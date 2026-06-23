@@ -37,6 +37,12 @@ pub struct MbClass {
     pub cached_init: Option<(u64, bool)>,
 }
 
+#[derive(Clone)]
+struct NamedTupleBaseShape {
+    tuple_name: String,
+    fields: Vec<String>,
+}
+
 // Global class registry — maps class name → MbClass.
 thread_local! {
     static CLASS_REGISTRY: std::cell::RefCell<HashMap<String, MbClass>> =
@@ -63,6 +69,10 @@ thread_local! {
     /// R10: Pending class keyword arguments for __init_subclass__ dispatch.
     /// Stored by mb_class_set_kwargs, consumed by mb_class_register.
     static KWARGS_REGISTRY: std::cell::RefCell<HashMap<String, HashMap<String, MbValue>>> =
+        std::cell::RefCell::new(HashMap::new());
+    /// Literal namedtuple base metadata for classes declared as
+    /// `class Child(namedtuple("Base", ["x"]))`.
+    static NAMEDTUPLE_BASE_SHAPES: std::cell::RefCell<HashMap<String, NamedTupleBaseShape>> =
         std::cell::RefCell::new(HashMap::new());
     /// Method lookup cache: (class_name_hash, method_name_hash) → cached MbValue.
     /// Avoids repeated MRO walks for hot method dispatch paths.
@@ -1346,6 +1356,60 @@ pub fn mb_class_set_metaclass(class_name: MbValue, metaclass_name: MbValue) {
     });
 }
 
+pub fn mb_class_set_namedtuple_base(
+    class_name: MbValue,
+    tuple_name: MbValue,
+    field_names: MbValue,
+) {
+    let class_name = extract_str(class_name).unwrap_or_default();
+    let tuple_name = extract_str(tuple_name).unwrap_or_default();
+    if class_name.is_empty() || tuple_name.is_empty() {
+        return;
+    }
+    let fields_vec: Vec<String> = field_names
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                Some(
+                    lock.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|v| extract_str(*v))
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    NAMEDTUPLE_BASE_SHAPES.with(|reg| {
+        reg.borrow_mut().insert(
+            class_name.clone(),
+            NamedTupleBaseShape {
+                tuple_name,
+                fields: fields_vec.clone(),
+            },
+        );
+    });
+    let tuple_items: Vec<MbValue> = fields_vec
+        .iter()
+        .map(|field| MbValue::from_ptr(MbObject::new_str(field.clone())))
+        .collect();
+    let fields_tuple = MbValue::from_ptr(MbObject::new_tuple(tuple_items));
+    let match_items: Vec<MbValue> = fields_vec
+        .iter()
+        .map(|field| MbValue::from_ptr(MbObject::new_str(field.clone())))
+        .collect();
+    let match_tuple = MbValue::from_ptr(MbObject::new_tuple(match_items));
+    CLASS_REGISTRY.with(|reg| {
+        let mut reg = reg.borrow_mut();
+        if let Some(cls) = reg.get_mut(&class_name) {
+            cls.class_attrs.insert("_fields".to_string(), fields_tuple);
+            cls.class_attrs.insert("__match_args__".to_string(), match_tuple);
+        }
+    });
+}
+
 /// Set a class-level attribute (P2-R3).
 /// Stores a value in the class's `class_attrs` dict so that it is visible
 /// via the descriptor protocol (e.g., class-level descriptor instances).
@@ -1992,6 +2056,60 @@ fn seed_simple_namespace_subclass_fields(instance: MbValue, args_list: MbValue) 
     true
 }
 
+fn namedtuple_subclass_shape(name: &str) -> Option<NamedTupleBaseShape> {
+    NAMEDTUPLE_BASE_SHAPES.with(|reg| reg.borrow().get(name).cloned())
+}
+
+fn seed_namedtuple_subclass_fields(
+    instance: MbValue,
+    args_list: MbValue,
+    class_name: &str,
+    shape: &NamedTupleBaseShape,
+) -> bool {
+    let items = super::builtins::extract_items(args_list);
+    if items.len() != shape.fields.len() {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{}() takes {} positional arguments but {} were given",
+                class_name,
+                shape.fields.len(),
+                items.len(),
+            ))),
+        );
+        return false;
+    }
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut guard = fields.write().unwrap();
+                guard.insert(
+                    "_namedtuple_name".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+                );
+                let ordered: Vec<MbValue> = shape
+                    .fields
+                    .iter()
+                    .map(|field| MbValue::from_ptr(MbObject::new_str(field.clone())))
+                    .collect();
+                guard.insert(
+                    "_namedtuple_fields".to_string(),
+                    MbValue::from_ptr(MbObject::new_list(ordered)),
+                );
+                guard.insert(
+                    "_namedtuple_base".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(shape.tuple_name.clone())),
+                );
+                for (field, value) in shape.fields.iter().zip(items.iter()) {
+                    super::rc::retain_if_ptr(*value);
+                    guard.insert(field.clone(), *value);
+                }
+            }
+        }
+    }
+    true
+}
+
 fn instance_new_with_init_impl(
     class_name: MbValue,
     args_list: MbValue,
@@ -2109,6 +2227,11 @@ fn instance_new_with_init_impl(
         && !seed_int_subclass_value(instance, args_list)
     {
         return MbValue::none();
+    }
+    if let Some(shape) = namedtuple_subclass_shape(&name) {
+        if !seed_namedtuple_subclass_fields(instance, args_list, &name, &shape) {
+            return MbValue::none();
+        }
     }
 
     // PEP 557: dataclasses without their own `__init__` route through the
@@ -3532,6 +3655,27 @@ fn is_array_unbound_method(name: &str) -> bool {
     )
 }
 
+fn namedtuple_hidden_dict_fields(fields: &FxHashMap<String, MbValue>) -> HashSet<String> {
+    let mut hidden = HashSet::new();
+    hidden.insert("_namedtuple_name".to_string());
+    hidden.insert("_namedtuple_fields".to_string());
+    hidden.insert("_namedtuple_base".to_string());
+    if let Some(names_val) = fields.get("_namedtuple_fields") {
+        if let Some(ptr) = names_val.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    for item in lock.read().unwrap().iter() {
+                        if let Some(name) = extract_str(*item) {
+                            hidden.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    hidden
+}
+
 /// Get an attribute from an instance (checks instance fields, then class methods via MRO).
 /// Falls back to `__getattr__` dunder if normal lookup fails.
 pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
@@ -4668,12 +4812,13 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         let has_field = fields.read().unwrap().contains_key("__dict__");
                         if !has_field {
                             let guard = fields.read().unwrap();
+                            let hidden = namedtuple_hidden_dict_fields(&guard);
                             let dict = super::dict_ops::mb_dict_new();
                             for (k, v) in guard.iter() {
                                 // `__ns_order__` is SimpleNamespace's hidden
                                 // insertion-order list; it must not surface in
                                 // __dict__ (vars() already excludes it).
-                                if k == "__ns_order__" {
+                                if k == "__ns_order__" || hidden.contains(k) {
                                     continue;
                                 }
                                 let key =
@@ -5684,11 +5829,12 @@ pub fn mb_vars(obj: MbValue) -> MbValue {
             }
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let fields = fields.read().unwrap();
+                let hidden = namedtuple_hidden_dict_fields(&fields);
                 let dict = super::dict_ops::mb_dict_new();
                 for (k, v) in fields.iter() {
                     // Hidden bookkeeping fields (e.g. SimpleNamespace's
                     // insertion-order list) are not part of __dict__.
-                    if k == "__ns_order__" {
+                    if k == "__ns_order__" || hidden.contains(k) {
                         continue;
                     }
                     let key = MbValue::from_ptr(super::rc::MbObject::new_str(k.clone()));
@@ -15165,10 +15311,13 @@ pub(crate) fn resolve_class_name(val: MbValue) -> Option<String> {
         } = (*ptr).data
         {
             if cn == "type" {
-                fields
-                    .read()
-                    .ok()
-                    .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                fields.read().ok().and_then(|f| {
+                    f.get("__name__").and_then(|v| extract_str(*v))
+                })
+            } else if cn == "collections.namedtuple_factory" {
+                fields.read().ok().and_then(|f| {
+                    f.get("_tuple_name").and_then(|v| extract_str(*v))
+                })
             } else {
                 None
             }

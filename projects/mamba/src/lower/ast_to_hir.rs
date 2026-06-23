@@ -2022,6 +2022,58 @@ fn decorator_preserves_call_signature(expr: &ast::Expr) -> bool {
     }
 }
 
+fn namedtuple_call_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Ident(name) => Some(name.as_str()),
+        ast::Expr::Attr { attr, .. } => Some(attr.as_str()),
+        _ => None,
+    }
+}
+
+fn literal_namedtuple_fields(expr: &ast::Expr) -> Option<Vec<String>> {
+    match expr {
+        ast::Expr::StrLit(s) => Some(
+            s.replace(',', " ")
+                .split_whitespace()
+                .map(|field| field.to_string())
+                .collect(),
+        ),
+        ast::Expr::ListLit(items) | ast::Expr::TupleLit(items) => {
+            let mut fields = Vec::with_capacity(items.len());
+            for item in items {
+                let ast::Expr::StrLit(field) = &item.node else {
+                    return None;
+                };
+                fields.push(field.clone());
+            }
+            Some(fields)
+        }
+        _ => None,
+    }
+}
+
+fn literal_namedtuple_base_spec(expr: &ast::Expr) -> Option<NamedTupleBaseSpec> {
+    let ast::Expr::Call { func, args } = expr else {
+        return None;
+    };
+    if namedtuple_call_name(&func.node) != Some("namedtuple") || args.len() < 2 {
+        return None;
+    }
+    let ast::CallArg::Positional(name_arg) = &args[0] else {
+        return None;
+    };
+    let ast::Expr::StrLit(tuple_name) = &name_arg.node else {
+        return None;
+    };
+    let ast::CallArg::Positional(fields_arg) = &args[1] else {
+        return None;
+    };
+    Some(NamedTupleBaseSpec {
+        tuple_name: tuple_name.clone(),
+        fields: literal_namedtuple_fields(&fields_arg.node)?,
+    })
+}
+
 /// Is this class-body default value a `field(...)` / `dataclasses.field(...)`
 /// call carrying `init=False`? Such fields are excluded from the synthesized
 /// `__init__` parameter list (PEP 557).
@@ -3230,11 +3282,18 @@ impl<'a> AstLowerer<'a> {
                         // resolver doesn't drop the base.
                         self.resolve_name(attr, stmt_span)
                             .or_else(|| Some(self.define_local(attr, self.checker.tcx.any())))
+                    } else if let Some(spec) = literal_namedtuple_base_spec(&b.node) {
+                        self.resolve_name(&spec.tuple_name, stmt_span).or_else(|| {
+                            Some(self.define_local(&spec.tuple_name, self.checker.tcx.any()))
+                        })
                     } else {
                         None
                     }
                 })
                 .collect();
+            cls.namedtuple_base = bases
+                .iter()
+                .find_map(|b| literal_namedtuple_base_spec(&b.node));
             // Keep first base for backward compatibility
             cls.base = cls.all_bases.first().copied();
             cls.decorators = decorators
@@ -3624,6 +3683,7 @@ impl<'a> AstLowerer<'a> {
             name: name_id,
             base: None,
             all_bases: Vec::new(),
+            namedtuple_base: None,
             fields,
             methods,
             span,
