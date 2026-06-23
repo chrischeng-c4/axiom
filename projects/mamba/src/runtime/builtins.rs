@@ -1430,7 +1430,18 @@ pub fn mb_int(val: MbValue) -> MbValue {
             // int(instance) — dispatch the __int__ dunder when the class
             // registers one (ipaddress addresses, user numeric types);
             // fall back to __index__ (CPython int() accepts SupportsIndex).
-            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if super::class::check_class_hierarchy(class_name, "int") {
+                    if let Some(value) = fields
+                        .read()
+                        .unwrap()
+                        .get(super::class::INT_SUBCLASS_VALUE_FIELD)
+                        .copied()
+                    {
+                        super::rc::retain_if_ptr(value);
+                        return value;
+                    }
+                }
                 for dunder in ["__int__", "__index__"] {
                     let method = super::class::lookup_method(class_name, dunder);
                     if !method.is_none() {
