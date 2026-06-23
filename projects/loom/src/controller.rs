@@ -144,7 +144,7 @@ async fn submit(
         status: run.status,
         node_count: run.nodes.len(),
     };
-    if let Err(e) = state.store.put(run) {
+    if let Err(e) = state.store.put(run).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
             .into_response();
     }
@@ -207,7 +207,7 @@ async fn complete_node(
     Json(req): Json<CompleteRequest>,
 ) -> impl IntoResponse {
     let run_id = WorkflowRunId::new(&id);
-    let mut run = match state.store.get(&run_id) {
+    let mut run = match state.store.get(&run_id).await {
         Ok(Some(run)) => run,
         Ok(None) => {
             return (StatusCode::NOT_FOUND, Json(ApiError { error: "run not found".into() }))
@@ -233,7 +233,7 @@ async fn complete_node(
             .into_response();
     }
     let v = view(&run);
-    if let Err(e) = state.store.put(run) {
+    if let Err(e) = state.store.put(run).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
             .into_response();
     }
@@ -241,7 +241,7 @@ async fn complete_node(
 }
 
 async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    match state.store.get(&WorkflowRunId::new(&id)) {
+    match state.store.get(&WorkflowRunId::new(&id)).await {
         Ok(Some(run)) => (StatusCode::OK, Json(view(&run))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, Json(ApiError { error: "run not found".into() }))
             .into_response(),
@@ -265,33 +265,64 @@ pub fn router(store: Arc<dyn RunStore>, dispatcher: Arc<dyn Dispatcher>) -> Rout
 /// fold) wires in once relay/keep transport lands.
 pub fn run() -> anyhow::Result<()> {
     let addr = std::env::var("LOOM_ADDR").unwrap_or_else(|_| "0.0.0.0:7474".to_string());
-    // Store backend: raft-backed (#110, LOOM_RAFT_DIR) > file crash-recovery
-    // (#123, LOOM_DATA_DIR) > in-memory.
-    let store: Arc<dyn RunStore> = if let Ok(dir) = std::env::var("LOOM_RAFT_DIR") {
-        eprintln!("loom: raft-backed durable store (single-voter) under {dir}");
-        Arc::new(crate::raft::RaftRunStore::open(0, &dir)?)
-    } else if let Ok(dir) = std::env::var("LOOM_DATA_DIR") {
-        eprintln!("loom: persisting runs under {dir}");
-        Arc::new(crate::store::FileStore::open(&dir)?)
-    } else {
-        Arc::new(MemStore::new())
-    };
-    // Dispatch to a real relay when LOOM_RELAY is set; otherwise the in-memory
-    // dispatcher records dispatches (dev/test) without a broker.
-    let relay_base = std::env::var("LOOM_RELAY").ok();
-    let dispatcher: Arc<dyn Dispatcher> = match &relay_base {
-        Some(base) => {
-            eprintln!("loom: dispatching to relay at {base}");
-            Arc::new(crate::relay_client::RelayDispatcher::new(base.clone())?)
-        }
-        None => {
-            eprintln!("loom: LOOM_RELAY unset — using in-memory dispatcher (no broker)");
-            Arc::new(MemDispatcher::new())
-        }
-    };
-    let app = router(store.clone(), dispatcher.clone());
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
+        // Store backend: multi-voter raft CLUSTER (#110 HA, LOOM_CLUSTER_PEERS) >
+        // single-voter raft (LOOM_RAFT_DIR) > file crash-recovery (LOOM_DATA_DIR)
+        // > in-memory. The cluster store also exposes a raft router peers reach.
+        let mut raft_router: Option<Router> = None;
+        let store: Arc<dyn RunStore> = if let Ok(peers_env) =
+            std::env::var("LOOM_CLUSTER_PEERS")
+        {
+            let id = std::env::var("LOOM_NODE_ID")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            let dir =
+                std::env::var("LOOM_RAFT_DIR").unwrap_or_else(|_| format!("/tmp/loom-raft-{id}"));
+            // LOOM_CLUSTER_PEERS = "0=http://h0,1=http://h1,2=http://h2" (all
+            // members incl. self); build the peer map excluding self.
+            let mut peers = std::collections::HashMap::new();
+            for part in peers_env.split(',') {
+                if let Some((nid, url)) = part.split_once('=') {
+                    if let Ok(nid) = nid.trim().parse::<u64>() {
+                        if nid != id {
+                            peers.insert(nid, url.trim().to_string());
+                        }
+                    }
+                }
+            }
+            let n_voters = peers.len() as u64 + 1;
+            eprintln!("loom: raft CLUSTER node {id}/{n_voters}, peers {peers:?}, dir {dir}");
+            let cs = crate::cluster::RaftClusterStore::spawn(id, n_voters, peers, &dir)?;
+            raft_router = Some(cs.router());
+            Arc::new(cs)
+        } else if let Ok(dir) = std::env::var("LOOM_RAFT_DIR") {
+            eprintln!("loom: raft-backed durable store (single-voter) under {dir}");
+            Arc::new(crate::raft::RaftRunStore::open(0, &dir)?)
+        } else if let Ok(dir) = std::env::var("LOOM_DATA_DIR") {
+            eprintln!("loom: persisting runs under {dir}");
+            Arc::new(crate::store::FileStore::open(&dir)?)
+        } else {
+            Arc::new(MemStore::new())
+        };
+        // Dispatch to a real relay when LOOM_RELAY is set; else an in-memory
+        // dispatcher records dispatches (dev/test) without a broker.
+        let relay_base = std::env::var("LOOM_RELAY").ok();
+        let dispatcher: Arc<dyn Dispatcher> = match &relay_base {
+            Some(base) => {
+                eprintln!("loom: dispatching to relay at {base}");
+                Arc::new(crate::relay_client::RelayDispatcher::new(base.clone())?)
+            }
+            None => {
+                eprintln!("loom: LOOM_RELAY unset — using in-memory dispatcher (no broker)");
+                Arc::new(MemDispatcher::new())
+            }
+        };
+        let mut app = router(store.clone(), dispatcher.clone());
+        if let Some(rr) = raft_router {
+            app = app.merge(rr);
+        }
         // With a real relay, consume worker completions and advance the DAG.
         if let Some(base) = relay_base {
             tokio::spawn(completion_consumer(base, store, dispatcher));
@@ -353,7 +384,7 @@ async fn completion_consumer(
 
 async fn apply_completion_msg(store: &Arc<dyn RunStore>, dispatcher: &dyn Dispatcher, cm: CompletionMsg) {
     let run_id = WorkflowRunId::new(&cm.run_id);
-    let Ok(Some(mut run)) = store.get(&run_id) else {
+    let Ok(Some(mut run)) = store.get(&run_id).await else {
         return;
     };
     let result_ref = if cm.failed { None } else { cm.result_ref.map(KeepRef) };
@@ -368,7 +399,7 @@ async fn apply_completion_msg(store: &Arc<dyn RunStore>, dispatcher: &dyn Dispat
     .await
     .is_ok()
     {
-        let _ = store.put(run);
+        let _ = store.put(run).await;
     }
 }
 
