@@ -225,7 +225,14 @@ pub fn router(store: Arc<dyn RunStore>, dispatcher: Arc<dyn Dispatcher>) -> Rout
 /// fold) wires in once relay/keep transport lands.
 pub fn run() -> anyhow::Result<()> {
     let addr = std::env::var("LOOM_ADDR").unwrap_or_else(|_| "0.0.0.0:7474".to_string());
-    let store: Arc<dyn RunStore> = Arc::new(MemStore::new());
+    // Persist runs (crash recovery, #123) when LOOM_DATA_DIR is set; else memory.
+    let store: Arc<dyn RunStore> = match std::env::var("LOOM_DATA_DIR") {
+        Ok(dir) => {
+            eprintln!("loom: persisting runs under {dir}");
+            Arc::new(crate::store::FileStore::open(&dir)?)
+        }
+        Err(_) => Arc::new(MemStore::new()),
+    };
     // Dispatch to a real relay when LOOM_RELAY is set; otherwise the in-memory
     // dispatcher records dispatches (dev/test) without a broker.
     let relay_base = std::env::var("LOOM_RELAY").ok();
