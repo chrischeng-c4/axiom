@@ -160,7 +160,31 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
     mb_open_with_closefd(path, mode, true)
 }
 
+fn patched_open_override(path: MbValue, mode: MbValue) -> Option<MbValue> {
+    let open = super::module::mb_builtin_get(MbValue::from_ptr(MbObject::new_str(
+        "open".to_string(),
+    )));
+    let is_native_open = open
+        .as_func()
+        .map(|addr| super::module::is_native_func(addr as u64))
+        .unwrap_or(false);
+    if open.is_none() || is_native_open {
+        return None;
+    }
+    let mut args = vec![path];
+    if !mode.is_none() {
+        args.push(mode);
+    }
+    Some(super::builtins::mb_call_spread(
+        open,
+        MbValue::from_ptr(MbObject::new_list(args)),
+    ))
+}
+
 fn mb_open_with_closefd(path: MbValue, mode: MbValue, closefd_flag: bool) -> MbValue {
+    if let Some(v) = patched_open_override(path, mode) {
+        return v;
+    }
     // str/bytes/bytearray directly; otherwise os.fspath coercion (pathlib
     // instances and any `__fspath__` provider) — CPython accepts str, bytes,
     // or os.PathLike here.

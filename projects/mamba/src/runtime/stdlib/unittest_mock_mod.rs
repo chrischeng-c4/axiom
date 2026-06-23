@@ -1192,6 +1192,25 @@ unsafe extern "C" fn patch_object_exit(self_v: MbValue, _args: MbValue) -> MbVal
     MbValue::from_bool(false)
 }
 
+unsafe extern "C" fn dispatch_mock_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { arg_slice(args_ptr, nargs) };
+    let kwargs = a.iter().copied().find(|v| is_dict_value(*v)).unwrap_or_else(MbValue::none);
+    let read_data = kwarg_get(kwargs, "read_data")
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str(String::new())));
+    let open_mock = build_mock("MagicMock", "open");
+    let file_mock = build_mock("MagicMock", "open()");
+    let read_child = mock_attr_child(file_mock, "read");
+    if !read_child.is_none() {
+        set_field(read_child, "return_value", read_data);
+    }
+    let enter_child = mock_attr_child(file_mock, "__enter__");
+    if !enter_child.is_none() {
+        set_field(enter_child, "return_value", file_mock);
+    }
+    set_field(open_mock, "return_value", file_mock);
+    open_mock
+}
+
 unsafe extern "C" fn dispatch_mock_noop(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::none()
 }
@@ -1217,6 +1236,7 @@ pub fn register() {
         ("create_autospec", dispatch_create_autospec as *const () as usize),
         ("patch", dispatch_patch as *const () as usize),
         ("call", dispatch_call_factory as *const () as usize),
+        ("mock_open", dispatch_mock_open as *const () as usize),
         ("seal", dispatch_seal as *const () as usize),
     ];
     for (name, addr) in dispatchers {
@@ -1274,7 +1294,6 @@ pub fn register() {
             "partial",
             "RLock",
             "iscoroutinefunction",
-            "mock_open",
             "safe_repr",
             "wraps",
         ];
