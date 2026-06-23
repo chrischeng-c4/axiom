@@ -2801,6 +2801,9 @@ fn numeric_handle_binop(op: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
 pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
     let a = int_enum_like_value(a).unwrap_or(a);
     let b = int_enum_like_value(b).unwrap_or(b);
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__add__") {
+        return mb_add(na, nb);
+    }
     if is_array_handle_value(a) || is_array_handle_value(b) {
         return super::stdlib::array_mod::mb_array_concat(a, b);
     }
