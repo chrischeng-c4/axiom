@@ -421,7 +421,9 @@ fn ipv6_to_compressed(bytes: &[u8; 16]) -> String {
     }
     let joined = parts.join(":");
     // If compression is at edges, "::" appears as part of the join.
-    if best_start == 0 {
+    if best_start == 0 && joined.is_empty() {
+        "::".to_string()
+    } else if best_start == 0 {
         format!(":{}", joined)
     } else if best_start + best_len == 8 {
         format!("{}:", joined)
@@ -437,6 +439,122 @@ fn ipv6_to_exploded(bytes: &[u8; 16]) -> String {
         parts.push(format!("{:04x}", g));
     }
     parts.join(":")
+}
+
+fn parse_ipv6_scoped(s: &str) -> Option<([u8; 16], Option<String>)> {
+    let (addr, scope) = match s.find('%') {
+        Some(idx) => (&s[..idx], Some(s[idx + 1..].to_string())),
+        None => (s, None),
+    };
+    parse_ipv6(addr).map(|b| (b, scope))
+}
+
+fn ipv6_text(bytes: &[u8; 16], scope: Option<&str>) -> String {
+    let mut text = ipv6_to_compressed(bytes);
+    if let Some(scope) = scope {
+        text.push('%');
+        text.push_str(scope);
+    }
+    text
+}
+
+fn ipv6_mask(prefix: u8) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    for (idx, slot) in out.iter_mut().enumerate() {
+        let used = prefix.saturating_sub((idx as u8) * 8);
+        *slot = if used >= 8 {
+            0xff
+        } else if used == 0 {
+            0
+        } else {
+            0xffu8 << (8 - used)
+        };
+    }
+    out
+}
+
+fn ipv6_hostmask(prefix: u8) -> [u8; 16] {
+    let mask = ipv6_mask(prefix);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = !mask[i];
+    }
+    out
+}
+
+fn packed_bytes(val: MbValue) -> Option<Vec<u8>> {
+    val.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::Bytes(ref b) => Some(b.clone()),
+            ObjData::ByteArray(ref lk) => Some(lk.read().unwrap().clone()),
+            _ => None,
+        }
+    })
+}
+
+fn make_ipv6_network_instance(
+    addr: [u8; 16],
+    prefix: u8,
+    scope: Option<&str>,
+    class_name: &str,
+) -> MbValue {
+    let inst = MbObject::new_instance(class_name.to_string());
+    let text = format!("{}/{}", ipv6_text(&addr, scope), prefix);
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut f = fields.write().unwrap();
+            f.insert("version".to_string(), MbValue::from_int(6));
+            f.insert("max_prefixlen".to_string(), MbValue::from_int(128));
+            f.insert("prefixlen".to_string(), MbValue::from_int(prefix as i64));
+            f.insert("compressed".to_string(), estr(&text));
+            f.insert("exploded".to_string(), estr(&text));
+            f.insert("with_prefixlen".to_string(), estr(&text));
+            f.insert("network_address".to_string(), make_handle(IpState::V6(addr)));
+            f.insert("netmask".to_string(), make_handle(IpState::V6(ipv6_mask(prefix))));
+            f.insert(
+                "hostmask".to_string(),
+                make_handle(IpState::V6(ipv6_hostmask(prefix))),
+            );
+            f.insert("num_addresses".to_string(), MbValue::from_int(1));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn build_ipv6_network(arg: MbValue, _strict: bool, class_name: &str) -> MbValue {
+    let parsed: Option<([u8; 16], u8, Option<String>)> = if let Some(i) = arg.as_int() {
+        if i < 0 {
+            None
+        } else {
+            Some(((i as u128).to_be_bytes(), 128, None))
+        }
+    } else if let Some(bytes) = packed_bytes(arg) {
+        if bytes.len() == 16 {
+            let mut b = [0u8; 16];
+            b.copy_from_slice(&bytes);
+            Some((b, 128, None))
+        } else {
+            None
+        }
+    } else if let Some(s) = extract_str(arg) {
+        let (addr_part, prefix_part) = match s.find('/') {
+            Some(idx) => (&s[..idx], Some(&s[idx + 1..])),
+            None => (s.as_str(), None),
+        };
+        let prefix = prefix_part
+            .and_then(|p| p.parse::<u32>().ok())
+            .unwrap_or(128)
+            .min(128) as u8;
+        parse_ipv6_scoped(addr_part).map(|(b, scope)| (b, prefix, scope))
+    } else {
+        None
+    };
+    match parsed {
+        Some((addr, prefix, scope)) => {
+            make_ipv6_network_instance(addr, prefix, scope.as_deref(), class_name)
+        }
+        None => MbValue::none(),
+    }
 }
 
 fn is_v4_private(a: u32) -> bool {
@@ -552,7 +670,7 @@ fn build_network(arg: MbValue, strict: bool) -> MbValue {
     };
     let (addr_part, prefix_part) = match s.find('/') {
         Some(idx) => (&s[..idx], &s[idx + 1..]),
-        None => (s.as_str(), "32"),
+        None => (s.as_str(), ""),
     };
     // Only IPv4 networks carry full IpState. An IPv6 network gets a minimal
     // field-only Instance (version/compressed/prefixlen) so cross-version
@@ -561,22 +679,17 @@ fn build_network(arg: MbValue, strict: bool) -> MbValue {
     let addr = match parse_ipv4(addr_part) {
         Some(a) => a,
         None => {
-            if let Some(_b) = parse_ipv6(addr_part) {
-                let prefix: u32 = prefix_part.parse().unwrap_or(128).min(128);
-                let inst = MbObject::new_instance("IPv6Network".to_string());
-                unsafe {
-                    if let ObjData::Instance { ref fields, .. } = (*inst).data {
-                        let mut f = fields.write().unwrap();
-                        f.insert("version".to_string(), MbValue::from_int(6));
-                        f.insert("max_prefixlen".to_string(), MbValue::from_int(128));
-                        f.insert("prefixlen".to_string(), MbValue::from_int(prefix as i64));
-                        f.insert(
-                            "compressed".to_string(),
-                            estr(&format!("{addr_part}/{prefix}")),
-                        );
-                    }
-                }
-                return MbValue::from_ptr(inst);
+            if parse_ipv6_scoped(addr_part).is_some() {
+                let full = if prefix_part.is_empty() {
+                    addr_part.to_string()
+                } else {
+                    format!("{addr_part}/{prefix_part}")
+                };
+                return build_ipv6_network(
+                    MbValue::from_ptr(MbObject::new_str(full)),
+                    strict,
+                    "IPv6Network",
+                );
             }
             return MbValue::none();
         }
@@ -584,7 +697,7 @@ fn build_network(arg: MbValue, strict: bool) -> MbValue {
     // Integer prefix length. A dotted-netmask form (e.g. "0.0.0.255") is not an
     // integer, so keep the legacy None for it; an in-range parse continues, and
     // an out-of-range integer prefix (>32) is a NetmaskValueError.
-    let prefix: u8 = match prefix_part.parse::<u32>() {
+    let prefix: u8 = match if prefix_part.is_empty() { Ok(32) } else { prefix_part.parse::<u32>() } {
         Ok(p) if p <= 32 => p as u8,
         Ok(p) => {
             return raise(
@@ -947,7 +1060,7 @@ unsafe extern "C" fn dispatch_class_ipv6_network(
     if nargs == 0 {
         return MbValue::none();
     }
-    mb_ipaddress_ip_network(unsafe { *args_ptr })
+    build_ipv6_network(unsafe { *args_ptr }, true, "IPv6Network")
 }
 
 unsafe extern "C" fn dispatch_class_ipv4_interface(
@@ -967,7 +1080,7 @@ unsafe extern "C" fn dispatch_class_ipv6_interface(
     if nargs == 0 {
         return MbValue::none();
     }
-    mb_ipaddress_ip_interface(unsafe { *args_ptr })
+    build_ipv6_network(unsafe { *args_ptr }, false, "IPv6Interface")
 }
 
 // Placeholder for the re-exported `functools` module attribute. Only present
@@ -1439,7 +1552,14 @@ unsafe extern "C" fn net_contains(self_v: MbValue, args: MbValue) -> MbValue {
 
 /// Register the IP classes' shared dunder tables.
 fn register_ip_classes() {
-    for class in ["IPv4Address", "IPv6Address", "IPv4Network", "IPv6Network"] {
+    for class in [
+        "IPv4Address",
+        "IPv6Address",
+        "IPv4Network",
+        "IPv6Network",
+        "IPv4Interface",
+        "IPv6Interface",
+    ] {
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         if class.ends_with("Network") {
             for (name, addr) in [
