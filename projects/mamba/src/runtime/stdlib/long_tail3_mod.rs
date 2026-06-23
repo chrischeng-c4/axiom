@@ -1162,17 +1162,6 @@ fn register_collections_abc() {
 
 fn register_email_subs() {
     register_with(
-        "email.charset",
-        &["Charset"],
-        &[
-            ("add_alias", dispatch_noop as *const () as usize),
-            ("add_charset", dispatch_noop as *const () as usize),
-            ("add_codec", dispatch_noop as *const () as usize),
-        ],
-        &[("QP", 1), ("BASE64", 2), ("SHORTEST", 3)],
-        &[],
-    );
-    register_with(
         "email.encoders",
         &[],
         &[

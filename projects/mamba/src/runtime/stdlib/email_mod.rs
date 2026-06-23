@@ -1620,6 +1620,9 @@ unsafe extern "C" fn dispatch_empty_list(_a: *const MbValue, _n: usize) -> MbVal
 unsafe extern "C" fn dispatch_dict_shell(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
+unsafe extern "C" fn dispatch_noop(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::none()
+}
 
 // ════════════════════════════════════════════════════════════════════════
 //  email.header: Header, decode_header, make_header
@@ -1922,6 +1925,15 @@ extern "C" fn m_charset_str(this: MbValue) -> MbValue {
             v
         })
         .unwrap_or_else(|| new_str("us-ascii"))
+}
+
+extern "C" fn m_charset_init(this: MbValue, args: MbValue) -> MbValue {
+    let items = args_items(args);
+    let pos = positional(&items);
+    let name = pos.first().and_then(|v| extract_str(*v))
+        .unwrap_or_else(|| "us-ascii".to_string());
+    field_set(this, "input_charset", new_str(name.to_lowercase()));
+    MbValue::none()
 }
 
 unsafe extern "C" fn m_charset_header_encode(this: MbValue, value: MbValue) -> MbValue {
@@ -2465,6 +2477,7 @@ pub fn register() {
         "Charset",
         &["object"],
         vec![
+            ("__init__", m_charset_init as *const (), true),
             ("__str__", m_charset_str as *const (), false),
             ("header_encode", m_charset_header_encode as *const (), false),
         ],
@@ -2785,7 +2798,13 @@ fn register_email_charset() {
         dispatch_charset_ctor as *const () as usize,
         "Charset",
     );
+    register_func(&mut attrs, "add_alias", dispatch_noop as *const () as usize);
+    register_func(&mut attrs, "add_charset", dispatch_noop as *const () as usize);
+    register_func(&mut attrs, "add_codec", dispatch_noop as *const () as usize);
     // surface: missing CPython module constants (auto-added)
+    attrs.insert("QP".into(), MbValue::from_int(1));
+    attrs.insert("BASE64".into(), MbValue::from_int(2));
+    attrs.insert("SHORTEST".into(), MbValue::from_int(3));
     attrs.insert(
         "DEFAULT_CHARSET".into(),
         MbValue::from_ptr(MbObject::new_str("us-ascii".to_string())),
