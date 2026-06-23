@@ -126,6 +126,11 @@ jet-parity-oracle = { path = "parity/oracle" }
 # Test targets are grouped by verification block under tests/<block>/;
 # target names are flat so `cargo test --test <name>` references in README/scripts keep working.
 
+# tests/codegen/ — jet codegen openapi generates TS types + fetch client + React Query hooks
+[[test]]
+name = "openapi_golden"
+path = "tests/codegen/openapi_golden.rs"
+
 # tests/pkg-mgmt/ — jet install/add/remove/update replaces npm/pnpm and beats them on speed
 [[test]]
 name = "pkg_replacement_gate"

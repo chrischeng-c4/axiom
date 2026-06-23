@@ -18,6 +18,7 @@ pub mod bundler;
 pub mod cdp_driver;
 pub mod ci_summary;
 pub mod cli;
+pub mod codegen;
 pub mod css;
 pub mod dev_server;
 pub mod e2e;
