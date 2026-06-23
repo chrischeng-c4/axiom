@@ -462,6 +462,22 @@ fn make_typing_special_form(class_name: &str, dunders: &[&str]) -> MbValue {
     use super::super::rc::{MbObjectHeader, ObjData, ObjKind};
     use rustc_hash::FxHashMap;
     let mut fields = FxHashMap::default();
+    if class_name == "typing.Generic" {
+        fields.insert(
+            "__name__".to_string(),
+            MbValue::from_ptr(MbObject::new_str("Generic".to_string())),
+        );
+        fields.insert(
+            "__qualname__".to_string(),
+            MbValue::from_ptr(MbObject::new_str("Generic".to_string())),
+        );
+        fields.insert(
+            "__bases__".to_string(),
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                super::super::builtins::make_type_object("object"),
+            ])),
+        );
+    }
     for d in dunders {
         // An empty string stands in for the (value-irrelevant) descriptor slot.
         fields.insert(
@@ -1034,6 +1050,11 @@ fn ensure_typing_classes_registered() {
         var(typing_alias_repr_m as *const () as usize),
     );
     super::super::class::mb_class_register("typing.Alias", vec![], ma);
+    super::super::class::mb_class_register(
+        "typing.Generic",
+        vec!["object".to_string()],
+        Map::new(),
+    );
     let mut ms: Map<String, MbValue> = Map::new();
     ms.insert(
         "__repr__".to_string(),
@@ -1192,6 +1213,38 @@ pub fn special_form_subscript(name: &str, key: MbValue) -> MbValue {
             )
         }
     }
+}
+
+/// `typing.Generic[T]` returns a generic alias whose origin is the Generic
+/// class object itself. User classes inherit through this alias before they can
+/// later be parameterized as `Box[int]`.
+pub fn generic_subscript(origin: MbValue, key: MbValue) -> MbValue {
+    use super::super::rc::ObjData;
+    let items = key
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(t) => Some(t.to_vec()),
+                _ => None,
+            }
+        })
+        .unwrap_or_else(|| vec![key]);
+    make_alias("generic", origin, items, Some("typing.Generic"), None)
+}
+
+/// Parameterize a user class that inherits from `typing.Generic`.
+pub fn user_generic_subscript(origin: MbValue, key: MbValue, repr_name: &str) -> MbValue {
+    use super::super::rc::ObjData;
+    let items = key
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(t) => Some(t.to_vec()),
+                _ => None,
+            }
+        })
+        .unwrap_or_else(|| vec![key]);
+    make_alias("generic", origin, items, Some(repr_name), None)
 }
 
 /// PEP 585 builtin-generic subscription: list[int], dict[str, int], ...
