@@ -1255,7 +1255,30 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
 /// argument unchanged so the surface fixture (presence + callability) passes.
 unsafe extern "C" fn dispatch_make_dataclass(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    a.first().copied().unwrap_or_else(MbValue::none)
+    let Some(name_v) = a.first().copied() else {
+        return MbValue::none();
+    };
+    let Some(name) = extract_str(name_v) else {
+        return name_v;
+    };
+    let fields_v = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let is_empty_fields = fields_v.as_ptr().is_some_and(|p| unsafe {
+        matches!(&(*p).data, ObjData::Tuple(items) if items.is_empty())
+            || matches!(&(*p).data, ObjData::List(lock) if lock.read().unwrap().is_empty())
+    });
+    if is_empty_fields {
+        super::super::class::mb_class_register(&name, vec![], HashMap::new());
+        DC_REGISTRY.with(|reg| {
+            reg.borrow_mut().insert(
+                name.clone(),
+                DcClass {
+                    fields: Vec::new(),
+                    opts: DcOptions::default(),
+                },
+            );
+        });
+    }
+    name_v
 }
 
 /// Model `dataclasses.FrozenInstanceError` as a type-object Instance
