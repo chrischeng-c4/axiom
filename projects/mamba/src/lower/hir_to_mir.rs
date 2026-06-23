@@ -878,6 +878,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
         lowerer.pending_classes.push((
             class_name.clone(),
             all_base_names,
+            cls.namedtuple_base.clone(),
             methods,
             match_args,
             cls.metaclass.clone(),
@@ -1080,10 +1081,11 @@ struct HirToMir<'a> {
     /// VReg of the caught exception inside an except handler body (for implicit chaining).
     active_except_vreg: Option<VReg>,
     /// Classes to register at the start of top-level code.
-    /// (class_name, all_base_names, [(method_name, method_symbol_id, decor_kind, setter_sym, deleter_sym, marker_attrs)], match_args, metaclass, slots, class_kwargs)
+    /// (class_name, all_base_names, namedtuple_base, [(method_name, method_symbol_id, decor_kind, setter_sym, deleter_sym, marker_attrs)], match_args, metaclass, slots, class_kwargs)
     pending_classes: Vec<(
         String,
         Vec<String>,
+        Option<NamedTupleBaseSpec>,
         Vec<(
             String,
             SymbolId,
@@ -2130,8 +2132,16 @@ impl<'a> HirToMir<'a> {
 
         // Emit class registrations at the start of top-level code
         let pending = std::mem::take(&mut self.pending_classes);
-        for (class_name, all_base_names, methods, match_args, metaclass, slots, class_kwargs) in
-            &pending
+        for (
+            class_name,
+            all_base_names,
+            namedtuple_base,
+            methods,
+            match_args,
+            metaclass,
+            slots,
+            class_kwargs,
+        ) in &pending
         {
             let name_vreg = self.emit_str_const(class_name);
             // Build bases list for multiple inheritance (P1 OOP conformance).
@@ -2308,6 +2318,23 @@ impl<'a> HirToMir<'a> {
                 args: vec![name_vreg, bases_list_vreg, names_list, values_list],
                 ty: self.tcx.none(),
             });
+            if let Some(spec) = namedtuple_base {
+                let tuple_name_vreg = self.emit_str_const(&spec.tuple_name);
+                let mut field_vregs = Vec::new();
+                for field in &spec.fields {
+                    field_vregs.push(self.emit_str_const(field));
+                }
+                let fields_list = self.fresh_vreg();
+                self.current_stmts.push(MirInst::MakeList {
+                    dest: fields_list, elements: field_vregs, ty: self.tcx.any(),
+                });
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_class_set_namedtuple_base".to_string(),
+                    args: vec![name_vreg, tuple_name_vreg, fields_list],
+                    ty: self.tcx.none(),
+                });
+            }
             // abc: register the names declared `@abc.abstractmethod` so the
             // runtime can compute `__abstractmethods__` and reject instantiation
             // of classes that still have un-overridden abstract methods.

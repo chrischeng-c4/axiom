@@ -89,12 +89,20 @@ pub struct HirFunction {
 }
 
 #[derive(Debug, Clone)]
+pub struct NamedTupleBaseSpec {
+    pub tuple_name: String,
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct HirClass {
     pub name: SymbolId,
     pub base: Option<SymbolId>,
     /// All base classes for multiple inheritance (P1 OOP conformance).
     /// When non-empty, takes priority over `base` for MRO computation.
     pub all_bases: Vec<SymbolId>,
+    /// Literal `namedtuple("T", [...])` base metadata for namedtuple subclasses.
+    pub namedtuple_base: Option<NamedTupleBaseSpec>,
     pub fields: Vec<(SymbolId, TypeId)>,
     pub methods: Vec<HirFunction>,
     pub span: Span,
@@ -819,6 +827,7 @@ mod tests {
             name: SymbolId(0),
             base: Some(SymbolId(1)),
             all_bases: vec![SymbolId(1)],
+            namedtuple_base: None,
             fields: vec![(SymbolId(2), int_ty)],
             methods: vec![],
             span: Span::dummy(),

@@ -1571,6 +1571,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_class_set_namedtuple_base",
+            class::mb_class_set_namedtuple_base
+                as fn(super::MbValue, super::MbValue, super::MbValue),
+            [I64, I64, I64],
+            Void
+        ),
+        rt_sym!(
             "mb_class_set_doc",
             class::mb_class_set_doc as fn(super::MbValue, super::MbValue),
             [I64, I64],
