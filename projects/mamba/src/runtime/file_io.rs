@@ -30,6 +30,8 @@ struct MbFile {
     encoding: Option<String>,
     /// Text-mode error handler (`f.errors`), None in binary mode.
     errors: Option<String>,
+    /// Whether closing this wrapper owns the underlying fd.
+    closefd: bool,
 }
 
 /// Parsed open() mode flags. Returns None on a structurally invalid mode.
@@ -147,23 +149,34 @@ pub fn mb_file_name(handle: MbValue) -> MbValue {
     }
 }
 
+fn file_path_from_handle(handle: MbValue) -> Option<String> {
+    let id = handle.as_int()? as u64;
+    FILES.with(|files| files.borrow().get(&id).map(|file| file.path.clone()))
+}
+
 /// open(path, mode) → file handle (as MbValue int)
 pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
+    mb_open_with_closefd(path, mode, true)
+}
+
+fn mb_open_with_closefd(path: MbValue, mode: MbValue, closefd_flag: bool) -> MbValue {
     // str/bytes/bytearray directly; otherwise os.fspath coercion (pathlib
     // instances and any `__fspath__` provider) — CPython accepts str, bytes,
     // or os.PathLike here.
-    let file_path =
-        match extract_str(path).or_else(|| super::stdlib::pathlib_mod::coerce_fspath(path)) {
-            Some(p) => p,
-            None => {
-                // A failing user `__fspath__` already left its own exception
-                // pending — propagate that instead of masking it.
-                if super::exception::mb_has_exception().as_bool() != Some(true) {
-                    raise_type_error("open() argument must be a string");
-                }
-                return MbValue::none();
+    let file_path = match extract_str(path)
+        .or_else(|| super::stdlib::pathlib_mod::coerce_fspath(path))
+        .or_else(|| file_path_from_handle(path))
+    {
+        Some(p) => p,
+        None => {
+            // A failing user `__fspath__` already left its own exception
+            // pending — propagate that instead of masking it.
+            if super::exception::mb_has_exception().as_bool() != Some(true) {
+                raise_type_error("open() argument must be a string");
             }
-        };
+            return MbValue::none();
+        }
+    };
     // Embedded NUL byte in path is a ValueError (CPython).
     if file_path.contains('\0') {
         raise_value_error("embedded null byte");
@@ -268,6 +281,7 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
                 append,
                 encoding,
                 errors,
+                closefd: closefd_flag,
             };
             FILES.with(|files| files.borrow_mut().insert(id, mf));
             MbValue::from_int(id as i64)
@@ -307,7 +321,8 @@ pub fn mb_open_ex(
         );
         return MbValue::none();
     }
-    let handle = mb_open(path, mode);
+    let closefd_flag = closefd.as_bool().unwrap_or(true);
+    let handle = mb_open_with_closefd(path, mode, closefd_flag);
     if let Some(id) = handle.as_int() {
         let enc = extract_str_opt(encoding);
         let err = extract_str_opt(errors);
@@ -463,6 +478,7 @@ pub fn mb_file_buffer(handle: MbValue) -> MbValue {
             "mode".to_string(),
             MbValue::from_ptr(MbObject::new_str(mode.clone())),
         );
+        raw_fields.insert("closefd".to_string(), MbValue::from_bool(mf.closefd));
         let raw = make_io_instance("FileIO", raw_fields);
 
         let mut buffer_fields = InstanceFields::default();
