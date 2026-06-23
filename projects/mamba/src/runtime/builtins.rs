@@ -7093,6 +7093,8 @@ pub fn mb_min_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
                 super::class::mb_call1_val(key, item)
             } else if let Some(ref name) = named_key {
                 call_named_callable(name, item).unwrap_or(item)
+            } else if key.as_ptr().is_some() {
+                super::class::mb_call1_val(key, item)
             } else {
                 item
             }
@@ -7151,6 +7153,8 @@ pub fn mb_max_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
                 super::class::mb_call1_val(key, item)
             } else if let Some(ref name) = named_key {
                 call_named_callable(name, item).unwrap_or(item)
+            } else if key.as_ptr().is_some() {
+                super::class::mb_call1_val(key, item)
             } else {
                 item
             }
