@@ -1,4 +1,4 @@
-use super::rc::MbObject;
+use super::rc::{InstanceFields, MbObject, MbObjectHeader, MbRwLock, ObjData, ObjKind};
 use super::value::MbValue;
 /// File I/O runtime support (#379).
 ///
@@ -8,6 +8,7 @@ use super::value::MbValue;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::sync::atomic::AtomicU32;
 
 /// File handle state.
 #[allow(dead_code)]
@@ -361,6 +362,76 @@ fn file_str_field(handle: MbValue, f: impl Fn(&MbFile) -> Option<String>) -> MbV
             Some(s) => MbValue::from_ptr(MbObject::new_str(s)),
             None => MbValue::none(),
         }
+    })
+}
+
+fn make_io_instance(class_name: &str, fields: InstanceFields) -> MbValue {
+    MbValue::from_ptr(Box::into_raw(Box::new(MbObject {
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: class_name.to_string(),
+            fields: MbRwLock::new(fields),
+        },
+    })))
+}
+
+fn binary_layer_mode(mode: &str) -> String {
+    let plus = mode.contains('+');
+    let primary = if plus && mode.contains('a') {
+        'a'
+    } else if plus && mode.contains('x') {
+        'x'
+    } else if plus {
+        'r'
+    } else if mode.contains('a') {
+        'a'
+    } else if mode.contains('x') {
+        'x'
+    } else if mode.contains('w') {
+        'w'
+    } else {
+        'r'
+    };
+    let mut out = String::with_capacity(3);
+    out.push(primary);
+    out.push('b');
+    if plus {
+        out.push('+');
+    }
+    out
+}
+
+/// `f.buffer` for text-mode builtin open() handles. The runtime represents
+/// files as table-backed integer handles, so synthesize the visible
+/// TextIOWrapper buffer/raw metadata stack for attribute probes.
+pub fn mb_file_buffer(handle: MbValue) -> MbValue {
+    let Some(id) = handle.as_int() else { return MbValue::none() };
+    FILES.with(|files| {
+        let files = files.borrow();
+        let Some(mf) = files.get(&(id as u64)) else {
+            return MbValue::none();
+        };
+        if mf.binary {
+            return MbValue::none();
+        }
+        let mode = binary_layer_mode(&mf.mode);
+        let mut raw_fields = InstanceFields::default();
+        raw_fields.insert(
+            "mode".to_string(),
+            MbValue::from_ptr(MbObject::new_str(mode.clone())),
+        );
+        let raw = make_io_instance("FileIO", raw_fields);
+
+        let mut buffer_fields = InstanceFields::default();
+        buffer_fields.insert(
+            "mode".to_string(),
+            MbValue::from_ptr(MbObject::new_str(mode)),
+        );
+        buffer_fields.insert("raw".to_string(), raw);
+        make_io_instance("BufferedRandom", buffer_fields)
     })
 }
 
