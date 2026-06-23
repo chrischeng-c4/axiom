@@ -1788,6 +1788,9 @@ pub fn mb_instance_new(class_name: MbValue, _args: MbValue) -> MbValue {
     if let Some(result) = mb_contextlib_abc_reject_abstract_instantiation(&name) {
         return result;
     }
+    if let Some(result) = mb_numbers_abc_reject_abstract_instantiation(&name) {
+        return result;
+    }
     if let Some(result) = mb_reject_protocol_instantiation(&name) {
         return result;
     }
@@ -1922,6 +1925,9 @@ fn instance_new_with_init_impl(
         return result;
     }
     if let Some(result) = mb_contextlib_abc_reject_abstract_instantiation(&name) {
+        return result;
+    }
+    if let Some(result) = mb_numbers_abc_reject_abstract_instantiation(&name) {
         return result;
     }
     if let Some(result) = mb_reject_protocol_instantiation(&name) {
@@ -3160,6 +3166,106 @@ fn collections_abc_abstract_methods(name: &str) -> &'static [&'static str] {
     }
 }
 
+fn numbers_abc_abstract_methods(name: &str) -> &'static [&'static str] {
+    match name {
+        "Complex" => &[
+            "__abs__",
+            "__add__",
+            "__complex__",
+            "__eq__",
+            "__mul__",
+            "__neg__",
+            "__pos__",
+            "__pow__",
+            "__radd__",
+            "__rmul__",
+            "__rpow__",
+            "__rtruediv__",
+            "__truediv__",
+            "conjugate",
+            "imag",
+            "real",
+        ],
+        "Real" => &[
+            "__abs__",
+            "__add__",
+            "__ceil__",
+            "__eq__",
+            "__float__",
+            "__floor__",
+            "__floordiv__",
+            "__le__",
+            "__lt__",
+            "__mod__",
+            "__mul__",
+            "__neg__",
+            "__pos__",
+            "__pow__",
+            "__radd__",
+            "__rfloordiv__",
+            "__rmod__",
+            "__rmul__",
+            "__round__",
+            "__rpow__",
+            "__rtruediv__",
+            "__truediv__",
+            "__trunc__",
+            "conjugate",
+            "imag",
+            "real",
+        ],
+        "Rational" => &["denominator", "numerator"],
+        "Integral" => &[
+            "__abs__",
+            "__add__",
+            "__and__",
+            "__ceil__",
+            "__eq__",
+            "__floor__",
+            "__index__",
+            "__int__",
+            "__invert__",
+            "__le__",
+            "__lshift__",
+            "__lt__",
+            "__mod__",
+            "__mul__",
+            "__neg__",
+            "__or__",
+            "__pos__",
+            "__pow__",
+            "__rshift__",
+            "__trunc__",
+            "__xor__",
+        ],
+        _ => &[],
+    }
+}
+
+fn missing_numbers_abc_abstract_method(class_name: &str) -> Option<&'static str> {
+    let abc_names = CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        if let Some(cls) = reg.get(class_name) {
+            cls.mro.iter().skip(1).cloned().collect::<Vec<_>>()
+        } else {
+            vec![class_name.to_string()]
+        }
+    });
+
+    let mut required = Vec::new();
+    for abc_name in abc_names {
+        for method in numbers_abc_abstract_methods(&abc_name) {
+            if !required.contains(method) {
+                required.push(*method);
+            }
+        }
+    }
+
+    required
+        .into_iter()
+        .find(|method| lookup_method(class_name, method).is_none())
+}
+
 fn missing_collections_abc_abstract_method(class_name: &str) -> Option<&'static str> {
     // Collect the ABC names that impose abstract-method requirements on this
     // class. A class is "abstract" only when it reaches a real
@@ -3202,6 +3308,17 @@ fn missing_collections_abc_abstract_method(class_name: &str) -> Option<&'static 
 
 pub fn mb_collections_abc_reject_abstract_instantiation(class_name: &str) -> Option<MbValue> {
     let missing = missing_collections_abc_abstract_method(class_name)?;
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "Can't instantiate abstract class {class_name} with abstract method {missing}",
+        ))),
+    );
+    Some(MbValue::none())
+}
+
+pub fn mb_numbers_abc_reject_abstract_instantiation(class_name: &str) -> Option<MbValue> {
+    let missing = missing_numbers_abc_abstract_method(class_name)?;
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
         MbValue::from_ptr(MbObject::new_str(format!(
