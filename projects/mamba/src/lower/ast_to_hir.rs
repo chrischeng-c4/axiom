@@ -2170,6 +2170,9 @@ struct AstLowerer<'a> {
     /// these names must keep explicit keyword arguments structural so call-time
     /// kwargs can override the partial's stored kwargs.
     functools_partial_kwarg_idents: std::collections::HashSet<String>,
+    /// Local names bound to unittest.mock mock instances. Calls through these
+    /// names must preserve keyword names so call_args records kwargs.
+    unittest_mock_kwarg_idents: std::collections::HashSet<String>,
     /// Class names whose MRO passes through `types.SimpleNamespace`. Their
     /// inherited native initializer needs keyword names preserved as a trailing
     /// kwargs dict; flattening keywords to values builds an empty namespace.
@@ -2250,6 +2253,7 @@ impl<'a> AstLowerer<'a> {
             functools_module_idents: std::iter::once("functools".to_string()).collect(),
             functools_partial_factory_idents: std::collections::HashSet::new(),
             functools_partial_kwarg_idents: std::collections::HashSet::new(),
+            unittest_mock_kwarg_idents: std::collections::HashSet::new(),
             simple_namespace_subclass_idents: std::collections::HashSet::new(),
             func_return_tys: HashMap::new(),
             func_param_float_hint: HashMap::new(),
@@ -3745,6 +3749,22 @@ impl<'a> AstLowerer<'a> {
                         self.functools_partial_kwarg_idents.insert(name.clone());
                     } else {
                         self.functools_partial_kwarg_idents.remove(name.as_str());
+                    }
+                    let is_unittest_mock_instance = match &value.node {
+                        ast::Expr::Call { func: call_func, .. } => match &call_func.node {
+                            ast::Expr::Ident(factory_name) => matches!(
+                                factory_name.as_str(),
+                                "MagicMock" | "Mock" | "AsyncMock" | "PropertyMock"
+                                    | "NonCallableMagicMock"
+                            ),
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                    if is_unittest_mock_instance {
+                        self.unittest_mock_kwarg_idents.insert(name.clone());
+                    } else {
+                        self.unittest_mock_kwarg_idents.remove(name.as_str());
                     }
                     let val = self.lower_expr(value)?;
                     // Python scoping: inside a function body, an assignment
@@ -5882,13 +5902,18 @@ impl<'a> AstLowerer<'a> {
                     ast::Expr::Ident(name)
                         if self.functools_partial_kwarg_idents.contains(name.as_str())
                 );
+                let is_unittest_mock_kwarg_ident = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name)
+                        if self.unittest_mock_kwarg_idents.contains(name.as_str())
+                );
                 // `p(k=1)` where `p` is a local `functools.partial(...)`
                 // instance must keep keyword names alive so call-time kwargs
                 // can override stored kwargs. Do not generalize this to every
                 // bare identifier: builtin constructors and imported classes
                 // still rely on the legacy flattening/trailing-dict conventions.
                 if (has_any_kwargs || has_dstar) && !pack_trailing_kwargs && !has_star
-                    && is_functools_partial_kwarg_ident
+                    && (is_functools_partial_kwarg_ident || is_unittest_mock_kwarg_ident)
                 {
                     return Some(self.build_spread_kwargs_call(f, args, any_ty));
                 }
