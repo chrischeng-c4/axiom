@@ -3437,6 +3437,8 @@ impl<'a> AstLowerer<'a> {
                         true,
                         method_is_decorated,
                     ) {
+                        self.result.func_sigs
+                            .insert(m.name.0, func_sig_meta(params, return_ty));
                         let has_yield = contains_yield(mbody);
                         if is_async_method {
                             // `async def` method: route same way the top-level

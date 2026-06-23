@@ -14730,21 +14730,64 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                         all_args.extend(items.iter());
                                     }
                                 }
+                                let is_variadic = super::module::is_variadic_func(addr as u64);
+                                let has_kwargs = super::module::is_kwargs_func(addr as u64);
+                                if !is_variadic && !has_kwargs {
+                                    if let Some(params) = super::closure::func_params(call_method) {
+                                        let regulars: Vec<&super::closure::MbParamInfo> =
+                                            params.iter().filter(|p| p.kind <= 1).collect();
+                                        let provided_user_args =
+                                            all_args.len().saturating_sub(pos_args_start);
+                                        if provided_user_args < regulars.len() {
+                                            let missing = &regulars[provided_user_args..];
+                                            if missing.iter().all(|p| p.has_default) {
+                                                for p in missing {
+                                                    all_args.push(p.default);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 // Variadic / kwargs methods: pack positional args into a list
                                 // (and empty dict for **kwargs) so the compiled signature
                                 // (self [, args_list] [, kwargs_dict]) gets the expected shape.
-                                let is_variadic = super::module::is_variadic_func(addr as u64);
-                                let has_kwargs = super::module::is_kwargs_func(addr as u64);
                                 if is_variadic || has_kwargs {
-                                    let pos: Vec<MbValue> =
+                                    let mut pos: Vec<MbValue> =
                                         all_args.drain(pos_args_start..).collect();
+                                    let receiver_as_star_arg = is_variadic
+                                        && dk != DescriptorKind::StaticMethod
+                                        && super::closure::mb_func_get_argcount(call_method)
+                                            .as_int()
+                                            .unwrap_or(1)
+                                            == 0;
+                                    let kwargs = if has_kwargs {
+                                        pos.last()
+                                            .copied()
+                                            .filter(|v| {
+                                                v.as_ptr().is_some_and(|p| {
+                                                    matches!((*p).data, ObjData::Dict(_))
+                                                })
+                                            })
+                                            .map(|kw| {
+                                                pos.pop();
+                                                kw
+                                            })
+                                            .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()))
+                                    } else {
+                                        MbValue::none()
+                                    };
+                                    if receiver_as_star_arg {
+                                        if let Some(recv) = all_args.pop() {
+                                            pos.insert(0, recv);
+                                        }
+                                    }
                                     if is_variadic {
                                         all_args.push(MbValue::from_ptr(MbObject::new_list(
                                             pos.clone(),
                                         )));
                                     }
                                     if has_kwargs {
-                                        all_args.push(MbValue::from_ptr(MbObject::new_dict()));
+                                        all_args.push(kwargs);
                                     }
                                     let _ = pos;
                                 }
