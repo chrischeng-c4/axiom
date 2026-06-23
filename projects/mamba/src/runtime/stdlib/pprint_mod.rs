@@ -519,6 +519,120 @@ fn builtin_repr(val: MbValue) -> String {
     String::new()
 }
 
+fn instance_field(val: MbValue, field: &str) -> Option<MbValue> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            return fields.read().unwrap().get(field).copied();
+        }
+    }
+    None
+}
+
+fn list_items(val: MbValue) -> Option<Vec<MbValue>> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            return Some(lock.read().unwrap().to_vec());
+        }
+    }
+    None
+}
+
+fn dict_entries(val: MbValue, sort: bool) -> Option<Vec<(MbValue, MbValue)>> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let mut entries: Vec<(MbValue, MbValue)> = map.iter()
+                .map(|(k, v)| (super::super::dict_ops::dict_key_to_mbvalue(k), *v))
+                .collect();
+            drop(map);
+            if sort {
+                sort_by_safe_key(&mut entries, |e| e.0);
+            }
+            return Some(entries);
+        }
+    }
+    None
+}
+
+fn counter_entries(val: MbValue) -> Option<Vec<(MbValue, MbValue)>> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let mut entries: Vec<(MbValue, MbValue, usize)> = map.iter()
+                .enumerate()
+                .map(|(i, (k, v))| (super::super::dict_ops::dict_key_to_mbvalue(k), *v, i))
+                .collect();
+            drop(map);
+            entries.sort_by(|a, b| {
+                let ai = a.1.as_int().unwrap_or(0);
+                let bi = b.1.as_int().unwrap_or(0);
+                bi.cmp(&ai).then(a.2.cmp(&b.2))
+            });
+            return Some(entries.into_iter().map(|(k, v, _)| (k, v)).collect());
+        }
+    }
+    None
+}
+
+fn safe_repr_projected_instance(
+    val: MbValue,
+    cfg: &Config,
+    context: &mut HashSet<usize>,
+    level: usize,
+) -> Option<SafeRepr> {
+    if let Some((_, data)) = super::collections_mod::user_wrapper_data(val) {
+        return Some(safe_repr(data, cfg, context, level));
+    }
+
+    let ptr = val.as_ptr()?;
+    unsafe {
+        let ObjData::Instance { ref class_name, ref fields } = (*ptr).data else {
+            return None;
+        };
+        match class_name.as_str() {
+            "collections.ChainMap" => {
+                let maps = fields.read().unwrap().get("maps").copied();
+                let items = maps.and_then(list_items).unwrap_or_default();
+                let maps = if items.is_empty() {
+                    vec![MbValue::from_ptr(MbObject::new_dict())]
+                } else {
+                    items
+                };
+                let mut readable = true;
+                let mut recursive = false;
+                let mut parts = Vec::with_capacity(maps.len());
+                for item in maps {
+                    let r = safe_repr(item, cfg, context, level + 1);
+                    readable = readable && r.readable;
+                    recursive = recursive || r.recursive;
+                    parts.push(r.text);
+                }
+                Some(SafeRepr {
+                    text: format!("ChainMap({})", parts.join(", ")),
+                    readable,
+                    recursive,
+                })
+            }
+            "mappingproxy" => {
+                let mapping = fields.read().unwrap().get("_mapping").copied()?;
+                let mut inner_cfg = cfg.clone();
+                inner_cfg.sort_dicts = false;
+                let r = safe_repr(mapping, &inner_cfg, context, level + 1);
+                Some(SafeRepr {
+                    text: format!("mappingproxy({})", r.text),
+                    readable: r.readable,
+                    recursive: r.recursive,
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
 fn namespace_repr_parts(val: MbValue) -> Option<(String, Vec<String>)> {
     let ptr = val.as_ptr()?;
     unsafe {
@@ -761,6 +875,10 @@ fn safe_repr(val: MbValue, cfg: &Config, context: &mut HashSet<usize>, level: us
         }
     }
 
+    if let Some(r) = safe_repr_projected_instance(val, cfg, context, level) {
+        return r;
+    }
+
     // Fallback: arbitrary object. readable iff repr doesn't start with '<'.
     let text = builtin_repr(val);
     let readable = !text.is_empty() && !text.starts_with('<');
@@ -953,6 +1071,116 @@ fn format_top(val: MbValue, cfg: &Config) -> String {
     out
 }
 
+fn format_wrapped_instance(
+    val: MbValue,
+    out: &mut String,
+    indent: usize,
+    allowance: usize,
+    context: &mut HashSet<usize>,
+    level: usize,
+    cfg: &Config,
+) -> bool {
+    if let Some((_, data)) = super::collections_mod::user_wrapper_data(val) {
+        format_obj(data, out, indent, allowance, context, level, cfg);
+        return true;
+    }
+
+    let Some(ptr) = val.as_ptr() else {
+        return false;
+    };
+    let id = ptr as usize;
+    unsafe {
+        let ObjData::Instance { ref class_name, .. } = (*ptr).data else {
+            return false;
+        };
+        match class_name.as_str() {
+            "collections.Counter" => {
+                let Some(data) = instance_field(val, "_data") else {
+                    return false;
+                };
+                let Some(entries) = counter_entries(data) else {
+                    return false;
+                };
+                if entries.is_empty() {
+                    return false;
+                }
+                out.push_str("Counter({");
+                context.insert(id);
+                format_dict_items(
+                    &entries,
+                    out,
+                    indent + "Counter(".len(),
+                    allowance + 2,
+                    context,
+                    level,
+                    cfg,
+                );
+                context.remove(&id);
+                out.push_str("})");
+                true
+            }
+            "collections.OrderedDict" => {
+                let Some(data) = instance_field(val, "_data") else {
+                    return false;
+                };
+                let Some(entries) = dict_entries(data, false) else {
+                    return false;
+                };
+                if entries.is_empty() {
+                    return false;
+                }
+                out.push_str("OrderedDict({");
+                context.insert(id);
+                format_dict_items(
+                    &entries,
+                    out,
+                    indent + "OrderedDict(".len(),
+                    allowance + 2,
+                    context,
+                    level,
+                    cfg,
+                );
+                context.remove(&id);
+                out.push_str("})");
+                true
+            }
+            "collections.deque" => {
+                let Some(items_val) = instance_field(val, "_items") else {
+                    return false;
+                };
+                let Some(items) = list_items(items_val) else {
+                    return false;
+                };
+                if items.is_empty() {
+                    return false;
+                }
+                let maxlen = instance_field(val, "_maxlen").and_then(|v| v.as_int());
+                out.push_str("deque([");
+                context.insert(id);
+                format_items(
+                    &items,
+                    out,
+                    indent + "deque(".len(),
+                    allowance + 2,
+                    context,
+                    level,
+                    cfg,
+                );
+                context.remove(&id);
+                if let Some(n) = maxlen {
+                    out.push_str("],\n");
+                    out.push_str(&" ".repeat(indent + "deque(".len()));
+                    out.push_str(&format!("maxlen={n})"));
+                } else {
+                    out.push_str("])");
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 /// CPython `_format`: write the single-line repr unless it overflows the
 /// available width, in which case dispatch to the container-breaking writer.
 fn format_obj(
@@ -1098,6 +1326,9 @@ fn format_obj(
                     _ => {}
                 }
             }
+        }
+        if format_wrapped_instance(val, out, indent, allowance, context, level, cfg) {
+            return;
         }
         if let Some((prefix, parts)) = namespace_repr_parts(val) {
             if !parts.is_empty() {
