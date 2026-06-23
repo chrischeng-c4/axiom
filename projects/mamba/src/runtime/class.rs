@@ -10017,6 +10017,12 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                                 }
                             }
                         }
+                        if class_mro_list(s)
+                            .iter()
+                            .any(|base| base == "typing.Generic")
+                        {
+                            return super::stdlib::typing_mod::user_generic_subscript(obj, key, s);
+                        }
                         // No __class_getitem__ → raise TypeError
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -10144,8 +10150,17 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                                 );
                                 return MbValue::none();
                             }
+                            _ if class_mro_list(&tn)
+                                .iter()
+                                .any(|base| base == "typing.Generic") =>
+                            {
+                                return super::stdlib::typing_mod::pep585_subscript(obj, key);
+                            }
                             _ => {}
                         }
+                    }
+                    if class_name == "typing.Generic" {
+                        return super::stdlib::typing_mod::generic_subscript(obj, key);
                     }
                     // typing special forms subscript into normalized alias
                     // objects: Union[int, str], Optional[int], List[int] (#22).
@@ -15366,13 +15381,12 @@ pub(crate) fn resolve_class_name(val: MbValue) -> Option<String> {
             return name;
         }
     }
-    // Try type object: Instance with class_name="type" and __name__ field
-    val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance {
-            class_name: ref cn,
-            ref fields,
-        } = (*ptr).data
-        {
+    // Try type object: Instance with class_name="type" and __name__ field.
+    // Also resolve typing.Generic and aliases whose origin is a class-like
+    // object so PEP 560 class bases such as `typing.Generic[T]` can update
+    // the registered MRO after the base expression is evaluated.
+    if let Some(name) = val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { class_name: ref cn, ref fields } = (*ptr).data {
             if cn == "type" {
                 fields.read().ok().and_then(|f| {
                     f.get("__name__").and_then(|v| extract_str(*v))
@@ -15381,13 +15395,40 @@ pub(crate) fn resolve_class_name(val: MbValue) -> Option<String> {
                 fields.read().ok().and_then(|f| {
                     f.get("_tuple_name").and_then(|v| extract_str(*v))
                 })
+            } else if cn == "typing.Generic" {
+                Some("typing.Generic".to_string())
+            } else if cn == "typing.SpecialForm" {
+                fields.read().ok().and_then(|f| {
+                    f.get("_name")
+                        .and_then(|v| extract_str(*v))
+                        .and_then(|n| (n == "Generic").then(|| "typing.Generic".to_string()))
+                })
             } else {
                 None
             }
         } else {
             None
         }
-    })
+    }) {
+        return Some(name);
+    }
+    if let Some(origin) = val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { class_name: ref cn, ref fields } = (*ptr).data {
+            if cn == "typing.Alias" {
+                fields
+                    .read()
+                    .ok()
+                    .and_then(|f| f.get("__origin__").copied())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }) {
+        return resolve_class_name(origin);
+    }
+    None
 }
 
 fn union_type_args(val: MbValue) -> Option<Vec<MbValue>> {
