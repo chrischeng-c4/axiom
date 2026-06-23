@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::model::KeepRef;
-use crate::scheduler::{CompletionMsg, Dispatcher, TaskMessage};
+use crate::scheduler::{CompletionMsg, Dispatcher, FanOutSpec, TaskMessage};
 use crate::worker::{CompletionSink, LeasedTask, RelayConsumer};
 
 /// Publishes node dispatches to a relay broker over h2c.
@@ -150,6 +150,7 @@ impl CompletionSink for RelayCompletionSink {
         attempt: u32,
         result_ref: Option<KeepRef>,
         failed: bool,
+        fan_out: &[FanOutSpec],
     ) -> anyhow::Result<()> {
         let msg = CompletionMsg {
             run_id: run_id.to_string(),
@@ -157,7 +158,7 @@ impl CompletionSink for RelayCompletionSink {
             attempt,
             result_ref: result_ref.map(|r| r.0),
             failed,
-            fan_out: Vec::new(),
+            fan_out: fan_out.to_vec(),
         };
         let url = format!("{}/v1/{}/publish", self.base, self.subject);
         let body = serde_json::json!({
