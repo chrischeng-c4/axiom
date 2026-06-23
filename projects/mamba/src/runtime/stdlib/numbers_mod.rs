@@ -46,6 +46,9 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(addr as u64, name.to_string());
+        });
         NUMBERS_ABC_RANKS.with(|m| {
             m.borrow_mut().insert(addr as u64, rank);
         });
