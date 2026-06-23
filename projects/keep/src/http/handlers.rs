@@ -611,3 +611,114 @@ pub async fn docs() -> Html<&'static str> {
 </html>"#,
     )
 }
+
+// ---------------------------------------------------------------------------
+// Claim-check API (#114 / #167): job input/result payloads addressed by id.
+// Thin aliases over the KV store (namespaced `input:` / `result:` keys),
+// bytes-first. This is the contract relay's worker-protocol references — a
+// worker GETs its input and PUTs its result by message id; the producer is the
+// mirror (PUT input, GET result).
+// ---------------------------------------------------------------------------
+
+async fn claim_get(st: &AppState, ns: &str, id: &str) -> Result<Response, ApiErr> {
+    let k = key_of(&format!("{ns}:{id}"))?;
+    match st.engine.get(&k) {
+        None => Err(ApiErr::new(
+            StatusCode::NOT_FOUND,
+            "claim_check_not_found",
+            format!("{ns} not found: {id}"),
+        )),
+        Some(KvValue::Bytes(b)) => {
+            Ok(([(CONTENT_TYPE, "application/octet-stream")], b).into_response())
+        }
+        Some(v) => Ok(Json(ValueResponse {
+            key: id.to_string(),
+            value: kv_to_json(v),
+        })
+        .into_response()),
+    }
+}
+
+async fn claim_put(
+    st: &AppState,
+    ns: &str,
+    id: &str,
+    q: TtlQuery,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiErr> {
+    let k = key_of(&format!("{ns}:{id}"))?;
+    let ct = headers
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    if ct.starts_with("application/json") {
+        let req: SetRequestFast = serde_json::from_slice(&body)
+            .map_err(|e| ApiErr::bad_request(format!("invalid JSON body: {e}")))?;
+        st.engine.set(&k, req.value.0, ttl(req.ttl_ms)).map_err(ApiErr::from)?;
+    } else {
+        st.engine
+            .set(&k, KvValue::Bytes(body.to_vec()), ttl(q.ttl_ms))
+            .map_err(ApiErr::from)?;
+    }
+    ack_durable(st).await;
+    Ok((StatusCode::OK, Json(OkResponse { key: id.to_string(), ok: true })).into_response())
+}
+
+/// Fetch a job input by id (worker reads its input — #167).
+#[utoipa::path(
+    get, path = "/v1/inputs/{id}", tag = "Claim-check",
+    params(("id" = String, Path, description = "Job input id")),
+    responses(
+        (status = 200, description = "Input payload"),
+        (status = 404, description = "Not found", body = crate::http::error::ApiError)
+    )
+)]
+pub async fn get_input(State(st): State<AppState>, Path(id): Path<String>) -> Result<Response, ApiErr> {
+    claim_get(&st, "input", &id).await
+}
+
+/// Store a job input by id (producer writes the input — #167).
+#[utoipa::path(
+    put, path = "/v1/inputs/{id}", tag = "Claim-check",
+    params(("id" = String, Path, description = "Job input id")),
+    responses((status = 200, description = "Stored", body = OkResponse))
+)]
+pub async fn put_input(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<TtlQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiErr> {
+    claim_put(&st, "input", &id, q, headers, body).await
+}
+
+/// Fetch a job result by id (producer reads the result — #167).
+#[utoipa::path(
+    get, path = "/v1/results/{id}", tag = "Claim-check",
+    params(("id" = String, Path, description = "Job result id")),
+    responses(
+        (status = 200, description = "Result payload"),
+        (status = 404, description = "Not found", body = crate::http::error::ApiError)
+    )
+)]
+pub async fn get_result(State(st): State<AppState>, Path(id): Path<String>) -> Result<Response, ApiErr> {
+    claim_get(&st, "result", &id).await
+}
+
+/// Store a job result by id (worker writes its result — #167).
+#[utoipa::path(
+    put, path = "/v1/results/{id}", tag = "Claim-check",
+    params(("id" = String, Path, description = "Job result id")),
+    responses((status = 200, description = "Stored", body = OkResponse))
+)]
+pub async fn put_result(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<TtlQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiErr> {
+    claim_put(&st, "result", &id, q, headers, body).await
+}

@@ -33,6 +33,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/kv:mget", post(handlers::mget))
         .route("/v1/kv:mset", post(handlers::mset))
         .route("/v1/kv:mdel", post(handlers::mdel))
+        // claim-check: job input/result payloads by id (#167)
+        .route(
+            "/v1/inputs/{id}",
+            get(handlers::get_input).put(handlers::put_input),
+        )
+        .route(
+            "/v1/results/{id}",
+            get(handlers::get_result).put(handlers::put_result),
+        )
         // locks
         .route(
             "/v1/locks/{key}",
