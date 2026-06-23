@@ -1563,8 +1563,8 @@ fn dict_lookup_str(d: MbValue, key: &str) -> Option<MbValue> {
 }
 
 /// Index `d` by a `[idx]` segment (CPython `d[idx]`): a dict accepts an int or
-/// str key (missing → KeyError); a list accepts an int index (oob → IndexError,
-/// non-int → TypeError). Raises and returns none() on failure.
+/// str key (missing → KeyError); list/tuple accept an int index (oob →
+/// IndexError, non-int → TypeError). Raises and returns none() on failure.
 fn cfg_index(d: MbValue, idx: &str) -> MbValue {
     let is_digit = !idx.is_empty() && idx.bytes().all(|b| b.is_ascii_digit());
     if let Some(ptr) = d.as_ptr() {
@@ -1596,6 +1596,18 @@ fn cfg_index(d: MbValue, idx: &str) -> MbValue {
                         return v;
                     }
                     return raise("IndexError", "list index out of range".to_string());
+                }
+                ObjData::Tuple(items) => {
+                    if !is_digit {
+                        return raise("TypeError", "tuple indices must be integers".to_string());
+                    }
+                    let n: i64 = idx.parse().unwrap_or(-1);
+                    if n >= 0 && (n as usize) < items.len() {
+                        let v = items[n as usize];
+                        retain(v);
+                        return v;
+                    }
+                    return raise("IndexError", "tuple index out of range".to_string());
                 }
                 _ => {}
             }
