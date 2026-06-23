@@ -4786,6 +4786,31 @@ impl<'a> AstLowerer<'a> {
                     && args.iter().any(|a| {
                         matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_))
                     });
+                if let ast::Expr::Ident(name) = &func.node {
+                    if name == "open"
+                        && args.iter().any(|a| matches!(a, ast::CallArg::DoubleStarArg(_)))
+                    {
+                        let none_hir = HirExpr::NoneLit(any_ty);
+                        let pos: Vec<HirExpr> = args.iter().filter_map(|a| {
+                            if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
+                        }).collect();
+                        let path = pos.first().cloned().unwrap_or_else(|| none_hir.clone());
+                        let mode = pos.get(1).cloned()
+                            .unwrap_or_else(|| HirExpr::StrLit("r".to_string(), str_ty));
+                        let encoding = pos.get(3).cloned().unwrap_or_else(|| none_hir.clone());
+                        let errors = pos.get(4).cloned().unwrap_or_else(|| none_hir.clone());
+                        let closefd = pos.get(6).cloned().unwrap_or_else(|| none_hir.clone());
+                        let kwargs = self.build_kwargs_dict(args, any_ty).unwrap_or(HirExpr::Dict {
+                            entries: vec![],
+                            ty: any_ty,
+                        });
+                        return Some(HirExpr::Call {
+                            func: Box::new(HirExpr::StrLit("mb_open_kwargs".to_string(), any_ty)),
+                            args: vec![path, mode, encoding, errors, closefd, kwargs],
+                            ty: any_ty,
+                        });
+                    }
+                }
                 if has_kwargs || is_format_splat {
                     if let ast::Expr::Ident(name) = &func.node {
                         let none_hir = HirExpr::NoneLit(any_ty);
@@ -5796,6 +5821,9 @@ impl<'a> AstLowerer<'a> {
                             // kwargs dict, so a bare `Request(...)` (from-import)
                             // must keep the keyword names instead of flattening.
                             | "Request"
+                            // builtins.open(file, mode=..., encoding=..., closefd=...)
+                            // reads a trailing kwargs dict in its native dispatcher.
+                            | "open"
                     ) || self.dataclasses_kwarg_idents.contains(name.as_str())
                 );
                 let is_type_metaclass_kwargs = matches!(
