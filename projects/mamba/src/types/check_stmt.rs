@@ -4,6 +4,15 @@ use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
 use crate::source::span::Spanned;
 
+fn decorator_is_typing_overload(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(n) => n == "overload",
+        Expr::Attr { attr, .. } => attr == "overload",
+        Expr::Call { func, .. } => decorator_is_typing_overload(&func.node),
+        _ => false,
+    }
+}
+
 /// Statement type checking, function body checking, and helpers.
 impl TypeChecker {
     /// ① Type-wall PoC: is `cls` a from-imported name that names a stdlib *class*
@@ -195,6 +204,7 @@ impl TypeChecker {
                 params,
                 return_ty,
                 body,
+                decorators,
                 ..
             }
             | Stmt::AsyncFnDef {
@@ -203,11 +213,15 @@ impl TypeChecker {
                 params,
                 return_ty,
                 body,
+                decorators,
                 ..
             } => {
                 // Re-register type params for body checking scope
                 let _gp = self.register_type_params(type_params);
-                self.check_fn_body(name, params, return_ty.as_ref(), body);
+                let overload_decorated = decorators
+                    .iter()
+                    .any(|d| decorator_is_typing_overload(&d.node));
+                self.check_fn_body(name, params, return_ty.as_ref(), body, overload_decorated);
                 self.unregister_type_params(type_params);
             }
             Stmt::If {
@@ -568,6 +582,7 @@ impl TypeChecker {
         params: &[Param],
         return_ty: Option<&Spanned<TypeExpr>>,
         body: &[Spanned<Stmt>],
+        overload_decorated: bool,
     ) {
         // A parameter default value must satisfy the parameter's annotation
         // (`def f(c: int = "3")` is a type error). Mirrors the var-decl
@@ -636,19 +651,24 @@ impl TypeChecker {
         self.symbols.pop_scope();
         if self.symbols.lookup(name).is_none() {
             // Detect *args variadic and only include pre-star positional params in type.
-            let star_pos = params
-                .iter()
-                .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
-            let is_variadic = star_pos.is_some()
-                || params
+            let (param_types, ret_ty, is_variadic) = if overload_decorated {
+                (Vec::new(), self.tcx.any(), true)
+            } else {
+                let star_pos = params
                     .iter()
-                    .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
-            let effective_params = star_pos.map_or(params, |pos| &params[..pos]);
-            let param_types: Vec<TypeId> = effective_params
-                .iter()
-                .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
-                .map(|p| self.resolve_type_expr(&p.ty))
-                .collect();
+                    .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
+                let is_variadic = star_pos.is_some()
+                    || params
+                        .iter()
+                        .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
+                let effective_params = star_pos.map_or(params, |pos| &params[..pos]);
+                let param_types: Vec<TypeId> = effective_params
+                    .iter()
+                    .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
+                    .map(|p| self.resolve_type_expr(&p.ty))
+                    .collect();
+                (param_types, ret_ty, is_variadic)
+            };
             let fn_ty = self.tcx.intern(Ty::Fn {
                 params: param_types,
                 ret: ret_ty,
