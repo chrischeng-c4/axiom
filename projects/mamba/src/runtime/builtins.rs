@@ -5849,11 +5849,14 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     {
                         return MbValue::from_ptr(MbObject::new_str(s));
                     }
-                    if class_name == "SimpleNamespace" {
+                    if class_name == "SimpleNamespace"
+                        || super::class::check_class_hierarchy(class_name, "SimpleNamespace")
+                    {
                         // CPython renders `namespace(field=repr(value), ...)` in
                         // INSERTION order (tracked in the hidden `__ns_order__`
                         // list), with a direct self-reference shown as
-                        // `namespace(...)`.
+                        // `namespace(...)`. Subclasses use their class name as
+                        // the repr prefix.
                         let self_ptr = val.as_ptr();
                         let guard = fields.read().unwrap();
                         // Preferred order from `__ns_order__`; any field missing
@@ -5891,33 +5894,27 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                                 keys.push(k.clone());
                             }
                         }
-                        let parts: Vec<String> = keys
-                            .iter()
-                            .filter_map(|k| {
-                                let v = *guard.get(k)?;
-                                Some(if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
-                                    format!("{k}=namespace(...)")
-                                } else {
-                                    let r = mb_repr(v);
-                                    let rs = r
-                                        .as_ptr()
-                                        .and_then(|p| {
-                                            if let ObjData::Str(ref s) = (*p).data {
-                                                Some(s.clone())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or_default();
-                                    format!("{k}={rs}")
-                                })
+                        let repr_prefix = if class_name == "SimpleNamespace" {
+                            "namespace"
+                        } else {
+                            class_name.as_str()
+                        };
+                        let parts: Vec<String> = keys.iter().filter_map(|k| {
+                            let v = *guard.get(k)?;
+                            Some(if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
+                                format!("{k}={repr_prefix}(...)")
+                            } else {
+                                let r = mb_repr(v);
+                                let rs = r.as_ptr().and_then(|p| {
+                                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                                }).unwrap_or_default();
+                                format!("{k}={rs}")
                             })
+                        })
                             .collect();
                         drop(guard);
-                        return MbValue::from_ptr(MbObject::new_str(format!(
-                            "namespace({})",
-                            parts.join(", ")
-                        )));
+                        return MbValue::from_ptr(MbObject::new_str(
+                            format!("{repr_prefix}({})", parts.join(", "))));
                     }
                     // PEP 654 ExceptionGroup repr: `ClassName('message', [child
                     // reprs])` — recursive over the `.exceptions` tuple. Gated to

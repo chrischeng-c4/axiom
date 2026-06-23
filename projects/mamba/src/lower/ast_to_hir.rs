@@ -2170,6 +2170,10 @@ struct AstLowerer<'a> {
     /// these names must keep explicit keyword arguments structural so call-time
     /// kwargs can override the partial's stored kwargs.
     functools_partial_kwarg_idents: std::collections::HashSet<String>,
+    /// Class names whose MRO passes through `types.SimpleNamespace`. Their
+    /// inherited native initializer needs keyword names preserved as a trailing
+    /// kwargs dict; flattening keywords to values builds an empty namespace.
+    simple_namespace_subclass_idents: std::collections::HashSet<String>,
     /// Function-name SymbolId → declared return type. Populated *before* a
     /// function's body is lowered so recursive calls can read the callee's
     /// return type (without this, the call falls through to `any_ty`,
@@ -2246,6 +2250,7 @@ impl<'a> AstLowerer<'a> {
             functools_module_idents: std::iter::once("functools".to_string()).collect(),
             functools_partial_factory_idents: std::collections::HashSet::new(),
             functools_partial_kwarg_idents: std::collections::HashSet::new(),
+            simple_namespace_subclass_idents: std::collections::HashSet::new(),
             func_return_tys: HashMap::new(),
             func_param_float_hint: HashMap::new(),
             func_ret_float_hint: HashMap::new(),
@@ -3253,6 +3258,20 @@ impl<'a> AstLowerer<'a> {
                 .filter(|(k, _)| k != "metaclass")
                 .filter_map(|(k, v)| self.lower_expr(v).map(|expr| (k.clone(), expr)))
                 .collect();
+            let inherits_simple_namespace = bases.iter().any(|b| {
+                let leaf = match &b.node {
+                    ast::Expr::Ident(base_name) => Some(base_name.as_str()),
+                    ast::Expr::Attr { attr, .. } => Some(attr.as_str()),
+                    _ => None,
+                };
+                leaf.is_some_and(|base_name| {
+                    base_name == "SimpleNamespace"
+                        || self.simple_namespace_subclass_idents.contains(base_name)
+                })
+            });
+            if inherits_simple_namespace {
+                self.simple_namespace_subclass_idents.insert(name.to_string());
+            }
             // Emit a ClassDefPlaceholder so decorator application
             // happens at the textual position (#1690). Without
             // a placeholder, decorators were applied at module-end
@@ -5842,9 +5861,15 @@ impl<'a> AstLowerer<'a> {
                         a,
                         ast::CallArg::Keyword { name, .. } if name == "metaclass"
                     )));
+                let is_simple_namespace_subclass_kwargs = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name)
+                        if self.simple_namespace_subclass_idents.contains(name.as_str())
+                );
                 let pack_trailing_kwargs = (is_method_call && (has_any_kwargs || has_dstar))
                     || (is_native_kwargs_ident && (has_any_kwargs || has_dstar))
-                    || (is_type_metaclass_kwargs && (has_any_kwargs || has_dstar));
+                    || (is_type_metaclass_kwargs && (has_any_kwargs || has_dstar))
+                    || (is_simple_namespace_subclass_kwargs && (has_any_kwargs || has_dstar));
 
                 let is_functools_partial_kwarg_ident = matches!(
                     &func.node,

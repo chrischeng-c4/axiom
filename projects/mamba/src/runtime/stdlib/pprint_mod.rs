@@ -519,6 +519,88 @@ fn builtin_repr(val: MbValue) -> String {
     String::new()
 }
 
+fn namespace_repr_parts(val: MbValue) -> Option<(String, Vec<String>)> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        let ObjData::Instance { class_name, ref fields } = &(*ptr).data else {
+            return None;
+        };
+        if class_name != "SimpleNamespace"
+            && !super::super::class::check_class_hierarchy(class_name, "SimpleNamespace")
+        {
+            return None;
+        }
+        let self_ptr = val.as_ptr();
+        let guard = fields.read().unwrap();
+        let order: Vec<String> = guard
+            .get("__ns_order__")
+            .and_then(|v| v.as_ptr())
+            .map(|p| {
+                if let ObjData::List(ref lk) = (*p).data {
+                    lk.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|k| {
+                            k.as_ptr().and_then(|kp| {
+                                if let ObjData::Str(ref s) = (*kp).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
+        let mut keys: Vec<String> = order
+            .iter()
+            .filter(|k| guard.contains_key(*k))
+            .cloned()
+            .collect();
+        for k in guard.keys() {
+            if k != "__ns_order__" && !keys.contains(k) {
+                keys.push(k.clone());
+            }
+        }
+        let recursive_name = if class_name == "SimpleNamespace" {
+            "namespace"
+        } else {
+            class_name.as_str()
+        };
+        let parts: Vec<String> = keys
+            .iter()
+            .filter_map(|k| {
+                let v = *guard.get(k)?;
+                Some(if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
+                    format!("{k}={recursive_name}(...)")
+                } else {
+                    let r = super::super::builtins::mb_repr(v);
+                    let rs = r
+                        .as_ptr()
+                        .and_then(|p| {
+                            if let ObjData::Str(ref s) = (*p).data {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
+                    format!("{k}={rs}")
+                })
+            })
+            .collect();
+        let prefix = if class_name == "SimpleNamespace" {
+            "namespace".to_string()
+        } else {
+            class_name.clone()
+        };
+        Some((prefix, parts))
+    }
+}
+
 /// Format an integer with underscore grouping (CPython `format(n, "_d")`).
 fn underscore_int(text: &str) -> String {
     let (sign, digits) = if let Some(rest) = text.strip_prefix('-') {
@@ -1015,6 +1097,18 @@ fn format_obj(
                     }
                     _ => {}
                 }
+            }
+        }
+        if let Some((prefix, parts)) = namespace_repr_parts(val) {
+            if !parts.is_empty() {
+                out.push_str(&prefix);
+                out.push('(');
+                out.push_str(&parts.join(&format!(
+                    ",\n{}",
+                    " ".repeat(indent + prefix.len() + 1)
+                )));
+                out.push(')');
+                return;
             }
         }
     }

@@ -1912,6 +1912,78 @@ pub(crate) fn instance_new_default(class_name: MbValue, args_list: MbValue) -> M
     instance_new_with_init_impl(class_name, args_list, true)
 }
 
+fn simple_namespace_subclass_inherits_native_init(name: &str) -> bool {
+    CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let Some(cls) = reg.get(name) else { return false };
+        if !cls.mro.iter().any(|c| c == "SimpleNamespace") {
+            return false;
+        }
+        for mro_class in &cls.mro {
+            if mro_class == "SimpleNamespace" {
+                return true;
+            }
+            if reg
+                .get(mro_class)
+                .is_some_and(|mro_cls| mro_cls.methods.contains_key("__init__"))
+            {
+                return false;
+            }
+        }
+        false
+    })
+}
+
+fn seed_simple_namespace_subclass_fields(instance: MbValue, args_list: MbValue) -> bool {
+    let items = super::builtins::extract_items(args_list);
+    let mut fields_to_write: FxHashMap<String, MbValue> = FxHashMap::default();
+    let mut order: Vec<MbValue> = Vec::new();
+    for arg in items {
+        let is_dict = arg
+            .as_ptr()
+            .map_or(false, |p| matches!(unsafe { &(*p).data }, ObjData::Dict(_)));
+        if !is_dict {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "no positional arguments expected".to_string(),
+                )),
+            );
+            return false;
+        }
+        if let Some(ptr) = arg.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    for (k, v) in lock.read().unwrap().iter() {
+                        if let super::dict_ops::DictKey::Str(name) = k {
+                            super::rc::retain_if_ptr(*v);
+                            if !fields_to_write.contains_key(name) {
+                                order.push(MbValue::from_ptr(MbObject::new_str(name.clone())));
+                            }
+                            fields_to_write.insert(name.clone(), *v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fields_to_write.insert(
+        "__ns_order__".to_string(),
+        MbValue::from_ptr(MbObject::new_list(order)),
+    );
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut guard = fields.write().unwrap();
+                for (k, v) in fields_to_write {
+                    guard.insert(k, v);
+                }
+            }
+        }
+    }
+    true
+}
+
 fn instance_new_with_init_impl(
     class_name: MbValue,
     args_list: MbValue,
@@ -2041,6 +2113,13 @@ fn instance_new_with_init_impl(
         && !class_defines_own_method(&name, "__init__")
     {
         super::stdlib::dataclasses_mod::dc_run_synth_init(&name, instance, args_list);
+        return instance;
+    }
+
+    if simple_namespace_subclass_inherits_native_init(&name) {
+        if !seed_simple_namespace_subclass_fields(instance, args_list) {
+            return MbValue::none();
+        }
         return instance;
     }
 
@@ -6637,7 +6716,9 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                 // SimpleNamespace insertion-order tracking: appending a NEW
                 // attribute name to the hidden `__ns_order__` list keeps repr()
                 // in insertion order. Runs before the generic insert below.
-                if class_name == "SimpleNamespace" {
+                if class_name == "SimpleNamespace"
+                    || check_class_hierarchy(class_name, "SimpleNamespace")
+                {
                     if let Some(attr_s) = extract_str(attr) {
                         if attr_s != "__ns_order__" {
                             let (is_new, order) = {
