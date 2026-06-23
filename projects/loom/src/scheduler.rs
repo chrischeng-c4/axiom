@@ -1,11 +1,13 @@
 //! Orchestration core (#106, #116): drive a [`WorkflowRun`]'s DAG by
 //! dispatching ready nodes and folding in completions.
 //!
-//! Backend-agnostic by design: the scheduler talks to a [`Dispatcher`]
-//! (loom → relay publish) and is fed [`Completion`] events (from relay acks).
-//! The real relay/keep HTTP/2 clients implement `Dispatcher` and feed
-//! completions; tests use in-memory fakes. This keeps loom's core logic
+//! Backend-agnostic by design: dispatch goes through a [`Dispatcher`]
+//! (loom → relay publish) and completions are fed in (from relay acks). The
+//! real relay/keep HTTP/2 clients implement `Dispatcher`; tests and the
+//! in-process controller use [`MemDispatcher`]. This keeps loom's core logic
 //! testable with no broker, store, or cluster.
+
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -25,10 +27,35 @@ pub struct TaskMessage {
     pub runner: RunnerClass,
 }
 
-/// loom → relay publish. The production impl is an HTTP/2 relay client; tests
-/// use a recording fake.
-pub trait Dispatcher {
-    fn dispatch(&mut self, route: &str, msg: TaskMessage) -> anyhow::Result<()>;
+/// loom → relay publish. Shared (`&self`) so the control plane can hold one
+/// behind an `Arc`; the production impl is an HTTP/2 relay client, tests use
+/// [`MemDispatcher`].
+pub trait Dispatcher: Send + Sync {
+    fn dispatch(&self, route: &str, msg: TaskMessage) -> anyhow::Result<()>;
+}
+
+/// In-memory dispatcher: records every published message. The dev/test backend
+/// and the default for `loom controller` until the relay client lands.
+#[derive(Default)]
+pub struct MemDispatcher {
+    sent: Mutex<Vec<(String, TaskMessage)>>,
+}
+
+impl MemDispatcher {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Snapshot of everything dispatched so far (route, message).
+    pub fn sent(&self) -> Vec<(String, TaskMessage)> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+impl Dispatcher for MemDispatcher {
+    fn dispatch(&self, route: &str, msg: TaskMessage) -> anyhow::Result<()> {
+        self.sent.lock().unwrap().push((route.to_string(), msg));
+        Ok(())
+    }
 }
 
 /// A worker completion observed via a relay ack.
@@ -38,7 +65,43 @@ pub enum Completion {
     Failed { node: NodeId },
 }
 
-/// Drives one run's DAG forward over a [`Dispatcher`].
+/// Publish every currently-ready node of `run` to `dispatcher` (routed by its
+/// runner class) and mark it dispatched. Returns the number dispatched. This is
+/// the single step both submit and completion-handling call.
+pub fn dispatch_ready(run: &mut WorkflowRun, dispatcher: &dyn Dispatcher) -> anyhow::Result<usize> {
+    let ready = run.ready_nodes();
+    for id in &ready {
+        let node = &run.nodes[id];
+        let msg = TaskMessage {
+            run_id: run.id.0.clone(),
+            node_id: node.id.0.clone(),
+            attempt: node.attempt + 1,
+            task_name: node.task.task_name.clone(),
+            args: node.task.args.clone(),
+            input_refs: node.task.input_refs.clone(),
+            runner: node.task.runner,
+        };
+        dispatcher.dispatch(node.task.runner.relay_route(), msg)?;
+        run.mark_dispatched(id);
+    }
+    Ok(ready.len())
+}
+
+/// Fold a completion into `run`, then dispatch any newly-ready nodes.
+pub fn apply_completion(
+    run: &mut WorkflowRun,
+    dispatcher: &dyn Dispatcher,
+    completion: Completion,
+) -> anyhow::Result<usize> {
+    match completion {
+        Completion::Ok { node, result } => run.mark_done(&node, result),
+        Completion::Failed { node } => run.mark_failed(&node),
+    }
+    dispatch_ready(run, dispatcher)
+}
+
+/// Owns a run + a dispatcher and drives it forward (a standalone driver; the
+/// controller uses the free functions over store-backed runs instead).
 pub struct Scheduler<D: Dispatcher> {
     pub run: WorkflowRun,
     dispatcher: D,
@@ -48,42 +111,15 @@ impl<D: Dispatcher> Scheduler<D> {
     pub fn new(run: WorkflowRun, dispatcher: D) -> Self {
         Self { run, dispatcher }
     }
-
-    /// Publish every currently-ready node to relay (routed by its runner class)
-    /// and mark it dispatched. Returns the number dispatched.
     pub fn tick(&mut self) -> anyhow::Result<usize> {
-        let ready = self.run.ready_nodes();
-        for id in &ready {
-            let node = &self.run.nodes[id];
-            let msg = TaskMessage {
-                run_id: self.run.id.0.clone(),
-                node_id: node.id.0.clone(),
-                attempt: node.attempt + 1,
-                task_name: node.task.task_name.clone(),
-                args: node.task.args.clone(),
-                input_refs: node.task.input_refs.clone(),
-                runner: node.task.runner,
-            };
-            self.dispatcher.dispatch(node.task.runner.relay_route(), msg)?;
-            self.run.mark_dispatched(id);
-        }
-        Ok(ready.len())
+        dispatch_ready(&mut self.run, &self.dispatcher)
     }
-
-    /// Fold a completion into DAG state, then dispatch any newly-ready nodes.
-    /// Returns the number dispatched as a result.
     pub fn on_completion(&mut self, completion: Completion) -> anyhow::Result<usize> {
-        match completion {
-            Completion::Ok { node, result } => self.run.mark_done(&node, result),
-            Completion::Failed { node } => self.run.mark_failed(&node),
-        }
-        self.tick()
+        apply_completion(&mut self.run, &self.dispatcher, completion)
     }
-
     pub fn status(&self) -> RunStatus {
         self.run.status
     }
-
     pub fn is_complete(&self) -> bool {
         self.run.is_complete()
     }
@@ -94,17 +130,6 @@ mod tests {
     use super::*;
     use crate::model::{Node, NodeId, StageId, TaskSpec, WorkflowRunId};
     use std::collections::BTreeSet;
-
-    #[derive(Default)]
-    struct RecordingDispatcher {
-        sent: Vec<(String, TaskMessage)>,
-    }
-    impl Dispatcher for RecordingDispatcher {
-        fn dispatch(&mut self, route: &str, msg: TaskMessage) -> anyhow::Result<()> {
-            self.sent.push((route.to_string(), msg));
-            Ok(())
-        }
-    }
 
     fn node(id: &str, stage: &str, deps: &[&str]) -> Node {
         Node::new(
@@ -126,22 +151,14 @@ mod tests {
 
     #[test]
     fn drives_diamond_dag_to_completion() {
-        let mut sched = Scheduler::new(diamond(), RecordingDispatcher::default());
-
-        // tick 1: only the root is ready.
+        let mut sched = Scheduler::new(diamond(), MemDispatcher::new());
         assert_eq!(sched.tick().unwrap(), 1);
-
-        // completing the root fans out to B and C.
         assert_eq!(
             sched.on_completion(Completion::Ok { node: NodeId::new("A"), result: Some(KeepRef("k/A".into())) }).unwrap(),
             2
         );
-
-        // fan-in: D only dispatches once BOTH B and C complete.
         assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("B"), result: None }).unwrap(), 0);
         assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("C"), result: None }).unwrap(), 1);
-
-        // completing D finishes the run.
         assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("D"), result: None }).unwrap(), 0);
         assert_eq!(sched.status(), RunStatus::Succeeded);
         assert!(sched.is_complete());
@@ -149,10 +166,11 @@ mod tests {
 
     #[test]
     fn dispatch_carries_route_and_identity() {
-        let mut sched = Scheduler::new(diamond(), RecordingDispatcher::default());
+        let mut sched = Scheduler::new(diamond(), MemDispatcher::new());
         sched.tick().unwrap();
-        let (route, msg) = &sched.dispatcher.sent[0];
-        assert_eq!(route, "resident"); // default runner class
+        let sent = sched.dispatcher.sent();
+        let (route, msg) = &sent[0];
+        assert_eq!(route, "resident");
         assert_eq!(msg.run_id, "run-1");
         assert_eq!(msg.node_id, "A");
         assert_eq!(msg.attempt, 1);
@@ -161,12 +179,10 @@ mod tests {
 
     #[test]
     fn failed_node_is_redispatched_within_attempts() {
-        let mut sched = Scheduler::new(diamond(), RecordingDispatcher::default());
-        sched.tick().unwrap(); // dispatch A (attempt 1)
-        // A fails but has attempts left -> on_completion re-readies and re-dispatches it.
+        let mut sched = Scheduler::new(diamond(), MemDispatcher::new());
+        sched.tick().unwrap();
         assert_eq!(sched.on_completion(Completion::Failed { node: NodeId::new("A") }).unwrap(), 1);
         assert_eq!(sched.status(), RunStatus::Running);
-        // the redispatch is attempt 2.
-        assert_eq!(sched.dispatcher.sent.last().unwrap().1.attempt, 2);
+        assert_eq!(sched.dispatcher.sent().last().unwrap().1.attempt, 2);
     }
 }

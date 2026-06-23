@@ -18,12 +18,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{KeepRef, Node, NodeId, RunStatus, StageId, TaskSpec, WorkflowRun, WorkflowRunId};
 use crate::runner::RunnerClass;
+use crate::scheduler::{apply_completion, dispatch_ready, Completion, Dispatcher, MemDispatcher};
 use crate::store::{MemStore, RunStore};
 
 /// Shared control-plane state.
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<dyn RunStore>,
+    pub dispatcher: Arc<dyn Dispatcher>,
 }
 
 /// One node in a submitted workflow.
@@ -127,10 +129,16 @@ async fn submit(
     State(state): State<AppState>,
     Json(req): Json<SubmitRequest>,
 ) -> impl IntoResponse {
-    let run = match build_run(&req) {
+    let mut run = match build_run(&req) {
         Ok(run) => run,
         Err(e) => return bad_request(e).into_response(),
     };
+    // Dispatch the root nodes immediately (loom → relay); the run advances as
+    // completions arrive at `/runs/{id}/nodes/{node}/complete`.
+    if let Err(e) = dispatch_ready(&mut run, state.dispatcher.as_ref()) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+            .into_response();
+    }
     let resp = SubmitResponse {
         run_id: run.id.0.clone(),
         status: run.status,
@@ -141,6 +149,53 @@ async fn submit(
             .into_response();
     }
     (StatusCode::CREATED, Json(resp)).into_response()
+}
+
+/// `POST /runs/{id}/nodes/{node}/complete` body: how a node finished. In
+/// production a relay ack drives this; the endpoint also lets a test/dev worker
+/// report completion directly.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompleteRequest {
+    /// keep ref to the result payload, if any.
+    #[serde(default)]
+    pub result_ref: Option<String>,
+    /// Set when the attempt failed (triggers retry-or-fail).
+    #[serde(default)]
+    pub failed: bool,
+}
+
+async fn complete_node(
+    State(state): State<AppState>,
+    Path((id, node)): Path<(String, String)>,
+    Json(req): Json<CompleteRequest>,
+) -> impl IntoResponse {
+    let run_id = WorkflowRunId::new(&id);
+    let mut run = match state.store.get(&run_id) {
+        Ok(Some(run)) => run,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(ApiError { error: "run not found".into() }))
+                .into_response()
+        }
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+                .into_response()
+        }
+    };
+    let completion = if req.failed {
+        Completion::Failed { node: NodeId::new(&node) }
+    } else {
+        Completion::Ok { node: NodeId::new(&node), result: req.result_ref.map(KeepRef) }
+    };
+    if let Err(e) = apply_completion(&mut run, state.dispatcher.as_ref(), completion) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+            .into_response();
+    }
+    let v = view(&run);
+    if let Err(e) = state.store.put(run) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+            .into_response();
+    }
+    (StatusCode::OK, Json(v)).into_response()
 }
 
 async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
@@ -154,12 +209,13 @@ async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> impl 
 }
 
 /// The control-plane router over a [`RunStore`].
-pub fn router(store: Arc<dyn RunStore>) -> Router {
+pub fn router(store: Arc<dyn RunStore>, dispatcher: Arc<dyn Dispatcher>) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/runs", post(submit))
         .route("/runs/{id}", get(get_run))
-        .with_state(AppState { store })
+        .route("/runs/{id}/nodes/{node}/complete", post(complete_node))
+        .with_state(AppState { store, dispatcher })
 }
 
 /// Entry point for `loom controller`. Serves the control API h2c on `LOOM_ADDR`
@@ -168,7 +224,8 @@ pub fn router(store: Arc<dyn RunStore>) -> Router {
 pub fn run() -> anyhow::Result<()> {
     let addr = std::env::var("LOOM_ADDR").unwrap_or_else(|_| "0.0.0.0:7474".to_string());
     let store: Arc<dyn RunStore> = Arc::new(MemStore::new());
-    let app = router(store);
+    let dispatcher: Arc<dyn Dispatcher> = Arc::new(MemDispatcher::new());
+    let app = router(store, dispatcher);
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(serve(&addr, app))
 }
@@ -203,7 +260,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_router() -> Router {
-        router(Arc::new(MemStore::new()))
+        router(Arc::new(MemStore::new()), Arc::new(MemDispatcher::new()))
     }
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
@@ -264,5 +321,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// End-to-end through the API with an in-process dispatcher: submit a chain
+    /// a→b, complete each node, and watch loom drive the run to `succeeded`.
+    #[tokio::test]
+    async fn drives_dag_to_completion_via_api() {
+        let app = test_router();
+
+        let submit = app
+            .clone()
+            .oneshot(
+                Request::post("/runs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"run_id":"e2e","nodes":[{"id":"a","task_name":"t"},{"id":"b","task_name":"t","deps":["a"]}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(submit.status(), StatusCode::CREATED);
+        // root `a` dispatched on submit → the run is running.
+        assert_eq!(body_json(submit).await["status"], "running");
+
+        // complete `a` → `b` becomes ready and is dispatched.
+        let r = app
+            .clone()
+            .oneshot(
+                Request::post("/runs/e2e/nodes/a/complete")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"result_ref":"k/a"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+
+        // complete `b` → the whole run succeeds.
+        let r = app
+            .oneshot(
+                Request::post("/runs/e2e/nodes/b/complete")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(body_json(r).await["status"], "succeeded");
     }
 }
