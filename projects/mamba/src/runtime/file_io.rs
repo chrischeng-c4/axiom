@@ -783,12 +783,44 @@ fn raise_value_error(msg: &str) {
 }
 
 fn raise_file_not_found(path: &str) {
-    super::exception::mb_raise(
+    let strerror = "No such file or directory";
+    let message = format!("[Errno 2] {strerror}: '{path}'");
+    let mut fields = InstanceFields::default();
+    fields.insert("message".to_string(), MbValue::from_ptr(MbObject::new_str(message)));
+    fields.insert(
+        "__type__".to_string(),
         MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(format!(
-            "No such file or directory: '{path}'"
-        ))),
     );
+    fields.insert("__cause__".to_string(), MbValue::none());
+    fields.insert("__context__".to_string(), MbValue::none());
+    fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
+    fields.insert("errno".to_string(), MbValue::from_int(2));
+    fields.insert(
+        "strerror".to_string(),
+        MbValue::from_ptr(MbObject::new_str(strerror.to_string())),
+    );
+    fields.insert(
+        "filename".to_string(),
+        MbValue::from_ptr(MbObject::new_str(path.to_string())),
+    );
+    fields.insert(
+        "args".to_string(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_int(2),
+            MbValue::from_ptr(MbObject::new_str(strerror.to_string())),
+        ])),
+    );
+    let obj = Box::new(MbObject {
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "FileNotFoundError".to_string(),
+            fields: MbRwLock::new(fields),
+        },
+    });
+    super::class::mb_raise_instance(MbValue::from_ptr(Box::into_raw(obj)));
 }
 
 fn raise_os_error(msg: &str) {
