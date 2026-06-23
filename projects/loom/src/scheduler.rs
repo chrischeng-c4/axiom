@@ -73,6 +73,16 @@ pub enum Completion {
     Failed { node: NodeId },
 }
 
+/// A runtime-discovered fan-out child (#116): a task a completing node splices
+/// into the DAG (e.g. a CSV reader emitting one node per chunk).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FanOutSpec {
+    pub id: String,
+    pub task_name: String,
+    #[serde(default)]
+    pub input_refs: Vec<KeepRef>,
+}
+
 /// Wire form of a worker completion: published to the loom completions subject
 /// by a worker and consumed by the controller to advance the DAG.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,6 +94,9 @@ pub struct CompletionMsg {
     pub result_ref: Option<String>,
     #[serde(default)]
     pub failed: bool,
+    /// Runtime fan-out children to splice in after this node (#116).
+    #[serde(default)]
+    pub fan_out: Vec<FanOutSpec>,
 }
 
 /// Publish every currently-ready node of `run` to `dispatcher` (routed by its

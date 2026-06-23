@@ -18,9 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{KeepRef, Node, NodeId, RunStatus, StageId, TaskSpec, WorkflowRun, WorkflowRunId};
 use crate::runner::RunnerClass;
-use crate::scheduler::{
-    apply_completion, dispatch_ready, Completion, CompletionMsg, Dispatcher, MemDispatcher,
-};
+use crate::scheduler::{dispatch_ready, CompletionMsg, Dispatcher, FanOutSpec, MemDispatcher};
 use crate::store::{MemStore, RunStore};
 
 /// Shared control-plane state.
@@ -164,6 +162,43 @@ pub struct CompleteRequest {
     /// Set when the attempt failed (triggers retry-or-fail).
     #[serde(default)]
     pub failed: bool,
+    /// Runtime fan-out children to splice in after this node (#116).
+    #[serde(default)]
+    pub fan_out: Vec<FanOutSpec>,
+}
+
+/// Mark a node's completion, splice in any runtime fan-out children (#116, the
+/// dynamic stage-expand), and dispatch newly-ready nodes.
+async fn apply_node_completion(
+    run: &mut WorkflowRun,
+    dispatcher: &dyn Dispatcher,
+    node: &NodeId,
+    result_ref: Option<KeepRef>,
+    failed: bool,
+    fan_out: &[FanOutSpec],
+) -> anyhow::Result<()> {
+    if failed {
+        run.mark_failed(node);
+    } else {
+        run.mark_done(node, result_ref);
+        if !fan_out.is_empty() {
+            let children: Vec<Node> = fan_out
+                .iter()
+                .map(|s| {
+                    let mut task = TaskSpec::new(&s.task_name);
+                    task.input_refs = s.input_refs.clone();
+                    Node::new(
+                        NodeId::new(&s.id),
+                        StageId::new(format!("dyn:{node}")),
+                        task,
+                        BTreeSet::new(),
+                    )
+                })
+                .collect();
+            run.expand(node, children);
+        }
+    }
+    dispatch_ready(run, dispatcher).await.map(|_| ())
 }
 
 async fn complete_node(
@@ -183,12 +218,17 @@ async fn complete_node(
                 .into_response()
         }
     };
-    let completion = if req.failed {
-        Completion::Failed { node: NodeId::new(&node) }
-    } else {
-        Completion::Ok { node: NodeId::new(&node), result: req.result_ref.map(KeepRef) }
-    };
-    if let Err(e) = apply_completion(&mut run, state.dispatcher.as_ref(), completion).await {
+    let result_ref = if req.failed { None } else { req.result_ref.clone().map(KeepRef) };
+    if let Err(e) = apply_node_completion(
+        &mut run,
+        state.dispatcher.as_ref(),
+        &NodeId::new(&node),
+        result_ref,
+        req.failed,
+        &req.fan_out,
+    )
+    .await
+    {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
             .into_response();
     }
@@ -313,12 +353,18 @@ async fn apply_completion_msg(store: &Arc<dyn RunStore>, dispatcher: &dyn Dispat
     let Ok(Some(mut run)) = store.get(&run_id) else {
         return;
     };
-    let completion = if cm.failed {
-        Completion::Failed { node: NodeId::new(&cm.node_id) }
-    } else {
-        Completion::Ok { node: NodeId::new(&cm.node_id), result: cm.result_ref.map(KeepRef) }
-    };
-    if apply_completion(&mut run, dispatcher, completion).await.is_ok() {
+    let result_ref = if cm.failed { None } else { cm.result_ref.map(KeepRef) };
+    if apply_node_completion(
+        &mut run,
+        dispatcher,
+        &NodeId::new(&cm.node_id),
+        result_ref,
+        cm.failed,
+        &cm.fan_out,
+    )
+    .await
+    .is_ok()
+    {
         let _ = store.put(run);
     }
 }
