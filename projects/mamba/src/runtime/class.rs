@@ -3348,6 +3348,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             if attr_name == "errors" {
                 return super::file_io::mb_file_errors(obj);
             }
+            if attr_name == "buffer" {
+                let buffer = super::file_io::mb_file_buffer(obj);
+                if !buffer.is_none() {
+                    return buffer;
+                }
+            }
         }
     }
 
