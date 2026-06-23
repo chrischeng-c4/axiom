@@ -686,7 +686,6 @@ pub fn mb_file_readlines(handle: MbValue) -> MbValue {
 
 /// file.write(text) → number of characters written
 pub fn mb_file_write(handle: MbValue, text: MbValue) -> MbValue {
-    let content = extract_bytes(text).unwrap_or_default();
     if let Some(id) = handle.as_int() {
         FILES.with(|files| {
             let mut files = files.borrow_mut();
@@ -695,11 +694,23 @@ pub fn mb_file_write(handle: MbValue, text: MbValue) -> MbValue {
                     raise_value_error("I/O operation on closed file");
                     return MbValue::none();
                 }
+                let binary = mf.binary;
+                let encoding = mf.encoding.clone();
                 if let Some(ref mut writer) = mf.writer {
+                    use std::io::{Seek, SeekFrom};
+                    let include_bom =
+                        !binary && writer.seek(SeekFrom::Current(0)).unwrap_or(0) == 0;
+                    let (content, logical_len) = if binary {
+                        let bytes = extract_bytes(text).unwrap_or_default();
+                        let len = bytes.len() as i64;
+                        (bytes, len)
+                    } else {
+                        encode_text_payload(text, encoding.as_deref(), include_bom)
+                    };
                     match writer.write_all(&content) {
                         Ok(()) => {
                             let _ = writer.flush();
-                            return MbValue::from_int(content.len() as i64);
+                            return MbValue::from_int(logical_len);
                         }
                         Err(_) => return MbValue::none(),
                     }
@@ -803,6 +814,56 @@ fn raise_permission_error(path: &str) {
 
 fn new_bytes(b: Vec<u8>) -> MbValue {
     MbValue::from_ptr(MbObject::new_bytes(b))
+}
+
+fn encode_text_payload(text: MbValue, encoding: Option<&str>, include_bom: bool) -> (Vec<u8>, i64) {
+    let Some(s) = extract_str(text) else {
+        let bytes = extract_bytes(text).unwrap_or_default();
+        let len = bytes.len() as i64;
+        return (bytes, len);
+    };
+    let logical_len = s.chars().count() as i64;
+    let enc = encoding
+        .unwrap_or("UTF-8")
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    let mut out = Vec::new();
+    match enc.as_str() {
+        "utf-8-sig" => {
+            if include_bom {
+                out.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+            }
+            out.extend_from_slice(s.as_bytes());
+        }
+        "utf-16" | "utf-16-le" => {
+            if include_bom && enc == "utf-16" {
+                out.extend_from_slice(&[0xFF, 0xFE]);
+            }
+            for unit in s.encode_utf16() {
+                out.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+        "utf-16-be" => {
+            for unit in s.encode_utf16() {
+                out.extend_from_slice(&unit.to_be_bytes());
+            }
+        }
+        "utf-32" | "utf-32-le" => {
+            if include_bom && enc == "utf-32" {
+                out.extend_from_slice(&[0xFF, 0xFE, 0x00, 0x00]);
+            }
+            for ch in s.chars() {
+                out.extend_from_slice(&(ch as u32).to_le_bytes());
+            }
+        }
+        "utf-32-be" => {
+            for ch in s.chars() {
+                out.extend_from_slice(&(ch as u32).to_be_bytes());
+            }
+        }
+        _ => out.extend_from_slice(s.as_bytes()),
+    }
+    (out, logical_len)
 }
 
 /// True iff `id` is an open (not closed) file handle whose ops need a closed
@@ -909,6 +970,22 @@ pub fn mb_file_seek(handle: MbValue, offset: MbValue, whence: MbValue) -> MbValu
                 if mf.closed {
                     raise_value_error("I/O operation on closed file");
                     return MbValue::none();
+                }
+                if mf.reader.is_some() && mf.writer.is_some() {
+                    let reader_pos = {
+                        let r = mf.reader.as_mut().unwrap();
+                        r.seek(match from {
+                            SeekFrom::Start(n) => SeekFrom::Start(n),
+                            SeekFrom::End(n) => SeekFrom::End(n),
+                            SeekFrom::Current(n) => SeekFrom::Current(n),
+                        })
+                        .unwrap_or(0)
+                    };
+                    let writer_pos = {
+                        let wr = mf.writer.as_mut().unwrap();
+                        wr.seek(from).unwrap_or(reader_pos)
+                    };
+                    return MbValue::from_int(writer_pos as i64);
                 }
                 if let Some(ref mut r) = mf.reader {
                     let pos = r.seek(from).unwrap_or(0);
