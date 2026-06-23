@@ -86,7 +86,7 @@ pub fn mb_keyword_kwlist() -> MbValue {
 /// Returns True if s is a Python 3.12 hard keyword, False otherwise.
 pub fn mb_keyword_iskeyword(s: MbValue) -> MbValue {
     let Some(s) = extract_str(s) else {
-        return raise_type_error("keyword.iskeyword() argument must be str");
+        return MbValue::from_bool(false);
     };
     MbValue::from_bool(KEYWORDS.contains(&s.as_str()))
 }
@@ -104,7 +104,7 @@ pub fn mb_keyword_softkwlist() -> MbValue {
 /// Returns True if s is a Python 3.12 soft keyword, False otherwise.
 pub fn mb_keyword_issoftkeyword(s: MbValue) -> MbValue {
     let Some(s) = extract_str(s) else {
-        return raise_type_error("keyword.issoftkeyword() argument must be str");
+        return MbValue::from_bool(false);
     };
     MbValue::from_bool(SOFT_KEYWORDS.contains(&s.as_str()))
 }
@@ -120,14 +120,6 @@ fn extract_str(val: MbValue) -> Option<String> {
         }
     }
     None
-}
-
-fn raise_type_error(msg: &str) -> MbValue {
-    super::super::exception::mb_raise(
-        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
-    );
-    MbValue::none()
 }
 
 // HANDWRITE-END
