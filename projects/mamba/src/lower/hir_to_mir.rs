@@ -5635,17 +5635,53 @@ impl<'a> HirToMir<'a> {
                     else_block: fail_block,
                 });
                 self.start_block(map_ok);
-                // For each key: check presence + value pattern; then collect rest (#827, R3)
+                let mut matched_keys = Vec::new();
                 for (key_expr, val_pat) in pairs {
                     let key_raw = self.lower_expr(key_expr);
                     // Box primitive keys (int/bool) so dict functions receive MbValue (#827)
                     let key_vreg = self.box_operand(key_raw, key_expr.ty());
+                    matched_keys.push((key_vreg, val_pat));
+                }
+                // PEP 634: duplicate mapping pattern keys that compare equal at
+                // runtime raise ValueError before matching values.
+                for i in 0..matched_keys.len() {
+                    for j in (i + 1)..matched_keys.len() {
+                        let duplicate = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(duplicate),
+                            name: "mb_eq".to_string(),
+                            args: vec![matched_keys[i].0, matched_keys[j].0],
+                            ty: self.tcx.bool(),
+                        });
+                        let raise_dup = self.fresh_block();
+                        let next_cmp = self.fresh_block();
+                        self.finish_block(Terminator::Branch {
+                            cond: duplicate,
+                            then_block: raise_dup,
+                            else_block: next_cmp,
+                        });
+                        self.start_block(raise_dup);
+                        let err_type = self.emit_str_const("ValueError");
+                        let err_msg = self.emit_str_const("mapping pattern checks duplicate key");
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: None,
+                            name: "mb_raise".to_string(),
+                            args: vec![err_type, err_msg],
+                            ty: self.tcx.none(),
+                        });
+                        self.emit_exception_propagate();
+                        self.finish_block(Terminator::Goto(next_cmp));
+                        self.start_block(next_cmp);
+                    }
+                }
+                // For each key: check presence + value pattern; then collect rest (#827, R3)
+                for (key_vreg, val_pat) in &matched_keys {
                     // Check: key in subject dict
                     let has_key = self.fresh_vreg();
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: Some(has_key),
                         name: "mb_dict_contains".to_string(),
-                        args: vec![subj_vreg, key_vreg],
+                        args: vec![subj_vreg, *key_vreg],
                         ty: self.tcx.bool(),
                     });
                     let key_ok = self.fresh_block();
@@ -5660,7 +5696,7 @@ impl<'a> HirToMir<'a> {
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: Some(val_vreg),
                         name: "mb_dict_getitem".to_string(),
-                        args: vec![subj_vreg, key_vreg],
+                        args: vec![subj_vreg, *key_vreg],
                         ty: self.tcx.any(),
                     });
                     // val_vreg is MbValue from mb_dict_getitem; raw_is_boxed=true (#827).
@@ -5677,13 +5713,11 @@ impl<'a> HirToMir<'a> {
                         ty: self.tcx.any(),
                     });
                     // Delete each matched key from the copy
-                    for (key_expr, _) in pairs {
-                        let key_raw = self.lower_expr(key_expr);
-                        let key_v = self.box_operand(key_raw, key_expr.ty());
+                    for (key_v, _) in &matched_keys {
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: None,
                             name: "mb_dict_delitem".to_string(),
-                            args: vec![rest_dict, key_v],
+                            args: vec![rest_dict, *key_v],
                             ty: self.tcx.none(),
                         });
                     }
