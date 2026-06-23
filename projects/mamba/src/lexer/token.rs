@@ -396,6 +396,14 @@ fn lex_triple_squote(lex: &mut logos::Lexer<TokenKind>) -> Option<String> {
     None
 }
 
+fn lex_regular_triple_dquote(lex: &mut logos::Lexer<TokenKind>) -> Option<String> {
+    lex_triple_dquote(lex).map(|content| apply_escape_sequences(&content))
+}
+
+fn lex_regular_triple_squote(lex: &mut logos::Lexer<TokenKind>) -> Option<String> {
+    lex_triple_squote(lex).map(|content| apply_escape_sequences(&content))
+}
+
 // Raw triple-quoted variants (#1678): scan to the matching `"""`/`'''` but
 // pass backslashes through literally (no escape processing).
 fn lex_raw_triple_dquote(lex: &mut logos::Lexer<TokenKind>) -> Option<String> {
@@ -819,8 +827,8 @@ pub enum TokenKind {
     Str(String),
 
     // Triple-quoted strings (#211)
-    #[token("\"\"\"", lex_triple_dquote, priority = 10)]
-    #[token("'''", lex_triple_squote, priority = 10)]
+    #[token("\"\"\"", lex_regular_triple_dquote, priority = 10)]
+    #[token("'''", lex_regular_triple_squote, priority = 10)]
     TripleStr(String),
 
     // F-strings with PEP 701 support (#py312):
@@ -1738,8 +1746,20 @@ mod tests {
         let kinds = lex_kinds("\"\"\"has \\\"\"\" inside\"\"\"");
         assert_eq!(
             kinds,
-            vec![TokenKind::TripleStr("has \\\"\"\" inside".into())]
+            vec![TokenKind::TripleStr("has \"\"\" inside".into())]
         );
+    }
+
+    #[test]
+    fn test_lex_triple_line_continuation() {
+        let kinds = lex_kinds("\"\"\"\\\nbody\n\"\"\"");
+        assert_eq!(kinds, vec![TokenKind::TripleStr("body\n".into())]);
+    }
+
+    #[test]
+    fn test_lex_bytes_triple_keeps_unicode_escape_raw() {
+        let kinds = lex_kinds("b\"\"\"\\u0041\"\"\"");
+        assert_eq!(kinds, vec![TokenKind::ByteStr("\\u0041".into())]);
     }
 
     // --- Ellipsis ---

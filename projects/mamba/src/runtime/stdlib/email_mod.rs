@@ -1042,18 +1042,33 @@ unsafe extern "C" fn m_set_content(this: MbValue, args: MbValue) -> MbValue {
 
 fn message_as_string(this: MbValue) -> String {
     let mut out = String::new();
+    let payload = field_get(this, "_payload").unwrap_or_else(MbValue::none);
+    let payload_text = if let Some(s) = extract_str(payload) {
+        s
+    } else if let Some(b) = extract_bytes(payload) {
+        b.iter().map(|&b| b as char).collect()
+    } else {
+        String::new()
+    };
+    let needs_implicit_qp = header_get_first(this, "content-transfer-encoding").is_none()
+        && payload_text.chars().any(|c| (c as u32) > 0x7f);
     for (n, s, _v) in headers_vec(this) {
         out.push_str(&n);
         out.push_str(": ");
         out.push_str(&s);
         out.push('\n');
     }
+    if needs_implicit_qp {
+        out.push_str("Content-Transfer-Encoding: quoted-printable\n");
+    }
     out.push('\n');
-    let payload = field_get(this, "_payload").unwrap_or_else(MbValue::none);
-    if let Some(s) = extract_str(payload) {
-        out.push_str(&s);
-    } else if let Some(b) = extract_bytes(payload) {
-        out.push_str(&String::from_utf8_lossy(&b));
+    if needs_implicit_qp {
+        match qp_body_encode(&payload_text, 76, "\n") {
+            Ok(encoded) => out.push_str(&encoded),
+            Err(_) => out.push_str(&payload_text),
+        }
+    } else {
+        out.push_str(&payload_text);
     }
     out
 }
