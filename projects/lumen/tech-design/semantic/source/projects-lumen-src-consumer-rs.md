@@ -14,15 +14,14 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/consumer.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/consumer.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `ShardRouter` | projects/lumen/src/consumer.rs | struct | pub |
-| `index_url` | projects/lumen/src/consumer.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ShardRouter` | projects/lumen/src/consumer.rs | struct | pub | 26 |  |
+| `index_url` | projects/lumen/src/consumer.rs | function | pub | 37 | index_url(&self, collection_id: &str) -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

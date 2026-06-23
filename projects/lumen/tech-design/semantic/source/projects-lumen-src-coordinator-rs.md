@@ -14,20 +14,19 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/coordinator.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/coordinator.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `SharedAof` | projects/lumen/src/coordinator.rs | type | pub |
-| `WriteCoordinator` | projects/lumen/src/coordinator.rs | struct | pub |
-| `start` | projects/lumen/src/coordinator.rs | function | pub |
-| `start_from` | projects/lumen/src/coordinator.rs | function | pub |
-| `start_from_with_aof` | projects/lumen/src/coordinator.rs | function | pub |
-| `submit` | projects/lumen/src/coordinator.rs | function | pub |
-| `applied_seq` | projects/lumen/src/coordinator.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `SharedAof` | projects/lumen/src/coordinator.rs | type | pub | 65 |  |
+| `WriteCoordinator` | projects/lumen/src/coordinator.rs | struct | pub | 68 |  |
+| `applied_seq` | projects/lumen/src/coordinator.rs | function | pub | 305 | applied_seq(&self) -> u64 |
+| `start` | projects/lumen/src/coordinator.rs | function | pub | 78 | start(wal: SharedWal, engine: Arc<Engine>) -> Arc<Self> |
+| `start_from` | projects/lumen/src/coordinator.rs | function | pub | 85 | start_from(wal: SharedWal, engine: Arc<Engine>, from_seq: u64) -> Arc<Self> |
+| `start_from_with_aof` | projects/lumen/src/coordinator.rs | function | pub | 95 | start_from_with_aof(         wal: SharedWal,         engine: Arc<Engine>,         from_seq: u64,         aof: SharedAof,     ) -> Arc<Self> |
+| `submit` | projects/lumen/src/coordinator.rs | function | pub | 297 | submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

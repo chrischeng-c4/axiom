@@ -14,18 +14,17 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/tokenize.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/tokenize.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `DEFAULT_NGRAM_MIN` | projects/lumen/src/tokenize.rs | const | pub |
-| `DEFAULT_NGRAM_MAX` | projects/lumen/src/tokenize.rs | const | pub |
-| `tokenize` | projects/lumen/src/tokenize.rs | function | pub |
-| `for_whitespace_lower` | projects/lumen/src/tokenize.rs | function | pub |
-| `for_whitespace_lower_cow` | projects/lumen/src/tokenize.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `DEFAULT_NGRAM_MAX` | projects/lumen/src/tokenize.rs | constant | pub | 25 |  |
+| `DEFAULT_NGRAM_MIN` | projects/lumen/src/tokenize.rs | constant | pub | 24 |  |
+| `for_whitespace_lower` | projects/lumen/src/tokenize.rs | function | pub | 42 | for_whitespace_lower(text: &str, mut emit: impl FnMut(String)) -> u32 |
+| `for_whitespace_lower_cow` | projects/lumen/src/tokenize.rs | function | pub | 47 | for_whitespace_lower_cow(     mut text: &'a str,     mut emit: impl FnMut(Cow<'a, str>), ) -> u32 |
+| `tokenize` | projects/lumen/src/tokenize.rs | function | pub | 29 | tokenize(text: &str, analyzer: Analyzer) -> Vec<String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

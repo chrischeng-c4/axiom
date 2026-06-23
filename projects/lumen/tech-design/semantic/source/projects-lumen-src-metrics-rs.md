@@ -14,21 +14,20 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/metrics.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/metrics.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `Metrics` | projects/lumen/src/metrics.rs | struct | pub |
-| `new` | projects/lumen/src/metrics.rs | function | pub |
-| `incr_index` | projects/lumen/src/metrics.rs | function | pub |
-| `observe_search` | projects/lumen/src/metrics.rs | function | pub |
-| `incr_duplicates` | projects/lumen/src/metrics.rs | function | pub |
-| `incr_collection_created` | projects/lumen/src/metrics.rs | function | pub |
-| `set_storage_bytes` | projects/lumen/src/metrics.rs | function | pub |
-| `render` | projects/lumen/src/metrics.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Metrics` | projects/lumen/src/metrics.rs | struct | pub | 20 |  |
+| `incr_collection_created` | projects/lumen/src/metrics.rs | function | pub | 57 | incr_collection_created(&self, fields: u64) |
+| `incr_duplicates` | projects/lumen/src/metrics.rs | function | pub | 52 | incr_duplicates(&self) |
+| `incr_index` | projects/lumen/src/metrics.rs | function | pub | 40 | incr_index(&self, items: u64, bytes: u64) |
+| `new` | projects/lumen/src/metrics.rs | function | pub | 36 | new() -> Self |
+| `observe_search` | projects/lumen/src/metrics.rs | function | pub | 45 | observe_search(&self, latency_ms: u64) |
+| `render` | projects/lumen/src/metrics.rs | function | pub | 70 | render(&self) -> String |
+| `set_storage_bytes` | projects/lumen/src/metrics.rs | function | pub | 64 | set_storage_bytes(&self, bytes: u64) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

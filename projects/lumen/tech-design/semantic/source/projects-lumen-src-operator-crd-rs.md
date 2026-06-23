@@ -14,23 +14,22 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/operator/crd.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `LumenSpec` | projects/lumen/src/operator/crd.rs | struct | pub |
-| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub |
-| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub |
-| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub |
-| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub |
-| `NatsSpec` | projects/lumen/src/operator/crd.rs | struct | pub |
-| `is_managed` | projects/lumen/src/operator/crd.rs | function | pub |
-| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub | 111 |  |
+| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub | 169 |  |
+| `BrokerSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 193 |  |
+| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub | 88 |  |
+| `LumenSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 36 |  |
+| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 253 |  |
+| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 137 |  |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 99 | as_env(self) -> &'static str |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 125 | as_env(self) -> &'static str |
+| `is_managed` | projects/lumen/src/operator/crd.rs | function | pub | 228 | is_managed(&self) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

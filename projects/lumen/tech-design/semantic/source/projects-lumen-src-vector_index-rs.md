@@ -14,28 +14,26 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/vector_index.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/vector_index.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `VectorIndex` | projects/lumen/src/vector_index.rs | trait | pub |
-| `ScalarCodebook` | projects/lumen/src/vector_index.rs | struct | pub |
-| `empty` | projects/lumen/src/vector_index.rs | function | pub |
-| `widen` | projects/lumen/src/vector_index.rs | function | pub |
-| `encode_sq` | projects/lumen/src/vector_index.rs | function | pub |
-| `decode_sq` | projects/lumen/src/vector_index.rs | function | pub |
-| `HnswCpuIndex` | projects/lumen/src/vector_index.rs | struct | pub |
-| `new` | projects/lumen/src/vector_index.rs | function | pub |
-| `restore` | projects/lumen/src/vector_index.rs | function | pub |
-| `set_ef_search` | projects/lumen/src/vector_index.rs | function | pub |
-| `FlatCpuIndex` | projects/lumen/src/vector_index.rs | struct | pub |
-| `new` | projects/lumen/src/vector_index.rs | function | pub |
-| `restore` | projects/lumen/src/vector_index.rs | function | pub |
-| `open_from_segment` | projects/lumen/src/vector_index.rs | function | pub |
-| `open_backend` | projects/lumen/src/vector_index.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `FlatCpuIndex` | projects/lumen/src/vector_index.rs | struct | pub | 669 |  |
+| `HnswCpuIndex` | projects/lumen/src/vector_index.rs | struct | pub | 365 |  |
+| `ScalarCodebook` | projects/lumen/src/vector_index.rs | struct | pub | 139 |  |
+| `decode_sq` | projects/lumen/src/vector_index.rs | function | pub | 194 | decode_sq(bytes: &[u8], cb: &ScalarCodebook) -> Vec<f32> |
+| `empty` | projects/lumen/src/vector_index.rs | function | pub | 148 | empty(dim: usize) -> Self |
+| `encode_sq` | projects/lumen/src/vector_index.rs | function | pub | 182 | encode_sq(vec: &[f32], cb: &ScalarCodebook) -> Vec<u8> |
+| `new` | projects/lumen/src/vector_index.rs | function | pub | 479 | new(spec: VectorSpec) -> Self |
+| `new` | projects/lumen/src/vector_index.rs | function | pub | 739 | new(spec: VectorSpec) -> Self |
+| `open_backend` | projects/lumen/src/vector_index.rs | function | pub | 1188 | open_backend(spec: VectorSpec) -> Box<dyn VectorIndex> |
+| `open_from_segment` | projects/lumen/src/vector_index.rs | function | pub | 887 | open_from_segment(         spec: VectorSpec,         seg: std::sync::Arc<crate::segment::SegmentReader>,         row_eids: Vec<String>,     ) -> Result<Self> |
+| `restore` | projects/lumen/src/vector_index.rs | function | pub | 495 | restore(         spec: VectorSpec,         vectors: Vec<(String, Vec<f32>)>,         codebook: Option<ScalarCodebook>,     ) -> Result<Self> |
+| `restore` | projects/lumen/src/vector_index.rs | function | pub | 749 | restore(         spec: VectorSpec,         vectors: Vec<(String, Vec<f32>)>,         codebook: Option<ScalarCodebook>,     ) -> Result<Self> |
+| `set_ef_search` | projects/lumen/src/vector_index.rs | function | pub | 522 | set_ef_search(&self, ef: usize) |
+| `widen` | projects/lumen/src/vector_index.rs | function | pub | 158 | widen(&mut self, vec: &[f32]) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

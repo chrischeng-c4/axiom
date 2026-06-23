@@ -21,15 +21,14 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/operator/render.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/operator/render.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `broker_url` | projects/lumen/src/operator/render.rs | function | pub |
-| `render` | projects/lumen/src/operator/render.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `broker_url` | projects/lumen/src/operator/render.rs | function | pub | 46 | broker_url(lumen: &Lumen) -> String |
+| `render` | projects/lumen/src/operator/render.rs | function | pub | 103 | render(lumen: &Lumen) -> Vec<Value> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

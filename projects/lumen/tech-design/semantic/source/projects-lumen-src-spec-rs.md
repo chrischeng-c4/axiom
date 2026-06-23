@@ -14,23 +14,22 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/spec.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/spec.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `openapi_json` | projects/lumen/src/spec.rs | function | pub |
-| `openapi_yaml` | projects/lumen/src/spec.rs | function | pub |
-| `json_schema_json` | projects/lumen/src/spec.rs | function | pub |
-| `query_shapes` | projects/lumen/src/spec.rs | function | pub |
-| `field_catalog` | projects/lumen/src/spec.rs | function | pub |
-| `llm_outline_md` | projects/lumen/src/spec.rs | function | pub |
-| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub |
-| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub |
-| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub |
-| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `field_catalog` | projects/lumen/src/spec.rs | function | pub | 105 | field_catalog() -> Value |
+| `json_schema_json` | projects/lumen/src/spec.rs | function | pub | 30 | json_schema_json() -> String |
+| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 208 | llm_integration_md() -> String |
+| `llm_outline_md` | projects/lumen/src/spec.rs | function | pub | 126 | llm_outline_md() -> String |
+| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 243 | llm_quickstart_md() -> String |
+| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 299 | llm_recipes_md() -> String |
+| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 150 | llm_workflow_md() -> String |
+| `openapi_json` | projects/lumen/src/spec.rs | function | pub | 15 | openapi_json() -> String |
+| `openapi_yaml` | projects/lumen/src/spec.rs | function | pub | 23 | openapi_yaml() -> String |
+| `query_shapes` | projects/lumen/src/spec.rs | function | pub | 41 | query_shapes() -> Value |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

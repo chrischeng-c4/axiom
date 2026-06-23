@@ -14,14 +14,11 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/bin/lumen.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/bin/lumen.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| _(no public items)_ | projects/lumen/src/bin/lumen.rs | - | - |
-
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

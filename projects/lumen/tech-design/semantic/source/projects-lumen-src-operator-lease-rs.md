@@ -14,16 +14,15 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/operator/lease.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/operator/lease.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `Election` | projects/lumen/src/operator/lease.rs | struct | pub |
-| `new` | projects/lumen/src/operator/lease.rs | function | pub |
-| `spawn` | projects/lumen/src/operator/lease.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Election` | projects/lumen/src/operator/lease.rs | struct | pub | 31 |  |
+| `new` | projects/lumen/src/operator/lease.rs | function | pub | 38 | new(identity: String) -> Arc<Self> |
+| `spawn` | projects/lumen/src/operator/lease.rs | function | pub | 117 | spawn(client: Client, namespace: String, election: Arc<Election>) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

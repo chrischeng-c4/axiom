@@ -14,22 +14,21 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/native_wire.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/native_wire.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `NativeSearchRequest` | projects/lumen/src/native_wire.rs | struct | pub |
-| `NativeSearchResponse` | projects/lumen/src/native_wire.rs | enum | pub |
-| `serve_search` | projects/lumen/src/native_wire.rs | function | pub |
-| `serve_unix_search` | projects/lumen/src/native_wire.rs | function | pub |
-| `encode_search_frame` | projects/lumen/src/native_wire.rs | function | pub |
-| `encode_term_frame` | projects/lumen/src/native_wire.rs | function | pub |
-| `encode_range_frame` | projects/lumen/src/native_wire.rs | function | pub |
-| `encode_term_range_frame` | projects/lumen/src/native_wire.rs | function | pub |
-| `search_prepared` | projects/lumen/src/native_wire.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `NativeSearchRequest` | projects/lumen/src/native_wire.rs | struct | pub | 39 |  |
+| `NativeSearchResponse` | projects/lumen/src/native_wire.rs | enum | pub | 47 |  |
+| `encode_range_frame` | projects/lumen/src/native_wire.rs | function | pub | 107 | encode_range_frame(     collection_id: &str,     field: &str,     gte: Option<f64>,     lt: Option<f64>,     limit: u32, ) -> Result<Vec<u8>> |
+| `encode_search_frame` | projects/lumen/src/native_wire.rs | function | pub | 84 | encode_search_frame(collection_id: &str, request: &SearchRequest) -> Result<Vec<u8>> |
+| `encode_term_frame` | projects/lumen/src/native_wire.rs | function | pub | 92 | encode_term_frame(     collection_id: &str,     field: &str,     value: &str,     limit: u32, ) -> Result<Vec<u8>> |
+| `encode_term_range_frame` | projects/lumen/src/native_wire.rs | function | pub | 124 | encode_term_range_frame(     collection_id: &str,     term_field: &str,     term_value: &str,     range_field: &str,     gte: Option<f64>,     lt: Option<f64>,     limit: u32, ) -> Result<Vec<u8>> |
+| `search_prepared` | projects/lumen/src/native_wire.rs | function | pub | 146 | search_prepared(stream: &mut S, frame: &[u8]) -> Result<SearchResponse> |
+| `serve_search` | projects/lumen/src/native_wire.rs | function | pub | 54 | serve_search(listener: TcpListener, engine: Arc<Engine>) -> Result<()> |
+| `serve_unix_search` | projects/lumen/src/native_wire.rs | function | pub | 68 | serve_unix_search(listener: UnixListener, engine: Arc<Engine>) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

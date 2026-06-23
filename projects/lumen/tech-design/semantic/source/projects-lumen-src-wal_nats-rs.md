@@ -14,19 +14,18 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/wal_nats.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/wal_nats.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `NatsWal` | projects/lumen/src/wal_nats.rs | struct | pub |
-| `NatsWalConfig` | projects/lumen/src/wal_nats.rs | struct | pub |
-| `new` | projects/lumen/src/wal_nats.rs | function | pub |
-| `shard` | projects/lumen/src/wal_nats.rs | function | pub |
-| `connect` | projects/lumen/src/wal_nats.rs | function | pub |
-| `connect_with_config` | projects/lumen/src/wal_nats.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `NatsWal` | projects/lumen/src/wal_nats.rs | struct | pub | 45 |  |
+| `NatsWalConfig` | projects/lumen/src/wal_nats.rs | struct | pub | 61 |  |
+| `connect` | projects/lumen/src/wal_nats.rs | function | pub | 105 | connect(url: &str) -> Result<Self> |
+| `connect_with_config` | projects/lumen/src/wal_nats.rs | function | pub | 110 | connect_with_config(url: &str, config: NatsWalConfig) -> Result<Self> |
+| `new` | projects/lumen/src/wal_nats.rs | function | pub | 78 | new(stream_name: impl Into<String>, subject: impl Into<String>) -> Result<Self> |
+| `shard` | projects/lumen/src/wal_nats.rs | function | pub | 93 | shard(shard: usize) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

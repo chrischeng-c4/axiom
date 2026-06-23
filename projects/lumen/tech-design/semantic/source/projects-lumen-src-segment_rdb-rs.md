@@ -14,20 +14,19 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/segment_rdb.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/segment_rdb.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `SegmentRdbStore` | projects/lumen/src/segment_rdb.rs | struct | pub |
-| `new` | projects/lumen/src/segment_rdb.rs | function | pub |
-| `save` | projects/lumen/src/segment_rdb.rs | function | pub |
-| `load_latest` | projects/lumen/src/segment_rdb.rs | function | pub |
-| `reopen_into` | projects/lumen/src/segment_rdb.rs | function | pub |
-| `prune` | projects/lumen/src/segment_rdb.rs | function | pub |
-| `generation_seqs` | projects/lumen/src/segment_rdb.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `SegmentRdbStore` | projects/lumen/src/segment_rdb.rs | struct | pub | 41 |  |
+| `generation_seqs` | projects/lumen/src/segment_rdb.rs | function | pub | 190 | generation_seqs(&self) -> Result<Vec<u64>> |
+| `load_latest` | projects/lumen/src/segment_rdb.rs | function | pub | 148 | load_latest(&self) -> Result<Option<(Arc<Engine>, u64)>> |
+| `new` | projects/lumen/src/segment_rdb.rs | function | pub | 48 | new(root: impl Into<PathBuf>) -> Result<Self> |
+| `prune` | projects/lumen/src/segment_rdb.rs | function | pub | 173 | prune(&self, keep: usize) -> Result<usize> |
+| `reopen_into` | projects/lumen/src/segment_rdb.rs | function | pub | 160 | reopen_into(&self, engine: &Arc<Engine>) -> Result<Option<u64>> |
+| `save` | projects/lumen/src/segment_rdb.rs | function | pub | 114 | save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

@@ -14,24 +14,23 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/auth.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/auth.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `Role` | projects/lumen/src/auth.rs | enum | pub |
-| `covers` | projects/lumen/src/auth.rs | function | pub |
-| `TokenClaims` | projects/lumen/src/auth.rs | struct | pub |
-| `AuthConfig` | projects/lumen/src/auth.rs | struct | pub |
-| `open` | projects/lumen/src/auth.rs | function | pub |
-| `from_env` | projects/lumen/src/auth.rs | function | pub |
-| `AuthContext` | projects/lumen/src/auth.rs | enum | pub |
-| `ensure` | projects/lumen/src/auth.rs | function | pub |
-| `subject` | projects/lumen/src/auth.rs | function | pub |
-| `auth_middleware` | projects/lumen/src/auth.rs | function | pub |
-| `AuthErr` | projects/lumen/src/auth.rs | enum | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `AuthConfig` | projects/lumen/src/auth.rs | struct | pub | 68 |  |
+| `AuthContext` | projects/lumen/src/auth.rs | enum | pub | 103 |  |
+| `AuthErr` | projects/lumen/src/auth.rs | enum | pub | 178 |  |
+| `Role` | projects/lumen/src/auth.rs | enum | pub | 44 |  |
+| `TokenClaims` | projects/lumen/src/auth.rs | struct | pub | 59 |  |
+| `auth_middleware` | projects/lumen/src/auth.rs | function | pub | 146 | auth_middleware(     State(cfg): State<Arc<AuthConfig>>,     mut req: Request,     next: Next, ) -> Response |
+| `covers` | projects/lumen/src/auth.rs | function | pub | 52 | covers(self, needed: Role) -> bool |
+| `ensure` | projects/lumen/src/auth.rs | function | pub | 112 | ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> |
+| `from_env` | projects/lumen/src/auth.rs | function | pub | 82 | from_env() -> Result<Self> |
+| `open` | projects/lumen/src/auth.rs | function | pub | 75 | open() -> Self |
+| `subject` | projects/lumen/src/auth.rs | function | pub | 137 | subject(&self) -> Option<&str> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
