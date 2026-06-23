@@ -3656,6 +3656,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     return buffer;
                 }
             }
+            if matches!(attr_name.as_str(),
+                "read" | "write" | "readline" | "readlines" | "readinto"
+                | "writelines" | "tell" | "seek" | "flush" | "truncate"
+                | "close" | "fileno" | "isatty" | "readable" | "writable"
+                | "seekable" | "__enter__" | "__exit__" | "__iter__" | "__next__"
+            ) {
+                return make_bound_native_method(obj, &attr_name);
+            }
         }
     }
 
@@ -13257,6 +13265,18 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 "writelines" => {
                     let lst = arg_items.first().copied().unwrap_or(MbValue::none());
                     return super::file_io::mb_file_writelines(receiver, lst);
+                }
+                "fileno" => {
+                    return super::file_io::mb_file_fileno(receiver);
+                }
+                "isatty" => {
+                    return super::file_io::mb_file_isatty(receiver);
+                }
+                "__iter__" => {
+                    return super::file_io::mb_file_iter(receiver);
+                }
+                "__next__" => {
+                    return super::iter::mb_next_raise(receiver);
                 }
                 "tell" => {
                     return super::file_io::mb_file_tell(receiver);

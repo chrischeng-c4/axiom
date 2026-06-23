@@ -2066,6 +2066,13 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
             }
             return val;
         }
+        if super::file_io::is_file_handle(id as u64) {
+            if super::file_io::mb_file_raise_if_closed(iter_handle) {
+                return MbValue::none();
+            }
+            let file_iter = mb_iter(iter_handle);
+            return mb_next_raise(file_iter);
+        }
         super::exception::set_current_exception(super::exception::MbException::new(
             "TypeError",
             "object is not an iterator",
