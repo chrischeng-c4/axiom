@@ -1,4 +1,4 @@
-use super::super::rc::MbObject;
+use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 /// wsgiref module + submodules for Mamba (#1261 long-tail).
 ///
@@ -33,6 +33,62 @@ unsafe extern "C" fn dispatch_empty_dict(_a: *const MbValue, _n: usize) -> MbVal
 
 unsafe extern "C" fn dispatch_request_uri(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_str("/".to_string()))
+}
+
+fn new_str(s: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.to_string()))
+}
+
+fn make_type_obj(name: &str, module: &str) -> MbValue {
+    let obj = MbObject::new_instance("type".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*obj).data {
+            let mut map = fields.write().unwrap();
+            map.insert("__name__".to_string(), new_str(name));
+            map.insert("__qualname__".to_string(), new_str(name));
+            map.insert("__module__".to_string(), new_str(module));
+        }
+    }
+    MbValue::from_ptr(obj)
+}
+
+fn extract_args(args: MbValue) -> Vec<MbValue> {
+    args.as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                Some(lock.read().unwrap().to_vec())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn is_bytes_like(v: MbValue) -> bool {
+    v.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+        .unwrap_or(false)
+}
+
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(new_str("TypeError"), new_str(msg));
+    MbValue::none()
+}
+
+unsafe extern "C" fn base_handler_write(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    let data = items.first().copied().unwrap_or_else(MbValue::none);
+    if !is_bytes_like(data) {
+        return raise_type_error("BaseHandler.write() argument must be bytes-like");
+    }
+    MbValue::none()
+}
+
+fn register_variadic_method_class(class_name: &str, method_name: &str, addr: usize) {
+    super::super::module::register_variadic_func(addr as u64);
+    let mut methods = HashMap::new();
+    methods.insert(method_name.to_string(), MbValue::from_func(addr));
+    super::super::class::mb_class_register(class_name, vec!["object".to_string()], methods);
 }
 
 pub fn register() {
@@ -141,7 +197,6 @@ fn register_wsgiref_validate() {
 fn register_wsgiref_handlers() {
     let mut attrs = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("BaseHandler", dispatch_class_shell as *const () as usize),
         ("SimpleHandler", dispatch_class_shell as *const () as usize),
         ("BaseCGIHandler", dispatch_class_shell as *const () as usize),
         ("CGIHandler", dispatch_class_shell as *const () as usize),
@@ -152,5 +207,14 @@ fn register_wsgiref_handlers() {
         attrs.insert((*name).into(), MbValue::from_func(*addr));
     }
     register_addrs(&dispatchers.iter().map(|(_, a)| *a).collect::<Vec<_>>());
+    attrs.insert(
+        "BaseHandler".into(),
+        make_type_obj("BaseHandler", "wsgiref.handlers"),
+    );
+    register_variadic_method_class(
+        "BaseHandler",
+        "write",
+        base_handler_write as *const () as usize,
+    );
     super::register_module("wsgiref.handlers", attrs);
 }
