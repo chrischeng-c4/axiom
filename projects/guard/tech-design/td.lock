@@ -1,8 +1,8 @@
 version = 1
 project = "guard"
 td_path = "projects/guard/tech-design"
-generated_at = "2026-06-14T08:10:48.187869+00:00"
-digest = "sha256:900097ebb7e040cef927a50955ece72189e317315e13630a9c83a07680abe8e8"
+generated_at = "2026-06-23T14:06:43.451762+00:00"
+digest = "sha256:f9b63094847e6a4e7325ad9a4bb78e17793495a4e7245170895dfba2cfae9d0a"
 
 [[files]]
 path = "semantic/guard-build-script.md"
@@ -10,7 +10,7 @@ digest = "sha256:aa666bd92ef8f43bda01ae450bf7d0201aee35a45b3fe7a70998f2cc085f1de
 
 [[files]]
 path = "semantic/guard-ec-static-security-smoke.md"
-digest = "sha256:8dac05537370c1fd961b1108df60a46e43f2f3b60c57487bdad4696475a58033"
+digest = "sha256:d5a3d76524695abdb0e8c1d1bd0888130f77b9e6091ae017e0d150a3cfa8f88a"
 
 [[files]]
 path = "semantic/guard-guard-cli-src-bin.md"
@@ -38,7 +38,7 @@ digest = "sha256:bb62565f6bf42a7bd6163024e3b14c88000065d53dcc1b7fdf54a689212952f
 
 [[files]]
 path = "semantic/source/projects-guard-guard-cli-src-dispatch-rs.md"
-digest = "sha256:44912b1c65c39d2a108023f1237c022dcbb9182789fe91142fab9effb422284e"
+digest = "sha256:5c6ef13e0f5e3e7c0ecc34655c4023b3d2ebda27ca572c3e744f38b2afccae62"
 
 [[files]]
 path = "semantic/source/projects-guard-guard-cli-src-lib-rs.md"
@@ -46,7 +46,7 @@ digest = "sha256:3590a975e86582ac1047fe816df4c02ae2f0672795e21159e6386526b99aace
 
 [[files]]
 path = "semantic/source/projects-guard-src-evidence-rs.md"
-digest = "sha256:28edc3248d97e0967f22361d9cd22b1cfd7d0d3aae7dda9c3c7da7286539fb73"
+digest = "sha256:18f0c566a5cf135de6fb01927f0b94431c2e5edb230a7433f71ca625fae29c84"
 
 [[files]]
 path = "semantic/source/projects-guard-src-lib-rs.md"
@@ -54,8 +54,8 @@ digest = "sha256:8d6c49e626e1500f825d459982527e8d32c3b5a923f2b7bee0aa4f31df16ef3
 
 [[files]]
 path = "semantic/source/projects-guard-src-report-rs.md"
-digest = "sha256:5613a2b99105e44c37214a16869cdcfc6b543e565e50bc9284e28d76656333a3"
+digest = "sha256:43a8faf95a760595219c656fc34631ff041f8dd733e7fa8356a6c1a93514915c"
 
 [[files]]
 path = "semantic/source/projects-guard-src-scan-rs.md"
-digest = "sha256:b7ada3d31de925be0acda23a7f988a7d22f0de65c64b7caae7ed838e62e0a066"
+digest = "sha256:ae540441fbf437b92ee183d4457815fdf4a94086a589fddee0b54236b882a7f2"
