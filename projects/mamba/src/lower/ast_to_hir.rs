@@ -5154,6 +5154,14 @@ impl<'a> AstLowerer<'a> {
                             // closefd is positional 6 (after newline at 5); None
                             // means the default True (no borrowed-fd guard).
                             let closefd = kw("closefd", 6);
+                            let opener = kw("opener", 7);
+                            if !matches!(opener, HirExpr::NoneLit(_)) {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit("mb_open_with_opener".to_string(), any_ty)),
+                                    args: vec![path, mode, encoding, errors, closefd, opener],
+                                    ty: any_ty,
+                                });
+                            }
                             return Some(HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit("mb_open_ex".to_string(), any_ty)),
                                 args: vec![path, mode, encoding, errors, closefd],

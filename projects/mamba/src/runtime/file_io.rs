@@ -152,6 +152,7 @@ pub fn mb_file_name(handle: MbValue) -> MbValue {
 fn file_path_from_handle(handle: MbValue) -> Option<String> {
     let id = handle.as_int()? as u64;
     FILES.with(|files| files.borrow().get(&id).map(|file| file.path.clone()))
+        .or_else(|| super::stdlib::os_mod::mb_os_fd_path(id as i64))
 }
 
 /// open(path, mode) → file handle (as MbValue int)
@@ -365,6 +366,27 @@ fn kw_or_default(kwargs: MbValue, key: &str, default: MbValue) -> MbValue {
         .unwrap_or(default)
 }
 
+fn open_flags_for_mode(mode: MbValue) -> MbValue {
+    let mode_s = extract_str_opt(mode).unwrap_or_else(|| "r".to_string());
+    let mut flags = if mode_s.contains('+') {
+        0x0002 // O_RDWR
+    } else if mode_s.contains('w') || mode_s.contains('a') || mode_s.contains('x') {
+        0x0001 // O_WRONLY
+    } else {
+        0x0000 // O_RDONLY
+    };
+    if mode_s.contains('a') {
+        flags |= 0x0008; // O_APPEND
+    }
+    if mode_s.contains('w') {
+        flags |= 0x0200 | 0x0400; // O_CREAT | O_TRUNC
+    }
+    if mode_s.contains('x') {
+        flags |= 0x0200 | 0x0800; // O_CREAT | O_EXCL
+    }
+    MbValue::from_int(flags)
+}
+
 /// open(path, *pos_defaults, **kwargs) lowered through a single runtime helper
 /// so the merged kwargs mapping is evaluated once before open_ex reads it.
 pub fn mb_open_kwargs(
@@ -380,6 +402,23 @@ pub fn mb_open_kwargs(
     let errors = kw_or_default(kwargs, "errors", errors_default);
     let closefd = kw_or_default(kwargs, "closefd", closefd_default);
     mb_open_ex(path, mode, encoding, errors, closefd)
+}
+
+pub fn mb_open_with_opener(
+    path: MbValue,
+    mode: MbValue,
+    encoding: MbValue,
+    errors: MbValue,
+    closefd: MbValue,
+    opener: MbValue,
+) -> MbValue {
+    let real_path = if opener.is_none() {
+        path
+    } else {
+        let opener_args = MbValue::from_ptr(MbObject::new_list(vec![path, open_flags_for_mode(mode)]));
+        super::builtins::mb_call_spread(opener, opener_args)
+    };
+    mb_open_ex(real_path, mode, encoding, errors, closefd)
 }
 
 /// Extract a String from an MbValue str, or None for non-str / None.

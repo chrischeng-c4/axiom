@@ -2464,9 +2464,18 @@ fn mb_os_removedirs_v(args: &[MbValue]) -> MbValue {
 // ── Real file-descriptor table for os.open / write / read / lseek / close ──
 
 thread_local! {
-    static FD_TABLE: std::cell::RefCell<HashMap<i64, std::fs::File>> =
+    static FD_TABLE: std::cell::RefCell<HashMap<i64, OsFdFile>> =
         std::cell::RefCell::new(HashMap::new());
     static NEXT_FD: std::cell::Cell<i64> = std::cell::Cell::new(100);
+}
+
+struct OsFdFile {
+    file: std::fs::File,
+    path: String,
+}
+
+pub fn mb_os_fd_path(fd: i64) -> Option<String> {
+    FD_TABLE.with(|t| t.borrow().get(&fd).map(|entry| entry.path.clone()))
 }
 
 /// os.open(path, flags, mode=0o777) → int fd. Honors O_CREAT/O_WRONLY/O_RDWR/
@@ -2518,7 +2527,7 @@ fn mb_os_open_fd(args: &[MbValue]) -> MbValue {
                 c.set(v + 1);
                 v
             });
-            FD_TABLE.with(|t| t.borrow_mut().insert(fd, file));
+            FD_TABLE.with(|t| t.borrow_mut().insert(fd, OsFdFile { file, path: p }));
             MbValue::from_int(fd)
         }
         Err(e) => map_io_error(&e, &p),
@@ -2546,9 +2555,9 @@ fn mb_os_write_fd(args: &[MbValue]) -> MbValue {
     };
     let n = FD_TABLE.with(|t| {
         let mut tb = t.borrow_mut();
-        if let Some(file) = tb.get_mut(&fd) {
+        if let Some(entry) = tb.get_mut(&fd) {
             use std::io::Write;
-            file.write(&bytes).ok().map(|w| w as i64)
+            entry.file.write(&bytes).ok().map(|w| w as i64)
         } else {
             None
         }
@@ -2570,10 +2579,10 @@ fn mb_os_read_fd(args: &[MbValue]) -> MbValue {
     };
     let out = FD_TABLE.with(|t| {
         let mut tb = t.borrow_mut();
-        tb.get_mut(&fd).map(|file| {
+        tb.get_mut(&fd).map(|entry| {
             use std::io::Read;
             let mut buf = vec![0u8; n];
-            let read = file.read(&mut buf).unwrap_or(0);
+            let read = entry.file.read(&mut buf).unwrap_or(0);
             buf.truncate(read);
             buf
         })
@@ -2594,14 +2603,14 @@ fn mb_os_lseek_fd(args: &[MbValue]) -> MbValue {
     };
     let new_pos = FD_TABLE.with(|t| {
         let mut tb = t.borrow_mut();
-        tb.get_mut(&fd).and_then(|file| {
+        tb.get_mut(&fd).and_then(|entry| {
             use std::io::Seek;
             let whence = match how {
                 1 => std::io::SeekFrom::Current(pos),
                 2 => std::io::SeekFrom::End(pos),
                 _ => std::io::SeekFrom::Start(pos.max(0) as u64),
             };
-            file.seek(whence).ok().map(|p| p as i64)
+            entry.file.seek(whence).ok().map(|p| p as i64)
         })
     });
     MbValue::from_int(new_pos.unwrap_or(0))
