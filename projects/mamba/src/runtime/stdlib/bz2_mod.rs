@@ -208,6 +208,7 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
         &mode,
         kwargs_str(args, "encoding"),
         kwargs_str(args, "errors"),
+        kwargs_str(args, "newline"),
     )
 }
 
