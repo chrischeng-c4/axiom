@@ -422,7 +422,9 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
                                 "default_factory must be callable".to_string(),
                             )),
                         );
-                        unsafe { release_if_ptr(d); }
+                        unsafe {
+                            release_if_ptr(d);
+                        }
                         return;
                     }
                 }
@@ -760,15 +762,28 @@ fn resolve_default(f: &DcField, marker: Option<MbValue>) -> Option<(MbValue, boo
     None
 }
 
-/// The synthesized dataclass `__init__`: bind positional args to
-/// init-participating fields in declaration order, fill defaults /
-/// default_factory, forward InitVars to `__post_init__`, seed init=False
-/// fields from their defaults, then call `__post_init__` when defined.
-pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: MbValue) {
-    let Some(d) = lookup_dc(class_name) else {
-        return;
-    };
-    let args: Vec<MbValue> = args_list
+fn kwargs_from_trailing_dict(val: MbValue) -> Option<HashMap<String, MbValue>> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let guard = lock.read().unwrap();
+            if guard.is_empty() {
+                return None;
+            }
+            let mut out = HashMap::new();
+            for (k, v) in guard.iter() {
+                let Some(key) = k.as_str() else { return None };
+                out.insert(key.to_string(), *v);
+            }
+            Some(out)
+        } else {
+            None
+        }
+    }
+}
+
+fn split_init_call_args(args_list: MbValue) -> (Vec<MbValue>, HashMap<String, MbValue>) {
+    let mut args: Vec<MbValue> = args_list
         .as_ptr()
         .map(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
@@ -778,12 +793,66 @@ pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: 
             }
         })
         .unwrap_or_default();
+    let kwargs = args
+        .last()
+        .copied()
+        .and_then(kwargs_from_trailing_dict)
+        .unwrap_or_default();
+    if !kwargs.is_empty() {
+        args.pop();
+    }
+    (args, kwargs)
+}
+
+fn raise_dataclass_type_error(msg: String) {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg)),
+    );
+}
+
+/// The synthesized dataclass `__init__`: bind positional args to
+/// init-participating fields in declaration order, fill defaults /
+/// default_factory, forward InitVars to `__post_init__`, seed init=False
+/// fields from their defaults, then call `__post_init__` when defined.
+pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: MbValue) {
+    let Some(d) = lookup_dc(class_name) else {
+        return;
+    };
+    let (args, mut kwargs) = split_init_call_args(args_list);
+    let positional_capacity = d
+        .fields
+        .iter()
+        .filter(|f| !f.is_classvar && f.init && !f.kw_only)
+        .count();
+    if args.len() > positional_capacity {
+        raise_dataclass_type_error(format!(
+            "{class_name}.__init__() takes {positional_capacity} positional arguments but {} were given",
+            args.len(),
+        ));
+        return;
+    }
 
     let mut initvars: Vec<MbValue> = Vec::new();
     let mut pos = 0usize;
     for f in d.fields.iter().filter(|f| !f.is_classvar && f.init) {
-        let supplied = args.get(pos).copied();
-        pos += 1;
+        let supplied_pos = if !f.kw_only {
+            let v = args.get(pos).copied();
+            if v.is_some() {
+                pos += 1;
+            }
+            v
+        } else {
+            None
+        };
+        if supplied_pos.is_some() && kwargs.contains_key(&f.name) {
+            raise_dataclass_type_error(format!(
+                "{class_name}.__init__() got multiple values for argument '{}'",
+                f.name,
+            ));
+            return;
+        }
+        let supplied = supplied_pos.or_else(|| kwargs.remove(&f.name));
         let (val, owned) = match supplied {
             Some(v) if !is_field_marker(v) => (v, false),
             other => {
@@ -791,13 +860,15 @@ pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: 
                 match resolve_default(f, marker) {
                     Some(pair) => pair,
                     None => {
-                        super::super::exception::mb_raise(
-                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(format!(
-                                "{class_name}.__init__() missing required positional argument: '{}'",
-                                f.name,
-                            ))),
-                        );
+                        let kind = if f.kw_only {
+                            "keyword-only"
+                        } else {
+                            "positional"
+                        };
+                        raise_dataclass_type_error(format!(
+                            "{class_name}.__init__() missing required {kind} argument: '{}'",
+                            f.name,
+                        ));
                         return;
                     }
                 }
@@ -814,6 +885,12 @@ pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: 
                 }
             }
         }
+    }
+    if let Some(name) = kwargs.keys().next().cloned() {
+        raise_dataclass_type_error(format!(
+            "{class_name}.__init__() got an unexpected keyword argument '{name}'",
+        ));
+        return;
     }
 
     // init=False real fields still get their declared default / factory.
@@ -1237,6 +1314,8 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
 
     let new_inst = MbValue::from_ptr(MbObject::new_instance(name.clone()));
     let mut init_args: Vec<MbValue> = Vec::new();
+    let kw_args = super::super::dict_ops::mb_dict_new();
+    let mut has_kw_args = false;
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
@@ -1245,18 +1324,36 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
                     let v = change_of(&f.name)
                         .or_else(|| guard.get(&f.name).copied())
                         .unwrap_or_else(MbValue::none);
-                    // The temp args list owns one reference per element.
-                    retain_if_ptr(v);
-                    init_args.push(v);
+                    if f.kw_only {
+                        super::super::dict_ops::mb_dict_setitem(
+                            kw_args,
+                            MbValue::from_ptr(MbObject::new_str(f.name.clone())),
+                            v,
+                        );
+                        has_kw_args = true;
+                    } else {
+                        // The temp args list owns one reference per element.
+                        retain_if_ptr(v);
+                        init_args.push(v);
+                    }
                 }
             }
         }
+    }
+    if has_kw_args {
+        retain_if_ptr(kw_args);
+        init_args.push(kw_args);
     }
     let args_list = MbValue::from_ptr(MbObject::new_list(init_args));
     dc_run_synth_init(&name, new_inst, args_list);
     // Drop the temp args list (releases the element refs taken above).
     unsafe {
         release_if_ptr(args_list);
+    }
+    if has_kw_args {
+        unsafe {
+            release_if_ptr(kw_args);
+        }
     }
     new_inst
 }
@@ -1488,6 +1585,64 @@ mod tests {
         dc_run_synth_init("TInit", inst, args);
         assert_eq!(get_field(inst, "x").as_int(), Some(5));
         assert_eq!(get_field(inst, "y").as_int(), Some(9));
+    }
+
+    #[test]
+    fn test_synth_init_binds_kw_only_fields_from_keywords() {
+        cleanup_all_dataclasses();
+        register_test_class("TKwOnly");
+        record("TKwOnly", "a", "int", None);
+        record("TKwOnly", "b", "int", None);
+        decorate_class(
+            "TKwOnly",
+            DcOptions {
+                kw_only: true,
+                ..DcOptions::default()
+            },
+        );
+        let inst = MbValue::from_ptr(MbObject::new_instance("TKwOnly".to_string()));
+        let kwargs = super::super::super::dict_ops::mb_dict_new();
+        super::super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("a".to_string())),
+            MbValue::from_int(1),
+        );
+        super::super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("b".to_string())),
+            MbValue::from_int(2),
+        );
+        let args = MbValue::from_ptr(MbObject::new_list(vec![kwargs]));
+        dc_run_synth_init("TKwOnly", inst, args);
+        assert_eq!(get_field(inst, "a").as_int(), Some(1));
+        assert_eq!(get_field(inst, "b").as_int(), Some(2));
+    }
+
+    #[test]
+    fn test_synth_init_rejects_kw_only_positionals() {
+        cleanup_all_dataclasses();
+        super::super::super::exception::clear_current_exception();
+        register_test_class("TKwOnlyReject");
+        record("TKwOnlyReject", "a", "int", None);
+        record("TKwOnlyReject", "b", "int", None);
+        decorate_class(
+            "TKwOnlyReject",
+            DcOptions {
+                kw_only: true,
+                ..DcOptions::default()
+            },
+        );
+        let inst = MbValue::from_ptr(MbObject::new_instance("TKwOnlyReject".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
+        dc_run_synth_init("TKwOnlyReject", inst, args);
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
+        );
+        super::super::super::exception::clear_current_exception();
     }
 
     #[test]

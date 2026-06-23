@@ -3217,6 +3217,7 @@ impl<'a> AstLowerer<'a> {
             // class defines its own __init__ (pre-scan already
             // registered it).
             if dataclass_decorated && !self.func_param_info.contains_key(name) {
+                self.dataclasses_kwarg_idents.insert(name.to_string());
                 let mut params: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
                     Vec::new();
                 // Inherited dataclass init params first (single
@@ -5770,7 +5771,13 @@ impl<'a> AstLowerer<'a> {
                         None
                     };
                     if let Some(ref fname) = func_name {
-                        if let Some(param_info) = self.func_param_info.get(fname).cloned() {
+                        let param_info =
+                            if self.dataclasses_kwarg_idents.contains(fname.as_str()) {
+                                None
+                            } else {
+                                self.func_param_info.get(fname).cloned()
+                            };
+                        if let Some(param_info) = param_info {
                             // A `**mapping` splat has dynamic keys the static
                             // reorder below cannot bind (it only matches literal
                             // keyword names; the splat would be dropped). Route the
