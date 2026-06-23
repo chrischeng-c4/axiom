@@ -21,6 +21,14 @@ pub enum MethodDecorKind {
     CachedProperty,
 }
 
+fn method_decorator_marker_attr_name(name: &str) -> Option<&'static str> {
+    match name {
+        "override" => Some("__override__"),
+        "final" => Some("__final__"),
+        _ => None,
+    }
+}
+
 /// Mapping from Python builtin name to mb_* runtime extern name.
 fn builtin_extern_map() -> HashMap<&'static str, &'static str> {
     [
@@ -723,30 +731,44 @@ pub fn lower_hir_to_mir_with_symbols_src(
             MethodDecorKind,
             Option<SymbolId>,
             Option<SymbolId>,
+            Vec<&'static str>,
         )> = {
-            // Per-method: (name, sym, base_kind, is_setter_for, is_deleter_for)
+            // Per-method: (name, sym, base_kind, is_setter_for, is_deleter_for, marker_attrs)
             struct Raw {
                 sym: SymbolId,
                 kind: MethodDecorKind,
                 setter_target: Option<String>,
                 deleter_target: Option<String>,
+                marker_attrs: Vec<&'static str>,
             }
             impl Raw {
-                fn new(sym: SymbolId) -> Self {
+                fn new(sym: SymbolId, marker_attrs: Vec<&'static str>) -> Self {
                     Self {
                         sym,
                         kind: MethodDecorKind::None,
                         setter_target: None,
                         deleter_target: None,
+                        marker_attrs,
                     }
                 }
             }
             // Collect raw per-method info in declaration order.
             let mut raw: Vec<(String, Raw)> = Vec::new();
             for m in &cls.methods {
-                let name =
-                    sym_name_lookup(m.name).unwrap_or_else(|| format!("method_{}", m.name.0));
-                let mut r = Raw::new(m.name);
+                let name = sym_name_lookup(m.name)
+                    .unwrap_or_else(|| format!("method_{}", m.name.0));
+                let marker_attrs = m.decorators
+                    .iter()
+                    .filter_map(|dec| match dec {
+                        HirExpr::Var(dec_sym, _) => sym_name_lookup(*dec_sym)
+                            .and_then(|name| method_decorator_marker_attr_name(&name)),
+                        HirExpr::Attr { attr, .. } => {
+                            method_decorator_marker_attr_name(attr)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let mut r = Raw::new(m.name, marker_attrs);
                 for dec in &m.decorators {
                     match dec {
                         HirExpr::Var(dec_sym, _) => {
@@ -807,6 +829,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 MethodDecorKind,
                 Option<SymbolId>,
                 Option<SymbolId>,
+                Vec<&'static str>,
             )> = Vec::new();
             for (name, r) in &raw {
                 if r.setter_target.is_some() || r.deleter_target.is_some() {
@@ -823,7 +846,14 @@ pub fn lower_hir_to_mir_with_symbols_src(
                         deleter_sym = Some(other.sym);
                     }
                 }
-                out.push((name.clone(), r.sym, r.kind, setter_sym, deleter_sym));
+                out.push((
+                    name.clone(),
+                    r.sym,
+                    r.kind,
+                    setter_sym,
+                    deleter_sym,
+                    r.marker_attrs.clone(),
+                ));
             }
             out
         };
@@ -1050,7 +1080,7 @@ struct HirToMir<'a> {
     /// VReg of the caught exception inside an except handler body (for implicit chaining).
     active_except_vreg: Option<VReg>,
     /// Classes to register at the start of top-level code.
-    /// (class_name, all_base_names, [(method_name, method_symbol_id, decor_kind, setter_sym, deleter_sym)], match_args, metaclass, slots, class_kwargs)
+    /// (class_name, all_base_names, [(method_name, method_symbol_id, decor_kind, setter_sym, deleter_sym, marker_attrs)], match_args, metaclass, slots, class_kwargs)
     pending_classes: Vec<(
         String,
         Vec<String>,
@@ -1060,6 +1090,7 @@ struct HirToMir<'a> {
             MethodDecorKind,
             Option<SymbolId>,
             Option<SymbolId>,
+            Vec<&'static str>,
         )>,
         Vec<String>,
         Option<String>,
@@ -2128,7 +2159,7 @@ impl<'a> HirToMir<'a> {
             let any_ty = self.tcx.any();
             let mut name_vregs = Vec::new();
             let mut value_vregs = Vec::new();
-            for (method_name, method_sym, decor_kind, setter_sym, deleter_sym) in methods {
+            for (method_name, method_sym, decor_kind, setter_sym, deleter_sym, marker_attrs) in methods {
                 let name_vreg = self.emit_str_const(method_name);
                 name_vregs.push(name_vreg);
                 let addr_vreg = self.fresh_vreg();
@@ -2137,6 +2168,22 @@ impl<'a> HirToMir<'a> {
                     value: MirConst::FuncRef(*method_sym),
                     ty: self.tcx.int(),
                 });
+                for attr_name in marker_attrs {
+                    let attr_vreg = self.emit_str_const(attr_name);
+                    let true_vreg = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: true_vreg,
+                        value: MirConst::Bool(true),
+                        ty: self.tcx.bool(),
+                    });
+                    let true_boxed = self.box_operand(true_vreg, self.tcx.bool());
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: None,
+                        name: "mb_setattr".to_string(),
+                        args: vec![addr_vreg, attr_vreg, true_boxed],
+                        ty: self.tcx.none(),
+                    });
+                }
                 let wrapped = match decor_kind {
                     MethodDecorKind::None => addr_vreg,
                     MethodDecorKind::Property => {
