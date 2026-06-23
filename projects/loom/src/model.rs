@@ -223,6 +223,45 @@ impl WorkflowRun {
         matches!(self.status, RunStatus::Succeeded | RunStatus::Failed)
     }
 
+    /// Dynamic fan-out (#116, runtime stage-expand): after `parent` has
+    /// completed, splice in `children` (each gated on `parent`) and make every
+    /// node that depended on `parent` also wait for the new children — the
+    /// fan-in barrier grows at runtime. This turns a static `split → merge`
+    /// into `split → {c1..cN} → merge` once the split task knows N (e.g. a CSV
+    /// reader that discovers the chunk count). No-op if `parent` is unknown.
+    pub fn expand(&mut self, parent: &NodeId, mut children: Vec<Node>) {
+        if !self.nodes.contains_key(parent) || children.is_empty() {
+            return;
+        }
+        let child_ids: Vec<NodeId> = children.iter().map(|c| c.id.clone()).collect();
+        for c in &mut children {
+            c.deps.insert(parent.clone());
+            c.state = NodeState::Pending;
+        }
+        // Downstream dependents of `parent` now also gate on the children.
+        for node in self.nodes.values_mut() {
+            if node.deps.contains(parent) {
+                for cid in &child_ids {
+                    node.deps.insert(cid.clone());
+                }
+                if node.state == NodeState::Ready {
+                    node.state = NodeState::Pending;
+                }
+            }
+        }
+        for child in children {
+            self.add_node(child);
+        }
+        self.recompute_ready();
+        // Adding not-yet-done children un-finishes a run that mark_done had just
+        // marked Succeeded.
+        if self.nodes.values().any(|n| n.state == NodeState::Failed) {
+            self.status = RunStatus::Failed;
+        } else if !self.nodes.values().all(|n| n.state == NodeState::Done) {
+            self.status = RunStatus::Running;
+        }
+    }
+
     /// Promote `Pending` nodes whose deps are all `Done` to `Ready`.
     fn recompute_ready(&mut self) {
         let done: BTreeSet<NodeId> = self
@@ -322,5 +361,39 @@ mod tests {
         }
         assert_eq!(run.nodes[&a].state, NodeState::Failed);
         assert_eq!(run.status, RunStatus::Failed);
+    }
+
+    #[test]
+    fn dynamic_fan_out_expands_at_runtime() {
+        // static split → merge; split discovers 3 chunks at runtime.
+        let mut run = WorkflowRun::new(WorkflowRunId::new("dyn"));
+        run.add_node(node("split", "s0", &[]));
+        run.add_node(node("merge", "s2", &["split"]));
+
+        run.mark_done(&NodeId::new("split"), None);
+        // before expand, merge would be ready; we expand into 3 children first.
+        run.expand(
+            &NodeId::new("split"),
+            vec![
+                node("c0", "s1", &[]),
+                node("c1", "s1", &[]),
+                node("c2", "s1", &[]),
+            ],
+        );
+
+        // run is back to Running; the 3 children are ready, merge waits for them.
+        assert_eq!(run.status, RunStatus::Running);
+        let mut ready = run.ready_nodes();
+        ready.sort();
+        assert_eq!(ready, vec![NodeId::new("c0"), NodeId::new("c1"), NodeId::new("c2")]);
+        assert_eq!(run.nodes[&NodeId::new("merge")].state, NodeState::Pending);
+
+        // completing all children releases the merge barrier.
+        for c in ["c0", "c1", "c2"] {
+            run.mark_done(&NodeId::new(c), None);
+        }
+        assert_eq!(run.ready_nodes(), vec![NodeId::new("merge")]);
+        run.mark_done(&NodeId::new("merge"), None);
+        assert_eq!(run.status, RunStatus::Succeeded);
     }
 }

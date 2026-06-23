@@ -157,6 +157,7 @@ impl CompletionSink for RelayCompletionSink {
             attempt,
             result_ref: result_ref.map(|r| r.0),
             failed,
+            fan_out: Vec::new(),
         };
         let url = format!("{}/v1/{}/publish", self.base, self.subject);
         let body = serde_json::json!({
