@@ -2074,6 +2074,25 @@ fn literal_namedtuple_base_spec(expr: &ast::Expr) -> Option<NamedTupleBaseSpec> 
     })
 }
 
+fn is_typing_namedtuple_base(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(name) => name == "NamedTuple",
+        ast::Expr::Attr { attr, .. } => attr == "NamedTuple",
+        _ => false,
+    }
+}
+
+fn class_body_namedtuple_fields(body: &[Spanned<ast::Stmt>]) -> Vec<String> {
+    body.iter()
+        .filter_map(|stmt| match &stmt.node {
+            ast::Stmt::VarDecl { name, .. } | ast::Stmt::BareAnnotation { name, .. } => {
+                (!name.starts_with("__")).then(|| name.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// Is this class-body default value a `field(...)` / `dataclasses.field(...)`
 /// call carrying `init=False`? Such fields are excluded from the synthesized
 /// `__init__` parameter list (PEP 557).
@@ -3305,7 +3324,16 @@ impl<'a> AstLowerer<'a> {
             }
             cls.namedtuple_base = bases
                 .iter()
-                .find_map(|b| literal_namedtuple_base_spec(&b.node));
+                .find_map(|b| literal_namedtuple_base_spec(&b.node))
+                .or_else(|| {
+                    bases
+                        .iter()
+                        .any(|b| is_typing_namedtuple_base(&b.node))
+                        .then(|| NamedTupleBaseSpec {
+                            tuple_name: name.to_string(),
+                            fields: class_body_namedtuple_fields(body),
+                        })
+                });
             // Keep first base for backward compatibility
             cls.base = cls.all_bases.first().copied();
             cls.decorators = decorators
