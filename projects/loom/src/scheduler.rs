@@ -1,14 +1,14 @@
 //! Orchestration core (#106, #116): drive a [`WorkflowRun`]'s DAG by
 //! dispatching ready nodes and folding in completions.
 //!
-//! Backend-agnostic by design: dispatch goes through a [`Dispatcher`]
+//! Backend-agnostic by design: dispatch goes through an async [`Dispatcher`]
 //! (loom → relay publish) and completions are fed in (from relay acks). The
-//! real relay/keep HTTP/2 clients implement `Dispatcher`; tests and the
-//! in-process controller use [`MemDispatcher`]. This keeps loom's core logic
-//! testable with no broker, store, or cluster.
+//! real relay client ([`crate::relay_client::RelayDispatcher`]) implements
+//! `Dispatcher`; tests and the in-process controller use [`MemDispatcher`].
 
 use std::sync::Mutex;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{KeepRef, NodeId, RunStatus, WorkflowRun};
@@ -27,15 +27,22 @@ pub struct TaskMessage {
     pub runner: RunnerClass,
 }
 
+impl TaskMessage {
+    /// Idempotency key for the relay publish: stable per (run, node, attempt).
+    pub fn message_id(&self) -> String {
+        format!("{}:{}:{}", self.run_id, self.node_id, self.attempt)
+    }
+}
+
 /// loom → relay publish. Shared (`&self`) so the control plane can hold one
-/// behind an `Arc`; the production impl is an HTTP/2 relay client, tests use
-/// [`MemDispatcher`].
+/// behind an `Arc`; async because the production impl is an HTTP/2 relay client.
+#[async_trait]
 pub trait Dispatcher: Send + Sync {
-    fn dispatch(&self, route: &str, msg: TaskMessage) -> anyhow::Result<()>;
+    async fn dispatch(&self, route: &str, msg: TaskMessage) -> anyhow::Result<()>;
 }
 
 /// In-memory dispatcher: records every published message. The dev/test backend
-/// and the default for `loom controller` until the relay client lands.
+/// and the default for `loom controller` until the relay client is wired.
 #[derive(Default)]
 pub struct MemDispatcher {
     sent: Mutex<Vec<(String, TaskMessage)>>,
@@ -51,8 +58,9 @@ impl MemDispatcher {
     }
 }
 
+#[async_trait]
 impl Dispatcher for MemDispatcher {
-    fn dispatch(&self, route: &str, msg: TaskMessage) -> anyhow::Result<()> {
+    async fn dispatch(&self, route: &str, msg: TaskMessage) -> anyhow::Result<()> {
         self.sent.lock().unwrap().push((route.to_string(), msg));
         Ok(())
     }
@@ -66,9 +74,11 @@ pub enum Completion {
 }
 
 /// Publish every currently-ready node of `run` to `dispatcher` (routed by its
-/// runner class) and mark it dispatched. Returns the number dispatched. This is
-/// the single step both submit and completion-handling call.
-pub fn dispatch_ready(run: &mut WorkflowRun, dispatcher: &dyn Dispatcher) -> anyhow::Result<usize> {
+/// runner class) and mark it dispatched. Returns the number dispatched.
+pub async fn dispatch_ready(
+    run: &mut WorkflowRun,
+    dispatcher: &dyn Dispatcher,
+) -> anyhow::Result<usize> {
     let ready = run.ready_nodes();
     for id in &ready {
         let node = &run.nodes[id];
@@ -81,14 +91,14 @@ pub fn dispatch_ready(run: &mut WorkflowRun, dispatcher: &dyn Dispatcher) -> any
             input_refs: node.task.input_refs.clone(),
             runner: node.task.runner,
         };
-        dispatcher.dispatch(node.task.runner.relay_route(), msg)?;
+        dispatcher.dispatch(node.task.runner.relay_route(), msg).await?;
         run.mark_dispatched(id);
     }
     Ok(ready.len())
 }
 
 /// Fold a completion into `run`, then dispatch any newly-ready nodes.
-pub fn apply_completion(
+pub async fn apply_completion(
     run: &mut WorkflowRun,
     dispatcher: &dyn Dispatcher,
     completion: Completion,
@@ -97,7 +107,7 @@ pub fn apply_completion(
         Completion::Ok { node, result } => run.mark_done(&node, result),
         Completion::Failed { node } => run.mark_failed(&node),
     }
-    dispatch_ready(run, dispatcher)
+    dispatch_ready(run, dispatcher).await
 }
 
 /// Owns a run + a dispatcher and drives it forward (a standalone driver; the
@@ -107,15 +117,15 @@ pub struct Scheduler<D: Dispatcher> {
     dispatcher: D,
 }
 
-impl<D: Dispatcher> Scheduler<D> {
+impl<D: Dispatcher + 'static> Scheduler<D> {
     pub fn new(run: WorkflowRun, dispatcher: D) -> Self {
         Self { run, dispatcher }
     }
-    pub fn tick(&mut self) -> anyhow::Result<usize> {
-        dispatch_ready(&mut self.run, &self.dispatcher)
+    pub async fn tick(&mut self) -> anyhow::Result<usize> {
+        dispatch_ready(&mut self.run, &self.dispatcher).await
     }
-    pub fn on_completion(&mut self, completion: Completion) -> anyhow::Result<usize> {
-        apply_completion(&mut self.run, &self.dispatcher, completion)
+    pub async fn on_completion(&mut self, completion: Completion) -> anyhow::Result<usize> {
+        apply_completion(&mut self.run, &self.dispatcher, completion).await
     }
     pub fn status(&self) -> RunStatus {
         self.run.status
@@ -149,39 +159,39 @@ mod tests {
         run
     }
 
-    #[test]
-    fn drives_diamond_dag_to_completion() {
+    #[tokio::test]
+    async fn drives_diamond_dag_to_completion() {
         let mut sched = Scheduler::new(diamond(), MemDispatcher::new());
-        assert_eq!(sched.tick().unwrap(), 1);
+        assert_eq!(sched.tick().await.unwrap(), 1);
         assert_eq!(
-            sched.on_completion(Completion::Ok { node: NodeId::new("A"), result: Some(KeepRef("k/A".into())) }).unwrap(),
+            sched.on_completion(Completion::Ok { node: NodeId::new("A"), result: Some(KeepRef("k/A".into())) }).await.unwrap(),
             2
         );
-        assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("B"), result: None }).unwrap(), 0);
-        assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("C"), result: None }).unwrap(), 1);
-        assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("D"), result: None }).unwrap(), 0);
+        assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("B"), result: None }).await.unwrap(), 0);
+        assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("C"), result: None }).await.unwrap(), 1);
+        assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("D"), result: None }).await.unwrap(), 0);
         assert_eq!(sched.status(), RunStatus::Succeeded);
         assert!(sched.is_complete());
     }
 
-    #[test]
-    fn dispatch_carries_route_and_identity() {
+    #[tokio::test]
+    async fn dispatch_carries_route_and_identity() {
         let mut sched = Scheduler::new(diamond(), MemDispatcher::new());
-        sched.tick().unwrap();
+        sched.tick().await.unwrap();
         let sent = sched.dispatcher.sent();
         let (route, msg) = &sent[0];
         assert_eq!(route, "resident");
         assert_eq!(msg.run_id, "run-1");
         assert_eq!(msg.node_id, "A");
         assert_eq!(msg.attempt, 1);
-        assert_eq!(msg.task_name, "task-A");
+        assert_eq!(msg.message_id(), "run-1:A:1");
     }
 
-    #[test]
-    fn failed_node_is_redispatched_within_attempts() {
+    #[tokio::test]
+    async fn failed_node_is_redispatched_within_attempts() {
         let mut sched = Scheduler::new(diamond(), MemDispatcher::new());
-        sched.tick().unwrap();
-        assert_eq!(sched.on_completion(Completion::Failed { node: NodeId::new("A") }).unwrap(), 1);
+        sched.tick().await.unwrap();
+        assert_eq!(sched.on_completion(Completion::Failed { node: NodeId::new("A") }).await.unwrap(), 1);
         assert_eq!(sched.status(), RunStatus::Running);
         assert_eq!(sched.dispatcher.sent().last().unwrap().1.attempt, 2);
     }

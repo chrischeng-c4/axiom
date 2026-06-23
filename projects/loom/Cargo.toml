@@ -27,3 +27,6 @@ tower = { workspace = true, features = ["util"] }
 # axum::serve alone is HTTP/1-only. (Same as keep/lumen.)
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
+async-trait = { workspace = true }
+# relay/keep clients (h2c, no TLS — same as lumen's relay client).
+reqwest = { workspace = true }
