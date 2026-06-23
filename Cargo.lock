@@ -6136,11 +6136,15 @@ name = "loom"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "axum 0.8.9",
  "chrono",
  "clap",
+ "hyper 1.9.0",
+ "hyper-util",
  "serde",
  "serde_json",
  "tokio",
+ "tower 0.5.3",
 ]
 
 [[package]]
