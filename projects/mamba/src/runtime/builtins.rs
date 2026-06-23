@@ -5768,6 +5768,19 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             super::stdlib::collections_mod::ordereddict_repr(val),
                         ));
                     }
+                    if class_name == "mappingproxy" {
+                        let mapping = fields.read().unwrap().get("_mapping").copied();
+                        if let Some(mapping) = mapping {
+                            let inner = mb_repr(mapping);
+                            if let Some(ip) = inner.as_ptr() {
+                                if let ObjData::Str(ref s) = (*ip).data {
+                                    return MbValue::from_ptr(MbObject::new_str(
+                                        format!("mappingproxy({s})"),
+                                    ));
+                                }
+                            }
+                        }
+                    }
                     // re.Match / re.Pattern CPython-style repr. (#1642)
                     if class_name == "re.Match" {
                         return MbValue::from_ptr(MbObject::new_str(
@@ -8190,6 +8203,32 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             "dict" => Some(super::dict_ops::mb_dict_from_pairs(arg0)),
                             "set" => Some(mb_set_from_iterable(arg0)),
                             "frozenset" => Some(mb_frozenset_new(arg0)),
+                            "mappingproxy" => {
+                                if items.len() != 1 {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "mappingproxy() takes exactly one argument".to_string(),
+                                        )),
+                                    );
+                                    Some(MbValue::none())
+                                } else {
+                                    let mut fields = rustc_hash::FxHashMap::default();
+                                    super::rc::retain_if_ptr(items[0]);
+                                    fields.insert("_mapping".to_string(), items[0]);
+                                    let obj = Box::new(MbObject {
+                                        header: super::rc::MbObjectHeader {
+                                            rc: std::sync::atomic::AtomicU32::new(1),
+                                            kind: super::rc::ObjKind::Instance,
+                                        },
+                                        data: ObjData::Instance {
+                                            class_name: "mappingproxy".to_string(),
+                                            fields: crate::runtime::rc::MbRwLock::new(fields),
+                                        },
+                                    });
+                                    Some(MbValue::from_ptr(Box::into_raw(obj)))
+                                }
+                            }
                             "complex" => Some(mb_complex(
                                 items
                                     .first()

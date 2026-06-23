@@ -100,12 +100,16 @@ unsafe extern "C" fn dispatch_deque_new(args_ptr: *const MbValue, nargs: usize) 
     if maxlen.is_none() {
         maxlen = a.get(1).and_then(|v| v.as_int());
     }
-    // Collect initial data
+    // Collect initial data through the shared iterable path so deque(zip(...))
+    // and deque(generator) consume values just like list(iterable).
     let mut data: Vec<MbValue> = Vec::new();
-    if let Some(ptr) = initial.as_ptr() {
-        unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                data = lock.read().unwrap().to_vec();
+    if !initial.is_none() {
+        let collected = super::super::list_ops::mb_list_from_iterable(initial);
+        if let Some(ptr) = collected.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    data = lock.read().unwrap().to_vec();
+                }
             }
         }
     }
@@ -117,7 +121,7 @@ unsafe extern "C" fn dispatch_deque_new(args_ptr: *const MbValue, nargs: usize) 
         }
     }
     // Build Instance
-    let items_list = MbValue::from_ptr(MbObject::new_list(data));
+    let items_list = MbValue::from_ptr(MbObject::new_list_borrowed(data));
     let mut fields = FxHashMap::default();
     fields.insert("_items".into(), items_list);
     fields.insert(
