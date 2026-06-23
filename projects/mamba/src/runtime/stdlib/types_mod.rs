@@ -36,12 +36,12 @@
 //!     rather than a wrapped dict.
 //!   - `DynamicClassAttribute`: descriptor stub. Decoration semantics
 //!     (the actual __get__ protocol) are not yet implemented.
-//!   - `new_class(name, bases=(), kwds=None, exec_body=None)`: returns a
-//!     type stub bearing `name`. The bases tuple is accepted positionally
-//!     but ignored; `kwds` / `exec_body` are not threaded into the
-//!     resulting class body.
-//!   - `prepare_class(name, bases, kwds)`: returns `(None, {}, {})`
-//!     unconditionally — the metaclass-resolution path is not modeled.
+//!   - `new_class(name, bases=(), kwds=None, exec_body=None)`: routes simple
+//!     class construction through `type(name, bases, ns)`, while explicit
+//!     metaclasses are handled by the runtime metaclass call path.
+//!   - `prepare_class(name, bases, kwds)`: models the common metaclass
+//!     selection path and calls `__prepare__` when the chosen metaclass
+//!     defines it; conflict diagnostics remain simplified.
 //!   - `resolve_bases(bases)`: identity function (real implementation
 //!     unwraps `__mro_entries__`).
 //!   - `get_original_bases(cls)`: returns an empty tuple — the
@@ -120,7 +120,13 @@ unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) 
     }
     mb_types_new_class_impl(name, bases, exec_body)
 }
-dispatch_unary!(dispatch_prepare_class, mb_types_prepare_class);
+unsafe extern "C" fn dispatch_prepare_class(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let name = a.first().copied().unwrap_or_else(MbValue::none);
+    let bases = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let kwds = a.get(2).copied().unwrap_or_else(MbValue::none);
+    mb_types_prepare_class_impl(name, bases, kwds)
+}
 dispatch_unary!(dispatch_resolve_bases, mb_types_resolve_bases);
 dispatch_unary!(dispatch_coroutine, mb_types_coroutine);
 dispatch_unary!(dispatch_get_original_bases, mb_types_get_original_bases);
@@ -448,15 +454,122 @@ pub fn mb_types_new_class(name: MbValue) -> MbValue {
     mb_types_new_class_impl(name, MbValue::none(), MbValue::none())
 }
 
-/// types.prepare_class(name, bases, kwds) -> (meta, ns, kwds)
-///
-/// Returns `(None, {}, {})` — metaclass resolution is not modeled.
-pub fn mb_types_prepare_class(_name: MbValue) -> MbValue {
+fn dict_get_str(dict: MbValue, key: &str) -> Option<MbValue> {
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let found = super::super::dict_ops::mb_dict_get(
+        dict,
+        MbValue::from_ptr(MbObject::new_str(key.to_string())),
+        sentinel,
+    );
+    if found.to_bits() == sentinel.to_bits() {
+        None
+    } else {
+        Some(found)
+    }
+}
+
+fn dict_without_metaclass(kwds: MbValue, had_metaclass: bool) -> MbValue {
+    let remaining = if kwds.as_ptr().map_or(false, |p| unsafe {
+        matches!(&(*p).data, ObjData::Dict(_))
+    }) {
+        super::super::dict_ops::mb_dict_copy(kwds)
+    } else {
+        MbValue::from_ptr(MbObject::new_dict())
+    };
+    if had_metaclass {
+        super::super::dict_ops::mb_dict_delitem(
+            remaining,
+            MbValue::from_ptr(MbObject::new_str("metaclass".to_string())),
+        );
+    }
+    remaining
+}
+
+fn normalized_bases_tuple(bases: MbValue) -> MbValue {
+    if bases.is_none() {
+        MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
+    } else {
+        bases
+    }
+}
+
+fn base_metaclass_name(base: MbValue) -> Option<String> {
+    if let Some(class_name) = super::super::class::resolve_class_name(base) {
+        return super::super::class::class_metaclass_name(&class_name)
+            .or_else(|| Some("type".to_string()));
+    }
+    base.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { class_name, .. } = &(*ptr).data {
+            if super::super::class::class_is_registered(class_name) {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    })
+}
+
+fn most_derived_base_metaclass(bases: MbValue) -> Option<String> {
+    bases.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Tuple(items) = &(*ptr).data {
+            items.iter().find_map(|base| {
+                let meta = base_metaclass_name(*base)?;
+                if meta == "type" { None } else { Some(meta) }
+            })
+        } else {
+            None
+        }
+    })
+}
+
+fn metaclass_value(name: &str) -> MbValue {
+    if name == "type" {
+        super::super::builtins::make_type_object("type")
+    } else {
+        MbValue::from_ptr(MbObject::new_str(name.to_string()))
+    }
+}
+
+fn prepare_namespace(meta_name: &str, name: MbValue, bases: MbValue) -> MbValue {
+    let prepare = super::super::class::lookup_method(meta_name, "__prepare__");
+    if prepare.is_none() {
+        return MbValue::from_ptr(MbObject::new_dict());
+    }
+    let args = MbValue::from_ptr(MbObject::new_list(vec![name, bases]));
+    let ns = super::super::builtins::mb_call_spread(prepare, args);
+    if ns.is_none() {
+        MbValue::from_ptr(MbObject::new_dict())
+    } else {
+        ns
+    }
+}
+
+fn mb_types_prepare_class_impl(name: MbValue, bases: MbValue, kwds: MbValue) -> MbValue {
+    let bases = normalized_bases_tuple(bases);
+    let explicit_meta = dict_get_str(kwds, "metaclass");
+    let explicit_meta_name = explicit_meta
+        .and_then(super::super::class::resolve_class_name);
+    let base_meta_name = most_derived_base_metaclass(bases);
+    let meta_name = match (explicit_meta_name, base_meta_name) {
+        (Some(explicit), Some(base)) if explicit == "type" => base,
+        (Some(explicit), _) => explicit,
+        (None, Some(base)) => base,
+        (None, None) => "type".to_string(),
+    };
+    let ns = prepare_namespace(&meta_name, name, bases);
+    let remaining = dict_without_metaclass(kwds, explicit_meta.is_some());
     MbValue::from_ptr(MbObject::new_tuple(vec![
-        MbValue::none(),
-        MbValue::from_ptr(MbObject::new_dict()),
-        MbValue::from_ptr(MbObject::new_dict()),
+        metaclass_value(&meta_name),
+        ns,
+        remaining,
     ]))
+}
+
+/// types.prepare_class(name, bases, kwds) -> (meta, ns, kwds)
+pub fn mb_types_prepare_class(_name: MbValue) -> MbValue {
+    mb_types_prepare_class_impl(_name, MbValue::none(), MbValue::none())
 }
 
 /// True if `v` is a class (a registered class-name string or a `type` object),
