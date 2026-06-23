@@ -1197,7 +1197,15 @@ pub fn special_form_subscript(name: &str, key: MbValue) -> MbValue {
             )
         }
         "Callable" => {
-            let origin = special_form("Callable");
+            let origin = super::super::module::mb_module_getattr(
+                new_str_v("collections.abc"),
+                new_str_v("Callable"),
+            );
+            let origin = if origin.is_none() {
+                super::super::builtins::make_type_object("Callable")
+            } else {
+                origin
+            };
             make_alias("generic", origin, items, Some("typing.Callable"), None)
         }
         _ => {
@@ -1268,6 +1276,9 @@ pub fn pep585_subscript(type_obj: MbValue, key: MbValue) -> MbValue {
 
 /// typing.get_origin(tp)
 pub fn mb_typing_get_origin(tp: MbValue) -> MbValue {
+    if instance_class_of(tp).as_deref() == Some("UnionType") {
+        return super::super::builtins::make_type_object("UnionType");
+    }
     match alias_kind(tp).as_deref() {
         Some("union") => special_form("Union"),
         Some("annotated") => special_form("Annotated"),
