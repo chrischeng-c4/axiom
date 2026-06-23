@@ -180,6 +180,23 @@ disp_unary!(d_runtime_checkable, mb_typing_runtime_checkable);
 disp_binary!(d_assert_type, mb_typing_assert_type);
 disp_unary!(d_is_typeddict, mb_typing_is_typeddict);
 
+unsafe extern "C" fn d_overload(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::from_func(d_overload_dummy as *const () as usize)
+}
+
+unsafe extern "C" fn d_overload_dummy(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("NotImplementedError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "You should not call an overloaded function. A series of @overload-decorated \
+             functions outside a stub module should always be followed by an implementation \
+             that is not @overload-ed."
+                .to_string(),
+        )),
+    );
+    MbValue::none()
+}
+
 /// Register the typing module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -290,6 +307,14 @@ pub fn register() {
     });
     attrs.insert("override".to_string(), MbValue::from_func(override_addr));
     attrs.insert("final".to_string(), MbValue::from_func(final_addr));
+    let overload_addr = d_overload as *const () as usize;
+    let overload_dummy_addr = d_overload_dummy as *const () as usize;
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        let mut set = s.borrow_mut();
+        set.insert(overload_addr as u64);
+        set.insert(overload_dummy_addr as u64);
+    });
+    attrs.insert("overload".to_string(), MbValue::from_func(overload_addr));
     // runtime_checkable marks its Protocol class so isinstance() does
     // structural matching against it (then returns the class unchanged).
     let rc_addr = d_runtime_checkable as *const () as usize;
