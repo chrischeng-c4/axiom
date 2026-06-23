@@ -16,6 +16,7 @@
 
 pub mod model;
 pub mod runner;
+pub mod scheduler;
 
 pub mod controller;
 pub mod worker;
