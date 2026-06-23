@@ -8,9 +8,11 @@
 //! is plaintext h2c, so no TLS is linked.
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::scheduler::{Dispatcher, TaskMessage};
+use crate::model::KeepRef;
+use crate::scheduler::{CompletionMsg, Dispatcher, TaskMessage};
+use crate::worker::{CompletionSink, LeasedTask, RelayConsumer};
 
 /// Publishes node dispatches to a relay broker over h2c.
 pub struct RelayDispatcher {
@@ -51,10 +53,129 @@ impl Dispatcher for RelayDispatcher {
     }
 }
 
+/// A relay work-queue consumer bound to one subject, over h2c. Implements the
+/// worker's [`RelayConsumer`]: `lease` returns the task body (#166), `ack`
+/// completes it.
+pub struct RelayWorkConsumer {
+    client: reqwest::Client,
+    base: String,
+    subject: String,
+}
+
+#[derive(Deserialize)]
+struct LeaseResp {
+    lease: Option<LeaseInfo>,
+    #[serde(default)]
+    entry: Option<EntryInfo>,
+}
+#[derive(Deserialize)]
+struct LeaseInfo {
+    lease_id: String,
+    epoch: u64,
+}
+#[derive(Deserialize)]
+struct EntryInfo {
+    payload: serde_json::Value,
+}
+
+impl RelayWorkConsumer {
+    pub fn new(base: impl Into<String>, subject: impl Into<String>) -> anyhow::Result<Self> {
+        Ok(Self {
+            client: reqwest::Client::builder().http2_prior_knowledge().build()?,
+            base: base.into(),
+            subject: subject.into(),
+        })
+    }
+}
+
+#[async_trait]
+impl RelayConsumer for RelayWorkConsumer {
+    async fn lease(&self, consumer_id: &str) -> anyhow::Result<Option<LeasedTask>> {
+        let url = format!("{}/v1/{}/lease", self.base, self.subject);
+        let resp = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({ "consumer_id": consumer_id }))
+            .send()
+            .await?;
+        anyhow::ensure!(resp.status().is_success(), "relay lease: {}", resp.status());
+        let lr: LeaseResp = resp.json().await?;
+        match (lr.lease, lr.entry) {
+            (Some(l), Some(e)) => {
+                let message: TaskMessage = serde_json::from_value(e.payload)
+                    .map_err(|err| anyhow::anyhow!("leased payload is not a loom TaskMessage: {err}"))?;
+                Ok(Some(LeasedTask { lease_id: l.lease_id, epoch: l.epoch, message }))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    async fn ack(&self, lease_id: &str, epoch: u64) -> anyhow::Result<()> {
+        let url = format!("{}/v1/{}/ack", self.base, self.subject);
+        let resp = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({ "lease_id": lease_id, "epoch": epoch }))
+            .send()
+            .await?;
+        anyhow::ensure!(resp.status().is_success(), "relay ack: {}", resp.status());
+        Ok(())
+    }
+}
+
+/// Publishes worker completions to a relay subject the controller consumes,
+/// closing the loop (`done == N → next-node` is loom's job, not relay's).
+pub struct RelayCompletionSink {
+    client: reqwest::Client,
+    base: String,
+    subject: String,
+}
+
+impl RelayCompletionSink {
+    pub fn new(base: impl Into<String>, subject: impl Into<String>) -> anyhow::Result<Self> {
+        Ok(Self {
+            client: reqwest::Client::builder().http2_prior_knowledge().build()?,
+            base: base.into(),
+            subject: subject.into(),
+        })
+    }
+}
+
+#[async_trait]
+impl CompletionSink for RelayCompletionSink {
+    async fn report(
+        &self,
+        run_id: &str,
+        node_id: &str,
+        attempt: u32,
+        result_ref: Option<KeepRef>,
+        failed: bool,
+    ) -> anyhow::Result<()> {
+        let msg = CompletionMsg {
+            run_id: run_id.to_string(),
+            node_id: node_id.to_string(),
+            attempt,
+            result_ref: result_ref.map(|r| r.0),
+            failed,
+        };
+        let url = format!("{}/v1/{}/publish", self.base, self.subject);
+        let body = serde_json::json!({
+            "message_id": format!("{run_id}:{node_id}:{attempt}:done"),
+            "payload": msg,
+        });
+        let resp = self.client.post(&url).json(&body).send().await?;
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "relay completion publish: {}",
+            resp.status()
+        );
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::KeepRef;
     use crate::runner::RunnerClass;
 
     fn msg() -> TaskMessage {
