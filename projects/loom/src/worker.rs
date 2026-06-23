@@ -16,7 +16,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::model::KeepRef;
-use crate::scheduler::TaskMessage;
+use crate::scheduler::{FanOutSpec, TaskMessage};
 
 /// A leased task as the worker needs it — the #166 contract: a lease carries the
 /// message identity and the payload, not just a position.
@@ -44,7 +44,8 @@ pub trait KeepStore: Send + Sync {
 }
 
 /// Where the worker reports a finished node so loom can advance the DAG (a relay
-/// publish to a completions subject loom subscribes).
+/// publish to a completions subject loom subscribes). `fan_out` carries any
+/// runtime children the task requested (#116).
 #[async_trait]
 pub trait CompletionSink: Send + Sync {
     async fn report(
@@ -54,13 +55,28 @@ pub trait CompletionSink: Send + Sync {
         attempt: u32,
         result_ref: Option<KeepRef>,
         failed: bool,
+        fan_out: &[FanOutSpec],
     ) -> anyhow::Result<()>;
 }
 
-/// A task handler: fetched input bytes → result bytes. A polyglot worker
-/// dispatches to the user's code/image; the Rust reference worker registers
-/// handlers here by task name.
-pub type Handler = Arc<dyn Fn(Vec<u8>) -> anyhow::Result<Vec<u8>> + Send + Sync>;
+/// What a handler produces: result bytes plus any runtime fan-out children
+/// (#116) — e.g. a CSV reader emits one child per chunk it discovers.
+#[derive(Debug, Default, Clone)]
+pub struct TaskOutput {
+    pub result: Vec<u8>,
+    pub fan_out: Vec<FanOutSpec>,
+}
+
+impl From<Vec<u8>> for TaskOutput {
+    fn from(result: Vec<u8>) -> Self {
+        Self { result, fan_out: Vec::new() }
+    }
+}
+
+/// A task handler: fetched input bytes → [`TaskOutput`] (result + optional
+/// fan-out). A polyglot worker dispatches to the user's code/image; the Rust
+/// reference worker registers handlers here by task name.
+pub type Handler = Arc<dyn Fn(Vec<u8>) -> anyhow::Result<TaskOutput> + Send + Sync>;
 
 /// task_name → handler.
 #[derive(Default, Clone)]
@@ -108,18 +124,25 @@ pub async fn run_once(
     };
 
     match outcome {
-        Ok(result) => {
+        Ok(out) => {
             let result_id = format!("{}:{}:result", m.run_id, m.node_id);
-            keep.put_result(&result_id, result).await?;
+            keep.put_result(&result_id, out.result).await?;
             consumer.ack(&task.lease_id, task.epoch).await?;
-            sink.report(&m.run_id, &m.node_id, m.attempt, Some(KeepRef(result_id)), false)
-                .await?;
+            sink.report(
+                &m.run_id,
+                &m.node_id,
+                m.attempt,
+                Some(KeepRef(result_id)),
+                false,
+                &out.fan_out,
+            )
+            .await?;
         }
         Err(_) => {
             // Release the lease and let loom decide retry-or-fail (loom owns the
             // DAG + retry policy; it re-dispatches a fresh attempt).
             consumer.ack(&task.lease_id, task.epoch).await?;
-            sink.report(&m.run_id, &m.node_id, m.attempt, None, true).await?;
+            sink.report(&m.run_id, &m.node_id, m.attempt, None, true, &[]).await?;
         }
     }
     Ok(true)
@@ -142,7 +165,26 @@ pub fn run() -> anyhow::Result<()> {
         let keep = crate::keep_client::KeepHttp::new(&keep_base)?;
         let sink = crate::relay_client::RelayCompletionSink::new(&relay, "loom.completions")?;
         let mut registry = Registry::new();
-        registry.register("echo", Arc::new(|input: Vec<u8>| Ok(input)));
+        registry.register("echo", Arc::new(|input: Vec<u8>| Ok(input.into())));
+        // demo: `split` reads its input as a chunk count and fans out one `echo`
+        // child per chunk at runtime (#116) — the shape a CSV reader uses (#111).
+        registry.register(
+            "split",
+            Arc::new(|input: Vec<u8>| {
+                let n: usize = std::str::from_utf8(&input)
+                    .ok()
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(3);
+                let fan_out = (0..n)
+                    .map(|i| FanOutSpec {
+                        id: format!("chunk-{i}"),
+                        task_name: "echo".to_string(),
+                        input_refs: Vec::new(),
+                    })
+                    .collect();
+                Ok(TaskOutput { result: Vec::new(), fan_out })
+            }),
+        );
 
         eprintln!("loom worker: leasing `{subject}` from relay {relay}, keep {keep_base}");
         loop {
@@ -213,7 +255,7 @@ mod tests {
 
     #[derive(Default)]
     struct FakeSink {
-        reports: Mutex<Vec<(String, bool)>>,
+        reports: Mutex<Vec<(String, bool, usize)>>,
     }
     #[async_trait]
     impl CompletionSink for FakeSink {
@@ -224,15 +266,16 @@ mod tests {
             _attempt: u32,
             _result: Option<KeepRef>,
             failed: bool,
+            fan_out: &[FanOutSpec],
         ) -> anyhow::Result<()> {
-            self.reports.lock().unwrap().push((node.to_string(), failed));
+            self.reports.lock().unwrap().push((node.to_string(), failed, fan_out.len()));
             Ok(())
         }
     }
 
     fn echo_registry() -> Registry {
         let mut r = Registry::new();
-        r.register("echo", Arc::new(|input: Vec<u8>| Ok(input)));
+        r.register("echo", Arc::new(|input: Vec<u8>| Ok(input.into())));
         r
     }
 
@@ -246,7 +289,29 @@ mod tests {
         assert!(did);
         assert_eq!(keep.results.lock().unwrap().get("r:n:result").unwrap(), b"hello");
         assert_eq!(consumer.acked.lock().unwrap().as_slice(), &[("L1".to_string(), 7)]);
-        assert_eq!(sink.reports.lock().unwrap().as_slice(), &[("n".to_string(), false)]);
+        assert_eq!(sink.reports.lock().unwrap().as_slice(), &[("n".to_string(), false, 0)]);
+    }
+
+    #[tokio::test]
+    async fn handler_fan_out_is_reported() {
+        let mut reg = Registry::new();
+        reg.register(
+            "split",
+            Arc::new(|_input: Vec<u8>| {
+                Ok(TaskOutput {
+                    result: Vec::new(),
+                    fan_out: vec![
+                        FanOutSpec { id: "c0".into(), task_name: "echo".into(), input_refs: vec![] },
+                        FanOutSpec { id: "c1".into(), task_name: "echo".into(), input_refs: vec![] },
+                    ],
+                })
+            }),
+        );
+        let consumer = FakeConsumer { next: Mutex::new(Some(task("split"))), ..Default::default() };
+        let sink = FakeSink::default();
+        run_once("w1", &consumer, &FakeKeep::default(), &sink, &reg).await.unwrap();
+        // the completion carries the 2 runtime children.
+        assert_eq!(sink.reports.lock().unwrap().as_slice(), &[("n".to_string(), false, 2)]);
     }
 
     #[tokio::test]
@@ -263,7 +328,7 @@ mod tests {
         let consumer = FakeConsumer { next: Mutex::new(Some(task("unknown"))), ..Default::default() };
         let sink = FakeSink::default();
         run_once("w1", &consumer, &FakeKeep::default(), &sink, &echo_registry()).await.unwrap();
-        assert_eq!(sink.reports.lock().unwrap().as_slice(), &[("n".to_string(), true)]);
+        assert_eq!(sink.reports.lock().unwrap().as_slice(), &[("n".to_string(), true, 0)]);
         // still acked (lease released) so loom drives retry.
         assert_eq!(consumer.acked.lock().unwrap().len(), 1);
     }
