@@ -30,3 +30,5 @@ hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
 async-trait = { workspace = true }
 # relay/keep clients (h2c, no TLS — same as lumen's relay client).
 reqwest = { workspace = true }
+# Shared Raft consensus engine for replicated workflow state (#110).
+raftcore = { path = "../../libs/raftcore" }
