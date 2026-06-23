@@ -18,6 +18,7 @@ pub mod model;
 pub mod runner;
 pub mod canvas;
 pub mod scheduler;
+pub mod store;
 
 pub mod controller;
 pub mod worker;
