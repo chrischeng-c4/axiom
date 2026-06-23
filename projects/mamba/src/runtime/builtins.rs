@@ -5080,6 +5080,22 @@ fn raise_if_not_iterable(args: MbValue) -> bool {
         ));
         return true;
     }
+    if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if !super::class::lookup_method(class_name, "__iter__").is_none() {
+                    return false;
+                }
+                let iter = super::iter::mb_iter(args);
+                if iter.is_none() {
+                    return true;
+                }
+                if super::iter::is_iter_handle(iter) {
+                    super::iter::mb_iter_release(iter);
+                }
+            }
+        }
+    }
     false
 }
 
