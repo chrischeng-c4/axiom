@@ -6832,6 +6832,28 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                 let is_class =
                     CLASS_REGISTRY.with(|r| r.borrow().contains_key(class_name.as_str()));
                 if is_class {
+                    if extract_str(attr).as_deref() == Some("__class__") {
+                        if let Some(meta_name) = resolve_class_name(value) {
+                            let is_meta_class =
+                                CLASS_REGISTRY.with(|r| r.borrow().contains_key(meta_name.as_str()));
+                            if is_meta_class {
+                                CLASS_REGISTRY.with(|reg| {
+                                    if let Some(cls) = reg.borrow_mut().get_mut(class_name.as_str()) {
+                                        cls.metaclass = Some(meta_name);
+                                    }
+                                });
+                                invalidate_method_cache();
+                                return;
+                            }
+                        }
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "__class__ must be set to a class".to_string(),
+                            )),
+                        );
+                        return;
+                    }
                     mb_class_set_class_attr(obj, attr, value);
                     return;
                 }
