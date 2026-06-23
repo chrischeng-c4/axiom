@@ -532,15 +532,65 @@ unsafe extern "C" fn d_suppress_ctor(args_ptr: *const MbValue, nargs: usize) -> 
 
 // ── contextlib.contextmanager — generator-driven context manager ──────────
 //
-// `@contextmanager` decorates a generator function. The decorator returns the
-// generator function unchanged, so the call-site arg/kwarg lowering (which
-// already knows the wrapped function's parameter names) forwards arguments
-// correctly and `cm(...)` produces a *generator handle*. The `with` lowering
-// then routes generator handles to `cm_gen_enter` / `cm_gen_exit` (hooked in
-// `mb_context_enter` / `mb_context_exit`), which drive the generator:
-//   __enter__: run the body to the first `yield`, return the yielded value.
-//   __exit__:  resume (or `throw` into) the generator, enforcing the CPython
-//              "generator didn't stop" / suppression / re-raise contract.
+// `@contextmanager` decorates a generator function. The decorator returns a
+// lightweight factory object; calling it forwards the original args to the
+// generator function and wraps the resulting generator handle in a
+// `_GeneratorContextManager`. The wrapper exposes `__enter__`/`__exit__` and
+// `ContextDecorator`-style `__call__`, matching CPython's dual with/decorator
+// surface while reusing the existing generator-driving helpers below.
+
+fn make_generator_context_manager(gen_handle: MbValue) -> MbValue {
+    let inst = MbValue::from_ptr(MbObject::new_instance(
+        "contextlib._GeneratorContextManager".to_string(),
+    ));
+    set_inst_field(inst, "_gen", gen_handle);
+    inst
+}
+
+fn split_trailing_kwargs(args_list: MbValue) -> (MbValue, MbValue) {
+    let mut args = items_of(args_list);
+    let kwargs = args
+        .last()
+        .copied()
+        .filter(|v| is_dict_value(*v))
+        .map(|kw| {
+            args.pop();
+            kw
+        })
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
+    (MbValue::from_ptr(MbObject::new_list(args)), kwargs)
+}
+
+/// `contextmanager(func)` factory instance call: `factory(*args)` -> GCM.
+extern "C" fn cm_factory_call(self_v: MbValue, args_list: MbValue) -> MbValue {
+    let func = inst_field(self_v, "_func").unwrap_or_else(MbValue::none);
+    let (pos_args, kwargs) = split_trailing_kwargs(args_list);
+    let gen = super::super::builtins::mb_call_spread_kwargs(func, pos_args, kwargs);
+    make_generator_context_manager(gen)
+}
+
+/// `_GeneratorContextManager.__enter__(self)`.
+extern "C" fn generator_cm_enter(self_v: MbValue) -> MbValue {
+    let gen = inst_field(self_v, "_gen").unwrap_or_else(MbValue::none);
+    cm_gen_enter(gen)
+}
+
+/// `_GeneratorContextManager.__exit__(self, exc_type, exc_val, exc_tb)`.
+extern "C" fn generator_cm_exit(
+    self_v: MbValue,
+    exc_type: MbValue,
+    exc_val: MbValue,
+    exc_tb: MbValue,
+) -> MbValue {
+    let gen = inst_field(self_v, "_gen").unwrap_or_else(MbValue::none);
+    let pending = if exc_val.is_none() { exc_type } else { exc_val };
+    cm_gen_exit(gen, pending, exc_val, exc_tb)
+}
+
+/// `_GeneratorContextManager.__call__(self, func)` decorator surface.
+extern "C" fn generator_cm_call(self_v: MbValue, func: MbValue) -> MbValue {
+    context_decorator_call(self_v, func)
+}
 
 /// Extract `(type_name, message)` from a pending-exception MbValue (an
 /// Instance whose `class_name` is the exception type and whose `message`
@@ -785,14 +835,15 @@ extern "C" fn context_decorator_call(self_v: MbValue, func: MbValue) -> MbValue 
 }
 
 /// `_cd_wrapper.__call__(self, *args)` → `with cm: return func(*args)`.
-/// Registered as a variadic method, so the second argument is the positional
-/// arg list.
+/// Registered as a variadic native method, so the runtime passes `(self,
+/// args_list)` for the wrapper call.
 extern "C" fn cd_wrapper_call(self_v: MbValue, args_list: MbValue) -> MbValue {
     let cm = inst_field(self_v, "_cm").unwrap_or_else(MbValue::none);
     let func = inst_field(self_v, "_func").unwrap_or_else(MbValue::none);
+    let (pos_args, kwargs) = split_trailing_kwargs(args_list);
 
     let _ = super::super::class::mb_context_enter(cm);
-    let result = super::super::builtins::mb_call_spread(func, args_list);
+    let result = super::super::builtins::mb_call_spread_kwargs(func, pos_args, kwargs);
 
     // Forward any exception state into __exit__ (mb_context_exit reads the
     // runtime exception slot itself).
@@ -893,6 +944,38 @@ pub fn register() {
             m,
         );
     }
+    // `@contextmanager` factory and generator context-manager wrapper.
+    {
+        let addr = cm_factory_call as usize;
+        super::super::module::register_variadic_func(addr as u64);
+        let mut m: HashMap<String, MbValue> = HashMap::new();
+        m.insert("__call__".to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register(
+            "contextlib._cm_factory",
+            vec!["object".to_string()],
+            m,
+        );
+    }
+    {
+        let mut m: HashMap<String, MbValue> = HashMap::new();
+        m.insert(
+            "__enter__".to_string(),
+            MbValue::from_func(generator_cm_enter as usize),
+        );
+        m.insert(
+            "__exit__".to_string(),
+            MbValue::from_func(generator_cm_exit as usize),
+        );
+        m.insert(
+            "__call__".to_string(),
+            MbValue::from_func(generator_cm_call as usize),
+        );
+        super::super::class::mb_class_register(
+            "contextlib._GeneratorContextManager",
+            vec!["object".to_string()],
+            m,
+        );
+    }
 
     let noop = d_noop as usize;
     let identity = d_identity as usize;
@@ -987,13 +1070,12 @@ pub fn mb_contextlib_nullcontext(value: MbValue) -> MbValue {
     }
 }
 
-/// contextlib.contextmanager — stub marker.
-///
-/// In CPython this is a decorator that turns a generator into a context manager.
-/// Here we return the function as-is since full generator support is pending.
+/// contextlib.contextmanager(func) -> factory object.
 pub fn mb_contextlib_contextmanager(func: MbValue) -> MbValue {
-    // Stub: return the function unchanged
-    func
+    let inst = MbValue::from_ptr(MbObject::new_instance("contextlib._cm_factory".to_string()));
+    unsafe { super::super::rc::retain_if_ptr(func); }
+    set_inst_field(inst, "_func", func);
+    inst
 }
 
 #[cfg(test)]
