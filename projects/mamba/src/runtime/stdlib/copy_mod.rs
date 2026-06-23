@@ -179,7 +179,7 @@ unsafe fn copy_instance(obj: MbValue, class_name: &str) -> MbValue {
         let empty = MbValue::from_ptr(MbObject::new_list(vec![]));
         return call_method(obj, "__copy__", empty);
     }
-    // 2. __reduce_ex__ / __reduce__ reconstruction.
+    // 2. copyreg / __reduce_ex__ / __reduce__ reconstruction.
     match reduce(obj, class_name) {
         ReduceOutcome::Identity => return return_identity(obj),
         ReduceOutcome::Tuple(rv) => {
@@ -224,6 +224,12 @@ unsafe fn copy_instance(obj: MbValue, class_name: &str) -> MbValue {
         if exception_pending() {
             return return_identity(obj);
         }
+    }
+    if own_new_requires_constructor_args(class_name) {
+        return raise_exc(
+            "TypeError",
+            &format!("{class_name}.__new__() missing required arguments"),
+        );
     }
     let fields = read_fields(obj);
     let new_inst = MbObject::new_instance(class_name.to_string());
@@ -576,7 +582,7 @@ unsafe fn deepcopy_instance(
         }
         return result;
     }
-    // 2. __reduce_ex__ / __reduce__ reconstruction.
+    // 2. copyreg / __reduce_ex__ / __reduce__ reconstruction.
     match reduce(obj, class_name) {
         ReduceOutcome::Identity => {
             let v = return_identity(obj);
@@ -624,6 +630,12 @@ unsafe fn deepcopy_instance(
             return v;
         }
     }
+    if own_new_requires_constructor_args(class_name) {
+        return raise_exc(
+            "TypeError",
+            &format!("{class_name}.__new__() missing required arguments"),
+        );
+    }
     let new_inst = MbObject::new_instance(class_name.to_string());
     let result = MbValue::from_ptr(new_inst);
     memo.insert(key, result); // seed for cycles (self-referential attribute)
@@ -663,12 +675,17 @@ enum ReduceOutcome {
     TypeError,
 }
 
-/// Invoke __reduce_ex__(4) or __reduce__() if the class defines one, returning
+/// Invoke copyreg, __reduce_ex__(4), or __reduce__() if the class defines one, returning
 /// the parsed (callable, args, state). Returns `None` when the instance has no
 /// custom reducer (so the caller falls back to a plain __dict__ copy). A string
 /// result from __reduce__ (the "return self by name" protocol) also yields
 /// `None` so the object is returned by identity.
 unsafe fn reduce(obj: MbValue, class_name: &str) -> ReduceOutcome {
+    if let Some(reducer) = super::copyreg_mod::reduce_func_for_class(class_name) {
+        let args = MbValue::from_ptr(MbObject::new_list(vec![obj]));
+        let rv = super::super::builtins::mb_call_spread(reducer, args);
+        return parse_reduce_result(rv);
+    }
     let rv = if has_method(class_name, "__reduce_ex__") {
         let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(4)]));
         call_method(obj, "__reduce_ex__", args)
@@ -678,6 +695,10 @@ unsafe fn reduce(obj: MbValue, class_name: &str) -> ReduceOutcome {
     } else {
         return ReduceOutcome::None;
     };
+    parse_reduce_result(rv)
+}
+
+unsafe fn parse_reduce_result(rv: MbValue) -> ReduceOutcome {
     // A bare string result means "return self by name" — return identity.
     if rv
         .as_ptr()
@@ -804,6 +825,37 @@ unsafe fn apply_state(inst: MbValue, state: MbValue) {
 /// True if `class_name` (via MRO) defines `method`.
 fn has_method(class_name: &str, method: &str) -> bool {
     !super::super::class::lookup_method(class_name, method).is_none()
+}
+
+/// CPython's inherited object reductor can only fall back to a no-argument
+/// `__new__` reconstruction path. If a class defines its own `__new__` with
+/// required constructor parameters beyond `cls`, copy/deepcopy must raise
+/// TypeError unless copyreg or an explicit reducer supplied constructor args
+/// first. Use function metadata instead of a runtime probe because direct JIT
+/// calls are padded on under-arity.
+fn own_new_requires_constructor_args(class_name: &str) -> bool {
+    if !super::super::class::class_defines_own_method(class_name, "__new__") {
+        return false;
+    }
+    if has_method(class_name, "__getnewargs__") || has_method(class_name, "__getnewargs_ex__") {
+        return false;
+    }
+    let new_func = super::super::class::lookup_method(class_name, "__new__");
+    if new_func.is_none() {
+        return false;
+    }
+    let Some(params) = super::super::closure::func_params(new_func) else {
+        return false;
+    };
+    let required_positional = params
+        .iter()
+        .filter(|p| p.kind <= 1 && !p.has_default)
+        .count();
+    let required_keyword_only = params
+        .iter()
+        .filter(|p| p.kind == 3 && !p.has_default)
+        .count();
+    required_positional.saturating_sub(1) > 0 || required_keyword_only > 0
 }
 
 /// Detect CPython's "uncopyable" condition: a class with a custom
