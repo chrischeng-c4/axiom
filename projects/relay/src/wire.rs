@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::types::{AppendOutcome, Lease, Payload, Seq};
+use crate::types::{AppendOutcome, Lease, LogEntry, Payload, Seq};
 
 /// Publish one message to the path's subject.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +35,10 @@ pub struct LeaseRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseResponse {
     pub lease: Option<Lease>,
+    /// The leased entry's stored body ({message_id, payload, headers}) so the
+    /// consumer knows what it leased (#166). `None` when `lease` is `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<LogEntry>,
 }
 
 /// Acknowledge a lease. The optional `epoch` fences a stale worker: when given

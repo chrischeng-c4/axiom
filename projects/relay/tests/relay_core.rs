@@ -19,6 +19,25 @@ fn ram() -> Relay {
     Relay::new(RelayCoreConfig::in_memory())
 }
 
+// #166: a leased entry's stored body is retrievable by (subject, shard, seq) so
+// a work-queue consumer knows what it leased.
+#[test]
+fn lease_exposes_entry_body() {
+    let r = ram();
+    let now = Utc::now();
+    r.publish("q", "m0", msg("hello"), BTreeMap::new(), now).unwrap();
+
+    let l = r.lease("q", "c1", now).unwrap().expect("a lease");
+    let entry = r
+        .entry(&l.subject, l.shard, l.seq)
+        .unwrap()
+        .expect("leased entry body");
+
+    assert_eq!(entry.message_id, "m0");
+    assert_eq!(entry.payload, msg("hello"));
+    assert_eq!(entry.seq, l.seq);
+}
+
 // case: sequencing — append assigns monotonic, gap-free seq.
 #[test]
 fn append_assigns_monotonic_seq() {
