@@ -2175,6 +2175,14 @@ struct AstLowerer<'a> {
     /// (e.g. `scale = 0.25; def ff(j): return j * scale`) infers a float return.
     /// Seeded into each function's return-inference env below the params.
     module_float_globals: HashMap<String, FloatHint>,
+    /// Module-scope names that have only a bare annotation so far (`x: int`)
+    /// and no runtime binding. CPython records them in `__annotations__`, but
+    /// reading them before a later assignment raises NameError.
+    module_unbound_annotation_names: std::collections::HashSet<String>,
+    /// True while lowering a function body. Module annotation-only fast
+    /// NameError lowering must not be baked into function bodies because a
+    /// later module assignment may bind the global before the function runs.
+    in_function_body: bool,
     /// PEP 695 type-parameter names of the function currently being lowered
     /// (`def f[T](x: T) -> T`). A `T`-annotated param/return is a boxed
     /// MbValue at runtime (the TypeVar erases to `any`), so the int-default
@@ -2215,6 +2223,8 @@ impl<'a> AstLowerer<'a> {
             func_param_float_hint: HashMap::new(),
             func_ret_float_hint: HashMap::new(),
             module_float_globals: HashMap::new(),
+            module_unbound_annotation_names: std::collections::HashSet::new(),
+            in_function_body: false,
         }
     }
 
@@ -2611,6 +2621,7 @@ impl<'a> AstLowerer<'a> {
                         }
                         self.result.functions.push(func);
                     }
+                    self.module_unbound_annotation_names.remove(name);
                 }
                 ast::Stmt::AsyncFnDef {
                     name,
@@ -2692,6 +2703,7 @@ impl<'a> AstLowerer<'a> {
                         }
                         self.result.functions.push(func);
                     }
+                    self.module_unbound_annotation_names.remove(name);
                 }
                 ast::Stmt::ClassDef {
                     name,
@@ -2710,6 +2722,7 @@ impl<'a> AstLowerer<'a> {
                         stmt.span,
                         true,
                     );
+                    self.module_unbound_annotation_names.remove(name);
                 }
                 _ => {
                     // Module-scope variable annotations record their name in the
@@ -2721,6 +2734,7 @@ impl<'a> AstLowerer<'a> {
                             self.result
                                 .module_annotations
                                 .push((name.clone(), type_expr_repr(&ty.node)));
+                            self.module_unbound_annotation_names.insert(name.clone());
                         }
                         ast::Stmt::VarDecl { name, ty, .. } => {
                             self.result
@@ -2731,6 +2745,17 @@ impl<'a> AstLowerer<'a> {
                     }
                     if let Some(s) = self.lower_stmt(stmt) {
                         self.result.top_level.push(s);
+                    }
+                    match &stmt.node {
+                        ast::Stmt::VarDecl { name, .. } => {
+                            self.module_unbound_annotation_names.remove(name);
+                        }
+                        ast::Stmt::Assign { target, .. } => {
+                            if let ast::Expr::Ident(name) = &target.node {
+                                self.module_unbound_annotation_names.remove(name);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -2795,6 +2820,8 @@ impl<'a> AstLowerer<'a> {
         let saved_cell_syms = self.cell_override_syms.clone();
         self.cell_override_syms = std::collections::HashSet::new();
         self.enter_local_scope();
+        let saved_in_function_body = self.in_function_body;
+        self.in_function_body = true;
 
         // Define params in local scope with their actual annotation types (#827 R5).
         // Method params use `any` because they receive NaN-boxed MbValues via mb_call_method.
@@ -3046,6 +3073,7 @@ impl<'a> AstLowerer<'a> {
         self.local_types = saved_local_types;
         self.outer_scope_names = saved_outer_scope;
         self.cell_override_syms = saved_cell_syms;
+        self.in_function_body = saved_in_function_body;
 
         let star_param_pos = params.iter().position(|p| p.kind == ast::ParamKind::Star);
         let has_star_args = star_param_pos.is_some();
@@ -4002,6 +4030,13 @@ impl<'a> AstLowerer<'a> {
                 // with an unresolvable Ident; emit the raise rather than
                 // silently dropping the statement (which printed "no_raise").
                 if let ast::Expr::Ident(name) = &expr.node {
+                    if !self.in_function_body
+                        && self.module_unbound_annotation_names.contains(name)
+                    {
+                        if let Some(raise) = self.name_error_raise(name, stmt.span) {
+                            return Some(raise);
+                        }
+                    }
                     if self.resolve_name(name, expr.span).is_none()
                         && !self.outer_scope_names.contains_key(name.as_str())
                     {
