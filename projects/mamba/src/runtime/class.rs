@@ -3266,6 +3266,78 @@ fn missing_numbers_abc_abstract_method(class_name: &str) -> Option<&'static str>
         .find(|method| lookup_method(class_name, method).is_none())
 }
 
+fn numbers_abc_rank_for_type_name(name: &str) -> Option<u8> {
+    match name {
+        "Number" => Some(0),
+        "Complex" => Some(1),
+        "Real" => Some(2),
+        "Rational" => Some(3),
+        "Integral" => Some(4),
+        _ => None,
+    }
+}
+
+fn numbers_class_rank_for_type_name(name: &str) -> Option<u8> {
+    numbers_abc_rank_for_type_name(name).or_else(|| match name {
+        "bool" | "int" => Some(4),
+        "float" => Some(2),
+        "complex" => Some(1),
+        "Fraction" | "fractions.Fraction" => Some(3),
+        "Decimal" | "decimal.Decimal" => Some(0),
+        _ => None,
+    })
+}
+
+fn numbers_abc_direct_base(name: &str) -> Option<&'static str> {
+    match name {
+        "Number" => Some("object"),
+        "Complex" => Some("Number"),
+        "Real" => Some("Complex"),
+        "Rational" => Some("Real"),
+        "Integral" => Some("Rational"),
+        _ => None,
+    }
+}
+
+fn numbers_abc_mro_names(name: &str) -> Option<&'static [&'static str]> {
+    match name {
+        "Number" => Some(&["Number", "object"]),
+        "Complex" => Some(&["Complex", "Number", "object"]),
+        "Real" => Some(&["Real", "Complex", "Number", "object"]),
+        "Rational" => Some(&["Rational", "Real", "Complex", "Number", "object"]),
+        "Integral" => Some(&["Integral", "Rational", "Real", "Complex", "Number", "object"]),
+        _ => None,
+    }
+}
+
+fn numbers_abc_type_attr(class_name: &str, attr_name: &str) -> Option<MbValue> {
+    match attr_name {
+        "__name__" | "__qualname__" if numbers_abc_rank_for_type_name(class_name).is_some() => {
+            Some(MbValue::from_ptr(MbObject::new_str(class_name.to_string())))
+        }
+        "__bases__" => {
+            let base = numbers_abc_direct_base(class_name)?;
+            Some(MbValue::from_ptr(MbObject::new_tuple(vec![make_type_object(base)])))
+        }
+        "__mro__" => {
+            let names = numbers_abc_mro_names(class_name)?;
+            Some(MbValue::from_ptr(MbObject::new_tuple(
+                names.iter().map(|name| make_type_object(name)).collect(),
+            )))
+        }
+        "__abstractmethods__" if class_name == "Number" => {
+            Some(MbValue::from_ptr(MbObject::new_frozenset(vec![])))
+        }
+        _ => None,
+    }
+}
+
+fn numbers_abc_issubclass_result(child_name: &str, parent_name: &str) -> Option<bool> {
+    let parent_rank = numbers_abc_rank_for_type_name(parent_name)?;
+    let child_rank = numbers_class_rank_for_type_name(child_name)?;
+    Some(child_rank >= parent_rank)
+}
+
 fn missing_collections_abc_abstract_method(class_name: &str) -> Option<&'static str> {
     // Collect the ABC names that impose abstract-method requirements on this
     // class. A class is "abstract" only when it reaches a real
@@ -3855,8 +3927,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         {
             return MbValue::from_ptr(MbObject::new_frozenset(vec![]));
         }
-        let native_type =
-            super::module::NATIVE_TYPE_NAMES.with(|map| map.borrow().get(&(addr as u64)).cloned());
+        let native_type = super::module::NATIVE_TYPE_NAMES.with(|map| {
+            map.borrow().get(&(addr as u64)).cloned()
+        });
+        if let Some(ref nt) = native_type {
+            if let Some(value) = numbers_abc_type_attr(nt, &attr_name) {
+                return value;
+            }
+        }
         if let Some(nt) = native_type {
             if nt == "collections.Counter" && attr_name == "fromkeys" {
                 return make_unbound_method(&nt, &attr_name);
@@ -8422,6 +8500,9 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
     // so that issubclass(type_obj, base_type_obj) works correctly (#974).
     let child_name = resolve_class_name(child).unwrap_or_default();
     let parent_name = resolve_class_name(parent).unwrap_or_default();
+    if let Some(result) = numbers_abc_issubclass_result(&child_name, &parent_name) {
+        return MbValue::from_bool(result);
+    }
     if super::stdlib::enum_mod::is_functional_enum_class(child)
         && matches!(parent_name.as_str(), "Enum" | "object")
     {
