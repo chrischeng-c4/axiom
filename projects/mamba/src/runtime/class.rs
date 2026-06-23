@@ -982,6 +982,14 @@ pub fn class_is_registered(name: &str) -> bool {
     CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(name))
 }
 
+pub(crate) fn class_metaclass_name(name: &str) -> Option<String> {
+    CLASS_REGISTRY.with(|reg| {
+        reg.borrow()
+            .get(name)
+            .and_then(|cls| cls.metaclass.clone())
+    })
+}
+
 fn registered_class_name_for_func(value: MbValue, addr: usize) -> Option<String> {
     let native_name = super::module::NATIVE_TYPE_NAMES.with(|map| {
         map.borrow().get(&(addr as u64)).cloned()
