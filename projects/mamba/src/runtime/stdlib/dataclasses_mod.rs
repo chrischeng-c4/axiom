@@ -1222,6 +1222,18 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
             }
         }
     };
+    for f in d.fields.iter().filter(|f| f.is_initvar && f.init) {
+        if change_of(&f.name).is_none() && resolve_default(f, None).is_none() {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "InitVar '{}' must be specified with replace()",
+                    f.name
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
 
     let new_inst = MbValue::from_ptr(MbObject::new_instance(name.clone()));
     let mut init_args: Vec<MbValue> = Vec::new();
