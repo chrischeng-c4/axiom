@@ -2108,6 +2108,35 @@ fn namedtuple_subclass_shape(name: &str) -> Option<NamedTupleBaseShape> {
     NAMEDTUPLE_BASE_SHAPES.with(|reg| reg.borrow().get(name).cloned())
 }
 
+fn namedtuple_subclass_default_for_field(class_name: &str, field: &str) -> Option<MbValue> {
+    CLASS_REGISTRY.with(|reg| {
+        reg.borrow()
+            .get(class_name)
+            .and_then(|cls| cls.class_attrs.get(field).copied())
+    })
+}
+
+fn namedtuple_subclass_field_defaults(class_name: &str) -> Option<MbValue> {
+    let shape = namedtuple_subclass_shape(class_name)?;
+    let defaults: Vec<(String, MbValue)> = CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let Some(cls) = reg.get(class_name) else {
+            return Vec::new();
+        };
+        shape
+            .fields
+            .iter()
+            .filter_map(|field| cls.class_attrs.get(field).copied().map(|v| (field.clone(), v)))
+            .collect()
+    });
+    let out = super::dict_ops::mb_dict_new();
+    for (field, default) in defaults {
+        let key = MbValue::from_ptr(MbObject::new_str(field));
+        super::dict_ops::mb_dict_setitem(out, key, default);
+    }
+    Some(out)
+}
+
 fn seed_namedtuple_subclass_fields(
     instance: MbValue,
     args_list: MbValue,
@@ -2115,7 +2144,7 @@ fn seed_namedtuple_subclass_fields(
     shape: &NamedTupleBaseShape,
 ) -> bool {
     let items = super::builtins::extract_items(args_list);
-    if items.len() != shape.fields.len() {
+    if items.len() > shape.fields.len() {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(format!(
@@ -2126,6 +2155,25 @@ fn seed_namedtuple_subclass_fields(
             ))),
         );
         return false;
+    }
+    let mut values = Vec::with_capacity(shape.fields.len());
+    for (idx, field) in shape.fields.iter().enumerate() {
+        if idx < items.len() {
+            values.push(items[idx]);
+        } else if let Some(default) = namedtuple_subclass_default_for_field(class_name, field) {
+            values.push(default);
+        } else {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "{}() takes {} positional arguments but {} were given",
+                    class_name,
+                    shape.fields.len(),
+                    items.len(),
+                ))),
+            );
+            return false;
+        }
     }
     if let Some(ptr) = instance.as_ptr() {
         unsafe {
@@ -2148,7 +2196,7 @@ fn seed_namedtuple_subclass_fields(
                     "_namedtuple_base".to_string(),
                     MbValue::from_ptr(MbObject::new_str(shape.tuple_name.clone())),
                 );
-                for (field, value) in shape.fields.iter().zip(items.iter()) {
+                for (field, value) in shape.fields.iter().zip(values.iter()) {
                     super::rc::retain_if_ptr(*value);
                     guard.insert(field.clone(), *value);
                 }
@@ -4533,6 +4581,13 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 }
                                 return MbValue::from_ptr(inst);
                             }
+                            if attr_name == "_field_defaults" {
+                                if let Some(defaults) =
+                                    namedtuple_subclass_field_defaults(&type_name_str)
+                                {
+                                    return defaults;
+                                }
+                            }
                             if let Some(val) = mro_lookup_class_attr(&type_name_str, &attr_name) {
                                 super::rc::retain_if_ptr(val);
                                 return val;
@@ -5068,6 +5123,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                     inherited_builtin_unbound_method(s, &attr_name)
                                 {
                                     return method;
+                                }
+                                if attr_name == "_field_defaults" {
+                                    if let Some(defaults) = namedtuple_subclass_field_defaults(s) {
+                                        return defaults;
+                                    }
                                 }
                                 let class_attr = mro_lookup_class_attr(s, &attr_name);
                                 if let Some(val) = class_attr {
