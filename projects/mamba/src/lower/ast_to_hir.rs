@@ -1181,6 +1181,15 @@ fn stmt_collect_value_compared_params(
         }
         Match { expr, arms } => {
             scan(expr, out);
+            if let ast::Expr::Ident(n) = &expr.node {
+                if params.contains(n)
+                    && arms
+                        .iter()
+                        .any(|a| pattern_contains_bool_literal(&a.pattern))
+                {
+                    out.insert(n.clone());
+                }
+            }
             for a in arms {
                 if let Some(g) = &a.guard {
                     scan(g, out);
@@ -1229,6 +1238,23 @@ fn stmt_collect_value_compared_params(
         // Do not descend — a same-named inner param is a different binding.
         FnDef { .. } | AsyncFnDef { .. } | ClassDef { .. } | EnumDef { .. } => {}
         _ => {}
+    }
+}
+
+fn pattern_contains_bool_literal(pattern: &Spanned<ast::Pattern>) -> bool {
+    match &pattern.node {
+        ast::Pattern::Literal(ast::Expr::BoolLit(_)) => true,
+        ast::Pattern::Or(patterns) | ast::Pattern::Sequence(patterns) => {
+            patterns.iter().any(pattern_contains_bool_literal)
+        }
+        ast::Pattern::Mapping { pairs, .. } => {
+            pairs.iter().any(|(_, value)| pattern_contains_bool_literal(value))
+        }
+        ast::Pattern::ClassPattern { patterns, .. } => patterns
+            .iter()
+            .any(|(_, pattern)| pattern_contains_bool_literal(pattern)),
+        ast::Pattern::As { pattern, .. } => pattern_contains_bool_literal(pattern),
+        _ => false,
     }
 }
 

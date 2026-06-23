@@ -4074,6 +4074,10 @@ pub fn mb_eq(a: MbValue, b: MbValue) -> MbValue {
     MbValue::from_bool(mb_values_eq(a, b))
 }
 
+pub fn mb_match_bool_literal(subject: MbValue, expected: i64) -> MbValue {
+    MbValue::from_bool(subject.as_bool() == Some(expected != 0))
+}
+
 /// CPython `PyObject_RichCompareBool(a, b, Py_EQ)`: identity-first, then value
 /// equality. Container comparisons (list/tuple/set/dict `==`, `in`, count,
 /// subset/superset) use this so a self-unequal element such as NaN still
