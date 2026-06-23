@@ -146,8 +146,9 @@ impl RaftRunStore {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::store::RunStore for RaftRunStore {
-    fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
+    async fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
         let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
         let inner = &mut *guard;
         for _ in 0..500 {
@@ -173,12 +174,12 @@ impl crate::store::RunStore for RaftRunStore {
         self.persist(inner)
     }
 
-    fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
+    async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
         let guard = self.inner.lock().map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
         Ok(guard.sm.get(id).cloned())
     }
 
-    fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>> {
+    async fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>> {
         let guard = self.inner.lock().map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
         Ok(guard.sm.run_ids())
     }
@@ -292,8 +293,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn raft_run_store_persists_and_recovers() {
+    #[tokio::test]
+    async fn raft_run_store_persists_and_recovers() {
         use crate::store::RunStore;
         let dir = std::env::temp_dir().join(format!("loom-raft-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -301,14 +302,14 @@ mod tests {
 
         {
             let store = RaftRunStore::open(0, &dir).unwrap();
-            store.put(WorkflowRun::new(id.clone())).unwrap();
-            assert_eq!(store.get(&id).unwrap().unwrap().id, id);
-            assert_eq!(store.list().unwrap(), vec![id.clone()]);
+            store.put(WorkflowRun::new(id.clone())).await.unwrap();
+            assert_eq!(store.get(&id).await.unwrap().unwrap().id, id);
+            assert_eq!(store.list().await.unwrap(), vec![id.clone()]);
         } // drop: only the raft log on disk remains
 
         // reopen: replaying the committed raft log rebuilds the state machine.
         let recovered = RaftRunStore::open(0, &dir).unwrap();
-        assert_eq!(recovered.get(&id).unwrap().unwrap().id, id);
+        assert_eq!(recovered.get(&id).await.unwrap().unwrap().id, id);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

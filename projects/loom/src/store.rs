@@ -9,17 +9,22 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use async_trait::async_trait;
+
 use crate::model::{WorkflowRun, WorkflowRunId};
 
-/// Persistence boundary for loom's workflow state. Implementations own
-/// durability and (eventually) per-shard consensus; callers see only get/put/list.
+/// Persistence boundary for loom's workflow state. Async because a multi-voter
+/// raft-backed store ([`crate::cluster`]) commits via consensus — `put` must
+/// await replication without blocking a runtime worker. The in-memory + file
+/// stores are trivially async.
+#[async_trait]
 pub trait RunStore: Send + Sync {
     /// Insert or replace a run.
-    fn put(&self, run: WorkflowRun) -> anyhow::Result<()>;
+    async fn put(&self, run: WorkflowRun) -> anyhow::Result<()>;
     /// Fetch a run by id, if present.
-    fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>>;
+    async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>>;
     /// List all run ids (ordered).
-    fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>>;
+    async fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>>;
 }
 
 /// In-memory reference store: a `Mutex<BTreeMap>`. Not durable — replaced by the
@@ -35,8 +40,9 @@ impl MemStore {
     }
 }
 
+#[async_trait]
 impl RunStore for MemStore {
-    fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
+    async fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
         self.runs
             .lock()
             .map_err(|_| anyhow::anyhow!("run store poisoned"))?
@@ -44,7 +50,7 @@ impl RunStore for MemStore {
         Ok(())
     }
 
-    fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
+    async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
         Ok(self
             .runs
             .lock()
@@ -53,7 +59,7 @@ impl RunStore for MemStore {
             .cloned())
     }
 
-    fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>> {
+    async fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>> {
         Ok(self
             .runs
             .lock()
@@ -98,14 +104,15 @@ impl FileStore {
     }
 }
 
+#[async_trait]
 impl RunStore for FileStore {
-    fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
+    async fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
         let mut g = self.cache.lock().map_err(|_| anyhow::anyhow!("run store poisoned"))?;
         g.insert(run.id.clone(), run);
         self.persist(&g)
     }
 
-    fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
+    async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
         Ok(self
             .cache
             .lock()
@@ -114,7 +121,7 @@ impl RunStore for FileStore {
             .cloned())
     }
 
-    fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>> {
+    async fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>> {
         Ok(self
             .cache
             .lock()
@@ -129,32 +136,32 @@ impl RunStore for FileStore {
 mod tests {
     use super::*;
 
-    #[test]
-    fn put_get_list_roundtrip() {
+    #[tokio::test]
+    async fn put_get_list_roundtrip() {
         let store = MemStore::new();
-        assert!(store.list().unwrap().is_empty());
+        assert!(store.list().await.unwrap().is_empty());
 
         let id = WorkflowRunId::new("run-1");
-        store.put(WorkflowRun::new(id.clone())).unwrap();
+        store.put(WorkflowRun::new(id.clone())).await.unwrap();
 
-        assert_eq!(store.get(&id).unwrap().unwrap().id, id);
-        assert_eq!(store.list().unwrap(), vec![id.clone()]);
-        assert!(store.get(&WorkflowRunId::new("missing")).unwrap().is_none());
+        assert_eq!(store.get(&id).await.unwrap().unwrap().id, id);
+        assert_eq!(store.list().await.unwrap(), vec![id.clone()]);
+        assert!(store.get(&WorkflowRunId::new("missing")).await.unwrap().is_none());
     }
 
-    #[test]
-    fn put_replaces_existing() {
+    #[tokio::test]
+    async fn put_replaces_existing() {
         let store = MemStore::new();
         let id = WorkflowRunId::new("run-1");
         let mut run = WorkflowRun::new(id.clone());
         run.status = crate::model::RunStatus::Running;
-        store.put(run).unwrap();
-        assert_eq!(store.get(&id).unwrap().unwrap().status, crate::model::RunStatus::Running);
-        assert_eq!(store.list().unwrap().len(), 1);
+        store.put(run).await.unwrap();
+        assert_eq!(store.get(&id).await.unwrap().unwrap().status, crate::model::RunStatus::Running);
+        assert_eq!(store.list().await.unwrap().len(), 1);
     }
 
-    #[test]
-    fn file_store_survives_reopen() {
+    #[tokio::test]
+    async fn file_store_survives_reopen() {
         let dir = std::env::temp_dir().join(format!("loom-fs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let id = WorkflowRunId::new("persisted");
@@ -163,14 +170,14 @@ mod tests {
             let store = FileStore::open(&dir).unwrap();
             let mut run = WorkflowRun::new(id.clone());
             run.status = crate::model::RunStatus::Running;
-            store.put(run).unwrap();
+            store.put(run).await.unwrap();
         } // drop: only the on-disk file remains
 
         // A fresh FileStore on the same dir recovers the run (crash recovery).
         let recovered = FileStore::open(&dir).unwrap();
-        assert_eq!(recovered.list().unwrap(), vec![id.clone()]);
+        assert_eq!(recovered.list().await.unwrap(), vec![id.clone()]);
         assert_eq!(
-            recovered.get(&id).unwrap().unwrap().status,
+            recovered.get(&id).await.unwrap().unwrap().status,
             crate::model::RunStatus::Running
         );
         let _ = std::fs::remove_dir_all(&dir);
