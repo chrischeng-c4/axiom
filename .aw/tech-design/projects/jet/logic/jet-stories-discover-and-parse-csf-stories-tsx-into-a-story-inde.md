@@ -59,3 +59,10 @@ flowchart TD
     more -->|yes| loop
     more -->|no| done([StoryIndex stories+diagnostics])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (id jet-stories-csf-discovery) is complete and deterministic: glob story files, per-file tree-sitter parse + export extraction, decision on meta presence (diagnostic+skip vs read), read meta + named-export stories, build StoryIndex entry (title hierarchy, stable ids, merged args), loop, terminal StoryIndex. All nodes reachable; decisions (has_default, more) carry labeled branches; terminal done is a real end. Scope correct: foundation for B2/B2b/B3.
