@@ -751,6 +751,34 @@ fn rewrite_relative_specifier(spec: &str) -> String {
     format!("{stripped}.js")
 }
 
+/// Rewrite the relative specifier inside an `export … from "./m"` re-export
+/// statement to its emitted `.js` sibling, leaving the export clause untouched.
+///
+///   `export { a as b } from "./m"`  → `export { a as b } from "./m.js"`
+///   `export * from "../util.ts"`     → `export * from "../util.js"`
+///
+/// Only the first string literal (the module specifier) is replaced. `spec` is
+/// the already-unquoted specifier extracted from the statement.
+fn rewrite_export_from_specifier(stmt: &str, spec: &str) -> String {
+    let normalised = rewrite_relative_specifier(spec);
+    // Replace the quoted specifier in place, preserving the original quote
+    // style. The specifier always appears verbatim (sans quotes) in `stmt`.
+    for quote in ['"', '\'', '`'] {
+        let needle = format!("{quote}{spec}{quote}");
+        if let Some(idx) = stmt.find(&needle) {
+            let mut out = String::with_capacity(stmt.len());
+            out.push_str(&stmt[..idx]);
+            out.push('"');
+            out.push_str(&normalised);
+            out.push('"');
+            out.push_str(&stmt[idx + needle.len()..]);
+            return out;
+        }
+    }
+    // Specifier not found verbatim (unexpected): return the statement unchanged.
+    stmt.to_string()
+}
+
 /// Map a public export subpath to its `.d.ts` file name.
 ///
 ///   `.`        → `index.d.ts`
@@ -915,20 +943,33 @@ fn inline_module(
         out.push_str(&source[last_end..stmt_start]);
         last_end = stmt_end;
 
+        let stmt_text = &source[stmt_start..stmt_end];
+
         if is_external_specifier(&spec, externals) {
-            // Keep the external import/re-export verbatim, hoisted.
-            let stmt_text = source[stmt_start..stmt_end].to_string();
-            if seen_external.insert(stmt_text.clone()) {
-                external_imports.push(stmt_text);
+            // External `export ... from "pkg"` re-exports stay as their own
+            // statement so the binding is re-exported from the package; the CJS
+            // pass rewrites them to `exports.x = require("pkg").x`. Hoisting one
+            // copy (deduplicated) is enough — do not also splice it into the
+            // body, or the re-export would be emitted twice.
+            if seen_external.insert(stmt_text.to_string()) {
+                external_imports.push(stmt_text.to_string());
             }
-            // Re-exports (`export ... from "pkg"`) must stay where they are so
-            // the binding is re-exported; a plain side-effect/default import is
-            // fully satisfied by the hoisted statement above.
-            if kind == "export_statement" {
-                out.push_str(&source[stmt_start..stmt_end]);
-            }
+            // A plain side-effect / default / named *import* is fully satisfied
+            // by the hoisted statement above; an export re-export is also
+            // satisfied by the hoisted copy, so nothing is spliced into `out`.
+        } else if kind == "export_statement" {
+            // Internal relative *re-export* (`export … from "./m"`): keep it as
+            // a sibling reference rather than inlining the target body. The
+            // specifier is normalised to the emitted `.js` sibling (matching
+            // the preserve-modules relative convention) so the CJS pass can
+            // turn it into `exports.b = require("./m.js").a`. This preserves
+            // renamed aliases (`a as b`) and `export *` semantics that inlining
+            // would otherwise drop.
+            let rewritten = rewrite_export_from_specifier(stmt_text, &spec);
+            out.push_str(&rewritten);
         } else {
-            // Internal relative module — inline its body in place.
+            // Internal relative *import* — inline the target module body in
+            // place so the bundled entry stays self-contained.
             if let Some(target) = resolve_relative(path, &spec) {
                 let inlined = inline_module(
                     &target,
@@ -940,7 +981,7 @@ fn inline_module(
                 out.push_str(&inlined);
             } else {
                 // Unresolved relative import: keep verbatim rather than drop it.
-                out.push_str(&source[stmt_start..stmt_end]);
+                out.push_str(stmt_text);
             }
         }
     }
@@ -1022,10 +1063,18 @@ fn resolve_relative(from: &Path, spec: &str) -> Option<PathBuf> {
 ///   * `export const|let|var|function|class …` → `<decl>; exports.<name> = …`
 ///   * `export default <expr>`         → `module.exports = <expr>`
 ///   * `export { a, b }`               → `exports.a = a; exports.b = b`
+///   * `export { a as b }`             → `exports.b = a`
+///   * `export { a as b } from "m"`    → `exports.b = require("m").a`
+///   * `export * from "m"`             → re-export every named key of `require("m")`
 ///
-/// TODO(#170 follow-up): `export … from "pkg"` re-export forms and renamed
-/// `export { a as b }` aliases fall through unchanged — they are rare in
-/// library entry points and a full CST rewrite is deferred.
+/// External (`pkg`) specifiers stay bare (`require("pkg")`); relative
+/// specifiers carry the emitted `.js` extension stamped on upstream by
+/// [`rewrite_export_from_specifier`], so the CJS pass uses them verbatim.
+///
+/// TODO(#170 follow-up): `export { default as X } from "m"` interop nuances
+/// (CJS `__esModule` default unwrapping) and live-binding getters (vs the
+/// value-copy `exports.x = …` emitted here) are deferred — the value-copy form
+/// is correct for the eagerly-evaluated modules a published library entry uses.
 fn esm_to_cjs(esm: &str) -> String {
     let mut out = String::new();
     for line in esm.lines() {
@@ -1065,6 +1114,47 @@ fn rewrite_cjs_line(line: &str) -> Option<String> {
     if let Some(rest) = line.strip_prefix("export default ") {
         return Some(format!("module.exports = {}", rest));
     }
+    // export * from "spec";  (re-export every named binding of `spec`)
+    //   → re-export all keys except `default` onto `exports`.
+    // Works for both external (`pkg`) and relative (`./m.js`) specifiers; the
+    // specifier is used verbatim, so a relative one already carries the `.js`
+    // extension stamped on by `rewrite_export_from_specifier`.
+    if let Some(rest) = line.strip_prefix("export * from ") {
+        let spec = import_spec(rest)?;
+        return Some(format!(
+            "Object.keys(require(\"{spec}\")).forEach(function (k) {{ \
+             if (k !== \"default\") exports[k] = require(\"{spec}\")[k]; }});"
+        ));
+    }
+    // export { a, b as c } from "spec";  (named re-export from another module)
+    //   → exports.a = require("spec").a; exports.c = require("spec").b;
+    // The specifier is used verbatim (external `pkg` stays bare; a relative one
+    // already carries `.js`). `a as b` maps local `a` to exported name `b`.
+    if let Some(rest) = line.strip_prefix("export {") {
+        if let Some((clause, tail)) = rest.split_once('}') {
+            // Only the `... } from "spec"` shape is a re-export; a bare
+            // `export { ... };` (no `from`) is handled by the local branch
+            // further down.
+            if tail.trim_start().starts_with("from ") {
+                let spec = import_spec(tail.trim_start().trim_start_matches("from"))?;
+                let mut buf = String::new();
+                for raw in clause.split(',') {
+                    let entry = raw.trim();
+                    if entry.is_empty() {
+                        continue;
+                    }
+                    let (local, exported) = split_export_alias(entry);
+                    buf.push_str(&format!(
+                        "exports.{exported} = require(\"{spec}\").{local};\n"
+                    ));
+                }
+                if !buf.is_empty() {
+                    return Some(buf.trim_end().to_string());
+                }
+                return Some(String::new());
+            }
+        }
+    }
     // export const|let|var NAME = ...
     for kw in ["const", "let", "var"] {
         if let Some(rest) = line.strip_prefix(&format!("export {kw} ")) {
@@ -1081,26 +1171,38 @@ fn rewrite_cjs_line(line: &str) -> Option<String> {
             }
         }
     }
-    // export { a, b };
+    // export { a, b as c };  (local re-export, no `from` — handled above)
+    //   → exports.a = a; exports.c = b;
+    // A renamed alias (`b as c`) binds the exported name `c` to the local `b`.
     if let Some(rest) = line.strip_prefix("export {") {
         let names = rest.split('}').next()?;
         let mut buf = String::new();
         for raw in names.split(',') {
-            let name = raw.trim();
-            if name.is_empty() {
+            let entry = raw.trim();
+            if entry.is_empty() {
                 continue;
             }
-            // Skip `a as b` aliases for the deferred follow-up.
-            if name.contains(" as ") {
-                continue;
-            }
-            buf.push_str(&format!("exports.{name} = {name};\n"));
+            let (local, exported) = split_export_alias(entry);
+            buf.push_str(&format!("exports.{exported} = {local};\n"));
         }
         if !buf.is_empty() {
             return Some(buf.trim_end().to_string());
         }
     }
     None
+}
+
+/// Split one entry of an `export { … }` clause into `(local, exported)`.
+///
+///   `a`        → (`a`, `a`)
+///   `a as b`   → (`a`, `b`)   (local `a` re-exported under the name `b`)
+fn split_export_alias(entry: &str) -> (String, String) {
+    if let Some((local, exported)) = entry.split_once(" as ") {
+        (local.trim().to_string(), exported.trim().to_string())
+    } else {
+        let name = entry.trim().to_string();
+        (name.clone(), name)
+    }
 }
 
 /// Helper: `Name from "pkg";` → `(Name, pkg)`.
@@ -1209,6 +1311,83 @@ mod tests {
     fn cjs_rewrite_default_export() {
         let out = esm_to_cjs("export default foo;\n");
         assert!(out.contains("module.exports = foo;"), "{out}");
+    }
+
+    #[test]
+    fn split_export_alias_handles_plain_and_renamed() {
+        assert_eq!(split_export_alias("a"), ("a".to_string(), "a".to_string()));
+        assert_eq!(
+            split_export_alias("a as b"),
+            ("a".to_string(), "b".to_string())
+        );
+        assert_eq!(
+            split_export_alias("  Foo as Bar  "),
+            ("Foo".to_string(), "Bar".to_string())
+        );
+    }
+
+    #[test]
+    fn cjs_rewrite_named_reexport_from_external() {
+        // `export { x } from "pkg"` keeps the external `require("pkg")`.
+        let out = esm_to_cjs("export { useState } from \"react\";\n");
+        assert!(
+            out.contains("exports.useState = require(\"react\").useState;"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn cjs_rewrite_renamed_reexport_from_relative() {
+        // `export { a as b } from "./m.js"` → exports.b = require("./m.js").a.
+        let out = esm_to_cjs("export { Foo as Bar } from \"./foo.js\";\n");
+        assert!(
+            out.contains("exports.Bar = require(\"./foo.js\").Foo;"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn cjs_rewrite_star_reexport() {
+        // `export * from "m"` → re-export every key except `default`.
+        let out = esm_to_cjs("export * from \"./util.js\";\n");
+        assert!(out.contains("Object.keys(require(\"./util.js\"))"), "{out}");
+        assert!(out.contains("if (k !== \"default\")"), "{out}");
+        assert!(out.contains("exports[k] = require(\"./util.js\")[k]"), "{out}");
+    }
+
+    #[test]
+    fn cjs_rewrite_local_renamed_export() {
+        // `export { a as b };` (no `from`, `a` local) → exports.b = a.
+        let out = esm_to_cjs("export { localA as renamedA };\n");
+        assert!(out.contains("exports.renamedA = localA;"), "{out}");
+        // Plain local export keeps the same name on both sides.
+        let plain = esm_to_cjs("export { thing };\n");
+        assert!(plain.contains("exports.thing = thing;"), "{plain}");
+    }
+
+    #[test]
+    fn cjs_rewrite_multi_binding_reexport_from_relative() {
+        // Mixed plain + renamed bindings in one `export { … } from` clause.
+        let out = esm_to_cjs("export { a, b as c } from \"./m.js\";\n");
+        assert!(out.contains("exports.a = require(\"./m.js\").a;"), "{out}");
+        assert!(out.contains("exports.c = require(\"./m.js\").b;"), "{out}");
+    }
+
+    #[test]
+    fn rewrite_export_from_specifier_stamps_js_extension() {
+        assert_eq!(
+            rewrite_export_from_specifier("export { Foo as Bar } from \"./foo\";", "./foo"),
+            "export { Foo as Bar } from \"./foo.js\";"
+        );
+        assert_eq!(
+            rewrite_export_from_specifier("export * from \"../util.ts\";", "../util.ts"),
+            "export * from \"../util.js\";"
+        );
+        // Single-quoted specifier is normalised to a double-quoted `.js` one.
+        assert_eq!(
+            rewrite_export_from_specifier("export { x } from './m';", "./m"),
+            "export { x } from \"./m.js\";"
+        );
     }
 }
 // HANDWRITE-END

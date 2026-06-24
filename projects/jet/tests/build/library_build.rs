@@ -567,4 +567,179 @@ fn lib_iife_default_global_name_derived_from_package_name() {
         "default IIFE global derived from package name (`widgetKit`), got:\n{code}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// (g) CJS re-export + renamed-alias edge cases
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Find the CJS output among a build result's entries.
+fn cjs_code(result: &jet::bundler::LibBuildResult) -> String {
+    result
+        .entries
+        .iter()
+        .find(|e| e.format == OutputFormat::Cjs)
+        .expect("CJS output present")
+        .code
+        .clone()
+}
+
+/// `export { Foo as Bar } from "./foo"` (renamed, relative) must emit CJS that
+/// binds `exports.Bar` to foo's `Foo` via `require("./foo.js").Foo`.
+#[test]
+fn lib_cjs_renamed_reexport_from_relative() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "my-lib",
+            "version": "1.0.0",
+            "module": "./src/index.js"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/foo.js",
+        "export function Foo() { return 1; }\n",
+    );
+    // Entry renames foo's `Foo` to the public `Bar` via a re-export.
+    write_file(
+        root,
+        "src/index.js",
+        "export { Foo as Bar } from \"./foo\";\n",
+    );
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let cjs = cjs_code(&result);
+
+    // The renamed re-export resolves the public `Bar` to foo's `Foo`, and the
+    // relative specifier carries the emitted `.js` extension.
+    assert!(
+        cjs.contains("exports.Bar = require(\"./foo.js\").Foo;"),
+        "renamed relative re-export → exports.Bar = require(\"./foo.js\").Foo, got:\n{cjs}"
+    );
+    // The original ESM-only `export … from` shape must not survive into CJS.
+    assert!(
+        !cjs.contains("export {"),
+        "no ESM `export {{` clause may leak into CJS, got:\n{cjs}"
+    );
+}
+
+/// `export * from "./util"` must emit CJS that re-exports every named binding of
+/// the relative module (except `default`).
+#[test]
+fn lib_cjs_star_reexport_from_relative() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "my-lib",
+            "version": "1.0.0",
+            "module": "./src/index.js"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/util.js",
+        "export function alpha() {}\nexport function beta() {}\n",
+    );
+    write_file(
+        root,
+        "src/index.js",
+        "export * from \"./util\";\n",
+    );
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let cjs = cjs_code(&result);
+
+    // Star re-export copies every key (except `default`) of the required module.
+    assert!(
+        cjs.contains("Object.keys(require(\"./util.js\"))"),
+        "star re-export enumerates the required module's keys, got:\n{cjs}"
+    );
+    assert!(
+        cjs.contains("if (k !== \"default\")")
+            && cjs.contains("exports[k] = require(\"./util.js\")[k]"),
+        "star re-export assigns each non-default key onto exports, got:\n{cjs}"
+    );
+}
+
+/// `export { useState } from "react"` (external) must keep `require("react")`
+/// — externals are never rewritten to a relative path.
+#[test]
+fn lib_cjs_reexport_from_external_keeps_require_pkg() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "my-lib",
+            "version": "1.0.0",
+            "module": "./src/index.js",
+            "peerDependencies": { "react": "^18.0.0" }
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.js",
+        "export { useState } from \"react\";\n",
+    );
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let cjs = cjs_code(&result);
+
+    // External re-export keeps the bare `require("react")` specifier.
+    assert!(
+        cjs.contains("exports.useState = require(\"react\").useState;"),
+        "external re-export keeps require(\"react\"), got:\n{cjs}"
+    );
+    // The external specifier must not be rewritten to a relative `.js` path.
+    assert!(
+        !cjs.contains("require(\"./react"),
+        "external specifier must stay bare (no relative rewrite), got:\n{cjs}"
+    );
+}
+
+/// A local renamed export (`export { localA as renamedA };`, no `from`) maps the
+/// public name to the in-module binding: `exports.renamedA = localA;`.
+#[test]
+fn lib_cjs_local_renamed_export() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "my-lib",
+            "version": "1.0.0",
+            "module": "./src/index.js"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.js",
+        "function localA() { return 1; }\nexport { localA as renamedA };\n",
+    );
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let cjs = cjs_code(&result);
+
+    assert!(
+        cjs.contains("exports.renamedA = localA;"),
+        "local renamed export → exports.renamedA = localA, got:\n{cjs}"
+    );
+    // The original function declaration is preserved (it is the value source).
+    assert!(
+        cjs.contains("function localA"),
+        "the renamed export's source binding survives, got:\n{cjs}"
+    );
+}
 // HANDWRITE-END
