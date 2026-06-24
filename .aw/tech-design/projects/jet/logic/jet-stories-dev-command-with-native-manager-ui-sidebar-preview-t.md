@@ -59,10 +59,3 @@ flowchart TD
     manager --> served
     module --> served
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability is correct: jet stories discovers the StoryIndex (B1), starts a dev-server variant, registers manager/preview/module routes, and on each request branches to serve the manager shell (sidebar+toolbar+preview frame), an isolated per-story preview (built via the module graph, no app shell), or a transformed module. Scoped to command+manager+isolated render; HMR is B2b and controls are B3.
