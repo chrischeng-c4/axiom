@@ -120,3 +120,11 @@ requirementDiagram
       type: "rs/#[test]"
     }
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] parse/upsert of an `<!-- aw:loop-state -->` block mirrors the existing WorkflowProjection serde pattern; absent block -> None, present -> replace in place. Additive and non-breaking.
+- [unit-test] R1-R3 cover lossless round-trip (all last_result variants + multi-iteration log), absent-is-None, and append-then-replace without disturbing the score:workflow-state block. Matches the logic surface.
