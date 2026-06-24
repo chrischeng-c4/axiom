@@ -55,10 +55,3 @@ flowchart TD
     inter --> members
     members --> done([PropDefs for inference])
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability sound: branch on prop-type shape (same-file existing / generic resolve type-arg / cross-file parse sibling / intersection merge / unresolvable graceful no-controls), collect PropDefs for inference. Extends B3; controls inference + UI unchanged.
