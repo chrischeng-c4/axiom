@@ -20,6 +20,7 @@ pub mod canvas;
 pub mod fairness;
 pub mod scheduler;
 pub mod store;
+pub mod gc;
 pub mod raft;
 pub mod cluster;
 pub mod relay_client;

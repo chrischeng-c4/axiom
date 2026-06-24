@@ -173,15 +173,15 @@ impl Shared {
         }
     }
 
-    /// Propose a run on the local node (must be leader) and wait for it to
+    /// Propose a command on the local node (must be leader) and wait for it to
     /// commit. Returns `Err` carrying the leader hint when not leader.
-    async fn propose_local(self: &Arc<Self>, run: WorkflowRun) -> Result<(), Option<NodeId>> {
+    async fn propose_local(self: &Arc<Self>, cmd: Command) -> Result<(), Option<NodeId>> {
         let index = {
             let mut n = self.node.lock().await;
             if !n.is_leader() {
                 return Err(n.leader());
             }
-            let idx = n.propose(Command::PutRun(run).encode());
+            let idx = n.propose(cmd.encode());
             self.persist(&n);
             self.apply_committed(&mut n);
             idx
@@ -292,21 +292,21 @@ impl RaftClusterStore {
     }
 }
 
-#[async_trait]
-impl RunStore for RaftClusterStore {
-    async fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
+impl RaftClusterStore {
+    /// Commit a command: propose on the local node if leader, else forward to the
+    /// leader's /raft/propose. Retries until the deadline (covers elections).
+    async fn commit(&self, cmd: Command) -> anyhow::Result<()> {
         let deadline = Instant::now() + COMMIT_DEADLINE;
         loop {
-            match self.shared.propose_local(run.clone()).await {
+            match self.shared.propose_local(cmd.clone()).await {
                 Ok(()) => return Ok(()),
                 Err(leader) => {
-                    // Forward to the leader if known; else wait for an election.
                     if let Some(url) = leader.and_then(|l| self.shared.peers.get(&l).cloned()) {
                         let ok = self
                             .shared
                             .client
                             .post(format!("{url}/raft/propose"))
-                            .json(&run)
+                            .json(&cmd)
                             .timeout(COMMIT_DEADLINE)
                             .send()
                             .await
@@ -317,12 +317,23 @@ impl RunStore for RaftClusterStore {
                         }
                     }
                     if Instant::now() >= deadline {
-                        anyhow::bail!("no leader available to accept the run");
+                        anyhow::bail!("no leader available to accept the command");
                     }
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
             }
         }
+    }
+}
+
+#[async_trait]
+impl RunStore for RaftClusterStore {
+    async fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
+        self.commit(Command::PutRun(run)).await
+    }
+
+    async fn delete(&self, id: &WorkflowRunId) -> anyhow::Result<()> {
+        self.commit(Command::DeleteRun(id.clone())).await
     }
 
     async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
@@ -379,9 +390,9 @@ fn take_reply(node: &mut RaftNode, to: NodeId) -> Option<RaftMsg> {
     reply
 }
 
-/// POST /raft/propose — the leader accepts a run (a follower's forward target).
-async fn propose(State(s): State<Arc<Shared>>, Json(run): Json<WorkflowRun>) -> axum::response::Response {
-    match s.propose_local(run).await {
+/// POST /raft/propose — the leader accepts a command (a follower's forward target).
+async fn propose(State(s): State<Arc<Shared>>, Json(cmd): Json<Command>) -> axum::response::Response {
+    match s.propose_local(cmd).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "committed": true }))).into_response(),
         Err(leader) => {
             let leader_url = leader.and_then(|l| s.peers.get(&l).cloned());

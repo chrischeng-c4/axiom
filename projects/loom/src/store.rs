@@ -25,6 +25,9 @@ pub trait RunStore: Send + Sync {
     async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>>;
     /// List all run ids (ordered).
     async fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>>;
+    /// Remove a run (completed-DAG GC, #106). Idempotent — deleting a missing
+    /// run is Ok.
+    async fn delete(&self, id: &WorkflowRunId) -> anyhow::Result<()>;
 }
 
 /// In-memory reference store: a `Mutex<BTreeMap>`. Not durable — replaced by the
@@ -67,6 +70,11 @@ impl RunStore for MemStore {
             .keys()
             .cloned()
             .collect())
+    }
+
+    async fn delete(&self, id: &WorkflowRunId) -> anyhow::Result<()> {
+        self.runs.lock().map_err(|_| anyhow::anyhow!("run store poisoned"))?.remove(id);
+        Ok(())
     }
 }
 
@@ -129,6 +137,14 @@ impl RunStore for FileStore {
             .keys()
             .cloned()
             .collect())
+    }
+
+    async fn delete(&self, id: &WorkflowRunId) -> anyhow::Result<()> {
+        let mut g = self.cache.lock().map_err(|_| anyhow::anyhow!("run store poisoned"))?;
+        if g.remove(id).is_some() {
+            self.persist(&g)?;
+        }
+        Ok(())
     }
 }
 

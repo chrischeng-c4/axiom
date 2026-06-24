@@ -323,6 +323,16 @@ pub fn run() -> anyhow::Result<()> {
         if let Some(rr) = raft_router {
             app = app.merge(rr);
         }
+        // Completed-DAG GC (#106): reap terminal runs after a retention window.
+        // LOOM_GC_RETENTION_SECS (default 3600); 0 disables.
+        let gc_retention = std::env::var("LOOM_GC_RETENTION_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(3600);
+        if gc_retention > 0 {
+            tokio::spawn(crate::gc::gc_loop(store.clone(), gc_retention));
+        }
+
         // With a real relay, consume worker completions and advance the DAG.
         // Run one consumer per shard (#127): completions are published to
         // `loom.completions.{shard_of(run_id)}`, so per-run folding stays serial
