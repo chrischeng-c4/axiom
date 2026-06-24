@@ -36,6 +36,7 @@ fn lib_options(root: &std::path::Path) -> LibBuildOptions {
         extra_externals: HashSet::new(),
         preserve_modules: false,
         declaration: true,
+        library_global_name: None,
     }
 }
 

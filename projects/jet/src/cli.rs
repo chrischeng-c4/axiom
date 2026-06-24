@@ -446,8 +446,34 @@ pub fn command() -> Command {
                     Arg::new("format")
                         .long("format")
                         .help(
-                            "Library output formats (comma-separated): esm, cjs. \
+                            "Library output formats (comma-separated): esm, cjs, iife. \
                              Only meaningful with --lib. Default: esm.",
+                        ),
+                )
+                .arg(
+                    // jet build --lib --preserve-modules — emit one output
+                    // file per source module (mirroring the source tree)
+                    // instead of bundling each entry into a single file.
+                    // ESM only. Overrides [lib].preserve_modules of jet.toml.
+                    Arg::new("preserve-modules")
+                        .long("preserve-modules")
+                        .action(ArgAction::SetTrue)
+                        .help(
+                            "Emit one output file per source module (mirroring \
+                             the source tree) instead of bundling each entry. \
+                             ESM only. Overrides [lib].preserve_modules.",
+                        ),
+                )
+                .arg(
+                    // jet build --lib --format iife --global-name <name> —
+                    // global variable an IIFE output assigns its namespace to.
+                    // Defaults to a name derived from package.json `name`.
+                    Arg::new("global-name")
+                        .long("global-name")
+                        .help(
+                            "Global variable name for --format iife output \
+                             (e.g. MyLib). Default: derived from package.json \
+                             `name`. Overrides [lib].global_name.",
                         ),
                 )
                 .arg(
@@ -3672,8 +3698,9 @@ fn run_library_build(
         match f.to_lowercase().as_str() {
             "esm" | "es" | "module" => formats.push(OutputFormat::Esm),
             "cjs" | "commonjs" => formats.push(OutputFormat::Cjs),
+            "iife" | "global" => formats.push(OutputFormat::Iife),
             other => anyhow::bail!(
-                "jet build --lib: unknown format '{}' (expected esm or cjs)",
+                "jet build --lib: unknown format '{}' (expected esm, cjs, or iife)",
                 other
             ),
         }
@@ -3697,9 +3724,21 @@ fn run_library_build(
         .conditions
         .clone();
 
-    let preserve_modules = lib_config
-        .and_then(|c| c.preserve_modules)
-        .unwrap_or(false);
+    // preserve_modules: --preserve-modules flag wins, else [lib] config.
+    let preserve_modules = if m.get_flag("preserve-modules") {
+        true
+    } else {
+        lib_config
+            .and_then(|c| c.preserve_modules)
+            .unwrap_or(false)
+    };
+
+    // Global name for IIFE output: --global-name flag wins, else [lib]
+    // config; `None` lets the bundler derive one from package.json `name`.
+    let library_global_name = m
+        .get_one::<String>("global-name")
+        .cloned()
+        .or_else(|| lib_config.and_then(|c| c.global_name.clone()));
 
     // Declaration emission: --no-dts wins, then --dts, then [lib].dts of
     // jet.toml, then the library-mode default (on).
@@ -3719,6 +3758,7 @@ fn run_library_build(
         extra_externals: std::collections::HashSet::new(),
         preserve_modules,
         declaration,
+        library_global_name,
     };
 
     let start = std::time::Instant::now();
