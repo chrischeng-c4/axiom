@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-build-lib-inline-barrel-re-exports-export-from-x-in-single-f-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -59,4 +59,32 @@ flowchart TD
     other --> emit
     skip --> done([barrel inlined single-file])
     emit --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/bundler/lib_build.rs"
+    action: modify
+    section: logic
+    description: |
+      Inline relative re-exports in single-file library mode: bundle_library_entry/
+      inline_module now FOLLOW `export * from './rel'` and `export {..} from './rel'`
+      to the target module, inline its source, and hoist its exports — instead of
+      leaving dangling `./rel.js` references. External `export .. from 'pkg'` stays
+      bare. Transitive re-exports followed with a visited-set cycle guard.
+      preserve_modules mode (emits per-module files) is unchanged.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/library_build.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Tests: a barrel `export * from './lib/a'` + `export {X} from './lib/b'` index
+      yields a single ESM output containing a's and b's code and re-exporting their
+      symbols (no dangling ./lib/*.js); transitive re-export inlines through; external
+      re-export stays `from "react"`.
+    impl_mode: hand-written
 ```
