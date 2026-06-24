@@ -37,6 +37,7 @@ fn run_lib_build(root: &std::path::Path, formats: Vec<OutputFormat>) -> jet::bun
         // exercised separately in `library_dts.rs`.
         declaration: false,
         library_global_name: None,
+        entry: Vec::new(),
     };
     build_library(options).expect("library build must succeed")
 }
@@ -333,6 +334,7 @@ fn run_lib_build_preserve(root: &std::path::Path) -> jet::bundler::LibBuildResul
         preserve_modules: true,
         declaration: false,
         library_global_name: None,
+        entry: Vec::new(),
     };
     build_library(options).expect("preserve-modules library build must succeed")
 }
@@ -482,6 +484,7 @@ export const VERSION = "1.0.0";
         preserve_modules: false,
         declaration: false,
         library_global_name: Some("WidgetKit".to_string()),
+        entry: Vec::new(),
     };
     let result = build_library(options).expect("iife library build must succeed");
     assert_eq!(result.entries.len(), 1, "single entry → single IIFE file");
@@ -558,6 +561,7 @@ fn lib_iife_default_global_name_derived_from_package_name() {
         declaration: false,
         // No explicit global name → derived from package.json `name`.
         library_global_name: None,
+        entry: Vec::new(),
     };
     let result = build_library(options).expect("iife build must succeed");
     let code = &result.entries[0].code;
@@ -740,6 +744,68 @@ fn lib_cjs_local_renamed_export() {
     assert!(
         cjs.contains("function localA"),
         "the renamed export's source binding survives, got:\n{cjs}"
+    );
+}
+
+/// #170 entry resolution: package.json `exports`/`module`/`main` point at BUILD
+/// OUTPUT (`./dist/index.js`), which does not exist as a source. The build must
+/// fall back to the conventional `src/index.ts` rather than failing on the
+/// not-yet-built dist path.
+#[test]
+fn lib_entry_falls_back_to_src_index_when_exports_point_at_dist() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write_file(
+        root,
+        "package.json",
+        r#"{
+          "name": "conv-lib",
+          "version": "1.0.0",
+          "type": "module",
+          "main": "./dist/index.cjs",
+          "module": "./dist/index.js",
+          "exports": { ".": { "import": "./dist/index.js", "require": "./dist/index.cjs" } }
+        }"#,
+    );
+    write_file(root, "src/index.ts", "export const hello = (): string => \"hi\";\n");
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm]);
+    assert!(!result.entries.is_empty(), "convention fallback must yield an entry");
+    let esm = &result.entries[0].code;
+    assert!(esm.contains("hello"), "built ESM must contain the source symbol, got:\n{esm}");
+}
+
+/// #170 explicit `[lib].entry` (via `LibBuildOptions::entry`) selects the SOURCE
+/// entry directly, overriding exports-based discovery.
+#[test]
+fn lib_explicit_entry_overrides_exports() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "explicit-lib", "version": "1.0.0", "type": "module",
+            "exports": { ".": "./dist/index.js" } }"#,
+    );
+    write_file(root, "src/main.ts", "export const answer = (): number => 42;\n");
+
+    let options = LibBuildOptions {
+        project_root: root.to_path_buf(),
+        out_dir: root.join("dist-jet"),
+        formats: vec![OutputFormat::Esm],
+        conditions: vec!["import".to_string(), "default".to_string()],
+        extra_externals: HashSet::new(),
+        preserve_modules: false,
+        declaration: false,
+        library_global_name: None,
+        entry: vec!["src/main.ts".to_string()],
+    };
+    let result = build_library(options).expect("explicit-entry build must succeed");
+    assert!(!result.entries.is_empty());
+    assert!(
+        result.entries[0].code.contains("answer"),
+        "explicit entry src/main.ts must be the built source, got:\n{}",
+        result.entries[0].code
     );
 }
 // HANDWRITE-END
