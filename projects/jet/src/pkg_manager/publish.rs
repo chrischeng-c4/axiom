@@ -116,20 +116,43 @@ fn describe_publish_field_kind(v: &serde_json::Value) -> &'static str {
 pub struct Publisher {
     root_dir: PathBuf,
     npmrc: NpmrcConfig,
+    /// When set, run a library build (`jet build --lib`) before packing so the
+    /// tarball contains freshly-built dist files. Opt-in — defaults to `false`
+    /// so the historical `jet publish` / `jet pack` behaviour is unchanged.
+    /// @issue #172
+    build_first: bool,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-pkg-manager.md#schema
 impl Publisher {
     pub fn new(root_dir: PathBuf) -> Self {
         let npmrc = NpmrcConfig::load(&root_dir);
-        Self { root_dir, npmrc }
+        Self {
+            root_dir,
+            npmrc,
+            build_first: false,
+        }
+    }
+
+    /// Enable the build-before-publish path: a library build runs and any
+    /// missing `main`/`module`/`types` field is auto-filled from the build
+    /// output before packing/publishing. Opt-in (default off).
+    /// @issue #172
+    pub fn with_build(mut self, build_first: bool) -> Self {
+        self.build_first = build_first;
+        self
     }
 
     /// Create a tarball (.tgz) for publishing without actually publishing.
     pub fn pack(&self) -> Result<PathBuf> {
-        let pkg = self.read_and_transform_package_json()?;
+        let mut pkg = self.read_and_transform_package_json()?;
         let package_json_path = self.root_dir.join("package.json");
         let (name, version) = require_publish_identity(&pkg, &package_json_path)?;
+
+        // @issue #172 — optionally build first, then validate that every
+        // metadata field (main/module/exports/types) points at a real file
+        // that the tarball will contain.
+        self.prepare_for_packing(&mut pkg)?;
 
         let tarball_name = format!(
             "{}-{}.tgz",
@@ -145,9 +168,16 @@ impl Publisher {
 
     /// Publish to npm registry.
     pub async fn publish(&self, tag: &str, access: Option<&str>) -> Result<()> {
-        let pkg = self.read_and_transform_package_json()?;
+        let mut pkg = self.read_and_transform_package_json()?;
         let package_json_path = self.root_dir.join("package.json");
         let (name_owned, version_owned) = require_publish_identity(&pkg, &package_json_path)?;
+
+        // @issue #172 — optionally build first, then validate the package
+        // metadata before we contact the registry. Doing this before the
+        // auth/registry lookup means a misconfigured package.json fails with a
+        // clear filesystem error instead of a confusing registry rejection.
+        self.prepare_for_packing(&mut pkg)?;
+
         let name = name_owned.as_str();
         let version = version_owned.as_str();
 
@@ -199,6 +229,39 @@ impl Publisher {
 
         tracing::info!("Published {}@{} with tag '{}'", name, version, tag);
         Ok(())
+    }
+
+    /// @issue #172 — the build-then-validate step shared by `pack` and
+    /// `publish`. When `build_first` is set, run a library build and auto-fill
+    /// any absent `main`/`module`/`types` field from the build output. Then
+    /// validate that every metadata target (`main`/`module`/`exports`/`types`)
+    /// resolves to a file that exists under the project root (i.e. will be in
+    /// the tarball). A missing target is a hard error.
+    fn prepare_for_packing(&self, pkg: &mut serde_json::Value) -> Result<()> {
+        if self.build_first {
+            let result = self.run_build()?;
+            auto_fill_metadata(pkg, &result, &self.root_dir);
+        }
+        validate_package_metadata(pkg, &self.root_dir)?;
+        Ok(())
+    }
+
+    /// @issue #172 — run `jet build --lib` for the project and return the
+    /// build result so callers can auto-fill metadata fields from the emitted
+    /// outputs. Reuses [`crate::bundler::build_library`].
+    fn run_build(&self) -> Result<crate::bundler::LibBuildResult> {
+        use crate::bundler::types::OutputFormat;
+        use crate::bundler::LibBuildOptions;
+
+        let options = LibBuildOptions {
+            project_root: self.root_dir.clone(),
+            out_dir: self.root_dir.join("dist"),
+            // Emit both ESM and CJS so `module`/`main` can both be auto-filled.
+            formats: vec![OutputFormat::Esm, OutputFormat::Cjs],
+            ..Default::default()
+        };
+        crate::bundler::build_library(options)
+            .context("jet publish --build: library build failed")
     }
 
     /// Read package.json and transform workspace:* protocols to real versions.
@@ -324,6 +387,158 @@ impl Publisher {
         }
         Ok(files)
     }
+}
+
+/// @issue #172 — auto-fill absent `main`/`module`/`types` package.json fields
+/// from a fresh library build's output. Only *missing* fields are filled — an
+/// already-declared field is left untouched so an author's explicit choice
+/// always wins. Paths are emitted as `./`-relative POSIX paths against the
+/// project root (npm convention).
+///
+/// Mapping:
+///   * `main`   ← the first CJS entry output (`./dist/index.cjs`)
+///   * `module` ← the first ESM entry output (`./dist/index.js`)
+///   * `types`  ← the first emitted `.d.ts`     (`./dist/index.d.ts`)
+pub(crate) fn auto_fill_metadata(
+    pkg: &mut serde_json::Value,
+    result: &crate::bundler::LibBuildResult,
+    root_dir: &Path,
+) {
+    use crate::bundler::types::OutputFormat;
+
+    let Some(obj) = pkg.as_object_mut() else {
+        return;
+    };
+
+    let rel = |path: &Path| -> Option<String> {
+        path.strip_prefix(root_dir)
+            .ok()
+            .map(|p| format!("./{}", p.to_string_lossy().replace('\\', "/")))
+    };
+
+    if !obj.contains_key("main") {
+        if let Some(cjs) = result
+            .entries
+            .iter()
+            .find(|e| e.subpath == "." && e.format == OutputFormat::Cjs)
+            .or_else(|| result.entries.iter().find(|e| e.format == OutputFormat::Cjs))
+        {
+            if let Some(p) = rel(&cjs.path) {
+                obj.insert("main".to_string(), serde_json::Value::String(p));
+            }
+        }
+    }
+
+    if !obj.contains_key("module") {
+        if let Some(esm) = result
+            .entries
+            .iter()
+            .find(|e| e.subpath == "." && e.format == OutputFormat::Esm)
+            .or_else(|| result.entries.iter().find(|e| e.format == OutputFormat::Esm))
+        {
+            if let Some(p) = rel(&esm.path) {
+                obj.insert("module".to_string(), serde_json::Value::String(p));
+            }
+        }
+    }
+
+    if !obj.contains_key("types") {
+        if let Some(dts) = result
+            .types
+            .iter()
+            .find(|t| t.subpath == ".")
+            .or_else(|| result.types.first())
+        {
+            if let Some(p) = rel(&dts.path) {
+                obj.insert("types".to_string(), serde_json::Value::String(p));
+            }
+        }
+    }
+}
+
+/// @issue #172 — validate that every package.json metadata target points at a
+/// file that exists under the project root (and will therefore be in the
+/// published tarball). Validates, in order: `main`, `module`, `types`, and
+/// every concrete string leaf reachable from `exports` (conditional and
+/// subpath maps are walked recursively; `*` wildcard targets are skipped —
+/// they need a filesystem glob and are out of scope here).
+///
+/// On the first missing target a clear error is returned naming the field, the
+/// declared value, and the absolute path that was checked, so a publishing dev
+/// lands on the actual cause from one line.
+pub(crate) fn validate_package_metadata(
+    pkg: &serde_json::Value,
+    root_dir: &Path,
+) -> Result<()> {
+    for field in ["main", "module", "types"] {
+        if let Some(serde_json::Value::String(rel)) = pkg.get(field) {
+            check_metadata_target(field, rel, root_dir)?;
+        }
+    }
+
+    if let Some(exports) = pkg.get("exports") {
+        validate_exports_targets(exports, root_dir)?;
+    }
+
+    Ok(())
+}
+
+/// Recursively validate every concrete string leaf of an `exports` value.
+fn validate_exports_targets(value: &serde_json::Value, root_dir: &Path) -> Result<()> {
+    match value {
+        serde_json::Value::String(rel) => check_metadata_target("exports", rel, root_dir),
+        serde_json::Value::Object(map) => {
+            for (key, v) in map.iter() {
+                // Wildcard subpath patterns need a glob — out of scope here.
+                if key.contains('*') {
+                    continue;
+                }
+                validate_exports_targets(v, root_dir)?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Array(items) => {
+            // `exports` may use an array of fallbacks; validate each.
+            for item in items {
+                validate_exports_targets(item, root_dir)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Check one `./`-relative metadata target resolves to an existing file.
+fn check_metadata_target(field: &str, rel: &str, root_dir: &Path) -> Result<()> {
+    // Wildcard targets (`./dist/*.js`) need a glob — skip them here.
+    if rel.contains('*') {
+        return Ok(());
+    }
+    let cleaned = rel.trim_start_matches("./");
+    let target = root_dir.join(cleaned);
+    if target.is_file() {
+        Ok(())
+    } else {
+        anyhow::bail!("{}", format_missing_metadata_err(field, rel, &target));
+    }
+}
+
+/// @issue #172 — build the error message for a metadata field whose declared
+/// path does not exist on disk. Extracted so the wording (field + declared
+/// value + checked absolute path + consequence) is unit-testable.
+pub(crate) fn format_missing_metadata_err(
+    field: &str,
+    declared: &str,
+    checked: &Path,
+) -> String {
+    format!(
+        "#172 cannot publish: package.json `{field}` points at `{declared}`, but no file \
+         exists at {}. The published tarball would ship a dangling `{field}` and every \
+         consumer's import/require of this package would fail with MODULE_NOT_FOUND. \
+         Build the library first (`jet build --lib` or `jet publish --build`) or fix the \
+         `{field}` path.",
+        checked.display()
+    )
 }
 
 /// Simple base64 encoding for tarball attachment.
@@ -586,6 +801,183 @@ mod tests {
             describe_publish_field_kind(&serde_json::json!({"a": 1})),
             "object"
         );
+    }
+
+    // ─── #172: build-before-publish metadata validation + auto-fill ────────
+
+    /// #172 — a declared `main`/`module`/`types`/`exports` target that does
+    /// not exist on disk must be a hard error naming the field, the declared
+    /// value, and the checked absolute path.
+    #[test]
+    fn issue172_missing_metadata_target_is_an_error() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        // `main` points at a dist file that was never built.
+        let pkg = serde_json::json!({
+            "name": "my-lib",
+            "version": "1.0.0",
+            "main": "./dist/index.cjs"
+        });
+
+        let err = validate_package_metadata(&pkg, root).unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(chain.contains("#172"), "must carry the issue tag: {chain}");
+        assert!(chain.contains("main"), "must name the field: {chain}");
+        assert!(
+            chain.contains("./dist/index.cjs"),
+            "must echo the declared value: {chain}"
+        );
+        assert!(
+            chain.contains("MODULE_NOT_FOUND") || chain.contains("dangling"),
+            "must explain the downstream consequence: {chain}"
+        );
+    }
+
+    /// #172 — when every declared target exists on disk, validation passes.
+    #[test]
+    fn issue172_present_metadata_targets_validate_ok() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        for f in ["index.cjs", "index.js", "index.d.ts", "client.js"] {
+            std::fs::write(root.join("dist").join(f), "// built\n").unwrap();
+        }
+
+        let pkg = serde_json::json!({
+            "name": "my-lib",
+            "version": "1.0.0",
+            "main": "./dist/index.cjs",
+            "module": "./dist/index.js",
+            "types": "./dist/index.d.ts",
+            "exports": {
+                ".": { "import": "./dist/index.js", "require": "./dist/index.cjs" },
+                "./client": "./dist/client.js"
+            }
+        });
+
+        assert!(
+            validate_package_metadata(&pkg, root).is_ok(),
+            "all targets exist on disk → validation must pass"
+        );
+    }
+
+    /// #172 — a missing `exports` leaf (nested under a condition map) is an
+    /// error, proving the recursive walk reaches conditional/subpath leaves.
+    #[test]
+    fn issue172_missing_exports_leaf_is_an_error() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::write(root.join("dist/index.js"), "// built\n").unwrap();
+        // `require` target is intentionally absent.
+
+        let pkg = serde_json::json!({
+            "name": "my-lib",
+            "version": "1.0.0",
+            "exports": {
+                ".": { "import": "./dist/index.js", "require": "./dist/index.cjs" }
+            }
+        });
+
+        let err = validate_package_metadata(&pkg, root).unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(chain.contains("exports"), "must name the exports field: {chain}");
+        assert!(
+            chain.contains("./dist/index.cjs"),
+            "must echo the missing leaf: {chain}"
+        );
+    }
+
+    /// #172 — wildcard targets and absent fields are skipped (no false error).
+    #[test]
+    fn issue172_wildcard_and_absent_fields_are_skipped() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        // No main/module/types; exports uses a `*` wildcard that we don't glob.
+        let pkg = serde_json::json!({
+            "name": "my-lib",
+            "version": "1.0.0",
+            "exports": { "./features/*": "./dist/features/*.js" }
+        });
+
+        assert!(
+            validate_package_metadata(&pkg, root).is_ok(),
+            "wildcard exports + absent fields must not error"
+        );
+    }
+
+    /// #172 — `auto_fill_metadata` fills *only* absent `main`/`module`/`types`
+    /// from the build output, mapping CJS→main, ESM→module, .d.ts→types, as
+    /// `./`-relative paths. An already-declared field is left untouched.
+    #[test]
+    fn issue172_auto_fill_metadata_from_build_output() {
+        use crate::bundler::lib_build::{EntryOutput, LibBuildResult, TypesOutput};
+        use crate::bundler::types::OutputFormat;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        let result = LibBuildResult {
+            entries: vec![
+                EntryOutput {
+                    subpath: ".".to_string(),
+                    format: OutputFormat::Esm,
+                    path: root.join("dist/index.js"),
+                    code: String::new(),
+                    dts: None,
+                },
+                EntryOutput {
+                    subpath: ".".to_string(),
+                    format: OutputFormat::Cjs,
+                    path: root.join("dist/index.cjs"),
+                    code: String::new(),
+                    dts: None,
+                },
+            ],
+            types: vec![TypesOutput {
+                subpath: ".".to_string(),
+                path: root.join("dist/index.d.ts"),
+            }],
+        };
+
+        // `main` is pre-declared; module/types are absent.
+        let mut pkg = serde_json::json!({
+            "name": "my-lib",
+            "version": "1.0.0",
+            "main": "./preexisting.cjs"
+        });
+
+        auto_fill_metadata(&mut pkg, &result, root);
+
+        assert_eq!(
+            pkg.get("main").and_then(|v| v.as_str()),
+            Some("./preexisting.cjs"),
+            "declared `main` must be left untouched"
+        );
+        assert_eq!(
+            pkg.get("module").and_then(|v| v.as_str()),
+            Some("./dist/index.js"),
+            "absent `module` must be auto-filled from the ESM output"
+        );
+        assert_eq!(
+            pkg.get("types").and_then(|v| v.as_str()),
+            Some("./dist/index.d.ts"),
+            "absent `types` must be auto-filled from the .d.ts output"
+        );
+    }
+
+    /// #172 — the missing-metadata error helper names field, declared value,
+    /// the checked absolute path, and the issue tag.
+    #[test]
+    fn issue172_format_missing_metadata_err_shape() {
+        let checked = std::path::Path::new("/proj/dist/index.cjs");
+        let msg = format_missing_metadata_err("main", "./dist/index.cjs", checked);
+        assert!(msg.contains("#172"), "msg: {msg}");
+        assert!(msg.contains("main"), "msg: {msg}");
+        assert!(msg.contains("./dist/index.cjs"), "msg: {msg}");
+        assert!(msg.contains("/proj/dist/index.cjs"), "msg: {msg}");
     }
 }
 // CODEGEN-END

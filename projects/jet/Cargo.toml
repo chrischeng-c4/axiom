@@ -139,6 +139,11 @@ path = "tests/pkg-mgmt/pkg_replacement_gate.rs"
 name = "workspace_protocol"
 path = "tests/pkg-mgmt/workspace_protocol.rs"
 
+# tests/publish/ — jet publish builds, validates package metadata, and ships to a private registry
+[[test]]
+name = "library_publish_e2e"
+path = "tests/publish/library_publish_e2e.rs"
+
 # tests/browser-bridge/ — jet bb replaces Playwright (CLI + MCP; see tests/browser-bridge/README.md)
 [[test]]
 name = "auto_artifacts_tests"
