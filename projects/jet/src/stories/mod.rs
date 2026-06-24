@@ -14,6 +14,10 @@
 //! diagnostics on the index — they never abort discovery of the other files.
 
 pub mod csf;
+pub mod manager;
+pub mod server;
+
+pub use server::start_stories_workbench;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

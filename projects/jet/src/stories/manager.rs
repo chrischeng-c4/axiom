@@ -1,3 +1,492 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:583d99f9" tracker="pending-tracker" reason="Manager UI: render the manager HTML shell (sidebar tree from StoryIndex, toolbar, preview iframe) and the isolated per-story preview HTML entry (mounts only the selected story component, no app router/shell)."
-// TODO: hand-write content for `projects/jet/src/stories/manager.rs`.
+//! HTML rendering for the `jet stories` native workbench (B2).
+//!
+//! Two pure functions, no I/O and no server state, so they are trivially
+//! testable and the [`server`](super::server) module can call them per request:
+//!
+//! - [`render_manager_html`] — the manager shell: a sidebar tree built from the
+//!   [`StoryIndex`] title hierarchy, a toolbar, and an `<iframe>` whose `src`
+//!   points at the selected story's preview URL. Clicking a sidebar entry just
+//!   navigates the iframe (a full preview reload — HMR is B2b/#176, out of
+//!   scope here).
+//! - [`render_preview_html`] — the *isolated* preview document for one story.
+//!   It mounts ONLY that story's component/render into a single root `<div>`
+//!   with no app router/shell around it, by dynamically importing the story
+//!   module (served + transformed by the module route) and rendering the
+//!   selected export.
+//!
+//! Both emit self-contained strings; escaping is intentionally minimal because
+//! the inputs are developer-authored story ids / titles, but every dynamic
+//! value that lands in HTML text is run through [`escape_html`] and every value
+//! that lands in a JS string literal through [`escape_js`].
+
+use std::collections::BTreeMap;
+
+use super::{StoryEntry, StoryIndex};
+
+/// Route prefix for an isolated story preview document.
+pub const PREVIEW_PREFIX: &str = "/__jet_stories_preview";
+
+/// Build the manager shell HTML: sidebar tree + toolbar + preview iframe.
+///
+/// `selected` is the id of the story whose preview the iframe loads first; when
+/// `None` (or unknown) the first story in the index is used. With no stories at
+/// all the iframe is pointed at an empty-state placeholder.
+pub fn render_manager_html(index: &StoryIndex, selected: Option<&str>) -> String {
+    // Resolve the initially-selected story: explicit id if it exists, else the
+    // first discovered story (the index is already id-sorted).
+    let selected_entry = selected
+        .and_then(|id| index.stories.iter().find(|s| s.id == id))
+        .or_else(|| index.stories.first());
+
+    let initial_src = match selected_entry {
+        Some(entry) => format!("{PREVIEW_PREFIX}/{}", entry.id),
+        None => format!("{PREVIEW_PREFIX}/"),
+    };
+    let initial_id = selected_entry.map(|e| e.id.as_str()).unwrap_or("");
+
+    let sidebar = render_sidebar(index, initial_id);
+    let diagnostics = render_diagnostics(index);
+    let story_count = index.stories.len();
+
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>jet stories</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  html, body {{ margin: 0; height: 100%; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: grid; grid-template-columns: 260px 1fr; grid-template-rows: 44px 1fr;
+    grid-template-areas: "sidebar toolbar" "sidebar preview"; height: 100vh;
+    color: #1a1a1a;
+  }}
+  #jet-sidebar {{
+    grid-area: sidebar; border-right: 1px solid #e3e3e3; overflow-y: auto;
+    background: #fafafa; padding: 8px 0;
+  }}
+  #jet-sidebar .jet-brand {{ font-weight: 600; padding: 8px 14px; font-size: 14px; }}
+  #jet-sidebar ul {{ list-style: none; margin: 0; padding: 0; }}
+  #jet-sidebar .jet-group > span {{
+    display: block; padding: 4px 14px; font-size: 12px; font-weight: 600;
+    color: #555;
+  }}
+  #jet-sidebar a.jet-story {{
+    display: block; padding: 4px 14px 4px 28px; font-size: 13px; color: #333;
+    text-decoration: none; cursor: pointer;
+  }}
+  #jet-sidebar a.jet-story:hover {{ background: #eef; }}
+  #jet-sidebar a.jet-story.jet-active {{ background: #4338ca; color: #fff; }}
+  #jet-toolbar {{
+    grid-area: toolbar; border-bottom: 1px solid #e3e3e3; display: flex;
+    align-items: center; gap: 12px; padding: 0 14px; background: #fff; font-size: 13px;
+  }}
+  #jet-preview {{ grid-area: preview; border: 0; width: 100%; height: 100%; }}
+  .jet-diag {{ color: #b00; font-size: 12px; padding: 6px 14px; }}
+</style>
+</head>
+<body>
+<nav id="jet-sidebar" aria-label="Stories">
+  <div class="jet-brand">jet stories</div>
+  {sidebar}
+  {diagnostics}
+</nav>
+<header id="jet-toolbar">
+  <span id="jet-current-title">{initial_title}</span>
+  <span style="margin-left:auto;color:#777">{story_count} stories</span>
+</header>
+<iframe id="jet-preview" name="jet-preview" src="{initial_src}"></iframe>
+<script>
+  // Full-reload navigation: clicking a story swaps the preview iframe src.
+  // HMR is deliberately out of scope here (B2b / #176) — a reload is fine.
+  const frame = document.getElementById('jet-preview');
+  const titleEl = document.getElementById('jet-current-title');
+  document.querySelectorAll('a.jet-story').forEach((a) => {{
+    a.addEventListener('click', (ev) => {{
+      ev.preventDefault();
+      document.querySelectorAll('a.jet-story').forEach((x) => x.classList.remove('jet-active'));
+      a.classList.add('jet-active');
+      frame.setAttribute('src', a.getAttribute('data-preview'));
+      titleEl.textContent = a.getAttribute('data-title');
+      history.replaceState(null, '', '?story=' + encodeURIComponent(a.getAttribute('data-story-id')));
+    }});
+  }});
+</script>
+</body>
+</html>
+"#,
+        sidebar = sidebar,
+        diagnostics = diagnostics,
+        initial_src = escape_html(&initial_src),
+        initial_title = escape_html(
+            selected_entry
+                .map(story_display_title)
+                .unwrap_or_else(|| "No stories".to_string())
+                .as_str()
+        ),
+        story_count = story_count,
+    )
+}
+
+/// The sidebar tree: stories grouped by their full title path so the sidebar
+/// mirrors the hierarchy the user authored via `meta.title`.
+fn render_sidebar(index: &StoryIndex, active_id: &str) -> String {
+    if index.stories.is_empty() {
+        return "<p class=\"jet-diag\">No stories discovered.</p>".to_string();
+    }
+
+    let mut groups: BTreeMap<String, Vec<&StoryEntry>> = BTreeMap::new();
+    for story in &index.stories {
+        groups
+            .entry(story.title_path.join(" / "))
+            .or_default()
+            .push(story);
+    }
+
+    let mut out = String::from("<ul>");
+    for (title, stories) in &groups {
+        out.push_str("<li class=\"jet-group\"><span>");
+        out.push_str(&escape_html(title));
+        out.push_str("</span><ul>");
+        for story in stories {
+            let preview = format!("{PREVIEW_PREFIX}/{}", story.id);
+            let active = if story.id == active_id {
+                " jet-active"
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "<li><a class=\"jet-story{active}\" href=\"{preview}\" target=\"jet-preview\" \
+                 data-preview=\"{preview}\" data-story-id=\"{id}\" data-title=\"{full_title}\">{name}</a></li>",
+                active = active,
+                preview = escape_html(&preview),
+                id = escape_html(&story.id),
+                full_title = escape_html(&story_display_title(story)),
+                name = escape_html(&story.name),
+            ));
+        }
+        out.push_str("</ul></li>");
+    }
+    out.push_str("</ul>");
+    out
+}
+
+/// Render per-file diagnostics (parse errors etc.) so the user sees broken
+/// story files instead of silently missing entries.
+fn render_diagnostics(index: &StoryIndex) -> String {
+    if index.diagnostics.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("<div class=\"jet-diag\"><strong>Diagnostics</strong><ul>");
+    for d in &index.diagnostics {
+        out.push_str("<li>");
+        out.push_str(&escape_html(d));
+        out.push_str("</li>");
+    }
+    out.push_str("</ul></div>");
+    out
+}
+
+/// `Components / Button — Primary` — used in the toolbar + sidebar tooltips.
+fn story_display_title(story: &StoryEntry) -> String {
+    if story.title_path.is_empty() {
+        story.name.clone()
+    } else {
+        format!("{} — {}", story.title_path.join(" / "), story.name)
+    }
+}
+
+/// Render the isolated preview document for one story.
+///
+/// `module_url` is the URL (served by the module route) of the story's source
+/// file, transformed to JS. The document:
+///   1. sets up an importmap so bare `react` / `react-dom/client` specifiers
+///      resolve to esm.sh CDN modules (no local node_modules needed for the
+///      React runtime itself — local relative imports still go through the
+///      module route),
+///   2. dynamically imports the story module,
+///   3. picks the story's named export and renders it — honoring a custom
+///      `render` function when the story declares one, otherwise mounting the
+///      meta `component` (or the export value treated as a component),
+///   4. mounts the result into a single `#jet-root` div with no surrounding app
+///      shell, router, or providers.
+pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
+    let args_json = args_to_json(&story.args);
+
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>{title}</title>
+<script type="importmap">
+{{
+  "imports": {{
+    "react": "https://esm.sh/react@18",
+    "react-dom": "https://esm.sh/react-dom@18",
+    "react-dom/client": "https://esm.sh/react-dom@18/client",
+    "react/jsx-runtime": "https://esm.sh/react@18/jsx-runtime"
+  }}
+}}
+</script>
+<style> html, body {{ margin: 0; }} #jet-root {{ padding: 16px; }} </style>
+</head>
+<body>
+<div id="jet-root" data-story-id="{story_id}"></div>
+<script type="module">
+  // Isolated mount: only this story renders here — no app router/shell.
+  import * as Story from "{module_url}";
+  import React from "react";
+  import {{ createRoot }} from "react-dom/client";
+
+  const exportName = "{export_name}";
+  const args = {args_json};
+  const root = createRoot(document.getElementById("jet-root"));
+
+  function pickComponent(mod) {{
+    const story = mod[exportName];
+    // A story may BE a component (function/class) or a CSF object with a
+    // `render`/`component` field. Resolve to a renderable React element factory.
+    if (typeof story === "function") return (props) => React.createElement(story, props);
+    if (story && typeof story.render === "function") return (props) => story.render(props);
+    if (story && story.component) return (props) => React.createElement(story.component, props);
+    const meta = mod.default;
+    if (meta && meta.component) return (props) => React.createElement(meta.component, props);
+    return null;
+  }}
+
+  try {{
+    const factory = pickComponent(Story);
+    if (!factory) {{
+      document.getElementById("jet-root").textContent =
+        "jet stories: could not resolve a component for export '" + exportName + "'";
+    }} else {{
+      const merged = {{ ...(Story[exportName] && Story[exportName].args), ...args }};
+      root.render(factory(merged));
+    }}
+  }} catch (err) {{
+    document.getElementById("jet-root").textContent = "jet stories render error: " + (err && err.message || err);
+    console.error(err);
+  }}
+</script>
+</body>
+</html>
+"#,
+        title = escape_html(&story_display_title(story)),
+        story_id = escape_html(&story.id),
+        module_url = escape_js(module_url),
+        export_name = escape_js(&story.export_name),
+        args_json = args_json,
+    )
+}
+
+/// Empty-state preview document (no stories discovered).
+pub fn render_empty_preview_html() -> String {
+    "<!doctype html><html><head><meta charset=\"utf-8\"><title>jet stories</title></head>\
+     <body style=\"font-family:sans-serif;padding:24px;color:#666\">\
+     <h2>No stories discovered</h2>\
+     <p>Add a <code>*.stories.tsx</code> file under your project root.</p>\
+     </body></html>"
+        .to_string()
+}
+
+/// Serialize a [`super::csf::CsfValue`] arg map into a compact JSON object
+/// literal usable directly in a `<script>` block. Non-destructurable values
+/// (`Raw`) are emitted as JSON strings so the runtime at least sees the source.
+fn args_to_json(args: &BTreeMap<String, super::csf::CsfValue>) -> String {
+    use super::csf::CsfValue;
+
+    fn value_to_json(v: &CsfValue) -> String {
+        match v {
+            CsfValue::Str(s) => json_string(s),
+            CsfValue::Bool(b) => b.to_string(),
+            CsfValue::Number(n) => {
+                if n.parse::<f64>().is_ok() {
+                    n.clone()
+                } else {
+                    json_string(n)
+                }
+            }
+            CsfValue::Null => "null".to_string(),
+            CsfValue::Object(map) => {
+                let mut out = String::from("{");
+                let mut first = true;
+                for (k, val) in map {
+                    if !first {
+                        out.push(',');
+                    }
+                    first = false;
+                    out.push_str(&json_string(k));
+                    out.push(':');
+                    out.push_str(&value_to_json(val));
+                }
+                out.push('}');
+                out
+            }
+            // Raw source (identifiers, JSX, arrow fns) can't be safely evaluated
+            // here; surface the source text as a string so it round-trips.
+            CsfValue::Raw(s) => json_string(s),
+        }
+    }
+
+    let mut out = String::from("{");
+    let mut first = true;
+    for (k, v) in args {
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        out.push_str(&json_string(k));
+        out.push(':');
+        out.push_str(&value_to_json(v));
+    }
+    out.push('}');
+    out
+}
+
+/// Minimal JSON string escaping for embedding in a `<script>` literal.
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            // Avoid `</script>` breaking out of the script element.
+            '<' => out.push_str("\\u003c"),
+            '>' => out.push_str("\\u003e"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// HTML-escape a value destined for element text / attribute values.
+fn escape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Escape a value destined for a JS double-quoted string literal in a module
+/// `<script>` (used for the module URL + export name).
+fn escape_js(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '<' => out.push_str("\\u003c"),
+            '>' => out.push_str("\\u003e"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stories::StoryEntry;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn entry(id: &str, name: &str, title: &[&str]) -> StoryEntry {
+        StoryEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            export_name: name.to_string(),
+            args: BTreeMap::new(),
+            has_render: false,
+            file: PathBuf::from("/x/Foo.stories.tsx"),
+            title_path: title.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn manager_lists_each_story_and_points_iframe_at_first() {
+        let mut index = StoryIndex::default();
+        index
+            .stories
+            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
+        index
+            .stories
+            .push(entry("components-button--disabled", "Disabled", &["Components", "Button"]));
+
+        let html = render_manager_html(&index, None);
+        assert!(html.contains("Primary"), "lists Primary");
+        assert!(html.contains("Disabled"), "lists Disabled");
+        assert!(html.contains("Components / Button"), "shows the group title");
+        // iframe defaults to the FIRST listed story.
+        assert!(
+            html.contains("src=\"/__jet_stories_preview/components-button--primary\"")
+                || html.contains("src=\"/__jet_stories_preview/components-button--disabled\""),
+            "iframe src points at a story: {html}"
+        );
+    }
+
+    #[test]
+    fn manager_honors_explicit_selection() {
+        let mut index = StoryIndex::default();
+        index
+            .stories
+            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
+        index
+            .stories
+            .push(entry("components-button--disabled", "Disabled", &["Components", "Button"]));
+
+        let html = render_manager_html(&index, Some("components-button--primary"));
+        assert!(html.contains("src=\"/__jet_stories_preview/components-button--primary\""));
+    }
+
+    #[test]
+    fn preview_references_module_and_export() {
+        let e = entry("components-button--primary", "Primary", &["Components", "Button"]);
+        let html = render_preview_html(&e, "/src/components/Button.stories.tsx");
+        assert!(html.contains("import * as Story from \"/src/components/Button.stories.tsx\""));
+        assert!(html.contains("const exportName = \"Primary\""));
+        assert!(html.contains("id=\"jet-root\""), "mounts into isolated root div");
+        // No app shell / router markers — just the single root.
+        assert_eq!(html.matches("id=\"jet-root\"").count(), 1);
+    }
+
+    #[test]
+    fn args_serialize_to_json() {
+        let mut args = BTreeMap::new();
+        args.insert("label".to_string(), super::super::csf::CsfValue::Str("Hi".into()));
+        args.insert("primary".to_string(), super::super::csf::CsfValue::Bool(true));
+        args.insert("count".to_string(), super::super::csf::CsfValue::Number("3".into()));
+        let json = args_to_json(&args);
+        assert!(json.contains("\"label\":\"Hi\""));
+        assert!(json.contains("\"primary\":true"));
+        assert!(json.contains("\"count\":3"));
+    }
+
+    #[test]
+    fn empty_index_renders_empty_state() {
+        let index = StoryIndex::default();
+        let html = render_manager_html(&index, None);
+        assert!(html.contains("No stories discovered"));
+    }
+}
 // HANDWRITE-END
