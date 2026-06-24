@@ -2895,6 +2895,26 @@ fn make_unbound_method(type_name: &str, method_name: &str) -> MbValue {
     MbValue::from_ptr(inst)
 }
 
+fn make_bound_method(func: MbValue, recv: MbValue) -> MbValue {
+    let inst = MbObject::new_instance("method".to_string());
+    if let ObjData::Instance { fields, .. } = unsafe { &(*inst).data } {
+        let mut guard = fields.write().unwrap();
+        guard.insert("__func__".to_string(), func);
+        guard.insert("__self__".to_string(), recv);
+        if let Some(name) = extract_str(super::closure::mb_func_get_name(func)) {
+            guard.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name)),
+            );
+        }
+        unsafe {
+            super::rc::retain_if_ptr(func);
+            super::rc::retain_if_ptr(recv);
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
 fn inherited_builtin_unbound_method(class_name: &str, method_name: &str) -> Option<MbValue> {
     if !class_is_registered(class_name) {
         return None;
@@ -4983,6 +5003,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     if !class_attr.is_none() {
                         if is_descriptor(class_attr) {
                             return invoke_descriptor_get(class_attr, obj);
+                        }
+                        if super::closure::mb_func_is_registered(class_attr) {
+                            return make_bound_method(class_attr, obj);
                         }
                         super::rc::retain_if_ptr(class_attr);
                         return class_attr;
@@ -11496,6 +11519,7 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                     || class_name == "functools.singledispatch"
                     || class_name == "__unbound_method__"
                     || class_name == "__bound_native_method__"
+                    || class_name == "method"
                     || class_name == "collections.namedtuple_factory"
                 {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));

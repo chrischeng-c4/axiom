@@ -1,12 +1,13 @@
 use super::super::dict_ops::DictKey;
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
+use std::collections::{HashMap, HashSet};
+
 /// inspect module for Mamba (#438).
 ///
 /// Provides introspection utilities for examining live objects at runtime.
 /// Functions check object types and extract member information from instances.
 /// Some functions are stubs pending full closure/function object support.
-use std::collections::HashMap;
 
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
@@ -284,8 +285,44 @@ disp_unary!(d_isroutine, mb_inspect_isroutine);
 disp_unary!(d_isabstract, mb_inspect_isabstract);
 disp_unary!(d_isclass, mb_inspect_isclass);
 disp_unary!(d_ismethod, mb_inspect_ismethod);
-disp_unary!(d_getmembers, mb_inspect_getmembers);
 disp_unary!(d_signature, mb_inspect_signature);
+
+unsafe extern "C" fn d_getmembers(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let members = mb_inspect_getmembers(args.get(0).copied().unwrap_or_else(MbValue::none));
+    let Some(predicate) = args.get(1).copied().filter(|v| !v.is_none()) else {
+        return members;
+    };
+    let Some(list_ptr) = members.as_ptr() else {
+        return members;
+    };
+    let items = unsafe {
+        match &(*list_ptr).data {
+            ObjData::List(lock) => lock.read().unwrap().to_vec(),
+            _ => return members,
+        }
+    };
+    let mut filtered = Vec::new();
+    for item in items {
+        let Some(item_ptr) = item.as_ptr() else {
+            continue;
+        };
+        let Some((name, value)) = (unsafe {
+            match &(*item_ptr).data {
+                ObjData::Tuple(tuple) if tuple.len() >= 2 => Some((tuple[0], tuple[1])),
+                _ => None,
+            }
+        }) else {
+            continue;
+        };
+        if super::super::class::mb_call1_val(predicate, value).as_bool() == Some(true) {
+            filtered.push(MbValue::from_ptr(MbObject::new_tuple_borrowed(vec![
+                name, value,
+            ])));
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(filtered))
+}
 
 /// Register the inspect module.
 pub fn register() {
@@ -1323,10 +1360,9 @@ pub fn mb_inspect_isclass(obj: MbValue) -> MbValue {
 
 /// inspect.ismethod(obj) -> bool.
 ///
-/// Checks if obj is a bound method. In current Mamba, methods are not
-/// distinguished from functions, so this returns the same as isfunction.
+/// Checks if obj is a bound Python method.
 pub fn mb_inspect_ismethod(obj: MbValue) -> MbValue {
-    mb_inspect_isfunction(obj)
+    MbValue::from_bool(inst_class_name(obj).as_deref() == Some("method"))
 }
 
 /// inspect.getmembers(obj) -> list of (name, value) tuples.
@@ -1352,12 +1388,30 @@ pub fn mb_inspect_getmembers(obj: MbValue) -> MbValue {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::Instance { ref fields, .. } => {
+                ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                } => {
                     let fields = fields.read().unwrap();
                     let mut members = Vec::new();
+                    let mut seen = HashSet::new();
                     for (name, value) in fields.iter() {
+                        seen.insert(name.clone());
                         let name_val = MbValue::from_ptr(MbObject::new_str(name.clone()));
                         let tuple = MbValue::from_ptr(MbObject::new_tuple(vec![name_val, *value]));
+                        members.push(tuple);
+                    }
+                    drop(fields);
+                    for (name, _) in super::super::class::class_members(class_name) {
+                        if !seen.insert(name.clone()) {
+                            continue;
+                        }
+                        let name_val = MbValue::from_ptr(MbObject::new_str(name.clone()));
+                        let value = super::super::class::mb_getattr(obj, name_val);
+                        let tuple = MbValue::from_ptr(MbObject::new_tuple(vec![
+                            MbValue::from_ptr(MbObject::new_str(name)),
+                            value,
+                        ]));
                         members.push(tuple);
                     }
                     MbValue::from_ptr(MbObject::new_list(members))
