@@ -48,18 +48,6 @@ pub enum CbCommand {
     // lock the next marker or dispatch `aw td code-check`.
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#cli
     Fill(CbFillArgs),
-    // Review filled HANDWRITE markers (Phase 3 CRRR step 3 of 4).
-    // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
-    Review(crate::cli::cb_review::CbReviewArgs),
-    // Revise flagged markers after `cb review` returns needs-revision
-    // (Phase 3 CRRR step 4 of 4).
-    // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
-    Revise(crate::cli::cb_revise::CbReviseArgs),
-    // Terminal escalation after the CB CRRR 2-review ceiling is exceeded.
-    // Advances phase to `cb_arbitrated`, commits `Lifecycle-Stage: Cb-Arbitrate`,
-    // and prints human guidance for force-merge vs send-back.
-    // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
-    Arbitrate(crate::cli::cb_arbitrate::CbArbitrateArgs),
 }
 
 // Args for `aw td fill <slug>` — Phase 3 marker-fill workflow.
@@ -204,18 +192,6 @@ pub async fn run(args: CbArgs) -> Result<()> {
             crate::cli::workflow_guard::guard_issue_mutation(&project_root, Some(("cb", &a.slug)))
                 .await?;
         }
-        CbCommand::Review(a) => {
-            crate::cli::workflow_guard::guard_issue_mutation(&project_root, Some(("cb", &a.slug)))
-                .await?;
-        }
-        CbCommand::Revise(a) => {
-            crate::cli::workflow_guard::guard_issue_mutation(&project_root, Some(("cb", &a.slug)))
-                .await?;
-        }
-        CbCommand::Arbitrate(a) => {
-            crate::cli::workflow_guard::guard_issue_mutation(&project_root, Some(("cb", &a.slug)))
-                .await?;
-        }
         CbCommand::Claim(_) => {
             crate::cli::workflow_guard::guard_issue_mutation(&project_root, None).await?;
         }
@@ -226,9 +202,6 @@ pub async fn run(args: CbArgs) -> Result<()> {
         CbCommand::Check(a) => run_check(a),
         CbCommand::Claim(a) => run_claim(a).await,
         CbCommand::Fill(a) => crate::cli::cb_fill::run(a).await,
-        CbCommand::Review(a) => crate::cli::cb_review::run_review(a).await,
-        CbCommand::Revise(a) => crate::cli::cb_revise::run_revise(a).await,
-        CbCommand::Arbitrate(a) => crate::cli::cb_arbitrate::run_arbitrate(a).await,
     }
 }
 

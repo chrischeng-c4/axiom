@@ -6,10 +6,6 @@ mod cb_claim_test;
 mod cb_fill_test;
 #[path = "cli/tests/cb_namespace_test.rs"]
 mod cb_namespace_test;
-#[path = "cli/tests/cb_review_revise_test.rs"]
-mod cb_review_revise_test;
-#[path = "cli/tests/cb_review_to_merge_test.rs"]
-mod cb_review_to_merge_test;
 #[path = "cli/tests/in_place_lifecycle_test.rs"]
 mod in_place_lifecycle_test;
 #[path = "cli/tests/inplace_mode_test.rs"]
@@ -30,8 +26,6 @@ mod standardize_test;
 mod td_check_test;
 #[path = "cli/tests/td_claim_test.rs"]
 mod td_claim_test;
-#[path = "cli/tests/td_dirty_gate_test.rs"]
-mod td_dirty_gate_test;
 #[path = "cli/tests/td_dispatch_chain_test.rs"]
 mod td_dispatch_chain_test;
 #[path = "cli/tests/td_merge_atomic_test.rs"]

@@ -343,16 +343,67 @@ pub mod td_phase {
         matches!(phase, CB_GENNED | LEGACY_TD_GEN_CODED)
     }
 
-    /// True if `phase` is acceptable as a pre-merge phase. Includes the
-    /// Phase 3 `cb_filled` / `cb_reviewed` / `cb_revised` phases in
-    /// addition to `cb_genned` / `td_gen_coded`.
+    /// True if `phase` is acceptable as a pre-merge phase. The lifecycle is
+    /// linear (no review/revise ceremony), so the only pre-merge phases are
+    /// `cb_genned` / `td_gen_coded` (HANDWRITE gap, no fill needed) and
+    /// `cb_filled` (markers filled).
     ///
-    /// @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#schema
+    /// @spec projects/agentic-workflow/tech-design/logic/remove-td-cb-crrr-collapse-to-linear-lifecycle.md
     pub fn is_mergeable(phase: &str) -> bool {
-        matches!(
-            phase,
-            CB_GENNED | LEGACY_TD_GEN_CODED | CB_FILLED | CB_REVIEWED | CB_REVISED | CB_ARBITRATED
-        )
+        matches!(phase, CB_GENNED | LEGACY_TD_GEN_CODED | CB_FILLED)
+    }
+
+    /// The next lifecycle command for a phase, in the linear lifecycle
+    /// `td_inited -> create -> td_created -> gen -> cb_genned -> fill ->
+    /// cb_filled -> merge`. There is no review/revise hop. `td_inited`
+    /// (create is the externally-driven entry) and `td_merged` (terminal)
+    /// have no successor.
+    ///
+    /// @spec projects/agentic-workflow/tech-design/logic/remove-td-cb-crrr-collapse-to-linear-lifecycle.md
+    pub fn next_phase_command(phase: &str) -> Option<&'static str> {
+        match normalize(phase) {
+            TD_CREATED => Some("aw td gen"),
+            CB_GENNED => Some("aw cb fill"),
+            CB_FILLED => Some("aw td merge"),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        // @spec remove-td-cb-crrr-collapse-to-linear-lifecycle.md R1
+        #[test]
+        fn td_created_dispatches_to_gen() {
+            // After create, the linear lifecycle routes straight to gen — no review.
+            assert_eq!(next_phase_command(TD_CREATED), Some("aw td gen"));
+        }
+
+        // @spec remove-td-cb-crrr-collapse-to-linear-lifecycle.md R2
+        #[test]
+        fn is_mergeable_linear_only_genned_filled() {
+            assert!(is_mergeable(CB_GENNED));
+            assert!(is_mergeable(CB_FILLED));
+            assert!(is_mergeable(LEGACY_TD_GEN_CODED));
+            // Non-code / pre-gen phases are not mergeable.
+            assert!(!is_mergeable(TD_INITED));
+            assert!(!is_mergeable(TD_CREATED));
+            // Removed CRRR phases are no longer mergeable.
+            assert!(!is_mergeable("cb_reviewed"));
+            assert!(!is_mergeable("cb_revised"));
+            assert!(!is_mergeable("cb_arbitrated"));
+        }
+
+        // @spec remove-td-cb-crrr-collapse-to-linear-lifecycle.md R3
+        #[test]
+        fn next_phase_command_is_linear() {
+            assert_eq!(next_phase_command(CB_GENNED), Some("aw cb fill"));
+            assert_eq!(next_phase_command(CB_FILLED), Some("aw td merge"));
+            // Entry and terminal phases have no successor.
+            assert_eq!(next_phase_command(TD_INITED), None);
+            assert_eq!(next_phase_command(TD_MERGED), None);
+        }
     }
 }
 
