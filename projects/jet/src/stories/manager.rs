@@ -22,6 +22,8 @@
 
 use std::collections::BTreeMap;
 
+use super::controls::{Control, ControlKind};
+use super::csf::CsfValue;
 use super::{StoryEntry, StoryIndex};
 
 /// Route prefix for an isolated story preview document.
@@ -32,7 +34,18 @@ pub const PREVIEW_PREFIX: &str = "/__jet_stories_preview";
 /// `selected` is the id of the story whose preview the iframe loads first; when
 /// `None` (or unknown) the first story in the index is used. With no stories at
 /// all the iframe is pointed at an empty-state placeholder.
-pub fn render_manager_html(index: &StoryIndex, selected: Option<&str>) -> String {
+///
+/// `controls` (B3) are the resolved controls for the initially-selected story —
+/// one editable widget per component prop, seeded with the story's current arg
+/// values. When empty (no props, or component source unavailable) the panel
+/// shows a "no controls" placeholder. The server computes them via
+/// [`super::controls::resolve_controls`] over the props the prop extractor reads
+/// from the component file.
+pub fn render_manager_html(
+    index: &StoryIndex,
+    selected: Option<&str>,
+    controls: &[Control],
+) -> String {
     // Resolve the initially-selected story: explicit id if it exists, else the
     // first discovered story (the index is already id-sorted).
     let selected_entry = selected
@@ -47,6 +60,8 @@ pub fn render_manager_html(index: &StoryIndex, selected: Option<&str>) -> String
 
     let sidebar = render_sidebar(index, initial_id);
     let diagnostics = render_diagnostics(index);
+    let controls_panel = render_controls_panel(controls);
+    let initial_args_json = controls_to_args_json(controls);
     let story_count = index.stories.len();
 
     format!(
@@ -61,9 +76,9 @@ pub fn render_manager_html(index: &StoryIndex, selected: Option<&str>) -> String
   html, body {{ margin: 0; height: 100%; }}
   body {{
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    display: grid; grid-template-columns: 260px 1fr; grid-template-rows: 44px 1fr;
-    grid-template-areas: "sidebar toolbar" "sidebar preview"; height: 100vh;
-    color: #1a1a1a;
+    display: grid; grid-template-columns: 260px 1fr; grid-template-rows: 44px 1fr 220px;
+    grid-template-areas: "sidebar toolbar" "sidebar preview" "sidebar controls";
+    height: 100vh; color: #1a1a1a;
   }}
   #jet-sidebar {{
     grid-area: sidebar; border-right: 1px solid #e3e3e3; overflow-y: auto;
@@ -87,6 +102,20 @@ pub fn render_manager_html(index: &StoryIndex, selected: Option<&str>) -> String
   }}
   #jet-preview {{ grid-area: preview; border: 0; width: 100%; height: 100%; }}
   .jet-diag {{ color: #b00; font-size: 12px; padding: 6px 14px; }}
+  #jet-controls {{
+    grid-area: controls; border-top: 1px solid #e3e3e3; background: #fff;
+    overflow-y: auto; padding: 8px 14px; font-size: 13px;
+  }}
+  #jet-controls h3 {{ margin: 0 0 8px; font-size: 12px; color: #555; font-weight: 600; }}
+  #jet-controls table {{ border-collapse: collapse; width: 100%; }}
+  #jet-controls td {{ padding: 4px 8px 4px 0; vertical-align: middle; }}
+  #jet-controls td.jet-control-name {{ font-weight: 500; width: 140px; color: #333; }}
+  #jet-controls input[type="text"], #jet-controls input[type="number"],
+  #jet-controls select {{
+    width: 100%; max-width: 260px; padding: 3px 6px; font-size: 13px;
+    border: 1px solid #ccc; border-radius: 4px;
+  }}
+  #jet-controls .jet-no-controls {{ color: #999; }}
 </style>
 </head>
 <body>
@@ -100,6 +129,10 @@ pub fn render_manager_html(index: &StoryIndex, selected: Option<&str>) -> String
   <span style="margin-left:auto;color:#777">{story_count} stories</span>
 </header>
 <iframe id="jet-preview" name="jet-preview" src="{initial_src}"></iframe>
+<section id="jet-controls" aria-label="Controls">
+  <h3>Controls</h3>
+  {controls_panel}
+</section>
 <script>
   // Full-reload navigation: clicking a story swaps the preview iframe src.
   // HMR is deliberately out of scope here (B2b / #176) — a reload is fine.
@@ -115,12 +148,54 @@ pub fn render_manager_html(index: &StoryIndex, selected: Option<&str>) -> String
       history.replaceState(null, '', '?story=' + encodeURIComponent(a.getAttribute('data-story-id')));
     }});
   }});
+
+  // ─── Controls panel (B3) ─────────────────────────────────────────────────
+  // The live args object, seeded with the selected story's current values.
+  // Editing any control mutates this object and posts the full args set into
+  // the preview iframe, which re-renders via window.__jetStoriesRender.
+  const jetArgs = {initial_args_json};
+
+  // Coerce a control's DOM value to the arg type the control declares.
+  function jetControlValue(el) {{
+    if (el.dataset.kind === 'toggle') return el.checked;
+    if (el.dataset.kind === 'number') {{
+      const n = el.value.trim();
+      if (n === '') return undefined;
+      const f = Number(n);
+      return Number.isNaN(f) ? el.value : f;
+    }}
+    return el.value;
+  }}
+
+  // Post the current args into the preview frame so it re-renders. The preview
+  // client applies them through window.__jetStoriesRender (see render_preview_html).
+  function jetPushArgs() {{
+    const win = frame.contentWindow;
+    if (!win) return;
+    win.postMessage({{ type: 'jet-stories-args', args: jetArgs }}, '*');
+  }}
+
+  document.querySelectorAll('[data-control]').forEach((el) => {{
+    const name = el.dataset.control;
+    el.addEventListener('input', () => {{
+      const v = jetControlValue(el);
+      if (v === undefined) {{ delete jetArgs[name]; }} else {{ jetArgs[name] = v; }}
+      jetPushArgs();
+    }});
+    el.addEventListener('change', () => {{
+      const v = jetControlValue(el);
+      if (v === undefined) {{ delete jetArgs[name]; }} else {{ jetArgs[name] = v; }}
+      jetPushArgs();
+    }});
+  }});
 </script>
 </body>
 </html>
 "#,
         sidebar = sidebar,
         diagnostics = diagnostics,
+        controls_panel = controls_panel,
+        initial_args_json = initial_args_json,
         initial_src = escape_html(&initial_src),
         initial_title = escape_html(
             selected_entry
@@ -130,6 +205,108 @@ pub fn render_manager_html(index: &StoryIndex, selected: Option<&str>) -> String
         ),
         story_count = story_count,
     )
+}
+
+/// Render the Controls panel body (B3): one row per control with an editable
+/// widget seeded with the story's current arg value. An empty list renders a
+/// "no controls" placeholder so the panel is never blank without explanation.
+fn render_controls_panel(controls: &[Control]) -> String {
+    if controls.is_empty() {
+        return "<p class=\"jet-no-controls\">No controls for this story.</p>".to_string();
+    }
+    let mut out = String::from("<table>");
+    for control in controls {
+        out.push_str("<tr><td class=\"jet-control-name\">");
+        out.push_str(&escape_html(&control.name));
+        out.push_str("</td><td>");
+        out.push_str(&render_control_widget(control));
+        out.push_str("</td></tr>");
+    }
+    out.push_str("</table>");
+    out
+}
+
+/// Render a single control's input widget, seeded with its current value. Each
+/// widget carries `data-control="<name>"` (the arg it edits) and `data-kind`
+/// (so the manager script coerces the value to the right JS type).
+fn render_control_widget(control: &Control) -> String {
+    let name = escape_html(&control.name);
+    match &control.kind {
+        ControlKind::Toggle => {
+            let checked = matches!(control.current, Some(CsfValue::Bool(true)));
+            format!(
+                "<input type=\"checkbox\" data-control=\"{name}\" data-kind=\"toggle\"{checked} />",
+                name = name,
+                checked = if checked { " checked" } else { "" },
+            )
+        }
+        ControlKind::Number => {
+            let value = control
+                .current
+                .as_ref()
+                .map(current_value_string)
+                .unwrap_or_default();
+            format!(
+                "<input type=\"number\" data-control=\"{name}\" data-kind=\"number\" value=\"{value}\" />",
+                name = name,
+                value = escape_html(&value),
+            )
+        }
+        ControlKind::Select { options } => {
+            let current = control.current.as_ref().map(current_value_string);
+            let mut opts = String::new();
+            for opt in options {
+                let selected = current.as_deref() == Some(opt.as_str());
+                opts.push_str(&format!(
+                    "<option value=\"{v}\"{sel}>{label}</option>",
+                    v = escape_html(opt),
+                    sel = if selected { " selected" } else { "" },
+                    label = escape_html(opt),
+                ));
+            }
+            format!(
+                "<select data-control=\"{name}\" data-kind=\"select\">{opts}</select>",
+                name = name,
+                opts = opts,
+            )
+        }
+        ControlKind::Text => {
+            let value = control
+                .current
+                .as_ref()
+                .map(current_value_string)
+                .unwrap_or_default();
+            format!(
+                "<input type=\"text\" data-control=\"{name}\" data-kind=\"text\" value=\"{value}\" />",
+                name = name,
+                value = escape_html(&value),
+            )
+        }
+    }
+}
+
+/// Render a [`CsfValue`] as a plain string for seeding an input's `value` or
+/// matching a `<select>` option.
+fn current_value_string(value: &CsfValue) -> String {
+    match value {
+        CsfValue::Str(s) => s.clone(),
+        CsfValue::Bool(b) => b.to_string(),
+        CsfValue::Number(n) => n.clone(),
+        CsfValue::Null => String::new(),
+        CsfValue::Object(_) | CsfValue::Raw(_) => String::new(),
+    }
+}
+
+/// Serialize the controls' current values into a JSON args object literal for
+/// the manager's live `jetArgs` seed (mirrors [`args_to_json`]'s value rules).
+fn controls_to_args_json(controls: &[Control]) -> String {
+    let mut map: BTreeMap<String, super::csf::CsfValue> = BTreeMap::new();
+    for control in controls {
+        if let Some(value) = &control.current {
+            map.insert(control.name.clone(), value.clone());
+        }
+    }
+    args_to_json(&map)
 }
 
 /// The sidebar tree: stories grouped by their full title path so the sidebar
@@ -247,12 +424,24 @@ pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
   import {{ createRoot }} from "react-dom/client";
 
   const exportName = "{export_name}";
-  const args = {args_json};
+  // `liveArgs` start as the story's authored args and are replaced wholesale
+  // when the manager's Controls panel posts a `jet-stories-args` message (B3).
+  let liveArgs = {args_json};
+  let lastModule = Story;
   const root = createRoot(document.getElementById("jet-root"));
   // Exposed so the HMR client (loaded after this module) can re-render the
   // story in place with a freshly re-imported module — state-preserving for
   // react-refresh-compatible edits, isolated to this frame.
   window.__jetStoriesRender = renderStory;
+
+  // B3: apply control edits from the manager. The manager posts the full args
+  // object; we replace liveArgs and re-render the most recent module in place.
+  window.addEventListener("message", (ev) => {{
+    const data = ev && ev.data;
+    if (!data || data.type !== "jet-stories-args" || !data.args) return;
+    liveArgs = data.args;
+    renderStory(lastModule);
+  }});
 
   function pickComponent(mod) {{
     const story = mod[exportName];
@@ -267,13 +456,14 @@ pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
   }}
 
   function renderStory(mod) {{
+    lastModule = mod;
     try {{
       const factory = pickComponent(mod);
       if (!factory) {{
         document.getElementById("jet-root").textContent =
           "jet stories: could not resolve a component for export '" + exportName + "'";
       }} else {{
-        const merged = {{ ...(mod[exportName] && mod[exportName].args), ...args }};
+        const merged = {{ ...(mod[exportName] && mod[exportName].args), ...liveArgs }};
         root.render(factory(merged));
       }}
     }} catch (err) {{
@@ -539,7 +729,7 @@ mod tests {
             .stories
             .push(entry("components-button--disabled", "Disabled", &["Components", "Button"]));
 
-        let html = render_manager_html(&index, None);
+        let html = render_manager_html(&index, None, &[]);
         assert!(html.contains("Primary"), "lists Primary");
         assert!(html.contains("Disabled"), "lists Disabled");
         assert!(html.contains("Components / Button"), "shows the group title");
@@ -561,7 +751,7 @@ mod tests {
             .stories
             .push(entry("components-button--disabled", "Disabled", &["Components", "Button"]));
 
-        let html = render_manager_html(&index, Some("components-button--primary"));
+        let html = render_manager_html(&index, Some("components-button--primary"), &[]);
         assert!(html.contains("src=\"/__jet_stories_preview/components-button--primary\""));
     }
 
@@ -591,8 +781,76 @@ mod tests {
     #[test]
     fn empty_index_renders_empty_state() {
         let index = StoryIndex::default();
-        let html = render_manager_html(&index, None);
+        let html = render_manager_html(&index, None, &[]);
         assert!(html.contains("No stories discovered"));
+    }
+
+    #[test]
+    fn controls_panel_seeds_current_values_and_wires_render_hook() {
+        use crate::stories::controls::{Control, ControlKind};
+        use crate::stories::csf::CsfValue;
+
+        let mut index = StoryIndex::default();
+        index
+            .stories
+            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
+
+        let controls = vec![
+            Control {
+                name: "primary".into(),
+                kind: ControlKind::Toggle,
+                current: Some(CsfValue::Bool(true)),
+            },
+            Control {
+                name: "label".into(),
+                kind: ControlKind::Text,
+                current: Some(CsfValue::Str("Click".into())),
+            },
+            Control {
+                name: "size".into(),
+                kind: ControlKind::Select {
+                    options: vec!["sm".into(), "lg".into()],
+                },
+                current: Some(CsfValue::Str("lg".into())),
+            },
+        ];
+
+        let html = render_manager_html(&index, None, &controls);
+        // The panel renders a widget per control.
+        assert!(html.contains("id=\"jet-controls\""), "controls panel present");
+        assert!(html.contains("data-control=\"primary\""), "toggle wired");
+        assert!(html.contains("data-control=\"label\""), "text wired");
+        assert!(html.contains("data-control=\"size\""), "select wired");
+        // Current values seed the widgets.
+        assert!(html.contains("data-kind=\"toggle\" checked"), "toggle seeded true");
+        assert!(html.contains("value=\"Click\""), "text seeded with current value");
+        assert!(html.contains("<option value=\"lg\" selected>"), "select seeds current option");
+        // The seed args object carries the current values.
+        assert!(html.contains("\"label\":\"Click\""), "jetArgs seeded");
+        // Editing posts new args to the preview render hook.
+        assert!(html.contains("postMessage"), "controls post args to preview");
+        assert!(html.contains("jet-stories-args"), "uses the args-update message");
+    }
+
+    #[test]
+    fn preview_applies_args_update_message() {
+        let e = entry("components-button--primary", "Primary", &["Components", "Button"]);
+        let html = render_preview_html(&e, "/src/Button.stories.tsx");
+        // The preview listens for the manager's args message and re-renders via
+        // the exposed render hook.
+        assert!(html.contains("window.__jetStoriesRender = renderStory"));
+        assert!(html.contains("jet-stories-args"), "listens for control updates");
+        assert!(html.contains("liveArgs = data.args"), "swaps live args on update");
+    }
+
+    #[test]
+    fn no_controls_renders_placeholder() {
+        let mut index = StoryIndex::default();
+        index
+            .stories
+            .push(entry("x--y", "Y", &["X"]));
+        let html = render_manager_html(&index, None, &[]);
+        assert!(html.contains("No controls for this story."));
     }
 }
 // HANDWRITE-END

@@ -76,7 +76,7 @@ fn manager_shell_does_not_connect_to_preview_hmr() {
         "Primary",
         "/x/Button.stories.tsx",
     ));
-    let html = render_manager_html(&index, None);
+    let html = render_manager_html(&index, None, &[]);
 
     // The manager must NOT open the preview HMR WebSocket — only the iframe does.
     assert!(

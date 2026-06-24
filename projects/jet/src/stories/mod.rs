@@ -13,9 +13,11 @@
 //! Per-file failures (parse errors, unreadable files, no default export) become
 //! diagnostics on the index — they never abort discovery of the other files.
 
+pub mod controls;
 pub mod csf;
 pub mod hmr;
 pub mod manager;
+pub mod prop_extractor;
 pub mod server;
 
 pub use server::start_stories_workbench;
