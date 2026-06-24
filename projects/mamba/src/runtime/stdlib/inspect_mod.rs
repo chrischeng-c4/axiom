@@ -123,6 +123,65 @@ fn pop_trailing_kwargs(items: &mut Vec<MbValue>, allowed: &[&str]) -> Vec<(Strin
     Vec::new()
 }
 
+fn dict_copy_with_annotation_eval(src: MbValue, eval_str: bool) -> Option<MbValue> {
+    let ptr = src.as_ptr()?;
+    unsafe {
+        let ObjData::Dict(ref lock) = (*ptr).data else { return None };
+        let out = MbValue::from_ptr(MbObject::new_dict());
+        for (k, v) in lock.read().unwrap().iter() {
+            let DictKey::Str(name) = k else { continue };
+            let value = if eval_str { eval_annotation_value(*v) } else { *v };
+            super::super::dict_ops::mb_dict_setitem(
+                out,
+                MbValue::from_ptr(MbObject::new_str(name.clone())),
+                value,
+            );
+        }
+        Some(out)
+    }
+}
+
+fn eval_annotation_value(value: MbValue) -> MbValue {
+    let Some(name) = extract_str(value) else { return value };
+    match name.as_str() {
+        // Mamba represents builtin class objects by their class-name strings.
+        "int" | "str" | "bool" | "float" | "bytes" | "list" | "dict" | "tuple" | "set" => {
+            MbValue::from_ptr(MbObject::new_str(name))
+        }
+        _ => value,
+    }
+}
+
+fn mb_inspect_get_annotations_from_args(args: &[MbValue]) -> MbValue {
+    if args.is_empty() {
+        return insp_raise(
+            "TypeError",
+            "get_annotations() missing 1 required positional argument: 'obj'",
+        );
+    }
+    let mut items = args.to_vec();
+    let kwargs = pop_trailing_kwargs(&mut items, &["globals", "locals", "eval_str"]);
+    let eval_str = kwargs
+        .iter()
+        .find(|(k, _)| k == "eval_str")
+        .map(|(_, v)| v.as_bool().unwrap_or_else(|| v.as_int().unwrap_or(0) != 0))
+        .unwrap_or(false);
+    let obj = items.first().copied().unwrap_or_else(MbValue::none);
+
+    let annotations = super::super::pep695::func_attrs_get(obj, "__annotations__")
+        .unwrap_or_else(|| {
+            super::super::class::mb_getattr(
+                obj,
+                MbValue::from_ptr(MbObject::new_str("__annotations__".to_string())),
+            )
+        });
+    if annotations.is_none() {
+        return MbValue::from_ptr(MbObject::new_dict());
+    }
+    dict_copy_with_annotation_eval(annotations, eval_str)
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()))
+}
+
 /// repr() of a value as a Rust string.
 fn repr_str(v: MbValue) -> String {
     extract_str(super::super::builtins::mb_repr(v)).unwrap_or_default()
@@ -324,6 +383,11 @@ unsafe extern "C" fn d_getmembers(args_ptr: *const MbValue, nargs: usize) -> MbV
     MbValue::from_ptr(MbObject::new_list(filtered))
 }
 
+unsafe extern "C" fn d_get_annotations(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    mb_inspect_get_annotations_from_args(args)
+}
+
 /// Register the inspect module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -368,6 +432,7 @@ pub fn register() {
         ("formatargspec", d_empty_str as *const () as usize),
         ("formatargvalues", d_empty_str as *const () as usize),
         ("unwrap", d_unwrap as *const () as usize),
+        ("get_annotations", d_get_annotations as *const () as usize),
     ];
     for (name, addr) in &dispatchers {
         attrs.insert((*name).to_string(), MbValue::from_func(*addr));
@@ -510,7 +575,6 @@ pub fn register() {
         "findsource",
         "formatannotation",
         "formatannotationrelativeto",
-        "get_annotations",
         "getabsfile",
         "getargs",
         "getasyncgenlocals",
