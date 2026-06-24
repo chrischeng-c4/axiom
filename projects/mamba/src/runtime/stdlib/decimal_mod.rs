@@ -1710,6 +1710,61 @@ fn extract_rounding(args: &[MbValue]) -> Rounding {
     Rounding::HalfEven
 }
 
+fn extract_context_arg(args: &[MbValue]) -> Option<MbValue> {
+    for &a in args {
+        if ctx_field(a, "Emin").is_some() {
+            return Some(a);
+        }
+        if let Some(ptr) = a.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let guard = lock.read().unwrap();
+                    let k = super::super::dict_ops::DictKey::Str("context".to_string());
+                    if let Some(v) = guard.get(&k) {
+                        if v.is_none() {
+                            return None;
+                        }
+                        if ctx_field(*v, "Emin").is_some() {
+                            return Some(*v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn decimal_number_class(st: &MbDecimal, context: Option<MbValue>) -> String {
+    let sign = if st.neg || (st.class == DecClass::Finite && st.value.is_sign_negative()) {
+        "-"
+    } else {
+        "+"
+    };
+    match st.class {
+        DecClass::SNan => "sNaN".to_string(),
+        DecClass::QNan => "NaN".to_string(),
+        DecClass::Inf => format!("{sign}Infinity"),
+        DecClass::Finite => {
+            if st.value.is_zero() {
+                format!("{sign}Zero")
+            } else {
+                let ctx = context.unwrap_or_else(current_ctx);
+                let emin = ctx_field(ctx, "Emin")
+                    .and_then(|v| v.as_int())
+                    .unwrap_or(-999_999);
+                let (coeff, scale) = coeff_scale(&st.value);
+                let adjusted = -scale + digit_count(&coeff) as i64 - 1;
+                if adjusted < emin {
+                    format!("{sign}Subnormal")
+                } else {
+                    format!("{sign}Normal")
+                }
+            }
+        }
+    }
+}
+
 /// Coerce a method operand (Decimal handle or int) into a state; raises
 /// InvalidOperation on unsupported shapes and returns None.
 fn method_operand(v: MbValue) -> Option<MbDecimal> {
@@ -1943,6 +1998,7 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
             DecClass::Finite => st.value.is_sign_negative(),
             _ => st.neg,
         }),
+        "number_class" => str_val(&decimal_number_class(&st, extract_context_arg(args))),
         "is_canonical" => MbValue::from_bool(true),
         "adjusted" => {
             if st.class != DecClass::Finite {
@@ -2900,22 +2956,12 @@ unsafe extern "C" fn ctx_copy_decimal(_self: MbValue, args: MbValue) -> MbValue 
     ctx_first_decimal(args)
 }
 /// Context.number_class(x) -> CPython class string ("+Normal", "-Zero", …).
-unsafe extern "C" fn ctx_number_class(_self: MbValue, args: MbValue) -> MbValue {
-    let s = with_str(mb_decimal_str(ctx_first_decimal(args)), |s| s.to_string());
-    let neg = s.starts_with('-');
-    let sign = if neg { "-" } else { "+" };
-    let cls = if s.contains("sNaN") {
-        "sNaN".to_string()
-    } else if s.contains("NaN") {
-        "NaN".to_string()
-    } else if s.to_ascii_lowercase().contains("inf") {
-        format!("{sign}Infinity")
-    } else {
-        let body = s.trim_start_matches(['+', '-']);
-        let mantissa = body.split(['E', 'e']).next().unwrap_or("");
-        let is_zero = mantissa.chars().all(|c| c == '0' || c == '.');
-        if is_zero { format!("{sign}Zero") } else { format!("{sign}Normal") }
+unsafe extern "C" fn ctx_number_class(self_v: MbValue, args: MbValue) -> MbValue {
+    let dec = ctx_first_decimal(args);
+    let Some(st) = get_state(dec) else {
+        return MbValue::none();
     };
+    let cls = decimal_number_class(&st, Some(self_v));
     str_val(&cls)
 }
 
