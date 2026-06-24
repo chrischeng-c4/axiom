@@ -68,6 +68,7 @@ pub mod rerun_manifest;
 pub mod resolver;
 pub mod result_envelope;
 pub mod runner;
+pub mod stories;
 pub mod task_runner;
 pub mod test_runner;
 pub mod trace;
