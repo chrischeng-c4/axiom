@@ -10015,6 +10015,7 @@ fn exec_has_pending_exception() -> bool {
 #[derive(Default)]
 struct ExecContext {
     class_match_args: FxHashMap<String, Option<MbValue>>,
+    type_vars: std::collections::HashSet<String>,
 }
 
 fn exec_raise_type_error(message: String) {
@@ -10062,6 +10063,128 @@ fn exec_raise_class_pattern_count_error(class_name: &str, accepted: usize, given
     exec_raise_type_error(format!(
         "{class_name}() accepts {accepted} positional {sub} ({given} given)"
     ));
+}
+
+fn exec_is_typevar_constructor(expr: &crate::parser::ast::Expr) -> bool {
+    let crate::parser::ast::Expr::Call { func, .. } = expr else {
+        return false;
+    };
+    matches!(
+        eval_dotted_path(&func.node).as_deref(),
+        Some([name]) if name == "TypeVar"
+    ) || matches!(
+        eval_dotted_path(&func.node).as_deref(),
+        Some([module, name]) if module == "typing" && name == "TypeVar"
+    )
+}
+
+fn exec_is_typing_generic_expr(expr: &crate::parser::ast::Expr) -> bool {
+    matches!(eval_dotted_path(expr).as_deref(), Some([name]) if name == "Generic")
+        || matches!(
+            eval_dotted_path(expr).as_deref(),
+            Some([module, name]) if module == "typing" && name == "Generic"
+        )
+}
+
+fn exec_base_is_typing_generic(base: &crate::parser::ast::Expr) -> bool {
+    use crate::parser::ast::Expr;
+    match base {
+        Expr::Index { object, .. } => exec_is_typing_generic_expr(&object.node),
+        _ => exec_is_typing_generic_expr(base),
+    }
+}
+
+fn exec_base_is_object(base: &crate::parser::ast::Expr) -> bool {
+    matches!(eval_dotted_path(base).as_deref(), Some([name]) if name == "object")
+}
+
+fn exec_collect_index_idents(expr: &crate::parser::ast::Expr, out: &mut Vec<String>) {
+    use crate::parser::ast::Expr;
+    match expr {
+        Expr::Ident(name) => out.push(name.clone()),
+        Expr::Index { object, index } => {
+            exec_collect_index_idents(&object.node, out);
+            exec_collect_index_idents(&index.node, out);
+        }
+        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::SetLit(items) => {
+            for item in items {
+                exec_collect_index_idents(&item.node, out);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            exec_collect_index_idents(&lhs.node, out);
+            exec_collect_index_idents(&rhs.node, out);
+        }
+        Expr::Attr { .. }
+        | Expr::Call { .. }
+        | Expr::IntLit(_)
+        | Expr::FloatLit(_)
+        | Expr::ComplexLit(_)
+        | Expr::StrLit(_)
+        | Expr::BytesLit(_)
+        | Expr::BoolLit(_)
+        | Expr::NoneLit
+        | Expr::Ellipsis
+        | Expr::UnaryOp { .. }
+        | Expr::Slice { .. }
+        | Expr::DictLit(_)
+        | Expr::IfExpr { .. }
+        | Expr::ChainedCompare { .. }
+        | Expr::Lambda { .. }
+        | Expr::FString(_)
+        | Expr::ListComp { .. }
+        | Expr::SetComp { .. }
+        | Expr::DictComp { .. }
+        | Expr::GeneratorExpr { .. }
+        | Expr::Await(_)
+        | Expr::Yield(_)
+        | Expr::YieldFrom(_)
+        | Expr::Walrus { .. }
+        | Expr::Starred(_)
+        | Expr::UnpackTarget(_) => {}
+    }
+}
+
+fn exec_validate_pep695_class_bases(
+    ctx: &ExecContext,
+    type_params: &[crate::parser::ast::TypeParam],
+    bases: &[crate::source::span::Spanned<crate::parser::ast::Expr>],
+) {
+    if type_params.is_empty() {
+        return;
+    }
+
+    if bases.iter().any(|base| exec_base_is_typing_generic(&base.node)) {
+        exec_raise_type_error("Cannot inherit from Generic[...] multiple times.".to_string());
+        return;
+    }
+
+    if bases.iter().any(|base| exec_base_is_object(&base.node)) {
+        exec_raise_type_error(
+            "Cannot create a consistent method resolution order (MRO) for bases object, Generic"
+                .to_string(),
+        );
+        return;
+    }
+
+    let declared: std::collections::HashSet<&str> =
+        type_params.iter().map(|param| param.name.as_str()).collect();
+    for base in bases {
+        let crate::parser::ast::Expr::Index { index, .. } = &base.node else {
+            continue;
+        };
+        let mut names = Vec::new();
+        exec_collect_index_idents(&index.node, &mut names);
+        if let Some(name) = names
+            .iter()
+            .find(|name| ctx.type_vars.contains(*name) && !declared.contains(name.as_str()))
+        {
+            exec_raise_type_error(format!(
+                "Some type variables (~{name}) are not listed in Generic"
+            ));
+            return;
+        }
+    }
 }
 
 fn exec_subject_class_name(expr: &crate::parser::ast::Expr) -> Option<String> {
@@ -10156,7 +10279,23 @@ fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
     use crate::parser::ast::Stmt;
     match stmt {
         Stmt::Pass | Stmt::Import { .. } => {}
-        Stmt::ClassDef { name, body, .. } => {
+        Stmt::Assign { target, value } => {
+            if let crate::parser::ast::Expr::Ident(name) = &target.node {
+                if exec_is_typevar_constructor(&value.node) {
+                    ctx.type_vars.insert(name.clone());
+                }
+            }
+        }
+        Stmt::VarDecl { name, value, .. } => {
+            if exec_is_typevar_constructor(&value.node) {
+                ctx.type_vars.insert(name.clone());
+            }
+        }
+        Stmt::ClassDef { name, type_params, bases, body, .. } => {
+            exec_validate_pep695_class_bases(ctx, type_params, bases);
+            if exec_has_pending_exception() {
+                return;
+            }
             let mut match_args = None;
             for class_stmt in body {
                 match &class_stmt.node {
