@@ -17,7 +17,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use jet::stories::controls::{infer_control, resolve_controls, Control, ControlKind};
 use jet::stories::csf::CsfValue;
-use jet::stories::prop_extractor::{extract_props, PropDef};
+use jet::stories::prop_extractor::{extract_props, extract_props_at, PropDef};
 use jet::stories::{discover, server};
 use tempfile::TempDir;
 use tower::ServiceExt; // for `oneshot`
@@ -278,6 +278,142 @@ fn controls_without_current_values_still_render_widgets() {
     let controls: Vec<Control> = resolve_controls(&props, &BTreeMap::new(), &BTreeMap::new());
     assert_eq!(controls.len(), 4);
     assert!(controls.iter().all(|c| c.current.is_none()));
+}
+
+// ── #198: generic / cross-file / intersection prop-type extraction ───────────
+
+/// (a) A component whose `Props` is imported from a sibling file yields controls
+/// for those props (the extractor follows the relative `import type` to disk).
+#[test]
+fn imported_sibling_props_yield_controls() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+    write(
+        root.join("src/types.ts"),
+        "export interface Props { primary: boolean; label: string; size: \"sm\" | \"lg\"; }\n",
+    );
+    let component = root.join("src/Widget.tsx");
+    write(
+        component.clone(),
+        r#"
+import type { Props } from "./types";
+export function Widget(props: Props) { return null; }
+"#,
+    );
+
+    let source = fs::read_to_string(&component).expect("read component");
+    let props = extract_props_at(&source, "Widget", Some(&component));
+    let names: Vec<&str> = props.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, vec!["primary", "label", "size"], "imported props read");
+
+    let controls = resolve_controls(&props, &BTreeMap::new(), &BTreeMap::new());
+    let kinds: Vec<ControlKind> = controls.into_iter().map(|c| c.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ControlKind::Toggle,
+            ControlKind::Text,
+            ControlKind::Select {
+                options: vec!["sm".into(), "lg".into()]
+            },
+        ],
+        "controls inferred for cross-file props"
+    );
+}
+
+/// (b) An intersection `Base & Extra` yields the union of both operands' members
+/// as controls (deduped, first operand winning), each inferring its widget.
+#[test]
+fn intersection_props_union_into_controls() {
+    let src = r#"
+interface Base { id: string; primary: boolean; }
+type Extra = { count: number; };
+type Props = Base & Extra;
+export function Widget(props: Props) { return null; }
+"#;
+    let props = extract_props(src, "Widget");
+    let names: Vec<&str> = props.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, vec!["id", "primary", "count"], "union of operands");
+
+    let controls = resolve_controls(&props, &BTreeMap::new(), &BTreeMap::new());
+    let by_name: BTreeMap<&str, &ControlKind> =
+        controls.iter().map(|c| (c.name.as_str(), &c.kind)).collect();
+    assert_eq!(by_name.get("id"), Some(&&ControlKind::Text));
+    assert_eq!(by_name.get("primary"), Some(&&ControlKind::Toggle));
+    assert_eq!(by_name.get("count"), Some(&&ControlKind::Number));
+}
+
+/// (c) A simple generic (`GenProps<number>`) resolves: the concrete type argument
+/// substitutes for the parameter, so the param-typed prop infers its real widget.
+#[test]
+fn simple_generic_resolves_with_substitution() {
+    let src = r#"
+interface GenProps<T> { value: T; label: string; }
+export function Field(props: GenProps<number>) { return null; }
+"#;
+    let props = extract_props(src, "Field");
+    assert_eq!(props.len(), 2);
+
+    let controls = resolve_controls(&props, &BTreeMap::new(), &BTreeMap::new());
+    let by_name: BTreeMap<&str, &ControlKind> =
+        controls.iter().map(|c| (c.name.as_str(), &c.kind)).collect();
+    assert_eq!(
+        by_name.get("value"),
+        Some(&&ControlKind::Number),
+        "T -> number gives a Number control"
+    );
+    assert_eq!(by_name.get("label"), Some(&&ControlKind::Text));
+}
+
+/// (d) An unresolvable generic (a utility-type rhs we don't destructure) degrades
+/// to no controls without error — the panel still renders empty.
+#[test]
+fn unresolvable_generic_degrades_to_no_controls() {
+    let src = r#"
+type Props = Partial<{ a: string; b: number }>;
+export function Widget(props: Props) { return null; }
+"#;
+    let props = extract_props(src, "Widget");
+    assert!(props.is_empty(), "no props extracted from utility-type rhs");
+    let controls = resolve_controls(&props, &BTreeMap::new(), &BTreeMap::new());
+    assert!(controls.is_empty(), "no controls, no crash");
+}
+
+/// (a, end-to-end) The manager renders controls for a story whose component's
+/// props are imported from a sibling file — exercising the live server path that
+/// now threads the component file path into extraction.
+#[tokio::test]
+async fn manager_renders_controls_for_cross_file_props() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+    write(
+        root.join("src/types.ts"),
+        "export interface Props { primary: boolean; label: string; }\n",
+    );
+    write(
+        root.join("src/Widget.tsx"),
+        r#"
+import type { Props } from "./types";
+export function Widget(props: Props) { return null; }
+"#,
+    );
+    write(
+        root.join("src/Widget.stories.tsx"),
+        r#"
+import { Widget } from './Widget';
+const meta = { title: 'X/Widget', component: Widget, args: { label: 'Hi' } };
+export default meta;
+export const Basic = { args: { primary: true, label: 'Hello' } };
+"#,
+    );
+
+    let index = discover(root);
+    let router = server::build_router(index, root.to_path_buf());
+    let (status, html) = get(&router, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("data-control=\"primary\""), "cross-file bool control");
+    assert!(html.contains("data-control=\"label\""), "cross-file string control");
+    assert!(html.contains("value=\"Hello\""), "seeded with story arg");
 }
 
 // Silence unused-path lint on the helper module path constant if added later.
