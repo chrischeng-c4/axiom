@@ -7016,9 +7016,9 @@ impl<'a> HirToMir<'a> {
                         Ty::Dict(..) => match (attr.as_str(), args.len()) {
                             ("clear", 0) => Some("mb_dict_clear"),
                             ("copy", 0) => Some("mb_dict_copy"),
-                            ("keys", 0) => Some("mb_dict_keys"),
-                            ("values", 0) => Some("mb_dict_values"),
-                            ("items", 0) => Some("mb_dict_items"),
+                            ("keys", 0) => Some("mb_dict_keys_view"),
+                            ("values", 0) => Some("mb_dict_values_view"),
+                            ("items", 0) => Some("mb_dict_items_view"),
                             ("update", 1) => Some("mb_dict_update"),
                             _ => None,
                         },
