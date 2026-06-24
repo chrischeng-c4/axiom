@@ -126,3 +126,11 @@ requirementDiagram
     }
     test_offset_sort_rejected - verifies -> R1
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Applicable: the change is a control-flow guard in the search dispatch (offset+sort → reject) plus the surrounding plan/score path; a flowchart is the right contract.
+- [unit-test] Applicable: the behavior is verifiable by unit/integration tests (offset+sort→400, offset+no-sort paginates, keyset+sort paginates) plus a doc-correctness inspection.
