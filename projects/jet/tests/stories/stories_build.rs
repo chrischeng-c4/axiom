@@ -194,6 +194,78 @@ fn rebuild_is_idempotent_and_cleans_stale_files() {
     assert_eq!(first.story_count, second.story_count);
 }
 
+/// (e) #197: a component importing a bare specifier installed in node_modules
+/// gets the resolved dep emitted under `out_dir/deps/<key>.js`, and the emitting
+/// module references it via a RELATIVE path that EXISTS — recursively for the
+/// dep's own relative imports. Un-installed bare specifiers (e.g. `react`) are
+/// left as-authored for the esm.sh importmap.
+#[test]
+fn build_emits_resolved_node_modules_dep_with_relative_url() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    // A tiny installed package `clsx` whose ESM entry imports a relative chunk.
+    write(
+        root.join("node_modules/clsx/package.json"),
+        r#"{"name":"clsx","version":"2.0.0","module":"dist/clsx.mjs","main":"dist/clsx.js"}"#,
+    );
+    write(
+        root.join("node_modules/clsx/dist/clsx.mjs"),
+        "import { join } from './chunk.mjs';\nexport default function clsx(){ return join(); }\n",
+    );
+    write(
+        root.join("node_modules/clsx/dist/chunk.mjs"),
+        "export function join(){ return ''; }\n",
+    );
+
+    // A component that imports the installed dep + a non-installed one, and the
+    // story that mounts it.
+    write(
+        root.join("src/components/Button.tsx"),
+        "import clsx from 'clsx';\nimport React from 'react';\nexport const Button = (props) => clsx('x');\n",
+    );
+    write(
+        root.join("src/components/Button.stories.tsx"),
+        "import { Button } from './Button';\nexport default { title: 'Components/Button', component: Button };\nexport const Primary = { args: {} };\n",
+    );
+
+    let out = root.join("dist-stories");
+    let result = build_stories_static(root, &out).expect("build");
+
+    // The resolved dep + its transitive chunk are emitted under deps/.
+    let dep_main = out.join("deps/clsx/dist/clsx.js");
+    let dep_chunk = out.join("deps/clsx/dist/chunk.js");
+    assert!(dep_main.is_file(), "resolved dep emitted: {:?}", dep_main);
+    assert!(dep_chunk.is_file(), "dep's transitive chunk emitted: {:?}", dep_chunk);
+    assert!(result.emitted.iter().any(|p| p == Path::new("deps/clsx/dist/clsx.js")));
+
+    // The emitting component module rewrites the bare `clsx` import to a RELATIVE
+    // path into the deps/ tree that EXISTS, and leaves the un-installed `react`
+    // import as-authored (importmap).
+    let component = fs::read_to_string(out.join("modules/src/components/Button.js"))
+        .expect("read component module");
+    assert!(
+        component.contains("../../../deps/clsx/dist/clsx.js"),
+        "bare dep import rewritten to relative deps url: {component}"
+    );
+    assert!(
+        !component.contains("\"clsx\"") && !component.contains("'clsx'"),
+        "the bare clsx specifier no longer appears verbatim: {component}"
+    );
+    assert!(
+        component.contains("\"react\"") || component.contains("'react'"),
+        "un-installed bare import kept for the importmap: {component}"
+    );
+
+    // The dep's own relative import is rewritten to its emitted `.js` sibling,
+    // which exists.
+    let dep_js = fs::read_to_string(&dep_main).expect("read dep module");
+    assert!(
+        dep_js.contains("./chunk.js"),
+        "dep's relative import rewritten to emitted .js sibling: {dep_js}"
+    );
+}
+
 /// (d) The dev renderers' default output is unchanged (no absolute→relative
 /// regression for the dev server).
 #[test]

@@ -16,6 +16,7 @@
 pub mod build;
 pub mod controls;
 pub mod csf;
+pub mod deps;
 pub mod hmr;
 pub mod manager;
 pub mod prop_extractor;
