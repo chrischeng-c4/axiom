@@ -239,6 +239,9 @@ path = "tests/build/tree_shaking.rs"
 [[test]]
 name = "csf_discovery"
 path = "tests/stories/csf_discovery.rs"
+[[test]]
+name = "manager"
+path = "tests/stories/manager.rs"
 
 # tests/task-runner/ — jet task running replaces Nx/Turbo-style workspace task execution
 [[test]]
