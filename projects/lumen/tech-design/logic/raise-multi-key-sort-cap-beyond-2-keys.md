@@ -89,3 +89,11 @@ requirementDiagram
     }
     test_three_key_sort_orders - verifies -> R1
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Applicable: control-flow contract for the change.
+- [unit-test] Applicable: behavior verified by unit tests.
