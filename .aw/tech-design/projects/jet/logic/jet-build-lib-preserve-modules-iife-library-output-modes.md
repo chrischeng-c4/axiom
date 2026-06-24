@@ -47,10 +47,3 @@ flowchart TD
     iife --> emit
     emit --> done([LibBuildResult])
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability sound: per-entry build branches on output mode (single-file existing default / preserve_modules one-file-per-module / IIFE global), then writes outputs. Builds on A1; .d.ts (LF2) and CJS edges (LF3) out of scope.
