@@ -233,7 +233,7 @@ Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-Atomic change WIs can move through TD authoring, review, code generation, handwrite fill, review, and merge with CLI-emitted next steps.
+Atomic change WIs can move through TD authoring, code generation, handwrite fill, and merge with CLI-emitted next steps. The lifecycle is linear (no review/revise ceremony); the gate that authorizes merge is EC, not review.
 Gate Inventory:
 - projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md
 
@@ -241,6 +241,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | TD lifecycle dispatch | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow td_branch_activation_only_uses_main` |
 | CB lifecycle dispatch | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow cb_gen_force_regen_verify_parses_without_slug` |
+| CRRR removal (linear lifecycle) | change | #191 | implemented | verified | smoke | `cargo test -p agentic-workflow td_created_dispatches_to_gen`; projects/agentic-workflow/tech-design/logic/crrr-removal-linear-lifecycle.md |
 
 ### Project-Local TD and EC Gates
 
