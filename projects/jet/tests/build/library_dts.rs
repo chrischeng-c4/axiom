@@ -299,4 +299,135 @@ fn untyped_export_fails_build() {
         "error must explain the isolatedDeclarations requirement, got: {msg}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// (f) An exported class is reduced to its public ambient surface: method
+//     bodies dropped to signatures, field initializers dropped, and
+//     `private`/`#private` members dropped.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn exported_class_reduced_to_ambient_surface() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "ui-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export interface Props { label: string; }
+export type Node = unknown;
+
+export class Button {
+    constructor(p: Props) { this.p = p; }
+    render(): Node { return null; }
+    private x = 1;
+    #secret = 2;
+    readonly id: string = "";
+}
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+    assert_eq!(result.types.len(), 1);
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+
+    // Reduced to a `declare class` with signature-only members.
+    assert!(
+        dts.contains("export declare class Button"),
+        "class reduced to `declare class`, got:\n{dts}"
+    );
+    assert!(
+        dts.contains("constructor(p: Props);"),
+        "constructor reduced to a signature, got:\n{dts}"
+    );
+    assert!(
+        dts.contains("render(): Node;"),
+        "method reduced to a signature, got:\n{dts}"
+    );
+    assert!(
+        dts.contains("readonly id: string;"),
+        "public readonly field kept without initializer, got:\n{dts}"
+    );
+
+    // Bodies and initializers gone.
+    assert!(
+        !dts.contains("return null"),
+        "method body must be dropped, got:\n{dts}"
+    );
+    assert!(
+        !dts.contains("this.p = p"),
+        "constructor body must be dropped, got:\n{dts}"
+    );
+    assert!(
+        !dts.contains("= \"\""),
+        "field initializer must be dropped, got:\n{dts}"
+    );
+
+    // Private members dropped.
+    assert!(
+        !dts.contains("private x") && !dts.contains("x = 1"),
+        "private member must be dropped, got:\n{dts}"
+    );
+    assert!(
+        !dts.contains("#secret") && !dts.contains("= 2"),
+        "#private member must be dropped, got:\n{dts}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// (g) A previously-deferred export shape now emits a valid declaration:
+//     `export default (expr as Type)` resolves to its annotated type, and a
+//     re-export passthrough is preserved.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn previously_deferred_export_shapes_now_emit() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "shapes-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"import type { Config } from "./config";
+export type { Helper } from "./helper";
+
+export default (loadConfig() as Config);
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+    assert_eq!(result.types.len(), 1);
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+
+    // Annotated default export → synthetic typed default (no TODO marker, no
+    // leaked `loadConfig()` call expression).
+    assert!(
+        dts.contains("declare const _default: Config;") && dts.contains("export default _default;"),
+        "annotated default export resolves to its type, got:\n{dts}"
+    );
+    assert!(
+        !dts.contains("loadConfig()"),
+        "default-export initializer expression must not leak, got:\n{dts}"
+    );
+    assert!(
+        !dts.contains("TODO"),
+        "this shape is now handled — no TODO marker expected, got:\n{dts}"
+    );
+
+    // `export type { … } from` re-export passthrough preserved.
+    assert!(
+        dts.contains("export type { Helper } from \"./helper\""),
+        "type re-export preserved, got:\n{dts}"
+    );
+}
 // HANDWRITE-END
