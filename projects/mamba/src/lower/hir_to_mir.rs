@@ -2378,16 +2378,16 @@ impl<'a> HirToMir<'a> {
                 for arg_name in match_args {
                     arg_vregs.push(self.emit_str_const(arg_name));
                 }
-                let args_list = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: args_list,
+                let args_tuple = self.fresh_vreg();
+                self.current_stmts.push(MirInst::MakeTuple {
+                    dest: args_tuple,
                     elements: arg_vregs,
                     ty: self.tcx.any(),
                 });
                 self.current_stmts.push(MirInst::CallExtern {
                     dest: None,
                     name: "mb_class_set_match_args".to_string(),
-                    args: vec![name_vreg, args_list],
+                    args: vec![name_vreg, args_tuple],
                     ty: self.tcx.none(),
                 });
             }

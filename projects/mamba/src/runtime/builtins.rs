@@ -10012,12 +10012,187 @@ fn exec_has_pending_exception() -> bool {
     super::exception::mb_has_exception().as_bool() == Some(true)
 }
 
-fn exec_stmt(stmt: &crate::parser::ast::Stmt) {
+#[derive(Default)]
+struct ExecContext {
+    class_match_args: FxHashMap<String, Option<MbValue>>,
+}
+
+fn exec_raise_type_error(message: String) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(message)),
+    );
+}
+
+fn exec_match_type_name(value: MbValue) -> &'static str {
+    if value.is_none() {
+        return "NoneType";
+    }
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            return match &(*ptr).data {
+                ObjData::Tuple(_) => "tuple",
+                ObjData::List(_) => "list",
+                ObjData::Str(_) => "str",
+                ObjData::Bytes(_) => "bytes",
+                ObjData::ByteArray(_) => "bytearray",
+                ObjData::Dict(_) => "dict",
+                ObjData::Set(_) => "set",
+                _ => "object",
+            };
+        }
+    }
+    if value.as_bool().is_some() {
+        "bool"
+    } else if value.as_int().is_some() {
+        "int"
+    } else if value.as_float().is_some() {
+        "float"
+    } else {
+        "object"
+    }
+}
+
+fn exec_raise_class_pattern_count_error(class_name: &str, accepted: usize, given: usize) {
+    let sub = if accepted == 1 {
+        "sub-pattern"
+    } else {
+        "sub-patterns"
+    };
+    exec_raise_type_error(format!(
+        "{class_name}() accepts {accepted} positional {sub} ({given} given)"
+    ));
+}
+
+fn exec_subject_class_name(expr: &crate::parser::ast::Expr) -> Option<String> {
+    use crate::parser::ast::{CallArg, Expr};
+    let Expr::Call { func, args } = expr else {
+        return None;
+    };
+    if args.iter().any(|arg| !matches!(arg, CallArg::Positional(_))) {
+        return None;
+    }
+    match &func.node {
+        Expr::Ident(name) => Some(name.clone()),
+        Expr::Attr { attr, .. } => Some(attr.clone()),
+        _ => None,
+    }
+}
+
+fn exec_validate_class_pattern(ctx: &ExecContext, subject_class: &str, pattern: &crate::parser::ast::Pattern) {
+    use crate::parser::ast::Pattern;
+    let Pattern::ClassPattern { cls, patterns } = pattern else {
+        return;
+    };
+    let Some(pattern_class) = cls.last() else {
+        return;
+    };
+    if pattern_class != subject_class {
+        return;
+    }
+
+    let positional = patterns.iter().filter(|(name, _)| name.is_none()).count();
+    let match_args = ctx.class_match_args.get(subject_class).copied().flatten();
+    let items = match match_args {
+        Some(value) => {
+            if let Some(ptr) = value.as_ptr() {
+                unsafe {
+                    match &(*ptr).data {
+                        ObjData::Tuple(items) => items.clone(),
+                        _ => {
+                            exec_raise_type_error(format!(
+                                "{subject_class}.__match_args__ must be a tuple (got {})",
+                                exec_match_type_name(value)
+                            ));
+                            return;
+                        }
+                    }
+                }
+            } else {
+                exec_raise_type_error(format!(
+                    "{subject_class}.__match_args__ must be a tuple (got {})",
+                    exec_match_type_name(value)
+                ));
+                return;
+            }
+        }
+        None => Vec::new(),
+    };
+
+    if positional > items.len() {
+        exec_raise_class_pattern_count_error(subject_class, items.len(), positional);
+        return;
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for item in items.iter().take(positional) {
+        let Some(name) = eval_str_value(*item) else {
+            exec_raise_type_error(format!(
+                "__match_args__ elements must be strings (got {})",
+                exec_match_type_name(*item)
+            ));
+            return;
+        };
+        if !seen.insert(name.clone()) {
+            exec_raise_type_error(format!(
+                "{subject_class}() got multiple sub-patterns for attribute '{name}'"
+            ));
+            return;
+        }
+    }
+    for (keyword, _) in patterns.iter().filter(|(name, _)| name.is_some()) {
+        if let Some(name) = keyword {
+            if !seen.insert(name.clone()) {
+                exec_raise_type_error(format!(
+                    "{subject_class}() got multiple sub-patterns for attribute '{name}'"
+                ));
+                return;
+            }
+        }
+    }
+}
+
+fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
     use crate::parser::ast::Stmt;
     match stmt {
         Stmt::Pass | Stmt::Import { .. } => {}
+        Stmt::ClassDef { name, body, .. } => {
+            let mut match_args = None;
+            for class_stmt in body {
+                match &class_stmt.node {
+                    Stmt::Assign { target, value } => {
+                        if let crate::parser::ast::Expr::Ident(attr) = &target.node {
+                            if attr == "__match_args__" {
+                                match_args = Some(eval_expr(&value.node));
+                                if exec_has_pending_exception() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Stmt::VarDecl { name: attr, value, .. } if attr == "__match_args__" => {
+                        match_args = Some(eval_expr(&value.node));
+                        if exec_has_pending_exception() {
+                            return;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ctx.class_match_args.insert(name.clone(), match_args);
+        }
         Stmt::ExprStmt(expr) => {
             let _ = eval_expr(&expr.node);
+        }
+        Stmt::Match { expr, arms } => {
+            if let Some(subject_class) = exec_subject_class_name(&expr.node) {
+                for arm in arms {
+                    exec_validate_class_pattern(ctx, &subject_class, &arm.pattern.node);
+                    if exec_has_pending_exception() {
+                        return;
+                    }
+                }
+            }
         }
         Stmt::Raise { value, from } => {
             let Some(value) = value else {
@@ -10054,7 +10229,7 @@ fn exec_stmt(stmt: &crate::parser::ast::Stmt) {
                 }
                 managers.push(manager);
             }
-            exec_stmts(body);
+            exec_stmts_with_context(ctx, body);
             for manager in managers.into_iter().rev() {
                 let _ = super::class::mb_context_exit(manager, MbValue::none());
             }
@@ -10063,13 +10238,18 @@ fn exec_stmt(stmt: &crate::parser::ast::Stmt) {
     }
 }
 
-fn exec_stmts(stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>]) {
+fn exec_stmts_with_context(ctx: &mut ExecContext, stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>]) {
     for stmt in stmts {
-        exec_stmt(&stmt.node);
+        exec_stmt(ctx, &stmt.node);
         if exec_has_pending_exception() {
             break;
         }
     }
+}
+
+fn exec_stmts(stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>]) {
+    let mut ctx = ExecContext::default();
+    exec_stmts_with_context(&mut ctx, stmts);
 }
 
 fn eval_binop(op: crate::parser::ast::BinOp, l: MbValue, r: MbValue) -> MbValue {
