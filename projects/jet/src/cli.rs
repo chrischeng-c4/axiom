@@ -3759,6 +3759,9 @@ fn run_library_build(
         preserve_modules,
         declaration,
         library_global_name,
+        entry: lib_config
+            .and_then(|c| c.entry.clone())
+            .unwrap_or_default(),
     };
 
     let start = std::time::Instant::now();

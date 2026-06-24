@@ -37,6 +37,7 @@ fn lib_options(root: &std::path::Path) -> LibBuildOptions {
         preserve_modules: false,
         declaration: true,
         library_global_name: None,
+        entry: Vec::new(),
     }
 }
 

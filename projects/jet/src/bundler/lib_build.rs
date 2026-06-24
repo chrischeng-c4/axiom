@@ -23,7 +23,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::types::OutputFormat;
-use crate::resolver::package::{external_package_names, library_entries};
+use crate::resolver::package::{external_package_names, library_entries, LibraryEntry};
 
 /// Options driving a single library build.
 #[derive(Debug, Clone)]
@@ -55,6 +55,14 @@ pub struct LibBuildOptions {
     /// for [`OutputFormat::Iife`] outputs. When `None`, a global name is
     /// derived from the `package.json` `name` (see [`derive_global_name`]).
     pub library_global_name: Option<String>,
+    /// Explicit source entry points (from `[lib].entry` of jet.toml), relative
+    /// to `project_root`, e.g. `["src/index.ts"]`. When non-empty these are the
+    /// SOURCE files to build; the first is published under `.`, the rest under
+    /// `./<file-stem>`. When empty, entries are discovered from package.json
+    /// `exports`/`module`/`main`, falling back to the conventional
+    /// `src/index.{tsx,ts,jsx,js}` when those point at not-yet-built output
+    /// (e.g. `./dist/index.js`). @issue #170
+    pub entry: Vec<String>,
 }
 
 /// Library builds default to emitting declarations on (`declaration: true`).
@@ -71,6 +79,7 @@ impl Default for LibBuildOptions {
             preserve_modules: false,
             declaration: true,
             library_global_name: None,
+            entry: Vec::new(),
         }
     }
 }
@@ -122,6 +131,57 @@ pub struct TypesOutput {
 ///   * `preserve_modules` — one output file per source module mirroring the
 ///     source tree (ESM only; CJS + preserve is a deferred TODO),
 ///   * [`OutputFormat::Iife`] — the bundled entry wrapped as a global-var IIFE.
+/// Resolve the SOURCE entries to build. Explicit `[lib].entry`
+/// (`options.entry`) wins. Otherwise entries are discovered from package.json
+/// `exports`/`module`/`main` — but those usually point at BUILD OUTPUT
+/// (e.g. `./dist/index.js`), so when the discovered sources don't exist on
+/// disk we fall back to the conventional `src/index.{tsx,ts,jsx,js}`.
+/// @issue #170
+fn resolve_lib_entries(
+    options: &LibBuildOptions,
+    pkg_path: &Path,
+    conditions: &[&str],
+) -> Result<Vec<LibraryEntry>> {
+    if !options.entry.is_empty() {
+        return Ok(options
+            .entry
+            .iter()
+            .enumerate()
+            .map(|(i, src)| LibraryEntry {
+                subpath: if i == 0 {
+                    ".".to_string()
+                } else {
+                    let stem = Path::new(src)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("entry");
+                    format!("./{stem}")
+                },
+                source: src.clone(),
+            })
+            .collect());
+    }
+
+    let mut entries = library_entries(pkg_path, conditions)
+        .with_context(|| format!("resolving library entries from {}", pkg_path.display()))?;
+
+    let any_missing = entries
+        .iter()
+        .any(|e| resolve_entry_path(&options.project_root, &e.source).is_err());
+    if entries.is_empty() || any_missing {
+        if let Some(conv) = ["src/index.tsx", "src/index.ts", "src/index.jsx", "src/index.js"]
+            .iter()
+            .find(|p| options.project_root.join(p).exists())
+        {
+            entries = vec![LibraryEntry {
+                subpath: ".".to_string(),
+                source: (*conv).to_string(),
+            }];
+        }
+    }
+    Ok(entries)
+}
+
 pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
     let pkg_path = options.project_root.join("package.json");
     if !pkg_path.exists() {
@@ -139,8 +199,7 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
         .unwrap_or_else(|| derive_global_name(&read_package_name(&pkg_path)));
 
     let conditions: Vec<&str> = options.conditions.iter().map(String::as_str).collect();
-    let entries = library_entries(&pkg_path, &conditions)
-        .with_context(|| format!("resolving library entries from {}", pkg_path.display()))?;
+    let entries = resolve_lib_entries(&options, &pkg_path, &conditions)?;
 
     // External set = dependencies + peerDependencies + caller-supplied extras.
     let mut externals = external_package_names(&pkg_path)
