@@ -232,6 +232,9 @@ path = "tests/build/library_dts.rs"
 name = "production_build_regression"
 path = "tests/build/production_build_regression.rs"
 [[test]]
+name = "svgr"
+path = "tests/build/svgr.rs"
+[[test]]
 name = "tree_shaking"
 path = "tests/build/tree_shaking.rs"
 

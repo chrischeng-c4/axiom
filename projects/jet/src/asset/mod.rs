@@ -4,9 +4,38 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 pub mod image_processor;
+pub mod svgr;
 pub mod types;
 
+pub use svgr::{transform_svg_to_component, SvgrExportType};
 pub use types::{AssetOptions, AssetType, ProcessedAsset};
+
+/// SVGR (import `.svg` as a React component) configuration for the bundler.
+///
+/// Mirrors `vite-plugin-svgr`: when [`enabled`](SvgrConfig::enabled) and an
+/// `.svg` is imported as a component, the file is routed through
+/// [`svgr::transform_svg_to_component`] instead of the asset-URL path. The
+/// default matches `fe-shared`'s `{ exportType: 'named' }` config.
+///
+/// @spec .aw/tech-design/projects/jet/semantic/jet-asset.md#schema
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SvgrConfig {
+    /// Whether `.svg`-as-component routing is active at all. When `false`,
+    /// every `.svg` import keeps the existing asset-URL behavior.
+    pub enabled: bool,
+    /// Which exports the emitted component module provides.
+    pub export_type: SvgrExportType,
+}
+
+impl Default for SvgrConfig {
+    fn default() -> Self {
+        // fe-shared uses `vite-plugin-svgr` with `{ exportType: 'named' }`.
+        Self {
+            enabled: true,
+            export_type: SvgrExportType::Named,
+        }
+    }
+}
 
 /// GH #3618 — `create_hashed_filename` previously did
 /// `path.file_stem().unwrap()` (panics on missing stem) and
