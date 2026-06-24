@@ -361,31 +361,229 @@ impl Publisher {
         Ok(gz.finish()?)
     }
 
-    /// Collect files to include in the package (respects .npmignore / files field).
+    /// Collect files to include in the package, matching npm pack semantics.
+    ///
+    /// Three modes, in priority order:
+    ///   1. **`files` allowlist** — if `package.json` has a `files` array,
+    ///      include ONLY paths matching those entries. A bare directory entry
+    ///      (`"dist"`) means the whole directory; glob patterns
+    ///      (`"dist/**"`, `"lib/*.js"`) are honoured.
+    ///   2. **`.npmignore`** — else, if a `.npmignore` exists at the root,
+    ///      walk the tree minus the gitignore-style patterns it lists.
+    ///   3. **default** — else, walk the tree skipping the historical
+    ///      non-publishable dirs.
+    ///
+    /// In every mode: `package.json` is never returned here (the transformed
+    /// copy is appended by the caller), `node_modules`/`.git` are NEVER
+    /// included, and `README*` / `LICENSE*` at the root are ALWAYS included
+    /// if present (npm forces them in regardless of `files`/`.npmignore`).
     fn collect_publish_files(root: &Path) -> Result<Vec<PathBuf>> {
+        let pkg_json = root.join("package.json");
+        let files_field = std::fs::read_to_string(&pkg_json)
+            .ok()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+            .and_then(|v| v.get("files").cloned())
+            .and_then(|f| f.as_array().cloned())
+            .map(|arr| {
+                arr.into_iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            });
+
+        let mut collected: Vec<PathBuf> = match files_field {
+            Some(patterns) if !patterns.is_empty() => Self::collect_from_files_allowlist(root, &patterns)?,
+            _ => {
+                let npmignore = root.join(".npmignore");
+                if npmignore.is_file() {
+                    Self::collect_from_npmignore(root, &npmignore)?
+                } else {
+                    Self::collect_default(root)?
+                }
+            }
+        };
+
+        // npm always forces README* and LICENSE* in, regardless of the
+        // `files` allowlist or `.npmignore`. Add them (deduped) if present.
+        Self::ensure_always_included(root, &mut collected);
+
+        Ok(collected)
+    }
+
+    /// Mode 1: include only files matching the `files` allowlist patterns.
+    ///
+    /// Each entry is matched two ways so both npm conventions work:
+    ///   * as a directory prefix — `"dist"` includes everything under `dist/`;
+    ///   * as a glob — `"dist/**"`, `"lib/*.js"`, `"*.md"`.
+    fn collect_from_files_allowlist(root: &Path, patterns: &[String]) -> Result<Vec<PathBuf>> {
+        use globset::{Glob, GlobSetBuilder};
+
+        // Build a globset from the entries. For a bare entry like "dist" we
+        // also register "dist/**" so the whole subtree matches, mirroring npm.
+        let mut builder = GlobSetBuilder::new();
+        let mut dir_prefixes: Vec<String> = Vec::new();
+        for raw in patterns {
+            let pat = raw.trim_start_matches("./").trim_end_matches('/');
+            if pat.is_empty() {
+                continue;
+            }
+            // The entry itself (a file path or a literal glob).
+            if let Ok(g) = Glob::new(pat) {
+                builder.add(g);
+            }
+            // Treat it as a directory too: include the whole subtree.
+            if !pat.contains('*') {
+                if let Ok(g) = Glob::new(&format!("{pat}/**")) {
+                    builder.add(g);
+                }
+                dir_prefixes.push(pat.to_string());
+            }
+        }
+        let set = builder.build().context("invalid pattern in package.json `files`")?;
+
         let mut files = Vec::new();
-        for entry in walkdir::WalkDir::new(root)
-            .min_depth(1)
-            .into_iter()
-            .filter_entry(|e| {
-                let name = e.file_name().to_string_lossy();
-                // Skip common non-publishable dirs
-                !matches!(
-                    name.as_ref(),
-                    "node_modules" | ".git" | "patches" | ".jet-cache"
-                )
-            })
-        {
+        for entry in Self::publishable_walk(root) {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.file_name().to_string_lossy() == "package.json" {
+                continue; // Already added transformed.
+            }
+            let rel = match entry.path().strip_prefix(root) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let in_dir = dir_prefixes
+                .iter()
+                .any(|d| rel_str == *d || rel_str.starts_with(&format!("{d}/")));
+            if set.is_match(rel) || in_dir {
+                files.push(entry.path().to_path_buf());
+            }
+        }
+        Ok(files)
+    }
+
+    /// Mode 2: walk the tree, excluding paths matching `.npmignore` patterns
+    /// (gitignore-style — bare names match anywhere, directory entries exclude
+    /// the whole subtree, `*` globs are honoured).
+    fn collect_from_npmignore(root: &Path, npmignore: &Path) -> Result<Vec<PathBuf>> {
+        use globset::{Glob, GlobSetBuilder};
+
+        let raw = std::fs::read_to_string(npmignore).unwrap_or_default();
+        let mut builder = GlobSetBuilder::new();
+        let mut names: Vec<String> = Vec::new();
+        for line in raw.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let pat = line.trim_start_matches('/').trim_end_matches('/');
+            if pat.is_empty() {
+                continue;
+            }
+            // gitignore-style: a pattern with no slash matches at any depth.
+            if !pat.contains('/') {
+                if let Ok(g) = Glob::new(&format!("**/{pat}")) {
+                    builder.add(g);
+                }
+                if let Ok(g) = Glob::new(&format!("**/{pat}/**")) {
+                    builder.add(g);
+                }
+                names.push(pat.to_string());
+            }
+            if let Ok(g) = Glob::new(pat) {
+                builder.add(g);
+            }
+            if !pat.contains('*') {
+                if let Ok(g) = Glob::new(&format!("{pat}/**")) {
+                    builder.add(g);
+                }
+            }
+        }
+        let set = builder.build().context("invalid pattern in .npmignore")?;
+
+        let mut files = Vec::new();
+        for entry in Self::publishable_walk(root) {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy();
+            if name == "package.json" || name == ".npmignore" {
+                continue;
+            }
+            let rel = match entry.path().strip_prefix(root) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let basename_excluded = names.iter().any(|n| {
+                rel.components()
+                    .any(|c| c.as_os_str().to_string_lossy() == *n)
+            });
+            if set.is_match(rel) || basename_excluded {
+                continue;
+            }
+            files.push(entry.path().to_path_buf());
+        }
+        Ok(files)
+    }
+
+    /// Mode 3: the historical default — walk the tree skipping the known
+    /// non-publishable dirs.
+    fn collect_default(root: &Path) -> Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        for entry in Self::publishable_walk(root) {
             let entry = entry?;
             if entry.file_type().is_file() {
                 let name = entry.file_name().to_string_lossy();
                 if name == "package.json" {
-                    continue; // Already added transformed
+                    continue; // Already added transformed.
                 }
                 files.push(entry.path().to_path_buf());
             }
         }
         Ok(files)
+    }
+
+    /// Walk the project tree, always pruning `node_modules` / `.git` (and the
+    /// historical `patches` / `.jet-cache`). Shared by all three collect modes
+    /// so those dirs can NEVER leak into a tarball.
+    fn publishable_walk(
+        root: &Path,
+    ) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> {
+        walkdir::WalkDir::new(root)
+            .min_depth(1)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy();
+                !matches!(
+                    name.as_ref(),
+                    "node_modules" | ".git" | "patches" | ".jet-cache"
+                )
+            })
+    }
+
+    /// npm always ships the root README* and LICENSE* regardless of the
+    /// `files` allowlist / `.npmignore`. Append any that exist and are not
+    /// already in `collected`.
+    fn ensure_always_included(root: &Path, collected: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(root) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            if !entry.path().is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let lower = name.to_string_lossy().to_lowercase();
+            let forced = lower.starts_with("readme")
+                || lower.starts_with("license")
+                || lower.starts_with("licence");
+            if forced && !collected.iter().any(|p| p == &entry.path()) {
+                collected.push(entry.path());
+            }
+        }
     }
 }
 
@@ -978,6 +1176,200 @@ mod tests {
         assert!(msg.contains("main"), "msg: {msg}");
         assert!(msg.contains("./dist/index.cjs"), "msg: {msg}");
         assert!(msg.contains("/proj/dist/index.cjs"), "msg: {msg}");
+    }
+
+    // ─── files allowlist / .npmignore honoured by collect_publish_files ────
+
+    /// Collect the publishable file set as a sorted Vec of `/`-joined paths
+    /// relative to `root`, so assertions read like the tarball listing.
+    fn collected_rel(root: &Path) -> Vec<String> {
+        let mut rels: Vec<String> = Publisher::collect_publish_files(root)
+            .unwrap()
+            .into_iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        rels.sort();
+        rels
+    }
+
+    /// Lay down the fe-shared `utils`-shaped fixture: a built `dist/`, the full
+    /// `src/**` tree, and the config files npm would otherwise leak.
+    fn write_source_lib(root: &Path) {
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::write(root.join("dist/index.js"), "// esm\n").unwrap();
+        std::fs::write(root.join("dist/index.cjs"), "// cjs\n").unwrap();
+        std::fs::write(root.join("dist/index.d.ts"), "// types\n").unwrap();
+
+        std::fs::create_dir_all(root.join("src/lib")).unwrap();
+        std::fs::write(root.join("src/index.ts"), "export {}\n").unwrap();
+        std::fs::write(root.join("src/lib/string.ts"), "export {}\n").unwrap();
+        std::fs::write(root.join("src/lib/string.test.ts"), "test\n").unwrap();
+
+        std::fs::write(root.join("README.md"), "# readme\n").unwrap();
+        std::fs::write(root.join("tsconfig.json"), "{}\n").unwrap();
+        std::fs::write(root.join("tsconfig.lib.json"), "{}\n").unwrap();
+        std::fs::write(root.join("vite.config.ts"), "export default {}\n").unwrap();
+        std::fs::write(root.join(".eslintrc.json"), "{}\n").unwrap();
+        std::fs::write(root.join("jest.config.ts"), "export default {}\n").unwrap();
+    }
+
+    /// (a) `files: ["dist"]` → the packed set is ONLY dist/** + README
+    /// (package.json is added separately by the caller). Source and config
+    /// files must NOT leak — this is the fe-shared `utils` bug.
+    #[test]
+    fn files_allowlist_includes_only_listed_dir_plus_readme() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        write_source_lib(root);
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "name": "@tw/utils", "version": "1.0.0", "files": ["dist"] }"#,
+        )
+        .unwrap();
+
+        let rels = collected_rel(root);
+
+        // dist/** is in.
+        assert!(rels.contains(&"dist/index.js".to_string()), "{rels:?}");
+        assert!(rels.contains(&"dist/index.cjs".to_string()), "{rels:?}");
+        assert!(rels.contains(&"dist/index.d.ts".to_string()), "{rels:?}");
+        // README is always forced in.
+        assert!(rels.contains(&"README.md".to_string()), "{rels:?}");
+
+        // Source and config files must NOT leak.
+        for leak in [
+            "src/index.ts",
+            "src/lib/string.ts",
+            "src/lib/string.test.ts",
+            "tsconfig.json",
+            "tsconfig.lib.json",
+            "vite.config.ts",
+            ".eslintrc.json",
+            "jest.config.ts",
+        ] {
+            assert!(
+                !rels.contains(&leak.to_string()),
+                "`{leak}` must NOT be packed when files=[\"dist\"]: {rels:?}"
+            );
+        }
+
+        // package.json is never returned here (transformed copy added by caller).
+        assert!(
+            !rels.contains(&"package.json".to_string()),
+            "package.json must not be double-collected: {rels:?}"
+        );
+    }
+
+    /// (b) no `files` but a `.npmignore` excluding `*.test.ts` → the test files
+    /// are excluded, the rest of the tree is still packed.
+    #[test]
+    fn npmignore_excludes_matching_patterns() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        write_source_lib(root);
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "name": "@tw/utils", "version": "1.0.0" }"#,
+        )
+        .unwrap();
+        std::fs::write(root.join(".npmignore"), "*.test.ts\n").unwrap();
+
+        let rels = collected_rel(root);
+
+        // The .test.ts file is excluded.
+        assert!(
+            !rels.contains(&"src/lib/string.test.ts".to_string()),
+            "*.test.ts must be excluded by .npmignore: {rels:?}"
+        );
+        // Non-ignored files remain.
+        assert!(rels.contains(&"src/lib/string.ts".to_string()), "{rels:?}");
+        assert!(rels.contains(&"dist/index.js".to_string()), "{rels:?}");
+        // README still forced in; package.json/.npmignore never collected.
+        assert!(rels.contains(&"README.md".to_string()), "{rels:?}");
+        assert!(!rels.contains(&"package.json".to_string()), "{rels:?}");
+        assert!(!rels.contains(&".npmignore".to_string()), "{rels:?}");
+    }
+
+    /// (c) always-include: README + LICENSE are packed regardless of a `files`
+    /// allowlist that does not mention them, and node_modules never leaks.
+    #[test]
+    fn readme_license_always_included_node_modules_never() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::write(root.join("dist/index.js"), "// esm\n").unwrap();
+        std::fs::write(root.join("README.md"), "# readme\n").unwrap();
+        std::fs::write(root.join("LICENSE"), "MIT\n").unwrap();
+        // node_modules must never be packed even though it is not in `files`.
+        std::fs::create_dir_all(root.join("node_modules/dep")).unwrap();
+        std::fs::write(root.join("node_modules/dep/index.js"), "leak\n").unwrap();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "name": "@tw/utils", "version": "1.0.0", "files": ["dist"] }"#,
+        )
+        .unwrap();
+
+        let rels = collected_rel(root);
+
+        assert!(rels.contains(&"README.md".to_string()), "{rels:?}");
+        assert!(rels.contains(&"LICENSE".to_string()), "{rels:?}");
+        assert!(rels.contains(&"dist/index.js".to_string()), "{rels:?}");
+        assert!(
+            !rels.iter().any(|r| r.starts_with("node_modules/")),
+            "node_modules must never be packed: {rels:?}"
+        );
+    }
+
+    /// `files` glob entries (`"dist/**"`, `"*.md"`) are honoured, not just
+    /// bare directory names.
+    #[test]
+    fn files_allowlist_supports_glob_entries() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        write_source_lib(root);
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "name": "@tw/utils", "version": "1.0.0", "files": ["dist/**", "*.md"] }"#,
+        )
+        .unwrap();
+
+        let rels = collected_rel(root);
+        assert!(rels.contains(&"dist/index.js".to_string()), "{rels:?}");
+        assert!(rels.contains(&"README.md".to_string()), "{rels:?}");
+        assert!(!rels.contains(&"src/index.ts".to_string()), "{rels:?}");
+        assert!(!rels.contains(&"vite.config.ts".to_string()), "{rels:?}");
+    }
+
+    /// No `files`, no `.npmignore` → the historical default walk still works
+    /// and still prunes node_modules.
+    #[test]
+    fn default_mode_walks_tree_minus_node_modules() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        write_source_lib(root);
+        std::fs::create_dir_all(root.join("node_modules/dep")).unwrap();
+        std::fs::write(root.join("node_modules/dep/index.js"), "leak\n").unwrap();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "name": "@tw/utils", "version": "1.0.0" }"#,
+        )
+        .unwrap();
+
+        let rels = collected_rel(root);
+        // Default mode keeps source files (legacy behaviour).
+        assert!(rels.contains(&"src/index.ts".to_string()), "{rels:?}");
+        assert!(rels.contains(&"dist/index.js".to_string()), "{rels:?}");
+        // But still prunes node_modules and never double-collects package.json.
+        assert!(
+            !rels.iter().any(|r| r.starts_with("node_modules/")),
+            "{rels:?}"
+        );
+        assert!(!rels.contains(&"package.json".to_string()), "{rels:?}");
     }
 }
 // CODEGEN-END
