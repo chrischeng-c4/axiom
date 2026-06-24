@@ -834,6 +834,172 @@ pub fn mb_bytes_concat(a: MbValue, b: MbValue) -> MbValue {
     }
 }
 
+pub fn mb_bytes_percent_format(template: MbValue, args: MbValue) -> MbValue {
+    unsafe {
+        let Some(fmt) = as_bytes_cloned(template) else {
+            return MbValue::none();
+        };
+        let is_bytearray = template.as_ptr().map_or(false, |p| {
+            matches!(&(*p).data, ObjData::ByteArray(_))
+        });
+        let mut values = if let Some(ptr) = args.as_ptr() {
+            match &(*ptr).data {
+                ObjData::Tuple(items) => items.clone(),
+                _ => vec![args],
+            }
+        } else {
+            vec![args]
+        };
+        let mut next_arg = || {
+            if values.is_empty() {
+                None
+            } else {
+                Some(values.remove(0))
+            }
+        };
+
+        let mut out = Vec::with_capacity(fmt.len());
+        let mut i = 0usize;
+        while i < fmt.len() {
+            let ch = fmt[i];
+            if ch != b'%' {
+                out.push(ch);
+                i += 1;
+                continue;
+            }
+            i += 1;
+            if i >= fmt.len() {
+                out.push(b'%');
+                break;
+            }
+            if fmt[i] == b'%' {
+                out.push(b'%');
+                i += 1;
+                continue;
+            }
+
+            let mut left_align = false;
+            let mut zero_pad = false;
+            loop {
+                match fmt.get(i).copied() {
+                    Some(b'-') => {
+                        left_align = true;
+                        i += 1;
+                    }
+                    Some(b'0') => {
+                        zero_pad = true;
+                        i += 1;
+                    }
+                    _ => break,
+                }
+            }
+            let mut width = 0usize;
+            while let Some(b'0'..=b'9') = fmt.get(i).copied() {
+                width = width * 10 + (fmt[i] - b'0') as usize;
+                i += 1;
+            }
+            let Some(kind) = fmt.get(i).copied() else {
+                break;
+            };
+            i += 1;
+
+            let Some(arg) = next_arg() else {
+                raise_type_error("not enough arguments for format string");
+                return MbValue::none();
+            };
+            let piece = match kind {
+                b'b' | b's' => {
+                    let Some(data) = as_bytes_cloned(arg) else {
+                        raise_type_error("%b requires a bytes-like object");
+                        return MbValue::none();
+                    };
+                    data
+                }
+                b'd' | b'i' => match arg.as_int_pyint() {
+                    Some(n) => n.to_string().into_bytes(),
+                    None => {
+                        raise_type_error("%d format: a real number is required, not object");
+                        return MbValue::none();
+                    }
+                },
+                b'x' => match arg.as_int_pyint() {
+                    Some(n) => format!("{n:x}").into_bytes(),
+                    None => {
+                        raise_type_error("%x format: an integer is required, not object");
+                        return MbValue::none();
+                    }
+                },
+                b'o' => match arg.as_int_pyint() {
+                    Some(n) => format!("{n:o}").into_bytes(),
+                    None => {
+                        raise_type_error("%o format: an integer is required, not object");
+                        return MbValue::none();
+                    }
+                },
+                b'c' => {
+                    if let Some(n) = arg.as_int_pyint() {
+                        if (0..=255).contains(&n) {
+                            vec![n as u8]
+                        } else {
+                            raise_type_error("%c requires an integer in range(256) or a single byte");
+                            return MbValue::none();
+                        }
+                    } else if let Some(data) = as_bytes_cloned(arg) {
+                        if data.len() == 1 {
+                            data
+                        } else {
+                            raise_type_error("%c requires an integer in range(256) or a single byte");
+                            return MbValue::none();
+                        }
+                    } else {
+                        raise_type_error("%c requires an integer in range(256) or a single byte");
+                        return MbValue::none();
+                    }
+                }
+                b'a' => {
+                    let repr = super::builtins::mb_repr(arg);
+                    match repr.as_ptr().and_then(|p| match &(*p).data {
+                        ObjData::Str(s) => Some(s.clone()),
+                        _ => None,
+                    }) {
+                        Some(s) => s.into_bytes(),
+                        None => Vec::new(),
+                    }
+                }
+                _ => {
+                    out.push(b'%');
+                    out.push(kind);
+                    continue;
+                }
+            };
+
+            if width > piece.len() {
+                let pad_len = width - piece.len();
+                let pad = if zero_pad && !left_align { b'0' } else { b' ' };
+                if left_align {
+                    out.extend_from_slice(&piece);
+                    out.extend(std::iter::repeat(pad).take(pad_len));
+                } else if pad == b'0' && piece.first() == Some(&b'-') {
+                    out.push(b'-');
+                    out.extend(std::iter::repeat(b'0').take(pad_len));
+                    out.extend_from_slice(&piece[1..]);
+                } else {
+                    out.extend(std::iter::repeat(pad).take(pad_len));
+                    out.extend_from_slice(&piece);
+                }
+            } else {
+                out.extend_from_slice(&piece);
+            }
+        }
+
+        if is_bytearray {
+            MbValue::from_ptr(MbObject::new_bytearray(out))
+        } else {
+            MbValue::from_ptr(MbObject::new_bytes(out))
+        }
+    }
+}
+
 /// value in bytes → bool
 pub fn mb_bytes_contains(bytes: MbValue, value: MbValue) -> MbValue {
     unsafe {
