@@ -50,10 +50,3 @@ flowchart TD
     servedep --> done
     cdn --> done
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability sound: classify each import (relative=existing; bare=resolve via node_modules pkg resolver), decision resolved (serve/emit dep transitively) vs unresolved (esm.sh importmap fallback). Applies to dev preview + static build. Builds on B2/B4; refresh(SF1)/controls out of scope.
