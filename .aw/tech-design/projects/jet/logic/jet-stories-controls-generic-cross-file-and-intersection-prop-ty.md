@@ -55,3 +55,10 @@ flowchart TD
     inter --> members
     members --> done([PropDefs for inference])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (jet-controls-advanced-props) complete + deterministic: locate -> shape decision (5 labeled branches incl unresolvable terminal) -> per-shape member collection -> PropDefs -> terminal. All nodes reachable; both terminals real. Extends B3 prop_extractor.
