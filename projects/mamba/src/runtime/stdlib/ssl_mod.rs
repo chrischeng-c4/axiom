@@ -67,7 +67,7 @@ unsafe extern "C" fn dispatch_create_default_context(a: *const MbValue, n: usize
         }
     }
     let inst = MbValue::from_ptr(MbObject::new_instance("SSLContext".to_string()));
-    seed_context_fields(inst, protocol);
+    seed_context_fields(inst, protocol, MbValue::from_int(protocol));
     inst
 }
 
@@ -288,9 +288,9 @@ fn as_int_like(v: MbValue) -> Option<i64> {
 
 /// Seed a fresh SSLContext instance with CPython 3.12 defaults for `protocol`.
 /// PROTOCOL_TLS_CLIENT (16) verifies by default; everything else does not.
-fn seed_context_fields(inst: MbValue, protocol: i64) {
+fn seed_context_fields(inst: MbValue, protocol: i64, protocol_value: MbValue) {
     let is_client = protocol == 16;
-    set_field(inst, "protocol", MbValue::from_int(protocol));
+    set_field(inst, "protocol", protocol_value);
     set_field(inst, "minimum_version", MbValue::from_int(-2)); // TLSVersion.MINIMUM_SUPPORTED
     set_field(inst, "maximum_version", MbValue::from_int(-1)); // TLSVersion.MAXIMUM_SUPPORTED
     set_field(
@@ -338,7 +338,12 @@ unsafe extern "C" fn init_ssl_context(self_v: MbValue, args: MbValue) -> MbValue
             &format!("invalid or unsupported protocol version {protocol}"),
         );
     }
-    seed_context_fields(self_v, protocol);
+    let protocol_value = if protocol_arg.is_none() {
+        MbValue::from_int(protocol)
+    } else {
+        protocol_arg
+    };
+    seed_context_fields(self_v, protocol, protocol_value);
     MbValue::none()
 }
 
