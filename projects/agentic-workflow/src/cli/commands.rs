@@ -9,6 +9,7 @@ use crate::cli::ec;
 use crate::cli::generator;
 use crate::cli::init;
 use crate::cli::issues;
+use crate::cli::llm;
 use crate::cli::project;
 use crate::cli::run as run_root;
 use crate::cli::standardize;
@@ -62,6 +63,9 @@ pub enum Commands {
     /// Cross-checkout agent messaging via shared plain-text channel
     Chat(chat::ChatArgs),
 
+    /// Offline agent orientation: outline + capability/td/ec pillars + loop.
+    Llm(llm::LlmArgs),
+
     /// Tech-design and generated-code lifecycle
     Td(crate::cli::td::TdArgs),
 
@@ -107,6 +111,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Chat(args) => {
             chat::run_chat(args)?;
+        }
+        Commands::Llm(args) => {
+            llm::run(args)?;
         }
         Commands::Td(args) => {
             crate::cli::td::run(args).await?;
