@@ -9736,6 +9736,10 @@ fn eval_call_values(args: &[crate::parser::ast::CallArg]) -> Option<(Vec<MbValue
     Some((vals, has_kwargs))
 }
 
+fn eval_make_args_list(vals: &[MbValue]) -> MbValue {
+    MbValue::from_ptr(MbObject::new_list(vals.to_vec()))
+}
+
 fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
     use crate::parser::ast::Expr;
     match expr {
@@ -9748,6 +9752,9 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
         Expr::ComplexLit(imag) => MbValue::from_ptr(MbObject::new_complex(0.0, *imag)),
         Expr::Ellipsis => MbValue::ellipsis(),
         Expr::Ident(name) => {
+            if super::exception::is_builtin_exception_name(name) {
+                return make_type_object(name);
+            }
             // Resolve module globals by name (the globals() introspection
             // path); unknown names raise NameError like CPython eval.
             let globals = super::closure::build_globals_dict();
@@ -9912,6 +9919,14 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
                     }
                     [name] if name == "repr" && !has_kwargs && vals.len() == 1 => return mb_repr(vals[0]),
                     [name] if name == "str" && !has_kwargs && vals.len() == 1 => return mb_str(vals[0]),
+                    [name] if super::exception::is_builtin_exception_name(name) && !has_kwargs => {
+                        let typ = make_type_object(name);
+                        let args_list = eval_make_args_list(&vals);
+                        return mb_call_spread(typ, args_list);
+                    }
+                    [module, name] if module == "contextlib" && name == "suppress" && !has_kwargs => {
+                        return super::stdlib::contextlib_mod::mb_contextlib_suppress_instance(vals);
+                    }
                     [module, ctor] if module == "datetime" && ctor == "timedelta" => {
                         return super::stdlib::datetime_mod::mb_timedelta_new(
                             MbValue::from_ptr(MbObject::new_list(vals)),
@@ -9986,6 +10001,70 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
             MbValue::none()
         }
         _ => MbValue::none(),
+    }
+}
+
+fn exec_has_pending_exception() -> bool {
+    super::exception::mb_has_exception().as_bool() == Some(true)
+}
+
+fn exec_stmt(stmt: &crate::parser::ast::Stmt) {
+    use crate::parser::ast::Stmt;
+    match stmt {
+        Stmt::Pass | Stmt::Import { .. } => {}
+        Stmt::ExprStmt(expr) => {
+            let _ = eval_expr(&expr.node);
+        }
+        Stmt::Raise { value, from } => {
+            let Some(value) = value else {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "No active exception to reraise".to_string(),
+                    )),
+                );
+                return;
+            };
+            let raised = eval_expr(&value.node);
+            if exec_has_pending_exception() {
+                return;
+            }
+            if let Some(cause_expr) = from {
+                let _ = eval_expr(&cause_expr.node);
+                if exec_has_pending_exception() {
+                    return;
+                }
+            }
+            super::class::mb_raise_instance(raised);
+        }
+        Stmt::With { items, body } => {
+            let mut managers = Vec::with_capacity(items.len());
+            for item in items {
+                let manager = eval_expr(&item.context.node);
+                if exec_has_pending_exception() {
+                    return;
+                }
+                let _ = super::class::mb_context_enter(manager);
+                if exec_has_pending_exception() {
+                    return;
+                }
+                managers.push(manager);
+            }
+            exec_stmts(body);
+            for manager in managers.into_iter().rev() {
+                let _ = super::class::mb_context_exit(manager, MbValue::none());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn exec_stmts(stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>]) {
+    for stmt in stmts {
+        exec_stmt(&stmt.node);
+        if exec_has_pending_exception() {
+            break;
+        }
     }
 }
 
@@ -10086,8 +10165,9 @@ fn eval_unaryop(op: crate::parser::ast::UnaryOp, v: MbValue) -> MbValue {
 ///     stub; raising TypeError here would break benches that already pass
 ///     compiled code objects).
 ///   * String input → parse as a module; raise SyntaxError on failure.
-///   * Successful parse with no side-effecting statements → None.
-/// Statements with side effects are still dropped on the floor; see #1256.
+///   * A narrow runtime subset (import no-op, expression statements, raise,
+///     and with cleanup) is executed so exceptions propagate through `exec`.
+/// Remaining side-effecting statements are still dropped on the floor; see #1256.
 pub fn mb_exec(code: MbValue) -> MbValue {
     use crate::lexer;
     use crate::parser::Parser;
@@ -10110,12 +10190,17 @@ pub fn mb_exec(code: MbValue) -> MbValue {
     let tokens = lexer::lex(&source, file_id);
     let mut parser = Parser::new(tokens, &source, file_id);
     parser.skip_newlines();
-    if parser.parse_module().is_err() {
-        super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
-            MbValue::from_ptr(MbObject::new_str("exec(): invalid syntax".to_string())),
-        );
-    }
+    let module = match parser.parse_module() {
+        Ok(module) => module,
+        Err(_) => {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("exec(): invalid syntax".to_string())),
+            );
+            return MbValue::none();
+        }
+    };
+    exec_stmts(&module.stmts);
     MbValue::none()
 }
 

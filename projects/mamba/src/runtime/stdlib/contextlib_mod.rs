@@ -530,6 +530,12 @@ unsafe extern "C" fn d_suppress_ctor(args_ptr: *const MbValue, nargs: usize) -> 
     inst
 }
 
+/// Construct the native `contextlib.suppress` instance from runtime callers
+/// that already hold a value vector instead of a dispatcher slab.
+pub fn mb_contextlib_suppress_instance(exceptions: Vec<MbValue>) -> MbValue {
+    unsafe { d_suppress_ctor(exceptions.as_ptr(), exceptions.len()) }
+}
+
 // ── contextlib.contextmanager — generator-driven context manager ──────────
 //
 // `@contextmanager` decorates a generator function. The decorator returns a
