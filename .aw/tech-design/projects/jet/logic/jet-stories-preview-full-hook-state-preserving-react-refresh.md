@@ -42,3 +42,10 @@ flowchart TD
     refresh --> done([preview updated])
     reload --> done
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (jet-stories-refresh) complete + deterministic: edit -> instrumented modules -> compatibility decision (both labeled) -> performReactRefresh (state-preserving) vs full reload -> terminal. All nodes reachable; terminal real. Extends B2b.
