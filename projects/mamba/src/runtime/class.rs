@@ -733,6 +733,7 @@ fn collections_abc_structural_match(obj_class: &str, target: &str) -> bool {
 }
 
 fn collections_abc_parents(name: &str) -> &'static [&'static str] {
+    let name = collections_abc_alias_name(name);
     match name {
         "Coroutine" => &["Awaitable"],
         "AsyncIterator" => &["AsyncIterable"],
@@ -756,7 +757,17 @@ fn collections_abc_parents(name: &str) -> &'static [&'static str] {
     }
 }
 
+fn collections_abc_alias_name(name: &str) -> &str {
+    match name.rsplit('.').next().unwrap_or(name) {
+        "dict_keys" => "KeysView",
+        "dict_items" => "ItemsView",
+        "dict_values" => "ValuesView",
+        _ => name,
+    }
+}
+
 fn is_collections_abc_name(name: &str) -> bool {
+    let name = collections_abc_alias_name(name);
     matches!(
         name,
         "Awaitable"
@@ -789,6 +800,8 @@ fn is_collections_abc_name(name: &str) -> bool {
 }
 
 fn collections_abc_is_subclass(child: &str, parent: &str) -> bool {
+    let child = collections_abc_alias_name(child);
+    let parent = collections_abc_alias_name(parent);
     if child == parent {
         return is_collections_abc_name(child);
     }
@@ -809,14 +822,14 @@ fn collections_abc_is_subclass(child: &str, parent: &str) -> bool {
 }
 
 fn collections_abc_virtual_match(child: &str, parent: &str) -> bool {
+    let child = collections_abc_alias_name(child);
+    let parent = collections_abc_alias_name(parent);
     ABC_VIRTUAL_SUBCLASSES.with(|reg| {
-        reg.borrow()
-            .iter()
-            .any(|(registered_child, registered_parent)| {
-                registered_child == child
-                    && (registered_parent == parent
-                        || collections_abc_is_subclass(registered_parent, parent))
-            })
+        reg.borrow().iter().any(|(registered_child, registered_parent)| {
+            collections_abc_alias_name(registered_child) == child
+                && (collections_abc_alias_name(registered_parent) == parent
+                    || collections_abc_is_subclass(registered_parent, parent))
+        })
     })
 }
 
@@ -836,6 +849,8 @@ fn collections_builtin_subclass(child: &str, parent: &str) -> bool {
 }
 
 fn class_matches_collections_abc(class_name: &str, target: &str) -> bool {
+    let class_name = collections_abc_alias_name(class_name);
+    let target = collections_abc_alias_name(target);
     let nominal = CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
         if let Some(cls) = reg.get(class_name) {
@@ -3974,6 +3989,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     }
     let attr_name = extract_str(attr).unwrap_or_default();
 
+    if attr_name == "mapping" {
+        if let Some(proxy) = super::dict_ops::dict_view_mapping_proxy(obj) {
+            return proxy;
+        }
+    }
+
     if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
         if !matches!(
             attr_name.as_str(),
@@ -4944,6 +4965,16 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             },
                         });
                         return MbValue::from_ptr(Box::into_raw(bound));
+                    }
+                    if class_name == "type" && attr_name == "__dict__" {
+                        let dict = super::dict_ops::mb_dict_new();
+                        for (k, v) in fields.read().unwrap().iter() {
+                            let key = MbValue::from_ptr(
+                                super::rc::MbObject::new_str(k.clone()),
+                            );
+                            super::dict_ops::mb_dict_setitem(dict, key, *v);
+                        }
+                        return super::dict_ops::mappingproxy_from_mapping(dict);
                     }
                     // R13: __dict__ access suppression.
                     // If class defines __slots__ without '__dict__', raise AttributeError for __dict__.
@@ -12075,6 +12106,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     }
 
     let name = extract_str(method_name).unwrap_or_default();
+    if let Some(result) = super::dict_ops::dict_view_method(receiver, &name, args) {
+        return result;
+    }
+
     if receiver.as_func().is_some() && name == "_convert" {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),

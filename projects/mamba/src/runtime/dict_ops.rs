@@ -894,6 +894,27 @@ fn dict_view_class_kind(class_name: &str) -> Option<&'static str> {
     }
 }
 
+fn dict_view_data(view: MbValue) -> Option<MbValue> {
+    let ptr = view.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            dict_view_class_kind(class_name)?;
+            return fields.read().unwrap().get("_data").copied();
+        }
+    }
+    None
+}
+
+pub(crate) fn dict_view_kind(view: MbValue) -> Option<&'static str> {
+    let ptr = view.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            return dict_view_class_kind(class_name);
+        }
+    }
+    None
+}
+
 fn dict_view_make(dict: MbValue, class_name: &str) -> MbValue {
     unsafe { super::rc::retain_if_ptr(dict) };
     let view = MbValue::from_ptr(MbObject::new_instance(class_name.to_string()));
@@ -932,43 +953,24 @@ pub(crate) fn mb_dict_items_abc_view(dict: MbValue) -> MbValue {
 }
 
 pub(crate) fn dict_view_elements(view: MbValue) -> Option<Vec<MbValue>> {
-    let ptr = view.as_ptr()?;
-    unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
-            let kind = dict_view_class_kind(class_name)?;
-            let data = fields.read().unwrap().get("_data").copied()?;
-            let list = match kind {
-                "keys" => mb_dict_keys(data),
-                "items" => mb_dict_items(data),
-                "values" => mb_dict_values(data),
-                _ => return None,
-            };
-            return Some(super::builtins::extract_items(list));
-        }
-    }
-    None
+    let kind = dict_view_kind(view)?;
+    let data = dict_view_data(view)?;
+    let list = match kind {
+        "keys" => mb_dict_keys(data),
+        "items" => mb_dict_items(data),
+        "values" => mb_dict_values(data),
+        _ => return None,
+    };
+    Some(super::builtins::extract_items(list))
 }
 
 pub(crate) fn dict_view_len(view: MbValue) -> Option<i64> {
-    let ptr = view.as_ptr()?;
-    unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
-            dict_view_class_kind(class_name)?;
-            let data = fields.read().unwrap().get("_data").copied()?;
-            return mb_dict_len(data).as_int();
-        }
-    }
-    None
+    let data = dict_view_data(view)?;
+    mb_dict_len(data).as_int()
 }
 
 pub(crate) fn dict_view_is_setlike(view: MbValue) -> bool {
-    let Some(ptr) = view.as_ptr() else { return false };
-    unsafe {
-        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-            return matches!(dict_view_class_kind(class_name), Some("keys" | "items"));
-        }
-    }
-    false
+    matches!(dict_view_kind(view), Some("keys" | "items"))
 }
 
 pub(crate) fn dict_view_as_set(view: MbValue) -> Option<MbValue> {
@@ -980,22 +982,157 @@ pub(crate) fn dict_view_as_set(view: MbValue) -> Option<MbValue> {
     Some(super::set_ops::mb_set_from_list(list))
 }
 
+fn is_set_or_frozenset(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!((*ptr).data, ObjData::Set(_) | ObjData::FrozenSet(_))
+    })
+}
+
+fn reject_plain_non_iterable(value: MbValue) -> Option<MbValue> {
+    let is_plain_non_iterable = value.is_none()
+        || value.is_bool()
+        || value.as_float().is_some()
+        || value
+            .as_int()
+            .is_some_and(|i| {
+                !super::iter::is_iter_handle(value)
+                    && !super::file_io::is_file_handle(i as u64)
+            });
+    if !is_plain_non_iterable {
+        return None;
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "'{}' object is not iterable",
+            super::builtins::value_type_name(value),
+        ))),
+    );
+    Some(MbValue::none())
+}
+
+pub(crate) fn dict_view_eq(a: MbValue, b: MbValue) -> Option<bool> {
+    let a_is_view = dict_view_kind(a).is_some();
+    let b_is_view = dict_view_kind(b).is_some();
+    if !a_is_view && !b_is_view {
+        return None;
+    }
+    let a_is_setlike = dict_view_is_setlike(a);
+    let b_is_setlike = dict_view_is_setlike(b);
+    if a_is_setlike && (b_is_setlike || is_set_or_frozenset(b)) {
+        let left = dict_view_as_set(a)?;
+        let right = if b_is_setlike { dict_view_as_set(b)? } else { b };
+        return Some(super::builtins::mb_eq(left, right).as_bool() == Some(true));
+    }
+    if b_is_setlike && is_set_or_frozenset(a) {
+        let right = dict_view_as_set(b)?;
+        return Some(super::builtins::mb_eq(a, right).as_bool() == Some(true));
+    }
+    Some(false)
+}
+
 pub(crate) fn dict_view_or(a: MbValue, b: MbValue) -> Option<MbValue> {
     if dict_view_is_setlike(a) {
+        if let Some(result) = reject_plain_non_iterable(b) {
+            return Some(result);
+        }
         let left = dict_view_as_set(a)?;
         return Some(super::set_ops::mb_set_union(left, b));
     }
     if dict_view_is_setlike(b) {
-        if let Some(ptr) = a.as_ptr() {
-            unsafe {
-                if matches!((*ptr).data, ObjData::Set(_) | ObjData::FrozenSet(_)) {
-                    let right = dict_view_as_set(b)?;
-                    return Some(super::set_ops::mb_set_union(a, right));
-                }
+        if let Some(result) = reject_plain_non_iterable(a) {
+            return Some(result);
+        }
+        let right = dict_view_as_set(b)?;
+        return Some(super::set_ops::mb_set_union(right, a));
+    }
+    None
+}
+
+pub(crate) fn dict_view_and(a: MbValue, b: MbValue) -> Option<MbValue> {
+    if dict_view_is_setlike(a) {
+        if let Some(result) = reject_plain_non_iterable(b) {
+            return Some(result);
+        }
+        let left = dict_view_as_set(a)?;
+        return Some(super::set_ops::mb_set_intersection(left, b));
+    }
+    if dict_view_is_setlike(b) {
+        if let Some(result) = reject_plain_non_iterable(a) {
+            return Some(result);
+        }
+        let right = dict_view_as_set(b)?;
+        return Some(super::set_ops::mb_set_intersection(right, a));
+    }
+    None
+}
+
+pub(crate) fn dict_view_sub(a: MbValue, b: MbValue) -> Option<MbValue> {
+    if dict_view_is_setlike(a) {
+        if let Some(result) = reject_plain_non_iterable(b) {
+            return Some(result);
+        }
+        let left = dict_view_as_set(a)?;
+        return Some(super::set_ops::mb_set_difference(left, b));
+    }
+    if dict_view_is_setlike(b) && is_set_or_frozenset(a) {
+        let right = dict_view_as_set(b)?;
+        return Some(super::set_ops::mb_set_difference(a, right));
+    }
+    None
+}
+
+pub(crate) fn dict_view_xor(a: MbValue, b: MbValue) -> Option<MbValue> {
+    if dict_view_is_setlike(a) {
+        if let Some(result) = reject_plain_non_iterable(b) {
+            return Some(result);
+        }
+        let left = dict_view_as_set(a)?;
+        return Some(super::set_ops::mb_set_symmetric_difference(left, b));
+    }
+    if dict_view_is_setlike(b) {
+        if let Some(result) = reject_plain_non_iterable(a) {
+            return Some(result);
+        }
+        let right = dict_view_as_set(b)?;
+        return Some(super::set_ops::mb_set_symmetric_difference(right, a));
+    }
+    None
+}
+
+pub(crate) fn dict_view_method(receiver: MbValue, name: &str, args: MbValue) -> Option<MbValue> {
+    dict_view_kind(receiver)?;
+    match name {
+        "isdisjoint" if dict_view_is_setlike(receiver) => {
+            let left = dict_view_as_set(receiver)?;
+            let other = super::builtins::extract_items(args)
+                .first()
+                .copied()
+                .unwrap_or_else(MbValue::none);
+            Some(super::set_ops::mb_set_isdisjoint(left, other))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn mappingproxy_from_mapping(data: MbValue) -> MbValue {
+    unsafe { super::rc::retain_if_ptr(data) };
+    let proxy = MbValue::from_ptr(MbObject::new_instance("mappingproxy".to_string()));
+    if let Some(ptr) = proxy.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.write().unwrap().insert("_mapping".to_string(), data);
             }
         }
     }
-    None
+    proxy
+}
+
+pub(crate) fn dict_view_mapping_proxy(view: MbValue) -> Option<MbValue> {
+    dict_view_kind(view)?;
+    let data = dict_view_data(view)?;
+    let proxy = mappingproxy_from_mapping(data);
+    Some(proxy)
 }
 
 /// dict.values() -> list of values
