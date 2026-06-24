@@ -14,6 +14,10 @@ pub struct PackageJson {
     pub main: Option<String>,
     pub module: Option<String>,
     pub exports: Option<serde_json::Value>,
+    /// `files` — the npm publish allowlist. When present, `jet pack`/`jet
+    /// publish` include ONLY paths matching these entries (plus the always-
+    /// included package.json / README / LICENSE), matching npm pack semantics.
+    pub files: Option<Vec<String>>,
     pub dependencies: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(rename = "devDependencies")]
     pub dev_dependencies: Option<serde_json::Map<String, serde_json::Value>>,
