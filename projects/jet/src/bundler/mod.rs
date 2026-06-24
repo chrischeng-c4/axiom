@@ -12,6 +12,7 @@ use crate::css::{CssPipeline, TailwindConfig};
 pub mod css_bundle;
 pub mod dce;
 pub mod define;
+pub mod dts;
 pub mod fold;
 pub mod graph;
 pub mod html_minify;
