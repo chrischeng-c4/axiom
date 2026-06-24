@@ -258,6 +258,27 @@ pub struct SortSpec {
     pub field: String,
     #[serde(default)]
     pub order: SortOrder,
+    /// How to treat rows that have no value for this sort key. Default
+    /// `exclude` keeps today's behavior (such rows are dropped from results and
+    /// from `total`). `first`/`last` keep them, placed before/after the rows
+    /// that do have a value, and count them in `total`.
+    /// @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+    #[serde(default)]
+    pub missing: SortMissing,
+}
+
+/// Placement of rows missing a value for a sort key (SQL NULLS FIRST/LAST).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+pub enum SortMissing {
+    /// Drop rows that lack a value for this key (default; today's behavior).
+    #[default]
+    Exclude,
+    /// Place rows lacking a value before all rows that have one.
+    First,
+    /// Place rows lacking a value after all rows that have one.
+    Last,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
