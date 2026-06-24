@@ -310,6 +310,47 @@ pub fn is_svg_specifier(specifier: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".svg")
 }
 
+// ─── SCSS / Sass routing (compile `.scss`/`.sass` imports to CSS) ─────────────
+
+/// True when `specifier` points at a `.scss`/`.sass` Sass source
+/// (case-insensitive, query strings stripped). These imports must be routed
+/// through the grass SCSS compile step ([`crate::css::scss`]) before the
+/// lightningcss pipeline, rather than read as plain CSS.
+///
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+pub fn is_scss_specifier(specifier: &str) -> bool {
+    let path = specifier.split(['?', '#']).next().unwrap_or(specifier);
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".scss") || lower.ends_with(".sass")
+}
+
+/// Classify a style import specifier into the route the build must take.
+///
+/// - `.scss`/`.sass` → [`StyleImportRoute::Sass`] (compile via grass first).
+/// - any other style specifier (`.css`, `.less`, …) → [`StyleImportRoute::PlainCss`].
+///
+/// Routing strictly by extension keeps plain `.css` on the existing path and
+/// only diverts the Sass family through the compile step.
+///
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+pub fn classify_style_import(specifier: &str) -> StyleImportRoute {
+    if is_scss_specifier(specifier) {
+        StyleImportRoute::Sass
+    } else {
+        StyleImportRoute::PlainCss
+    }
+}
+
+/// How a style import is fed into the CSS pipeline.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StyleImportRoute {
+    /// `.scss`/`.sass` — compile to CSS via grass before lightningcss.
+    Sass,
+    /// `.css` (and other already-CSS forms) — pass straight through.
+    PlainCss,
+}
+
 /// Decide whether a `.svg` import should be routed through SVGR (emit a React
 /// component module) instead of the default asset-URL behavior.
 ///
@@ -589,6 +630,31 @@ mod tests {
             true,
             SvgrExportType::Named,
         ));
+    }
+
+    // ─── SCSS / Sass routing tests ─────────────────────────────────────────────
+
+    #[test]
+    fn is_scss_specifier_detects_scss_and_sass() {
+        assert!(is_scss_specifier("./theme.scss"));
+        assert!(is_scss_specifier("./theme.SCSS"));
+        assert!(is_scss_specifier("../styles/main.sass"));
+        assert!(is_scss_specifier("@/styles/x.scss?inline"));
+        assert!(!is_scss_specifier("./theme.css"));
+        assert!(!is_scss_specifier("./icon.svg"));
+        assert!(!is_scss_specifier("react"));
+    }
+
+    #[test]
+    fn classify_routes_sass_family_and_keeps_plain_css() {
+        assert_eq!(classify_style_import("./a.scss"), StyleImportRoute::Sass);
+        assert_eq!(classify_style_import("./a.sass"), StyleImportRoute::Sass);
+        // Plain CSS (and other forms) must NOT be diverted.
+        assert_eq!(classify_style_import("./a.css"), StyleImportRoute::PlainCss);
+        assert_eq!(
+            classify_style_import("./a.less"),
+            StyleImportRoute::PlainCss
+        );
     }
 }
 // CODEGEN-END

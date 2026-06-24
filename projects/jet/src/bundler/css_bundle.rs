@@ -151,7 +151,17 @@ fn resolve_css_imports(
     }
     visited.insert(canonical);
 
-    let source = std::fs::read_to_string(file)?;
+    // SCSS/Sass compile step: a `.scss`/`.sass` file is compiled to CSS via
+    // grass (pure-Rust Sass) BEFORE inlining, so Sass nesting/variables/
+    // mixins and its own `@use`/`@import` partials are flattened. Plain
+    // `.css` reads straight from disk. The compiled CSS then flows through
+    // the same `@import` inlining as before.
+    let source = if crate::css::scss::is_sass_family_path(file) {
+        crate::css::scss::compile_sass_file(file)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?
+    } else {
+        std::fs::read_to_string(file)?
+    };
     let base_dir = file.parent().unwrap_or(Path::new("."));
 
     process_css_source(&source, base_dir, visited, output)

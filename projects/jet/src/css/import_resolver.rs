@@ -49,9 +49,19 @@ fn resolve_file(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<String> {
     }
     visited.insert(canonical);
 
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("Cannot read CSS file {:?}: {}", path, e))?;
     let base_dir = path.parent().unwrap_or(Path::new("."));
+
+    // SCSS/Sass compile step: when an `@import` (or the entry) resolves to a
+    // `.scss`/`.sass` file, compile it to CSS via grass BEFORE inlining.
+    // grass resolves the file's own nested `@use`/`@import` partials, so the
+    // result is flattened CSS; we then keep walking it for any remaining
+    // plain-CSS `@import`. Plain `.css` files read straight from disk.
+    let source = if crate::css::scss::is_sass_family_path(path) {
+        crate::css::scss::compile_sass_file(path)?
+    } else {
+        std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Cannot read CSS file {:?}: {}", path, e))?
+    };
     process_source(&source, base_dir, visited)
 }
 
