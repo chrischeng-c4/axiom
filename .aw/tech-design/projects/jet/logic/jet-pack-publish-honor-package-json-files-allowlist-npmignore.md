@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-pack-publish-honor-package-json-files-allowlist-npmignore-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -50,3 +50,27 @@ flowchart TD
     deflist --> always
     always --> done([tarball file list])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/pkg_manager/publish.rs"
+    action: modify
+    section: logic
+    description: |
+      Honor package.json files allowlist (glob) in collect_publish_files; .npmignore fallback when files absent; always include package.json + README/LICENSE; keep default skip-list as last resort.
+  - path: "projects/jet/src/resolver/package.rs"
+    action: modify
+    section: logic
+    description: |
+      Add a files: Option<Vec<String>> field to PackageJson if not present, for the allowlist.
+  - path: "projects/jet/src/pkg_manager/publish.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Tests: files=[dist] packs only dist+package.json+README; .npmignore excludes patterns; always-include files present.
+```
+
