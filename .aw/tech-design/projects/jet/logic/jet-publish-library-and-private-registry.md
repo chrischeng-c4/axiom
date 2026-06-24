@@ -66,10 +66,3 @@ flowchart TD
     pack_only -->|publish| put[PUT base64 tarball, Bearer auth]
     put --> done([published to registry])
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability is correct: publish optionally builds the library first (A1/A2), reads+transforms package.json, validates and auto-fills main/module/exports/types against real built files (terminal error on missing), requires name+version identity, resolves the registry via .npmrc scope + auth token (public or private), creates the tarball, and branches pack-only (write .tgz) vs publish (PUT base64 with Bearer auth). Scoped to publish; build is A1/A2.
