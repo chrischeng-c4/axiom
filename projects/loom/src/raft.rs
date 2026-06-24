@@ -24,6 +24,8 @@ use crate::model::{WorkflowRun, WorkflowRunId};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
     PutRun(WorkflowRun),
+    /// Remove a run from the replicated map (completed-DAG GC, #106).
+    DeleteRun(WorkflowRunId),
 }
 
 impl Command {
@@ -52,8 +54,14 @@ impl LoomStateMachine {
     /// (empty command) is a no-op.
     pub fn apply(&mut self, entry: &RaftEntry) {
         if !entry.command.is_empty() {
-            if let Ok(Command::PutRun(run)) = Command::decode(&entry.command) {
-                self.runs.insert(run.id.clone(), run);
+            match Command::decode(&entry.command) {
+                Ok(Command::PutRun(run)) => {
+                    self.runs.insert(run.id.clone(), run);
+                }
+                Ok(Command::DeleteRun(id)) => {
+                    self.runs.remove(&id);
+                }
+                Err(_) => {}
             }
         }
         self.applied = entry.index;
@@ -146,9 +154,9 @@ impl RaftRunStore {
     }
 }
 
-#[async_trait::async_trait]
-impl crate::store::RunStore for RaftRunStore {
-    async fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
+impl RaftRunStore {
+    /// Propose a command on the (single-voter) node and drive to commit+apply.
+    fn propose_and_commit(&self, cmd: Command) -> anyhow::Result<()> {
         let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
         let inner = &mut *guard;
         for _ in 0..500 {
@@ -159,7 +167,7 @@ impl crate::store::RunStore for RaftRunStore {
         }
         let idx = inner
             .node
-            .propose(Command::PutRun(run).encode())
+            .propose(cmd.encode())
             .ok_or_else(|| anyhow::anyhow!("not leader; cannot propose"))?;
         for _ in 0..500 {
             if inner.sm.applied_index() >= idx {
@@ -170,8 +178,19 @@ impl crate::store::RunStore for RaftRunStore {
                 inner.sm.apply(&entry);
             }
         }
-        anyhow::ensure!(inner.sm.applied_index() >= idx, "raft put did not commit");
+        anyhow::ensure!(inner.sm.applied_index() >= idx, "raft command did not commit");
         self.persist(inner)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::store::RunStore for RaftRunStore {
+    async fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
+        self.propose_and_commit(Command::PutRun(run))
+    }
+
+    async fn delete(&self, id: &WorkflowRunId) -> anyhow::Result<()> {
+        self.propose_and_commit(Command::DeleteRun(id.clone()))
     }
 
     async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
