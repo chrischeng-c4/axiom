@@ -264,4 +264,222 @@ fn register_served_module_links_story_to_component() {
         "editing the served component must reach the story that imported it: {affected:?}"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// #196: state-preserving React Fast Refresh wiring for the preview.
+//
+// A real browser hook-state assertion is out of reach in a Rust test, so these
+// assert the WIRING that makes hook-state preservation work:
+//   (a) a preview-SERVED `.tsx` module carries the transform's $RefreshReg$ /
+//       $RefreshSig$ registration (so component families register at import),
+//   (b) the server serves the `/@react-refresh` runtime the modules import,
+//   (c) the dev preview HTML wires that runtime + calls performReactRefresh on
+//       an `update`, and full-reloads only on an incompatible `reload`,
+//   (d) the manager shell carries NONE of the refresh runtime / reload wiring.
+// ════════════════════════════════════════════════════════════════════════════
+
+use axum::body::{to_bytes, Body};
+use axum::http::{Request, StatusCode};
+use jet::stories::discover;
+use jet::stories::server::{self, REACT_REFRESH_ROUTE};
+use tempfile::TempDir;
+use tower::ServiceExt; // for `oneshot`
+
+/// A genuine React component module: an uppercase function returning JSX and
+/// using a hook — so the transform injects BOTH `$RefreshReg$` (component
+/// family registration) and `$RefreshSig$` (hook-order signature).
+const COUNTER_TSX: &str = r#"
+import React, { useState } from 'react';
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(count + 1)}>{count}</button>;
+}
+"#;
+
+const COUNTER_STORIES: &str = r#"
+import { Counter } from './Counter';
+
+export default {
+  title: 'Components/Counter',
+  component: Counter,
+};
+
+export const Default = { args: {} };
+"#;
+
+fn write_counter_fixtures() -> TempDir {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+    write_file(root.join("src/Counter.tsx"), COUNTER_TSX);
+    write_file(root.join("src/Counter.stories.tsx"), COUNTER_STORIES);
+    dir
+}
+
+fn write_file(path: PathBuf, contents: &str) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("mkdir");
+    }
+    std::fs::write(path, contents).expect("write fixture");
+}
+
+fn router_for(root: &Path) -> axum::Router {
+    let index = discover(root);
+    server::build_router(index, root.to_path_buf())
+}
+
+async fn get(router: &axum::Router, path: &str) -> (StatusCode, String) {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(path)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("router response");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 4 * 1024 * 1024)
+        .await
+        .expect("body bytes");
+    (status, String::from_utf8_lossy(&bytes).to_string())
+}
+
+// ── (a) preview-served `.tsx` module carries $RefreshReg$/$RefreshSig$ ───────
+
+#[tokio::test]
+async fn served_module_is_instrumented_with_react_refresh() {
+    let dir = write_counter_fixtures();
+    let router = router_for(dir.path());
+
+    let (status, js) = get(&router, "/src/Counter.tsx").await;
+    assert_eq!(status, StatusCode::OK, "module route serves the component JS");
+
+    // The transform's React Fast Refresh preamble + registration are present, so
+    // importing this module registers the `Counter` family with the runtime.
+    assert!(
+        js.contains("RefreshRuntime"),
+        "served module imports the refresh runtime: {js}"
+    );
+    assert!(
+        js.contains("$RefreshReg$(Counter, \"Counter\")"),
+        "served module registers the Counter component family: {js}"
+    );
+    assert!(
+        js.contains("$RefreshSig$()"),
+        "served module emits the hook signature for state-order stability: {js}"
+    );
+    assert!(
+        js.contains("RefreshRuntime.enqueueUpdate()"),
+        "served module schedules a refresh after registration: {js}"
+    );
+    // The runtime is imported from the same endpoint the preview serves.
+    assert!(
+        js.contains("'/@react-refresh'") || js.contains("\"/@react-refresh\""),
+        "refresh runtime import targets the served endpoint: {js}"
+    );
+}
+
+// ── (b) the server serves the react-refresh runtime the modules import ───────
+
+#[tokio::test]
+async fn react_refresh_runtime_endpoint_is_served() {
+    let dir = write_counter_fixtures();
+    let router = router_for(dir.path());
+
+    assert_eq!(REACT_REFRESH_ROUTE, "/@react-refresh");
+    let (status, js) = get(&router, REACT_REFRESH_ROUTE).await;
+    assert_eq!(status, StatusCode::OK, "the /@react-refresh runtime is served");
+
+    // It exposes the API the preview wiring drives.
+    assert!(js.contains("performReactRefresh"), "runtime exposes performReactRefresh");
+    assert!(js.contains("onPerformReactRefresh"), "runtime exposes the host refresh hook");
+    assert!(
+        js.contains("createSignatureFunctionForTransform"),
+        "runtime exposes the signature factory the modules use"
+    );
+}
+
+// ── (c) the dev preview wires the runtime + performReactRefresh on update ────
+
+#[test]
+fn preview_html_wires_react_refresh_runtime_and_performs_refresh_on_update() {
+    let story = entry("components-counter--default", "Default", "/x/Counter.stories.tsx");
+    let html = render_preview_html(&story, "/src/Counter.stories.tsx");
+
+    // Loads the refresh runtime BEFORE the story module and installs the
+    // $RefreshReg$/$RefreshSig$ globals the served modules expect.
+    assert!(
+        html.contains("import RefreshRuntime from \"/@react-refresh\""),
+        "preview loads the react-refresh runtime: {html}"
+    );
+    assert!(
+        html.contains("window.$RefreshReg$ = RefreshRuntime.register"),
+        "preview installs the global $RefreshReg$ hook"
+    );
+    assert!(
+        html.contains("RefreshRuntime.createSignatureFunctionForTransform"),
+        "preview installs the global $RefreshSig$ factory"
+    );
+    // The runtime is loaded before the story module import (registry-first).
+    let runtime_at = html
+        .find("import RefreshRuntime")
+        .expect("runtime import present");
+    let story_at = html
+        .find("import * as Story")
+        .expect("story import present");
+    assert!(
+        runtime_at < story_at,
+        "the refresh runtime must be set up BEFORE the story module imports"
+    );
+    // Registers the in-place refresh callback the runtime drives.
+    assert!(
+        html.contains("RefreshRuntime.onPerformReactRefresh"),
+        "preview registers an in-place refresh callback"
+    );
+    // On an `update`, the HMR client drives performReactRefresh (state-preserving),
+    // NOT a blind remount.
+    assert!(
+        html.contains("performReactRefresh"),
+        "preview HMR client calls performReactRefresh on update: {html}"
+    );
+    // Incompatible edits still full-reload THIS frame only.
+    assert!(
+        html.contains("location.reload()"),
+        "preview keeps a full-reload fallback for incompatible edits"
+    );
+    assert!(html.contains("case \"reload\":"), "reload message branch present");
+    assert!(html.contains("case \"update\":"), "update message branch present");
+}
+
+// ── (d) the manager shell carries NONE of the refresh wiring ─────────────────
+
+#[test]
+fn manager_shell_has_no_react_refresh_runtime_or_reload() {
+    let mut index = StoryIndex::default();
+    index.stories.push(entry(
+        "components-counter--default",
+        "Default",
+        "/x/Counter.stories.tsx",
+    ));
+    let html = render_manager_html(&index, None, &[]);
+
+    assert!(
+        !html.contains("/@react-refresh"),
+        "manager shell must not load the react-refresh runtime: {html}"
+    );
+    assert!(
+        !html.contains("RefreshRuntime"),
+        "manager shell must not reference the refresh runtime"
+    );
+    assert!(
+        !html.contains("performReactRefresh"),
+        "manager shell must not perform react refresh"
+    );
+    assert!(
+        !html.contains("location.reload()"),
+        "manager shell must never reload the whole page"
+    );
+}
 // HANDWRITE-END

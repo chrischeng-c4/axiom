@@ -71,8 +71,11 @@ impl UpdateKind {
 pub enum StoriesHmrMessage {
     /// Initial connection acknowledgement (no-op on the client).
     Connected,
-    /// State-preserving react-refresh update: re-import `path` (cache-busted by
-    /// `timestamp`) and let the refresh runtime patch the component in place.
+    /// State-preserving react-refresh update (#196): re-import `path`
+    /// (cache-busted by `timestamp`) — which re-runs the module's
+    /// transform-injected `$RefreshReg$(...)` registration — then drive
+    /// `RefreshRuntime.performReactRefresh()` so the preview re-renders the
+    /// EXISTING root in place, preserving component hook state.
     /// `affected` is the changed module plus its transitive importers, so the
     /// client can also re-import re-exporting barrels that feed the story.
     Update {
