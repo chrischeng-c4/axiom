@@ -2863,6 +2863,35 @@ impl<'a> AstLowerer<'a> {
                     self.module_unbound_annotation_names.remove(name);
                 }
                 _ => {
+                    if let Some(fn_def) =
+                        crate::exec_literal::global_literal_exec_fn_def(&stmt.node)
+                    {
+                        self.func_param_info.insert(
+                            fn_def.name.clone(),
+                            fn_def
+                                .params
+                                .iter()
+                                .map(|p| (p.name.clone(), p.default.clone(), p.kind))
+                                .collect(),
+                        );
+                        self.arg_bind_sigs.insert(
+                            fn_def.name,
+                            fn_def
+                                .params
+                                .iter()
+                                .map(|p| {
+                                    (
+                                        p.name.clone(),
+                                        p.default.is_some(),
+                                        p.kw_only,
+                                        p.kind == ast::ParamKind::Star,
+                                        p.kind == ast::ParamKind::DoubleStar,
+                                        p.pos_only,
+                                    )
+                                })
+                                .collect(),
+                        );
+                    }
                     // Module-scope variable annotations record their name in the
                     // module __annotations__ dict (CPython: PEP 526 semantics).
                     // `x: int` (BareAnnotation) and `x: int = v` (VarDecl) both
