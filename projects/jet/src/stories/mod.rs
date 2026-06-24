@@ -14,6 +14,7 @@
 //! diagnostics on the index — they never abort discovery of the other files.
 
 pub mod csf;
+pub mod hmr;
 pub mod manager;
 pub mod server;
 

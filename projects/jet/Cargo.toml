@@ -237,6 +237,9 @@ path = "tests/stories/csf_discovery.rs"
 [[test]]
 name = "manager"
 path = "tests/stories/manager.rs"
+[[test]]
+name = "preview_hmr"
+path = "tests/stories/preview_hmr.rs"
 
 # tests/task-runner/ — jet task running replaces Nx/Turbo-style workspace task execution
 [[test]]

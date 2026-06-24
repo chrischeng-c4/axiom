@@ -216,6 +216,9 @@ fn story_display_title(story: &StoryEntry) -> String {
 ///      shell, router, or providers.
 pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
     let args_json = args_to_json(&story.args);
+    // B2b/#176: the HMR client lives ONLY in the preview frame, so an edit
+    // hot-updates the iframe while the manager shell stays put.
+    let hmr_client = render_preview_hmr_client();
 
     format!(
         r#"<!doctype html>
@@ -246,6 +249,10 @@ pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
   const exportName = "{export_name}";
   const args = {args_json};
   const root = createRoot(document.getElementById("jet-root"));
+  // Exposed so the HMR client (loaded after this module) can re-render the
+  // story in place with a freshly re-imported module — state-preserving for
+  // react-refresh-compatible edits, isolated to this frame.
+  window.__jetStoriesRender = renderStory;
 
   function pickComponent(mod) {{
     const story = mod[exportName];
@@ -259,20 +266,25 @@ pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
     return null;
   }}
 
-  try {{
-    const factory = pickComponent(Story);
-    if (!factory) {{
-      document.getElementById("jet-root").textContent =
-        "jet stories: could not resolve a component for export '" + exportName + "'";
-    }} else {{
-      const merged = {{ ...(Story[exportName] && Story[exportName].args), ...args }};
-      root.render(factory(merged));
+  function renderStory(mod) {{
+    try {{
+      const factory = pickComponent(mod);
+      if (!factory) {{
+        document.getElementById("jet-root").textContent =
+          "jet stories: could not resolve a component for export '" + exportName + "'";
+      }} else {{
+        const merged = {{ ...(mod[exportName] && mod[exportName].args), ...args }};
+        root.render(factory(merged));
+      }}
+    }} catch (err) {{
+      document.getElementById("jet-root").textContent = "jet stories render error: " + (err && err.message || err);
+      console.error(err);
     }}
-  }} catch (err) {{
-    document.getElementById("jet-root").textContent = "jet stories render error: " + (err && err.message || err);
-    console.error(err);
   }}
+
+  renderStory(Story);
 </script>
+{hmr_client}
 </body>
 </html>
 "#,
@@ -281,6 +293,100 @@ pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
         module_url = escape_js(module_url),
         export_name = escape_js(&story.export_name),
         args_json = args_json,
+        hmr_client = hmr_client,
+    )
+}
+
+/// The HMR client `<script>` injected into the **preview frame only** (B2b/#176).
+///
+/// It connects to the stories HMR WebSocket ([`super::hmr::STORIES_HMR_ROUTE`])
+/// and, per message:
+///   - `update` → re-import the changed story module (cache-busted by the
+///     server's timestamp) and re-render it in place via the
+///     `window.__jetStoriesRender` hook the preview module exposes. This is the
+///     state-preserving react-refresh path for compatible (component) edits.
+///   - `reload` → `location.reload()` *inside this iframe only*, the safe
+///     fallback for non-component edits.
+///   - `connected` → no-op ack.
+///
+/// Crucially this script is NOT injected into the manager shell, so the manager
+/// never reloads — only the iframe does. Reconnects with exponential backoff so
+/// a server restart re-establishes live reload.
+///
+/// TODO(#176 follow-up): wire the dev server's full react-refresh runtime
+/// (`/@react-refresh` + `$RefreshReg$` instrumentation, see
+/// [`crate::dev_server::react_refresh`]) so hook state survives a component edit
+/// without a re-mount. Today an `update` re-imports + re-renders the story
+/// (fast, frame-local, no manager reload) but `createRoot().render` still
+/// re-mounts the component subtree, so component-local hook state is reset.
+fn render_preview_hmr_client() -> String {
+    format!(
+        r#"<script type="module">
+  // ─── jet stories preview HMR client (B2b/#176) ───────────────────────────
+  // Lives only in the preview frame; the manager shell never reloads.
+  (function() {{
+    const ROUTE = "{route}";
+    let retryDelay = 500;
+    const MAX_RETRY_DELAY = 10000;
+
+    async function applyUpdate(msg) {{
+      const render = window.__jetStoriesRender;
+      if (typeof render !== "function") {{
+        // Preview module not ready (or no render hook) — reload to be safe.
+        location.reload();
+        return;
+      }}
+      try {{
+        // Cache-bust so the browser fetches the freshly transformed module.
+        const bust = (msg.path.indexOf("?") === -1 ? "?" : "&") + "t=" + msg.timestamp;
+        const fresh = await import(msg.path + bust);
+        render(fresh);
+        console.log("[jet stories] hot updated", msg.path);
+      }} catch (err) {{
+        console.error("[jet stories] hot update failed, reloading preview:", err);
+        location.reload();
+      }}
+    }}
+
+    function connect() {{
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(protocol + "//" + location.host + ROUTE);
+
+      ws.onopen = () => {{ retryDelay = 500; console.log("[jet stories] HMR connected"); }};
+
+      ws.onmessage = (event) => {{
+        let msg;
+        try {{ msg = JSON.parse(event.data); }} catch (_) {{ return; }}
+        switch (msg.type) {{
+          case "connected":
+            break;
+          case "update":
+            applyUpdate(msg);
+            break;
+          case "reload":
+            // Reload THIS iframe only — the manager shell is untouched.
+            console.log("[jet stories] preview reload:", msg.reason);
+            location.reload();
+            break;
+          default:
+            console.log("[jet stories] unknown HMR message", msg);
+        }}
+      }};
+
+      ws.onclose = () => {{
+        setTimeout(() => {{
+          retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY);
+          connect();
+        }}, retryDelay);
+      }};
+      ws.onerror = () => {{ /* close handler reconnects */ }};
+    }}
+
+    connect();
+  }})();
+</script>
+"#,
+        route = super::hmr::STORIES_HMR_ROUTE,
     )
 }
 
