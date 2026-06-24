@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-publish-library-and-private-registry-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -65,6 +65,49 @@ flowchart TD
     pack_only -->|pack| write_tgz([write name-version.tgz])
     pack_only -->|publish| put[PUT base64 tarball, Bearer auth]
     put --> done([published to registry])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/pkg_manager/publish.rs"
+    action: modify
+    section: logic
+    description: |
+      Add an optional build-library step before packing (when --build or a [lib]
+      config is present, call bundler::build_library); add metadata validation
+      that resolves main/module/exports/types against real files in the tarball
+      (reusing resolver::library_entries / get_package_main), auto-fills them
+      from the build output, and errors on a missing target.
+    impl_mode: hand-written
+  - path: "projects/jet/src/cli.rs"
+    action: modify
+    section: cli
+    description: |
+      Add a `--build` flag to `jet publish` / `jet pack` that runs the library
+      build before packing; thread it into Publisher.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/publish/library_publish_e2e.rs"
+    action: create
+    section: unit-test
+    description: |
+      In-process mock npm registry (axum) e2e: jet publish a built library to the
+      mock registry, then resolve+download it back (install round-trip), asserting
+      the tarball contains the built JS/.d.ts and that scoped private-registry
+      routing + Bearer auth are exercised. Plus metadata-validation unit tests
+      (missing main/exports path -> error; auto-fill from build output).
+    impl_mode: hand-written
+  - path: "projects/jet/docs/library-publishing.md"
+    action: create
+    section: doc
+    description: |
+      Document the library publish + private-registry workflow: `.npmrc` scoped
+      registry + auth token (GitLab/Verdaccio/Nexus), `jet build --lib`, `jet
+      publish --build --access --tag`, and the metadata fields jet validates.
+    impl_mode: hand-written
 ```
 
 # Reviews
