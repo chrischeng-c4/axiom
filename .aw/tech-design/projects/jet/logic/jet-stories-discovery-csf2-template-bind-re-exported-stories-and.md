@@ -50,3 +50,10 @@ flowchart TD
     resargs --> index
     index --> done([stories captured])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (jet-csf2-discovery) complete + deterministic: scan named export -> shape decision (csf3/template-bind/re-export, all labeled) -> args resolution (spread merge) for csf3+bind / sibling pull for re-export -> add to index -> terminal. All nodes reachable; terminal real. Extends B1.
