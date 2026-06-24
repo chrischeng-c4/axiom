@@ -982,6 +982,38 @@ pub(crate) fn dict_view_as_set(view: MbValue) -> Option<MbValue> {
     Some(super::set_ops::mb_set_from_list(list))
 }
 
+fn dict_view_contains(view: MbValue, needle: MbValue) -> MbValue {
+    let Some(kind) = dict_view_kind(view) else {
+        return MbValue::from_bool(false);
+    };
+    let Some(data) = dict_view_data(view) else {
+        return MbValue::from_bool(false);
+    };
+    if kind == "keys" {
+        let result = mb_dict_contains(data, needle);
+        if super::exception::current_exception_type().is_some() {
+            return MbValue::none();
+        }
+        return result;
+    }
+    let haystack = match kind {
+        "items" => mb_dict_items(data),
+        "values" => mb_dict_values(data),
+        _ => return MbValue::from_bool(false),
+    };
+    for item in super::builtins::extract_items(haystack) {
+        if item.to_bits() == needle.to_bits()
+            || super::builtins::mb_eq(item, needle).as_bool() == Some(true)
+        {
+            return MbValue::from_bool(true);
+        }
+        if super::exception::current_exception_type().is_some() {
+            return MbValue::none();
+        }
+    }
+    MbValue::from_bool(false)
+}
+
 fn is_set_or_frozenset(value: MbValue) -> bool {
     value.as_ptr().is_some_and(|ptr| unsafe {
         matches!((*ptr).data, ObjData::Set(_) | ObjData::FrozenSet(_))
@@ -1103,6 +1135,13 @@ pub(crate) fn dict_view_xor(a: MbValue, b: MbValue) -> Option<MbValue> {
 pub(crate) fn dict_view_method(receiver: MbValue, name: &str, args: MbValue) -> Option<MbValue> {
     dict_view_kind(receiver)?;
     match name {
+        "__contains__" => {
+            let needle = super::builtins::extract_items(args)
+                .first()
+                .copied()
+                .unwrap_or_else(MbValue::none);
+            Some(dict_view_contains(receiver, needle))
+        }
         "isdisjoint" if dict_view_is_setlike(receiver) => {
             let left = dict_view_as_set(receiver)?;
             let other = super::builtins::extract_items(args)
@@ -1126,6 +1165,19 @@ pub(crate) fn mappingproxy_from_mapping(data: MbValue) -> MbValue {
         }
     }
     proxy
+}
+
+pub(crate) fn mappingproxy_mapping(proxy: MbValue) -> Option<MbValue> {
+    let ptr = proxy.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if class_name == "mappingproxy" {
+                let data = fields.read().unwrap().get("_mapping").copied();
+                return data.filter(|v| !v.is_none());
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn dict_view_mapping_proxy(view: MbValue) -> Option<MbValue> {
