@@ -10,6 +10,7 @@ pub mod directives;
 pub mod import_resolver;
 pub mod output;
 pub mod plugins;
+pub mod scss;
 pub mod tailwind;
 
 pub use output::CssOutput;
@@ -73,8 +74,21 @@ impl CssPipeline {
     /// 8. Minify in production mode
     /// 9. Return `CssOutput` with content hash
     pub fn process(&self, entry: &Path) -> Result<CssOutput> {
-        // 1. @import resolution
-        let source = resolve_imports(entry)?;
+        // 0. SCSS/Sass compile step (runs BEFORE @import resolution and the
+        //    lightningcss transform). grass resolves `@use`/`@import` of
+        //    partials itself, so a `.scss`/`.sass` entry is flattened to CSS
+        //    here; the resulting CSS then flows through the identical
+        //    @import → directives → lightningcss chain as a plain `.css`
+        //    entry. Plain `.css` entries skip this and read from disk as
+        //    before.
+        let source = if scss::is_sass_family_path(entry) {
+            let compiled = scss::compile_sass_file(entry)?;
+            let base_dir = entry.parent().unwrap_or_else(|| Path::new("."));
+            import_resolver::resolve_source(&compiled, base_dir)?
+        } else {
+            // 1. @import resolution
+            resolve_imports(entry)?
+        };
 
         // 2. Scan content files for used classes
         let emitter = TailwindEmitter::new(self.config.clone());
