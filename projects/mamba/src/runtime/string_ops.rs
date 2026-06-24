@@ -3895,9 +3895,37 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                     }
                 };
             }
-            let bytes_data: Vec<u8> = (0..hex_s.len() / 2)
-                .filter_map(|i| u8::from_str_radix(&hex_s[i * 2..i * 2 + 2], 16).ok())
-                .collect();
+            let mut bytes_data: Vec<u8> = Vec::new();
+            let mut high_nibble: Option<(u8, usize)> = None;
+            let char_count = hex_s.chars().count();
+            for (pos, ch) in hex_s.chars().enumerate() {
+                if ch.is_ascii_whitespace() {
+                    continue;
+                }
+                let Some(nibble) = ch.to_digit(16).map(|n| n as u8) else {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "non-hexadecimal number found in fromhex() arg at position {pos}"
+                        ))),
+                    );
+                    return MbValue::none();
+                };
+                if let Some((high, _)) = high_nibble.take() {
+                    bytes_data.push((high << 4) | nibble);
+                } else {
+                    high_nibble = Some((nibble, pos));
+                }
+            }
+            if high_nibble.is_some() {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "non-hexadecimal number found in fromhex() arg at position {char_count}"
+                    ))),
+                );
+                return MbValue::none();
+            }
             if recv_str == "bytearray" {
                 MbValue::from_ptr(MbObject::new_bytearray(bytes_data))
             } else {
