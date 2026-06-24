@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-stories-discover-and-parse-csf-stories-tsx-into-a-story-inde-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: component-workbench
     role: primary
@@ -58,6 +58,43 @@ flowchart TD
     index --> more
     more -->|yes| loop
     more -->|no| done([StoryIndex stories+diagnostics])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/stories/mod.rs"
+    action: create
+    section: logic
+    description: |
+      New stories module root: StoryIndex/StoryEntry/StoryMeta types and
+      discover(root) that globs *.stories.* and assembles the index + diagnostics.
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/csf.rs"
+    action: create
+    section: logic
+    description: |
+      CSF parser: given a story file source, extract the default export (meta:
+      component ref, title, args, argTypes) and named exports (stories: name,
+      args, render) using the existing extract_imports/tree-sitter surface.
+    impl_mode: hand-written
+  - path: "projects/jet/src/lib.rs"
+    action: modify
+    section: logic
+    description: |
+      Register `pub mod stories;`.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/stories/csf_discovery.rs"
+    action: create
+    section: unit-test
+    description: |
+      Fixtures (Button.stories.tsx, Card.stories.tsx, malformed) + tests: glob
+      finds both, meta+named stories parsed with merged args, title hierarchy +
+      stable ids, malformed file -> diagnostic without aborting discovery.
+    impl_mode: hand-written
 ```
 
 # Reviews
