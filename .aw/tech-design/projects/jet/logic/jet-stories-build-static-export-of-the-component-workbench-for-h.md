@@ -57,3 +57,10 @@ flowchart TD
     more -->|no| assets[copy assets]
     assets --> done([static workbench, servable])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Applicability is correct: discover the StoryIndex, prepare out_dir, render the manager to index.html, then per story render the isolated preview + transform/emit its imported modules + rewrite URLs to relative static paths, finally copy assets — producing a static, jet-process-free workbench. Reuses B2 renderers; HMR/controls-live-edit are dev-only and out of scope. Builds on B1+B2.
