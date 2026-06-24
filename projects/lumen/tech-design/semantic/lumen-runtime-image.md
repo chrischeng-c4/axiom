@@ -65,7 +65,7 @@ runtime_image:
         RUN --mount=type=cache,target=/usr/local/cargo/registry \
             --mount=type=cache,target=/usr/local/cargo/git \
             --mount=type=cache,target=/src/target \
-            cargo build --release -p lumen --bin lumen --features "otel operator relay-wal" \
+            cargo build --release -p lumen --bin lumen --features "otel operator relay-wal jieba" \
          && cp target/release/lumen /usr/local/bin/
         
         # distroless runtime: glibc + libgcc + CA certs + nonroot (uid 65532, matching
