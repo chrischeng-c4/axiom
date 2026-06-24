@@ -3947,6 +3947,15 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     }
     let attr_name = extract_str(attr).unwrap_or_default();
 
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
+        if !matches!(
+            attr_name.as_str(),
+            "__class__" | "__callback__" | "_callback" | "_target" | "_target_id"
+        ) {
+            return mb_getattr(target, attr);
+        }
+    }
+
     // SpooledTemporaryFile: a binary spool has no encoding/errors/newlines
     // fields and CPython raises AttributeError for them (the generic Instance
     // path would silently yield None). Scoped to exactly these text-only
@@ -6770,6 +6779,16 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
     }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
+            if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
+                let attr_name = extract_str(attr).unwrap_or_default();
+                if !matches!(
+                    attr_name.as_str(),
+                    "__class__" | "__callback__" | "_callback" | "_target" | "_target_id"
+                ) {
+                    mb_setattr(target, attr, value);
+                    return;
+                }
+            }
             // obj.__class__ = NewClass reassigns a user instance's class
             // (preserving its instance __dict__). CPython only permits this
             // between heap (user-defined) types; assigning a builtin like list
@@ -7302,6 +7321,15 @@ pub fn mb_delattr(obj: MbValue, attr: MbValue) {
     let attr_name = extract_str(attr).unwrap_or_default();
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
+            if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
+                if !matches!(
+                    attr_name.as_str(),
+                    "__class__" | "__callback__" | "_callback" | "_target" | "_target_id"
+                ) {
+                    mb_delattr(target, attr);
+                    return;
+                }
+            }
             if let ObjData::Str(ref class_name) = (*ptr).data {
                 let is_class =
                     CLASS_REGISTRY.with(|r| r.borrow().contains_key(class_name.as_str()));
