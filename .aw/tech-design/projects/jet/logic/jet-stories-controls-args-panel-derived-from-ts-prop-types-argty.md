@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-stories-controls-args-panel-derived-from-ts-prop-types-argty-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: component-workbench
     role: primary
@@ -51,6 +51,47 @@ flowchart TD
     panel --> edit[user edits control -> update args]
     edit --> rerender[re-render preview live]
     rerender --> done([controls live, preview reflects args])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/stories/prop_extractor.rs"
+    action: create
+    section: logic
+    description: |
+      Tree-sitter walk of a component file: locate the component's props type
+      (interface or type alias referenced by the component's first param) and
+      return an ordered list of (prop name, type text, optional flag).
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/controls.rs"
+    action: create
+    section: logic
+    description: |
+      Map a prop type to a control kind (bool->toggle, string->text,
+      number->number, string-literal union->select with options, else text),
+      then apply meta.argTypes overrides (control type/options/disable). Returns
+      the resolved control descriptors for a story.
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/manager.rs"
+    action: modify
+    section: logic
+    description: |
+      Render a Controls panel from the resolved controls seeded with the story's
+      merged args, and an args channel so editing a control posts updated args to
+      the preview frame for a live re-render (reusing the B2b preview render hook).
+    impl_mode: hand-written
+  - path: "projects/jet/tests/stories/controls.rs"
+    action: create
+    section: unit-test
+    description: |
+      Tests: prop-type extraction for a typed component; control inference for
+      bool/string/number/string-literal-union; meta.argTypes override wins; the
+      Controls panel HTML seeds current arg values; editing posts new args.
+    impl_mode: hand-written
 ```
 
 # Reviews
