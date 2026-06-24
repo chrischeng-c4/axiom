@@ -132,9 +132,101 @@ pub fn upsert_loop_state(body: &str, state: &LoopState) -> Result<String> {
     Ok(out)
 }
 
+/// The loop's decision, given the latest verification (EC) result: the status
+/// the loop is now in, and the next command to run. Green = converged (merge);
+/// Red = keep iterating (adapt and re-gen); Blocked = HITL (no auto next).
+/// This is the loop-engineering "decide" step — it reads the verifier, not a
+/// reviewer.
+pub fn decide_next_action(last: &LastResult) -> (LoopStatus, Option<&'static str>) {
+    match last {
+        LastResult::Green => (LoopStatus::Converged, Some("aw td merge")),
+        LastResult::Red { .. } => (LoopStatus::Iterating, Some("aw td gen")),
+        LastResult::Blocked { .. } => (LoopStatus::Blocked, None),
+        LastResult::None => (LoopStatus::Iterating, None),
+    }
+}
+
+impl LoopState {
+    /// Record a verification (EC) outcome: append it to the running log, set it
+    /// as `last_result`, and derive `status` + `next_action` via
+    /// [`decide_next_action`]. This is the loop's observe -> decide step,
+    /// driven by the EC verifier rather than a review.
+    pub fn record_verification(&mut self, result: LastResult, summary: Option<String>) {
+        let n = self.iterations.len() as u32 + 1;
+        let outcome = match &result {
+            LastResult::Green => "green".to_string(),
+            LastResult::Red { dimension, .. } => format!("red:{dimension}"),
+            LastResult::Blocked { reason } => format!("blocked:{reason}"),
+            LastResult::None => "none".to_string(),
+        };
+        self.iterations.push(Iteration {
+            n,
+            action: "ec".to_string(),
+            outcome,
+            summary,
+        });
+        let (status, next) = decide_next_action(&result);
+        self.status = status;
+        self.next_action = next.map(str::to_string);
+        self.last_result = result;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // @spec epic #188 E4: ec verifier drives the loop decision.
+    #[test]
+    fn decide_green_converges_to_merge() {
+        assert_eq!(
+            decide_next_action(&LastResult::Green),
+            (LoopStatus::Converged, Some("aw td merge"))
+        );
+    }
+
+    #[test]
+    fn decide_red_iterates_to_gen() {
+        let red = LastResult::Red {
+            dimension: "behavior".into(),
+            why: "t failed".into(),
+        };
+        assert_eq!(decide_next_action(&red), (LoopStatus::Iterating, Some("aw td gen")));
+    }
+
+    #[test]
+    fn decide_blocked_is_hitl() {
+        let blocked = LastResult::Blocked {
+            reason: "ec undefined".into(),
+        };
+        assert_eq!(decide_next_action(&blocked), (LoopStatus::Blocked, None));
+    }
+
+    #[test]
+    fn record_verification_appends_and_decides() {
+        let mut s = LoopState {
+            version: 1,
+            issue_id: "1".into(),
+            status: LoopStatus::Iterating,
+            ..Default::default()
+        };
+        s.record_verification(
+            LastResult::Red {
+                dimension: "behavior".into(),
+                why: "t failed".into(),
+            },
+            Some("round 1".into()),
+        );
+        assert_eq!(s.iterations.len(), 1);
+        assert_eq!(s.status, LoopStatus::Iterating);
+        assert_eq!(s.next_action.as_deref(), Some("aw td gen"));
+
+        s.record_verification(LastResult::Green, None);
+        assert_eq!(s.iterations.len(), 2);
+        assert_eq!(s.status, LoopStatus::Converged);
+        assert_eq!(s.next_action.as_deref(), Some("aw td merge"));
+        assert_eq!(s.last_result, LastResult::Green);
+    }
 
     // @spec workitem-loop-state-model-additive-foundation.md R1
     #[test]
