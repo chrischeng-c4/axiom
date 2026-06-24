@@ -59,3 +59,10 @@ flowchart TD
     manager --> served
     module --> served
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (id jet-stories-manager) is complete and deterministic: discover StoryIndex, start dev server, register routes, then per request serve manager / isolated preview (build per-story entry via module graph) / module, terminating in a served response. All nodes reachable; the request decision carries labeled branches (manager/preview/module); terminal served is a real end. Scope correct: builds on B1; HMR=B2b, controls=B3.
