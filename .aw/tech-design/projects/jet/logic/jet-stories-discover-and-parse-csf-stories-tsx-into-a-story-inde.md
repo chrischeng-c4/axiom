@@ -59,10 +59,3 @@ flowchart TD
     more -->|yes| loop
     more -->|no| done([StoryIndex stories+diagnostics])
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability is correct: glob *.stories.* via walkdir+globset, parse each with tree-sitter, branch on default-export (meta) presence (no -> diagnostic+skip, yes -> read meta + named-export stories), assemble a StoryIndex with title hierarchy, stable ids, and merged args, and continue per file. Diagnostics don't abort discovery. Scoped to discovery+parse; manager/controls are B2/B3.
