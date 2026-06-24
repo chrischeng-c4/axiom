@@ -52,3 +52,10 @@ flowchart TD
     edit --> rerender[re-render preview live]
     rerender --> done([controls live, preview reflects args])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (id jet-stories-controls) is complete and deterministic: locate prop type -> decision found (terminal no_ctrl vs infer) -> infer per-prop control -> apply argTypes overrides -> render panel from merged args -> edit -> live re-render -> terminal done. All nodes reachable; the found decision carries both labeled branches; terminals (no_ctrl, done) are real ends. Scope correct: builds on B1 args/argTypes + B2 manager/preview.
