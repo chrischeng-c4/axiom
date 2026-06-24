@@ -20,19 +20,19 @@ capability_refs:
 id: jet-svgr
 entry: imp
 nodes:
-  imp: { kind: start,    label: resolve an import specifier }
-  issvg: { kind: decision, label: specifier ends with .svg? }
-  normal: { kind: process,  label: non-svg: existing resolution }
-  ascomp: { kind: decision, label: imported as component? (config exportType / query) }
-  comp: { kind: process,  label: parse svg, emit React component (JSX svg + props spread) }
-  url: { kind: process,  label: svg as asset URL (existing) }
-  done: { kind: terminal, label: import resolves (component or url) }
+  imp: { kind: start,    label: "resolve an import specifier" }
+  issvg: { kind: decision, label: "specifier ends with .svg?" }
+  normal: { kind: process,  label: "non-svg: existing resolution" }
+  ascomp: { kind: decision, label: "imported as component? (config exportType / query)" }
+  comp: { kind: process,  label: "parse svg, emit React component (JSX svg + props spread)" }
+  url: { kind: process,  label: "svg as asset URL (existing)" }
+  done: { kind: terminal, label: "import resolves (component or url)" }
 edges:
   - { from: imp,    to: issvg }
-  - { from: issvg,  to: normal, label: no }
-  - { from: issvg,  to: ascomp, label: yes }
-  - { from: ascomp, to: comp,   label: component }
-  - { from: ascomp, to: url,    label: url }
+  - { from: issvg,  to: normal, label: "no" }
+  - { from: issvg,  to: ascomp, label: "yes" }
+  - { from: ascomp, to: comp,   label: "component" }
+  - { from: ascomp, to: url,    label: "url" }
   - { from: normal, to: done }
   - { from: comp,   to: done }
   - { from: url,    to: done }
@@ -47,7 +47,6 @@ flowchart TD
     comp --> done
     url --> done
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
