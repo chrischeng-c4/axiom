@@ -120,3 +120,11 @@ requirementDiagram
       type: "rs/#[test]"
     }
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract is stable: parse_loop_state/upsert_loop_state over an `<!-- aw:loop-state -->` block, absent -> None, present -> replace in place; independent of the score:workflow-state block. Implementable as written.
+- [unit-test] R1-R3 map one-to-one to tests: lossless round-trip, absent-is-None, append-then-replace-in-place. Coverage matches the logic surface.
