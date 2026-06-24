@@ -39,7 +39,10 @@ pub struct LibBuildOptions {
     /// Extra package names to force-externalize beyond `package.json` deps.
     pub extra_externals: HashSet<String>,
     /// Preserve internal module structure instead of bundling each entry.
-    /// Deferred — see [`build_library`].
+    /// When set, one output file is emitted per source module (mirroring the
+    /// source tree under `out_dir`); internal relative imports are rewritten
+    /// to the emitted siblings and external imports stay as bare specifiers.
+    /// Supported for ESM output; CJS + `preserve_modules` is a deferred TODO.
     pub preserve_modules: bool,
     /// Emit a `<entry>.d.ts` type declaration file next to each entry's JS
     /// output (isolatedDeclarations-style). Defaults to `true` for library
@@ -47,6 +50,11 @@ pub struct LibBuildOptions {
     /// written and [`EntryOutput::dts`] stays `None`.
     /// @issue #171
     pub declaration: bool,
+    /// Global variable name an IIFE library output assigns its namespace to,
+    /// e.g. `MyLib` → `var MyLib = (function () { ... })();`. Only consulted
+    /// for [`OutputFormat::Iife`] outputs. When `None`, a global name is
+    /// derived from the `package.json` `name` (see [`derive_global_name`]).
+    pub library_global_name: Option<String>,
 }
 
 /// Library builds default to emitting declarations on (`declaration: true`).
@@ -62,6 +70,7 @@ impl Default for LibBuildOptions {
             extra_externals: HashSet::new(),
             preserve_modules: false,
             declaration: true,
+            library_global_name: None,
         }
     }
 }
@@ -108,20 +117,12 @@ pub struct TypesOutput {
 
 /// Build a publishable library from `package.json`.
 ///
-/// `preserve_modules` is accepted but not yet implemented — when set, the
-/// build fails fast with a typed "unsupported yet" error rather than silently
-/// bundling. See TODO(#170 follow-up) below.
+/// Three emission shapes are supported:
+///   * bundled single-file ESM/CJS (default),
+///   * `preserve_modules` — one output file per source module mirroring the
+///     source tree (ESM only; CJS + preserve is a deferred TODO),
+///   * [`OutputFormat::Iife`] — the bundled entry wrapped as a global-var IIFE.
 pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
-    // TODO(#170 follow-up): preserve-modules emission (one output file per
-    // source module) is not implemented. Fail loudly instead of silently
-    // producing a single-file bundle that contradicts the requested mode.
-    if options.preserve_modules {
-        anyhow::bail!(
-            "jet build --lib: preserve_modules is not supported yet (TODO #170 follow-up); \
-             omit preserve_modules to produce a bundled library"
-        );
-    }
-
     let pkg_path = options.project_root.join("package.json");
     if !pkg_path.exists() {
         anyhow::bail!(
@@ -129,6 +130,13 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
             pkg_path.display()
         );
     }
+
+    // Global name for IIFE output: explicit option wins, else derive from the
+    // package name. Computed up front so it is available to the IIFE branch.
+    let global_name = options
+        .library_global_name
+        .clone()
+        .unwrap_or_else(|| derive_global_name(&read_package_name(&pkg_path)));
 
     let conditions: Vec<&str> = options.conditions.iter().map(String::as_str).collect();
     let entries = library_entries(&pkg_path, &conditions)
@@ -141,6 +149,12 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
 
     std::fs::create_dir_all(&options.out_dir)
         .with_context(|| format!("creating out_dir {}", options.out_dir.display()))?;
+
+    // preserve_modules: emit one file per source module + an entry re-export,
+    // mirroring the source tree under out_dir. ESM only; CJS is a TODO.
+    if options.preserve_modules {
+        return build_library_preserve_modules(&options, &entries, &externals);
+    }
 
     let mut outputs = Vec::new();
     let mut types_outputs = Vec::new();
@@ -181,14 +195,7 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
             let code = match format {
                 OutputFormat::Esm => esm.clone(),
                 OutputFormat::Cjs => esm_to_cjs(&esm),
-                OutputFormat::Iife => {
-                    // TODO(#170 follow-up): IIFE library output. Libraries are
-                    // ESM/CJS; an IIFE/global build is a separate concern.
-                    anyhow::bail!(
-                        "jet build --lib: IIFE output format is not supported yet \
-                         (TODO #170 follow-up); use esm or cjs"
-                    );
-                }
+                OutputFormat::Iife => wrap_iife(&esm, &entry_path, &global_name, &externals)?,
             };
 
             let file_name = output_file_name(&entry.subpath, format);
@@ -216,6 +223,534 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
     })
 }
 
+/// Read the `name` field from a `package.json`, falling back to `"lib"` when
+/// it is missing or the file cannot be parsed. Used to derive an IIFE global
+/// name when the caller did not supply one.
+fn read_package_name(pkg_path: &Path) -> String {
+    crate::resolver::package::read_package_json(pkg_path)
+        .ok()
+        .and_then(|p| p.name)
+        .unwrap_or_else(|| "lib".to_string())
+}
+
+/// Derive a JS-identifier global name from a package name.
+///
+///   `my-lib`            → `myLib`
+///   `@scope/widget-kit` → `widgetKit`  (scope dropped)
+///   `123abc`            → `_123abc`     (leading digit guarded)
+///
+/// The result is always a valid identifier: scope (`@scope/`) is dropped, the
+/// remaining segments are camel-cased on `-`/`.`/`/` boundaries, any other
+/// non-identifier byte becomes `_`, and a leading digit is prefixed with `_`.
+pub(crate) fn derive_global_name(pkg_name: &str) -> String {
+    // Drop an npm scope: `@scope/name` → `name`.
+    let base = pkg_name.rsplit('/').next().unwrap_or(pkg_name);
+
+    let mut out = String::new();
+    let mut upper_next = false;
+    for ch in base.chars() {
+        if ch == '-' || ch == '.' || ch == '/' || ch == ' ' || ch == '@' {
+            // Word boundary: camel-case the next kept char.
+            upper_next = !out.is_empty();
+            continue;
+        }
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+            if upper_next {
+                out.extend(ch.to_uppercase());
+            } else {
+                out.push(ch);
+            }
+        } else {
+            out.push('_');
+        }
+        upper_next = false;
+    }
+
+    if out.is_empty() {
+        return "lib".to_string();
+    }
+    // A JS identifier must not start with a digit.
+    if out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        out.insert(0, '_');
+    }
+    out
+}
+
+/// Wrap a bundled ESM entry as a global-var IIFE.
+///
+/// The bundled `esm` body already has every external import hoisted to the top
+/// as `import ... from "pkg"` statements (see [`bundle_library_entry`]). For an
+/// IIFE we cannot keep `import`s — the script must run as a classic global —
+/// so each hoisted external import is rewritten to read from a browser global
+/// (`window`/`globalThis`). The mapping is the conventional one: the package's
+/// global is `globalThis[<derive_global_name(pkg)>]`, e.g. `react` → the
+/// `React` global, `react-dom` → `ReactDom`.
+///
+/// The remaining body is `export`-stripped (named exports are collected onto a
+/// returned namespace object; `export default` becomes the namespace itself),
+/// and the whole thing is assigned to `var <global_name> = (function () { … })();`.
+///
+/// TODO(#170 follow-up): the global-name mapping for externals is a simple
+/// derive-from-specifier heuristic. A configurable `globals` map (à la Rollup
+/// `output.globals`) and UMD wrapping are deferred — anything beyond the
+/// convention above (renamed default imports, `import * as`, re-export forms)
+/// is best-effort.
+///
+/// `entry_path` is read directly to determine which symbols are *public*
+/// (the entry's own `export`s) — distinct from the inlined internal modules
+/// whose `export` keywords are stripped so they stay private to the IIFE.
+fn wrap_iife(
+    esm: &str,
+    entry_path: &Path,
+    global_name: &str,
+    externals: &HashSet<String>,
+) -> Result<String> {
+    // Public surface = the entry module's own exports. Internal modules are
+    // inlined into the body but their exports do not become public.
+    let entry_source = std::fs::read_to_string(entry_path)
+        .with_context(|| format!("reading entry {} for IIFE exports", entry_path.display()))?;
+    let public = collect_entry_exports(&entry_source);
+
+    let mut prelude = String::new();
+    let mut body = String::new();
+
+    for line in esm.lines() {
+        let trimmed = line.trim();
+
+        // Rewrite a hoisted external import into a `const … = globalThis.X` read.
+        if trimmed.starts_with("import ") {
+            if let Some(rewritten) = rewrite_iife_import(trimmed, externals) {
+                prelude.push_str(&rewritten);
+                prelude.push('\n');
+                continue;
+            }
+            // Non-external / unrecognised import: drop it (an IIFE has no module
+            // system to satisfy a bare import); keep going.
+            continue;
+        }
+
+        // `export default <expr>;` → keep the value as a bare statement; the
+        // default expression is also returned as the namespace below.
+        if let Some(rest) = trimmed.strip_prefix("export default ") {
+            // Emitted inline (rare for non-entry); the entry's default is
+            // captured via `public.default_expr` and returned.
+            let _ = rest;
+            continue;
+        }
+
+        // `export { a, b };` → drop the statement (names handled via `public`).
+        if trimmed.starts_with("export {") {
+            continue;
+        }
+
+        // `export const|let|var|function|class NAME …` → strip the `export `
+        // keyword (entry + inlined internals alike) so nothing leaks to the
+        // module scope; the public ones are re-exposed via the namespace.
+        if let Some(rest) = trimmed.strip_prefix("export ") {
+            let indent_len = line.len() - line.trim_start().len();
+            body.push_str(&line[..indent_len]);
+            body.push_str(rest);
+            body.push('\n');
+            continue;
+        }
+
+        body.push_str(line);
+        body.push('\n');
+    }
+
+    // Build the returned namespace.
+    let mut out = String::new();
+    out.push_str(&format!("var {global_name} = (function () {{\n"));
+    if !prelude.is_empty() {
+        out.push_str(&prelude);
+    }
+    out.push_str(&body);
+    if !body.ends_with('\n') {
+        out.push('\n');
+    }
+    if let Some(expr) = public.default_expr {
+        // A default export defines the module value directly.
+        out.push_str(&format!("return {expr};\n"));
+    } else {
+        out.push_str("return {\n");
+        for name in &public.names {
+            out.push_str(&format!("  {name}: {name},\n"));
+        }
+        out.push_str("};\n");
+    }
+    out.push_str("})();\n");
+    Ok(out)
+}
+
+/// The public export surface of a single module.
+struct EntryExports {
+    /// Named exports (from `export const/function/class/{…}`).
+    names: Vec<String>,
+    /// `export default <expr>` target, when present. Takes precedence over
+    /// `names` for the IIFE return value.
+    default_expr: Option<String>,
+}
+
+/// Parse the *entry module's own* top-level exports (named + default).
+///
+/// Used to decide the IIFE's public namespace without confusing it with the
+/// exports of inlined internal modules. `export … from "pkg"` re-export forms
+/// are best-effort: the bare names in `export { a, b }` are collected; renamed
+/// (`a as b`) and `* from` forms are deferred (TODO #170 follow-up).
+fn collect_entry_exports(source: &str) -> EntryExports {
+    let mut names: Vec<String> = Vec::new();
+    let mut default_expr: Option<String> = None;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("export default ") {
+            default_expr = Some(rest.trim_end_matches(';').trim().to_string());
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("export {") {
+            if let Some(group) = rest.split('}').next() {
+                for raw in group.split(',') {
+                    let name = raw.trim();
+                    if name.is_empty() || name.contains(" as ") {
+                        continue;
+                    }
+                    names.push(name.to_string());
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("export ") {
+            if let Some(name) = declared_name(rest) {
+                names.push(name);
+            }
+        }
+    }
+
+    EntryExports {
+        names,
+        default_expr,
+    }
+}
+
+/// Rewrite one hoisted external `import` line into a global-read `const`.
+///
+///   `import React from "react";`            → `const React = globalThis.React;`
+///   `import { useState } from "react";`      → `const { useState } = globalThis.React;`
+///   `import * as React from "react";`        → `const React = globalThis.React;`
+///   `import "side-effect";`                  → ``  (dropped)
+///
+/// Returns `None` when the specifier is not external (should not happen for a
+/// bundled library entry, whose only surviving imports are external).
+fn rewrite_iife_import(line: &str, externals: &HashSet<String>) -> Option<String> {
+    // import * as X from "pkg";
+    if let Some(rest) = line.strip_prefix("import * as ") {
+        let (name, spec) = split_import_from(rest)?;
+        if !is_external_specifier(&spec, externals) {
+            return None;
+        }
+        let g = external_global_path(&spec);
+        return Some(format!("const {name} = {g};"));
+    }
+    // import { a, b } from "pkg";
+    if let Some(rest) = line.strip_prefix("import {") {
+        let (names, spec) = rest.split_once('}')?;
+        let spec = import_spec(spec)?;
+        if !is_external_specifier(&spec, externals) {
+            return None;
+        }
+        let g = external_global_path(&spec);
+        return Some(format!("const {{{names}}} = {g};"));
+    }
+    // import "pkg"; (side-effect) → nothing to bind under an IIFE.
+    if let Some(rest) = line.strip_prefix("import ") {
+        if rest.starts_with('"') || rest.starts_with('\'') {
+            return Some(String::new());
+        }
+        // import Default from "pkg";
+        let (name, spec) = split_import_from(rest)?;
+        if !is_external_specifier(&spec, externals) {
+            return None;
+        }
+        let g = external_global_path(&spec);
+        return Some(format!("const {name} = {g};"));
+    }
+    None
+}
+
+/// Map an external specifier to the `globalThis.<Name>` expression an IIFE
+/// reads it from. Sub-path specifiers (`react/jsx-runtime`) resolve to their
+/// root package's global.
+fn external_global_path(spec: &str) -> String {
+    let root = spec.split('/').next().unwrap_or(spec);
+    format!("globalThis.{}", derive_global_name(root))
+}
+
+/// Extract the binding name declared by an `export`-stripped declaration head,
+/// i.e. the `NAME` in `const NAME =`, `function NAME(`, `class NAME {`.
+fn declared_name(decl: &str) -> Option<String> {
+    let decl = decl.trim();
+    for kw in ["const", "let", "var", "function", "class", "async function"] {
+        if let Some(rest) = decl.strip_prefix(&format!("{kw} ")) {
+            let name = rest
+                .split(['=', ' ', '(', '{', ':', '<', ';'])
+                .find(|s| !s.is_empty())?
+                .trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// `preserve_modules` emission: one output file per source module reachable
+/// from the entries, mirroring the source tree under `out_dir`.
+///
+/// Internal relative imports are rewritten to point at the emitted siblings
+/// (always `./relative.js`); external imports stay bare. The entry file keeps
+/// its original `export … from "./x"` / re-export structure so a consumer can
+/// `import` the entry *or* deep-import any emitted module.
+///
+/// ESM only. CJS + `preserve_modules` is deferred — see the bail below.
+fn build_library_preserve_modules(
+    options: &LibBuildOptions,
+    entries: &[crate::resolver::package::LibraryEntry],
+    externals: &HashSet<String>,
+) -> Result<LibBuildResult> {
+    for format in &options.formats {
+        if !matches!(format, OutputFormat::Esm) {
+            // TODO(#170 follow-up): preserve_modules currently emits ESM only.
+            // A CJS (and IIFE) per-module flavour needs per-module require()
+            // rewriting + an interop entry; deferred.
+            anyhow::bail!(
+                "jet build --lib --preserve-modules: only esm output is supported \
+                 (TODO #170 follow-up); got {:?}",
+                format
+            );
+        }
+    }
+
+    // Collect every module reachable from all entries (BFS over relative
+    // imports). The map key is the canonical absolute path; the value is the
+    // path relative to the common source root, used to mirror the tree.
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut module_paths: Vec<PathBuf> = Vec::new();
+
+    let mut entry_abs: Vec<(String, PathBuf)> = Vec::new();
+    for entry in entries {
+        let entry_path = resolve_entry_path(&options.project_root, &entry.source)
+            .with_context(|| format!("resolving entry source {}", entry.source))?;
+        entry_abs.push((entry.subpath.clone(), entry_path.clone()));
+        collect_modules(&entry_path, externals, &mut visited, &mut module_paths)?;
+    }
+
+    // Source root = the project's `src` dir if every module lives under it,
+    // else the deepest common ancestor of all modules. The emitted tree
+    // mirrors each module's path relative to this root.
+    let src_root = common_source_root(&module_paths);
+
+    let mut outputs = Vec::new();
+
+    for module in &module_paths {
+        let rel = module
+            .strip_prefix(&src_root)
+            .unwrap_or(module)
+            .to_path_buf();
+        let out_rel = with_js_extension(&rel);
+        let out_path = options.out_dir.join(&out_rel);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+
+        let code = rewrite_module_for_preserve(module, externals)?;
+        std::fs::write(&out_path, &code)
+            .with_context(|| format!("writing {}", out_path.display()))?;
+
+        outputs.push(EntryOutput {
+            subpath: format!("./{}", out_rel.to_string_lossy().replace('\\', "/")),
+            format: OutputFormat::Esm,
+            path: out_path,
+            code,
+            dts: None,
+        });
+    }
+
+    Ok(LibBuildResult {
+        entries: outputs,
+        types: Vec::new(),
+    })
+}
+
+/// Recursively collect all internal relative modules reachable from `path`.
+fn collect_modules(
+    path: &Path,
+    externals: &HashSet<String>,
+    visited: &mut HashSet<PathBuf>,
+    order: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(canonical.clone()) {
+        return Ok(());
+    }
+    order.push(canonical.clone());
+
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    for spec in module_specifiers(&source, path)? {
+        if is_external_specifier(&spec, externals) {
+            continue;
+        }
+        if let Some(target) = resolve_relative(path, &spec) {
+            collect_modules(&target, externals, visited, order)?;
+        }
+    }
+    Ok(())
+}
+
+/// Parse the import/export-from specifiers of a module's top-level statements.
+fn module_specifiers(source: &str, path: &Path) -> Result<Vec<String>> {
+    let mut parser = tree_sitter::Parser::new();
+    let ext = path.extension().and_then(|e| e.to_str());
+    let is_ts = matches!(ext, Some("ts") | Some("tsx"));
+    let language: tree_sitter::Language = if is_ts {
+        tree_sitter_typescript::LANGUAGE_TSX.into()
+    } else {
+        tree_sitter_javascript::LANGUAGE.into()
+    };
+    parser
+        .set_language(&language)
+        .context("setting tree-sitter language")?;
+    let tree = parser
+        .parse(source, None)
+        .context("parsing module source")?;
+    let root = tree.root_node();
+
+    let mut specs = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        let kind = child.kind();
+        if kind != "import_statement" && kind != "export_statement" {
+            continue;
+        }
+        if let Some(spec) = statement_specifier(source, &child) {
+            specs.push(spec);
+        }
+    }
+    Ok(specs)
+}
+
+/// Determine the source root the emitted tree mirrors. Prefers the deepest
+/// common ancestor of all modules so the relative layout under `out_dir`
+/// matches the source layout (without leaking the absolute prefix).
+fn common_source_root(modules: &[PathBuf]) -> PathBuf {
+    let mut iter = modules.iter();
+    let Some(first) = iter.next() else {
+        return PathBuf::new();
+    };
+    let mut prefix: Vec<&std::ffi::OsStr> = first
+        .parent()
+        .map(|p| p.iter().collect())
+        .unwrap_or_default();
+    for m in iter {
+        let comps: Vec<&std::ffi::OsStr> = m.parent().map(|p| p.iter().collect()).unwrap_or_default();
+        let common = prefix
+            .iter()
+            .zip(comps.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        prefix.truncate(common);
+    }
+    prefix.iter().collect()
+}
+
+/// Rewrite a relative path's extension to `.js` for the emitted sibling.
+fn with_js_extension(rel: &Path) -> PathBuf {
+    rel.with_extension("js")
+}
+
+/// Rewrite one module's source for `preserve_modules` emission:
+///   * internal relative imports point at the emitted `.js` sibling,
+///   * external imports are kept bare,
+///   * everything else is verbatim.
+fn rewrite_module_for_preserve(path: &Path, externals: &HashSet<String>) -> Result<String> {
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+
+    let mut parser = tree_sitter::Parser::new();
+    let ext = path.extension().and_then(|e| e.to_str());
+    let is_ts = matches!(ext, Some("ts") | Some("tsx"));
+    let language: tree_sitter::Language = if is_ts {
+        tree_sitter_typescript::LANGUAGE_TSX.into()
+    } else {
+        tree_sitter_javascript::LANGUAGE.into()
+    };
+    parser
+        .set_language(&language)
+        .context("setting tree-sitter language")?;
+    let tree = parser.parse(&source, None).context("parsing module")?;
+    let root = tree.root_node();
+
+    let mut out = String::new();
+    let mut cursor = root.walk();
+    let mut last_end = 0usize;
+
+    for child in root.children(&mut cursor) {
+        let kind = child.kind();
+        if kind != "import_statement" && kind != "export_statement" {
+            continue;
+        }
+        let Some(spec) = statement_specifier(&source, &child) else {
+            continue;
+        };
+        if is_external_specifier(&spec, externals) {
+            continue;
+        }
+
+        // Internal relative specifier — rewrite its extension to `.js` so it
+        // points at the emitted sibling.
+        let Some((str_start, str_end)) = first_string_range(&child) else {
+            continue;
+        };
+
+        // Emit text up to the string literal, then the rewritten specifier.
+        out.push_str(&source[last_end..str_start]);
+        let rewritten = rewrite_relative_specifier(&spec);
+        out.push_str(&format!("\"{rewritten}\""));
+        last_end = str_end;
+    }
+    out.push_str(&source[last_end..]);
+    Ok(out)
+}
+
+/// Find the byte range of the first `string` child of an import/export
+/// statement (the module specifier literal).
+fn first_string_range(node: &tree_sitter::Node) -> Option<(usize, usize)> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "string" {
+            return Some((child.start_byte(), child.end_byte()));
+        }
+    }
+    None
+}
+
+/// Rewrite a relative specifier to its emitted `.js` sibling, keeping the
+/// `./` / `../` prefix. `./util.ts` → `./util.js`, `./util` → `./util.js`,
+/// `./sub/mod` → `./sub/mod.js`.
+fn rewrite_relative_specifier(spec: &str) -> String {
+    // Strip a known source extension, then append `.js`.
+    let stripped = spec
+        .strip_suffix(".ts")
+        .or_else(|| spec.strip_suffix(".tsx"))
+        .or_else(|| spec.strip_suffix(".jsx"))
+        .or_else(|| spec.strip_suffix(".mjs"))
+        .or_else(|| spec.strip_suffix(".cjs"))
+        .or_else(|| spec.strip_suffix(".js"))
+        .unwrap_or(spec);
+    format!("{stripped}.js")
+}
+
 /// Map a public export subpath to its `.d.ts` file name.
 ///
 ///   `.`        → `index.d.ts`
@@ -236,8 +771,11 @@ fn dts_file_name(subpath: &str) -> String {
 
 /// Map a public export subpath + format to an output file name.
 ///
-///   `.`        + Esm → `index.js`     + Cjs → `index.cjs`
-///   `./client` + Esm → `client.js`    + Cjs → `client.cjs`
+///   `.`        + Esm → `index.js`     + Cjs → `index.cjs`  + Iife → `index.iife.js`
+///   `./client` + Esm → `client.js`    + Cjs → `client.cjs` + Iife → `client.iife.js`
+///
+/// IIFE gets its own `.iife.js` suffix so an `[esm, iife]` build does not
+/// overwrite the ESM output with the global-script flavour.
 fn output_file_name(subpath: &str, format: &OutputFormat) -> String {
     let stem = if subpath == "." {
         "index".to_string()
@@ -251,7 +789,8 @@ fn output_file_name(subpath: &str, format: &OutputFormat) -> String {
     };
     let ext = match format {
         OutputFormat::Cjs => "cjs",
-        _ => "js",
+        OutputFormat::Iife => "iife.js",
+        OutputFormat::Esm => "js",
     };
     format!("{stem}.{ext}")
 }
@@ -591,8 +1130,46 @@ mod tests {
     fn output_file_name_maps_subpath_and_format() {
         assert_eq!(output_file_name(".", &OutputFormat::Esm), "index.js");
         assert_eq!(output_file_name(".", &OutputFormat::Cjs), "index.cjs");
+        assert_eq!(output_file_name(".", &OutputFormat::Iife), "index.iife.js");
         assert_eq!(output_file_name("./client", &OutputFormat::Esm), "client.js");
         assert_eq!(output_file_name("./client", &OutputFormat::Cjs), "client.cjs");
+        assert_eq!(
+            output_file_name("./client", &OutputFormat::Iife),
+            "client.iife.js"
+        );
+    }
+
+    #[test]
+    fn derive_global_name_camel_cases_and_drops_scope() {
+        assert_eq!(derive_global_name("my-lib"), "myLib");
+        assert_eq!(derive_global_name("@scope/widget-kit"), "widgetKit");
+        assert_eq!(derive_global_name("react"), "react");
+        assert_eq!(derive_global_name("react-dom"), "reactDom");
+        assert_eq!(derive_global_name("lodash.merge"), "lodashMerge");
+        // Leading digit guarded into a valid identifier.
+        assert_eq!(derive_global_name("123abc"), "_123abc");
+        // Empty / pathological names fall back to `lib`.
+        assert_eq!(derive_global_name(""), "lib");
+        assert_eq!(derive_global_name("@scope/"), "lib");
+    }
+
+    #[test]
+    fn rewrite_relative_specifier_targets_emitted_js_sibling() {
+        assert_eq!(rewrite_relative_specifier("./util"), "./util.js");
+        assert_eq!(rewrite_relative_specifier("./util.ts"), "./util.js");
+        assert_eq!(rewrite_relative_specifier("./util.js"), "./util.js");
+        assert_eq!(rewrite_relative_specifier("../sub/mod.tsx"), "../sub/mod.js");
+    }
+
+    #[test]
+    fn external_global_path_uses_root_package_global() {
+        assert_eq!(external_global_path("react"), "globalThis.react");
+        assert_eq!(external_global_path("react-dom"), "globalThis.reactDom");
+        // Sub-path inherits its package's global.
+        assert_eq!(
+            external_global_path("react/jsx-runtime"),
+            "globalThis.react"
+        );
     }
 
     #[test]

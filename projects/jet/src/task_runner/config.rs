@@ -198,9 +198,16 @@ pub struct LibConfig {
     pub out_dir: Option<String>,
 
     /// Preserve the internal module structure (one output per source module)
-    /// instead of bundling each entry. Default `false`; currently a deferred
-    /// follow-up in the bundler.
+    /// instead of bundling each entry. Default `false`. Supported for ESM
+    /// output; CJS + `preserve_modules` is a deferred follow-up. `jet build
+    /// --lib --preserve-modules` overrides this.
     pub preserve_modules: Option<bool>,
+
+    /// Global variable name for `iife` output (`jet build --lib --format
+    /// iife`), e.g. `MyLib`. When `None`, a name is derived from the
+    /// `package.json` `name`. `jet build --lib --global-name <name>`
+    /// overrides this.
+    pub global_name: Option<String>,
 
     /// Emit `<entry>.d.ts` type-declaration files alongside the JS output
     /// (isolatedDeclarations-style). When `None`, defaults to `true` for
