@@ -160,9 +160,28 @@ pub fn command() -> Command {
                     Arg::new("access")
                         .long("access")
                         .help("Package access level (public/restricted)"),
+                )
+                .arg(
+                    // #172 — build the library before packing so the tarball
+                    // ships freshly-built dist files; also auto-fills any
+                    // missing main/module/types from the build output.
+                    Arg::new("build")
+                        .long("build")
+                        .action(clap::ArgAction::SetTrue)
+                        .help("Run `jet build --lib` before publishing (build-before-publish)"),
                 ),
         )
-        .subcommand(Command::new("pack").about("Create tarball without publishing"))
+        .subcommand(
+            Command::new("pack")
+                .about("Create tarball without publishing")
+                .arg(
+                    // #172 — same build-before-pack path as `jet publish --build`.
+                    Arg::new("build")
+                        .long("build")
+                        .action(clap::ArgAction::SetTrue)
+                        .help("Run `jet build --lib` before packing"),
+                ),
+        )
         .subcommand(
             Command::new("store")
                 .about("Store management commands")
@@ -1926,12 +1945,18 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 .map(|s| s.as_str())
                 .unwrap_or("latest");
             let access = m.get_one::<String>("access").map(|s| s.as_str());
-            let publisher = crate::pkg_manager::publish::Publisher::new(root_dir);
+            // #172 — `--build` runs `jet build --lib` before packing.
+            let build_first = m.get_flag("build");
+            let publisher =
+                crate::pkg_manager::publish::Publisher::new(root_dir).with_build(build_first);
             publisher.publish(tag, access).await
         }
 
-        Some(("pack", _)) => {
-            let publisher = crate::pkg_manager::publish::Publisher::new(root_dir);
+        Some(("pack", m)) => {
+            // #172 — `--build` runs `jet build --lib` before packing.
+            let build_first = m.get_flag("build");
+            let publisher =
+                crate::pkg_manager::publish::Publisher::new(root_dir).with_build(build_first);
             let path = publisher.pack()?;
             println!("Created: {:?}", path);
             Ok(())
