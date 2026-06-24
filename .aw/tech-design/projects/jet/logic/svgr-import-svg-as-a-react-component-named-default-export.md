@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-svgr-import-svg-as-a-react-component-named-default-export-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -47,3 +47,36 @@ flowchart TD
     comp --> done
     url --> done
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/asset/svgr.rs"
+    action: create
+    section: logic
+    description: |
+      New SVGR transform: parse an .svg file and emit a React component module (a component returning the SVG as JSX with props/ref forwarded); configurable named (ReactComponent) and/or default export, matching vite-plugin-svgr defaults.
+    impl_mode: hand-written
+  - path: "projects/jet/src/bundler/imports.rs"
+    action: modify
+    section: logic
+    description: |
+      Route .svg imports through SVGR when imported as a component; keep asset-URL import otherwise.
+    impl_mode: hand-written
+  - path: "projects/jet/src/asset/mod.rs"
+    action: modify
+    section: logic
+    description: |
+      Wire svgr module; expose config (exportType named/default).
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/svgr.rs"
+    action: create
+    section: unit-test
+    description: |
+      Tests: importing an .svg yields a component rendering <svg> with forwarded props; named vs default export; plain asset-url import still works.
+    impl_mode: hand-written
+```
+
