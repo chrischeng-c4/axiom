@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: component-workbench
     role: primary
@@ -58,6 +58,50 @@ flowchart TD
     build_entry --> served([served, isolated])
     manager --> served
     module --> served
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/stories/manager.rs"
+    action: create
+    section: logic
+    description: |
+      Manager UI: render the manager HTML shell (sidebar tree from StoryIndex,
+      toolbar, preview iframe) and the isolated per-story preview HTML entry
+      (mounts only the selected story component, no app router/shell).
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/server.rs"
+    action: create
+    section: logic
+    description: |
+      start_stories_workbench(root, host, port): discover StoryIndex, build a
+      dev-server variant (reuse dev_server substrate) with routes for the manager,
+      isolated preview, and module serving; build per-story entry via module graph.
+    impl_mode: hand-written
+  - path: "projects/jet/src/cli.rs"
+    action: modify
+    section: cli
+    description: |
+      Add a `jet stories` subcommand (port/host flags mirroring jet dev)
+      dispatching to stories::start_stories_workbench.
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/mod.rs"
+    action: modify
+    section: logic
+    description: |
+      Register manager + server submodules and re-export start_stories_workbench.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/stories/manager.rs"
+    action: create
+    section: unit-test
+    description: |
+      Tests: manager route returns HTML listing discovered stories; preview route
+      renders the selected story in isolation; switching stories swaps the preview.
+    impl_mode: hand-written
 ```
 
 # Reviews
