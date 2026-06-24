@@ -3074,6 +3074,9 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = bigint_numeric_binop("-", a, b) {
         return r;
     }
+    if let Some(result) = super::dict_ops::dict_view_sub(a, b) {
+        return result;
+    }
     // Int fast path first — matches mb_add's ordering. fib_recursive and
     // every other int-arith hot loop runs `n - 1` through here on every
     // iteration; the set-difference dispatch was paying two as_ptr()
@@ -3174,11 +3177,11 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
     {
         return r;
     }
+    if let Some(result) = super::dict_ops::dict_view_or(a, b) {
+        return result;
+    }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
-            if let Some(result) = super::dict_ops::dict_view_or(a, b) {
-                return result;
-            }
             let a_is_setlike = matches!((*pa).data, ObjData::Set(_) | ObjData::FrozenSet(_));
             let b_is_setlike = matches!((*pb).data, ObjData::Set(_) | ObjData::FrozenSet(_));
             if a_is_setlike && b_is_setlike {
@@ -3450,6 +3453,9 @@ pub fn mb_bitand(a: MbValue, b: MbValue) -> MbValue {
     {
         return r;
     }
+    if let Some(result) = super::dict_ops::dict_view_and(a, b) {
+        return result;
+    }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
             let a_is_setlike = matches!((*pa).data, ObjData::Set(_) | ObjData::FrozenSet(_));
@@ -3504,6 +3510,9 @@ pub fn mb_bitxor(a: MbValue, b: MbValue) -> MbValue {
         super::stdlib::enum_class::flag_binop(a, b, super::stdlib::enum_class::FlagOp::Xor)
     {
         return r;
+    }
+    if let Some(result) = super::dict_ops::dict_view_xor(a, b) {
+        return result;
     }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
@@ -4147,6 +4156,18 @@ fn slice_as_tuple(v: MbValue) -> Option<MbValue> {
     None
 }
 
+fn mappingproxy_mapping(v: MbValue) -> Option<MbValue> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if class_name == "mappingproxy" {
+                return fields.read().unwrap().get("_mapping").copied();
+            }
+        }
+    }
+    None
+}
+
 fn bound_method_parts(v: MbValue) -> Option<(MbValue, MbValue)> {
     let ptr = v.as_ptr()?;
     unsafe {
@@ -4227,6 +4248,16 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     // Fast path: identical bits (safe for non-float types)
     if a.to_bits() == b.to_bits() {
         return true;
+    }
+    if let Some(eq) = super::dict_ops::dict_view_eq(a, b) {
+        return eq;
+    }
+    if let Some(ma) = mappingproxy_mapping(a) {
+        let rhs = mappingproxy_mapping(b).unwrap_or(b);
+        return mb_values_eq(ma, rhs);
+    }
+    if let Some(mb) = mappingproxy_mapping(b) {
+        return mb_values_eq(a, mb);
     }
     match (bound_method_parts(a), bound_method_parts(b)) {
         (Some((af, aself)), Some((bf, bself))) => {
