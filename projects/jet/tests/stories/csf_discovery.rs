@@ -61,6 +61,50 @@ export const Orphan = {
 };
 "#;
 
+/// CSF2: `const Primary = Template.bind({})` + later `Primary.args = {...}`.
+const LEGACY_STORIES: &str = r#"
+import { Toggle } from './Toggle';
+
+export default {
+  title: 'Legacy/Toggle',
+  component: Toggle,
+};
+
+const Template = (args) => <Toggle {...args} />;
+
+export const Primary = Template.bind({});
+Primary.args = { label: "Hi", on: true };
+Primary.storyName = "The Primary";
+"#;
+
+/// Spread args: `args: { ...base, x: 2 }` where `base` is a static const, plus
+/// a story that spreads another CSF2 story's args.
+const SPREAD_STORIES: &str = r#"
+import { Panel } from './Panel';
+
+export default {
+  title: 'Layout/Panel',
+  component: Panel,
+};
+
+const base = { x: 1, y: 1, label: 'base' };
+
+export const Spread = {
+  args: { ...base, x: 2 },
+};
+
+// Unresolvable spread (imported base) -> explicit keys kept, spread dropped.
+export const Dynamic = {
+  args: { ...imported, only: 9 },
+};
+"#;
+
+/// A barrel file that re-exports stories from a sibling story file.
+const REEXPORT_STORIES: &str = r#"
+export { Primary } from './LegacyToggle.stories';
+export { Primary as Renamed } from './LegacyToggle.stories';
+"#;
+
 /// Lay down the three fixtures in nested dirs (exercises `**/` globbing).
 fn write_fixtures() -> TempDir {
     let dir = TempDir::new().expect("temp dir");
@@ -77,6 +121,22 @@ fn write_fixtures() -> TempDir {
         root.join("node_modules/dep/Vendor.stories.tsx"),
         BUTTON_STORIES,
     );
+
+    dir
+}
+
+/// Fixtures for the stories follow-up (CSF2 bind, spread args, re-exports).
+///
+/// Kept separate from [`write_fixtures`] so the original exact-count assertions
+/// stay stable. `LegacyToggle.stories.tsx` is the sibling that
+/// `Barrel.stories.tsx` re-exports from.
+fn write_followup_fixtures() -> TempDir {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(root.join("src/legacy/LegacyToggle.stories.tsx"), LEGACY_STORIES);
+    write(root.join("src/layout/Panel.stories.tsx"), SPREAD_STORIES);
+    write(root.join("src/legacy/Barrel.stories.tsx"), REEXPORT_STORIES);
 
     dir
 }
@@ -226,6 +286,104 @@ fn malformed_file_yields_diagnostic_without_aborting() {
             .any(|d| d.contains("Broken.stories.tsx") && d.contains("parse error")),
         "expected a parse-error diagnostic for Broken.stories.tsx, got {:?}",
         index.diagnostics
+    );
+}
+
+/// (e) CSF2 `const Primary = Template.bind({}); Primary.args = {...}` surfaces
+/// `Primary` as a story carrying its mutated args + a render (the bound
+/// template).
+#[test]
+fn csf2_template_bind_surfaces_story_with_args() {
+    let dir = write_followup_fixtures();
+    let index = index_of(dir.path());
+
+    let primary = index
+        .stories
+        .iter()
+        .find(|s| s.name == "Primary" && s.file.ends_with("LegacyToggle.stories.tsx"))
+        .expect("CSF2 Primary discovered");
+
+    assert_eq!(
+        primary.args.get("label"),
+        Some(&CsfValue::Str("Hi".into())),
+        "Primary.args picked up `label`"
+    );
+    assert_eq!(primary.args.get("on"), Some(&CsfValue::Bool(true)));
+    // The bound template supplies the render.
+    assert!(primary.has_render, "bound-template story renders via template");
+    assert_eq!(primary.id, "legacy-toggle--primary");
+}
+
+/// (f) a barrel file re-exporting `export { Primary } from './LegacyToggle.stories'`
+/// includes `Primary` (and the renamed `Renamed`) in its discovered set, under
+/// the barrel's own title.
+#[test]
+fn re_exported_stories_are_resolved_from_sibling() {
+    let dir = write_followup_fixtures();
+    let index = index_of(dir.path());
+
+    let barrel = dir
+        .path()
+        .join("src/legacy/Barrel.stories.tsx");
+
+    let from_barrel: Vec<_> = index.stories.iter().filter(|s| s.file == barrel).collect();
+    let names: Vec<_> = from_barrel.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        names.contains(&"Primary"),
+        "barrel re-exports Primary, got {names:?}"
+    );
+    assert!(
+        names.contains(&"Renamed"),
+        "barrel re-exports Primary as Renamed, got {names:?}"
+    );
+
+    // The re-exported story adopts the sibling's args.
+    let primary = from_barrel
+        .iter()
+        .find(|s| s.name == "Primary")
+        .expect("re-exported Primary");
+    assert_eq!(primary.args.get("label"), Some(&CsfValue::Str("Hi".into())));
+    assert!(
+        !index
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("Barrel.stories.tsx")),
+        "no diagnostic expected for a resolvable barrel, got {:?}",
+        index.diagnostics
+    );
+}
+
+/// (g) spread args `args: { ...base, x: 2 }` merge the static `base` (explicit
+/// `x` overrides); an unresolvable spread keeps only its explicit keys.
+#[test]
+fn spread_args_merge_static_base() {
+    let dir = write_followup_fixtures();
+    let index = index_of(dir.path());
+
+    let spread = index
+        .stories
+        .iter()
+        .find(|s| s.name == "Spread")
+        .expect("Spread story discovered");
+    // `base` members merged in...
+    assert_eq!(spread.args.get("y"), Some(&CsfValue::Number("1".into())));
+    assert_eq!(
+        spread.args.get("label"),
+        Some(&CsfValue::Str("base".into()))
+    );
+    // ...with the explicit `x: 2` overriding `base.x = 1`.
+    assert_eq!(spread.args.get("x"), Some(&CsfValue::Number("2".into())));
+
+    // Unresolvable spread: explicit key kept, spread silently dropped.
+    let dynamic = index
+        .stories
+        .iter()
+        .find(|s| s.name == "Dynamic")
+        .expect("Dynamic story discovered");
+    assert_eq!(dynamic.args.get("only"), Some(&CsfValue::Number("9".into())));
+    assert!(
+        !dynamic.args.contains_key("x"),
+        "imported-base spread must not leak resolved keys"
     );
 }
 // HANDWRITE-END
