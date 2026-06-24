@@ -15,13 +15,21 @@ root-cause of loom's current ceiling and the levers to raise it.
 
 ## Results
 
-| System | submit | end-to-end | model |
-|--------|--------|-----------|-------|
-| Celery + Redis | ~2500/s | **~1549 tasks/s** | direct task queue |
-| loom (release) | ~179/s | **~45 runs/s** (500/500) | DAG control-plane + claim-check |
+| System | submit | end-to-end | category |
+|--------|--------|-----------|----------|
+| Celery + Redis | ~2500/s | **~1549 tasks/s** | lean task queue (different category) |
+| **Temporal** (dev, sqlite) | ~1143/s | **~184 workflows/s** | **durable workflow engine — loom's true peer** |
+| loom (release) | ~179/s | **~45–50 runs/s** (500/500) | durable DAG control-plane + claim-check |
 | loom (debug, sequential curl) | — | ~36 runs/s | (scripts/bench.sh) |
 
-loom is ~34× slower than Celery on this micro-workload.
+**Category matters.** Against a *lean task queue* (Celery), loom is ~34× slower —
+but that compares a durable DAG orchestrator to a fire-and-forget queue. Against
+its *actual peer*, a durable workflow engine (**Temporal**), loom is only **~4×
+slower** (45–50 vs 184 wf/s) on comparable dev configs (loom MemStore vs Temporal
+sqlite). Both pay for durability + history; the gap is loom's per-run h2c hop
+count (below), not its design category. The Temporal comparison is the fair one —
+loom and Temporal solve the same problem (durable, retryable, observable DAGs);
+Celery does not.
 
 ## Root cause (measured — first hypothesis, then refuted by experiment)
 
@@ -65,13 +73,21 @@ amortize it; Celery pays one Redis round-trip. Different optimization targets.
 
 ## Takeaway
 
-For fine-grained, independent tasks, a lean queue (Celery/Redis) wins decisively
-(~34×). loom's value is durable, HA, claim-check DAG orchestration. Its single-run
-throughput is gated not by one fixable loop (the sharded-consumer fix I tested
-moved it only 45→50 runs/s) but by the **cumulative per-run h2c control-plane
-overhead** — the price of claim-check + a durable broker + consistent state. The
-honest lesson: closing the gap means cutting round-trips per run (batching), which
-trades directly against the claim-check/durability design — so the right question
-is not "how do we match Celery's throughput" but "for which workloads is the
-durable-DAG tax worth it" (deep DAGs, large payloads, failure-sensitive runs),
-where the per-run overhead amortizes and Celery would need bespoke plumbing.
+Compare like with like. A lean task queue (Celery/Redis, ~1549/s) wins ~34× — but
+it is a different category (fire-and-forget, no durable history). Against loom's
+*actual peer*, a durable workflow engine (**Temporal, ~184 wf/s**), loom (~45–50
+runs/s) is only **~4× off** on comparable dev configs — and that gap is the
+**cumulative per-run h2c control-plane overhead** (the sharded-consumer fix I
+tested moved it only 45→50, so it is not one fixable loop), not the durable-DAG
+design itself. Closing it means cutting round-trips per run (batching/pipelining),
+which trades against claim-check + broker + consistent state. So the right framing
+is which workloads earn the durable-DAG tax (deep DAGs, large payloads,
+failure-sensitive runs) — and there loom is already in Temporal's league while
+keeping the no-SDK polyglot + claim-check model.
+
+## Ratchet (CI gate)
+
+`scripts/perf-ratchet.sh` runs the loom bench, compares end-to-end runs/s to
+`docs/benchmark/baseline.json`, fails on regression beyond tolerance, and ratchets
+the baseline up on improvement — the "dormant axis" the competitor arena can't
+cover (loom vs its own best). Reproduce the competitors from `benchmark/`.
