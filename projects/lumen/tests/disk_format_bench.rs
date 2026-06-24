@@ -93,6 +93,7 @@ fn disk_format_size_and_decode_speed() {
             external_id: eid.clone(),
             field: "embedding".into(),
             value: FieldValue::Vector(v),
+            version: None,
         });
         items.push(IndexItem {
             external_id: eid.clone(),
@@ -101,11 +102,13 @@ fn disk_format_size_and_decode_speed() {
                 "document {i} lorem ipsum dolor sit amet consectetur token{}",
                 i % 97
             )),
+            version: None,
         });
         items.push(IndexItem {
             external_id: eid,
             field: "category".into(),
             value: FieldValue::String(format!("cat-{}", i % 50)),
+            version: None,
         });
     }
     // Bulk index caps at 10k items/request; chunk the writes.

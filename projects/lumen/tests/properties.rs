@@ -153,7 +153,7 @@ proptest! {
                 items: vec![IndexItem {
                     external_id: eid.clone(),
                     field: "kw".into(),
-                    value: FieldValue::String(v.clone()),
+                    value: FieldValue::String(v.clone()), version: None,
                 }],
                 request_id: None,
             }).unwrap();
@@ -178,7 +178,7 @@ proptest! {
                 items: vec![IndexItem {
                     external_id: eid.clone(),
                     field: "kw".into(),
-                    value: FieldValue::String(v.clone()),
+                    value: FieldValue::String(v.clone()), version: None,
                 }],
                 request_id: None,
             }).unwrap();
@@ -204,8 +204,8 @@ proptest! {
         for (eid, kw, body) in &writes {
             e.index("c", IndexRequest {
                 items: vec![
-                    IndexItem { external_id: eid.clone(), field: "kw".into(),   value: FieldValue::String(kw.clone()) },
-                    IndexItem { external_id: eid.clone(), field: "body".into(), value: FieldValue::String(body.clone()) },
+                    IndexItem { external_id: eid.clone(), field: "kw".into(),   value: FieldValue::String(kw.clone()), version: None, },
+                    IndexItem { external_id: eid.clone(), field: "body".into(), value: FieldValue::String(body.clone()), version: None, },
                 ],
                 request_id: None,
             }).unwrap();
@@ -239,7 +239,7 @@ proptest! {
         prop_assume!(v1 != v2);
         let e = fresh();
         let put = |v: &str| e.index("c", IndexRequest {
-            items: vec![IndexItem { external_id: eid.clone(), field: "kw".into(), value: FieldValue::String(v.into()) }],
+            items: vec![IndexItem { external_id: eid.clone(), field: "kw".into(), value: FieldValue::String(v.into()), version: None, }],
             request_id: None,
         }).unwrap();
         put(&v1);
@@ -258,7 +258,7 @@ proptest! {
         let mut distinct = std::collections::BTreeSet::new();
         for (eid, v) in &writes {
             e.index("c", IndexRequest {
-                items: vec![IndexItem { external_id: eid.clone(), field: "kw".into(), value: FieldValue::String(v.clone()) }],
+                items: vec![IndexItem { external_id: eid.clone(), field: "kw".into(), value: FieldValue::String(v.clone()), version: None, }],
                 request_id: None,
             }).unwrap();
             distinct.insert(eid.clone());
@@ -278,7 +278,7 @@ proptest! {
         let mut truth: BTreeMap<String, String> = BTreeMap::new();
         for (eid, v) in &writes {
             e.index("c", IndexRequest {
-                items: vec![IndexItem { external_id: eid.clone(), field: "kw".into(), value: FieldValue::String(v.clone()) }],
+                items: vec![IndexItem { external_id: eid.clone(), field: "kw".into(), value: FieldValue::String(v.clone()), version: None, }],
                 request_id: None,
             }).unwrap();
             truth.insert(eid.clone(), v.clone());

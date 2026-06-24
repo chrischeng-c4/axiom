@@ -2793,6 +2793,13 @@ struct Collection {
     /// before changing postings so repeated serving queries can skip planner work
     /// without returning stale hits.
     search_cache: RwLock<FastHashMap<String, SearchResponse>>,
+    /// #184: external-version last-write-wins. Sparse `doc-id → field → highest
+    /// applied version`, populated only for cells written with an explicit
+    /// `IndexItem.version`. A strictly-older versioned write is dropped at apply
+    /// time. In-memory only (reconstructed by WAL replay); durability across
+    /// snapshot/seal is a follow-up.
+    /// @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
+    cell_versions: FastHashMap<u32, FastHashMap<String, u64>>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
@@ -2812,6 +2819,7 @@ impl Collection {
             deleted_at: None,
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
+            cell_versions: FastHashMap::default(),
         })
     }
 
@@ -3189,6 +3197,21 @@ impl Engine {
             for pos in cursor..group_end {
                 let field_name = std::mem::take(&mut items[pos].field);
                 let field = field_name.as_str();
+                // #184: external-version LWW — drop a strictly-older versioned
+                // write for this (external_id, field) cell. Absent version means
+                // arrival order (no check, today's behavior).
+                // @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
+                let item_version = items[pos].version;
+                if let Some(v) = item_version {
+                    let stale = coll
+                        .cell_versions
+                        .get(&id)
+                        .and_then(|m| m.get(field))
+                        .is_some_and(|stored| *stored >= v);
+                    if stale {
+                        continue;
+                    }
+                }
                 if !cleared_text_rank_caches || !cleared_number_filter_caches {
                     let field_type = match coll.fields.get(field) {
                         Some(fi) => fi.field_type(),
@@ -3260,6 +3283,14 @@ impl Engine {
                     }
                 };
                 add_bytes_written(&mut bytes_by_field, field, bytes);
+                // #184: record the highest applied version for this cell so a
+                // later strictly-older write is dropped above.
+                if let Some(v) = item_version {
+                    coll.cell_versions
+                        .entry(id)
+                        .or_default()
+                        .insert(field.to_string(), v);
+                }
                 if !field_already_indexed {
                     if new_doc_in_request {
                         new_doc_fields.insert_absent(field_name);
@@ -8223,6 +8254,7 @@ impl Collection {
             deleted_at: None,
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
+            cell_versions: FastHashMap::default(),
         })
     }
 }
@@ -8894,6 +8926,7 @@ impl Collection {
             deleted_at: None,
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
+            cell_versions: FastHashMap::default(),
         })
     }
 }
@@ -9650,6 +9683,7 @@ mod segment_predicate_diff_tests {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(kw.into()),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
@@ -9659,6 +9693,7 @@ mod segment_predicate_diff_tests {
                 } else {
                     "filler".into()
                 }),
+                version: None,
             },
         ];
         if let Some(a) = age {
@@ -9666,6 +9701,7 @@ mod segment_predicate_diff_tests {
                 external_id: eid.into(),
                 field: "age".into(),
                 value: FieldValue::Number(a),
+                version: None,
             });
         }
         e.index(
@@ -9906,12 +9942,14 @@ mod segment_keyword_diff_tests {
             } else {
                 "filler".into()
             }),
+            version: None,
         }];
         if let Some(k) = kw {
             items.push(crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(k.into()),
+                version: None,
             });
         }
         e.index(
@@ -10140,6 +10178,7 @@ mod segment_keyword_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(k.into()),
+                version: None,
             });
         }
         if let Some(c) = cat {
@@ -10147,6 +10186,7 @@ mod segment_keyword_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "cat".into(),
                 value: FieldValue::String(c.into()),
+                version: None,
             });
         }
         // A doc with neither field would have no postings anywhere; ensure at
@@ -10156,6 +10196,7 @@ mod segment_keyword_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String("zzz_filler".into()),
+                version: None,
             });
         }
         e.index(
@@ -10710,6 +10751,7 @@ mod segment_number_range_diff_tests {
                 external_id: eid.into(),
                 field: "price".into(),
                 value: FieldValue::Number(p),
+                version: None,
             });
         }
         if let Some(c) = cat {
@@ -10717,6 +10759,7 @@ mod segment_number_range_diff_tests {
                 external_id: eid.into(),
                 field: "cat".into(),
                 value: FieldValue::String(c.into()),
+                version: None,
             });
         }
         // Ensure the doc is interned even when both fields are absent.
@@ -10725,6 +10768,7 @@ mod segment_number_range_diff_tests {
                 external_id: eid.into(),
                 field: "cat".into(),
                 value: FieldValue::String("zzz_filler".into()),
+                version: None,
             });
         }
         e.index(
@@ -11548,12 +11592,14 @@ mod segment_set_diff_tests {
             } else {
                 "filler".into()
             }),
+            version: None,
         }];
         if let Some(ts) = tags {
             items.push(crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(ts.iter().map(|s| (*s).to_string()).collect()),
+                version: None,
             });
         }
         e.index(
@@ -11798,6 +11844,7 @@ mod segment_set_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(ts.iter().map(|s| (*s).to_string()).collect()),
+                version: None,
             });
         }
         if let Some(cs) = cat {
@@ -11805,6 +11852,7 @@ mod segment_set_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "cat".into(),
                 value: FieldValue::StringList(cs.iter().map(|s| (*s).to_string()).collect()),
+                version: None,
             });
         }
         if items.is_empty() {
@@ -11812,6 +11860,7 @@ mod segment_set_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(vec!["zzz_filler".into()]),
+                version: None,
             });
         }
         e.index(
@@ -12359,12 +12408,14 @@ mod segment_text_diff_tests {
             external_id: eid.into(),
             field: "body".into(),
             value: FieldValue::String(body.into()),
+            version: None,
         }];
         if let Some(p) = price {
             items.push(crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "price".into(),
                 value: FieldValue::Number(p),
+                version: None,
             });
         }
         e.index(
@@ -12981,6 +13032,7 @@ mod segment_hash_diff_tests {
                     external_id: eid.into(),
                     field: "sig".into(),
                     value: FieldValue::String(format!("{hash:016x}")),
+                    version: None,
                 }],
                 request_id: None,
             },
@@ -13125,6 +13177,7 @@ mod segment_vector_diff_tests {
                     external_id: eid.into(),
                     field: "emb".into(),
                     value: FieldValue::Vector(v.to_vec()),
+                    version: None,
                 }],
                 request_id: None,
             },
@@ -13294,6 +13347,7 @@ mod tests {
             external_id: eid.into(),
             field: field.into(),
             value,
+            version: None,
         }
     }
 
@@ -15697,11 +15751,13 @@ mod triple_path_diff_tests {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(kw.into()),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(tags.iter().map(|s| s.to_string()).collect()),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
@@ -15711,16 +15767,19 @@ mod triple_path_diff_tests {
                 } else {
                     "filler".into()
                 }),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "sig".into(),
                 value: FieldValue::String(format!("{sig:016x}")),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "emb".into(),
                 value: FieldValue::Vector(emb.to_vec()),
+                version: None,
             },
         ];
         if let Some(n) = num {
@@ -15728,6 +15787,7 @@ mod triple_path_diff_tests {
                 external_id: eid.into(),
                 field: "num".into(),
                 value: FieldValue::Number(n),
+                version: None,
             });
         }
         e.index(
@@ -16017,16 +16077,19 @@ mod checkpoint_engine_tests {
                 external_id: eid.into(),
                 field: "num".into(),
                 value: FieldValue::Number(n),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(kw.into()),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(vec![tag.into()]),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
@@ -16036,16 +16099,19 @@ mod checkpoint_engine_tests {
                 } else {
                     "filler".into()
                 }),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "sig".into(),
                 value: FieldValue::String(format!("{sig:016x}")),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "emb".into(),
                 value: FieldValue::Vector(emb.to_vec()),
+                version: None,
             },
         ];
         e.index(
@@ -16541,11 +16607,13 @@ mod offset_sort_guard_tests {
                             external_id: format!("d{i}"),
                             field: "price".into(),
                             value: FieldValue::Number(*p),
+                            version: None,
                         },
                         IndexItem {
                             external_id: format!("d{i}"),
                             field: "cat".into(),
                             value: FieldValue::String("x".into()),
+                            version: None,
                         },
                     ],
                     request_id: None,
@@ -16634,8 +16702,120 @@ mod offset_sort_guard_tests {
         let mut p2 = base();
         p2.sort = Some(sort_price_asc());
         p2.cursor = Some(cursor);
-        let r2 = e.search("c", p2).expect("keyset + sort page 2 must succeed");
+        let r2 = e
+            .search("c", p2)
+            .expect("keyset + sort page 2 must succeed");
         assert_eq!(ids(&r2), vec!["d2".to_string(), "d3".to_string()]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #184: external-version last-write-wins. An IndexItem may carry an optional
+// `version`; lumen keeps the highest version per (external_id, field) and drops
+// strictly-older writes. Absent version = arrival order (today's behavior).
+// @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod external_version_lww_tests {
+    use super::*;
+    use crate::types::IndexItem;
+
+    fn schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "price".into(),
+            FieldSpec {
+                field_type: FieldType::Number,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        CreateCollectionRequest { fields }
+    }
+
+    fn setup() -> Engine {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        e
+    }
+
+    fn write(e: &Engine, eid: &str, price: f64, version: Option<u64>) {
+        e.index(
+            "c",
+            IndexRequest {
+                items: vec![IndexItem {
+                    external_id: eid.into(),
+                    field: "price".into(),
+                    value: FieldValue::Number(price),
+                    version,
+                }],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// external_ids whose `price` equals `price`.
+    fn matches_price(e: &Engine, price: f64) -> Vec<String> {
+        let req = SearchRequest {
+            query: QueryNode::Term(TermQuery {
+                field: "price".into(),
+                value: FieldValue::Number(price),
+            }),
+            limit: 100,
+            cursor: None,
+            sort: None,
+            track_total: true,
+            collapse: None,
+        };
+        e.search("c", req)
+            .unwrap()
+            .hits
+            .into_iter()
+            .map(|h| h.external_id)
+            .collect()
+    }
+
+    /// R1: a versioned write older than the stored version is dropped.
+    #[test]
+    fn stale_versioned_write_is_dropped() {
+        let e = setup();
+        write(&e, "d0", 10.0, Some(5));
+        write(&e, "d0", 20.0, Some(3)); // stale: 3 < stored 5
+        assert_eq!(
+            matches_price(&e, 10.0),
+            vec!["d0".to_string()],
+            "value must remain at the v5 write"
+        );
+        assert!(
+            matches_price(&e, 20.0).is_empty(),
+            "the stale v3 write must not apply"
+        );
+    }
+
+    /// R2: a newer versioned write advances the cell.
+    #[test]
+    fn newer_versioned_write_wins() {
+        let e = setup();
+        write(&e, "d0", 10.0, Some(5));
+        write(&e, "d0", 20.0, Some(6)); // newer: 6 > stored 5
+        assert_eq!(matches_price(&e, 20.0), vec!["d0".to_string()]);
+        assert!(matches_price(&e, 10.0).is_empty());
+    }
+
+    /// R3: writes without a version apply in arrival order (last wins) —
+    /// unchanged from today.
+    #[test]
+    fn unversioned_writes_keep_arrival_order() {
+        let e = setup();
+        write(&e, "d0", 10.0, None);
+        write(&e, "d0", 20.0, None);
+        assert_eq!(matches_price(&e, 20.0), vec!["d0".to_string()]);
+        assert!(matches_price(&e, 10.0).is_empty());
     }
 }
 // CODEGEN-END

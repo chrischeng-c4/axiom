@@ -73,6 +73,7 @@ fn index_one(coll: &str, eid: &str, field: &str, val: FieldValue) -> RaftLogEntr
                 external_id: eid.into(),
                 field: field.into(),
                 value: val,
+                version: None,
             }],
             request_id: None,
         },

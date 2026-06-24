@@ -171,6 +171,14 @@ pub struct IndexItem {
     pub external_id: String,
     pub field: String,
     pub value: FieldValue,
+    /// Optional external version for last-write-wins. When set, lumen keeps the
+    /// highest version per `(external_id, field)` and drops strictly-older
+    /// writes (cf. Elasticsearch `version_type=external`), so out-of-order
+    /// delivery cannot clobber a newer value. When absent, the write applies in
+    /// arrival order.
+    /// @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
 }
 
 /// Polymorphic field value. Validated against the declared `FieldType`

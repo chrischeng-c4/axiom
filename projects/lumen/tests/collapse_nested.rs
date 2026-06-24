@@ -82,9 +82,9 @@ proptest! {
         for (i, (g, tok)) in rows.iter().enumerate() {
             let eid = format!("d{i}");
             e.index("c", IndexRequest { items: vec![
-                IndexItem { external_id: eid.clone(), field: "parent".into(), value: FieldValue::String(g.to_string()) },
+                IndexItem { external_id: eid.clone(), field: "parent".into(), value: FieldValue::String(g.to_string()), version: None, },
                 IndexItem { external_id: eid.clone(), field: "body".into(),
-                            value: FieldValue::String(if *tok { "tok x".into() } else { "x".into() }) },
+                            value: FieldValue::String(if *tok { "tok x".into() } else { "x".into() }), version: None, },
             ], request_id: None }).unwrap();
             group_of.insert(eid, g.to_string());
         }
@@ -132,9 +132,9 @@ proptest! {
             for (j, (sku, qty)) in elems.iter().enumerate() {
                 let cid = format!("{parent}#{j}");
                 e.index("c", IndexRequest { items: vec![
-                    IndexItem { external_id: cid.clone(), field: "parent".into(), value: FieldValue::String(parent.clone()) },
-                    IndexItem { external_id: cid.clone(), field: "sku".into(), value: FieldValue::String(sku.to_string()) },
-                    IndexItem { external_id: cid.clone(), field: "qty".into(), value: FieldValue::Number(*qty as f64) },
+                    IndexItem { external_id: cid.clone(), field: "parent".into(), value: FieldValue::String(parent.clone()), version: None, },
+                    IndexItem { external_id: cid.clone(), field: "sku".into(), value: FieldValue::String(sku.to_string()), version: None, },
+                    IndexItem { external_id: cid.clone(), field: "qty".into(), value: FieldValue::Number(*qty as f64), version: None, },
                 ], request_id: None }).unwrap();
                 if *sku == "S0" && *qty >= 5 { expected.insert(parent.clone()); }
             }
@@ -172,16 +172,19 @@ fn collapse_early_term_correct() {
                         external_id: format!("{parent}#0"),
                         field: "parent".into(),
                         value: FieldValue::String(parent.clone()),
+                        version: None,
                     },
                     IndexItem {
                         external_id: format!("{parent}#0"),
                         field: "sku".into(),
                         value: FieldValue::String(sku.into()),
+                        version: None,
                     },
                     IndexItem {
                         external_id: format!("{parent}#0"),
                         field: "qty".into(),
                         value: FieldValue::Number(qty),
+                        version: None,
                     },
                 ],
                 request_id: None,
@@ -253,16 +256,19 @@ fn no_cross_element_false_match() {
                         external_id: cid.into(),
                         field: "parent".into(),
                         value: FieldValue::String("p1".into()),
+                        version: None,
                     },
                     IndexItem {
                         external_id: cid.into(),
                         field: "sku".into(),
                         value: FieldValue::String(sku.into()),
+                        version: None,
                     },
                     IndexItem {
                         external_id: cid.into(),
                         field: "qty".into(),
                         value: FieldValue::Number(qty),
+                        version: None,
                     },
                 ],
                 request_id: None,
@@ -349,6 +355,7 @@ fn has_child_composes_in_boolean_tree() {
                     external_id: parent.clone(),
                     field: "city".into(),
                     value: FieldValue::String(city.into()),
+                    version: None,
                 }],
                 request_id: None,
             },
@@ -365,16 +372,19 @@ fn has_child_composes_in_boolean_tree() {
                         external_id: format!("{parent}#0"),
                         field: "parent".into(),
                         value: FieldValue::String(parent.clone()),
+                        version: None,
                     },
                     IndexItem {
                         external_id: format!("{parent}#0"),
                         field: "sku".into(),
                         value: FieldValue::String(sku.into()),
+                        version: None,
                     },
                     IndexItem {
                         external_id: format!("{parent}#0"),
                         field: "qty".into(),
                         value: FieldValue::Number(qty),
+                        version: None,
                     },
                 ],
                 request_id: None,
@@ -482,6 +492,7 @@ fn ngram_cjk_substring() {
                     external_id: eid.into(),
                     field: "name".into(),
                     value: FieldValue::String(name.into()),
+                    version: None,
                 }],
                 request_id: None,
             },
@@ -542,11 +553,13 @@ fn enum_path_and_level_match() {
                         external_id: eid.into(),
                         field: "enum_path".into(),
                         value: FieldValue::String(full),
+                        version: None,
                     },
                     IndexItem {
                         external_id: eid.into(),
                         field: "enum_levels".into(),
                         value: FieldValue::StringList(levels),
+                        version: None,
                     },
                 ],
                 request_id: None,

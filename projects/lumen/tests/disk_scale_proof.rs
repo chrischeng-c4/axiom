@@ -237,16 +237,19 @@ fn index_range(e: &Engine, coll: &str, lo: u64, hi: u64, dim: usize, with_vector
                 external_id: eid.clone(),
                 field: "num".into(),
                 value: FieldValue::Number(num_of(i)),
+                version: None,
             },
             IndexItem {
                 external_id: eid.clone(),
                 field: "kw".into(),
                 value: FieldValue::String(kw_of(i)),
+                version: None,
             },
             IndexItem {
                 external_id: eid.clone(),
                 field: "body".into(),
                 value: FieldValue::String(body_of(i)),
+                version: None,
             },
         ];
         if with_vector {
@@ -254,6 +257,7 @@ fn index_range(e: &Engine, coll: &str, lo: u64, hi: u64, dim: usize, with_vector
                 external_id: eid.clone(),
                 field: "emb".into(),
                 value: FieldValue::Vector(vec_of(i, dim)),
+                version: None,
             });
         }
         e.index(

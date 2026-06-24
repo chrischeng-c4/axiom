@@ -96,12 +96,12 @@ proptest! {
             e.index("c", IndexRequest {
                 items: vec![
                     IndexItem { external_id: eid.clone(), field: "kw".into(),
-                                value: FieldValue::String(kw.to_string()) },
+                                value: FieldValue::String(kw.to_string()), version: None, },
                     IndexItem { external_id: eid.clone(), field: "n".into(),
-                                value: FieldValue::Number(*n as f64) },
+                                value: FieldValue::Number(*n as f64), version: None, },
                     IndexItem { external_id: eid.clone(), field: "body".into(),
                                 value: FieldValue::String(
-                                    if *tok { "tok filler".into() } else { "filler".into() }) },
+                                    if *tok { "tok filler".into() } else { "filler".into() }), version: None, },
                 ],
                 request_id: None,
             }).unwrap();
