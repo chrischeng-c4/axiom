@@ -299,6 +299,80 @@ pub fn apply_alias(specifier: &str, aliases: &[(String, String)]) -> String {
     specifier.to_string()
 }
 
+// ─── SVGR routing (import `.svg` as a React component) ────────────────────────
+
+/// True when `specifier` points at a `.svg` file (case-insensitive, query
+/// strings like `?url` / `?react` stripped).
+///
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+pub fn is_svg_specifier(specifier: &str) -> bool {
+    let path = specifier.split(['?', '#']).next().unwrap_or(specifier);
+    path.to_ascii_lowercase().ends_with(".svg")
+}
+
+/// Decide whether a `.svg` import should be routed through SVGR (emit a React
+/// component module) instead of the default asset-URL behavior.
+///
+/// This mirrors `vite-plugin-svgr`'s routing, which is driven by two things:
+///
+/// 1. **Explicit query suffix** — `?url` forces the asset-URL path even when
+///    SVGR is enabled; `?react` (or `?component`) forces the component path
+///    even when SVGR is disabled globally.
+/// 2. **The import shape** — with `vite-plugin-svgr`'s `{ exportType: 'named'
+///    }` (what `fe-shared` uses) the SVG is a component only when imported via
+///    the named `ReactComponent` binding: `import { ReactComponent as Icon }
+///    from './icon.svg'`. A bare `import url from './icon.svg'` stays an asset
+///    URL. With `exportType: 'default'`, the default import is the component.
+///
+/// `svgr_enabled` is the global toggle ([`crate::asset::SvgrConfig::enabled`]);
+/// `export_type` is the configured [`crate::asset::SvgrExportType`].
+///
+/// Returns `true` to route through `transform_svg_to_component`, `false` to
+/// keep the existing asset-URL emission. Non-`.svg` specifiers always return
+/// `false`.
+///
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+pub fn should_route_svg_as_component(
+    specifier: &str,
+    import_kind: &ImportKind,
+    svgr_enabled: bool,
+    export_type: crate::asset::SvgrExportType,
+) -> bool {
+    if !is_svg_specifier(specifier) {
+        return false;
+    }
+
+    // 1. Explicit query suffix wins over the global toggle.
+    let query = specifier.split('?').nth(1).unwrap_or("");
+    if query.contains("url") {
+        // `import logo from './logo.svg?url'` — always an asset URL.
+        return false;
+    }
+    if query.contains("react") || query.contains("component") {
+        // `import Logo from './logo.svg?react'` — always a component.
+        return true;
+    }
+
+    if !svgr_enabled {
+        return false;
+    }
+
+    // 2. Import-shape gate, matching the configured export type.
+    use crate::asset::SvgrExportType;
+    match export_type {
+        // Named (`{ exportType: 'named' }`, fe-shared default): only the named
+        // `ReactComponent` binding is the component. A default/namespace/
+        // side-effect import keeps the asset-URL behavior.
+        SvgrExportType::Named => matches!(import_kind, ImportKind::Named),
+        // Default: the default import is the component.
+        SvgrExportType::Default => matches!(import_kind, ImportKind::Default),
+        // Both: either a named or default import resolves to the component.
+        SvgrExportType::Both => {
+            matches!(import_kind, ImportKind::Named | ImportKind::Default)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,6 +501,94 @@ mod tests {
         let result_1 = apply_alias(specifier, &aliases);
         let result_2 = apply_alias(specifier, &aliases);
         assert_eq!(result_1, result_2);
+    }
+
+    // ─── SVGR routing tests ───────────────────────────────────────────────────
+
+    use crate::asset::SvgrExportType;
+
+    #[test]
+    fn is_svg_specifier_detects_svg() {
+        assert!(is_svg_specifier("./icon.svg"));
+        assert!(is_svg_specifier("./Icon.SVG"));
+        assert!(is_svg_specifier("./icon.svg?react"));
+        assert!(is_svg_specifier("@/assets/logo.svg?url"));
+        assert!(!is_svg_specifier("./icon.png"));
+        assert!(!is_svg_specifier("react"));
+    }
+
+    #[test]
+    fn named_export_routes_only_reactcomponent_named_import() {
+        // fe-shared shape: `import { ReactComponent as Icon } from './icon.svg'`
+        assert!(should_route_svg_as_component(
+            "./icon.svg",
+            &ImportKind::Named,
+            true,
+            SvgrExportType::Named,
+        ));
+        // Bare default import stays an asset URL under `exportType: 'named'`.
+        assert!(!should_route_svg_as_component(
+            "./icon.svg",
+            &ImportKind::Default,
+            true,
+            SvgrExportType::Named,
+        ));
+    }
+
+    #[test]
+    fn default_export_routes_default_import() {
+        assert!(should_route_svg_as_component(
+            "./icon.svg",
+            &ImportKind::Default,
+            true,
+            SvgrExportType::Default,
+        ));
+        assert!(!should_route_svg_as_component(
+            "./icon.svg",
+            &ImportKind::Named,
+            true,
+            SvgrExportType::Default,
+        ));
+    }
+
+    #[test]
+    fn url_query_forces_asset_url_even_when_enabled() {
+        assert!(!should_route_svg_as_component(
+            "./icon.svg?url",
+            &ImportKind::Named,
+            true,
+            SvgrExportType::Named,
+        ));
+    }
+
+    #[test]
+    fn react_query_forces_component_even_when_disabled() {
+        assert!(should_route_svg_as_component(
+            "./icon.svg?react",
+            &ImportKind::Default,
+            false,
+            SvgrExportType::Named,
+        ));
+    }
+
+    #[test]
+    fn disabled_svgr_keeps_asset_url() {
+        assert!(!should_route_svg_as_component(
+            "./icon.svg",
+            &ImportKind::Named,
+            false,
+            SvgrExportType::Named,
+        ));
+    }
+
+    #[test]
+    fn non_svg_never_routes_as_component() {
+        assert!(!should_route_svg_as_component(
+            "./icon.png",
+            &ImportKind::Named,
+            true,
+            SvgrExportType::Named,
+        ));
     }
 }
 // CODEGEN-END
