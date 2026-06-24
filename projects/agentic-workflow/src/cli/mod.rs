@@ -24,6 +24,7 @@ pub mod hook;
 pub mod init;
 pub mod issues;
 pub mod llm;
+pub mod loop_state;
 pub mod production;
 pub mod project;
 pub mod regenerability_policy;

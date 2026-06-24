@@ -1536,6 +1536,12 @@ fn issue_show_json(issue: &Issue) -> Result<serde_json::Value> {
     if let Some(object) = value.as_object_mut() {
         object.insert("slug".to_string(), serde_json::json!(issue.slug));
         object.insert("body".to_string(), serde_json::json!(issue.body));
+        // Surface the loop state when the WI body carries an `<!-- aw:loop-state -->`
+        // block; absent block -> null (not an error). @spec workitem-loop-state-model.
+        let loop_state = crate::cli::loop_state::parse_loop_state(&issue.body)
+            .and_then(|s| serde_json::to_value(s).ok())
+            .unwrap_or(serde_json::Value::Null);
+        object.insert("loop_state".to_string(), loop_state);
     }
     Ok(value)
 }
@@ -7482,6 +7488,29 @@ labels:\n\
             .as_str()
             .unwrap()
             .contains("## Reference Context"));
+    }
+
+    // @spec workitem-loop-state-model-additive-foundation.md R3
+    #[test]
+    fn issue_show_json_surfaces_loop_state() {
+        use crate::cli::loop_state::{upsert_loop_state, LoopState, LoopStatus};
+        // Absent block -> loop_state is null, not an error.
+        let mut issue = test_issue_with_phase(Some("created"));
+        let value = issue_show_json(&issue).unwrap();
+        assert!(value["loop_state"].is_null());
+
+        // Present block -> surfaced under `loop_state`.
+        let state = LoopState {
+            version: 1,
+            issue_id: "1234".into(),
+            goal: Some("some-gap".into()),
+            status: LoopStatus::Iterating,
+            ..Default::default()
+        };
+        issue.body = upsert_loop_state(&issue.body, &state).unwrap();
+        let value = issue_show_json(&issue).unwrap();
+        assert_eq!(value["loop_state"]["goal"], "some-gap");
+        assert_eq!(value["loop_state"]["status"], "iterating");
     }
 
     #[test]
