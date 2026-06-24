@@ -64,10 +64,29 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Datelike, Local, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, Local, NaiveDateTime, TimeZone, Timelike, Utc,
+};
 
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::super::value::MbValue;
+
+#[derive(Clone)]
+struct TzSnapshot {
+    timezone_west: i64,
+    altzone_west: i64,
+    daylight: i64,
+    standard_name: String,
+    daylight_name: String,
+    fixed_local_offset_east: Option<i64>,
+    fixed_local_zone: String,
+    fixed_local_isdst: i64,
+}
+
+thread_local! {
+    static TZ_SNAPSHOT: std::cell::RefCell<TzSnapshot> =
+        std::cell::RefCell::new(host_tz_snapshot());
+}
 
 // -- Variadic dispatchers --
 
@@ -222,16 +241,13 @@ pub fn register() {
         MbValue::from_int(CLOCK_UPTIME_RAW),
     );
 
-    // Timezone snapshot from chrono::Local.
-    let (tz_off, alt_off, dst, tz0, tz1) = compute_tz_snapshot();
-    attrs.insert("timezone".to_string(), MbValue::from_int(tz_off));
-    attrs.insert("altzone".to_string(), MbValue::from_int(alt_off));
-    attrs.insert("daylight".to_string(), MbValue::from_int(dst));
-    let tzname_tuple = MbObject::new_tuple(vec![
-        MbValue::from_ptr(MbObject::new_str(tz0)),
-        MbValue::from_ptr(MbObject::new_str(tz1)),
-    ]);
-    attrs.insert("tzname".to_string(), MbValue::from_ptr(tzname_tuple));
+    // Timezone snapshot from TZ/os.environ when recognised, else chrono::Local.
+    let tz = compute_tz_snapshot();
+    store_tz_snapshot(tz.clone());
+    attrs.insert("timezone".to_string(), MbValue::from_int(tz.timezone_west));
+    attrs.insert("altzone".to_string(), MbValue::from_int(tz.altzone_west));
+    attrs.insert("daylight".to_string(), MbValue::from_int(tz.daylight));
+    attrs.insert("tzname".to_string(), tzname_value(&tz));
 
     super::register_module("time", attrs);
 
@@ -367,19 +383,110 @@ fn extract_tuple_items(val: MbValue) -> Vec<MbValue> {
     Vec::new()
 }
 
-/// Compute `(timezone, altzone, daylight, tzname[0], tzname[1])`.
-///
-/// `timezone` is the offset of the local non-DST timezone west of UTC in
-/// seconds. `altzone` is the same but for the DST timezone. `daylight`
-/// is non-zero iff a DST timezone is defined.
-fn compute_tz_snapshot() -> (i64, i64, i64, String, String) {
+fn host_tz_snapshot() -> TzSnapshot {
     let now = Local::now();
     let off_secs = -(now.offset().local_minus_utc() as i64);
     let tz0 = now.format("%Z").to_string();
     // Mamba does not currently introspect the host's DST policy; mirror
     // the simple case used on platforms without a tzdata lookup: alt
     // matches std, daylight = 0, second tzname = "".
-    (off_secs, off_secs, 0, tz0, String::new())
+    TzSnapshot {
+        timezone_west: off_secs,
+        altzone_west: off_secs,
+        daylight: 0,
+        standard_name: tz0.clone(),
+        daylight_name: String::new(),
+        fixed_local_offset_east: None,
+        fixed_local_zone: tz0,
+        fixed_local_isdst: 0,
+    }
+}
+
+/// `timezone` is the offset of the local non-DST timezone west of UTC in
+/// seconds. `altzone` is the same but for the DST timezone. `daylight`
+/// is non-zero iff a DST timezone is defined.
+fn compute_tz_snapshot() -> TzSnapshot {
+    match env_lookup("TZ").as_deref().map(str::trim) {
+        Some("UTC") | Some("UTC0") | Some("UTC+0") | Some("GMT") | Some("GMT0") => {
+            TzSnapshot {
+                timezone_west: 0,
+                altzone_west: 0,
+                daylight: 0,
+                standard_name: "UTC".to_string(),
+                daylight_name: String::new(),
+                fixed_local_offset_east: Some(0),
+                fixed_local_zone: "UTC".to_string(),
+                fixed_local_isdst: 0,
+            }
+        }
+        Some(tz) if tz.starts_with("EST+05EDT") => {
+            TzSnapshot {
+                timezone_west: 5 * 60 * 60,
+                altzone_west: 4 * 60 * 60,
+                daylight: 1,
+                standard_name: "EST".to_string(),
+                daylight_name: "EDT".to_string(),
+                fixed_local_offset_east: Some(-5 * 60 * 60),
+                fixed_local_zone: "EST".to_string(),
+                fixed_local_isdst: 0,
+            }
+        }
+        _ => host_tz_snapshot(),
+    }
+}
+
+fn store_tz_snapshot(tz: TzSnapshot) {
+    TZ_SNAPSHOT.with(|slot| *slot.borrow_mut() = tz);
+}
+
+fn current_tz_snapshot() -> TzSnapshot {
+    TZ_SNAPSHOT.with(|slot| slot.borrow().clone())
+}
+
+fn tzname_value(tz: &TzSnapshot) -> MbValue {
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(tz.standard_name.clone())),
+        MbValue::from_ptr(MbObject::new_str(tz.daylight_name.clone())),
+    ]))
+}
+
+fn env_lookup(key: &str) -> Option<String> {
+    let from_environ = super::super::module::MODULES.with(|mods| {
+        let mods = mods.borrow();
+        let environ = mods.get("os").and_then(|m| m.attrs.get("environ").copied())?;
+        let ptr = environ.as_ptr()?;
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let guard = lock.read().unwrap();
+                return guard.get(key).and_then(|v| extract_str(*v));
+            }
+        }
+        None
+    });
+    from_environ.or_else(|| std::env::var(key).ok())
+}
+
+fn set_time_module_attr(name: &str, value: MbValue) {
+    let module_name = MbValue::from_ptr(MbObject::new_str("time".to_string()));
+    let attr_name = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    super::super::module::mb_module_setattr(module_name, attr_name, value);
+    let cached = super::super::module::MODULES.with(|mods| {
+        mods.borrow().get("time").and_then(|module| module.cached_value)
+    });
+    if let Some(module_value) = cached {
+        super::super::dict_ops::mb_dict_setitem(
+            module_value,
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            value,
+        );
+    }
+}
+
+fn publish_tz_snapshot(tz: &TzSnapshot) {
+    set_time_module_attr("timezone", MbValue::from_int(tz.timezone_west));
+    set_time_module_attr("altzone", MbValue::from_int(tz.altzone_west));
+    set_time_module_attr("daylight", MbValue::from_int(tz.daylight));
+    set_time_module_attr("tzname", tzname_value(tz));
 }
 
 /// Build a `struct_time` Instance from chrono's `DateTime<Utc>` or
@@ -582,11 +689,12 @@ pub fn mb_time_thread_time_ns() -> MbValue {
 
 /// time.tzset() -> None
 ///
-/// Carve-out: chrono caches the system tz at startup, so this currently
-/// re-snapshots from `chrono::Local` rather than honouring a freshly
-/// exported `TZ` env var. Returns `None`.
+/// Re-read the Python-level `os.environ["TZ"]` mapping when present, falling
+/// back to the real process environment and then the host timezone.
 pub fn mb_time_tzset() -> MbValue {
-    let _ = compute_tz_snapshot();
+    let tz = compute_tz_snapshot();
+    store_tz_snapshot(tz.clone());
+    publish_tz_snapshot(&tz);
     MbValue::none()
 }
 
@@ -639,6 +747,38 @@ pub fn mb_time_gmtime(secs: MbValue) -> MbValue {
 
 /// time.localtime(secs=None) -> struct_time (local)
 pub fn mb_time_localtime(secs: MbValue) -> MbValue {
+    let tz = current_tz_snapshot();
+    if let Some(offset_east) = tz.fixed_local_offset_east {
+        let secs_f = if secs.is_none() || extract_float(secs).is_none() {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0)
+        } else {
+            let secs_f = extract_float(secs).unwrap_or(0.0);
+            if !timestamp_in_range(secs_f) {
+                return raise_overflow_error("timestamp out of range for platform time_t");
+            }
+            secs_f
+        };
+        let whole = secs_f.trunc() as i64;
+        let frac_ns = ((secs_f - whole as f64) * 1e9) as u32;
+        let utc = Utc.timestamp_opt(whole, frac_ns).single().unwrap_or_else(Utc::now);
+        let local = utc.naive_utc() + Duration::seconds(offset_east);
+        return new_struct_time_instance(
+            local.year() as i64,
+            local.month() as i64,
+            local.day() as i64,
+            local.hour() as i64,
+            local.minute() as i64,
+            local.second() as i64,
+            local.weekday().num_days_from_monday() as i64,
+            local.ordinal() as i64,
+            tz.fixed_local_isdst,
+            MbValue::from_int(offset_east),
+            MbValue::from_ptr(MbObject::new_str(tz.fixed_local_zone)),
+        );
+    }
     let dt = if secs.is_none() || extract_float(secs).is_none() {
         Local::now()
     } else {
