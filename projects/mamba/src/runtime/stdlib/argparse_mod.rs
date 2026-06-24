@@ -1176,14 +1176,36 @@ fn invoke_custom_action(
     parser: MbValue,
     ns: MbValue,
     values: MbValue,
-    _option_string: &str,
+    option_string: &str,
 ) {
-    // The stored Action was already constructed; call its __call__. The
-    // 4th argument `option_string` is left to its default — mamba's instance
-    // method dispatch caps a bound call at 4 total values (self + 3), so a
-    // 4-positional call (self + 4) would hit the arity fallback and silently
-    // no-op. `__call__(self, parser, namespace, values, option_string=None)`
-    // fires correctly with three positional args.
+    // The stored Action was already constructed; call its user-defined
+    // __call__(self, parser, namespace, values, option_string). Route directly
+    // through callable spread because mb_call_method's closure-handle fallback
+    // only supplies `self`, which makes Action subclass callbacks silently no-op.
+    if let Some(ptr) = custom_action_inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let call_method = super::super::class::lookup_method(class_name, "__call__");
+                if !call_method.is_none() {
+                    let option_value = if option_string.is_empty() {
+                        MbValue::none()
+                    } else {
+                        new_str(option_string)
+                    };
+                    let call_args = new_list(vec![
+                        custom_action_inst,
+                        parser,
+                        ns,
+                        values,
+                        option_value,
+                    ]);
+                    super::super::builtins::mb_call_spread(call_method, call_args);
+                    return;
+                }
+            }
+        }
+    }
+
     let call_args = new_list(vec![parser, ns, values]);
     let name = new_str("__call__");
     super::super::class::mb_call_method(custom_action_inst, name, call_args);
