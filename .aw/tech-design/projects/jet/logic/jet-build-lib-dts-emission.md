@@ -63,3 +63,10 @@ flowchart TD
     write --> meta[set types / exports.types]
     meta --> done([DtsResult per-entry paths])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (id jet-build-lib-dts-flow) is complete and deterministic: per library entry, parse with tree-sitter, walk exported declarations, branch type-vs-value, emit type/interface/enum verbatim and `export declare` signatures for explicitly-typed values, terminal error on untyped exports (isolatedDeclarations contract), assemble per-entry .d.ts preserving external type imports, write `<entry>.d.ts`, and set types/exports.types. All nodes reachable; both decisions (classify, is_typed) carry labeled branches; terminals (err_untyped, done) are real ends. Scope correct: builds on A1 output; publish/registry is A3.
