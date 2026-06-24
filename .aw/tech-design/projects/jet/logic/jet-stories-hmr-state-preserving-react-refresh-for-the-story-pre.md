@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-stories-hmr-state-preserving-react-refresh-for-the-story-pre-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: component-workbench
     role: primary
@@ -50,6 +50,47 @@ flowchart TD
     refreshable -->|no| reload[full preview reload]
     patch --> done([preview updated, manager untouched])
     reload --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/stories/hmr.rs"
+    action: create
+    section: logic
+    description: |
+      Preview HMR: a file watcher + WS endpoint that, on a story/component edit,
+      computes the affected module set (dependents_of), invalidates the module
+      cache, and pushes an HMR message; reuses the dev_server hmr_client +
+      react_refresh runtime so compatible edits are state-preserving and
+      incompatible edits fall back to a full preview reload.
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/server.rs"
+    action: modify
+    section: logic
+    description: |
+      Wire the HMR WS route + watcher into the stories server and inject the
+      HMR client runtime into the preview HTML so the preview frame (not the
+      manager shell) hot-updates.
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/manager.rs"
+    action: modify
+    section: logic
+    description: |
+      Inject the HMR client script into render_preview_html; keep the manager
+      shell free of HMR reloads.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/stories/preview_hmr.rs"
+    action: create
+    section: unit-test
+    description: |
+      Tests: a changed module yields the correct invalidation set; the preview
+      HTML includes the HMR client; a react-refresh-compatible vs incompatible
+      edit routes to patch vs full reload; the manager shell is not reloaded.
+    impl_mode: hand-written
 ```
 
 # Reviews
