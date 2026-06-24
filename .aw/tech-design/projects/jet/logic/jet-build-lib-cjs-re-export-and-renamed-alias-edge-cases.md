@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-build-lib-cjs-re-export-and-renamed-alias-edge-cases-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -53,6 +53,32 @@ flowchart TD
     star --> done
     alias --> done
     other --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/bundler/lib_build.rs"
+    action: modify
+    section: logic
+    description: |
+      Extend esm_to_cjs / rewrite_cjs_line to correctly emit CJS for:
+      export { x } from "pkg" (exports.x = require("pkg").x), export { a as b }
+      from "./m" (exports.b = require("./m").a), export * from "m"
+      (Object.assign(exports, require("m"))), and local renamed export
+      { a as b } (exports.b = a). Externals keep require().
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/library_build.rs"
+    action: modify
+    section: unit-test
+    description: |
+      CJS tests: renamed-alias re-export resolves via exports.Bar; export * from
+      re-exports all named; external re-export keeps require("react"); existing
+      CJS tests pass.
+    impl_mode: hand-written
 ```
 
 # Reviews
