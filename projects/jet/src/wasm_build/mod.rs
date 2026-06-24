@@ -318,8 +318,17 @@ fn copy_style_import_groups(
             if !seen.insert(canonical.clone()) {
                 continue;
             }
-            let css = fs::read_to_string(&canonical)
-                .with_context(|| format!("reading CSS import `{import}`"))?;
+            // SCSS/Sass compile step for the lib single `style.css`: a
+            // `.scss`/`.sass` import is compiled to CSS via grass (which
+            // resolves its own `@use`/`@import` partials) before being
+            // concatenated into the bundle. Plain `.css` is read verbatim.
+            let css = if crate::css::scss::is_sass_family_path(&canonical) {
+                crate::css::scss::compile_sass_file(&canonical)
+                    .with_context(|| format!("compiling SCSS import `{import}`"))?
+            } else {
+                fs::read_to_string(&canonical)
+                    .with_context(|| format!("reading CSS import `{import}`"))?
+            };
             bundle.push_str("/* ");
             bundle.push_str(import);
             bundle.push_str(" */\n");
@@ -1038,6 +1047,52 @@ mod tests {
         assert!(css.contains("body { color: black; }"));
         assert!(css.contains("/* ./theme.css */"));
         assert!(css.contains("#jet-canvas { width: 100vw; }"));
+    }
+
+    /// Lib single `style.css` SCSS path: a `.scss` side-effect import (with
+    /// nesting + a variable + a `@use` partial) is compiled to CSS via grass
+    /// and concatenated into `dist/style.css`, alongside a plain `.css`
+    /// import that is passed through verbatim.
+    #[test]
+    fn copy_style_imports_compiles_scss_into_style_css() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("dist")).unwrap();
+
+        // Partial loaded via `@use` (grass resolves `_tokens.scss`).
+        fs::write(root.join("src/_tokens.scss"), "$brand: #1a73e8;").unwrap();
+        // Entry SCSS: variable + nesting + a `@use` of the partial.
+        fs::write(
+            root.join("src/ui.scss"),
+            "@use 'tokens';\n$pad: 12px;\n.card { padding: $pad; .title { color: tokens.$brand; } }",
+        )
+        .unwrap();
+        // Plain CSS import passes through unchanged.
+        fs::write(root.join("src/base.css"), "body { margin: 0; }").unwrap();
+
+        let imports = ["./ui.scss".to_string(), "./base.css".to_string()];
+        let out = copy_style_import_groups(
+            root,
+            &[(&root.join("src/App.tsx"), imports.as_slice())],
+            &root.join("dist"),
+        )
+        .unwrap();
+
+        assert_eq!(out.as_deref(), Some("style.css"));
+        let css = fs::read_to_string(root.join("dist/style.css")).unwrap();
+
+        // SCSS nesting flattened + variable resolved + `@use` partial pulled in.
+        assert!(css.contains(".card .title"), "nesting must flatten, got:\n{css}");
+        assert!(css.contains("12px"), "local variable must resolve, got:\n{css}");
+        assert!(
+            css.contains("#1a73e8") || css.to_lowercase().contains("#1a73e8"),
+            "`@use` partial variable must resolve, got:\n{css}"
+        );
+        assert!(!css.contains("$pad"), "no raw Sass variables, got:\n{css}");
+        assert!(!css.contains("@use"), "no raw @use, got:\n{css}");
+        // Plain CSS import survives verbatim.
+        assert!(css.contains("body { margin: 0; }"), "plain css must pass through, got:\n{css}");
     }
 
     #[test]

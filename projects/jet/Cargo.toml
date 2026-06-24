@@ -117,6 +117,12 @@ open = "5"
 # Browser install: home dir resolution
 dirs = "5"
 
+# SCSS/Sass compilation — pure-Rust Sass compiler (no C deps). Compiles
+# `.scss`/`.sass` to CSS before the lightningcss minify/bundle step so
+# Sass features (nesting, variables, `@use`/`@import` partials, mixins)
+# flow through the existing CSS pipeline and the lib `style.css`.
+grass = "0.13"
+
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 which = "7"
@@ -231,6 +237,9 @@ path = "tests/build/library_dts.rs"
 [[test]]
 name = "production_build_regression"
 path = "tests/build/production_build_regression.rs"
+[[test]]
+name = "scss"
+path = "tests/build/scss.rs"
 [[test]]
 name = "svgr"
 path = "tests/build/svgr.rs"

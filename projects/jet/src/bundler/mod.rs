@@ -474,11 +474,15 @@ impl Bundler {
     fn try_process_css_entry(&self, js_entry: &PathBuf) -> Option<types::Asset> {
         let stem = js_entry.file_stem()?.to_string_lossy().into_owned();
         let dir = js_entry.parent()?;
-        let css_entry = dir.join(format!("{}.css", stem));
-
-        if !css_entry.exists() {
-            return None;
-        }
+        // Convention: sibling stylesheet entry named like the JS entry.
+        // Prefer `.css`, then fall back to `.scss`/`.sass` so a Sass entry
+        // (e.g. `src/index.scss` next to `src/index.tsx`) is compiled via
+        // grass and run through the same CSS pipeline. The hashed output is
+        // always a `.css` asset regardless of the source extension.
+        let css_entry = [".css", ".scss", ".sass"]
+            .iter()
+            .map(|ext| dir.join(format!("{stem}{ext}")))
+            .find(|p| p.exists())?;
 
         tracing::info!("CSS entry detected: {:?}", css_entry);
 
