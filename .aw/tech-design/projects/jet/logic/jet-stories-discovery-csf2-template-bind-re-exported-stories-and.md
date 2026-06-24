@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-stories-discovery-csf2-template-bind-re-exported-stories-and-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: component-workbench
     role: primary
@@ -49,6 +49,38 @@ flowchart TD
     reexport --> index[add to StoryIndex]
     resargs --> index
     index --> done([stories captured])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/stories/csf.rs"
+    action: modify
+    section: logic
+    description: |
+      Extend parse_csf to capture CSF2 stories (const S = Template.bind({}); S.args
+      = {...} assigned after declaration), re-exported stories (export { X } from
+      "./other" -> resolve sibling file + pull that story), and spread args
+      (args: { ...base, x } -> merge the statically-known base where resolvable).
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/mod.rs"
+    action: modify
+    section: logic
+    description: |
+      discover() resolves re-exported story sources relative to the file when
+      assembling the index; pass-through if unresolvable.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/stories/csf_discovery.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Tests: CSF2 Template.bind + .args surfaces stories with args; re-exported
+      story appears in the discovering file set; spread args merge the static
+      base; existing csf_discovery tests pass.
+    impl_mode: hand-written
 ```
 
 # Reviews
