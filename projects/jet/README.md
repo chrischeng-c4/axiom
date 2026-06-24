@@ -366,3 +366,4 @@ Gate Inventory:
 | Stories Dev Manager | change | #174 | implemented | verified | conformance | `cargo test -p jet --test manager` — `jet stories` command + manager UI + isolated per-story preview |
 | Stories Preview HMR | change | #176 | implemented | verified | conformance | `cargo test -p jet --test preview_hmr` — watcher + WS, preview re-render/reload, manager untouched (full hook-state refresh TODO) |
 | Stories Controls Panel | change | #175 | implemented | verified | conformance | `cargo test -p jet --test controls` — prop-type-inferred controls + `argTypes` override; live arg edits re-render the preview |
+| Stories Static Export | change | #190 | planned | planned | none | `jet stories build` — render manager + per-story previews + modules to a static, hostable out dir (phase 2) |
