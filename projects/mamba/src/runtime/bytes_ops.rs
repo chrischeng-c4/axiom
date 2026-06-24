@@ -53,6 +53,49 @@ fn raise_lookup_error(msg: &str) {
     );
 }
 
+fn raise_index_error(msg: &str) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+}
+
+fn raise_value_error(msg: &str) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+}
+
+fn raise_unicode_decode_error(encoding: &str, data: &[u8], pos: usize, reason: &str) {
+    let byte = data.get(pos).copied().unwrap_or_default();
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("UnicodeDecodeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "'{encoding}' codec can't decode byte 0x{byte:02x} in position {pos}: {reason}"
+        ))),
+    );
+}
+
+fn known_text_codec_fallback(enc: &str) -> bool {
+    matches!(
+        enc.replace('_', "-").as_str(),
+        "idna"
+            | "euc-jp"
+            | "eucjp"
+            | "iso-2022-jp"
+            | "shift-jis"
+            | "sjis"
+            | "cp932"
+            | "cp1252"
+            | "windows-1252"
+            | "big5"
+            | "gbk"
+            | "gb2312"
+            | "gb18030"
+    )
+}
+
 fn str_from_value(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
         match &(*ptr).data {
@@ -360,6 +403,7 @@ pub fn mb_bytes_getitem(bytes: MbValue, index: MbValue) -> MbValue {
             if actual >= 0 && actual < len {
                 MbValue::from_int(data[actual as usize] as i64)
             } else {
+                raise_index_error("index out of range");
                 MbValue::none()
             }
         } else {
@@ -388,9 +432,9 @@ pub fn mb_bytes_decode(bytes: MbValue, encoding: MbValue) -> MbValue {
 ///
 /// Supported encodings: `utf-8` / `utf8`, `ascii` / `us-ascii`, and
 /// `latin-1` / `iso-8859-1`. Errors handlers: `strict` / `ignore` /
-/// `replace`. UTF-8 strict-mode UnicodeDecodeError isn't modeled — we
-/// fall back to the replacement char rather than raising — but the
-/// `ignore` and `replace` paths produce CPython-equivalent output.
+/// `replace`. Strict UTF-8/ASCII decode raises UnicodeDecodeError on invalid
+/// bytes; known but unimplemented text codecs use the legacy UTF-8 fallback so
+/// existing codec-registry fixtures keep their pre-registry behavior.
 pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
     unsafe {
         let data = match as_bytes_cloned(bytes) {
@@ -406,8 +450,31 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
         };
         let err = encoding_errors_kind(errors);
         let s = match enc.as_str() {
-            "utf-8" | "utf8" | "u8" => decode_utf8(&data, err),
-            "ascii" | "us-ascii" => decode_ascii(&data, err),
+            "utf-8" | "utf8" | "u8" => {
+                if matches!(err, ErrorsKind::Strict) {
+                    match std::str::from_utf8(&data) {
+                        Ok(s) => s.to_string(),
+                        Err(e) => {
+                            let pos = e.valid_up_to();
+                            raise_unicode_decode_error("utf-8", &data, pos, "invalid start byte");
+                            return MbValue::none();
+                        }
+                    }
+                } else {
+                    decode_utf8(&data, err)
+                }
+            }
+            "ascii" | "us-ascii" => {
+                if matches!(err, ErrorsKind::Strict) {
+                    if let Some(pos) = data.iter().position(|b| *b >= 0x80) {
+                        raise_unicode_decode_error("ascii", &data, pos, "ordinal not in range(128)");
+                        return MbValue::none();
+                    }
+                    String::from_utf8_lossy(&data).into_owned()
+                } else {
+                    decode_ascii(&data, err)
+                }
+            }
             "latin-1" | "latin_1" | "iso-8859-1" | "8859" => decode_latin1(&data),
             "utf-16be" | "utf-16-be" | "utf_16_be" => decode_utf16(&data, true),
             "utf-16le" | "utf-16-le" | "utf_16_le" => decode_utf16(&data, false),
@@ -434,9 +501,6 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                 }
             }
             _ => {
-                // A known non-text codec (quopri, base64, ...) is a LookupError
-                // via bytes.decode; unrecognised names keep the lenient utf-8
-                // fallback.
                 if let Some(canon) = super::string_ops::nontext_codec_name(&enc) {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
@@ -446,7 +510,11 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                     );
                     return MbValue::none();
                 }
-                decode_utf8(&data, err)
+                if known_text_codec_fallback(&enc) {
+                    return MbValue::from_ptr(MbObject::new_str(decode_utf8(&data, err)));
+                }
+                raise_lookup_error(&format!("unknown encoding: {enc}"));
+                return MbValue::none();
             }
         };
         MbValue::from_ptr(MbObject::new_str(s))
@@ -798,6 +866,14 @@ pub fn mb_bytes_contains(bytes: MbValue, value: MbValue) -> MbValue {
                 return MbValue::from_bool(data.windows(sub.len()).any(|w| w == sub.as_slice()));
             }
             // Neither an integer nor a bytes-like object → TypeError.
+            if str_from_value(value).is_some() {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "a bytes-like object is required, not 'str'".to_string())),
+                );
+                return MbValue::none();
+            }
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(
@@ -836,6 +912,10 @@ pub fn mb_bytearray_extend(ba: MbValue, other: MbValue) {
                     lock.write().unwrap().extend_from_slice(&other_data);
                 }
             }
+            return;
+        }
+        if str_from_value(other).is_some() {
+            raise_type_error("can't concat str to bytearray");
             return;
         }
         // Iterator handle (range, generators, …).
@@ -2002,6 +2082,12 @@ pub fn mb_bytes_rjust(receiver: MbValue, width: MbValue, fill: MbValue) -> MbVal
 pub fn mb_bytes_translate(receiver: MbValue, table: MbValue, delete: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
     let table_b = extract_bytes(table);
+    if let Some(ref t) = table_b {
+        if t.len() != 256 {
+            raise_value_error("translation table must be 256 characters long");
+            return MbValue::none();
+        }
+    }
     let delete_b = extract_bytes(delete).unwrap_or_default();
     let mut out = Vec::with_capacity(data.len());
     for &b in &data {
