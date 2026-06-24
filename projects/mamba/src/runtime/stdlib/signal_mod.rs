@@ -40,18 +40,17 @@ use std::cell::RefCell;
 ///     (CPython raises `KeyboardInterrupt`; emulating that requires real
 ///     exception propagation which mamba's stdlib surface deliberately
 ///     avoids — see traceback_mod.rs carve-out).
-///   - **`Signals`, `Handlers`, `Sigmasks`, `ItimerError`** are passive
-///     Instance class-shells; `Signals(signum)` returns an Instance with
-///     `value`/`name` fields best-effort populated.
+///   - **`Signals`, `Handlers`, `Sigmasks`** are lightweight IntEnum-style
+///     singleton members for the module constants; constructors perform
+///     value-to-member lookup so `Signals(2) is SIGINT` holds.
 ///
 /// Carve-outs (deliberately out of scope for this surface ticket):
 ///   - No actual signal delivery / Unix `sigaction` plumbing — every
 ///     callable that would mutate process state in CPython is a no-op
 ///     here. Real signal handling can be wired later behind a separate
 ///     issue once exception propagation across the JIT boundary lands.
-///   - `Signals` / `Handlers` / `Sigmasks` IntEnum class semantics are
-///     not modeled — they are passive Instance constructors. CPython
-///     code that does `signal.Signals(2) is signal.SIGINT` will diverge.
+///   - Full EnumMeta behavior is not modeled; only the value/name/identity
+///     surface required by the signal module constants is provided.
 ///   - SIG* integer values reflect the host (macOS/darwin) signal table.
 ///     Linux-only signal numbers (e.g. `SIGRTMIN`, `SIGPWR`) are not
 ///     exposed; surface-presence does not test them.
@@ -89,12 +88,6 @@ thread_local! {
     static HANDLERS: RefCell<HashMap<i64, MbValue>> = RefCell::new(HashMap::new());
 }
 
-/// Coerce a value to a Python signal number. Accepts plain ints and bools
-/// (Python `bool` is an `int` subclass). Returns `None` for non-integers.
-fn as_signum(v: MbValue) -> Option<i64> {
-    v.as_int_pyint()
-}
-
 /// The distinct, valid signal numbers exposed by this build (mirrors the
 /// SIG* table registered below). Used by `valid_signals()` and range checks.
 fn valid_signal_numbers() -> Vec<i64> {
@@ -104,6 +97,146 @@ fn valid_signal_numbers() -> Vec<i64> {
     ];
     nums.dedup();
     nums
+}
+
+fn signal_member_defs() -> &'static [(&'static str, i64)] {
+    &[
+        ("SIGABRT", 6),
+        ("SIGALRM", 14),
+        ("SIGBUS", 10),
+        ("SIGCHLD", 20),
+        ("SIGCONT", 19),
+        ("SIGEMT", 7),
+        ("SIGFPE", 8),
+        ("SIGHUP", 1),
+        ("SIGILL", 4),
+        ("SIGINFO", 29),
+        ("SIGINT", 2),
+        ("SIGIO", 23),
+        ("SIGIOT", 6),
+        ("SIGKILL", 9),
+        ("SIGPIPE", 13),
+        ("SIGPROF", 27),
+        ("SIGQUIT", 3),
+        ("SIGSEGV", 11),
+        ("SIGSTOP", 17),
+        ("SIGSYS", 12),
+        ("SIGTERM", 15),
+        ("SIGTRAP", 5),
+        ("SIGTSTP", 18),
+        ("SIGTTIN", 21),
+        ("SIGTTOU", 22),
+        ("SIGURG", 16),
+        ("SIGUSR1", 30),
+        ("SIGUSR2", 31),
+        ("SIGVTALRM", 26),
+        ("SIGWINCH", 28),
+        ("SIGXCPU", 24),
+        ("SIGXFSZ", 25),
+    ]
+}
+
+fn handler_member_defs() -> &'static [(&'static str, i64)] {
+    &[("SIG_DFL", 0), ("SIG_IGN", 1)]
+}
+
+fn sigmask_member_defs() -> &'static [(&'static str, i64)] {
+    &[("SIG_BLOCK", 1), ("SIG_UNBLOCK", 2), ("SIG_SETMASK", 3)]
+}
+
+fn enum_defs(class_name: &str) -> &'static [(&'static str, i64)] {
+    match class_name {
+        "Signals" => signal_member_defs(),
+        "Handlers" => handler_member_defs(),
+        "Sigmasks" => sigmask_member_defs(),
+        _ => &[],
+    }
+}
+
+fn make_int_enum_member(class_name: &str, member_name: &str, value: i64) -> MbValue {
+    let inst_ptr = MbObject::new_instance(class_name.to_string());
+    let inst = MbValue::from_ptr(inst_ptr);
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+            let mut map = fields.write().unwrap();
+            map.insert(
+                "name".to_string(),
+                MbValue::from_ptr(MbObject::new_str(member_name.to_string())),
+            );
+            map.insert(
+                "_name_".to_string(),
+                MbValue::from_ptr(MbObject::new_str(member_name.to_string())),
+            );
+            map.insert("value".to_string(), MbValue::from_int(value));
+            map.insert("_value_".to_string(), MbValue::from_int(value));
+            map.insert(
+                "__class__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+            );
+        }
+    }
+    inst
+}
+
+fn insert_int_enum_members(
+    attrs: &mut HashMap<String, MbValue>,
+    class_name: &str,
+    defs: &[(&'static str, i64)],
+) {
+    let mut by_value: HashMap<i64, MbValue> = HashMap::new();
+    for (name, value) in defs {
+        let member = *by_value
+            .entry(*value)
+            .or_insert_with(|| make_int_enum_member(class_name, name, *value));
+        attrs.insert((*name).to_string(), member);
+    }
+}
+
+fn lookup_registered_member(class_name: &str, value: i64) -> Option<MbValue> {
+    let member_name = enum_defs(class_name)
+        .iter()
+        .find_map(|(name, v)| (*v == value).then_some(*name))?;
+    super::super::module::MODULES.with(|mods| {
+        mods.borrow()
+            .get("signal")
+            .and_then(|m| m.attrs.get(member_name).copied())
+    })
+}
+
+fn member_value(v: MbValue) -> Option<i64> {
+    v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if matches!(class_name.as_str(), "Signals" | "Handlers" | "Sigmasks") {
+                return fields
+                    .read()
+                    .ok()
+                    .and_then(|f| f.get("value").and_then(|value| value.as_int_pyint()));
+            }
+        }
+        None
+    })
+}
+
+fn signal_int_value(v: MbValue) -> Option<i64> {
+    v.as_int_pyint().or_else(|| member_value(v))
+}
+
+pub(crate) fn signal_enum_int_value(v: MbValue) -> Option<MbValue> {
+    member_value(v).map(MbValue::from_int)
+}
+
+fn handler_sentinel(value: i64) -> MbValue {
+    lookup_registered_member("Handlers", value).unwrap_or_else(|| MbValue::from_int(value))
+}
+
+/// Coerce a value to a Python signal number. Accepts plain ints, bools, and
+/// the module's IntEnum-style `Signals` members.
+fn as_signum(v: MbValue) -> Option<i64> {
+    signal_int_value(v)
 }
 
 /// CPython-style short description for a signal number, mirroring the
@@ -246,60 +379,18 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
+        if matches!(name, "Signals" | "Handlers" | "Sigmasks" | "ItimerError") {
+            super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+                m.borrow_mut().insert(addr as u64, name.to_string());
+            });
+        }
     }
 
-    // ── Integer constants — eagerly evaluated as int values (CPython
-    //    exposes these as IntEnum members with `callable() == False`;
-    //    eager ints match that parity bit AND keep `signal.SIGINT == 2`
-    //    working without going through a factory). Values mirror the
-    //    POSIX / darwin signal table.
-
-    // Signal numbers — 30 SIG* constants.
-    for (name, value) in [
-        ("SIGABRT", 6),
-        ("SIGALRM", 14),
-        ("SIGBUS", 10),
-        ("SIGCHLD", 20),
-        ("SIGCONT", 19),
-        ("SIGEMT", 7),
-        ("SIGFPE", 8),
-        ("SIGHUP", 1),
-        ("SIGILL", 4),
-        ("SIGINFO", 29),
-        ("SIGINT", 2),
-        ("SIGIO", 23),
-        ("SIGIOT", 6),
-        ("SIGKILL", 9),
-        ("SIGPIPE", 13),
-        ("SIGPROF", 27),
-        ("SIGQUIT", 3),
-        ("SIGSEGV", 11),
-        ("SIGSTOP", 17),
-        ("SIGSYS", 12),
-        ("SIGTERM", 15),
-        ("SIGTRAP", 5),
-        ("SIGTSTP", 18),
-        ("SIGTTIN", 21),
-        ("SIGTTOU", 22),
-        ("SIGURG", 16),
-        ("SIGUSR1", 30),
-        ("SIGUSR2", 31),
-        ("SIGVTALRM", 26),
-        ("SIGWINCH", 28),
-        ("SIGXCPU", 24),
-        ("SIGXFSZ", 25),
-    ] {
-        attrs.insert(name.to_string(), MbValue::from_int(value));
-    }
-
-    // Disposition sentinels.
-    attrs.insert("SIG_DFL".to_string(), MbValue::from_int(0));
-    attrs.insert("SIG_IGN".to_string(), MbValue::from_int(1));
-
-    // pthread_sigmask "how" modes.
-    attrs.insert("SIG_BLOCK".to_string(), MbValue::from_int(1));
-    attrs.insert("SIG_UNBLOCK".to_string(), MbValue::from_int(2));
-    attrs.insert("SIG_SETMASK".to_string(), MbValue::from_int(3));
+    // ── IntEnum-style constants. Aliases share the first canonical member for
+    // a value (e.g. SIGIOT aliases SIGABRT), which preserves identity lookup.
+    insert_int_enum_members(&mut attrs, "Signals", signal_member_defs());
+    insert_int_enum_members(&mut attrs, "Handlers", handler_member_defs());
+    insert_int_enum_members(&mut attrs, "Sigmasks", sigmask_member_defs());
 
     // Itimer modes.
     attrs.insert("ITIMER_REAL".to_string(), MbValue::from_int(0));
@@ -349,22 +440,34 @@ pub fn mb_signal_signal(args: &[MbValue]) -> MbValue {
         return raise_os_error("[Errno 22] Invalid argument");
     }
     let handler = args[1];
-    // A handler is valid iff it is the SIG_DFL/SIG_IGN sentinel or callable.
-    let is_sentinel = matches!(handler.as_int_pyint(), Some(0) | Some(1));
+    // A handler is valid iff it is callable or the SIG_DFL/SIG_IGN sentinel.
+    // Callable handles may be int-tagged, so callability must win over raw
+    // sentinel normalization.
     let is_callable = super::super::builtins::mb_callable(handler).as_bool() == Some(true);
+    let handler_int = if is_callable {
+        None
+    } else {
+        signal_int_value(handler)
+    };
+    let is_sentinel = matches!(handler_int, Some(0) | Some(1));
     if !is_sentinel && !is_callable {
         return raise_type_error(
             "signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object",
         );
     }
+    let stored_handler = match (is_callable, handler_int) {
+        (true, _) => handler,
+        (false, Some(n @ (0 | 1))) => handler_sentinel(n),
+        _ => handler,
+    };
     // Record the new disposition; return the previous one (default SIG_DFL).
     let previous = HANDLERS.with(|h| {
         let mut map = h.borrow_mut();
         let prev = map
             .get(&signum)
             .copied()
-            .unwrap_or_else(|| MbValue::from_int(0));
-        map.insert(signum, handler);
+            .unwrap_or_else(|| handler_sentinel(0));
+        map.insert(signum, stored_handler);
         prev
     });
     previous
@@ -381,7 +484,7 @@ pub fn mb_signal_getsignal(signum: MbValue) -> MbValue {
             h.borrow()
                 .get(&n)
                 .copied()
-                .unwrap_or_else(|| MbValue::from_int(0))
+                .unwrap_or_else(|| handler_sentinel(0))
         }),
         None => MbValue::from_int(0),
     }
@@ -412,7 +515,7 @@ pub fn mb_signal_raise_signal(signum: MbValue) -> MbValue {
         // original signum value so `seen == [signal.SIGINT]` holds.
         let args_list = MbValue::from_ptr(MbObject::new_list(vec![signum, MbValue::none()]));
         super::super::builtins::mb_call_spread(handler, args_list);
-    } else if handler.as_int_pyint() == Some(0) && n == 2 {
+    } else if signal_int_value(handler) == Some(0) && n == 2 {
         // SIG_DFL for SIGINT raises KeyboardInterrupt (default_int_handler);
         // SIG_IGN (1) and other defaults are a no-op here.
         super::super::exception::mb_raise(
@@ -437,7 +540,7 @@ pub fn mb_signal_set_wakeup_fd(args: &[MbValue]) -> MbValue {
             args.len()
         ));
     }
-    match args[0].as_int_pyint() {
+    match signal_int_value(args[0]) {
         Some(fd) => {
             // CPython rejects descriptors that cannot refer to an open file.
             // We do not own a wakeup fd, so treat anything outside a small
@@ -518,7 +621,7 @@ pub fn mb_signal_pthread_sigmask(args: &[MbValue]) -> MbValue {
         ));
     }
     // `how` must be one of the three mask-op constants.
-    match args[0].as_int_pyint() {
+    match signal_int_value(args[0]) {
         Some(1) | Some(2) | Some(3) => {}
         Some(_) => return raise_os_error("[Errno 22] Invalid argument"),
         None => return raise_os_error("[Errno 22] Invalid argument"),
@@ -526,7 +629,7 @@ pub fn mb_signal_pthread_sigmask(args: &[MbValue]) -> MbValue {
     // Validate every signal number in the mask iterable.
     if let Some(items) = seq_items(args[1]) {
         for item in items {
-            match item.as_int_pyint() {
+            match signal_int_value(item) {
                 // Valid signal numbers are strictly between 0 and NSIG.
                 Some(n) if n > 0 && n < 32 => {}
                 // 0, NSIG, negatives, and out-of-range numbers are invalid.
@@ -592,59 +695,38 @@ pub fn mb_signal_sigwait(_sigset: MbValue) -> MbValue {
 
 // ── Class / type shells ──
 
-/// signal.Signals(value) -> Signals Instance (passive IntEnum shell).
-///
-/// CPython: `signal.Signals` is an IntEnum; `Signals(2) is SIGINT`. Mamba
-/// constructs a passive Instance with a `value` field; identity-with
-/// the constant is not preserved.
+fn signal_enum_new(class_name: &str, args: &[MbValue]) -> MbValue {
+    if args.len() != 1 {
+        return raise_type_error(&format!(
+            "{class_name}() takes exactly 1 argument ({} given)",
+            args.len()
+        ));
+    }
+    let raw = match signal_int_value(args[0]) {
+        Some(value) => value,
+        None => {
+            return raise_value_error(&format!("{} is not a valid {class_name}", "None"));
+        }
+    };
+    if let Some(member) = lookup_registered_member(class_name, raw) {
+        return member;
+    }
+    raise_value_error(&format!("{raw} is not a valid {class_name}"))
+}
+
+/// signal.Signals(value) -> the singleton Signals member for that value.
 pub fn mb_signal_signals_new(args: &[MbValue]) -> MbValue {
-    let value = args.first().copied().unwrap_or_else(MbValue::none);
-    let inst_ptr = MbObject::new_instance("Signals".to_string());
-    unsafe {
-        if let super::super::rc::ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
-            let mut map = fields.write().unwrap();
-            map.insert("value".to_string(), value);
-            map.insert(
-                "__class__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("Signals".to_string())),
-            );
-        }
-    }
-    MbValue::from_ptr(inst_ptr)
+    signal_enum_new("Signals", args)
 }
 
-/// signal.Handlers(value) -> Handlers Instance (passive IntEnum shell).
+/// signal.Handlers(value) -> the singleton Handlers member for that value.
 pub fn mb_signal_handlers_new(args: &[MbValue]) -> MbValue {
-    let value = args.first().copied().unwrap_or_else(MbValue::none);
-    let inst_ptr = MbObject::new_instance("Handlers".to_string());
-    unsafe {
-        if let super::super::rc::ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
-            let mut map = fields.write().unwrap();
-            map.insert("value".to_string(), value);
-            map.insert(
-                "__class__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("Handlers".to_string())),
-            );
-        }
-    }
-    MbValue::from_ptr(inst_ptr)
+    signal_enum_new("Handlers", args)
 }
 
-/// signal.Sigmasks(value) -> Sigmasks Instance (passive IntEnum shell).
+/// signal.Sigmasks(value) -> the singleton Sigmasks member for that value.
 pub fn mb_signal_sigmasks_new(args: &[MbValue]) -> MbValue {
-    let value = args.first().copied().unwrap_or_else(MbValue::none);
-    let inst_ptr = MbObject::new_instance("Sigmasks".to_string());
-    unsafe {
-        if let super::super::rc::ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
-            let mut map = fields.write().unwrap();
-            map.insert("value".to_string(), value);
-            map.insert(
-                "__class__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("Sigmasks".to_string())),
-            );
-        }
-    }
-    MbValue::from_ptr(inst_ptr)
+    signal_enum_new("Sigmasks", args)
 }
 
 /// signal.ItimerError -> ItimerError Instance (passive OSError subclass shell).
@@ -755,12 +837,12 @@ mod tests {
     #[test]
     fn test_sig_constants_values() {
         register();
-        assert_eq!(signal_attr("SIGINT").and_then(|v| v.as_int()), Some(2));
-        assert_eq!(signal_attr("SIGTERM").and_then(|v| v.as_int()), Some(15));
-        assert_eq!(signal_attr("SIGKILL").and_then(|v| v.as_int()), Some(9));
-        assert_eq!(signal_attr("SIGHUP").and_then(|v| v.as_int()), Some(1));
-        assert_eq!(signal_attr("SIG_DFL").and_then(|v| v.as_int()), Some(0));
-        assert_eq!(signal_attr("SIG_IGN").and_then(|v| v.as_int()), Some(1));
+        assert_eq!(signal_attr("SIGINT").and_then(signal_int_value), Some(2));
+        assert_eq!(signal_attr("SIGTERM").and_then(signal_int_value), Some(15));
+        assert_eq!(signal_attr("SIGKILL").and_then(signal_int_value), Some(9));
+        assert_eq!(signal_attr("SIGHUP").and_then(signal_int_value), Some(1));
+        assert_eq!(signal_attr("SIG_DFL").and_then(signal_int_value), Some(0));
+        assert_eq!(signal_attr("SIG_IGN").and_then(signal_int_value), Some(1));
         assert_eq!(signal_attr("NSIG").and_then(|v| v.as_int()), Some(32));
     }
 
@@ -769,7 +851,7 @@ mod tests {
         // With no handler installed for this signum, getsignal returns the
         // SIG_DFL sentinel (0).
         let r = mb_signal_getsignal(MbValue::from_int(13));
-        assert_eq!(r.as_int(), Some(0));
+        assert_eq!(signal_int_value(r), Some(0));
     }
 
     #[test]
@@ -777,9 +859,9 @@ mod tests {
         // First install over a fresh signum returns SIG_DFL (0); the second
         // install returns the SIG_IGN sentinel we just put in place.
         let prev1 = mb_signal_signal(&[MbValue::from_int(30), MbValue::from_int(1)]);
-        assert_eq!(prev1.as_int(), Some(0));
+        assert_eq!(signal_int_value(prev1), Some(0));
         let prev2 = mb_signal_signal(&[MbValue::from_int(30), MbValue::from_int(0)]);
-        assert_eq!(prev2.as_int(), Some(1));
+        assert_eq!(signal_int_value(prev2), Some(1));
     }
 
     #[test]
@@ -823,7 +905,10 @@ mod tests {
 
     #[test]
     fn test_signals_class_shell_carries_value() {
+        register();
+        let sigint = signal_attr("SIGINT").expect("SIGINT");
         let inst = mb_signal_signals_new(&[MbValue::from_int(2)]);
+        assert_eq!(inst.to_bits(), sigint.to_bits());
         unsafe {
             if let super::super::super::rc::ObjData::Instance {
                 ref class_name,
@@ -834,6 +919,13 @@ mod tests {
                 assert_eq!(class_name, "Signals");
                 let f = fields.read().unwrap();
                 assert_eq!(f.get("value").and_then(|v| v.as_int()), Some(2));
+                let name = f.get("name").and_then(|v| {
+                    v.as_ptr().and_then(|p| match &(*p).data {
+                        super::super::super::rc::ObjData::Str(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                });
+                assert_eq!(name.as_deref(), Some("SIGINT"));
             } else {
                 panic!("expected Instance");
             }

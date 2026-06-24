@@ -1325,6 +1325,7 @@ pub(crate) fn raise_value_error(msg: String) {
 
 fn int_enum_like_value(val: MbValue) -> Option<MbValue> {
     super::stdlib::enum_class::int_member_value(val)
+        .or_else(|| super::stdlib::signal_mod::signal_enum_int_value(val))
         .or_else(|| super::stdlib::http_mod::http_status_member_value(val))
 }
 
