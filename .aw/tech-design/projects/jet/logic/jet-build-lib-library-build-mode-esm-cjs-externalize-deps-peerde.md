@@ -18,31 +18,51 @@ capability_refs:
 ```mermaid
 ---
 id: jet-build-lib-flow
-initial: ParseLibInvocation
+entry: parse_inv
+nodes:
+  parse_inv: { kind: start,    label: "jet build --lib invoked" }
+  load_cfg:  { kind: process,  label: "merge --lib/--format/--out-dir flags + jet.toml [lib]" }
+  is_lib:    { kind: decision, label: "lib mode requested?" }
+  app_mode:  { kind: terminal, label: "existing app build path (byte-stable, unchanged)" }
+  read_pkg:  { kind: process,  label: "read package.json: exports/module/main + dependencies+peerDependencies" }
+  entries:   { kind: decision, label: ">=1 library entry resolved?" }
+  no_entry:  { kind: terminal, label: "error: no library entry found" }
+  externals: { kind: process,  label: "externals = deps + peerDeps -> resolver externalize" }
+  build:     { kind: process,  label: "build module graph per entry, tree-shake" }
+  fmt:       { kind: decision, label: "emit format" }
+  emit_esm:  { kind: process,  label: "emit ESM: external specifiers kept as bare import" }
+  emit_cjs:  { kind: process,  label: "emit CJS: external specifiers kept as require()" }
+  write:     { kind: process,  label: "write one output file per (entry x format) under out_dir" }
+  result:    { kind: terminal, label: "LibBuildResult { entries: Vec<EntryOutput> } returned" }
+edges:
+  - { from: parse_inv, to: load_cfg }
+  - { from: load_cfg, to: is_lib }
+  - { from: is_lib,    to: app_mode,  label: "no" }
+  - { from: is_lib,    to: read_pkg,  label: "yes" }
+  - { from: read_pkg,  to: entries }
+  - { from: entries,   to: no_entry,  label: "no" }
+  - { from: entries,   to: externals, label: "yes" }
+  - { from: externals, to: build }
+  - { from: build,     to: fmt }
+  - { from: fmt,       to: emit_esm,  label: "esm" }
+  - { from: fmt,       to: emit_cjs,  label: "cjs" }
+  - { from: emit_esm,  to: write }
+  - { from: emit_cjs,  to: write }
+  - { from: write,     to: result }
 ---
-stateDiagram-v2
-    [*] --> ParseLibInvocation : jet build --lib
-    ParseLibInvocation --> LoadLibConfig : merge --lib flags + jet.toml [lib]
-    LoadLibConfig --> ReadPackageJson : resolve formats, out_dir, preserve_modules
-    ReadPackageJson --> DiscoverEntries : read exports / module / main
-    ReadPackageJson --> CollectExternals : read dependencies + peerDependencies
-    DiscoverEntries --> BuildPerEntry : entries resolved (>=1)
-    CollectExternals --> BuildPerEntry : externals set = deps + peerDeps
-    BuildPerEntry --> EmitEsm : format includes esm
-    BuildPerEntry --> EmitCjs : format includes cjs
-    EmitEsm --> PreserveExternalImports : external specifiers kept as bare import
-    EmitCjs --> PreserveExternalRequires : external specifiers kept as require()
-    PreserveExternalImports --> WriteOutputs
-    PreserveExternalRequires --> WriteOutputs
-    WriteOutputs --> RecordMetadata : one output file per entry x format
-    RecordMetadata --> [*] : resolved entry to output map returned
-    LoadLibConfig --> AppModeUnchanged : --lib absent
-    AppModeUnchanged --> [*] : existing app build path stays byte-stable
+flowchart TD
+    parse_inv([jet build --lib invoked]) --> load_cfg[merge flags + jet.toml lib]
+    load_cfg --> is_lib{lib mode requested?}
+    is_lib -->|no| app_mode([existing app build, byte-stable])
+    is_lib -->|yes| read_pkg[read package.json exports + deps/peerDeps]
+    read_pkg --> entries{>=1 library entry?}
+    entries -->|no| no_entry([error: no library entry])
+    entries -->|yes| externals[externals = deps + peerDeps]
+    externals --> build[build graph per entry, tree-shake]
+    build --> fmt{emit format}
+    fmt -->|esm| emit_esm[emit ESM, external bare import]
+    fmt -->|cjs| emit_cjs[emit CJS, external require]
+    emit_esm --> write[write one file per entry x format]
+    emit_cjs --> write
+    write --> result([LibBuildResult entries returned])
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] The logic state diagram correctly scopes the library build flow: config merge, package.json read (entries from exports/module/main, externals from dependencies+peerDependencies), per-entry build, ESM/CJS emission preserving external imports/requires, and the `--lib`-absent branch that leaves the existing app build byte-stable. Applicability is sound for this TD.
