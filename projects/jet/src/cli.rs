@@ -3762,6 +3762,22 @@ fn run_library_build(
         entry: lib_config
             .and_then(|c| c.entry.clone())
             .unwrap_or_default(),
+        // CSS cascade-merge + raw-asset copy from [lib] of jet.toml. Both
+        // default to empty (no-op) so a build without them is unchanged.
+        css_merge: lib_config
+            .and_then(|c| c.css_merge.clone())
+            .unwrap_or_default(),
+        raw_copy: lib_config
+            .and_then(|c| c.raw_copy.clone())
+            .map(|v| {
+                v.into_iter()
+                    .map(|rc| crate::bundler::RawCopyDir {
+                        from: rc.from,
+                        to: rc.to,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
 
     let start = std::time::Instant::now();
@@ -3788,6 +3804,18 @@ fn run_library_build(
             .unwrap_or(&types.path)
             .display();
         println!("  {} (types) → {}", types.subpath, rel);
+    }
+    for asset in &result.assets {
+        let rel = asset
+            .path
+            .strip_prefix(root_dir)
+            .unwrap_or(&asset.path)
+            .display();
+        let label = match asset.kind {
+            crate::bundler::AssetKind::MergedCss => "merged css",
+            crate::bundler::AssetKind::RawAsset => "raw asset",
+        };
+        println!("  ({label}) → {rel}");
     }
 
     Ok(())

@@ -63,6 +63,32 @@ pub struct LibBuildOptions {
     /// `src/index.{tsx,ts,jsx,js}` when those point at not-yet-built output
     /// (e.g. `./dist/index.js`). @issue #170
     pub entry: Vec<String>,
+
+    /// CSS cascade-merge sources (from `[lib].css_merge` of jet.toml): an
+    /// ordered list of `style.css` files relative to `project_root`, e.g.
+    /// dependent packages' `dist/style.css`. After the normal lib emit, each
+    /// file is read in this DECLARED order and concatenated (in order) into
+    /// `out_dir/style.css` — declared order IS cascade order (first listed lands
+    /// first, later rules can override). When empty, no merge runs and the build
+    /// is byte-identical to today. Replaces the bespoke `mergeDepStyles` plugin.
+    pub css_merge: Vec<String>,
+
+    /// Raw-asset directory copies (from `[lib].raw_copy` of jet.toml): each
+    /// directory tree is copied verbatim into `out_dir` (at the directive's
+    /// `to`, defaulting to the same relative path as `from`), preserving
+    /// subpaths so consumers can deep-import `@pkg/assets/icons/x.svg`. When
+    /// empty, no copy runs. Replaces the bespoke `copyRawAssets` plugin.
+    pub raw_copy: Vec<RawCopyDir>,
+}
+
+/// One raw-asset directory copy: the source dir (relative to `project_root`)
+/// and an optional destination (relative to `out_dir`, default = `from`).
+#[derive(Debug, Clone)]
+pub struct RawCopyDir {
+    /// Source directory relative to `project_root`.
+    pub from: String,
+    /// Destination relative to `out_dir`. `None` → same relative path as `from`.
+    pub to: Option<String>,
 }
 
 /// Library builds default to emitting declarations on (`declaration: true`).
@@ -80,6 +106,8 @@ impl Default for LibBuildOptions {
             declaration: true,
             library_global_name: None,
             entry: Vec::new(),
+            css_merge: Vec::new(),
+            raw_copy: Vec::new(),
         }
     }
 }
@@ -112,6 +140,30 @@ pub struct LibBuildResult {
     /// is on. Empty when declaration emission is disabled.
     /// @issue #171
     pub types: Vec<TypesOutput>,
+
+    /// Post-emit asset side-effects: the merged `out_dir/style.css` (when
+    /// `css_merge` was configured) plus every file copied by `raw_copy`. Empty
+    /// when neither was configured, so default builds carry no extra files.
+    pub assets: Vec<AssetOutput>,
+}
+
+/// A post-emit asset written by the lib build's CSS cascade-merge or
+/// raw-asset copy step.
+#[derive(Debug, Clone)]
+pub struct AssetOutput {
+    /// Absolute path the asset was written to.
+    pub path: PathBuf,
+    /// How the asset was produced.
+    pub kind: AssetKind,
+}
+
+/// Provenance of an [`AssetOutput`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssetKind {
+    /// The `out_dir/style.css` produced by concatenating `css_merge` sources.
+    MergedCss,
+    /// A file copied verbatim by a `raw_copy` directive.
+    RawAsset,
 }
 
 /// A `.d.ts` type-declaration file emitted for one library entry.
@@ -276,10 +328,143 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
         }
     }
 
+    // Post-emit asset steps: CSS cascade-merge + raw-asset copy. No-ops (and
+    // thus byte-identical to today) when neither is configured.
+    let assets = run_post_emit_assets(&options)?;
+
     Ok(LibBuildResult {
         entries: outputs,
         types: types_outputs,
+        assets,
     })
+}
+
+/// Run the post-emit asset side-effects for a library build:
+///   1. CSS cascade-merge (`css_merge`) — concatenate the listed `style.css`
+///      files, in DECLARED order, into `out_dir/style.css` (created or
+///      extended); declared order is cascade order.
+///   2. Raw-asset copy (`raw_copy`) — copy each `from` directory tree verbatim
+///      into `out_dir` (at `to`, default = same relative path), preserving
+///      subpaths.
+///
+/// Both are no-ops when their config is empty, so a default lib build emits no
+/// extra files and is byte-identical to today. Missing sources are a clear
+/// error (not a panic); empty/absent config is skipped silently.
+fn run_post_emit_assets(options: &LibBuildOptions) -> Result<Vec<AssetOutput>> {
+    let mut assets = Vec::new();
+    if !options.css_merge.is_empty() {
+        if let Some(asset) = merge_css(options)? {
+            assets.push(asset);
+        }
+    }
+    if !options.raw_copy.is_empty() {
+        assets.extend(copy_raw_assets(options)?);
+    }
+    Ok(assets)
+}
+
+/// Concatenate every `css_merge` source into `out_dir/style.css`, in declared
+/// (cascade) order. If `out_dir/style.css` already exists (e.g. emitted by an
+/// earlier CSS pass), the merged dependent CSS is appended after it so the
+/// meta-package's own rules keep their cascade position and the dependents'
+/// declared order is preserved. Each source is separated by a newline so the
+/// boundary between two files is never glued mid-rule.
+fn merge_css(options: &LibBuildOptions) -> Result<Option<AssetOutput>> {
+    let mut merged = String::new();
+
+    // Preserve any style.css the normal emit already produced as the base of
+    // the cascade, then append the declared dependents after it.
+    let out_css = options.out_dir.join("style.css");
+    if out_css.is_file() {
+        let existing = std::fs::read_to_string(&out_css)
+            .with_context(|| format!("reading existing {}", out_css.display()))?;
+        merged.push_str(&existing);
+        if !merged.is_empty() && !merged.ends_with('\n') {
+            merged.push('\n');
+        }
+    }
+
+    for rel in &options.css_merge {
+        let src = options.project_root.join(rel);
+        let css = std::fs::read_to_string(&src).with_context(|| {
+            format!(
+                "jet build --lib css_merge: reading CSS source {}",
+                src.display()
+            )
+        })?;
+        merged.push_str(&css);
+        // Guard the boundary between concatenated files: a missing trailing
+        // newline would otherwise glue the next file's first rule onto the
+        // previous file's last one.
+        if !css.ends_with('\n') {
+            merged.push('\n');
+        }
+    }
+
+    std::fs::create_dir_all(&options.out_dir)
+        .with_context(|| format!("creating out_dir {}", options.out_dir.display()))?;
+    std::fs::write(&out_css, &merged)
+        .with_context(|| format!("writing merged {}", out_css.display()))?;
+
+    Ok(Some(AssetOutput {
+        path: out_css,
+        kind: AssetKind::MergedCss,
+    }))
+}
+
+/// Copy each `raw_copy` directory tree verbatim into `out_dir`, preserving
+/// subpaths. A directive's `to` (default = `from`) is the destination relative
+/// to `out_dir`. Files are copied byte-for-byte; intermediate directories are
+/// created as needed. A missing source directory is a clear error.
+fn copy_raw_assets(options: &LibBuildOptions) -> Result<Vec<AssetOutput>> {
+    let mut copied = Vec::new();
+
+    for dir in &options.raw_copy {
+        let src_root = options.project_root.join(&dir.from);
+        if !src_root.is_dir() {
+            anyhow::bail!(
+                "jet build --lib raw_copy: source directory not found: {}",
+                src_root.display()
+            );
+        }
+        // Destination root under out_dir: explicit `to`, else mirror `from`.
+        let dest_rel = dir.to.clone().unwrap_or_else(|| dir.from.clone());
+        let dest_root = options.out_dir.join(&dest_rel);
+
+        for entry in walkdir::WalkDir::new(&src_root).follow_links(false) {
+            let entry = entry.with_context(|| {
+                format!("jet build --lib raw_copy: walking {}", src_root.display())
+            })?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let rel = entry.path().strip_prefix(&src_root).with_context(|| {
+                format!(
+                    "computing relative path of {} under {}",
+                    entry.path().display(),
+                    src_root.display()
+                )
+            })?;
+            let dest = dest_root.join(rel);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            std::fs::copy(entry.path(), &dest).with_context(|| {
+                format!(
+                    "copying {} → {}",
+                    entry.path().display(),
+                    dest.display()
+                )
+            })?;
+            copied.push(AssetOutput {
+                path: dest,
+                kind: AssetKind::RawAsset,
+            });
+        }
+    }
+
+    Ok(copied)
 }
 
 /// Read the `name` field from a `package.json`, falling back to `"lib"` when
@@ -635,9 +820,13 @@ fn build_library_preserve_modules(
         });
     }
 
+    // Post-emit asset steps run for preserve_modules builds too.
+    let assets = run_post_emit_assets(options)?;
+
     Ok(LibBuildResult {
         entries: outputs,
         types: Vec::new(),
+        assets,
     })
 }
 

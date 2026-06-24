@@ -1138,6 +1138,7 @@ mod tests {
                 subpath: ".".to_string(),
                 path: root.join("dist/index.d.ts"),
             }],
+            assets: Vec::new(),
         };
 
         // `main` is pre-declared; module/types are absent.

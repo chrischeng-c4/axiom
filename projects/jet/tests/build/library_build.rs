@@ -38,6 +38,8 @@ fn run_lib_build(root: &std::path::Path, formats: Vec<OutputFormat>) -> jet::bun
         declaration: false,
         library_global_name: None,
         entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
     };
     build_library(options).expect("library build must succeed")
 }
@@ -335,6 +337,8 @@ fn run_lib_build_preserve(root: &std::path::Path) -> jet::bundler::LibBuildResul
         declaration: false,
         library_global_name: None,
         entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
     };
     build_library(options).expect("preserve-modules library build must succeed")
 }
@@ -485,6 +489,8 @@ export const VERSION = "1.0.0";
         declaration: false,
         library_global_name: Some("WidgetKit".to_string()),
         entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
     };
     let result = build_library(options).expect("iife library build must succeed");
     assert_eq!(result.entries.len(), 1, "single entry → single IIFE file");
@@ -562,6 +568,8 @@ fn lib_iife_default_global_name_derived_from_package_name() {
         // No explicit global name → derived from package.json `name`.
         library_global_name: None,
         entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
     };
     let result = build_library(options).expect("iife build must succeed");
     let code = &result.entries[0].code;
@@ -1044,6 +1052,8 @@ fn lib_explicit_entry_overrides_exports() {
         declaration: false,
         library_global_name: None,
         entry: vec!["src/main.ts".to_string()],
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
     };
     let result = build_library(options).expect("explicit-entry build must succeed");
     assert!(!result.entries.is_empty());
