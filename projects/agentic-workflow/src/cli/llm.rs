@@ -15,16 +15,17 @@ use clap::{Args, Command, Subcommand, ValueEnum};
 /// Which agent-orientation topic to print.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum LlmTopic {
-    /// Axiom + one-crown-two-axes model + topic map. Agents start here.
+    /// The loop model + topic map. Agents start here.
     Outline,
-    /// The capability pillar: product surface, completion loop, readiness.
+    /// The goal: capability defines function; what to build + is it ready.
     Capability,
-    /// The inward axis: spec-is-truth, td -> gen, regenerable source.
+    /// The artifact: spec defines how; td code is what runs (caps-agnostic).
     Td,
-    /// The outward axis: external contract, generated gates, opt-in.
+    /// The verifier: ec defines what to test; ec green is the only gate.
     Ec,
-    /// How to operate aw: the envelope contract, wi -> td -> merge, HITL.
-    Loop,
+    /// The loop state + engine: wi carries goal/verifier/iterations/
+    /// last_result/next_action; aw run iterates until ec green.
+    Wi,
 }
 
 /// Output format.
@@ -74,7 +75,7 @@ fn topic_name(topic: LlmTopic) -> &'static str {
         LlmTopic::Capability => "capability",
         LlmTopic::Td => "td",
         LlmTopic::Ec => "ec",
-        LlmTopic::Loop => "loop",
+        LlmTopic::Wi => "wi",
     }
 }
 
@@ -84,7 +85,7 @@ fn topic_markdown(topic: LlmTopic) -> String {
         LlmTopic::Capability => capability_md(),
         LlmTopic::Td => td_md(),
         LlmTopic::Ec => ec_md(),
-        LlmTopic::Loop => loop_md(),
+        LlmTopic::Wi => wi_md(),
     }
 }
 
@@ -106,40 +107,38 @@ fn outline_md() -> String {
     format!(
         r#"# aw -- agent orientation
 
-aw drives spec-driven development. One axiom underlies every verb:
+aw is a loop. You operate it by reading one JSON envelope (schema `aw.cli.v1`)
+and running the single command it hands back, until the loop converges:
 
-    declare in a spec  ->  generate the artifact  ->  measure readiness
+    read wi (state) -> do td (act) -> run ec (verify) -> write result to wi -> repeat
 
-aw is mechanical: it never calls a model. Each command emits a JSON envelope
-(schema `aw.cli.v1`) carrying `next.command` and `agent_prompt`; YOU run the
-model and re-run the root command until `completion.workflow_complete=true`.
+aw is mechanical: it never calls a model. The loop terminates on the VERIFIER
+(ec), not on a review.
 
-## The model: one crown, two axes
+## The model: a loop over three artifacts
 
-                 capability        WHAT should exist + is it production-ready
-                /          \
-        td + gen            ec + gen
-        inward              outward
-        "built right?"      "safe for consumers?"
+| layer       | what it is                            | role               |
+|-------------|---------------------------------------|--------------------|
+| `aw` (run)  | the loop engine                       | act->verify->decide|
+| `aw wi`     | the loop STATE + iteration target     | persists the loop  |
+| `aw caps`   | the goal (function definition)        | what "done" means  |
+| `aw ec`     | the verifier (what to test); ec green | the only gate      |
+| `aw td`     | the artifact (how + the running code) | caps-agnostic      |
 
-- capability -- the product surface. Work = completing capabilities to ready.
-- td + gen   -- spec is the source of truth; implementation is generated from
-                the tech-design and is regenerable (no hand-drift).
-- ec + gen   -- the external contract across correctness / benchmark /
-                security / stability; its gates are generated and run as
-                production gates.
-
-`gen` is not a fourth pillar -- it is the shared verb of td and ec. You
-declare, you generate; you never hand-author the artifact.
+One sentence: aw (loop) reads wi (state+target) -> does td (act) -> runs ec
+(verify) -> writes the result back to wi -> repeats until ec is green = the
+caps gap is closed. td may be any shape; only ec decides done. There is no
+review -- you terminate on the verifier. (The one judgment point is deriving
+ec from caps; see `aw llm ec`.)
 
 ## Topics -- read the smallest one you need
 
 | topic             | read it when ...                                        |
 |-------------------|---------------------------------------------------------|
-| aw llm capability | you need to know what to build and whether it's ready   |
-| aw llm td         | you are designing / generating implementation from a TD |
-| aw llm ec         | you are guarding the external contract and its gates    |
-| aw llm loop       | you need to operate aw: envelope, wi -> td -> merge, HITL|
+| aw llm capability | you need the goal: what to build and whether it's ready |
+| aw llm ec         | you are defining/guarding what gets tested (the gate)   |
+| aw llm td         | you are authoring/generating the implementation         |
+| aw llm wi         | you need to operate the loop: state, next_action, HITL  |
 
 ## Registered verbs
 
@@ -185,23 +184,24 @@ For exact flags, run `aw capability --help`.
 }
 
 fn td_md() -> String {
-    r#"# aw llm td -- the inward axis (built right?)
+    r#"# aw llm td -- the artifact (how + the running code)
 
-Spec is the source of truth; code is a derived artifact. Implementation is
-generated from the tech-design, and the tree is regenerable.
+Spec defines how; `td` code is the artifact that runs. Implementation is
+generated from the tech-design, and the tree is regenerable. td is
+**caps-agnostic**: it does not reference the capability -- it only has to pass
+ec. Passing ec verify == achieving caps, so td chases ec green, in any shape.
 
 ## Mental model
 
-- A TD is authored in phases (applicability -> contract) and reviewed before
-  it generates code. Logic and unit-test sections are Mermaid Plus blocks
-  (YAML IR + a rendered diagram).
+- The lifecycle is LINEAR: `create -> gen -> merge`. There is no review/revise
+  step -- the gate is ec, not a reviewer. Logic and unit-test sections are
+  Mermaid Plus blocks (YAML IR + a rendered diagram).
 - `gen` turns the TD into code. Every in-scope region is either `CODEGEN`
   (emitted from the spec) or `HANDWRITE` (a named generator gap that codegen
   cannot yet cover). There is no skip state for source ownership.
 - Regenerability invariant: delete the codebase, re-run codegen on the TDs,
   replay HANDWRITE blocks, and the tree is byte-equivalent.
-- When a gap-blocker lands, `HANDWRITE` -> `CODEGEN` and the invariant
-  tightens.
+- Code beauty is irrelevant; ec green is the only truth.
 
 ## Where it lives
 
@@ -215,70 +215,72 @@ For exact flags, run `aw td --help`.
 }
 
 fn ec_md() -> String {
-    r#"# aw llm ec -- the outward axis (safe for consumers?)
+    r#"# aw llm ec -- the verifier (the only gate)
 
-The External Contract is what keeps aw-managed projects from breaking the
-people who depend on them: "don't break things for consumers". aw is the EC
-gatekeeper across four dimensions.
+EC is what everything trusts. The loop terminates on ec; caps is "achieved"
+iff ec is green; td chases ec green. So ec is the one artifact that decides
+"done" -- and the one place judgment lives.
 
 ## The four dimensions
 
 | dimension   | question                                  |
 |-------------|-------------------------------------------|
-| behavior    | does it still do the right thing?         |
-| benchmark   | is it still fast enough?                  |
-| security    | is it still safe?                         |
+| behavior    | does it do the right thing? (required)    |
+| benchmark   | is it fast enough?                        |
+| security    | is it safe?                               |
 | stability   | does it hold up under failure / time?     |
 
 ## Mental model
 
-- EC artifacts -- tests, tool configs, gates -- are generated (`gen`), not
-  hand-authored, and run as production gates.
-- A dimension is wired per project via `.aw/config.toml` `ec.<category>`; when
-  a category is absent it falls back to the default cargo-test gate.
+- ec is two things: the `doc` defines WHAT to test; the `code` is the verifier
+  that runs and yields green / red.
+- What to test is DERIVED FROM caps. That derivation is the single human +
+  agent collaboration point (HITL) -- and the only place a review belongs,
+  because a wrong ec yields a false green nothing downstream can catch.
+- ec green is the only merge gate. Code style / fmt are not gates.
+- Wired per project via `.aw/config.toml` `ec.<category>`; absent -> the
+  default test gate. Non-capability scope (delivery, docs) has no behavior ec
+  and rides a zero-EC / cold-build lane instead.
 - `aw health --verify-ec` evaluates the dimensions required for production.
-  A dimension marked `required_for_production=false` is reported but not
-  gated.
 
 For exact flags, run `aw ec --help`.
 "#
     .to_string()
 }
 
-fn loop_md() -> String {
-    r#"# aw llm loop -- how to operate aw
+fn wi_md() -> String {
+    r#"# aw llm wi -- the loop state + how to operate the loop
 
-aw is mechanical. You operate it by reading one JSON envelope and running the
-single command it hands back, in a loop, until it says you are done.
+A work-item IS the loop's durable state. You operate aw by reading one JSON
+envelope (schema `aw.cli.v1`) and running the command it hands back, until the
+loop converges on ec green.
 
-## The envelope contract (schema `aw.cli.v1`)
+## The loop state (carried in the WI)
 
-- `next.command`                 -- the only command to run next.
-- `agent_prompt`                 -- guidance for you, the calling agent.
-- `completion.workflow_complete` -- stop only when this is `true`.
-- `completion.requires_hitl`     -- a human decision is required; surface it.
+- `goal`        -- the capability gap this loop closes.
+- `verifier`    -- the ec gate that decides done.
+- `iterations`  -- the running log of act/verify passes.
+- `last_result` -- none | green | red{dimension, why} | blocked{reason}.
+- `next_action` -- the command to run next, derived from last_result.
+- `status`      -- iterating | converged | blocked | failed.
+- `tried`       -- failed approaches, so the loop does not repeat one.
 
-Re-run the same root command after each child command completes. `action=done`
-can mean only the current child root is complete -- inspect the parent.
+## The decision (driven by ec, not review)
 
-## The forward loop
+    ec green  -> converged   -> aw td merge
+    ec red    -> iterating   -> aw td gen      (adapt; never re-run the same fail)
+    blocked   -> HITL        -> surface hitl_question to a human
 
-    aw wi        -- bound a work-item (Scope / Acceptance Criteria / refs)
-      -> aw td   -- author + review the tech-design, then gen code
-        -> merge -- aw td merge lands the change
+## The envelope
 
-Drive the whole thing with the root runner:
+- `next.command` is the only command to run next; re-run the root after each
+  child completes; stop when `completion.workflow_complete=true`.
+- `completion.requires_hitl=true` -> stop and ask a human.
 
-    aw run --wi <id>        (or --project / --capability)
+Drive it: `aw run --wi <id>` (or `--project` / `--capability`); the linear
+forward path is `wi -> td -> merge`.
 
-follow `invoke.command` until `workflow_complete=true` or `requires_hitl=true`.
-
-## HITL
-
-When `requires_hitl=true`, stop and put the `hitl_question` to a human; do not
-guess past a blocked decision.
-
-For exact flags, run `aw run --help` or `aw td --help`.
+For exact flags, run `aw run --help` or `aw wi --help`.
 "#
     .to_string()
 }
@@ -312,7 +314,7 @@ mod tests {
             LlmTopic::Capability,
             LlmTopic::Td,
             LlmTopic::Ec,
-            LlmTopic::Loop,
+            LlmTopic::Wi,
         ] {
             let md = topic_markdown(topic);
             assert!(
@@ -351,7 +353,7 @@ mod tests {
             LlmTopic::Capability,
             LlmTopic::Td,
             LlmTopic::Ec,
-            LlmTopic::Loop,
+            LlmTopic::Wi,
         ] {
             assert_eq!(
                 topic_markdown(topic),
