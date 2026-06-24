@@ -29,29 +29,39 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
 use axum::{
-    extract::{Path as AxumPath, State},
+    extract::{ws::WebSocket, Path as AxumPath, State, WebSocketUpgrade},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
+use futures_util::{SinkExt, StreamExt};
 
+use super::hmr::{self, StoriesHmrManager, STORIES_HMR_ROUTE};
 use super::manager;
 use super::{discover, StoryEntry, StoryIndex};
+use crate::dev_server::module_graph::ModuleGraph;
+use crate::dev_server::watcher::FileWatcher;
 
 /// Manager shell route (alias of `/`).
 pub const MANAGER_PREFIX: &str = "/__jet_stories_manager";
 
 /// Shared router state: the discovered index + the project root (for resolving
-/// + transforming module sources on demand).
+/// + transforming module sources on demand), plus the HMR broadcast hub and the
+/// served-module import graph (B2b/#176).
 #[derive(Clone)]
 struct WorkbenchState {
     index: Arc<StoryIndex>,
     root: Arc<PathBuf>,
+    /// Broadcast hub the preview-frame HMR clients subscribe to.
+    hmr: StoriesHmrManager,
+    /// Import graph the module route populates lazily as it serves modules, so
+    /// [`super::hmr::affected_modules`] can walk a changed module's importers.
+    graph: Arc<RwLock<ModuleGraph>>,
 }
 
 /// Discover stories under `root`, build the router, bind `host:port`, and serve
@@ -69,7 +79,24 @@ pub async fn start_stories_workbench(root: &Path, host: String, port: u16) -> Re
         eprintln!("[jet stories] {diag}");
     }
 
-    let app = build_router(index, root);
+    // B2b/#176: a shared HMR hub + import graph, wired to a file watcher so a
+    // story/component edit hot-updates ONLY the preview frame.
+    let hmr = StoriesHmrManager::new();
+    let graph = Arc::new(RwLock::new(ModuleGraph::new()));
+
+    // Hold the watcher for the server's lifetime — dropping it stops the notify
+    // backend. A failed watcher must NOT abort the workbench: the manager +
+    // preview still serve, just without live reload.
+    let _watcher: Option<FileWatcher> = match hmr::spawn_watcher(&root, graph.clone(), hmr.clone())
+    {
+        Ok(w) => Some(w),
+        Err(err) => {
+            eprintln!("[jet stories] file watcher unavailable, HMR disabled: {err}");
+            None
+        }
+    };
+
+    let app = build_router_with(index, root, hmr, graph);
 
     let addr: SocketAddr = format!("{host}:{port}")
         .parse()
@@ -83,21 +110,47 @@ pub async fn start_stories_workbench(root: &Path, host: String, port: u16) -> Re
     axum::serve(listener, app)
         .await
         .context("jet stories server error")?;
+    // Keep the watcher alive until the server exits.
+    drop(_watcher);
     Ok(())
 }
 
 /// Build the workbench router (factored out so tests can drive routes without
 /// binding a port — via `tower::ServiceExt::oneshot` or a `127.0.0.1:0` bind).
+///
+/// Constructs a fresh HMR hub + import graph; for the live workbench
+/// [`start_stories_workbench`] uses [`build_router_with`] to share the hub with
+/// its file watcher.
 pub fn build_router(index: StoryIndex, root: PathBuf) -> Router {
+    build_router_with(
+        index,
+        root,
+        StoriesHmrManager::new(),
+        Arc::new(RwLock::new(ModuleGraph::new())),
+    )
+}
+
+/// Build the router over an explicit HMR hub + import graph (so the watcher and
+/// the WS route share one broadcast channel).
+fn build_router_with(
+    index: StoryIndex,
+    root: PathBuf,
+    hmr: StoriesHmrManager,
+    graph: Arc<RwLock<ModuleGraph>>,
+) -> Router {
     let state = WorkbenchState {
         index: Arc::new(index),
         root: Arc::new(root),
+        hmr,
+        graph,
     };
 
     Router::new()
         .route("/", get(manager_handler))
         .route(MANAGER_PREFIX, get(manager_handler))
         .route("/__jet_stories_preview/{story_id}", get(preview_handler))
+        // Preview-frame HMR WebSocket (B2b/#176).
+        .route(STORIES_HMR_ROUTE, get(stories_hmr_handler))
         // Catch-all for module + static requests the preview imports.
         .route("/{*path}", get(module_handler))
         .with_state(state)
@@ -132,6 +185,57 @@ async fn preview_handler(
     html_response(html)
 }
 
+/// `GET /__jet_stories_hmr` → upgrade to the preview-frame HMR WebSocket.
+///
+/// Each connected preview frame subscribes to the shared [`StoriesHmrManager`];
+/// the file watcher broadcasts [`super::hmr::StoriesHmrMessage`]s which this
+/// handler forwards as JSON. The manager shell never connects here, so it never
+/// reloads (B2b/#176).
+async fn stories_hmr_handler(ws: WebSocketUpgrade, State(state): State<WorkbenchState>) -> Response {
+    ws.on_upgrade(move |socket| stories_hmr_socket(socket, state.hmr.clone()))
+}
+
+/// Pump broadcast HMR messages to one connected preview frame until it closes.
+async fn stories_hmr_socket(socket: WebSocket, hmr: StoriesHmrManager) {
+    use axum::extract::ws::Message;
+
+    let (mut sender, mut receiver) = socket.split();
+    let mut rx = hmr.subscribe();
+
+    // Greet the client so it can confirm the channel before any edits arrive.
+    let _ = sender
+        .send(Message::Text(
+            super::hmr::StoriesHmrMessage::Connected.to_json().into(),
+        ))
+        .await;
+
+    let send_task = tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if sender
+                .send(Message::Text(msg.to_json().into()))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+
+    // Drain inbound frames so the socket stays healthy; close ends the loop.
+    let recv_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = receiver.next().await {
+            if matches!(msg, Message::Close(_)) {
+                break;
+            }
+        }
+    });
+
+    tokio::select! {
+        _ = send_task => {}
+        _ = recv_task => {}
+    }
+}
+
 /// `GET /{path}` → transform + serve a local `.ts/.tsx/.js/.jsx` module (so the
 /// preview's `import` of the story file resolves), or 404.
 async fn module_handler(
@@ -150,13 +254,83 @@ async fn module_handler(
         .unwrap_or("");
 
     match ext {
-        "ts" | "tsx" | "js" | "jsx" => serve_module(&file_path, &path).await,
+        "ts" | "tsx" | "js" | "jsx" => {
+            // B2b/#176: record this module's relative-import edges in the shared
+            // graph BEFORE serving, so a later edit to an imported component can
+            // walk back to the importing story (`affected_modules`). Best-effort:
+            // failure to read/parse just means a thinner graph, never a 500.
+            register_module_imports(&state, &file_path, &path);
+            serve_module(&file_path, &path).await
+        }
         _ => (
             StatusCode::NOT_FOUND,
             format!("jet stories: not found '{path}'"),
         )
             .into_response(),
     }
+}
+
+/// B2b/#176: record `request_path`'s relative-import edges in the shared graph.
+///
+/// Reads the (untransformed) source, extracts import specifiers via the dev
+/// server's [`crate::dev_server::source_analysis::extract_imports_from_source`],
+/// resolves the *relative* ones (`./`, `../`) against the module's own URL to
+/// root-relative URLs, and registers the edges. Bare specifiers (`react`, etc.)
+/// are skipped — they're not part of the served-module invalidation graph.
+///
+/// Best-effort: any read/parse failure leaves the graph thinner but never
+/// affects serving (the caller ignores the outcome).
+fn register_module_imports(state: &WorkbenchState, file_path: &Path, request_path: &str) {
+    let Ok(source) = std::fs::read_to_string(file_path) else {
+        return;
+    };
+    let module_url = {
+        let mut u = String::from("/");
+        u.push_str(request_path.trim_start_matches('/'));
+        u
+    };
+    let specifiers = crate::dev_server::source_analysis::extract_imports_from_source(&source);
+    let resolved: Vec<String> = specifiers
+        .iter()
+        .filter_map(|spec| resolve_relative_import(&module_url, spec))
+        .collect();
+
+    hmr::register_served_module(&state.graph, &module_url, file_path, &resolved);
+}
+
+/// Resolve a relative import specifier (`./Button`, `../lib/x`) against the
+/// importing module's root-relative URL, yielding a root-relative URL. Returns
+/// `None` for bare specifiers (no leading `.`).
+///
+/// Extensionless relative imports are left extensionless here; the invalidation
+/// walk keys on whatever URL the preview actually requests, and the watcher
+/// emits the on-disk path's URL, so a follow-up could normalize extensions. For
+/// the common case (stories import a sibling `./Button` and the watcher fires on
+/// `Button.tsx`) this thin resolution is enough to link the two when the story
+/// imports with the explicit extension; without it, `affected_modules` falls
+/// back to the changed module alone (still a correct, if narrower, update).
+/// TODO(#176 follow-up): probe `.tsx/.ts/.jsx/.js/index.*` like the module route
+/// so extensionless relative imports resolve to the served URL.
+fn resolve_relative_import(importer_url: &str, spec: &str) -> Option<String> {
+    if !spec.starts_with('.') {
+        return None;
+    }
+    // Base directory = importer URL minus its filename.
+    let base_dir = match importer_url.rsplit_once('/') {
+        Some((dir, _file)) => dir,
+        None => "",
+    };
+    let mut segments: Vec<&str> = base_dir.split('/').filter(|s| !s.is_empty()).collect();
+    for part in spec.split('/') {
+        match part {
+            "." | "" => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    Some(format!("/{}", segments.join("/")))
 }
 
 /// Transform a single source file to browser JS and serve it.
