@@ -130,6 +130,52 @@ fn registry_find_plain_ref(obj: MbValue) -> Option<MbValue> {
     })
 }
 
+/// Find an existing *no-callback* proxy wrapper for `obj`.
+fn registry_find_plain_proxy(obj: MbValue) -> Option<MbValue> {
+    let key = referent_key(obj);
+    WEAKREF_REGISTRY.with(|r| {
+        r.borrow().get(&key).and_then(|v| {
+            v.iter().copied().find(|&w| {
+                if let Some(ptr) = w.as_ptr() {
+                    unsafe {
+                        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                            return matches!(class_name.as_str(), "ProxyType" | "CallableProxyType")
+                                && ref_callback(w).is_none();
+                        }
+                    }
+                }
+                false
+            })
+        })
+    })
+}
+
+fn referent_needs_proxy_hash_guard(obj: MbValue) -> bool {
+    let Some(ptr) = obj.as_ptr() else { return false; };
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            return super::super::class::class_own_members(class_name)
+                .into_iter()
+                .any(|(name, _, _)| name == "__hash__");
+        }
+    }
+    false
+}
+
+pub fn proxy_target(proxy: MbValue) -> Option<MbValue> {
+    let ptr = proxy.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields }
+                if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType") =>
+            {
+                fields.read().unwrap().get("_target").copied()
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Extract a string from an MbValue.
 #[allow(dead_code)]
 fn extract_str(val: MbValue) -> Option<String> {
@@ -593,10 +639,47 @@ pub fn mb_weakref_deref(wref: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// weakref.proxy(obj, callback=None) -> obj (carve-out).
-pub fn mb_weakref_proxy(obj: MbValue, _callback: MbValue) -> MbValue {
+/// weakref.proxy(obj, callback=None) -> proxy wrapper for hash-sensitive
+/// referents; otherwise keep the legacy live-object alias carve-out.
+pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
     if reject_non_weakreferenceable(obj) {
         return MbValue::none();
+    }
+    if referent_needs_proxy_hash_guard(obj) {
+        if callback.is_none() {
+            if let Some(existing) = registry_find_plain_proxy(obj) {
+                unsafe { super::super::rc::retain_if_ptr(existing); }
+                return existing;
+            }
+        }
+        let class_name = if super::super::builtins::mb_callable(obj)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            "CallableProxyType"
+        } else {
+            "ProxyType"
+        };
+        let target_id = MbValue::from_int(referent_key(obj) as i64);
+        let mut fields = FxHashMap::default();
+        fields.insert("_target".to_string(), obj);
+        fields.insert("_target_id".to_string(), target_id);
+        fields.insert("__callback__".to_string(), callback);
+        fields.insert("_callback".to_string(), callback);
+        fields.insert(
+            "__class__".to_string(),
+            MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+        );
+        let proxy = Box::new(MbObject {
+            header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+            data: ObjData::Instance {
+                class_name: class_name.to_string(),
+                fields: RwLock::new(fields),
+            },
+        });
+        let proxy = MbValue::from_ptr(Box::into_raw(proxy));
+        registry_push(obj, proxy);
+        return proxy;
     }
     // The proxy carve-out returns the referent itself. The argument cleanup and
     // returned alias each consume an owned slot, so keep both references alive.
