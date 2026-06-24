@@ -75,6 +75,14 @@ impl Resolver {
                     let id = self.symbols.define(name.clone(), SymbolKind::Enum);
                     self.name_map.push((stmt.span, id));
                 }
+                Stmt::ExprStmt(_) => {
+                    if let Some(fn_def) =
+                        crate::exec_literal::global_literal_exec_fn_def(&stmt.node)
+                    {
+                        let id = self.symbols.define(fn_def.name, SymbolKind::Function);
+                        self.name_map.push((stmt.span, id));
+                    }
+                }
                 Stmt::Try {
                     body,
                     handlers,
