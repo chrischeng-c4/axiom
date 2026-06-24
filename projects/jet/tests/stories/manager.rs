@@ -214,4 +214,83 @@ async fn module_route_rejects_parent_traversal() {
         "traversal blocked, got {status}"
     );
 }
+
+/// (f) #197: a component that imports a bare specifier installed in the project's
+/// node_modules gets that import rewritten to a `/@dep/<key>` route, and the dep
+/// route serves the resolved dep file as JS — recursively for its own imports.
+/// Unresolvable bare specifiers (e.g. `react`, not installed) are left as-is so
+/// the esm.sh importmap still satisfies them.
+#[tokio::test]
+async fn module_route_resolves_and_serves_node_modules_dep() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    // A tiny installed package `clsx` with a `module` ESM entry that itself
+    // imports a relative chunk (to exercise the recursive dep walk) AND a
+    // not-installed bare specifier (`react`) that must stay as-authored.
+    write(
+        root.join("node_modules/clsx/package.json"),
+        r#"{"name":"clsx","version":"2.0.0","module":"dist/clsx.mjs","main":"dist/clsx.js"}"#,
+    );
+    write(
+        root.join("node_modules/clsx/dist/clsx.mjs"),
+        "import { join } from './chunk.mjs';\nexport default function clsx(){ return join(); }\n",
+    );
+    write(
+        root.join("node_modules/clsx/dist/chunk.mjs"),
+        "export function join(){ return ''; }\n",
+    );
+
+    // A component that imports the installed dep + a non-installed one.
+    write(
+        root.join("src/components/Button.tsx"),
+        "import clsx from 'clsx';\nimport React from 'react';\nexport const Button = (props) => clsx('x');\n",
+    );
+    // A story so discovery has something to mount (not strictly required for the
+    // module route, but keeps the fixture realistic).
+    write(
+        root.join("src/components/Button.stories.tsx"),
+        "import { Button } from './Button';\nexport default { title: 'Components/Button', component: Button };\nexport const Primary = { args: {} };\n",
+    );
+
+    let router = router_for(root);
+
+    // The component module route rewrites the resolvable bare `clsx` import to a
+    // `/@dep/clsx/...` route, but leaves the un-installed `react` import alone.
+    let (status, js) = get(&router, "/src/components/Button.tsx").await;
+    assert_eq!(status, StatusCode::OK, "component served: {js}");
+    assert!(
+        js.contains("/@dep/clsx/dist/clsx.mjs"),
+        "resolvable bare import rewritten to a /@dep route: {js}"
+    );
+    assert!(
+        !js.contains("\"clsx\"") && !js.contains("'clsx'"),
+        "the bare clsx specifier no longer appears verbatim: {js}"
+    );
+    assert!(
+        js.contains("\"react\"") || js.contains("'react'"),
+        "un-installed bare import left for the importmap: {js}"
+    );
+
+    // The dep route serves the resolved dep file as JS. Its OWN relative import
+    // (`./chunk.mjs`) stays relative — the browser resolves it against this
+    // dep's `/@dep/clsx/dist/` URL, so it loads from the same dep route without
+    // needing a rewrite.
+    let (dep_status, dep_js) = get(&router, "/@dep/clsx/dist/clsx.mjs").await;
+    assert_eq!(dep_status, StatusCode::OK, "dep served: {dep_js}");
+    assert!(dep_js.contains("function clsx"), "dep body present: {dep_js}");
+    assert!(
+        dep_js.contains("./chunk.mjs"),
+        "dep's relative import stays relative (resolves under /@dep/): {dep_js}"
+    );
+
+    // That sibling chunk — addressed relative to the dep route — also serves.
+    let (chunk_status, chunk_js) = get(&router, "/@dep/clsx/dist/chunk.mjs").await;
+    assert_eq!(chunk_status, StatusCode::OK, "dep chunk served: {chunk_js}");
+    assert!(chunk_js.contains("function join"), "chunk body present");
+
+    // An unknown dep path is a 404 (not a panic / 500).
+    let (missing, _) = get(&router, "/@dep/clsx/dist/nope.mjs").await;
+    assert_eq!(missing, StatusCode::NOT_FOUND);
+}
 // HANDWRITE-END
