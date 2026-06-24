@@ -66,3 +66,10 @@ flowchart TD
     pack_only -->|publish| put[PUT base64 tarball, Bearer auth]
     put --> done([published to registry])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (id jet-publish-lib-flow) is complete and deterministic: optional build_library, read+transform package.json, validate+auto-fill main/module/exports/types (terminal val_err on missing), require identity, resolve registry via .npmrc scope+auth, pack, then branch pack-only (.tgz) vs publish (PUT base64 Bearer). All nodes reachable; decisions (build_q, val_ok, pack_only) carry labeled branches; terminals (val_err, write_tgz, done) are real ends. Private-registry routing reuses the hardened npmrc path; scope correct (build is A1/A2).
