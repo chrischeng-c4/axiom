@@ -4140,6 +4140,25 @@ fn slice_as_tuple(v: MbValue) -> Option<MbValue> {
     None
 }
 
+fn bound_method_parts(v: MbValue) -> Option<(MbValue, MbValue)> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if class_name == "method" {
+                let guard = fields.read().unwrap();
+                let func = guard.get("__func__").copied().unwrap_or_else(MbValue::none);
+                let recv = guard.get("__self__").copied().unwrap_or_else(MbValue::none);
+                return Some((func, recv));
+            }
+        }
+    }
+    None
+}
+
 /// Deep structural equality for MbValues.
 fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     // UserList / UserDict / UserString compare by their backing payload, so
@@ -4201,6 +4220,13 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     // Fast path: identical bits (safe for non-float types)
     if a.to_bits() == b.to_bits() {
         return true;
+    }
+    match (bound_method_parts(a), bound_method_parts(b)) {
+        (Some((af, aself)), Some((bf, bself))) => {
+            return af.to_bits() == bf.to_bits() && aself.to_bits() == bself.to_bits();
+        }
+        (Some(_), None) | (None, Some(_)) => return false,
+        (None, None) => {}
     }
     // Bool/int cross-comparison: Python `True == 1` and `False == 0` (#827)
     if a.is_bool() && b.is_int() {
@@ -7960,6 +7986,17 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     drop(g);
                     let rest = MbValue::from_ptr(MbObject::new_list(items));
                     return super::class::mb_call_method(recv, mname, rest);
+                }
+                if class_name == "method" {
+                    let g = fields.read().unwrap();
+                    let func_v = g.get("__func__").copied().unwrap_or_else(MbValue::none);
+                    let self_v = g.get("__self__").copied().unwrap_or_else(MbValue::none);
+                    drop(g);
+                    let mut all_args = Vec::with_capacity(items.len() + 1);
+                    all_args.push(self_v);
+                    all_args.extend(items);
+                    let args_list = MbValue::from_ptr(MbObject::new_list(all_args));
+                    return mb_call_spread(func_v, args_list);
                 }
                 if class_name == "__unbound_method__" {
                     let guard = fields.read().unwrap();
