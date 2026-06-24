@@ -108,3 +108,11 @@ requirementDiagram
     }
     test_stale_version_dropped - verifies -> R1
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Correct contract: stale check (version present AND stored >= version) drops the write before drop_eid+apply_value; otherwise apply and, when versioned, store the max version per (id, field). Absent version = arrival order.
+- [unit-test] R1–R3 cover stale-drop, newer-wins, and the unversioned arrival-order regression, each bound to a concrete test.
