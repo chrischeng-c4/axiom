@@ -1211,6 +1211,24 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_dict_keys_view",
+            dict_ops::mb_dict_keys_view as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_dict_values_view",
+            dict_ops::mb_dict_values_view as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_dict_items_view",
+            dict_ops::mb_dict_items_view as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_dict_update",
             dict_ops::mb_dict_update as fn(super::MbValue, super::MbValue),
             [I64, I64],
