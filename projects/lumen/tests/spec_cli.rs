@@ -239,4 +239,47 @@ fn llm_recipes_render_every_cookbook_shape_without_drift() {
         "recipes include the hybrid recipe"
     );
 }
+
+/// #200: the emitted OpenAPI must be self-complete (every `$ref` resolves to a
+/// defined component schema) and advertise the real serving port 7373.
+/// @spec projects/lumen/tech-design/interfaces/rest/lumen-openapi-define-4-dangling-ref-schemas-fix-servers-port-808.md
+#[test]
+fn openapi_is_self_complete_and_uses_port_7373() {
+    let v: Value = serde_json::from_str(&openapi_json()).expect("openapi is valid JSON");
+
+    let defined: std::collections::BTreeSet<String> = v["components"]["schemas"]
+        .as_object()
+        .expect("components.schemas object")
+        .keys()
+        .cloned()
+        .collect();
+
+    // Every `#/components/schemas/<Name>` reference must resolve to a definition.
+    let text = v.to_string();
+    let needle = "#/components/schemas/";
+    let mut missing = std::collections::BTreeSet::new();
+    let mut rest = text.as_str();
+    while let Some(i) = rest.find(needle) {
+        rest = &rest[i + needle.len()..];
+        let end = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        if !defined.contains(&rest[..end]) {
+            missing.insert(rest[..end].to_string());
+        }
+    }
+    assert!(missing.is_empty(), "dangling $refs in OpenAPI: {missing:?}");
+
+    let servers: Vec<String> = v["servers"]
+        .as_array()
+        .expect("servers array")
+        .iter()
+        .filter_map(|s| s["url"].as_str().map(str::to_string))
+        .collect();
+    assert!(!servers.is_empty(), "servers block present");
+    assert!(
+        servers.iter().all(|u| u.contains(":7373")),
+        "servers must use the real port :7373, got {servers:?}"
+    );
+}
 // CODEGEN-END
