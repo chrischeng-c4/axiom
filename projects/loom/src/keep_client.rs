@@ -26,16 +26,20 @@ impl KeepHttp {
 #[async_trait]
 impl KeepStore for KeepHttp {
     async fn get_input(&self, id: &str) -> anyhow::Result<Option<Vec<u8>>> {
-        let resp = self
-            .client
-            .get(format!("{}/v1/inputs/{}", self.base, id))
-            .send()
-            .await?;
-        if resp.status().as_u16() == 404 {
-            return Ok(None);
+        // A claim-check ref resolves whether it names a producer-supplied input
+        // or an upstream node's result: try /v1/inputs, then fall back to
+        // /v1/results. This is what makes inter-node data flow work (a downstream
+        // node's input_ref is an upstream node's result_ref).
+        for ns in ["inputs", "results"] {
+            let resp =
+                self.client.get(format!("{}/v1/{}/{}", self.base, ns, id)).send().await?;
+            if resp.status().as_u16() == 404 {
+                continue;
+            }
+            anyhow::ensure!(resp.status().is_success(), "keep get {ns}: {}", resp.status());
+            return Ok(Some(resp.bytes().await?.to_vec()));
         }
-        anyhow::ensure!(resp.status().is_success(), "keep get_input: {}", resp.status());
-        Ok(Some(resp.bytes().await?.to_vec()))
+        Ok(None)
     }
 
     async fn put_input(&self, id: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
