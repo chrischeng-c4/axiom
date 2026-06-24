@@ -50,6 +50,14 @@ pub struct JetConfig {
     #[serde(default)]
     pub build: JetBuildConfig,
 
+    /// Library-build settings (`jet build --lib`). Optional because most
+    /// projects ship an app, not a publishable library; absent → app-mode
+    /// build. Surfaced here so `[lib]` is a recognized top-level section
+    /// under `deny_unknown_fields`.
+    /// @issue #170
+    #[serde(default)]
+    pub lib: Option<LibConfig>,
+
     /// Module resolution settings.
     ///
     /// Controls which `exports` conditions are tried when resolving package
@@ -162,6 +170,39 @@ pub struct JetBuildConfig {
     pub out_dir: Option<String>,
 }
 
+/// `[lib]` section of `jet.toml` — `jet build --lib` settings.
+///
+/// Every field is optional so `[lib]` can be present (opting the project into
+/// library-build mode) with all behaviour defaulted. Entries default to the
+/// `package.json` `exports`/`module`/`main` discovery; formats default to
+/// `["esm"]`.
+/// @issue #170
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LibConfig {
+    /// Explicit entry source paths. When `None`, entries are discovered from
+    /// `package.json` `exports` (falling back to `module`/`main`).
+    pub entry: Option<Vec<String>>,
+
+    /// Output formats to emit, e.g. `["esm", "cjs"]`. When `None`, defaults
+    /// to `["esm"]`.
+    pub formats: Option<Vec<String>>,
+
+    /// Force-externalize all bare package specifiers. Library builds always
+    /// externalize `dependencies`/`peerDependencies`; this widens that to
+    /// every bare import. Default `true` for library mode.
+    pub externalize_all: Option<bool>,
+
+    /// Output directory (relative to project root). When `None`, defaults to
+    /// the `[build]` `out_dir`, then `dist`.
+    pub out_dir: Option<String>,
+
+    /// Preserve the internal module structure (one output per source module)
+    /// instead of bundling each entry. Default `false`; currently a deferred
+    /// follow-up in the bundler.
+    pub preserve_modules: Option<bool>,
+}
+
 /// Single task definition within the pipeline.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -211,7 +252,7 @@ fn default_true() -> bool {
 /// the did-you-mean suggestion when a typo lands at section level.
 /// Keep in lockstep with the struct fields above.
 const JET_TOP_LEVEL_KEYS: &[&str] = &[
-    "pipeline", "dev", "alias", "build", "resolve", "test", "wasm",
+    "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib",
 ];
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema
@@ -329,7 +370,7 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
         for expected in [
-            "pipeline", "dev", "alias", "build", "resolve", "test", "wasm",
+            "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib",
         ] {
             assert!(
                 props.iter().any(|p| p == expected),

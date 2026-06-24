@@ -72,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
         externals: HashSet::new(),
         externalize_all_packages: false,
         defines: std::collections::HashMap::new(),
+        ..Default::default()
     };
 
     let bundler = jet::bundler::Bundler::new(bundle_options)?;
