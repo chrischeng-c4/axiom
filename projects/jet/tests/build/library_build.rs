@@ -587,10 +587,12 @@ fn cjs_code(result: &jet::bundler::LibBuildResult) -> String {
         .clone()
 }
 
-/// `export { Foo as Bar } from "./foo"` (renamed, relative) must emit CJS that
-/// binds `exports.Bar` to foo's `Foo` via `require("./foo.js").Foo`.
+/// `export { Foo as Bar } from "./foo"` (renamed, RELATIVE) is now INLINED in
+/// single-file mode: `./foo`'s body lands in the bundle (private) and the
+/// public `Bar` is bound to foo's `Foo` locally. The CJS lowering exposes
+/// `exports.Bar = Foo` with NO dangling `require("./foo.js")`.
 #[test]
-fn lib_cjs_renamed_reexport_from_relative() {
+fn lib_cjs_renamed_reexport_from_relative_inlines() {
     let dir = tempdir().unwrap();
     let root = dir.path();
 
@@ -618,11 +620,19 @@ fn lib_cjs_renamed_reexport_from_relative() {
     let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
     let cjs = cjs_code(&result);
 
-    // The renamed re-export resolves the public `Bar` to foo's `Foo`, and the
-    // relative specifier carries the emitted `.js` extension.
+    // The target was inlined: foo's body is present and `Bar` binds the local
+    // `Foo` — no dangling relative require.
     assert!(
-        cjs.contains("exports.Bar = require(\"./foo.js\").Foo;"),
-        "renamed relative re-export → exports.Bar = require(\"./foo.js\").Foo, got:\n{cjs}"
+        cjs.contains("function Foo"),
+        "inlined foo body must be present, got:\n{cjs}"
+    );
+    assert!(
+        cjs.contains("exports.Bar = Foo;"),
+        "renamed relative re-export → exports.Bar = Foo (inlined), got:\n{cjs}"
+    );
+    assert!(
+        !cjs.contains("require(\"./foo"),
+        "inlined relative re-export must not leave a dangling require, got:\n{cjs}"
     );
     // The original ESM-only `export … from` shape must not survive into CJS.
     assert!(
@@ -631,10 +641,11 @@ fn lib_cjs_renamed_reexport_from_relative() {
     );
 }
 
-/// `export * from "./util"` must emit CJS that re-exports every named binding of
-/// the relative module (except `default`).
+/// `export * from "./util"` (RELATIVE) is now INLINED in single-file mode:
+/// util's body lands in the bundle keeping its `export` keywords, so each
+/// export lowers to `exports.<name>` with NO dangling `require("./util.js")`.
 #[test]
-fn lib_cjs_star_reexport_from_relative() {
+fn lib_cjs_star_reexport_from_relative_inlines() {
     let dir = tempdir().unwrap();
     let root = dir.path();
 
@@ -661,15 +672,19 @@ fn lib_cjs_star_reexport_from_relative() {
     let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
     let cjs = cjs_code(&result);
 
-    // Star re-export copies every key (except `default`) of the required module.
+    // util was inlined: its bodies + per-export `exports.<name>` are present.
     assert!(
-        cjs.contains("Object.keys(require(\"./util.js\"))"),
-        "star re-export enumerates the required module's keys, got:\n{cjs}"
+        cjs.contains("function alpha") && cjs.contains("function beta"),
+        "inlined util bodies must be present, got:\n{cjs}"
     );
     assert!(
-        cjs.contains("if (k !== \"default\")")
-            && cjs.contains("exports[k] = require(\"./util.js\")[k]"),
-        "star re-export assigns each non-default key onto exports, got:\n{cjs}"
+        cjs.contains("exports.alpha = alpha;") && cjs.contains("exports.beta = beta;"),
+        "each star-re-exported binding surfaces via exports.*, got:\n{cjs}"
+    );
+    // No dangling relative require — the module was inlined, not referenced.
+    assert!(
+        !cjs.contains("require(\"./util"),
+        "inlined star re-export must not leave a dangling require, got:\n{cjs}"
     );
 }
 
@@ -744,6 +759,236 @@ fn lib_cjs_local_renamed_export() {
     assert!(
         cjs.contains("function localA"),
         "the renamed export's source binding survives, got:\n{cjs}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// (h) Barrel re-export inlining (single-file mode)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A `src/index.ts` barrel of `export * from './lib/a'` + `export { Foo } from
+/// './lib/b'` (RELATIVE specifiers) must INLINE the target modules into the
+/// single ESM output — the bundle is self-contained, with no dangling
+/// `from "./lib/a.js"` sibling reference.
+#[test]
+fn lib_barrel_reexport_inlines_relative_targets() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "barrel-lib",
+            "version": "1.0.0",
+            "module": "./src/index.js"
+        }"#,
+    );
+    // `a` is star-re-exported: all of its named exports become public.
+    write_file(
+        root,
+        "src/lib/a.js",
+        "export function alpha(x) { return x + 1; }\nexport const A_CONST = 7;\n",
+    );
+    // `b` is named-re-exported: only `Foo` is published; `Hidden` stays private.
+    write_file(
+        root,
+        "src/lib/b.js",
+        "export function Foo() { return \"foo\"; }\nexport function Hidden() { return \"hidden\"; }\n",
+    );
+    write_file(
+        root,
+        "src/index.js",
+        "export * from './lib/a';\nexport { Foo } from './lib/b';\n",
+    );
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm]);
+    assert_eq!(result.entries.len(), 1, "single entry → single ESM file");
+    let code = &result.entries[0].code;
+
+    // a.js and b.js code is INLINED (function bodies present).
+    assert!(
+        code.contains("function alpha"),
+        "star-re-exported module a's body must be inlined, got:\n{code}"
+    );
+    assert!(
+        code.contains("A_CONST"),
+        "star-re-exported const must be inlined, got:\n{code}"
+    );
+    assert!(
+        code.contains("function Foo"),
+        "named-re-exported Foo's body must be inlined, got:\n{code}"
+    );
+    // `Hidden` body is inlined too (it lives in the same module) but stays
+    // PRIVATE — only `Foo` is re-exported from the named clause.
+    assert!(
+        code.contains("function Hidden"),
+        "b's other declaration is inlined (private), got:\n{code}"
+    );
+
+    // NO dangling sibling reference to the inlined modules.
+    assert!(
+        !code.contains("from \"./lib/a.js\"") && !code.contains("from './lib/a"),
+        "no dangling re-export of ./lib/a may survive, got:\n{code}"
+    );
+    assert!(
+        !code.contains("from \"./lib/b.js\"") && !code.contains("from './lib/b"),
+        "no dangling re-export of ./lib/b may survive, got:\n{code}"
+    );
+
+    // The exports are surfaced: star keeps a's own `export` keywords, and the
+    // named clause re-exports Foo (but NOT Hidden).
+    assert!(
+        code.contains("export function alpha") || code.contains("export { alpha"),
+        "star re-export keeps a's exports public, got:\n{code}"
+    );
+    assert!(
+        code.contains("export { Foo }") || code.contains("export {Foo}"),
+        "named clause re-exports Foo, got:\n{code}"
+    );
+    assert!(
+        !code.contains("export function Hidden") && !code.contains("export { Hidden"),
+        "Hidden must NOT be re-exported (named clause only published Foo), got:\n{code}"
+    );
+}
+
+/// Transitive barrel: the entry re-exports `./lib/a`, which itself re-exports
+/// `./lib/c`. The chain is followed recursively and fully inlined — `c`'s code
+/// lands in the single output with no `./lib/c` sibling reference.
+#[test]
+fn lib_barrel_reexport_is_transitive() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "transitive-barrel",
+            "version": "1.0.0",
+            "module": "./src/index.js"
+        }"#,
+    );
+    // c is the deepest module.
+    write_file(
+        root,
+        "src/lib/c.js",
+        "export function gamma(n) { return n * 3; }\n",
+    );
+    // a re-exports c (and adds its own export).
+    write_file(
+        root,
+        "src/lib/a.js",
+        "export * from './c';\nexport function alpha() { return 1; }\n",
+    );
+    // entry re-exports a.
+    write_file(root, "src/index.js", "export * from './lib/a';\n");
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm]);
+    let code = &result.entries[0].code;
+
+    assert!(
+        code.contains("function gamma"),
+        "transitively re-exported c's body must be inlined, got:\n{code}"
+    );
+    assert!(
+        code.contains("function alpha"),
+        "intermediate a's body must be inlined, got:\n{code}"
+    );
+    assert!(
+        !code.contains("from \"./c") && !code.contains("from './c"),
+        "no dangling re-export of ./c may survive, got:\n{code}"
+    );
+    assert!(
+        !code.contains("from \"./lib/a") && !code.contains("from './lib/a"),
+        "no dangling re-export of ./lib/a may survive, got:\n{code}"
+    );
+}
+
+/// A barrel mixing internal (inlined) and external (bare) re-exports: the
+/// relative `./lib/a` is inlined, while `export { x } from 'react'` stays a
+/// bare external re-export.
+#[test]
+fn lib_barrel_keeps_external_reexport_bare() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "mixed-barrel",
+            "version": "1.0.0",
+            "module": "./src/index.js",
+            "peerDependencies": { "react": "^18.0.0" }
+        }"#,
+    );
+    write_file(
+        root,
+        "src/lib/a.js",
+        "export function alpha() { return 1; }\n",
+    );
+    write_file(
+        root,
+        "src/index.js",
+        "export * from './lib/a';\nexport { useState } from 'react';\n",
+    );
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm]);
+    let code = &result.entries[0].code;
+
+    // Relative target inlined.
+    assert!(
+        code.contains("function alpha"),
+        "relative ./lib/a must be inlined, got:\n{code}"
+    );
+    assert!(
+        !code.contains("./lib/a"),
+        "no dangling relative re-export, got:\n{code}"
+    );
+    // External re-export stays a bare `from "react"` re-export.
+    assert!(
+        code.contains("from \"react\"") || code.contains("from 'react'"),
+        "external react re-export stays bare, got:\n{code}"
+    );
+}
+
+/// CJS no-regression for inlined barrels: a `export * from './lib/a'` barrel,
+/// once inlined into ESM, lowers to CJS that exposes a's symbol via `exports.*`
+/// (NOT via a dangling `require("./lib/a.js")`).
+#[test]
+fn lib_barrel_inlined_cjs_exposes_symbol_without_dangling_require() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "barrel-cjs-lib",
+            "version": "1.0.0",
+            "module": "./src/index.js"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/lib/a.js",
+        "export function alpha() { return 1; }\n",
+    );
+    write_file(root, "src/index.js", "export * from './lib/a';\n");
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let cjs = cjs_code(&result);
+
+    // The inlined ESM `export function alpha` lowers to a CJS `exports.alpha`.
+    assert!(
+        cjs.contains("exports.alpha = alpha;"),
+        "inlined barrel export must surface as exports.alpha, got:\n{cjs}"
+    );
+    // No dangling relative require survives (the module was inlined, not kept).
+    assert!(
+        !cjs.contains("require(\"./lib/a"),
+        "inlined barrel must not leave a dangling require(\"./lib/a.js\"), got:\n{cjs}"
     );
 }
 

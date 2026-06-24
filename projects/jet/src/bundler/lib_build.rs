@@ -928,6 +928,7 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
         &mut external_imports,
         &mut seen_external,
         &mut inlined_files,
+        false,
     )?;
 
     let mut out = String::new();
@@ -950,12 +951,22 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
 /// `external_imports`; internal relative imports/re-exports are replaced by
 /// the inlined body of their target module. Every other statement is kept
 /// verbatim.
+///
+/// `make_private` strips this module's (and every module it transitively
+/// inlines) top-level `export `/`export default ` keywords so its bindings
+/// stay private to the bundle. It is set when a parent inlines the module to
+/// satisfy a *named* re-export (`export { a } from "./m"`): only the named
+/// bindings should become public, so the target's own `export` keywords are
+/// dropped and the parent re-exports the chosen names explicitly. A `export *
+/// from "./m"` inlines with `make_private = false` so every export survives.
+#[allow(clippy::too_many_arguments)]
 fn inline_module(
     path: &Path,
     externals: &HashSet<String>,
     external_imports: &mut Vec<String>,
     seen_external: &mut HashSet<String>,
     inlined_files: &mut HashSet<PathBuf>,
+    make_private: bool,
 ) -> Result<String> {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !inlined_files.insert(canonical.clone()) {
@@ -1017,18 +1028,64 @@ fn inline_module(
             // by the hoisted statement above; an export re-export is also
             // satisfied by the hoisted copy, so nothing is spliced into `out`.
         } else if kind == "export_statement" {
-            // Internal relative *re-export* (`export … from "./m"`): keep it as
-            // a sibling reference rather than inlining the target body. The
-            // specifier is normalised to the emitted `.js` sibling (matching
-            // the preserve-modules relative convention) so the CJS pass can
-            // turn it into `exports.b = require("./m.js").a`. This preserves
-            // renamed aliases (`a as b`) and `export *` semantics that inlining
-            // would otherwise drop.
-            let rewritten = rewrite_export_from_specifier(stmt_text, &spec);
-            out.push_str(&rewritten);
+            // Internal relative *re-export* (`export … from "./m"`): in
+            // single-file bundle mode we FOLLOW and INLINE the target module
+            // so the emitted entry is self-contained — there is no emitted
+            // `./m.js` sibling to reference (preserve_modules mode handles the
+            // per-file case separately and is not routed through here).
+            //
+            //   `export * from "./m"`        → inline `./m` keeping its own
+            //       `export` keywords; every named export of `./m` is hoisted
+            //       and so re-exported from the bundle, matching `export *`.
+            //   `export { a, b as c } from "./m"` → inline `./m` with its top-
+            //       level `export` keywords stripped (its bindings become
+            //       private to the bundle), then emit a local `export { a, b as
+            //       c };` referencing the now-inlined bindings.
+            //
+            // Recursion + the shared `inlined_files` visited-set make this
+            // transitive (a re-export of a re-export is followed) and cycle-
+            // safe (a module is inlined at most once).
+            if let Some(target) = resolve_relative(path, &spec) {
+                if is_star_reexport(stmt_text) {
+                    // `export * from "./m"` — inline keeping export keywords so
+                    // the target's exports become the bundle's exports.
+                    let inlined = inline_module(
+                        &target,
+                        externals,
+                        external_imports,
+                        seen_external,
+                        inlined_files,
+                        false,
+                    )?;
+                    out.push_str(&inlined);
+                } else {
+                    // `export { … } from "./m"` — inline the target privately
+                    // (export keywords stripped) then re-export the named
+                    // bindings under their public names.
+                    let inlined = inline_module(
+                        &target,
+                        externals,
+                        external_imports,
+                        seen_external,
+                        inlined_files,
+                        true,
+                    )?;
+                    out.push_str(&inlined);
+                    if let Some(clause) = export_named_clause(stmt_text) {
+                        out.push_str(&format!("export {{{clause}}};\n"));
+                    }
+                }
+            } else {
+                // Unresolved relative re-export: keep verbatim (with the `.js`
+                // sibling extension stamped on) rather than drop it.
+                let rewritten = rewrite_export_from_specifier(stmt_text, &spec);
+                out.push_str(&rewritten);
+            }
         } else {
             // Internal relative *import* — inline the target module body in
-            // place so the bundled entry stays self-contained.
+            // place so the bundled entry stays self-contained. The target's
+            // own `export` keywords are kept (verbatim inline), matching the
+            // pre-existing single-file behaviour.
             if let Some(target) = resolve_relative(path, &spec) {
                 let inlined = inline_module(
                     &target,
@@ -1036,6 +1093,7 @@ fn inline_module(
                     external_imports,
                     seen_external,
                     inlined_files,
+                    false,
                 )?;
                 out.push_str(&inlined);
             } else {
@@ -1047,7 +1105,78 @@ fn inline_module(
 
     // Trailing text after the last handled statement.
     out.push_str(&source[last_end..]);
+
+    // When this module was inlined to satisfy a *named* re-export, strip its
+    // (and every module it transitively inlined — all concatenated at this
+    // same top level) `export ` keywords so the bindings stay private; the
+    // parent re-exports the chosen names explicitly. Done once on the fully
+    // assembled body so nested inlines are covered in a single pass.
+    if make_private {
+        out = strip_top_level_exports(&out);
+    }
     Ok(out)
+}
+
+/// Strip top-level `export ` / `export default ` keywords from a concatenated
+/// module body, leaving the underlying declaration in place but private.
+///
+///   `export function f() {}`     → `function f() {}`
+///   `export const X = 1;`        → `const X = 1;`
+///   `export default foo;`        → `foo;`
+///   `export { a, b as c };`      → ``            (a bare named re-export of
+///                                                 already-inlined bindings is
+///                                                 dropped wholesale)
+///
+/// Operates per physical line on the top-level (un-indented) statements an
+/// inlined library module produces. Indented lines (function bodies etc.) are
+/// left untouched, so a nested `return export` substring is never mangled.
+fn strip_top_level_exports(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    for line in body.lines() {
+        // Only top-level (column-0) `export` statements form the module's
+        // public surface; indented `export`-looking text is inside a block.
+        let is_top_level = !line.starts_with(char::is_whitespace);
+        if is_top_level {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("export {") {
+                // Bare `export { … };` (no `from`) of now-inlined bindings:
+                // drop the whole statement — the binding itself was already
+                // emitted by the declaration line.
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("export default ") {
+                out.push_str(rest);
+                out.push('\n');
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("export ") {
+                out.push_str(rest);
+                out.push('\n');
+                continue;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// `true` when an `export … from "…"` statement is the `export * from "…"`
+/// (or `export * as ns from "…"`) star form, as opposed to a named
+/// `export { … } from "…"` clause.
+fn is_star_reexport(stmt: &str) -> bool {
+    let after = stmt.trim_start().trim_start_matches("export").trim_start();
+    after.starts_with('*')
+}
+
+/// Extract the `{ … }` clause body of an `export { a, b as c } from "…"`
+/// statement (without the surrounding braces), to be re-emitted as a local
+/// `export { … };` over the now-inlined bindings. Returns `None` when no
+/// braced clause is present.
+fn export_named_clause(stmt: &str) -> Option<String> {
+    let open = stmt.find('{')?;
+    let close = stmt[open..].find('}')? + open;
+    Some(stmt[open + 1..close].trim().to_string())
 }
 
 /// Extract the string specifier of an `import`/`export ... from` statement,
@@ -1430,6 +1559,46 @@ mod tests {
         let out = esm_to_cjs("export { a, b as c } from \"./m.js\";\n");
         assert!(out.contains("exports.a = require(\"./m.js\").a;"), "{out}");
         assert!(out.contains("exports.c = require(\"./m.js\").b;"), "{out}");
+    }
+
+    #[test]
+    fn is_star_reexport_distinguishes_star_from_named() {
+        assert!(is_star_reexport("export * from \"./m\";"));
+        assert!(is_star_reexport("export * as ns from \"./m\";"));
+        assert!(!is_star_reexport("export { a, b } from \"./m\";"));
+        assert!(!is_star_reexport("export { Foo as Bar } from './m';"));
+    }
+
+    #[test]
+    fn export_named_clause_extracts_braced_clause() {
+        assert_eq!(
+            export_named_clause("export { a, b as c } from \"./m\";").as_deref(),
+            Some("a, b as c")
+        );
+        assert_eq!(
+            export_named_clause("export { Foo } from './m';").as_deref(),
+            Some("Foo")
+        );
+        // No braced clause (star form) → None.
+        assert_eq!(export_named_clause("export * from \"./m\";"), None);
+    }
+
+    #[test]
+    fn strip_top_level_exports_privatises_declarations() {
+        let body = "export function f() { return 1; }\n\
+                    export const X = 2;\n\
+                    export default foo;\n\
+                    export { a, b as c };\n\
+                    function inner() {\n  export;\n}\n";
+        let out = strip_top_level_exports(body);
+        assert!(out.contains("function f() { return 1; }"), "{out}");
+        assert!(!out.contains("export function f"), "{out}");
+        assert!(out.contains("const X = 2;"), "{out}");
+        assert!(out.contains("foo;"), "{out}");
+        // The bare named-export clause is dropped wholesale.
+        assert!(!out.contains("export {"), "{out}");
+        // Indented `export`-looking text inside a block is left untouched.
+        assert!(out.contains("  export;"), "indented export preserved: {out}");
     }
 
     #[test]
