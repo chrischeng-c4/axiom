@@ -2845,6 +2845,33 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
             match (af, bf) {
                 (Some(af), Some(bf)) => MbValue::from_float(af + bf),
                 _ => {
+                    // Str + non-str where the right operand is an inline value
+                    // (for example int/bool) does not enter the pointer-pair
+                    // concat block below, but CPython still gives the
+                    // sequence-specific TypeError instead of the generic
+                    // binary-operator message.
+                    if let Some(pa) = a.as_ptr() {
+                        unsafe {
+                            if matches!(&(*pa).data, ObjData::Str(_)) {
+                                let b_is_str = b.as_ptr().map_or(false, |p| {
+                                    matches!(&(*p).data, ObjData::Str(_))
+                                });
+                                let b_is_instance = b.as_ptr().map_or(false, |p| {
+                                    matches!(&(*p).data, ObjData::Instance { .. })
+                                });
+                                if !b_is_str && !b_is_instance {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                        MbValue::from_ptr(MbObject::new_str(format!(
+                                            "can only concatenate str (not \"{}\") to str",
+                                            add_operand_type_name(b)
+                                        ))),
+                                    );
+                                    return MbValue::none();
+                                }
+                            }
+                        }
+                    }
                     // List + List → concatenation
                     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
                         unsafe {
