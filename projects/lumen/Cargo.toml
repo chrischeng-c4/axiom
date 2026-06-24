@@ -37,6 +37,8 @@ futures.workspace = true
 # uses rustls (no openssl) when enabled.
 relay = { path = "../relay", optional = true }
 reqwest = { workspace = true, optional = true }
+# `lumen spec gen` — generate a typed client from lumen's own OpenAPI.
+cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 rayon = "1.10"
 # simdeez_f compiles anndists' SIMD distance kernels (aarch64 NEON `asimd`,
 # x86 AVX2/SSE2) for DistL2/DistDot. The cosine path routes through DistDot on
