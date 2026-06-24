@@ -149,3 +149,19 @@ requirementDiagram
       type: "rs/#[test]"
     }
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approve
+
+- [logic] llm::run dispatches topic -> per-topic emitter -> format branch; the outline sources its verb list from the Commands enum so it cannot drift from the actual CLI. Scoped, deterministic, no model/network call.
+- [unit-test] R1-R4 each map to exactly one test: outline lists registered verbs, every topic emits markdown, json wraps {topic, markdown} with md default, and emitters are pure/offline. Coverage matches the logic surface.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] llm::run dispatches topic -> per-topic emitter -> format branch; the outline sources its verb list from the Commands enum so it cannot drift from the actual CLI. Scoped, deterministic, no model/network call.
+- [unit-test] R1-R4 each map to exactly one test: outline lists registered verbs, every topic emits markdown, json wraps {topic, markdown} with md default, and emitters are pure/offline. Coverage matches the logic surface.
