@@ -48,7 +48,7 @@ use futures_util::{SinkExt, StreamExt};
 
 use super::controls::{resolve_controls, Control};
 use super::hmr::{self, StoriesHmrManager, STORIES_HMR_ROUTE};
-use super::prop_extractor::extract_props;
+use super::prop_extractor::extract_props_at;
 use super::{discover, manager, StoryEntry, StoryIndex};
 use crate::dev_server::module_graph::ModuleGraph;
 use crate::dev_server::watcher::FileWatcher;
@@ -214,10 +214,12 @@ fn controls_for_story(root: &Path, index: &StoryIndex, story: &StoryEntry) -> Ve
     let Some(component_name) = meta.component.as_deref() else {
         return Vec::new();
     };
-    let Some(component_source) = read_component_source(root, &story.file, component_name) else {
+    let Some((component_path, component_source)) =
+        read_component_source(root, &story.file, component_name)
+    else {
         return Vec::new();
     };
-    let props = extract_props(&component_source, component_name);
+    let props = extract_props_at(&component_source, component_name, Some(&component_path));
     resolve_controls(&props, &meta.arg_types, &story.args)
 }
 
@@ -226,12 +228,19 @@ fn controls_for_story(root: &Path, index: &StoryIndex, story: &StoryEntry) -> Ve
 ///
 /// Finds the story file's relative import that brings in `component_name`,
 /// resolves it against the story file's directory (trying `.tsx/.ts/.jsx/.js`
-/// and `index.*`), and returns the file's source. Returns `None` for bare
-/// (node_modules) imports or unresolvable paths.
+/// and `index.*`), and returns the resolved file path plus its source. Returns
+/// `None` for bare (node_modules) imports or unresolvable paths.
 ///
-/// TODO(#175 follow-up): cross-package / aliased component imports and barrel
+/// The path is returned (not just the source) so prop extraction can follow the
+/// component file's own relative imports for cross-file prop types (#198).
+///
+/// TODO(#198 follow-up): cross-package / aliased component imports and barrel
 /// re-exports (`export { Button } from './Button'`) are not followed.
-fn read_component_source(root: &Path, story_file: &Path, component_name: &str) -> Option<String> {
+fn read_component_source(
+    root: &Path,
+    story_file: &Path,
+    component_name: &str,
+) -> Option<(PathBuf, String)> {
     let story_source = std::fs::read_to_string(story_file).ok()?;
     let specifier = component_import_specifier(&story_source, component_name)?;
     // Only relative imports are resolvable to a local file here.
@@ -240,7 +249,8 @@ fn read_component_source(root: &Path, story_file: &Path, component_name: &str) -
     }
     let base_dir = story_file.parent().unwrap_or(root);
     let resolved = resolve_module_file(base_dir, &specifier)?;
-    std::fs::read_to_string(resolved).ok()
+    let source = std::fs::read_to_string(&resolved).ok()?;
+    Some((resolved, source))
 }
 
 /// Find the import specifier (`./Button`) that imports `component_name` in the
