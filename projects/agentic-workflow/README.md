@@ -152,6 +152,7 @@ Gate Inventory:
 | Core concept model and invariants | change | #3894 | implemented | verified | smoke | projects/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md |
 | WorkItem artifact admission gate | change | #3895 | implemented | verified | smoke | projects/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md |
 | Client boundary model | change | #3896 | implemented | verified | smoke | projects/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md |
+| Agent orientation surface | change | #178 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib llm_outline_lists_registered_verbs`; projects/agentic-workflow/tech-design/logic/aw-llm-offline-agent-orientation-command.md |
 
 ### Workflow Root Runner
 
