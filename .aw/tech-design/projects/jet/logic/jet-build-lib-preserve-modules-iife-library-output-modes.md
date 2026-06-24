@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-build-lib-preserve-modules-iife-library-output-modes-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -46,6 +46,45 @@ flowchart TD
     preserve --> emit
     iife --> emit
     emit --> done([LibBuildResult])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/bundler/lib_build.rs"
+    action: modify
+    section: logic
+    description: |
+      Implement preserve_modules (emit one output file per source module mirroring
+      the source tree, externals externalized, entry re-exports) and IIFE library
+      output (global-var wrapper, configurable global name), replacing the typed
+      TODO bails. Return per-output entries in LibBuildResult.
+    impl_mode: hand-written
+  - path: "projects/jet/src/bundler/types.rs"
+    action: modify
+    section: logic
+    description: |
+      Support OutputFormat::Iife in library emission + a library_global_name
+      option; preserve_modules already on BundleOptions.
+    impl_mode: hand-written
+  - path: "projects/jet/src/cli.rs"
+    action: modify
+    section: cli
+    description: |
+      Accept iife in --format and a --global-name flag (and [lib] config) for
+      jet build --lib; thread preserve_modules through.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/library_build.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Tests: preserve_modules emits one file per module (consumer imports a deep
+      module); --format iife emits a loadable global IIFE; single-file default
+      and app-mode unchanged.
+    impl_mode: hand-written
 ```
 
 # Reviews
