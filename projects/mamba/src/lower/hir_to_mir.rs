@@ -30,6 +30,18 @@ type MethodEntry = (
     Vec<&'static str>,
 );
 
+type PendingClassRegistration = (
+    String,
+    SymbolId,
+    Vec<String>,
+    Option<NamedTupleBaseSpec>,
+    Vec<MethodEntry>,
+    Vec<String>,
+    Option<String>,
+    Option<Vec<String>>,
+    Vec<(String, HirExpr)>,
+);
+
 fn method_decorator_marker_attr_name(name: &str) -> Option<&'static str> {
     match name {
         "override" => Some("__override__"),
@@ -872,6 +884,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
         };
         lowerer.pending_classes.push((
             class_name.clone(),
+            cls.name,
             all_base_names,
             cls.namedtuple_base.clone(),
             methods,
@@ -1083,17 +1096,8 @@ struct HirToMir<'a> {
     /// VReg of the caught exception inside an except handler body (for implicit chaining).
     active_except_vreg: Option<VReg>,
     /// Classes to register at the start of top-level code.
-    /// (class_name, all_base_names, namedtuple_base, methods, match_args, metaclass, slots, class_kwargs)
-    pending_classes: Vec<(
-        String,
-        Vec<String>,
-        Option<NamedTupleBaseSpec>,
-        Vec<MethodEntry>,
-        Vec<String>,
-        Option<String>,
-        Option<Vec<String>>,
-        Vec<(String, HirExpr)>,
-    )>,
+    /// (class_name, class_symbol_id, all_base_names, namedtuple_base, methods, match_args, metaclass, slots, class_kwargs)
+    pending_classes: Vec<PendingClassRegistration>,
     /// Class base expressions that must be evaluated at the class statement's
     /// textual runtime position, e.g. `class Derived(base):` inside a loop.
     pending_runtime_class_bases: Vec<(String, SymbolId, Vec<HirExpr>)>,
@@ -2130,287 +2134,10 @@ impl<'a> HirToMir<'a> {
             self.sym_to_vreg.insert(ann_sym, dict_vreg);
         }
 
-        // Emit class registrations at the start of top-level code
-        let pending = std::mem::take(&mut self.pending_classes);
-        for (
-            class_name,
-            all_base_names,
-            namedtuple_base,
-            methods,
-            match_args,
-            metaclass,
-            slots,
-            class_kwargs,
-        ) in &pending
-        {
-            let name_vreg = self.emit_str_const(class_name);
-            // Build bases list for multiple inheritance (P1 OOP conformance).
-            // For single base, pass the base name directly for backward compat.
-            // For multiple bases, build a list of base name strings.
-            let bases_list_vreg = if all_base_names.is_empty() {
-                self.emit_none()
-            } else {
-                let mut base_vregs = Vec::new();
-                for base in all_base_names {
-                    base_vregs.push(self.emit_str_const(base));
-                }
-                let list_vreg = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: list_vreg,
-                    elements: base_vregs,
-                    ty: self.tcx.any(),
-                });
-                list_vreg
-            };
-            // Build method_names list and method_values list. For methods
-            // decorated with @property/@classmethod/@staticmethod, wrap the
-            // raw function pointer in the corresponding descriptor object so
-            // mb_getattr dispatches through the descriptor protocol.
-            let any_ty = self.tcx.any();
-            let mut name_vregs = Vec::new();
-            let mut value_vregs = Vec::new();
-            for (method_name, method_sym, decor_kind, setter_sym, deleter_sym, marker_attrs) in methods {
-                let name_vreg = self.emit_str_const(method_name);
-                name_vregs.push(name_vreg);
-                let addr_vreg = self.fresh_vreg();
-                self.current_stmts.push(MirInst::LoadConst {
-                    dest: addr_vreg,
-                    value: MirConst::FuncRef(*method_sym),
-                    ty: self.tcx.int(),
-                });
-                for attr_name in marker_attrs {
-                    let attr_vreg = self.emit_str_const(attr_name);
-                    let true_vreg = self.fresh_vreg();
-                    self.current_stmts.push(MirInst::LoadConst {
-                        dest: true_vreg,
-                        value: MirConst::Bool(true),
-                        ty: self.tcx.bool(),
-                    });
-                    let true_boxed = self.box_operand(true_vreg, self.tcx.bool());
-                    self.current_stmts.push(MirInst::CallExtern {
-                        dest: None,
-                        name: "mb_setattr".to_string(),
-                        args: vec![addr_vreg, attr_vreg, true_boxed],
-                        ty: self.tcx.none(),
-                    });
-                }
-                let wrapped = match decor_kind {
-                    MethodDecorKind::None => addr_vreg,
-                    MethodDecorKind::Property => {
-                        let w = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(w),
-                            name: "mb_property_new".to_string(),
-                            args: vec![addr_vreg],
-                            ty: any_ty,
-                        });
-                        // Attach setter if present
-                        if let Some(ssym) = setter_sym {
-                            let setter_addr = self.fresh_vreg();
-                            self.current_stmts.push(MirInst::LoadConst {
-                                dest: setter_addr,
-                                value: MirConst::FuncRef(*ssym),
-                                ty: self.tcx.int(),
-                            });
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: None,
-                                name: "mb_property_setter".to_string(),
-                                args: vec![w, setter_addr],
-                                ty: any_ty,
-                            });
-                        }
-                        // Attach deleter if present
-                        if let Some(dsym) = deleter_sym {
-                            let del_addr = self.fresh_vreg();
-                            self.current_stmts.push(MirInst::LoadConst {
-                                dest: del_addr,
-                                value: MirConst::FuncRef(*dsym),
-                                ty: self.tcx.int(),
-                            });
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: None,
-                                name: "mb_property_deleter".to_string(),
-                                args: vec![w, del_addr],
-                                ty: any_ty,
-                            });
-                        }
-                        w
-                    }
-                    MethodDecorKind::ClassMethod => {
-                        let w = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(w),
-                            name: "mb_classmethod_new".to_string(),
-                            args: vec![addr_vreg],
-                            ty: any_ty,
-                        });
-                        w
-                    }
-                    MethodDecorKind::StaticMethod => {
-                        let w = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(w),
-                            name: "mb_staticmethod_new".to_string(),
-                            args: vec![addr_vreg],
-                            ty: any_ty,
-                        });
-                        w
-                    }
-                    MethodDecorKind::CachedProperty => {
-                        let name_str = self.emit_str_const(method_name);
-                        let w = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(w),
-                            name: "mb_cached_property_new".to_string(),
-                            args: vec![addr_vreg, name_str],
-                            ty: any_ty,
-                        });
-                        w
-                    }
-                };
-                value_vregs.push(wrapped);
-            }
-            let names_list = self.fresh_vreg();
-            self.current_stmts.push(MirInst::MakeList {
-                dest: names_list,
-                elements: name_vregs,
-                ty: self.tcx.any(),
-            });
-            let values_list = self.fresh_vreg();
-            self.current_stmts.push(MirInst::MakeList {
-                dest: values_list,
-                elements: value_vregs,
-                ty: self.tcx.any(),
-            });
-            // R10: Emit class keyword arguments BEFORE class registration
-            // so they are available in KWARGS_REGISTRY when __init_subclass__ is called.
-            if !class_kwargs.is_empty() {
-                let mut key_vregs = Vec::new();
-                let mut val_vregs_kw = Vec::new();
-                for (kwarg_name, kwarg_expr) in class_kwargs {
-                    key_vregs.push(self.emit_str_const(kwarg_name));
-                    let val_vreg = self.lower_expr(kwarg_expr);
-                    let boxed = self.box_operand(val_vreg, kwarg_expr.ty());
-                    val_vregs_kw.push(boxed);
-                }
-                let keys_list = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: keys_list,
-                    elements: key_vregs,
-                    ty: self.tcx.any(),
-                });
-                let vals_list_kw = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: vals_list_kw,
-                    elements: val_vregs_kw,
-                    ty: self.tcx.any(),
-                });
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_set_kwargs".to_string(),
-                    args: vec![name_vreg, keys_list, vals_list_kw],
-                    ty: self.tcx.none(),
-                });
-            }
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: None,
-                name: "mb_class_define_multi".to_string(),
-                args: vec![name_vreg, bases_list_vreg, names_list, values_list],
-                ty: self.tcx.none(),
-            });
-            if let Some(spec) = namedtuple_base {
-                let tuple_name_vreg = self.emit_str_const(&spec.tuple_name);
-                let mut field_vregs = Vec::new();
-                for field in &spec.fields {
-                    field_vregs.push(self.emit_str_const(field));
-                }
-                let fields_list = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: fields_list, elements: field_vregs, ty: self.tcx.any(),
-                });
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_set_namedtuple_base".to_string(),
-                    args: vec![name_vreg, tuple_name_vreg, fields_list],
-                    ty: self.tcx.none(),
-                });
-            }
-            // abc: register the names declared `@abc.abstractmethod` so the
-            // runtime can compute `__abstractmethods__` and reject instantiation
-            // of classes that still have un-overridden abstract methods.
-            let abs_names: Vec<String> = self
-                .pending_abstract_methods
-                .iter()
-                .find(|(cn, _)| cn == class_name)
-                .map(|(_, names)| names.clone())
-                .unwrap_or_default();
-            if !abs_names.is_empty() {
-                let mut abs_vregs = Vec::new();
-                for an in &abs_names {
-                    abs_vregs.push(self.emit_str_const(an));
-                }
-                let abs_list = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: abs_list,
-                    elements: abs_vregs,
-                    ty: self.tcx.any(),
-                });
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_set_abstractmethods".to_string(),
-                    args: vec![name_vreg, abs_list],
-                    ty: self.tcx.none(),
-                });
-            }
-            // P2-R2: Set metaclass if specified (e.g., class Foo(metaclass=Meta)).
-            if let Some(ref meta_name) = metaclass {
-                let meta_vreg = self.emit_str_const(meta_name);
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_set_metaclass".to_string(),
-                    args: vec![name_vreg, meta_vreg],
-                    ty: self.tcx.none(),
-                });
-            }
-            // Register __match_args__ for PEP 634 positional class patterns (#827)
-            if !match_args.is_empty() {
-                let mut arg_vregs = Vec::new();
-                for arg_name in match_args {
-                    arg_vregs.push(self.emit_str_const(arg_name));
-                }
-                let args_tuple = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeTuple {
-                    dest: args_tuple,
-                    elements: arg_vregs,
-                    ty: self.tcx.any(),
-                });
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_set_match_args".to_string(),
-                    args: vec![name_vreg, args_tuple],
-                    ty: self.tcx.none(),
-                });
-            }
-            // R14: Emit mb_register_slots if __slots__ declared in class body.
-            if let Some(ref slot_names) = slots {
-                let mut slot_vregs = Vec::new();
-                for slot_name in slot_names {
-                    slot_vregs.push(self.emit_str_const(slot_name));
-                }
-                let slots_list = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: slots_list,
-                    elements: slot_vregs,
-                    ty: self.tcx.any(),
-                });
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_register_slots".to_string(),
-                    args: vec![name_vreg, slots_list],
-                    ty: self.tcx.none(),
-                });
-            }
-        }
+        // Emit class registrations that do not need runtime class keyword
+        // evaluation. Classes with class kwargs are emitted at their
+        // ClassDefPlaceholder so preceding top-level bindings are visible.
+        self.emit_pending_class_registrations(None);
 
         // Prime CLASS_DOCS so `inspect.getdoc(Cls)` / `Cls.__doc__` see the
         // class-body docstring.
@@ -4167,6 +3894,7 @@ impl<'a> HirToMir<'a> {
                 self.lower_match(subject, cases);
             }
             HirStmt::ClassDefPlaceholder { name: cls_sym, .. } => {
+                self.emit_pending_class_registrations(Some(*cls_sym));
                 self.emit_runtime_class_bases_for(Some(*cls_sym));
                 // P2-R3: emit class-level attribute assignments at the class's
                 // textual position so initializer expressions resolve imports
@@ -4256,6 +3984,275 @@ impl<'a> HirToMir<'a> {
                     }
                 }
             }
+        }
+    }
+
+    fn emit_pending_class_registrations(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_classes.len() {
+            let should_emit = match cls_sym {
+                Some(sym) => self.pending_classes[i].1 == sym,
+                None => self.pending_classes[i].8.is_empty(),
+            };
+            if should_emit {
+                let registration = self.pending_classes.remove(i);
+                self.emit_class_registration(&registration);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn emit_class_registration(&mut self, registration: &PendingClassRegistration) {
+        let (
+            class_name,
+            _class_sym,
+            all_base_names,
+            namedtuple_base,
+            methods,
+            match_args,
+            metaclass,
+            slots,
+            class_kwargs,
+        ) = registration;
+        let name_vreg = self.emit_str_const(class_name);
+        // Build bases list for multiple inheritance (P1 OOP conformance).
+        // For single base, pass the base name directly for backward compat.
+        // For multiple bases, build a list of base name strings.
+        let bases_list_vreg = if all_base_names.is_empty() {
+            self.emit_none()
+        } else {
+            let mut base_vregs = Vec::new();
+            for base in all_base_names {
+                base_vregs.push(self.emit_str_const(base));
+            }
+            let list_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: list_vreg, elements: base_vregs, ty: self.tcx.any(),
+            });
+            list_vreg
+        };
+        // Build method_names list and method_values list. For methods
+        // decorated with @property/@classmethod/@staticmethod, wrap the
+        // raw function pointer in the corresponding descriptor object so
+        // mb_getattr dispatches through the descriptor protocol.
+        let any_ty = self.tcx.any();
+        let mut name_vregs = Vec::new();
+        let mut value_vregs = Vec::new();
+        for (method_name, method_sym, decor_kind, setter_sym, deleter_sym, marker_attrs) in methods {
+            let name_vreg = self.emit_str_const(method_name);
+            name_vregs.push(name_vreg);
+            let addr_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: addr_vreg,
+                value: MirConst::FuncRef(*method_sym),
+                ty: self.tcx.int(),
+            });
+            for attr_name in marker_attrs {
+                let attr_vreg = self.emit_str_const(attr_name);
+                let true_vreg = self.fresh_vreg();
+                self.current_stmts.push(MirInst::LoadConst {
+                    dest: true_vreg,
+                    value: MirConst::Bool(true),
+                    ty: self.tcx.bool(),
+                });
+                let true_boxed = self.box_operand(true_vreg, self.tcx.bool());
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_setattr".to_string(),
+                    args: vec![addr_vreg, attr_vreg, true_boxed],
+                    ty: self.tcx.none(),
+                });
+            }
+            let wrapped = match decor_kind {
+                MethodDecorKind::None => addr_vreg,
+                MethodDecorKind::Property => {
+                    let w = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(w), name: "mb_property_new".to_string(),
+                        args: vec![addr_vreg], ty: any_ty,
+                    });
+                    // Attach setter if present
+                    if let Some(ssym) = setter_sym {
+                        let setter_addr = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadConst {
+                            dest: setter_addr,
+                            value: MirConst::FuncRef(*ssym),
+                            ty: self.tcx.int(),
+                        });
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: None, name: "mb_property_setter".to_string(),
+                            args: vec![w, setter_addr], ty: any_ty,
+                        });
+                    }
+                    // Attach deleter if present
+                    if let Some(dsym) = deleter_sym {
+                        let del_addr = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadConst {
+                            dest: del_addr,
+                            value: MirConst::FuncRef(*dsym),
+                            ty: self.tcx.int(),
+                        });
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: None, name: "mb_property_deleter".to_string(),
+                            args: vec![w, del_addr], ty: any_ty,
+                        });
+                    }
+                    w
+                }
+                MethodDecorKind::ClassMethod => {
+                    let w = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(w), name: "mb_classmethod_new".to_string(),
+                        args: vec![addr_vreg], ty: any_ty,
+                    });
+                    w
+                }
+                MethodDecorKind::StaticMethod => {
+                    let w = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(w), name: "mb_staticmethod_new".to_string(),
+                        args: vec![addr_vreg], ty: any_ty,
+                    });
+                    w
+                }
+                MethodDecorKind::CachedProperty => {
+                    let name_str = self.emit_str_const(method_name);
+                    let w = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(w), name: "mb_cached_property_new".to_string(),
+                        args: vec![addr_vreg, name_str], ty: any_ty,
+                    });
+                    w
+                }
+            };
+            value_vregs.push(wrapped);
+        }
+        let names_list = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: names_list, elements: name_vregs, ty: self.tcx.any(),
+        });
+        let values_list = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: values_list, elements: value_vregs, ty: self.tcx.any(),
+        });
+        // R10: Emit class keyword arguments BEFORE class registration
+        // so they are available in KWARGS_REGISTRY when __init_subclass__ is called.
+        if !class_kwargs.is_empty() {
+            let mut key_vregs = Vec::new();
+            let mut val_vregs_kw = Vec::new();
+            for (kwarg_name, kwarg_expr) in class_kwargs {
+                key_vregs.push(self.emit_str_const(kwarg_name));
+                let val_vreg = self.lower_expr(kwarg_expr);
+                let boxed = self.box_operand(val_vreg, kwarg_expr.ty());
+                val_vregs_kw.push(boxed);
+            }
+            let keys_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: keys_list, elements: key_vregs, ty: self.tcx.any(),
+            });
+            let vals_list_kw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: vals_list_kw, elements: val_vregs_kw, ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_kwargs".to_string(),
+                args: vec![name_vreg, keys_list, vals_list_kw],
+                ty: self.tcx.none(),
+            });
+        }
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_class_define_multi".to_string(),
+            args: vec![name_vreg, bases_list_vreg, names_list, values_list],
+            ty: self.tcx.none(),
+        });
+        if let Some(spec) = namedtuple_base {
+            let tuple_name_vreg = self.emit_str_const(&spec.tuple_name);
+            let mut field_vregs = Vec::new();
+            for field in &spec.fields {
+                field_vregs.push(self.emit_str_const(field));
+            }
+            let fields_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: fields_list, elements: field_vregs, ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_namedtuple_base".to_string(),
+                args: vec![name_vreg, tuple_name_vreg, fields_list],
+                ty: self.tcx.none(),
+            });
+        }
+        // abc: register the names declared `@abc.abstractmethod` so the
+        // runtime can compute `__abstractmethods__` and reject instantiation
+        // of classes that still have un-overridden abstract methods.
+        let abs_names: Vec<String> = self
+            .pending_abstract_methods
+            .iter()
+            .find(|(cn, _)| cn == class_name)
+            .map(|(_, names)| names.clone())
+            .unwrap_or_default();
+        if !abs_names.is_empty() {
+            let mut abs_vregs = Vec::new();
+            for an in &abs_names {
+                abs_vregs.push(self.emit_str_const(an));
+            }
+            let abs_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: abs_list, elements: abs_vregs, ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_abstractmethods".to_string(),
+                args: vec![name_vreg, abs_list],
+                ty: self.tcx.none(),
+            });
+        }
+        // P2-R2: Set metaclass if specified (e.g., class Foo(metaclass=Meta)).
+        if let Some(ref meta_name) = metaclass {
+            let meta_vreg = self.emit_str_const(meta_name);
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_metaclass".to_string(),
+                args: vec![name_vreg, meta_vreg],
+                ty: self.tcx.none(),
+            });
+        }
+        // Register __match_args__ for PEP 634 positional class patterns (#827)
+        if !match_args.is_empty() {
+            let mut arg_vregs = Vec::new();
+            for arg_name in match_args {
+                arg_vregs.push(self.emit_str_const(arg_name));
+            }
+            let args_tuple = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeTuple {
+                dest: args_tuple, elements: arg_vregs, ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_match_args".to_string(),
+                args: vec![name_vreg, args_tuple],
+                ty: self.tcx.none(),
+            });
+        }
+        // R14: Emit mb_register_slots if __slots__ declared in class body.
+        if let Some(ref slot_names) = slots {
+            let mut slot_vregs = Vec::new();
+            for slot_name in slot_names {
+                slot_vregs.push(self.emit_str_const(slot_name));
+            }
+            let slots_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: slots_list, elements: slot_vregs, ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_register_slots".to_string(),
+                args: vec![name_vreg, slots_list],
+                ty: self.tcx.none(),
+            });
         }
     }
 
