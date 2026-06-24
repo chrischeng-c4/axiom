@@ -16,28 +16,33 @@
 //!    then **transform + emit** the story module and every local relative module
 //!    it transitively imports into `out_dir/modules/...js`, **rewriting** their
 //!    import URLs to the relative emitted paths,
-//! 5. the React runtime itself still loads from the esm.sh importmap baked into
-//!    every preview (same limit as B2 — bare specifiers beyond React are not
-//!    resolved locally).
+//! 5. **bare imports** (`import x from "clsx"`) that resolve to a real file in
+//!    the project's `node_modules` are resolved via the shared [`super::deps`]
+//!    helper, emitted under `out_dir/deps/<key>.js`, and the importer's
+//!    specifier is rewritten to a **relative** URL into that `deps/` tree —
+//!    recursively for the dep's own bare + relative imports. Bare specifiers
+//!    that do NOT resolve on disk (e.g. `react` with no local install) stay
+//!    as-authored and load from the esm.sh importmap baked into every preview.
 //!
 //! ## Layout (all relative, server-less)
 //! ```text
 //! out_dir/
 //!   index.html                         # manager shell (UrlMode::Static)
 //!   preview/<story_id>.html            # one isolated preview per story
-//!   modules/<rel-path-with-.js>        # transformed JS for every imported module
+//!   modules/<rel-path-with-.js>        # transformed JS for every project module
+//!   deps/<node_modules-rel-with-.js>   # transformed JS for every resolved dep
 //! ```
 //! A preview at `preview/<id>.html` imports its module as
 //! `../modules/<rel>.js`; inside a module, a relative import `./Button` is
-//! rewritten to `./Button.js` (extension normalized to the emitted `.js`), so
-//! the `modules/` tree is internally consistent and resolves on any static host.
+//! rewritten to `./Button.js` (extension normalized to the emitted `.js`), and a
+//! resolvable bare import `clsx` is rewritten to e.g.
+//! `../../../deps/clsx/dist/clsx.js`, so the emitted tree is internally
+//! consistent and resolves on any static host.
 //!
-//! ## Deferred (same boundary as B2)
-//! Bare specifiers other than React (arbitrary `node_modules` packages) are NOT
-//! resolved/emitted locally — the importmap covers React, anything else is left
-//! as-authored for the browser to fail on.
-//! TODO(#190 follow-up): reuse the dev server's `node_modules` resolution +
-//! prebundle path so non-React bare specifiers resolve into the static bundle.
+//! ## Deferred (#197)
+//! Advanced conditional-`exports` edge cases and CommonJS interop are out of
+//! scope — see [`super::deps`]. A dep authored as browser ESM is the
+//! expectation; bare specifiers with no local install ride the importmap.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -150,10 +155,39 @@ fn preview_module_import_url(module_root_url: &str) -> String {
     format!("../modules/{}", to_js_path(rel))
 }
 
+/// A unit of work in the transitive emit walk: a project module (under
+/// `modules/`) or a resolved `node_modules` dependency (under `deps/`, #197).
+#[derive(Clone)]
+enum EmitItem {
+    /// A project source module, identified by its root-relative URL
+    /// (`/src/components/Button.tsx`). Emitted at `modules/<rel-with-.js>`.
+    Module(String),
+    /// A resolved dep, identified by its on-disk file under `node_modules`.
+    /// Emitted at `deps/<node_modules-relative-with-.js>`.
+    Dep(PathBuf),
+}
+
+impl EmitItem {
+    /// The out_dir-relative POSIX path this item is emitted to (`.js`-normalized).
+    /// This is the stable identity used for dedup and for computing the relative
+    /// specifiers between any two emitted files.
+    fn emitted_path(&self, root: &Path) -> String {
+        match self {
+            EmitItem::Module(url) => {
+                format!("modules/{}", to_js_path(url.trim_start_matches('/')))
+            }
+            EmitItem::Dep(file) => {
+                let _ = root;
+                format!("deps/{}", to_js_path(&super::deps::dep_key(file)))
+            }
+        }
+    }
+}
+
 /// Emit the module at `module_url` and, transitively, every local relative
-/// module it imports — transforming each to JS and rewriting its relative
-/// imports to the emitted `.js` siblings. Best-effort per module: a failure is
-/// recorded as a diagnostic and the rest of the graph still emits.
+/// module **and** resolvable `node_modules` dep it imports — transforming each to
+/// JS and rewriting its imports to the emitted siblings/deps. Best-effort per
+/// item: a failure is recorded as a diagnostic and the rest of the graph emits.
 fn emit_module_graph(
     root: &Path,
     module_url: &str,
@@ -161,106 +195,123 @@ fn emit_module_graph(
     emitted: &mut BTreeSet<String>,
     result: &mut BuildStaticResult,
 ) {
-    let mut queue: Vec<String> = vec![module_url.to_string()];
-    while let Some(url) = queue.pop() {
-        if !emitted.insert(url.clone()) {
-            continue; // already emitted (or queued+done)
+    let mut queue: Vec<EmitItem> = vec![EmitItem::Module(module_url.to_string())];
+    while let Some(item) = queue.pop() {
+        // Dedup by the out_dir-relative emitted path (so a dep imported from two
+        // modules, or a module imported from two stories, emits once).
+        let key = item.emitted_path(root);
+        if !emitted.insert(key) {
+            continue;
         }
-        match emit_module(root, &url, out_dir) {
+        match emit_item(root, &item, out_dir) {
             Ok(emit) => {
                 result.emitted.push(emit.rel_path);
                 queue.extend(emit.imports);
             }
             Err(err) => {
-                result
-                    .diagnostics
-                    .push(format!("module {url}: {err}"));
+                result.diagnostics.push(format!("module {err}"));
             }
         }
     }
 }
 
-/// What [`emit_module`] produced for one module.
-struct EmittedModule {
-    /// Relative path under `out_dir` the JS was written to (`modules/...js`).
+/// What [`emit_item`] produced for one emitted file.
+struct EmittedItem {
+    /// Relative path under `out_dir` the JS was written to.
     rel_path: PathBuf,
-    /// Root-relative URLs of the local relative modules this one imports (to
-    /// continue the transitive walk).
-    imports: Vec<String>,
+    /// Further items to walk (resolved relative modules + resolved deps).
+    imports: Vec<EmitItem>,
 }
 
-/// Transform a single module (identified by its root-relative URL) to browser
-/// JS, rewrite its **relative** imports to the emitted `.js` siblings, and write
-/// it to `out_dir/modules/<rel>.js`.
-///
-/// Returns the emitted relative path + the root-relative URLs of the local
-/// relative modules it imports (so the caller can walk them too). Bare
-/// specifiers (`react`, ...) are left untouched — they load via the importmap.
-fn emit_module(root: &Path, module_url: &str, out_dir: &Path) -> Result<EmittedModule> {
-    let rel = module_url.trim_start_matches('/');
-    let source_file = resolve_url_to_file(root, rel)
-        .with_context(|| format!("cannot resolve {module_url} under {}", root.display()))?;
+/// Transform one emit item to browser JS, rewrite its relative + resolvable bare
+/// imports to the emitted siblings/deps, and write it under `out_dir`.
+fn emit_item(root: &Path, item: &EmitItem, out_dir: &Path) -> Result<EmittedItem> {
+    // The on-disk source file + the emitted out_dir-relative path of this item.
+    let (source_file, self_emitted) = match item {
+        EmitItem::Module(url) => {
+            let rel = url.trim_start_matches('/');
+            let file = resolve_url_to_file(root, rel)
+                .with_context(|| format!("cannot resolve {url} under {}", root.display()))?;
+            // Resolution may have added an extension / index file; recompute the
+            // canonical emitted path from the file we actually read.
+            let canonical = EmitItem::Module(file_to_root_url(root, &file));
+            let emitted = canonical.emitted_path(root);
+            (file, emitted)
+        }
+        EmitItem::Dep(file) => (file.clone(), item.emitted_path(root)),
+    };
 
     let source = std::fs::read_to_string(&source_file)
         .with_context(|| format!("reading {}", source_file.display()))?;
-
-    // Same transform path the dev server's module route uses.
     let code = transform_source(&source, &source_file)
         .with_context(|| format!("transforming {}", source_file.display()))?;
 
-    // The on-disk URL of what we actually read (resolution may have added an
-    // extension / index file), so import rewriting is relative to the right base.
-    let resolved_url = file_to_root_url(root, &source_file);
+    let (rewritten, imports) = rewrite_imports(&code, &source_file, &self_emitted, root);
 
-    // Rewrite relative imports to emitted `.js` siblings + collect them for the
-    // transitive walk.
-    let (rewritten, imports) = rewrite_relative_imports(&code, &resolved_url, root);
-
-    // modules/<resolved-rel-path-with-.js>
-    let resolved_rel = resolved_url.trim_start_matches('/');
-    let out_rel = PathBuf::from("modules").join(to_js_path(resolved_rel));
+    let out_rel = PathBuf::from(&self_emitted);
     let out_path = out_dir.join(&out_rel);
     if let Some(parent) = out_path.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating module dir {}", parent.display()))?;
+            .with_context(|| format!("creating dir {}", parent.display()))?;
     }
     std::fs::write(&out_path, rewritten)
-        .with_context(|| format!("writing module {}", out_path.display()))?;
+        .with_context(|| format!("writing {}", out_path.display()))?;
 
-    Ok(EmittedModule {
+    Ok(EmittedItem {
         rel_path: out_rel,
         imports,
     })
 }
 
-/// Rewrite the relative import specifiers in transformed JS so they resolve to
-/// the emitted `.js` siblings, and collect each one's root-relative URL.
+/// Rewrite the import specifiers in transformed JS so they resolve to the
+/// emitted siblings (relative imports) and emitted deps (resolvable bare imports
+/// under `node_modules`, #197), and collect each one's [`EmitItem`] for the walk.
 ///
-/// `importer_url` is the importing module's root-relative URL. A relative
-/// specifier (`./Button`, `../lib/x.tsx`) is resolved against the importer's
-/// on-disk file to a root-relative URL (probing the same extensions the dev
-/// server does), then re-expressed relative to the importer with a `.js`
-/// extension. Bare specifiers (no leading `.`) are left untouched.
-fn rewrite_relative_imports(
+/// `importer_file` is the importer's on-disk source file (the resolution base).
+/// `importer_emitted` is its out_dir-relative emitted path (`modules/...js` or
+/// `deps/...js`) — both surfaces live under `out_dir`, so the rewritten specifier
+/// is a plain relative path between two emitted positions. A relative specifier
+/// that does not resolve, and a bare specifier with no local install, are left
+/// as-authored (the importmap covers the latter).
+fn rewrite_imports(
     code: &str,
-    importer_url: &str,
+    importer_file: &Path,
+    importer_emitted: &str,
     root: &Path,
-) -> (String, Vec<String>) {
-    let mut imports = Vec::new();
+) -> (String, Vec<EmitItem>) {
+    let mut imports: Vec<EmitItem> = Vec::new();
     let mut rewrites: BTreeMap<String, String> = BTreeMap::new();
 
-    for spec in crate::dev_server::source_analysis::extract_imports_from_source(code) {
-        if !spec.starts_with('.') {
-            continue; // bare or root-absolute — leave as-is
-        }
-        // Resolve the specifier to the file it points at, root-relative.
-        let Some(target_url) = resolve_relative_to_root_url(importer_url, &spec, root) else {
-            continue; // unresolvable — leave the original specifier in place
+    for spec in super::deps::extract_all_import_specifiers(code) {
+        let (item, target_emitted) = if spec.starts_with('.') {
+            // Relative import → resolve against the importer's on-disk dir.
+            let Some(target_file) = resolve_relative_file(importer_file, &spec) else {
+                continue; // unresolvable — leave the original specifier in place
+            };
+            // A relative import inside a dep file resolves to another file in the
+            // SAME node_modules package → keep it a dep; a relative import inside
+            // a project module resolves to another project module.
+            let item = if path_has_node_modules(&target_file) {
+                EmitItem::Dep(target_file)
+            } else {
+                EmitItem::Module(file_to_root_url(root, &target_file))
+            };
+            let emitted = item.emitted_path(root);
+            (item, emitted)
+        } else {
+            // Bare import → resolve against node_modules via the shared helper.
+            let Some(dep_file) = super::deps::resolve_bare_specifier(root, importer_file, &spec)
+            else {
+                continue; // not installed locally — leave for the importmap
+            };
+            let item = EmitItem::Dep(dep_file);
+            let emitted = item.emitted_path(root);
+            (item, emitted)
         };
-        // The browser import path: relative to the importer, .js extension.
-        let new_spec = relative_js_specifier(importer_url, &target_url);
+
+        let new_spec = relative_emitted_specifier(importer_emitted, &target_emitted);
         rewrites.insert(spec.clone(), new_spec);
-        imports.push(target_url);
+        imports.push(item);
     }
 
     // Apply the rewrites textually. Only quoted forms are rewritten so we never
@@ -272,41 +323,71 @@ fn rewrite_relative_imports(
         }
         out = out
             .replace(&format!("\"{old}\""), &format!("\"{new}\""))
-            .replace(&format!("'{old}'", old = old), &format!("'{new}'", new = new));
+            .replace(&format!("'{old}'"), &format!("'{new}'"));
     }
     (out, imports)
 }
 
-/// Resolve a relative specifier against the importer's root-relative URL to the
-/// target's root-relative URL, probing the on-disk file (extensions + index).
-fn resolve_relative_to_root_url(importer_url: &str, spec: &str, root: &Path) -> Option<String> {
-    let importer_dir = match importer_url.rsplit_once('/') {
-        Some((dir, _file)) => dir,
-        None => "",
-    };
-    // Join importer dir + spec, collapsing `.`/`..` segments.
-    let mut segments: Vec<&str> = importer_dir.split('/').filter(|s| !s.is_empty()).collect();
-    for part in spec.split('/') {
-        match part {
-            "." | "" => {}
-            ".." => {
-                segments.pop();
-            }
-            other => segments.push(other),
+/// Resolve a relative specifier (`./Button`, `../lib/x.tsx`) against the
+/// importer's on-disk file, probing the same extensions + `index.*` the dev
+/// server does. Returns the resolved on-disk file (which may be a project file
+/// or a sibling inside the same `node_modules` package), lexically normalized so
+/// no `.`/`..` segments leak into the emitted path / dedup key.
+fn resolve_relative_file(importer_file: &Path, spec: &str) -> Option<PathBuf> {
+    let base_dir = importer_file.parent().unwrap_or(Path::new("."));
+    let joined = lexically_normalize(&base_dir.join(spec));
+    if joined.is_file() {
+        return Some(joined);
+    }
+    const EXTS: &[&str] = &["tsx", "ts", "jsx", "js", "mjs", "cjs", "json"];
+    for ext in EXTS {
+        let candidate = joined.with_extension(ext);
+        if candidate.is_file() {
+            return Some(candidate);
         }
     }
-    let joined_rel = segments.join("/");
-    let on_disk = resolve_url_to_file(root, &joined_rel)?;
-    Some(file_to_root_url(root, &on_disk))
+    for ext in EXTS {
+        let candidate = joined.join(format!("index.{ext}"));
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
-/// Express `target_url` (root-relative) as an import specifier relative to
-/// `importer_url` (root-relative), with the file extension normalized to `.js`.
-/// Both live in the same emitted `modules/` tree, so a simple `../`-prefixed
-/// relative path is correct.
-fn relative_js_specifier(importer_url: &str, target_url: &str) -> String {
-    let importer_segs: Vec<&str> = importer_url.split('/').filter(|s| !s.is_empty()).collect();
-    let target_segs: Vec<&str> = target_url.split('/').filter(|s| !s.is_empty()).collect();
+/// Lexically collapse `.` and `..` segments in `path` (no filesystem access), so
+/// a path like `/proj/src/components/./Button` becomes
+/// `/proj/src/components/Button`. A leading `..` that would pop the root is kept
+/// (it never happens for a path joined from an absolute importer dir).
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        use std::path::Component;
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// True when `path` contains a `node_modules` path segment.
+fn path_has_node_modules(path: &Path) -> bool {
+    path.iter().any(|c| c == "node_modules")
+}
+
+/// Express `target_emitted` (out_dir-relative, `.js`-normalized) as an import
+/// specifier relative to `importer_emitted` (same form). Both live under
+/// `out_dir`, so this is a plain relative path between two emitted positions —
+/// it crosses the `modules/` ↔ `deps/` boundary as needed.
+fn relative_emitted_specifier(importer_emitted: &str, target_emitted: &str) -> String {
+    let importer_segs: Vec<&str> = importer_emitted.split('/').filter(|s| !s.is_empty()).collect();
+    let target_segs: Vec<&str> = target_emitted.split('/').filter(|s| !s.is_empty()).collect();
 
     // Drop the importer's own filename — relativity is from its directory.
     let importer_dir = &importer_segs[..importer_segs.len().saturating_sub(1)];
@@ -327,8 +408,8 @@ fn relative_js_specifier(importer_url: &str, target_url: &str) -> String {
         parts.push((*seg).to_string());
     }
     let mut spec = parts.join("/");
-    spec = to_js_path(&spec);
-    // A sibling import must keep a leading `./` so it stays a relative specifier.
+    // A sibling (or descendant) import must keep a leading `./` so it stays a
+    // relative specifier rather than becoming a bare one.
     if !spec.starts_with('.') {
         spec = format!("./{spec}");
     }
@@ -390,10 +471,11 @@ fn story_module_root_url(root: &Path, file: &Path) -> String {
 }
 
 /// Normalize a path's file extension to `.js` (the emitted module extension).
-/// `src/Button.tsx` → `src/Button.js`; `src/util.js` stays `src/util.js`; an
-/// extensionless path gets a `.js` appended.
+/// `src/Button.tsx` → `src/Button.js`; `src/util.js` stays `src/util.js`; a
+/// dep's `dist/clsx.mjs` → `dist/clsx.js`; an extensionless path gets a `.js`
+/// appended.
 fn to_js_path(path: &str) -> String {
-    const SRC_EXTS: &[&str] = &[".tsx", ".ts", ".jsx", ".js"];
+    const SRC_EXTS: &[&str] = &[".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs"];
     for ext in SRC_EXTS {
         if let Some(stem) = path.strip_suffix(ext) {
             return format!("{stem}.js");
@@ -463,17 +545,31 @@ mod tests {
     #[test]
     fn relative_specifier_is_sibling_with_js_ext() {
         // Story imports a sibling component — emitted side by side under modules/.
-        let spec = relative_js_specifier(
-            "/src/components/Button.stories.tsx",
-            "/src/components/Button.tsx",
+        let spec = relative_emitted_specifier(
+            "modules/src/components/Button.stories.js",
+            "modules/src/components/Button.js",
         );
         assert_eq!(spec, "./Button.js");
     }
 
     #[test]
     fn relative_specifier_walks_up_directories() {
-        let spec = relative_js_specifier("/src/components/Button.stories.tsx", "/src/lib/util.ts");
+        let spec = relative_emitted_specifier(
+            "modules/src/components/Button.stories.js",
+            "modules/src/lib/util.js",
+        );
         assert_eq!(spec, "../lib/util.js");
+    }
+
+    #[test]
+    fn bare_dep_specifier_crosses_into_deps_tree() {
+        // A project module importing a resolved dep rewrites across the
+        // modules/ ↔ deps/ boundary (#197).
+        let spec = relative_emitted_specifier(
+            "modules/src/components/Button.stories.js",
+            "deps/clsx/dist/clsx.js",
+        );
+        assert_eq!(spec, "../../../deps/clsx/dist/clsx.js");
     }
 
     #[test]

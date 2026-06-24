@@ -18,14 +18,19 @@
 //! HMR is out of scope (B2b / #176): navigation does a full preview reload.
 //! Controls are out of scope (B3).
 //!
-//! ## Bare-import resolution (deferred)
+//! ## Bare-import resolution (#197)
 //! Local *relative* imports (`./Button`) are resolved + transformed by the
-//! module route. The React runtime itself is provided to the preview via an
-//! importmap to esm.sh (see [`manager::render_preview_html`]). Full bare-import
-//! resolution against local `node_modules` (arbitrary third-party packages)
-//! is intentionally NOT wired here.
-//! TODO(#174 follow-up): reuse the dev server's `node_modules` resolution +
-//! prebundle path so bare specifiers other than React resolve locally.
+//! module route. Bare specifiers (`import x from "clsx"`) that resolve to a real
+//! file in the project's `node_modules` are now resolved via the shared
+//! [`super::deps`] helper (which reuses the project
+//! [`crate::resolver::ModuleResolver`]), rewritten in the served JS to a
+//! `/@dep/<node_modules-relative-path>` route ([`DEP_PREFIX`]), and served —
+//! transformed if TS/JSX — by [`dep_handler`], **recursively** for the dep's own
+//! bare + relative imports. Specifiers that do NOT resolve on disk (e.g. `react`
+//! with no local install) are left as-authored so the esm.sh importmap baked
+//! into [`manager::render_preview_html`] still satisfies them.
+//! TODO(#197 follow-up): advanced conditional-`exports` edge cases and CommonJS
+//! interop are out of scope — see [`super::deps`].
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -50,6 +55,14 @@ use crate::dev_server::watcher::FileWatcher;
 
 /// Manager shell route (alias of `/`).
 pub const MANAGER_PREFIX: &str = "/__jet_stories_manager";
+
+/// Route prefix for a resolved `node_modules` dependency module (#197).
+///
+/// A served/emitted module's bare import that resolves to a real file under the
+/// project's `node_modules` is rewritten to `/@dep/<node_modules-relative-path>`
+/// (e.g. `/@dep/clsx/dist/clsx.mjs`); [`dep_handler`] maps that path back to the
+/// on-disk file, transforms it if needed, and recursively rewrites ITS imports.
+pub const DEP_PREFIX: &str = "/@dep/";
 
 /// React Fast Refresh runtime endpoint (#196). Must match the import specifier
 /// the transform's [`crate::transform::react_refresh::inject_react_fast_refresh`]
@@ -164,6 +177,9 @@ fn build_router_with(
         // preamble (injected by the transform), so the preview must serve that
         // runtime — reusing the dev server's shim — for state-preserving refresh.
         .route(REACT_REFRESH_ROUTE, get(react_refresh_handler))
+        // Resolved node_modules dependency modules (#197): the module route
+        // rewrites a served module's bare imports to `/@dep/<key>`, served here.
+        .route("/@dep/{*dep}", get(dep_handler))
         // Catch-all for module + static requests the preview imports.
         .route("/{*path}", get(module_handler))
         .with_state(state)
@@ -454,7 +470,7 @@ async fn module_handler(
             // walk back to the importing story (`affected_modules`). Best-effort:
             // failure to read/parse just means a thinner graph, never a 500.
             register_module_imports(&state, &file_path, &path);
-            serve_module(&file_path, &path).await
+            serve_module(&state.root, &file_path, &path).await
         }
         _ => (
             StatusCode::NOT_FOUND,
@@ -527,12 +543,17 @@ fn resolve_relative_import(importer_url: &str, spec: &str) -> Option<String> {
     Some(format!("/{}", segments.join("/")))
 }
 
-/// Transform a single source file to browser JS and serve it.
+/// Transform a single project source file to browser JS, rewrite its resolvable
+/// `node_modules` bare imports to `/@dep/<key>` routes (#197), and serve it.
 ///
 /// Reuses the same per-extension transform entrypoints the dev server uses for
 /// on-demand module serving (`transform_tsx` / `transform_typescript` /
-/// `transform_jsx`; `.js` is served as-is).
-async fn serve_module(file_path: &Path, request_path: &str) -> Response {
+/// `transform_jsx`; `.js` is served as-is). After transforming, every bare
+/// import that resolves to a real file under the project's `node_modules` is
+/// rewritten to the `/@dep/<node_modules-relative-path>` route ([`dep_handler`]
+/// serves it). Unresolvable specifiers (e.g. `react` with no local install) are
+/// left as-authored for the esm.sh importmap.
+async fn serve_module(root: &Path, file_path: &Path, request_path: &str) -> Response {
     let source = match std::fs::read_to_string(file_path) {
         Ok(s) => s,
         Err(err) => {
@@ -553,30 +574,102 @@ async fn serve_module(file_path: &Path, request_path: &str) -> Response {
         }
     };
 
-    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let options = crate::transform::TransformOptions::default();
-    let result = match ext {
-        "tsx" => crate::transform::transform_tsx::transform_tsx(&source, &options),
-        "ts" => crate::transform::typescript::transform_typescript(&source, &options),
-        "jsx" => crate::transform::jsx::transform_jsx(&source, &options),
-        "js" => Ok(crate::transform::TransformResult {
-            code: source.clone(),
-            source_map: None,
-        }),
-        _ => Ok(crate::transform::TransformResult {
-            code: source.clone(),
-            source_map: None,
-        }),
-    };
-
-    match result {
-        Ok(transformed) => js_response(transformed.code),
+    match transform_to_js(&source, file_path) {
+        Ok(code) => js_response(rewrite_bare_imports_to_dep_routes(&code, root, file_path)),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("jet stories: transform error for '{request_path}': {err}"),
         )
             .into_response(),
     }
+}
+
+/// `GET /@dep/{key}` → transform + serve a resolved `node_modules` dependency
+/// module (#197), recursively rewriting ITS own bare imports to `/@dep/<key>`.
+///
+/// `dep` is the `node_modules`-relative key the module route rewrote a bare
+/// import to (`clsx/dist/clsx.mjs`). We map it back to the on-disk file under
+/// `<root>/node_modules/<key>`, transform it if TS/JSX (pass through `.js`/
+/// `.mjs`/`.cjs`), and rewrite the dep's own bare imports to further `/@dep/`
+/// routes — so a dep's transitive deps load too. The dep's RELATIVE imports
+/// (`./chunk.js`) resolve browser-side against this same `/@dep/<dir>/` URL, so
+/// they need no rewriting.
+async fn dep_handler(
+    State(state): State<WorkbenchState>,
+    AxumPath(dep): AxumPath<String>,
+) -> Response {
+    // Reject traversal so a `/@dep/../..` can't escape node_modules.
+    if dep.split('/').any(|seg| seg == "..") {
+        return (StatusCode::BAD_REQUEST, "jet stories: invalid dep path").into_response();
+    }
+
+    let file_path = state.root.join("node_modules").join(&dep);
+    if !file_path.is_file() {
+        return (
+            StatusCode::NOT_FOUND,
+            format!("jet stories: dep not found '@dep/{dep}'"),
+        )
+            .into_response();
+    }
+
+    let source = match std::fs::read_to_string(&file_path) {
+        Ok(s) => s,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("jet stories: failed to read dep '@dep/{dep}': {err}"),
+            )
+                .into_response();
+        }
+    };
+
+    match transform_to_js(&source, &file_path) {
+        Ok(code) => js_response(rewrite_bare_imports_to_dep_routes(&code, &state.root, &file_path)),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("jet stories: transform error for dep '@dep/{dep}': {err}"),
+        )
+            .into_response(),
+    }
+}
+
+/// Transform a source file to browser JS using the same per-extension
+/// entrypoints the dev server's module route uses. `.js`/`.mjs`/`.cjs` and any
+/// other extension pass through unchanged.
+fn transform_to_js(source: &str, file_path: &Path) -> Result<String> {
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let options = crate::transform::TransformOptions::default();
+    let result = match ext {
+        "tsx" => crate::transform::transform_tsx::transform_tsx(source, &options),
+        "ts" => crate::transform::typescript::transform_typescript(source, &options),
+        "jsx" => crate::transform::jsx::transform_jsx(source, &options),
+        _ => Ok(crate::transform::TransformResult {
+            code: source.to_string(),
+            source_map: None,
+        }),
+    };
+    result.map(|r| r.code).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Rewrite every bare import in `code` that resolves to a real file under the
+/// project's `node_modules` to its `/@dep/<key>` route (#197).
+///
+/// `importer_file` is the on-disk file the code came from (the resolution base).
+/// Bare specifiers that don't resolve on disk are left untouched so the esm.sh
+/// importmap still satisfies them (React etc.). Only quoted specifier forms are
+/// replaced, so an identifier sharing the spelling is never touched.
+fn rewrite_bare_imports_to_dep_routes(code: &str, root: &Path, importer_file: &Path) -> String {
+    let mut out = code.to_string();
+    for spec in super::deps::extract_all_import_specifiers(code) {
+        let Some(resolved) = super::deps::resolve_bare_specifier(root, importer_file, &spec) else {
+            continue; // relative, or unresolved → leave for the importmap
+        };
+        let route = format!("{DEP_PREFIX}{}", super::deps::dep_key(&resolved));
+        out = out
+            .replace(&format!("\"{spec}\""), &format!("\"{route}\""))
+            .replace(&format!("'{spec}'"), &format!("'{route}'"));
+    }
+    out
 }
 
 /// The browser-facing URL of a story's source file: root-relative, slashed.
