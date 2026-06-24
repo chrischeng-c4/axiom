@@ -90,20 +90,11 @@ unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) 
         sentinel,
     );
     if !kwds.is_none() && meta.to_bits() != sentinel.to_bits() {
-        let ns = MbValue::from_ptr(MbObject::new_dict());
-        if !exec_body.is_none() {
-            let _ = super::super::class::mb_call1_val(exec_body, ns);
-        }
         let bases_t = if bases.is_none() {
             MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
         } else {
             bases
         };
-        let remaining = super::super::dict_ops::mb_dict_copy(kwds);
-        super::super::dict_ops::mb_dict_delitem(
-            remaining,
-            MbValue::from_ptr(MbObject::new_str("metaclass".to_string())),
-        );
         // CPython calls metaclass(name, bases, ns, **kwds); a non-callable
         // metaclass (e.g. a bare string) is a TypeError, not a silent build.
         if super::super::builtins::mb_callable(meta).as_bool() != Some(true) {
@@ -115,6 +106,34 @@ unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) 
             );
             return MbValue::none();
         }
+        if let Some(meta_name) = super::super::class::resolve_class_name(meta) {
+            if meta_name == "type" || super::super::class::class_is_registered(&meta_name) {
+                let ns = prepare_namespace(&meta_name, name, bases_t);
+                if !exec_body.is_none() {
+                    let _ = super::super::class::mb_call1_val(exec_body, ns);
+                }
+                let type_obj = super::super::builtins::mb_type3_kwargs(name, bases_t, ns, kwds);
+                if let Some(class_name) = name.as_ptr().and_then(|p| unsafe {
+                    if let ObjData::Str(ref s) = (*p).data {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                }) {
+                    return MbValue::from_ptr(MbObject::new_str(class_name));
+                }
+                return type_obj;
+            }
+        }
+        let ns = MbValue::from_ptr(MbObject::new_dict());
+        if !exec_body.is_none() {
+            let _ = super::super::class::mb_call1_val(exec_body, ns);
+        }
+        let remaining = super::super::dict_ops::mb_dict_copy(kwds);
+        super::super::dict_ops::mb_dict_delitem(
+            remaining,
+            MbValue::from_ptr(MbObject::new_str("metaclass".to_string())),
+        );
         let pos = MbValue::from_ptr(MbObject::new_list(vec![name, bases_t, ns]));
         return super::super::builtins::mb_call_spread_kwargs(meta, pos, remaining);
     }
