@@ -118,11 +118,3 @@ requirementDiagram
       type: "rs/#[test]"
     }
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Linear collapse: td_created -> gen -> fill -> merge with the hop centralized in a pure next_phase_command(phase) and is_mergeable trimmed to cb_genned|cb_filled. Review/revise/arbitrate nodes are gone. Matches the surgical change-list.
-- [unit-test] R1-R3 hit pure, testable functions: next_phase_command("td_created")=="aw td gen", is_mergeable accepts only cb_genned|cb_filled, and the cb_genned->fill / cb_filled->merge chain. The bulk module/variant deletion is covered by the build + full suite gate.
