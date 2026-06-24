@@ -2848,6 +2848,7 @@ impl<'a> AstLowerer<'a> {
                     body,
                     bases,
                     decorators,
+                    type_params,
                     keyword_args,
                     ..
                 } => {
@@ -2856,6 +2857,7 @@ impl<'a> AstLowerer<'a> {
                         body,
                         bases,
                         decorators,
+                        type_params,
                         keyword_args,
                         stmt.span,
                         true,
@@ -3275,6 +3277,7 @@ impl<'a> AstLowerer<'a> {
         body: &[Spanned<ast::Stmt>],
         bases: &[Spanned<ast::Expr>],
         decorators: &[Spanned<ast::Expr>],
+        type_params: &[ast::TypeParam],
         keyword_args: &[(String, Spanned<ast::Expr>)],
         span: crate::source::span::Span,
         placeholder_to_top: bool,
@@ -3371,6 +3374,16 @@ impl<'a> AstLowerer<'a> {
                     }
                 })
                 .collect();
+            if !type_params.is_empty() {
+                let generic = self
+                    .resolve_name("typing.Generic", stmt_span)
+                    .unwrap_or_else(|| {
+                        self.define_local("typing.Generic", self.checker.tcx.any())
+                    });
+                if !cls.all_bases.contains(&generic) {
+                    cls.all_bases.push(generic);
+                }
+            }
             let has_runtime_bases = bases
                 .iter()
                 .any(|b| self.class_base_needs_runtime_eval(&b.node));
@@ -3444,6 +3457,7 @@ impl<'a> AstLowerer<'a> {
             if !cls.decorators.is_empty()
                 || !cls.class_attr_assigns.is_empty()
                 || !cls.runtime_base_exprs.is_empty()
+                || !cls.class_kwargs.is_empty()
             {
                 if placeholder_to_top {
                     self.result.top_level.push(HirStmt::ClassDefPlaceholder {
@@ -3831,6 +3845,7 @@ impl<'a> AstLowerer<'a> {
                 body,
                 bases,
                 decorators,
+                type_params,
                 keyword_args,
                 ..
             } => {
@@ -3839,6 +3854,7 @@ impl<'a> AstLowerer<'a> {
                     body,
                     bases,
                     decorators,
+                    type_params,
                     keyword_args,
                     stmt.span,
                     false,

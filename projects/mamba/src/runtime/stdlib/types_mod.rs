@@ -674,9 +674,60 @@ pub fn mb_types_coroutine(func: MbValue) -> MbValue {
 
 /// types.get_original_bases(cls) -> tuple
 ///
-/// Returns the empty tuple — `__orig_bases__` is not tracked.
-pub fn mb_types_get_original_bases(_cls: MbValue) -> MbValue {
+/// Mamba does not track arbitrary `__orig_bases__` yet, but PEP 695 implicit
+/// generics have enough runtime metadata to reconstruct `Generic[T, ...]`.
+pub fn mb_types_get_original_bases(cls: MbValue) -> MbValue {
+    let bases = super::super::class::mb_getattr(
+        cls,
+        MbValue::from_ptr(MbObject::new_str("__bases__".to_string())),
+    );
+    let params = super::super::class::mb_getattr(
+        cls,
+        MbValue::from_ptr(MbObject::new_str("__parameters__".to_string())),
+    );
+    let base_items = super::super::builtins::extract_items(bases);
+    let param_items = super::super::builtins::extract_items(params);
+    if base_items.len() == 1 && !param_items.is_empty() {
+        let base_name = base_items[0]
+            .as_ptr()
+            .and_then(|ptr| unsafe {
+                if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                    if class_name == "type" {
+                        fields
+                            .read()
+                            .unwrap()
+                            .get("__name__")
+                            .copied()
+                            .and_then(mb_str_value)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+        if base_name.as_deref() == Some("typing.Generic") {
+            let origin = super::super::builtins::make_type_object("typing.Generic");
+            let args = if param_items.len() == 1 {
+                param_items[0]
+            } else {
+                MbValue::from_ptr(MbObject::new_tuple(param_items))
+            };
+            let alias = super::typing_mod::generic_subscript(origin, args);
+            return MbValue::from_ptr(MbObject::new_tuple(vec![alias]));
+        }
+    }
     MbValue::from_ptr(MbObject::new_tuple(vec![]))
+}
+
+fn mb_str_value(value: MbValue) -> Option<String> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]

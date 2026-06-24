@@ -1132,22 +1132,16 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
             if addr != 0 {
                 let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                 if is_registered {
-                    // REQ: JIT-compiled functions use SystemV/C calling convention.
-                    if class_kwargs.is_empty() {
-                        // No kwargs: call with 1 arg (cls only)
-                        let func: extern "C" fn(MbValue) -> MbValue =
-                            unsafe { std::mem::transmute(addr as usize) };
-                        func(cls_val);
+                    let pos_args = MbValue::from_ptr(MbObject::new_list(vec![cls_val]));
+                    let kwargs_dict = if class_kwargs.is_empty() {
+                        MbValue::from_ptr(MbObject::new_dict())
                     } else {
-                        // R10: Pass kwargs as a dict to __init_subclass__(cls, kwargs_dict)
-                        let kwargs_dict = build_kwargs_dict(&class_kwargs);
-                        let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                            unsafe { std::mem::transmute(addr as usize) };
-                        func(cls_val, kwargs_dict);
-                    }
+                        build_kwargs_dict(&class_kwargs)
+                    };
+                    super::builtins::mb_call_spread_kwargs(hook, pos_args, kwargs_dict);
                 }
             }
-        } else if !class_kwargs.is_empty() {
+        } else if !class_kwargs.is_empty() && base_name != "typing.Generic" {
             // R10: If base has no __init_subclass__ and kwargs are non-empty, raise TypeError
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -1344,6 +1338,19 @@ pub fn mb_class_set_kwargs(class_name: MbValue, keys: MbValue, values: MbValue) 
                 let vals_items = vals_lock.read().unwrap();
                 for (k, v) in keys_items.iter().zip(vals_items.iter()) {
                     if let Some(key_name) = extract_str(*k) {
+                        if key_name == "**" {
+                            if let Some(map_ptr) = v.as_ptr() {
+                                if let ObjData::Dict(ref map_lock) = (*map_ptr).data {
+                                    for (dict_key, dict_val) in map_lock.read().unwrap().iter() {
+                                        if let super::dict_ops::DictKey::Str(name) = dict_key {
+                                            super::rc::retain_if_ptr(*dict_val);
+                                            kwargs.insert(name.clone(), *dict_val);
+                                        }
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         // Fix C-prime: KWARGS_REGISTRY takes its own +1.
                         super::rc::retain_if_ptr(*v);
                         kwargs.insert(key_name, *v);
@@ -5290,22 +5297,7 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
 
 /// Create a type object — Instance with class_name="type" and __name__ field.
 fn make_type_object(name: &str) -> MbValue {
-    let mut fields = FxHashMap::default();
-    fields.insert(
-        "__name__".to_string(),
-        MbValue::from_ptr(super::rc::MbObject::new_str(name.to_string())),
-    );
-    let obj = Box::new(super::rc::MbObject {
-        header: super::rc::MbObjectHeader {
-            rc: std::sync::atomic::AtomicU32::new(1),
-            kind: super::rc::ObjKind::Instance,
-        },
-        data: ObjData::Instance {
-            class_name: "type".to_string(),
-            fields: crate::runtime::rc::MbRwLock::new(fields),
-        },
-    });
-    MbValue::from_ptr(Box::into_raw(obj))
+    super::builtins::make_type_object(name)
 }
 
 /// The co_* field names a code object carries, in the CPython 3.12
@@ -10270,6 +10262,9 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         match tn.as_str() {
                             "list" | "dict" | "set" | "frozenset" | "tuple" | "type" => {
                                 return super::stdlib::typing_mod::pep585_subscript(obj, key);
+                            }
+                            "typing.Generic" => {
+                                return super::stdlib::typing_mod::generic_subscript(obj, key);
                             }
                             "int" | "float" | "str" | "bool" | "bytes" | "complex"
                             | "bytearray" | "range" | "NoneType" => {
