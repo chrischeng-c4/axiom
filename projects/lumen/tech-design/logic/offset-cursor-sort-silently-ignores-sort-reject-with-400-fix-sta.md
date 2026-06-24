@@ -45,7 +45,6 @@ flowchart TD
     guard -->|no| proceed[existing plan / score path]
     proceed --> done([SearchResponse])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
