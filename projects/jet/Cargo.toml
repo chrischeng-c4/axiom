@@ -216,6 +216,9 @@ path = "tests/build/incremental_rebuild_bench.rs"
 name = "library_build"
 path = "tests/build/library_build.rs"
 [[test]]
+name = "library_dts"
+path = "tests/build/library_dts.rs"
+[[test]]
 name = "production_build_regression"
 path = "tests/build/production_build_regression.rs"
 [[test]]

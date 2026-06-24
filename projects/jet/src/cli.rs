@@ -394,6 +394,30 @@ pub fn command() -> Command {
                             "Library output formats (comma-separated): esm, cjs. \
                              Only meaningful with --lib. Default: esm.",
                         ),
+                )
+                .arg(
+                    // jet build --lib --dts / --no-dts — toggle
+                    // isolatedDeclarations-style `.d.ts` emission. Default on
+                    // in library mode; `[lib].dts` of jet.toml is the
+                    // configured default, --dts/--no-dts override it.
+                    Arg::new("dts")
+                        .long("dts")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("no-dts")
+                        .help(
+                            "Emit `<entry>.d.ts` type declarations next to the \
+                             JS output (isolatedDeclarations-style). On by \
+                             default in --lib mode.",
+                        ),
+                )
+                .arg(
+                    Arg::new("no-dts")
+                        .long("no-dts")
+                        .action(ArgAction::SetTrue)
+                        .help(
+                            "Disable `.d.ts` emission in --lib mode (overrides \
+                             [lib].dts of jet.toml).",
+                        ),
                 ),
         )
         .subcommand(Command::new("check").about("Type check TypeScript files"))
@@ -3339,6 +3363,16 @@ fn run_library_build(
         .and_then(|c| c.preserve_modules)
         .unwrap_or(false);
 
+    // Declaration emission: --no-dts wins, then --dts, then [lib].dts of
+    // jet.toml, then the library-mode default (on).
+    let declaration = if m.get_flag("no-dts") {
+        false
+    } else if m.get_flag("dts") {
+        true
+    } else {
+        lib_config.and_then(|c| c.dts).unwrap_or(true)
+    };
+
     let options = crate::bundler::LibBuildOptions {
         project_root: root_dir.to_path_buf(),
         out_dir,
@@ -3346,6 +3380,7 @@ fn run_library_build(
         conditions,
         extra_externals: std::collections::HashSet::new(),
         preserve_modules,
+        declaration,
     };
 
     let start = std::time::Instant::now();
@@ -3364,6 +3399,14 @@ fn run_library_build(
             .unwrap_or(&entry.path)
             .display();
         println!("  {} ({:?}) → {} ({:.1} KB)", entry.subpath, entry.format, rel, size_kb);
+    }
+    for types in &result.types {
+        let rel = types
+            .path
+            .strip_prefix(root_dir)
+            .unwrap_or(&types.path)
+            .display();
+        println!("  {} (types) → {}", types.subpath, rel);
     }
 
     Ok(())

@@ -71,6 +71,13 @@ pub struct BundleOptions {
     /// `lib_build::build_library`. Default `false`.
     /// @issue #170
     pub preserve_modules: bool,
+
+    /// Emit `.d.ts` type-declaration files alongside the JS in library mode
+    /// (isolatedDeclarations-style). Ignored when `library` is `false`.
+    /// Default `false` here keeps the app-mode build path unchanged; the
+    /// library entry path (`LibBuildOptions`) defaults this to `true`.
+    /// @issue #171
+    pub declaration: bool,
 }
 
 /// Production build configuration.
@@ -232,6 +239,7 @@ impl Default for BundleOptions {
             library: false,
             formats: vec![OutputFormat::Esm],
             preserve_modules: false,
+            declaration: false,
         }
     }
 }
