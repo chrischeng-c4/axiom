@@ -52,3 +52,10 @@ flowchart TD
     edit --> rerender[re-render preview live]
     rerender --> done([controls live, preview reflects args])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Applicability is correct: for a selected story, locate the component's prop type, branch on found (no -> no controls; yes -> infer control kind per prop with bool/string/number/union mapping), apply meta.argTypes overrides, render the Controls panel seeded from merged args, and on edit update args + re-render the preview live. Scoped to controls; builds on B1 (args/argTypes) + B2 (manager/preview).
