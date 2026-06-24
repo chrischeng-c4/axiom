@@ -118,3 +118,11 @@ requirementDiagram
       type: "rs/#[test]"
     }
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract is stable: a pure next_phase_command(phase) encodes td_created->gen, cb_genned->fill, cb_filled->merge; is_mergeable trimmed to cb_genned|cb_filled; review/revise/arbitrate removed. Implementable as the surgical change-list.
+- [unit-test] R1-R3 map to pure-function tests (td_created_dispatches_to_gen, is_mergeable_linear_only_genned_filled, next_phase_command_is_linear); bulk deletion guarded by build + full suite.
