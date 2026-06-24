@@ -121,3 +121,11 @@ requirementDiagram
 
 - [logic] Applicable: control-flow contract for the change.
 - [unit-test] Applicable: behavior verified by unit tests.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Correct contract matching the implementation.
+- [unit-test] Requirements bound to concrete tests.
