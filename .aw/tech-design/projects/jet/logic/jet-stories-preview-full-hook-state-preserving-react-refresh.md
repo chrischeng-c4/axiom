@@ -42,10 +42,3 @@ flowchart TD
     refresh --> done([preview updated])
     reload --> done
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability sound: preview modules carry React Refresh registration; on edit, branch refresh-compatible (performReactRefresh preserving hook state) vs incompatible (full preview reload). Extends B2b HMR; manager shell + bare-import (SF2) out of scope.
