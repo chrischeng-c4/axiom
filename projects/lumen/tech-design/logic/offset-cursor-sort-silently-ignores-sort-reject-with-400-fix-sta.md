@@ -21,8 +21,31 @@ fill_sections: [logic, unit-test]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
-(fill)
+---
+id: offset-sort-reject
+entry: start
+nodes:
+  start:        { kind: start,    label: "search() entry" }
+  parse_cursor: { kind: process,  label: "parse cursor to offset" }
+  guard:        { kind: decision, label: "offset>0 AND sort present?" }
+  reject:       { kind: terminal, label: "400 UnsupportedSort" }
+  proceed:      { kind: process,  label: "existing plan / score path" }
+  done:         { kind: terminal, label: "SearchResponse" }
+edges:
+  - { from: start,        to: parse_cursor }
+  - { from: parse_cursor, to: guard }
+  - { from: guard,        to: reject,  label: "yes" }
+  - { from: guard,        to: proceed, label: "no" }
+  - { from: proceed,      to: done }
+---
+flowchart TD
+    start([search entry]) --> parse_cursor[parse cursor to offset]
+    parse_cursor --> guard{offset>0 AND sort?}
+    guard -->|yes| reject([400 UnsupportedSort])
+    guard -->|no| proceed[existing plan / score path]
+    proceed --> done([SearchResponse])
 ```
+
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
