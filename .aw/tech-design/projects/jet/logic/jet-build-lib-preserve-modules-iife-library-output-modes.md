@@ -47,3 +47,10 @@ flowchart TD
     iife --> emit
     emit --> done([LibBuildResult])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (jet-lib-output-modes) complete + deterministic: start -> mode decision (single/preserve-modules/iife, all labeled) -> respective emit -> write -> terminal LibBuildResult. All nodes reachable; terminal real. Builds on A1.
