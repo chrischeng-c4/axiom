@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-stories-bare-import-node-modules-resolution-for-dev-preview-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: component-workbench
     role: primary
@@ -49,6 +49,46 @@ flowchart TD
     relative --> done([import resolves dev + static])
     servedep --> done
     cdn --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/stories/server.rs"
+    action: modify
+    section: logic
+    description: |
+      Dev module route: when a served module imports a bare specifier, resolve it
+      in the project node_modules via the existing resolver / pkg_manager, then
+      transform + serve the resolved dependency module(s) transitively (rewriting
+      bare imports to the served paths). Unresolved/CDN-only deps fall back to the
+      esm.sh importmap. React-class deps keep working.
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/build.rs"
+    action: modify
+    section: logic
+    description: |
+      Static build: emit the resolved node_modules dependency modules into the
+      out dir with relative URLs (same resolution as dev), so the static preview
+      loads them without a server / without esm.sh for resolved deps.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/stories/manager.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Dev test: a fixture component importing a small node_modules package resolves
+      + serves the dependency through the module route.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/stories/stories_build.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Static test: jet stories build emits the resolved dependency module(s) and
+      the static preview references them via relative URLs.
+    impl_mode: hand-written
 ```
 
 # Reviews
