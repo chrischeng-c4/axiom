@@ -3516,6 +3516,9 @@ impl<'a> AstLowerer<'a> {
                 } => {
                     // `__match_args__: tuple = ("x", "y")` — typed var declaration (#827)
                     if fname == "__match_args__" {
+                        if let Some(val_expr) = self.lower_expr(value) {
+                            class_attr_assigns.push((fname.clone(), val_expr));
+                        }
                         if let ast::Expr::TupleLit(elems) = &value.node {
                             let names: Vec<String> = elems
                                 .iter()
@@ -3528,6 +3531,8 @@ impl<'a> AstLowerer<'a> {
                                 })
                                 .collect();
                             explicit_match_args = Some(names);
+                        } else {
+                            explicit_match_args = Some(Vec::new());
                         }
                     } else {
                         class_annotations.push((fname.clone(), type_expr_repr(&ty.node)));
@@ -3633,6 +3638,9 @@ impl<'a> AstLowerer<'a> {
                 ast::Stmt::Assign { target, value } => {
                     if let ast::Expr::Ident(aname) = &target.node {
                         if aname == "__match_args__" {
+                            if let Some(val_expr) = self.lower_expr(value) {
+                                class_attr_assigns.push((aname.clone(), val_expr));
+                            }
                             if let ast::Expr::TupleLit(elems) = &value.node {
                                 let names: Vec<String> = elems
                                     .iter()
@@ -3645,6 +3653,8 @@ impl<'a> AstLowerer<'a> {
                                     })
                                     .collect();
                                 explicit_match_args = Some(names);
+                            } else {
+                                explicit_match_args = Some(Vec::new());
                             }
                         } else if aname == "__slots__" {
                             // R14: Extract __slots__ from list literal or tuple literal.
