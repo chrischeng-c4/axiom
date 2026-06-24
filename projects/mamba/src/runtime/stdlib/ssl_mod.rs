@@ -954,10 +954,32 @@ unsafe extern "C" fn ctx_load_path_checked(_self_v: MbValue, args: MbValue) -> M
     MbValue::none()
 }
 
+fn str_value(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn class_name_value(v: MbValue) -> Option<String> {
+    str_value(v).or_else(|| get_field(v, "__name__").and_then(str_value))
+}
+
+fn ssl_wrapper_instance(class_name: &str, fields: &[(&str, MbValue)]) -> MbValue {
+    let inst = MbValue::from_ptr(MbObject::new_instance(class_name.to_string()));
+    for (key, val) in fields {
+        set_field(inst, key, *val);
+    }
+    inst
+}
+
 /// `SSLContext.wrap_socket(sock, ...)` — TLS itself is not wired yet, but the
 /// CPython argument contract holds: a non-socket first argument fails with
 /// AttributeError when wrap_socket reaches for the socket surface.
-unsafe extern "C" fn ctx_wrap_socket(_self_v: MbValue, args: MbValue) -> MbValue {
+unsafe extern "C" fn ctx_wrap_socket(self_v: MbValue, args: MbValue) -> MbValue {
     let (pos, kwargs) = split_method_kwargs(
         args,
         &[
@@ -992,10 +1014,22 @@ unsafe extern "C" fn ctx_wrap_socket(_self_v: MbValue, args: MbValue) -> MbValue
             return err;
         }
     }
-    MbValue::none()
+    let class_name = get_field(self_v, "sslsocket_class")
+        .and_then(class_name_value)
+        .unwrap_or_else(|| "SSLSocket".to_string());
+    let timeout = get_field(sock, "_timeout").unwrap_or_else(MbValue::none);
+    ssl_wrapper_instance(
+        &class_name,
+        &[
+            ("_context", self_v),
+            ("_socket", sock),
+            ("_timeout", timeout),
+            ("server_side", MbValue::from_bool(server_side)),
+        ],
+    )
 }
 
-unsafe extern "C" fn ctx_wrap_bio(_self_v: MbValue, args: MbValue) -> MbValue {
+unsafe extern "C" fn ctx_wrap_bio(self_v: MbValue, args: MbValue) -> MbValue {
     let (pos, kwargs) = split_method_kwargs(
         args,
         &["server_side", "server_hostname", "session"],
@@ -1007,7 +1041,19 @@ unsafe extern "C" fn ctx_wrap_bio(_self_v: MbValue, args: MbValue) -> MbValue {
             return err;
         }
     }
-    MbValue::none()
+    let class_name = get_field(self_v, "sslobject_class")
+        .and_then(class_name_value)
+        .unwrap_or_else(|| "SSLObject".to_string());
+    let incoming = pos.first().copied().unwrap_or_else(MbValue::none);
+    let outgoing = pos.get(1).copied().unwrap_or_else(MbValue::none);
+    ssl_wrapper_instance(
+        &class_name,
+        &[
+            ("_context", self_v),
+            ("incoming", incoming),
+            ("outgoing", outgoing),
+        ],
+    )
 }
 
 /// Named curves OpenSSL 3.x accepts for set_ecdh_curve.
@@ -1181,6 +1227,29 @@ unsafe extern "C" fn ssl_socket_init(_self_v: MbValue, _args: MbValue) -> MbValu
         "SSLSocket does not have a public constructor. Instances are returned by SSLContext.wrap_socket().")
 }
 
+unsafe extern "C" fn ssl_wrapper_enter(self_v: MbValue, _args: MbValue) -> MbValue {
+    unsafe {
+        super::super::rc::retain_if_ptr(self_v);
+    }
+    self_v
+}
+
+unsafe extern "C" fn ssl_wrapper_exit(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_bool(false)
+}
+
+unsafe extern "C" fn ssl_socket_gettimeout(self_v: MbValue, _args: MbValue) -> MbValue {
+    get_field(self_v, "_timeout").unwrap_or_else(MbValue::none)
+}
+
+unsafe extern "C" fn ssl_socket_unconnected_io(_self_v: MbValue, _args: MbValue) -> MbValue {
+    raise_err("OSError", "Underlying socket is not connected")
+}
+
+unsafe extern "C" fn ssl_socket_not_implemented(_self_v: MbValue, _args: MbValue) -> MbValue {
+    raise_err("NotImplementedError", "SSLSocket method is not implemented")
+}
+
 /// Register the ssl exception taxonomy + `SSLContext` in CLASS_REGISTRY.
 ///
 /// The exception classes mirror CPython's hierarchy so `issubclass` walks the
@@ -1236,11 +1305,35 @@ fn register_ssl_classes() {
         let sock_init = ssl_socket_init as usize;
         super::super::module::register_variadic_func(obj_init as u64);
         super::super::module::register_variadic_func(sock_init as u64);
+        let enter_addr = ssl_wrapper_enter as usize;
+        let exit_addr = ssl_wrapper_exit as usize;
+        super::super::module::register_variadic_func(enter_addr as u64);
+        super::super::module::register_variadic_func(exit_addr as u64);
         let mut obj_methods: HashMap<String, MbValue> = HashMap::new();
         obj_methods.insert("__init__".to_string(), MbValue::from_func(obj_init));
+        obj_methods.insert("__enter__".to_string(), MbValue::from_func(enter_addr));
+        obj_methods.insert("__exit__".to_string(), MbValue::from_func(exit_addr));
         super::super::class::mb_class_register("SSLObject", Vec::new(), obj_methods);
         let mut sock_methods: HashMap<String, MbValue> = HashMap::new();
         sock_methods.insert("__init__".to_string(), MbValue::from_func(sock_init));
+        sock_methods.insert("__enter__".to_string(), MbValue::from_func(enter_addr));
+        sock_methods.insert("__exit__".to_string(), MbValue::from_func(exit_addr));
+        for (name, addr) in [
+            ("gettimeout", ssl_socket_gettimeout as usize),
+            ("recv", ssl_socket_unconnected_io as usize),
+            ("recv_into", ssl_socket_unconnected_io as usize),
+            ("recvfrom", ssl_socket_unconnected_io as usize),
+            ("recvfrom_into", ssl_socket_unconnected_io as usize),
+            ("send", ssl_socket_unconnected_io as usize),
+            ("sendto", ssl_socket_unconnected_io as usize),
+            ("dup", ssl_socket_not_implemented as usize),
+            ("sendmsg", ssl_socket_not_implemented as usize),
+            ("recvmsg", ssl_socket_not_implemented as usize),
+            ("recvmsg_into", ssl_socket_not_implemented as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            sock_methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
         super::super::class::mb_class_register("SSLSocket", Vec::new(), sock_methods);
     }
 
