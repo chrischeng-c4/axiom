@@ -41,9 +41,10 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 
+use super::controls::{resolve_controls, Control};
 use super::hmr::{self, StoriesHmrManager, STORIES_HMR_ROUTE};
-use super::manager;
-use super::{discover, StoryEntry, StoryIndex};
+use super::prop_extractor::extract_props;
+use super::{discover, manager, StoryEntry, StoryIndex};
 use crate::dev_server::module_graph::ModuleGraph;
 use crate::dev_server::watcher::FileWatcher;
 
@@ -157,9 +158,179 @@ fn build_router_with(
 }
 
 /// `GET /` / `GET /__jet_stories_manager` → the manager shell.
+///
+/// B3: the manager embeds the resolved controls for the initially-selected
+/// story (the first in the id-sorted index) so the Controls panel renders
+/// server-side, seeded with that story's current arg values.
 async fn manager_handler(State(state): State<WorkbenchState>) -> Response {
-    let html = manager::render_manager_html(&state.index, None);
+    let selected = state.index.stories.first();
+    let controls = selected
+        .map(|story| controls_for_story(&state.root, &state.index, story))
+        .unwrap_or_default();
+    let html = manager::render_manager_html(&state.index, None, &controls);
     html_response(html)
+}
+
+/// Resolve the Controls panel descriptors for one story (B3).
+///
+/// Pipeline: find the story's meta → resolve the component's source file (the
+/// relative import that brings in `meta.component`) → extract the component's
+/// props → infer/override controls and seed each with the story's current args.
+///
+/// Every step degrades gracefully to an empty control list (no meta, no
+/// component, unreadable file, no props) so the manager always renders.
+fn controls_for_story(root: &Path, index: &StoryIndex, story: &StoryEntry) -> Vec<Control> {
+    let Some(meta) = index.metas.iter().find(|m| m.file == story.file) else {
+        return Vec::new();
+    };
+    let Some(component_name) = meta.component.as_deref() else {
+        return Vec::new();
+    };
+    let Some(component_source) = read_component_source(root, &story.file, component_name) else {
+        return Vec::new();
+    };
+    let props = extract_props(&component_source, component_name);
+    resolve_controls(&props, &meta.arg_types, &story.args)
+}
+
+/// Locate + read the source of the component named `component_name`, imported by
+/// the story file at `story_file`.
+///
+/// Finds the story file's relative import that brings in `component_name`,
+/// resolves it against the story file's directory (trying `.tsx/.ts/.jsx/.js`
+/// and `index.*`), and returns the file's source. Returns `None` for bare
+/// (node_modules) imports or unresolvable paths.
+///
+/// TODO(#175 follow-up): cross-package / aliased component imports and barrel
+/// re-exports (`export { Button } from './Button'`) are not followed.
+fn read_component_source(root: &Path, story_file: &Path, component_name: &str) -> Option<String> {
+    let story_source = std::fs::read_to_string(story_file).ok()?;
+    let specifier = component_import_specifier(&story_source, component_name)?;
+    // Only relative imports are resolvable to a local file here.
+    if !specifier.starts_with('.') {
+        return None;
+    }
+    let base_dir = story_file.parent().unwrap_or(root);
+    let resolved = resolve_module_file(base_dir, &specifier)?;
+    std::fs::read_to_string(resolved).ok()
+}
+
+/// Find the import specifier (`./Button`) that imports `component_name` in the
+/// story source. Matches `import { Button } ...`, `import Button ...`, and
+/// `import { Foo as Button } ...` (the *local* binding is what the meta uses).
+fn component_import_specifier(story_source: &str, component_name: &str) -> Option<String> {
+    use tree_sitter::Parser;
+
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())
+        .ok()?;
+    let tree = parser.parse(story_source, None)?;
+    let root = tree.root_node();
+
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        if child.kind() != "import_statement" {
+            continue;
+        }
+        // The import's source string (last `string` child).
+        let source_node = {
+            let mut c = child.walk();
+            child
+                .named_children(&mut c)
+                .filter(|n| n.kind() == "string")
+                .last()
+        };
+        let Some(source_node) = source_node else {
+            continue;
+        };
+        let specifier = strip_quotes(&story_source[source_node.byte_range()]);
+
+        // Does this import bind `component_name`? Scan the import clause text for
+        // the identifier as a default import or a named (possibly aliased) one.
+        let clause_text = &story_source[child.byte_range()];
+        if import_binds(clause_text, component_name) {
+            return Some(specifier);
+        }
+    }
+    None
+}
+
+/// True when an import statement's source text binds the local name `name`
+/// (default import, namespace import, or named/aliased import).
+fn import_binds(import_text: &str, name: &str) -> bool {
+    // Named/aliased: `{ Foo as Button }` or `{ Button }`. The local binding is
+    // the token after `as`, or the token itself.
+    if let Some(open) = import_text.find('{') {
+        if let Some(close) = import_text[open..].find('}') {
+            let inner = &import_text[open + 1..open + close];
+            for spec in inner.split(',') {
+                let local = spec
+                    .rsplit(" as ")
+                    .next()
+                    .unwrap_or(spec)
+                    .trim()
+                    .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '$');
+                let local = local.trim();
+                if local == name {
+                    return true;
+                }
+            }
+        }
+    }
+    // Default / namespace: `import Button from ...` / `import * as Button ...`.
+    // Match the binding token between `import` and `from`.
+    if let Some(after_import) = import_text.strip_prefix("import") {
+        if let Some(from_idx) = after_import.find(" from ") {
+            let head = &after_import[..from_idx];
+            // Skip a leading `type` keyword and `* as`.
+            let head = head.trim();
+            let head = head.strip_prefix("type ").unwrap_or(head).trim();
+            if let Some(ns) = head.strip_prefix("* as ") {
+                if ns.trim() == name {
+                    return true;
+                }
+            } else if !head.starts_with('{') {
+                // `Button` or `Button, { ... }` — take the first token.
+                let first = head.split(',').next().unwrap_or(head).trim();
+                if first == name {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Resolve a relative module specifier to an existing file under `base_dir`,
+/// probing the common TS/JS extensions and an `index.*` barrel.
+fn resolve_module_file(base_dir: &Path, specifier: &str) -> Option<PathBuf> {
+    let joined = base_dir.join(specifier);
+    // Exact path (specifier already had an extension).
+    if joined.is_file() {
+        return Some(joined);
+    }
+    const EXTS: &[&str] = &["tsx", "ts", "jsx", "js"];
+    for ext in EXTS {
+        let candidate = joined.with_extension(ext);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    // `./components/Button` → `./components/Button/index.tsx`.
+    for ext in EXTS {
+        let candidate = joined.join(format!("index.{ext}"));
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Strip surrounding quotes from a string-literal source slice.
+fn strip_quotes(raw: &str) -> String {
+    raw.trim_matches(|c| c == '"' || c == '\'' || c == '`')
+        .to_string()
 }
 
 /// `GET /__jet_stories_preview/{story_id}` → isolated single-story preview.
