@@ -8642,10 +8642,113 @@ fn is_builtin_self_subject(class_name: &str, obj: MbValue) -> bool {
     }
 }
 
+fn raise_class_pattern_type_error(message: String) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(message)),
+    );
+}
+
+fn raise_class_pattern_count_error(class_name: &str, accepted: usize, given: usize) {
+    let sub = if accepted == 1 {
+        "sub-pattern"
+    } else {
+        "sub-patterns"
+    };
+    raise_class_pattern_type_error(format!(
+        "{class_name}() accepts {accepted} positional {sub} ({given} given)"
+    ));
+}
+
+fn match_args_type_name(value: MbValue) -> &'static str {
+    if value.is_none() {
+        return "NoneType";
+    }
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            return match &(*ptr).data {
+                ObjData::Tuple(_) => "tuple",
+                ObjData::List(_) => "list",
+                ObjData::Str(_) => "str",
+                ObjData::Bytes(_) => "bytes",
+                ObjData::ByteArray(_) => "bytearray",
+                ObjData::Dict(_) => "dict",
+                ObjData::Set(_) => "set",
+                ObjData::Instance { .. } => "object",
+                _ => "object",
+            };
+        }
+    }
+    if value.as_bool().is_some() {
+        "bool"
+    } else if value.as_int().is_some() {
+        "int"
+    } else if value.as_float().is_some() {
+        "float"
+    } else {
+        "object"
+    }
+}
+
+fn class_pattern_pos_attr_name(class_name: &str, pos: usize) -> Option<String> {
+    let match_args = match mro_lookup_class_attr(class_name, "__match_args__") {
+        Some(value) => value,
+        None => {
+            raise_class_pattern_count_error(class_name, 0, pos + 1);
+            return None;
+        }
+    };
+    let items = if let Some(ptr) = match_args.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(items) => items.clone(),
+                _ => {
+                    raise_class_pattern_type_error(format!(
+                        "{class_name}.__match_args__ must be a tuple (got {})",
+                        match_args_type_name(match_args)
+                    ));
+                    return None;
+                }
+            }
+        }
+    } else {
+        raise_class_pattern_type_error(format!(
+            "{class_name}.__match_args__ must be a tuple (got {})",
+            match_args_type_name(match_args)
+        ));
+        return None;
+    };
+
+    if pos >= items.len() {
+        raise_class_pattern_count_error(class_name, items.len(), pos + 1);
+        return None;
+    }
+
+    let mut seen = HashSet::new();
+    let mut attr_name = None;
+    for (idx, item) in items.iter().take(pos + 1).enumerate() {
+        let Some(name) = extract_str(*item) else {
+            raise_class_pattern_type_error(format!(
+                "__match_args__ elements must be strings (got {})",
+                match_args_type_name(*item)
+            ));
+            return None;
+        };
+        if !seen.insert(name.clone()) {
+            raise_class_pattern_type_error(format!(
+                "{class_name}() got multiple sub-patterns for attribute '{name}'"
+            ));
+            return None;
+        }
+        if idx == pos {
+            attr_name = Some(name);
+        }
+    }
+    attr_name
+}
+
 /// PEP 634 positional class pattern match: get the value of positional attribute `pos`
 /// by looking up `obj.__class__.__match_args__[pos]` and returning `getattr(obj, that_attr)`.
-///
-/// Returns `None` if `__match_args__` is not defined or `pos` is out of range.
 pub fn mb_match_pos_arg(obj: MbValue, class_name_val: MbValue, pos: i64) -> MbValue {
     let class_name = match extract_str(class_name_val) {
         Some(n) => n,
@@ -8664,39 +8767,7 @@ pub fn mb_match_pos_arg(obj: MbValue, class_name_val: MbValue, pos: i64) -> MbVa
         return obj;
     }
 
-    // Use MRO-aware lookup for __match_args__ (#827) so that subclasses inheriting
-    // __match_args__ from a base class are handled consistently with mb_class_has_pos_match.
-    let attr_name = if let Some(match_args) = mro_lookup_class_attr(&class_name, "__match_args__") {
-        if let Some(ptr) = match_args.as_ptr() {
-            unsafe {
-                match &(*ptr).data {
-                    ObjData::List(ref lock) => {
-                        let items = lock.read().unwrap();
-                        if pos < items.len() {
-                            extract_str(items[pos])
-                        } else {
-                            None
-                        }
-                    }
-                    ObjData::Tuple(ref items) => {
-                        // ObjData::Tuple holds Vec<MbValue> directly (no RwLock)
-                        if pos < items.len() {
-                            extract_str(items[pos])
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    match attr_name {
+    match class_pattern_pos_attr_name(&class_name, pos) {
         Some(name) => {
             // Call mb_getattr with the resolved attribute name
             let attr_val = MbValue::from_ptr(MbObject::new_str(name));
@@ -8752,44 +8823,16 @@ pub fn mb_class_has_pos_match(obj: MbValue, class_name_val: MbValue, pos: i64) -
     };
 
     // PEP 634: built-in self-subject types — positional arg 0 always matches if type matches.
-    if pos == 0 && is_builtin_self_subject(&class_name, obj) {
-        return MbValue::from_bool(true);
+    if is_builtin_self_subject(&class_name, obj) {
+        if pos == 0 {
+            return MbValue::from_bool(true);
+        }
+        raise_class_pattern_count_error(&class_name, 1, pos + 1);
+        return MbValue::from_bool(false);
     }
 
-    let attr_name: Option<String> = {
-        // Use MRO-aware lookup for __match_args__ (#827)
-        if let Some(match_args) = mro_lookup_class_attr(&class_name, "__match_args__") {
-            if let Some(ptr) = match_args.as_ptr() {
-                unsafe {
-                    match &(*ptr).data {
-                        ObjData::List(ref items) => {
-                            let items = items.read().unwrap();
-                            if pos < items.len() {
-                                extract_str(items[pos])
-                            } else {
-                                None
-                            }
-                        }
-                        ObjData::Tuple(ref items) => {
-                            // ObjData::Tuple holds Vec<MbValue> directly (no RwLock)
-                            if pos < items.len() {
-                                extract_str(items[pos])
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
-                    }
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    };
     // Verify the instance also has the resolved attribute
-    match attr_name {
+    match class_pattern_pos_attr_name(&class_name, pos) {
         Some(name) => {
             let attr_val = MbValue::from_ptr(MbObject::new_str(name));
             mb_instance_hasattr(obj, attr_val)
@@ -8799,7 +8842,7 @@ pub fn mb_class_has_pos_match(obj: MbValue, class_name_val: MbValue, pos: i64) -
 }
 
 /// Register `__match_args__` for a class (PEP 634 positional class pattern support).
-/// Stores `args_list` (a list of attribute name strings) in the class's `class_attrs`.
+/// Stores `args_list` (a tuple of attribute name strings) in the class's `class_attrs`.
 pub fn mb_class_set_match_args(class_name: MbValue, args_list: MbValue) {
     let name = match extract_str(class_name) {
         Some(n) => n,
