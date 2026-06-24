@@ -30,7 +30,9 @@ pub mod types;
 
 pub use graph::{EdgeKind, ModuleGraph, ModuleNode};
 pub use imports::{ImportDeclaration, ImportKind, ModuleImports};
-pub use lib_build::{build_library, EntryOutput, LibBuildOptions, LibBuildResult};
+pub use lib_build::{
+    build_library, AssetKind, AssetOutput, EntryOutput, LibBuildOptions, LibBuildResult, RawCopyDir,
+};
 pub use splitting::SplitResult;
 pub use types::{BundleOptions, BundleOutput, ModuleId, PreloadHint};
 

@@ -38,6 +38,8 @@ fn lib_options(root: &std::path::Path) -> LibBuildOptions {
         declaration: true,
         library_global_name: None,
         entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
     }
 }
 
