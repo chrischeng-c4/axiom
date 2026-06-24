@@ -105,6 +105,9 @@ fn ref_callback(wref: MbValue) -> MbValue {
 /// Register a freshly-created ref/proxy object for `obj` in creation order.
 fn registry_push(obj: MbValue, wref: MbValue) {
     let key = referent_key(obj);
+    unsafe {
+        super::super::rc::retain_if_ptr(wref);
+    }
     WEAKREF_REGISTRY.with(|r| {
         r.borrow_mut().entry(key).or_default().push(wref);
     });
