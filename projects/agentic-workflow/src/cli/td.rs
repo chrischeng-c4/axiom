@@ -2807,16 +2807,31 @@ async fn complete_section_apply(
             .await?;
         super::workflow_guard::complete_issue_lock(&worktree_abs, slug, "td").await?;
         maybe_push_remote(&worktree_abs, &issue_path, slug).await?;
-        Some((
-            "Td-Applicability-Complete",
-            active_phase,
-            "aw td review",
-            serde_json::json!({
-                "slug": slug,
-                "phase": "applicability",
-                "spec_path": spec_path,
-            }),
-        ))
+        // Linear lifecycle (no review): start the contract pass at its first
+        // section, or go straight to gen when there are no contract sections.
+        match td_section_queue_for_spec(&worktree_abs, spec_path, "contract")
+            .into_iter()
+            .next()
+        {
+            Some(first) => Some((
+                "Td-Applicability-Complete",
+                active_phase,
+                "aw td create",
+                serde_json::json!({
+                    "slug": slug,
+                    "apply": true,
+                    "phase": "contract",
+                    "section": first,
+                    "spec_path": spec_path,
+                }),
+            )),
+            None => Some((
+                "Td-Applicability-Complete",
+                active_phase,
+                "aw td gen",
+                serde_json::json!({ "slug": slug, "spec_path": spec_path }),
+            )),
+        }
     } else {
         super::workflow_guard::complete_issue_lock(&worktree_abs, slug, "td").await?;
         backend
@@ -2829,13 +2844,13 @@ async fn complete_section_apply(
             )
             .await?;
         maybe_push_remote(&worktree_abs, &issue_path, slug).await?;
+        // Linear lifecycle: contract sections complete -> straight to gen.
         Some((
             "Td-Contract-Complete",
             "td_created".to_string(),
-            "aw td review",
+            "aw td gen",
             serde_json::json!({
                 "slug": slug,
-                "phase": "contract",
                 "spec_path": spec_path,
             }),
         ))
