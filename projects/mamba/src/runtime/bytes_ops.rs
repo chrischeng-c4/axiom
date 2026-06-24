@@ -80,7 +80,9 @@ fn raise_unicode_decode_error(encoding: &str, data: &[u8], pos: usize, reason: &
 fn known_text_codec_fallback(enc: &str) -> bool {
     matches!(
         enc.replace('_', "-").as_str(),
-        "idna"
+            "idna"
+            | "utf-7"
+            | "utf7"
             | "euc-jp"
             | "eucjp"
             | "iso-2022-jp"
@@ -89,6 +91,10 @@ fn known_text_codec_fallback(enc: &str) -> bool {
             | "cp932"
             | "cp1252"
             | "windows-1252"
+            | "iso-8859-15"
+            | "iso8859-15"
+            | "latin-9"
+            | "latin9"
             | "big5"
             | "gbk"
             | "gb2312"
