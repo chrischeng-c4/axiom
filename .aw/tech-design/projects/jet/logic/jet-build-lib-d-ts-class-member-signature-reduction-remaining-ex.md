@@ -55,3 +55,10 @@ flowchart TD
     more -->|no| emit[emit export declare class]
     emit --> done([ambient class declaration])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Applicability sound: per class member, branch private(drop)/method(signature)/public-field(name:type), loop, emit ambient export declare class. Extends A2 dts; library output modes (LF1) and CJS (LF3) out of scope.
