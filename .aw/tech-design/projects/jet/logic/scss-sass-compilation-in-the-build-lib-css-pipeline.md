@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-scss-sass-compilation-in-the-build-lib-css-pipeline-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -42,3 +42,36 @@ flowchart TD
     css --> pipe
     pipe --> done([CSS in output])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/Cargo.toml"
+    action: modify
+    section: logic
+    description: |
+      Add a Rust Sass implementation dependency (grass) for SCSS/Sass compilation.
+    impl_mode: hand-written
+  - path: "projects/jet/src/bundler/css_bundle/mod.rs"
+    action: modify
+    section: logic
+    description: |
+      Compile .scss/.sass to CSS (grass) before the lightningcss pipeline; support nesting, variables, @use/@import partials; flows into the single lib style.css.
+    impl_mode: hand-written
+  - path: "projects/jet/src/bundler/imports.rs"
+    action: modify
+    section: logic
+    description: |
+      Resolve .scss/.sass style imports through the new compile step.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/scss.rs"
+    action: create
+    section: unit-test
+    description: |
+      Tests: a .scss with nesting + a variable compiles, resolved rules appear in build CSS; lib emits compiled SCSS into style.css; plain .css still works.
+    impl_mode: hand-written
+```
+
