@@ -911,8 +911,11 @@ pub fn member_str(v: MbValue) -> Option<String> {
     if !super::super::class::lookup_method(&cls, "__str__").is_none() {
         return None;
     }
-    // StrEnum: str(member) IS the member's value ("1", not "Label.ONE");
+    // IntEnum/ReprEnum and StrEnum stringify through their raw data value;
     // a plain (str, Enum) mixin keeps the qualified form (CPython 3.12).
+    if matches!(class_kind(&cls), Some(EnumKind::IntFlag | EnumKind::IntMixin)) {
+        return Some(repr_string(member_value(v)));
+    }
     if class_kind(&cls) == Some(EnumKind::StrEnum) {
         if let Some(s) = extract_str(member_value(v)) {
             return Some(s);
@@ -975,6 +978,53 @@ pub fn register_global_enum(
     // Make enum_kind_for agree (these classes are not in CLASS_REGISTRY).
     ENUM_KIND_MEMO.with(|m| {
         m.borrow_mut().insert(class_name.to_string(), Some(EnumKind::IntMixin));
+    });
+    out
+}
+
+/// Register a stdlib-owned IntEnum class whose members should repr as
+/// `<Class.NAME: value>` instead of a global module alias. Duplicate values
+/// share the first canonical member, matching CPython enum alias identity.
+pub fn register_int_enum(class_name: &str, members: &[(&str, i64)]) -> Vec<MbValue> {
+    HAVE_ENUM_CLASSES.with(|c| c.set(true));
+    let mut out = Vec::new();
+    ENUM_CLASSES.with(|m| {
+        let mut map = m.borrow_mut();
+        let info = map
+            .entry(class_name.to_string())
+            .or_insert_with(|| EnumClassInfo {
+                kind: EnumKind::IntMixin,
+                next_auto: 1,
+                canonical: Vec::new(),
+                by_name: Vec::new(),
+                composites: FxHashMap::default(),
+                global_module: None,
+            });
+        info.global_module = None;
+        let mut by_value: FxHashMap<i64, MbValue> = FxHashMap::default();
+        for (name, value) in members {
+            let member = if let Some(existing) = by_value.get(value) {
+                *existing
+            } else {
+                let member = new_member(class_name, name, MbValue::from_int(*value));
+                unsafe {
+                    super::super::rc::retain_if_ptr(member);
+                }
+                info.canonical.push(member);
+                by_value.insert(*value, member);
+                member
+            };
+            unsafe {
+                super::super::rc::retain_if_ptr(member);
+                super::super::rc::retain_if_ptr(member);
+            }
+            info.by_name.push((name.to_string(), member));
+            out.push(member);
+        }
+    });
+    ENUM_KIND_MEMO.with(|m| {
+        m.borrow_mut()
+            .insert(class_name.to_string(), Some(EnumKind::IntMixin));
     });
     out
 }
