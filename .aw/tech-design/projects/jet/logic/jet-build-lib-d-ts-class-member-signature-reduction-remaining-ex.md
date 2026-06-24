@@ -55,3 +55,10 @@ flowchart TD
     more -->|no| emit[emit export declare class]
     emit --> done([ambient class declaration])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (jet-dts-class-reduction) complete + deterministic: walk class -> per-member visibility decision (private/method/public-field, all labeled) -> more loop -> emit ambient declare class -> terminal. All nodes reachable; terminal real. Extends A2.
