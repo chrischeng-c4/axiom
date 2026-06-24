@@ -51,3 +51,10 @@ flowchart TD
     patch --> done([preview updated, manager untouched])
     reload --> done
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (id jet-stories-hmr) is complete and deterministic: watch -> change -> dependents_of -> invalidate -> WS notify -> decision react-refresh-compatible (state-preserving patch) vs not (full preview reload) -> terminal preview-updated with manager untouched. All nodes reachable; the refreshable decision carries both labeled branches; terminal done is a real end. Scope correct: reuses existing HMR substrate; builds on B2.
