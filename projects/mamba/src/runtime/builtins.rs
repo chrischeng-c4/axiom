@@ -6143,6 +6143,10 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                     MbValue::from_int(if h == -1 { -2 } else { h })
                 }
                 ObjData::Instance { class_name, .. } => {
+                    if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType") {
+                        raise_type_error(format!("unhashable type: 'weakref.{class_name}'"));
+                        return MbValue::none();
+                    }
                     // namedtuple instances hash like the equivalent plain
                     // tuple: hash(Point(11, 22)) == hash((11, 22)).
                     if let Some(vals) = super::stdlib::collections_mod::namedtuple_values(val) {
