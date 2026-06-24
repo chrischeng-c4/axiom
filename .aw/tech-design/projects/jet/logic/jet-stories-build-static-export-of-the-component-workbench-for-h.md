@@ -57,3 +57,10 @@ flowchart TD
     more -->|no| assets[copy assets]
     assets --> done([static workbench, servable])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (id jet-stories-build) is complete and deterministic: cmd -> discover -> clean out_dir -> render manager -> per-story loop (preview HTML + emit transformed modules + rewrite to relative URLs) -> decision more -> copy assets -> terminal static workbench. All nodes reachable; the more decision carries both labeled branches; terminal done is a real end. Reuses B2 render fns; dev-only HMR excluded. Scope correct.
