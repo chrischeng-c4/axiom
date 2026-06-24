@@ -478,7 +478,7 @@ unsafe extern "C" fn dispatch_displayhook_flat(args_ptr: *const MbValue, nargs: 
         })
         .unwrap_or_default();
     let line = format!("{text}\n");
-    if !super::super::output::write_captured(&line) {
+    if !write_current_sys_stdout(&line) && !super::super::output::write_captured(&line) {
         print!("{line}");
     }
     // Bind builtins._ to the displayed value — both in the registry attrs
@@ -502,6 +502,21 @@ unsafe extern "C" fn dispatch_displayhook_flat(args_ptr: *const MbValue, nargs: 
         }
     });
     MbValue::none()
+}
+
+fn write_current_sys_stdout(text: &str) -> bool {
+    let Some(stdout) = super::super::module::mb_module_value_getattr("sys", "stdout") else {
+        return false;
+    };
+    if stdout.is_none() {
+        return false;
+    }
+    let method = MbValue::from_ptr(MbObject::new_str("write".to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str(text.to_string()),
+    )]));
+    let _ = super::super::class::mb_call_method(stdout, method, args);
+    super::super::exception::mb_has_exception().as_bool() != Some(true)
 }
 
 unsafe extern "C" fn dispatch_excepthook_flat(args_ptr: *const MbValue, nargs: usize) -> MbValue {
