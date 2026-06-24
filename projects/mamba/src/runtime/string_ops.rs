@@ -21,6 +21,55 @@ fn new_str(s: String) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(s))
 }
 
+fn raise_exception(kind: &str, msg: String) -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(kind.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg)),
+    );
+    MbValue::none()
+}
+
+fn raise_type_error(msg: impl Into<String>) -> MbValue {
+    raise_exception("TypeError", msg.into())
+}
+
+fn raise_index_error(msg: impl Into<String>) -> MbValue {
+    raise_exception("IndexError", msg.into())
+}
+
+fn raise_lookup_error(msg: impl Into<String>) -> MbValue {
+    raise_exception("LookupError", msg.into())
+}
+
+fn raise_overflow_error(msg: impl Into<String>) -> MbValue {
+    raise_exception("OverflowError", msg.into())
+}
+
+fn known_text_codec_fallback(enc: &str) -> bool {
+    matches!(
+        enc.replace('_', "-").as_str(),
+            "idna"
+            | "utf-7"
+            | "utf7"
+            | "euc-jp"
+            | "eucjp"
+            | "iso-2022-jp"
+            | "shift-jis"
+            | "sjis"
+            | "cp932"
+            | "cp1252"
+            | "windows-1252"
+            | "iso-8859-15"
+            | "iso8859-15"
+            | "latin-9"
+            | "latin9"
+            | "big5"
+            | "gbk"
+            | "gb2312"
+            | "gb18030"
+    )
+}
+
 fn int_digits_for_percent(v: MbValue, radix: u32) -> Option<(bool, String)> {
     if let Some(i) = v.as_int() {
         let abs = i.unsigned_abs();
@@ -88,7 +137,7 @@ pub fn mb_str_getitem(s: MbValue, index: MbValue) -> MbValue {
             if actual >= 0 && actual < len {
                 new_str(chars[actual as usize].to_string())
             } else {
-                MbValue::none() // IndexError
+                raise_index_error("string index out of range")
             }
         } else {
             MbValue::none()
@@ -464,7 +513,10 @@ pub fn mb_str_startswith(s: MbValue, prefix: MbValue, start: MbValue, end: MbVal
             if let Some(p) = as_str(prefix) {
                 MbValue::from_bool(slice.starts_with(p))
             } else {
-                MbValue::from_bool(false)
+                raise_type_error(format!(
+                    "startswith first arg must be str or a tuple of str, not {}",
+                    super::builtins::value_type_name(prefix)
+                ))
             }
         } else {
             MbValue::from_bool(false)
@@ -685,10 +737,15 @@ pub fn mb_str_join(sep: MbValue, items: MbValue) -> MbValue {
             unsafe {
                 let mut total: usize = 0;
                 let mut count: usize = 0;
-                for v in values.iter() {
+                for (idx, v) in values.iter().enumerate() {
                     if let Some(s) = as_str(*v) {
                         total += s.len();
                         count += 1;
+                    } else {
+                        return raise_type_error(format!(
+                            "sequence item {idx}: expected str instance, {} found",
+                            super::builtins::value_type_name(*v)
+                        ));
                     }
                 }
                 if count == 0 {
@@ -753,6 +810,7 @@ pub fn mb_str_join(sep: MbValue, items: MbValue) -> MbValue {
             return MbValue::none();
         }
         let mut parts: Vec<String> = Vec::new();
+        let mut idx = 0usize;
         loop {
             let v = super::iter::mb_next_raise(iter_handle);
             if super::exception::mb_has_exception().as_bool() == Some(true) {
@@ -761,7 +819,13 @@ pub fn mb_str_join(sep: MbValue, items: MbValue) -> MbValue {
             }
             if let Some(st) = as_str(v) {
                 parts.push(st.to_string());
+            } else {
+                return raise_type_error(format!(
+                    "sequence item {idx}: expected str instance, {} found",
+                    super::builtins::value_type_name(v)
+                ));
             }
+            idx += 1;
         }
         new_str(parts.join(sep_str))
     }
@@ -998,7 +1062,10 @@ pub fn mb_str_isprintable(s: MbValue) -> MbValue {
 pub fn mb_str_center(s: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     unsafe {
         if let (Some(st), Some(w)) = (as_str(s), width.as_int()) {
-            let fillchar = as_str(fill).and_then(|f| f.chars().next()).unwrap_or(' ');
+            let fillchar = match fill_char(fill) {
+                Some(c) => c,
+                None => return MbValue::none(),
+            };
             let w = w as usize;
             let char_len = st.chars().count();
             if char_len >= w {
@@ -1023,7 +1090,10 @@ pub fn mb_str_center(s: MbValue, width: MbValue, fill: MbValue) -> MbValue {
 pub fn mb_str_ljust(s: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     unsafe {
         if let (Some(st), Some(w)) = (as_str(s), width.as_int()) {
-            let fillchar = as_str(fill).and_then(|f| f.chars().next()).unwrap_or(' ');
+            let fillchar = match fill_char(fill) {
+                Some(c) => c,
+                None => return MbValue::none(),
+            };
             let w = w as usize;
             let char_len = st.chars().count();
             if char_len >= w {
@@ -1043,7 +1113,10 @@ pub fn mb_str_ljust(s: MbValue, width: MbValue, fill: MbValue) -> MbValue {
 pub fn mb_str_rjust(s: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     unsafe {
         if let (Some(st), Some(w)) = (as_str(s), width.as_int()) {
-            let fillchar = as_str(fill).and_then(|f| f.chars().next()).unwrap_or(' ');
+            let fillchar = match fill_char(fill) {
+                Some(c) => c,
+                None => return MbValue::none(),
+            };
             let w = w as usize;
             let char_len = st.chars().count();
             if char_len >= w {
@@ -1056,6 +1129,28 @@ pub fn mb_str_rjust(s: MbValue, width: MbValue, fill: MbValue) -> MbValue {
             ))
         } else {
             MbValue::none()
+        }
+    }
+}
+
+fn fill_char(fill: MbValue) -> Option<char> {
+    if fill.is_none() {
+        return Some(' ');
+    }
+    unsafe {
+        if let Some(f) = as_str(fill) {
+            let mut chars = f.chars();
+            let Some(ch) = chars.next() else {
+                raise_type_error("The fill character must be exactly one character long");
+                return None;
+            };
+            if chars.next().is_some() {
+                raise_type_error("The fill character must be exactly one character long");
+                return None;
+            }
+            Some(ch)
+        } else {
+            Some(' ')
         }
     }
 }
@@ -1240,7 +1335,11 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                     );
                     return MbValue::none();
                 }
-                st.as_bytes().to_vec()
+                if known_text_codec_fallback(&enc) {
+                    st.as_bytes().to_vec()
+                } else {
+                    return raise_lookup_error(format!("unknown encoding: {enc}"));
+                }
             }
         };
         MbValue::from_ptr(MbObject::new_bytes(bytes))
@@ -1339,6 +1438,17 @@ pub fn mb_str_splitlines(s: MbValue, keepends: MbValue) -> MbValue {
 pub fn mb_str_expandtabs(s: MbValue, tabsize: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
+            let bigint_tabsize = tabsize.as_ptr().map_or(false, |p| {
+                matches!(&(*p).data, ObjData::BigInt(_))
+            });
+            if bigint_tabsize
+                || tabsize
+                    .as_int()
+                    .map(|i| i > 1_000_000_000)
+                    .unwrap_or(false)
+            {
+                return raise_overflow_error("Python int too large to convert to C int");
+            }
             let size: usize = tabsize
                 .as_int()
                 .map(|i| if i < 0 { 0 } else { i as usize })
@@ -2663,6 +2773,10 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
                 let k = super::dict_ops::DictKey::Str(name.to_string());
                 return guard.get(&k).copied();
             }
+            if matches!(&(*ptr).data, ObjData::List(_)) {
+                raise_type_error("list indices must be integers or slices, not str");
+                return None;
+            }
             // Mapping-protocol objects (e.g. re.Match) look up via
             // __getitem__ semantics.
             if let ObjData::Instance {
@@ -2716,6 +2830,9 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
             match lookup(field_name) {
                 Some(val) => out.push_str(&apply_format_spec(val, fmt_spec)),
                 None => {
+                    if super::exception::mb_has_exception().as_bool() == Some(true) {
+                        return MbValue::none();
+                    }
                     // Pass the bare key — KeyError.__str__ applies repr-once
                     // when printed. Pre-quoting here doubles the escapes
                     // (e.g. `caught: '\'missing\''` instead of `caught: 'missing'`).
@@ -2974,10 +3091,17 @@ pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
                         result.push_str(&apply_format_spec(value, &resolved_spec));
                     }
                 } else {
-                    // {name} keyword — not supported in positional-only format
-                    result.push('{');
-                    result.push_str(&field);
-                    result.push('}');
+                    if head.starts_with('!') {
+                        result.push('{');
+                        result.push_str(&field);
+                        result.push('}');
+                        continue;
+                    }
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(head.to_string())),
+                    );
+                    return MbValue::none();
                 }
             } else if ch == '}' {
                 if chars.peek() == Some(&'}') {
