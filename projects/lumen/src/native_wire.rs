@@ -492,6 +492,7 @@ mod tests {
                         external_id: "a".to_string(),
                         field: "city".to_string(),
                         value: crate::types::FieldValue::String("taipei".to_string()),
+                        version: None,
                     }],
                     request_id: None,
                 },

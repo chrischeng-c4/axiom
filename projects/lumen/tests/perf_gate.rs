@@ -78,11 +78,13 @@ fn fixture_engine(n: usize) -> Arc<Engine> {
                 external_id: id.clone(),
                 field: "bio".into(),
                 value: FieldValue::String(bio),
+                version: None,
             });
             items.push(IndexItem {
                 external_id: id,
                 field: "email".into(),
                 value: FieldValue::String(format!("u{}@x.com", rng() % 1_000)),
+                version: None,
             });
         }
         e.index(
@@ -108,6 +110,7 @@ fn index_throughput_floor() {
             external_id: format!("u{i}"),
             field: "email".into(),
             value: FieldValue::String(format!("u{i}@x.com")),
+            version: None,
         })
         .collect();
     let start = Instant::now();
