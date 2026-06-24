@@ -3981,6 +3981,9 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
             if let ObjData::Str(ref tmpl) = (*ptr).data {
                 return super::string_ops::mb_str_percent_format(tmpl.clone(), b);
             }
+            if matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) {
+                return super::bytes_ops::mb_bytes_percent_format(a, b);
+            }
         }
     }
     if raise_datetime_op_type_error("%", a, b) {
