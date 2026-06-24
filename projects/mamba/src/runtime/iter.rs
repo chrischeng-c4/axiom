@@ -528,6 +528,9 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     ref class_name,
                     ref fields,
                 } => {
+                    if let Some(items) = super::dict_ops::dict_view_elements(obj) {
+                        IterKind::List(MbValue::from_ptr(MbObject::new_list_borrowed(items)))
+                    } else
                     // tempfile NamedTemporaryFile / SpooledTemporaryFile
                     // iterate their remaining lines, like a real file object.
                     if let Some(lines) = super::stdlib::tempfile_mod::tempfile_iter_lines(obj) {
