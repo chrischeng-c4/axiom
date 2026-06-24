@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-stories-preview-full-hook-state-preserving-react-refresh-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: component-workbench
     role: primary
@@ -41,6 +41,46 @@ flowchart TD
     boundary -->|incompatible| reload[full preview-frame reload]
     refresh --> done([preview updated])
     reload --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/stories/hmr.rs"
+    action: modify
+    section: logic
+    description: |
+      Drive a React-Refresh update on a compatible edit: serve the refresh
+      runtime and, on an update message, call performReactRefresh instead of a
+      blind re-render; keep the full-reload fallback for incompatible edits.
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/server.rs"
+    action: modify
+    section: logic
+    description: |
+      Transform preview modules with React-Refresh registration ($RefreshReg$/
+      $RefreshSig$), reusing the dev_server react_refresh transform, and serve
+      the react-refresh runtime endpoint for the preview frame.
+    impl_mode: hand-written
+  - path: "projects/jet/src/stories/manager.rs"
+    action: modify
+    section: logic
+    description: |
+      Inject the react-refresh runtime + refresh-aware update handling into the
+      preview client (so a compatible edit reconciles in place, preserving hook
+      state); manager shell unchanged.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/stories/preview_hmr.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Tests: preview modules are emitted with React-Refresh registration; the
+      preview client wires performReactRefresh on update and full reload on
+      incompatible; existing preview_hmr tests pass; manager not reloaded.
+    impl_mode: hand-written
 ```
 
 # Reviews
