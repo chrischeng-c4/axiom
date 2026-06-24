@@ -38,6 +38,18 @@ fn make_ns(pairs: &[(&str, MbValue)]) -> MbValue {
     MbValue::from_ptr(dict)
 }
 
+fn ssl_method_members() -> &'static [(&'static str, i64)] {
+    &[
+        ("PROTOCOL_TLS", 2),
+        ("PROTOCOL_SSLv23", 2),
+        ("PROTOCOL_TLS_CLIENT", 16),
+        ("PROTOCOL_TLS_SERVER", 17),
+        ("PROTOCOL_TLSv1", 3),
+        ("PROTOCOL_TLSv1_1", 4),
+        ("PROTOCOL_TLSv1_2", 5),
+    ]
+}
+
 unsafe extern "C" fn dispatch_ssl_context(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
@@ -269,7 +281,9 @@ fn get_field(inst: MbValue, key: &str) -> Option<MbValue> {
 
 /// Int coercion that also accepts bool (CPython int-conversion of True/False).
 fn as_int_like(v: MbValue) -> Option<i64> {
-    v.as_int().or_else(|| v.as_bool().map(|b| b as i64))
+    v.as_int()
+        .or_else(|| v.as_bool().map(|b| b as i64))
+        .or_else(|| super::enum_class::int_member_value(v).and_then(|raw| raw.as_int()))
 }
 
 /// Seed a fresh SSLContext instance with CPython 3.12 defaults for `protocol`.
@@ -1297,14 +1311,13 @@ unsafe extern "C" fn ctx_set_servername_callback(_self_v: MbValue, args: MbValue
 pub fn register() {
     let mut attrs = HashMap::new();
 
-    // Protocol constants (CPython 3.12 ssl.h verbatim).
-    attrs.insert("PROTOCOL_TLS".into(), MbValue::from_int(2));
-    attrs.insert("PROTOCOL_SSLv23".into(), MbValue::from_int(2));
-    attrs.insert("PROTOCOL_TLS_CLIENT".into(), MbValue::from_int(16));
-    attrs.insert("PROTOCOL_TLS_SERVER".into(), MbValue::from_int(17));
-    attrs.insert("PROTOCOL_TLSv1".into(), MbValue::from_int(3));
-    attrs.insert("PROTOCOL_TLSv1_1".into(), MbValue::from_int(4));
-    attrs.insert("PROTOCOL_TLSv1_2".into(), MbValue::from_int(5));
+    // Protocol constants (CPython 3.12 ssl.h verbatim). These are
+    // `_SSLMethod` IntEnum members, not raw ints; aliases share the canonical
+    // member for their value (PROTOCOL_SSLv23 aliases PROTOCOL_TLS).
+    let ssl_method_values = super::enum_class::register_int_enum("_SSLMethod", ssl_method_members());
+    for ((name, _), member) in ssl_method_members().iter().zip(ssl_method_values.iter()) {
+        attrs.insert((*name).into(), *member);
+    }
 
     // Cert verification.
     attrs.insert("CERT_NONE".into(), MbValue::from_int(0));
