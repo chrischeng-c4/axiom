@@ -1084,6 +1084,9 @@ pub fn mb_len(val: MbValue) -> MbValue {
                     ref class_name,
                     ref fields,
                 } => {
+                    if let Some(n) = super::dict_ops::dict_view_len(val) {
+                        return MbValue::from_int(n);
+                    }
                     // namedtuple instances: len reflects declared field count.
                     if let Some(vals) = super::stdlib::collections_mod::namedtuple_values(val) {
                         return MbValue::from_int(vals.len() as i64);
@@ -3173,6 +3176,9 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
     }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
+            if let Some(result) = super::dict_ops::dict_view_or(a, b) {
+                return result;
+            }
             let a_is_setlike = matches!((*pa).data, ObjData::Set(_) | ObjData::FrozenSet(_));
             let b_is_setlike = matches!((*pb).data, ObjData::Set(_) | ObjData::FrozenSet(_));
             if a_is_setlike && b_is_setlike {
@@ -5543,6 +5549,9 @@ pub fn extract_items(val: MbValue) -> Vec<MbValue> {
                         .collect();
                 }
                 ObjData::Instance { .. } => {
+                    if let Some(items) = super::dict_ops::dict_view_elements(val) {
+                        return items;
+                    }
                     // User iterable: go through iterator protocol.
                     // Fall through to the iterator handling below.
                 }
