@@ -305,6 +305,8 @@ pub enum QueryNode {
     Match(MatchQuery),
     Term(TermQuery),
     Terms(TermsQuery),
+    /// Filter to a set of external_ids (#182). Wire: `{"ids": {"values":[...]}}`.
+    Ids(IdsQuery),
     Range(RangeQuery),
     Knn(KnnQuery),
     And(Vec<QueryNode>),
@@ -434,6 +436,16 @@ pub struct TermQuery {
 pub struct TermsQuery {
     pub field: String,
     pub values: Vec<FieldValue>,
+}
+
+/// `ids` query node (#182): filter to a set of external_ids. Each id is resolved
+/// through the collection interner to a docid (unknown ids are skipped). It is
+/// constant-scored and composes under and/or/not like term/terms. Removes the
+/// need to index a redundant row-id keyword field for `row_id_in`.
+/// @spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct IdsQuery {
+    pub values: Vec<String>,
 }
 
 /// kNN vector search node. Returns the `k` external_ids closest to

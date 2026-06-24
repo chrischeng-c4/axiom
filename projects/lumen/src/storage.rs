@@ -38,9 +38,10 @@ use crate::tokenize;
 use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
     DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
-    HammingQuery, HasChildQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp, MatchQuery,
-    QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortMissing,
-    SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery, VectorSpec,
+    HammingQuery, HasChildQuery, IdsQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp,
+    MatchQuery, QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse,
+    SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
+    VectorSpec,
 };
 use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
 use roaring::RoaringBitmap;
@@ -4528,6 +4529,7 @@ fn eval_query(
         QueryNode::Match(m) => eval_match(coll, m)?,
         QueryNode::Term(t) => constant_score(eval_term(coll, t)?),
         QueryNode::Terms(t) => constant_score(eval_terms(coll, t)?),
+        QueryNode::Ids(q) => constant_score(eval_ids(coll, q)?),
         QueryNode::Range(r) => constant_score(eval_range(coll, r)?),
         QueryNode::Knn(k) => eval_knn(coll, k)?,
         QueryNode::Hamming(hq) => eval_hamming(coll, hq)?,
@@ -5787,6 +5789,19 @@ fn eval_term(coll: &Collection, t: &TermQuery) -> Result<RoaringBitmap> {
     })
 }
 
+/// #182: resolve an `ids` query to the docid bitmap of the named external_ids.
+/// Unknown ids are skipped (they simply contribute nothing).
+/// @spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
+fn eval_ids(coll: &Collection, q: &IdsQuery) -> Result<RoaringBitmap> {
+    let mut out = RoaringBitmap::new();
+    for eid in &q.values {
+        if let Some(id) = coll.interner.id(eid) {
+            out.insert(id);
+        }
+    }
+    Ok(out)
+}
+
 fn eval_terms(coll: &Collection, t: &TermsQuery) -> Result<RoaringBitmap> {
     let mut acc = RoaringBitmap::new();
     // Fast path: union the in-memory posting bitmaps by reference (word-wise
@@ -6019,6 +6034,7 @@ fn is_predicable(node: &QueryNode) -> bool {
         node,
         QueryNode::Term(_)
             | QueryNode::Terms(_)
+            | QueryNode::Ids(_)
             | QueryNode::Range(_)
             | QueryNode::Match(_)
             | QueryNode::Exists(_)
@@ -6193,6 +6209,9 @@ fn is_unbounded_range_on_field(query: &QueryNode, field: &str) -> bool {
 /// from (so a leaf is always preferred).
 fn estimate_selectivity(coll: &Collection, node: &QueryNode) -> u64 {
     match node {
+        // #182: the id list size is a cheap upper bound on matched docs — a
+        // small ids clause is a good (selective) driver for the AND.
+        QueryNode::Ids(q) => q.values.len() as u64,
         QueryNode::Term(t) => match (coll.fields.get(&t.field), &t.value) {
             (Some(FieldIndex::Keyword(k)), FieldValue::String(s)) => {
                 // Phase 2h-1: df from the active source (segment count-prefix
@@ -6518,6 +6537,7 @@ fn eval_filter_bitmap(coll: &Collection, node: &QueryNode) -> Result<RoaringBitm
     match node {
         QueryNode::Term(t) => eval_term(coll, t),
         QueryNode::Terms(t) => eval_terms(coll, t),
+        QueryNode::Ids(q) => eval_ids(coll, q),
         QueryNode::Range(r) => eval_range(coll, r),
         QueryNode::Exists(e) => eval_field_doc_union(coll, &e.field, 1),
         QueryNode::Duplicated(d) => {
@@ -7209,6 +7229,8 @@ fn query_predicate(coll: &Collection, node: &QueryNode, id: u32) -> Result<bool>
         QueryNode::Term(_) | QueryNode::Terms(_) | QueryNode::Range(_) | QueryNode::Match(_) => {
             clause_matches(coll, node, id)?.is_some()
         }
+        // #182: ids is a direct membership test against the resolved bitmap.
+        QueryNode::Ids(q) => eval_ids(coll, q)?.contains(id),
         QueryNode::And(cs) => {
             for c in cs {
                 if !query_predicate(coll, c, id)? {
@@ -17282,6 +17304,143 @@ mod has_child_sort_tests {
             matches!(se, StorageError::UnsupportedSort(_)),
             "knn + sort must stay rejected, got {se:?}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #182: native `ids` query — filter by a set of external_ids, resolved through
+// the interner. Constant-scored, predicable, composes under and/or/not + sort.
+// @spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod ids_query_tests {
+    use super::*;
+    use crate::types::{IdsQuery, IndexItem};
+
+    fn fieldspec(t: FieldType) -> FieldSpec {
+        FieldSpec {
+            field_type: t,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        }
+    }
+
+    fn schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert("price".into(), fieldspec(FieldType::Number));
+        fields.insert("status".into(), fieldspec(FieldType::Keyword));
+        CreateCollectionRequest { fields }
+    }
+
+    /// d0(10,open) d1(20,closed) d2(30,open).
+    fn seed() -> Engine {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        for (eid, price, status) in [
+            ("d0", 10.0, "open"),
+            ("d1", 20.0, "closed"),
+            ("d2", 30.0, "open"),
+        ] {
+            e.index(
+                "c",
+                IndexRequest {
+                    items: vec![
+                        IndexItem {
+                            external_id: eid.into(),
+                            field: "price".into(),
+                            value: FieldValue::Number(price),
+                            version: None,
+                        },
+                        IndexItem {
+                            external_id: eid.into(),
+                            field: "status".into(),
+                            value: FieldValue::String(status.into()),
+                            version: None,
+                        },
+                    ],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+        e
+    }
+
+    fn ids_q(vals: &[&str]) -> QueryNode {
+        QueryNode::Ids(IdsQuery {
+            values: vals.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+
+    fn run(e: &Engine, query: QueryNode, sort: Option<Vec<SortSpec>>) -> SearchResponse {
+        e.search(
+            "c",
+            SearchRequest {
+                query,
+                limit: 100,
+                cursor: None,
+                sort,
+                track_total: true,
+                collapse: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn id_set(r: &SearchResponse) -> BTreeSet<String> {
+        r.hits.iter().map(|h| h.external_id.clone()).collect()
+    }
+
+    /// R1: returns exactly the named existing ids, skipping unknown ones.
+    #[test]
+    fn ids_returns_named_set_skips_unknown() {
+        let e = seed();
+        let r = run(&e, ids_q(&["d0", "d2", "does-not-exist"]), None);
+        assert_eq!(
+            id_set(&r),
+            ["d0".to_string(), "d2".to_string()].into_iter().collect()
+        );
+        assert_eq!(r.total, 2);
+    }
+
+    /// R2: composes under a boolean AND with another clause.
+    #[test]
+    fn ids_composes_under_and() {
+        let e = seed();
+        let q = QueryNode::And(vec![
+            ids_q(&["d0", "d1", "d2"]),
+            QueryNode::Term(TermQuery {
+                field: "status".into(),
+                value: FieldValue::String("open".into()),
+            }),
+        ]);
+        let r = run(&e, q, None);
+        assert_eq!(
+            id_set(&r),
+            ["d0".to_string(), "d2".to_string()].into_iter().collect(),
+            "d1 is closed, so the AND drops it"
+        );
+    }
+
+    /// R3: combines with sort (ids is a predicable filter).
+    #[test]
+    fn ids_combines_with_sort() {
+        let e = seed();
+        let r = run(
+            &e,
+            ids_q(&["d2", "d0"]),
+            Some(vec![SortSpec {
+                field: "price".into(),
+                order: SortOrder::Asc,
+                missing: SortMissing::Exclude,
+            }]),
+        );
+        let ordered: Vec<String> = r.hits.iter().map(|h| h.external_id.clone()).collect();
+        assert_eq!(ordered, vec!["d0".to_string(), "d2".to_string()]); // 10 then 30
     }
 }
 // CODEGEN-END
