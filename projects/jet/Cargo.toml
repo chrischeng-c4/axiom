@@ -213,6 +213,9 @@ path = "tests/build/bundler_monorepo.rs"
 name = "incremental_rebuild_bench"
 path = "tests/build/incremental_rebuild_bench.rs"
 [[test]]
+name = "library_build"
+path = "tests/build/library_build.rs"
+[[test]]
 name = "production_build_regression"
 path = "tests/build/production_build_regression.rs"
 [[test]]

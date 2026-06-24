@@ -51,6 +51,26 @@ pub struct BundleOptions {
     /// Production DOM builds set this so CSS is not duplicated in both the JS
     /// bundle and a sidecar stylesheet.
     pub css_bundle: bool,
+
+    /// Library-build mode. When true the bundler is driven through
+    /// `lib_build::build_library` instead of the app `Bundler::bundle` path:
+    /// npm dependencies are externalized and emitted as real top-level
+    /// `import`/`require` statements rather than inlined. Default `false`
+    /// keeps the app-mode build path completely unchanged.
+    /// @issue #170
+    pub library: bool,
+
+    /// Output formats to emit in library mode (e.g. `[Esm]` or `[Esm, Cjs]`).
+    /// Ignored when `library` is `false`. Default `[OutputFormat::Esm]`.
+    /// @issue #170
+    pub formats: Vec<OutputFormat>,
+
+    /// Preserve the internal module structure (one output file per source
+    /// module) instead of bundling each entry into a single file. Library
+    /// mode only. Currently a deferred follow-up — see
+    /// `lib_build::build_library`. Default `false`.
+    /// @issue #170
+    pub preserve_modules: bool,
 }
 
 /// Production build configuration.
@@ -209,6 +229,9 @@ impl Default for BundleOptions {
             externalize_all_packages: false,
             defines: HashMap::new(),
             css_bundle: false,
+            library: false,
+            formats: vec![OutputFormat::Esm],
+            preserve_modules: false,
         }
     }
 }

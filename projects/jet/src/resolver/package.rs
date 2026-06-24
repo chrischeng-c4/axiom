@@ -17,6 +17,11 @@ pub struct PackageJson {
     pub dependencies: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(rename = "devDependencies")]
     pub dev_dependencies: Option<serde_json::Map<String, serde_json::Value>>,
+    /// `peerDependencies` — packages the consumer is expected to provide.
+    /// Like `dependencies`, these must stay external in a library build.
+    /// @issue #170
+    #[serde(rename = "peerDependencies")]
+    pub peer_dependencies: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Read package.json from path
@@ -41,6 +46,93 @@ pub fn get_package_main(path: &Path) -> Result<String> {
     }
 
     Ok("index.js".to_string())
+}
+
+/// A single library entry discovered from `package.json`.
+///
+/// `subpath` is the public export key (`.`, `./client`, …) the entry is
+/// published under; `source` is the relative file path the bundler reads.
+/// @issue #170
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryEntry {
+    /// Public export subpath, e.g. `.` or `./client`.
+    pub subpath: String,
+    /// Relative source path the bundler reads, e.g. `./src/index.ts`.
+    pub source: String,
+}
+
+/// Enumerate the publishable library entries from a `package.json`.
+///
+/// Resolution order:
+///   1. Every concrete (non-wildcard) `exports` subpath, resolved with the
+///      supplied `conditions` (e.g. `["import", "default"]`).
+///   2. If `exports` yields nothing, fall back to a single `.` entry from
+///      `module` (preferred, ESM) or `main`.
+///
+/// Wildcard export patterns (keys containing `*`) are skipped — they require
+/// a filesystem glob and are out of scope for the first library-build pass.
+/// @issue #170
+pub fn library_entries(
+    package_json_path: &Path,
+    conditions: &[&str],
+) -> Result<Vec<LibraryEntry>> {
+    let package = read_package_json(package_json_path)?;
+    let mut entries: Vec<LibraryEntry> = Vec::new();
+
+    if let Some(serde_json::Value::Object(map)) = &package.exports {
+        for (subpath, _) in map.iter() {
+            if subpath.contains('*') {
+                // Wildcard patterns need a filesystem glob — deferred.
+                continue;
+            }
+            if let Some(source) = resolve_exports(package_json_path, Some(subpath), conditions)? {
+                entries.push(LibraryEntry {
+                    subpath: subpath.clone(),
+                    source,
+                });
+            }
+        }
+    } else if let Some(serde_json::Value::String(source)) = &package.exports {
+        // Shorthand: `"exports": "./dist/index.js"` is the `.` entry.
+        entries.push(LibraryEntry {
+            subpath: ".".to_string(),
+            source: source.clone(),
+        });
+    }
+
+    if entries.is_empty() {
+        let source = package
+            .module
+            .clone()
+            .or_else(|| package.main.clone())
+            .unwrap_or_else(|| "index.js".to_string());
+        entries.push(LibraryEntry {
+            subpath: ".".to_string(),
+            source,
+        });
+    }
+
+    Ok(entries)
+}
+
+/// Collect the package names that must stay external in a library build:
+/// every key of `dependencies` and `peerDependencies`. `devDependencies`
+/// are intentionally excluded — they are not shipped to consumers.
+/// @issue #170
+pub fn external_package_names(package_json_path: &Path) -> Result<std::collections::HashSet<String>> {
+    let package = read_package_json(package_json_path)?;
+    let mut names = std::collections::HashSet::new();
+
+    for map in [&package.dependencies, &package.peer_dependencies]
+        .into_iter()
+        .flatten()
+    {
+        for key in map.keys() {
+            names.insert(key.clone());
+        }
+    }
+
+    Ok(names)
 }
 
 /// Resolve using package.json "exports" field (modern Node.js).

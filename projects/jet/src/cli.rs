@@ -370,6 +370,30 @@ pub fn command() -> Command {
                              runtime inspection hooks (window.__jet_debug). \
                              Only meaningful with --wasm.",
                         ),
+                )
+                .arg(
+                    // jet build --lib — library mode: externalize npm deps,
+                    // emit ESM (+ optional CJS), discover multiple entries
+                    // from package.json `exports`. Reads [lib] section of
+                    // jet.toml when present.
+                    Arg::new("lib")
+                        .long("lib")
+                        .action(ArgAction::SetTrue)
+                        .help(
+                            "Library mode — build a publishable library: \
+                             externalize npm dependencies/peerDependencies as \
+                             real `import`/`require` statements, emit ESM (and \
+                             CJS with --format), discover entries from \
+                             package.json `exports`. Reads [lib] of jet.toml.",
+                        ),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .help(
+                            "Library output formats (comma-separated): esm, cjs. \
+                             Only meaningful with --lib. Default: esm.",
+                        ),
                 ),
         )
         .subcommand(Command::new("check").about("Type check TypeScript files"))
@@ -1851,6 +1875,17 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 return Ok(());
             }
 
+            // Library mode (`jet build --lib`, or a `[lib]` section in
+            // jet.toml). Externalizes npm deps and emits a publishable
+            // ESM (+ optional CJS) artifact instead of an app bundle. The
+            // app-mode build path below is untouched.
+            let lib_config = crate::task_runner::config::JetConfig::load(&root_dir)
+                .ok()
+                .and_then(|c| c.lib);
+            if m.get_flag("lib") || lib_config.is_some() {
+                return run_library_build(m, &root_dir, &output, lib_config.as_ref());
+            }
+
             // GH #3708 — the prior `let _watch = m.get_flag("watch");`
             // silently discarded the flag. clap accepted `-w` / `--watch`,
             // the bundler ran once, printed "Build complete", exited 0.
@@ -3239,6 +3274,98 @@ async fn run_nx_build(
         built,
         skipped,
     );
+    Ok(())
+}
+
+/// Drive a `jet build --lib` library build.
+///
+/// Translates CLI flags (`--format`, `--output`) and the optional `[lib]`
+/// section of `jet.toml` into [`crate::bundler::LibBuildOptions`], runs
+/// [`crate::bundler::build_library`], and prints the emitted files. App-mode
+/// build is unaffected — this is only reached when `--lib` is passed or a
+/// `[lib]` section is present.
+/// @issue #170
+fn run_library_build(
+    m: &ArgMatches,
+    root_dir: &Path,
+    output: &str,
+    lib_config: Option<&crate::task_runner::config::LibConfig>,
+) -> Result<()> {
+    use crate::bundler::types::OutputFormat;
+
+    // Formats: --format overrides [lib] formats overrides default [esm].
+    let format_strings: Vec<String> = if let Some(arg) = m.get_one::<String>("format") {
+        arg.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else if let Some(formats) = lib_config.and_then(|c| c.formats.clone()) {
+        formats
+    } else {
+        vec!["esm".to_string()]
+    };
+
+    let mut formats = Vec::new();
+    for f in &format_strings {
+        match f.to_lowercase().as_str() {
+            "esm" | "es" | "module" => formats.push(OutputFormat::Esm),
+            "cjs" | "commonjs" => formats.push(OutputFormat::Cjs),
+            other => anyhow::bail!(
+                "jet build --lib: unknown format '{}' (expected esm or cjs)",
+                other
+            ),
+        }
+    }
+    if formats.is_empty() {
+        formats.push(OutputFormat::Esm);
+    }
+
+    // out_dir: --output (defaults to "dist") wins; else [lib] out_dir.
+    let out_rel = if output != "dist" {
+        output.to_string()
+    } else {
+        lib_config
+            .and_then(|c| c.out_dir.clone())
+            .unwrap_or_else(|| output.to_string())
+    };
+    let out_dir = root_dir.join(&out_rel);
+
+    // Resolve conditions: prefer the build-mode default (import/require/...).
+    let conditions = crate::resolver::ResolveOptions::for_browser_production()
+        .conditions
+        .clone();
+
+    let preserve_modules = lib_config
+        .and_then(|c| c.preserve_modules)
+        .unwrap_or(false);
+
+    let options = crate::bundler::LibBuildOptions {
+        project_root: root_dir.to_path_buf(),
+        out_dir,
+        formats,
+        conditions,
+        extra_externals: std::collections::HashSet::new(),
+        preserve_modules,
+    };
+
+    let start = std::time::Instant::now();
+    let result = crate::bundler::build_library(options).context("Library build failed")?;
+
+    println!(
+        "Library build complete in {:.0}ms: {} file(s)",
+        start.elapsed().as_millis(),
+        result.entries.len(),
+    );
+    for entry in &result.entries {
+        let size_kb = entry.code.len() as f64 / 1024.0;
+        let rel = entry
+            .path
+            .strip_prefix(root_dir)
+            .unwrap_or(&entry.path)
+            .display();
+        println!("  {} ({:?}) → {} ({:.1} KB)", entry.subpath, entry.format, rel, size_kb);
+    }
+
     Ok(())
 }
 

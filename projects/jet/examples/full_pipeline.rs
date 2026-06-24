@@ -161,6 +161,7 @@ async fn demo_bundler(root: &Path) {
         externals: HashSet::new(),
         externalize_all_packages: false,
         defines: std::collections::HashMap::new(),
+        ..Default::default()
     };
 
     let bundler = Bundler::new(options).unwrap();
