@@ -3211,6 +3211,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_exec_with_globals",
+            builtins::mb_exec_with_globals as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_compile",
             builtins::mb_compile
                 as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,

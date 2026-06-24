@@ -10016,6 +10016,7 @@ fn exec_has_pending_exception() -> bool {
 struct ExecContext {
     class_match_args: FxHashMap<String, Option<MbValue>>,
     type_vars: std::collections::HashSet<String>,
+    globals: Option<MbValue>,
 }
 
 fn exec_raise_type_error(message: String) {
@@ -10275,6 +10276,17 @@ fn exec_validate_class_pattern(ctx: &ExecContext, subject_class: &str, pattern: 
     }
 }
 
+fn exec_store_global(ctx: &ExecContext, name: &str, value: MbValue) {
+    let Some(globals) = ctx.globals else {
+        return;
+    };
+    super::dict_ops::mb_dict_setitem(
+        globals,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        value,
+    );
+}
+
 fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
     use crate::parser::ast::Stmt;
     match stmt {
@@ -10284,11 +10296,25 @@ fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
                 if exec_is_typevar_constructor(&value.node) {
                     ctx.type_vars.insert(name.clone());
                 }
+                if ctx.globals.is_some() {
+                    let assigned = eval_expr(&value.node);
+                    if exec_has_pending_exception() {
+                        return;
+                    }
+                    exec_store_global(ctx, name, assigned);
+                }
             }
         }
         Stmt::VarDecl { name, value, .. } => {
             if exec_is_typevar_constructor(&value.node) {
                 ctx.type_vars.insert(name.clone());
+            }
+            if ctx.globals.is_some() {
+                let assigned = eval_expr(&value.node);
+                if exec_has_pending_exception() {
+                    return;
+                }
+                exec_store_global(ctx, name, assigned);
             }
         }
         Stmt::ClassDef { name, type_params, bases, body, .. } => {
@@ -10492,6 +10518,14 @@ fn eval_unaryop(op: crate::parser::ast::UnaryOp, v: MbValue) -> MbValue {
 ///     and with cleanup) is executed so exceptions propagate through `exec`.
 /// Remaining side-effecting statements are still dropped on the floor; see #1256.
 pub fn mb_exec(code: MbValue) -> MbValue {
+    mb_exec_impl(code, None)
+}
+
+pub fn mb_exec_with_globals(code: MbValue, globals: MbValue) -> MbValue {
+    mb_exec_impl(code, Some(globals))
+}
+
+fn mb_exec_impl(code: MbValue, globals: Option<MbValue>) -> MbValue {
     use crate::lexer;
     use crate::parser::Parser;
     use crate::source::SourceMap;
@@ -10523,7 +10557,8 @@ pub fn mb_exec(code: MbValue) -> MbValue {
             return MbValue::none();
         }
     };
-    exec_stmts(&module.stmts);
+    let mut ctx = ExecContext { globals, ..ExecContext::default() };
+    exec_stmts_with_context(&mut ctx, &module.stmts);
     MbValue::none()
 }
 

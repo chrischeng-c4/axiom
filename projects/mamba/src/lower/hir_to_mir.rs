@@ -7449,6 +7449,28 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
+                    // exec(code, globals) needs the namespace dict at runtime.
+                    // The historical mb_exec intrinsic is single-arg, so route
+                    // the two-arg form through the dedicated runtime entry.
+                    if extern_name == "mb_exec" {
+                        let code_arg = boxed_args.first().copied().unwrap_or_else(|| self.emit_none());
+                        if boxed_args.len() >= 2 {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_exec_with_globals".to_string(),
+                                args: vec![code_arg, boxed_args[1]],
+                                ty: *ty,
+                            });
+                        } else {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: extern_name,
+                                args: vec![code_arg],
+                                ty: *ty,
+                            });
+                        }
+                        return dest;
+                    }
                     // Special case: breakpoint(*args, **kwargs) — drop all
                     // args. mb_breakpoint takes zero args and returns None.
                     if extern_name == "mb_breakpoint" {
