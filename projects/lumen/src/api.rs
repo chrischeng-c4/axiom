@@ -263,8 +263,8 @@ impl AppState {
         license(name = "MIT")
     ),
     servers(
-        (url = "http://lumen-svc:8080", description = "in-cluster ClusterIP"),
-        (url = "http://localhost:8080", description = "local dev")
+        (url = "http://lumen-svc:7373", description = "in-cluster ClusterIP"),
+        (url = "http://localhost:7373", description = "local dev")
     ),
     tags(
         (name = "Collections", description = "Schema lifecycle"),
@@ -313,6 +313,15 @@ impl AppState {
         crate::types::RrfQuery,
         crate::types::ExistsQuery,
         crate::types::DuplicatedQuery,
+        // #200: these are $ref'd by QueryNode / SearchRequest but were not
+        // registered, so the emitted OpenAPI had dangling refs. SortSpec also
+        // pulls in SortOrder + SortMissing.
+        crate::types::IdsQuery,
+        crate::types::HasChildQuery,
+        crate::types::HammingQuery,
+        crate::types::SortSpec,
+        crate::types::SortOrder,
+        crate::types::SortMissing,
         SearchHit,
         SearchResponse,
         DuplicatesRequest,
