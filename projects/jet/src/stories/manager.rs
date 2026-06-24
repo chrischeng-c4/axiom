@@ -29,6 +29,47 @@ use super::{StoryEntry, StoryIndex};
 /// Route prefix for an isolated story preview document.
 pub const PREVIEW_PREFIX: &str = "/__jet_stories_preview";
 
+/// How the renderers form the URLs they embed (iframe src, sidebar links, the
+/// preview's module imports, and the HMR client).
+///
+/// - [`UrlMode::Dev`] (the default) emits **absolute dev-server routes** — e.g.
+///   `/__jet_stories_preview/{id}` for the iframe + sidebar links and a
+///   root-relative `/src/...` module URL the dev server transforms on demand —
+///   plus the preview-frame HMR client. This is exactly the B2/B2b/B3 behavior
+///   and is unchanged.
+/// - [`UrlMode::Static`] emits **relative URLs** for the static export (B4): the
+///   manager (at `index.html`) links the iframe + sidebar at `preview/{id}.html`,
+///   and each preview (at `preview/{id}.html`) imports its module from
+///   `../modules/...js`. No HMR client is injected (there is no server at serve
+///   time), so the static site is hostable by any file server or `file://`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UrlMode {
+    /// Absolute dev-server routes + HMR client (B2/B2b/B3 behavior).
+    #[default]
+    Dev,
+    /// Relative URLs for a static, server-less export (B4).
+    Static,
+}
+
+impl UrlMode {
+    /// The iframe `src` / sidebar link for a story preview in this mode.
+    fn preview_url(self, story_id: &str) -> String {
+        match self {
+            UrlMode::Dev => format!("{PREVIEW_PREFIX}/{story_id}"),
+            // Relative to the manager document (`index.html`).
+            UrlMode::Static => format!("preview/{story_id}.html"),
+        }
+    }
+
+    /// The empty-state preview link (no stories / unknown selection).
+    fn empty_preview_url(self) -> String {
+        match self {
+            UrlMode::Dev => format!("{PREVIEW_PREFIX}/"),
+            UrlMode::Static => "preview/.html".to_string(),
+        }
+    }
+}
+
 /// Build the manager shell HTML: sidebar tree + toolbar + preview iframe.
 ///
 /// `selected` is the id of the story whose preview the iframe loads first; when
@@ -46,6 +87,18 @@ pub fn render_manager_html(
     selected: Option<&str>,
     controls: &[Control],
 ) -> String {
+    render_manager_html_with_mode(index, selected, controls, UrlMode::Dev)
+}
+
+/// [`render_manager_html`] with an explicit [`UrlMode`]. The dev server calls the
+/// [`UrlMode::Dev`] wrapper above (unchanged); the static exporter (B4) passes
+/// [`UrlMode::Static`] so the iframe src + sidebar links are relative.
+pub fn render_manager_html_with_mode(
+    index: &StoryIndex,
+    selected: Option<&str>,
+    controls: &[Control],
+    mode: UrlMode,
+) -> String {
     // Resolve the initially-selected story: explicit id if it exists, else the
     // first discovered story (the index is already id-sorted).
     let selected_entry = selected
@@ -53,12 +106,12 @@ pub fn render_manager_html(
         .or_else(|| index.stories.first());
 
     let initial_src = match selected_entry {
-        Some(entry) => format!("{PREVIEW_PREFIX}/{}", entry.id),
-        None => format!("{PREVIEW_PREFIX}/"),
+        Some(entry) => mode.preview_url(&entry.id),
+        None => mode.empty_preview_url(),
     };
     let initial_id = selected_entry.map(|e| e.id.as_str()).unwrap_or("");
 
-    let sidebar = render_sidebar(index, initial_id);
+    let sidebar = render_sidebar(index, initial_id, mode);
     let diagnostics = render_diagnostics(index);
     let controls_panel = render_controls_panel(controls);
     let initial_args_json = controls_to_args_json(controls);
@@ -311,7 +364,7 @@ fn controls_to_args_json(controls: &[Control]) -> String {
 
 /// The sidebar tree: stories grouped by their full title path so the sidebar
 /// mirrors the hierarchy the user authored via `meta.title`.
-fn render_sidebar(index: &StoryIndex, active_id: &str) -> String {
+fn render_sidebar(index: &StoryIndex, active_id: &str, mode: UrlMode) -> String {
     if index.stories.is_empty() {
         return "<p class=\"jet-diag\">No stories discovered.</p>".to_string();
     }
@@ -330,7 +383,7 @@ fn render_sidebar(index: &StoryIndex, active_id: &str) -> String {
         out.push_str(&escape_html(title));
         out.push_str("</span><ul>");
         for story in stories {
-            let preview = format!("{PREVIEW_PREFIX}/{}", story.id);
+            let preview = mode.preview_url(&story.id);
             let active = if story.id == active_id {
                 " jet-active"
             } else {
@@ -392,10 +445,30 @@ fn story_display_title(story: &StoryEntry) -> String {
 ///   4. mounts the result into a single `#jet-root` div with no surrounding app
 ///      shell, router, or providers.
 pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
+    render_preview_html_with_mode(story, module_url, UrlMode::Dev)
+}
+
+/// [`render_preview_html`] with an explicit [`UrlMode`].
+///
+/// [`UrlMode::Dev`] (the wrapper above) injects the preview-frame HMR client and
+/// is unchanged. [`UrlMode::Static`] (B4) omits the HMR client entirely — there
+/// is no dev server / WebSocket at serve time — so the emitted document is a
+/// self-contained, server-less preview; `module_url` is expected to already be a
+/// relative URL (e.g. `../modules/src/Button.stories.js`) pointing at an emitted
+/// transformed module.
+pub fn render_preview_html_with_mode(
+    story: &StoryEntry,
+    module_url: &str,
+    mode: UrlMode,
+) -> String {
     let args_json = args_to_json(&story.args);
     // B2b/#176: the HMR client lives ONLY in the preview frame, so an edit
-    // hot-updates the iframe while the manager shell stays put.
-    let hmr_client = render_preview_hmr_client();
+    // hot-updates the iframe while the manager shell stays put. The static
+    // export has no server to talk to, so it ships no HMR client.
+    let hmr_client = match mode {
+        UrlMode::Dev => render_preview_hmr_client(),
+        UrlMode::Static => String::new(),
+    };
 
     format!(
         r#"<!doctype html>
@@ -851,6 +924,57 @@ mod tests {
             .push(entry("x--y", "Y", &["X"]));
         let html = render_manager_html(&index, None, &[]);
         assert!(html.contains("No controls for this story."));
+    }
+
+    #[test]
+    fn dev_mode_is_the_default_and_emits_absolute_routes() {
+        let mut index = StoryIndex::default();
+        index
+            .stories
+            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
+
+        // The default wrapper and the explicit Dev mode must be byte-identical
+        // — no absolute→relative regression for the dev server.
+        let default = render_manager_html(&index, None, &[]);
+        let dev = render_manager_html_with_mode(&index, None, &[], UrlMode::Dev);
+        assert_eq!(default, dev);
+        assert!(default.contains("src=\"/__jet_stories_preview/components-button--primary\""));
+        // The preview likewise defaults to Dev (absolute module URL + HMR client).
+        let e = entry("components-button--primary", "Primary", &["Components", "Button"]);
+        let p_default = render_preview_html(&e, "/src/Button.stories.tsx");
+        let p_dev = render_preview_html_with_mode(&e, "/src/Button.stories.tsx", UrlMode::Dev);
+        assert_eq!(p_default, p_dev);
+        assert!(p_default.contains("HMR connected"), "dev preview ships the HMR client");
+    }
+
+    #[test]
+    fn static_mode_emits_relative_preview_links() {
+        let mut index = StoryIndex::default();
+        index
+            .stories
+            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
+
+        let html = render_manager_html_with_mode(&index, None, &[], UrlMode::Static);
+        // iframe + sidebar link the relative preview file, never an absolute route.
+        assert!(html.contains("src=\"preview/components-button--primary.html\""));
+        assert!(html.contains("data-preview=\"preview/components-button--primary.html\""));
+        assert!(!html.contains("/__jet_stories_preview"), "no dev routes in static mode");
+    }
+
+    #[test]
+    fn static_mode_preview_imports_relative_and_drops_hmr() {
+        let e = entry("components-button--primary", "Primary", &["Components", "Button"]);
+        let html = render_preview_html_with_mode(
+            &e,
+            "../modules/src/components/Button.stories.js",
+            UrlMode::Static,
+        );
+        assert!(html.contains("import * as Story from \"../modules/src/components/Button.stories.js\""));
+        // No HMR client / WebSocket wiring in the server-less static export.
+        assert!(!html.contains("HMR connected"), "static preview omits the HMR client");
+        assert!(!html.contains("WebSocket"), "no WebSocket in static preview");
+        // Still an isolated single-root mount.
+        assert_eq!(html.matches("id=\"jet-root\"").count(), 1);
     }
 }
 // HANDWRITE-END
