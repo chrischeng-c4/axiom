@@ -63,3 +63,10 @@ flowchart TD
     write --> meta[set types / exports.types]
     meta --> done([DtsResult per-entry paths])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Applicability is correct: the .d.ts flow walks exported declarations per library entry, emits type/interface/enum decls verbatim and `export declare` signatures for explicitly-typed values (isolatedDeclarations model), errors on untyped exports, assembles per-entry .d.ts preserving external type imports, and wires types/exports.types. Scoped to declaration emission; depends on A1's per-entry output.
