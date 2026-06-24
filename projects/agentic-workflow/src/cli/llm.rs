@@ -115,21 +115,27 @@ and running the single command it hands back, until the loop converges:
 aw is mechanical: it never calls a model. The loop terminates on the VERIFIER
 (ec), not on a review.
 
-## The model: a loop over three artifacts
+## The model: capability -> ec -> td
 
-| layer       | what it is                            | role               |
-|-------------|---------------------------------------|--------------------|
-| `aw` (run)  | the loop engine                       | act->verify->decide|
-| `aw wi`     | the loop STATE + iteration target     | persists the loop  |
-| `aw caps`   | the goal (function definition)        | what "done" means  |
-| `aw ec`     | the verifier (what to test); ec green | the only gate      |
-| `aw td`     | the artifact (how + the running code) | caps-agnostic      |
+    capability  --derive what to test-->  ec  --gates-->  td
+      (goal:          (human + agent)    (verifier:      (artifact:
+       what)                              the only gate)  how + code)
 
-One sentence: aw (loop) reads wi (state+target) -> does td (act) -> runs ec
-(verify) -> writes the result back to wi -> repeats until ec is green = the
-caps gap is closed. td may be any shape; only ec decides done. There is no
-review -- you terminate on the verifier. (The one judgment point is deriving
-ec from caps; see `aw llm ec`.)
+                    ec green  =>  capability achieved
+
+- ec sits BETWEEN the goal and the implementation: it guards td on behalf of
+  capability.
+- td is caps-agnostic -- it only has to pass ec; passing ec == achieving caps,
+  so td may be any shape (beauty irrelevant).
+- the one judgment point is deriving ec from capability (human + agent); that
+  is the only place a review belongs. See `aw llm ec`.
+
+The loop runs over that chain -- `aw` is the engine, `aw wi` is the state:
+
+    aw (loop) reads wi (state+target) -> does td (act) -> runs ec (verify)
+    -> writes the result to wi -> repeats until ec is green.
+
+No review -- you terminate on the verifier.
 
 ## Topics -- read the smallest one you need
 
