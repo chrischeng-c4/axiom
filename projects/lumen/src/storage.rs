@@ -39,8 +39,8 @@ use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
     DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
     HammingQuery, HasChildQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp, MatchQuery,
-    QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortOrder, SortSpec,
-    StatsResponse, StorageStats, TermQuery, TermsQuery, VectorSpec,
+    QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortMissing,
+    SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery, VectorSpec,
 };
 use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
 use roaring::RoaringBitmap;
@@ -3426,14 +3426,22 @@ impl Engine {
             Some(PageCursor::Offset(n)) => *n as usize,
             _ => 0,
         };
-        // #179: an offset cursor cannot drive a field-sorted page. `try_plan`
-        // bails for offset != 0, so a non-zero offset would silently fall
-        // through to the score-ranked path and IGNORE `sort`. Reject instead of
-        // returning a mis-ordered page: sequential sorted paging uses the keyset
-        // cursor handed back in the response; random page-jumps use over-fetch
-        // (limit = offset + page_size, then slice client-side).
+        // #180: a sort with any `missing: first|last` key is served by the
+        // materialized missing-aware path below, which paginates with offset
+        // correctly (it never early-terminates). The exclude-only path uses the
+        // keyset planner and is the one the #179 guard protects.
+        let sort_uses_missing = req
+            .sort
+            .as_deref()
+            .is_some_and(|s| s.iter().any(|spec| spec.missing != SortMissing::Exclude));
+        // #179: an offset cursor cannot drive a field-sorted (exclude) page.
+        // `try_plan` bails for offset != 0, so a non-zero offset would silently
+        // fall through to the score-ranked path and IGNORE `sort`. Reject instead
+        // of returning a mis-ordered page: sequential sorted paging uses the
+        // keyset cursor handed back in the response; random page-jumps use
+        // over-fetch (limit = offset + page_size, then slice client-side).
         // @spec projects/lumen/tech-design/logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.md
-        if offset != 0 && req.sort.as_deref().is_some_and(|s| !s.is_empty()) {
+        if offset != 0 && req.sort.as_deref().is_some_and(|s| !s.is_empty()) && !sort_uses_missing {
             return Err(StorageError::UnsupportedSort(
                 "offset pagination cannot be combined with sort; use a keyset \
                  cursor (omit the cursor on page 1, then follow the returned \
@@ -3574,6 +3582,99 @@ impl Engine {
                 .map(|(val, score)| SearchHit {
                     external_id: val.to_string(),
                     score,
+                })
+                .collect();
+            let next_offset = offset + hits.len();
+            let cursor = if (next_offset as u64) < total {
+                Some(make_cursor(next_offset))
+            } else {
+                None
+            };
+            let el = start.elapsed();
+            let took_ms = el.as_millis() as u64;
+            self.metrics.observe_search(took_ms);
+            let response = SearchResponse {
+                hits,
+                total,
+                cursor,
+                took_ms,
+                took_us: el.as_micros() as u64,
+            };
+            coll.cache_search_response(cache_key.clone(), &response);
+            return Ok(response);
+        }
+
+        // #180: materialized missing-aware sort. When any sort key is
+        // first/last, include rows lacking that key's value (placed before/after
+        // the present rows per the policy) and count them in an exact total; rows
+        // missing an `exclude` key are dropped. Materializes the full matched set
+        // (no early termination) and paginates by offset.
+        // @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+        if sort_uses_missing {
+            let sort = req.sort.as_deref().expect("missing-sort path has a sort");
+            let universe: BTreeSet<u32> = if query_needs_universe(&req.query) {
+                coll.eid_fields.keys().copied().collect()
+            } else {
+                BTreeSet::new()
+            };
+            let scored = eval_query(coll, collection_id, &req.query, &universe, &state)?;
+            let mut included: Vec<(u32, Vec<Option<SortValue>>)> = Vec::with_capacity(scored.len());
+            'docs: for (id, _score) in scored {
+                let mut tuple = Vec::with_capacity(sort.len());
+                for spec in sort {
+                    let v = sort_value_at(coll, spec, id)?;
+                    if v.is_none() && spec.missing == SortMissing::Exclude {
+                        continue 'docs;
+                    }
+                    tuple.push(v);
+                }
+                included.push((id, tuple));
+            }
+            let total = included.len() as u64;
+            included.sort_by(|(a_id, a_t), (b_id, b_t)| {
+                for (idx, spec) in sort.iter().enumerate() {
+                    let ord = match (&a_t[idx], &b_t[idx]) {
+                        (Some(a), Some(b)) => {
+                            let base = compare_sort_value(a, b);
+                            if matches!(spec.order, SortOrder::Desc) {
+                                base.reverse()
+                            } else {
+                                base
+                            }
+                        }
+                        // NULLS FIRST/LAST placement is independent of asc/desc.
+                        (None, Some(_)) => {
+                            if spec.missing == SortMissing::First {
+                                CmpOrdering::Less
+                            } else {
+                                CmpOrdering::Greater
+                            }
+                        }
+                        (Some(_), None) => {
+                            if spec.missing == SortMissing::First {
+                                CmpOrdering::Greater
+                            } else {
+                                CmpOrdering::Less
+                            }
+                        }
+                        (None, None) => CmpOrdering::Equal,
+                    };
+                    if ord != CmpOrdering::Equal {
+                        return ord;
+                    }
+                }
+                interner.resolve(*a_id).cmp(interner.resolve(*b_id))
+            });
+            let hits: Vec<SearchHit> = included
+                .iter()
+                .skip(offset)
+                .take(limit)
+                .map(|(id, tuple)| SearchHit {
+                    external_id: interner.resolve(*id).to_string(),
+                    score: tuple
+                        .iter()
+                        .find_map(|v| v.as_ref().map(sort_score))
+                        .unwrap_or(0.0),
                 })
                 .collect();
             let next_offset = offset + hits.len();
@@ -10710,6 +10811,7 @@ mod segment_number_range_diff_tests {
             sort: Some(vec![crate::types::SortSpec {
                 field: field.into(),
                 order,
+                missing: SortMissing::Exclude,
             }]),
             track_total: true,
             collapse: None,
@@ -13400,6 +13502,7 @@ mod tests {
                     sort: Some(vec![crate::types::SortSpec {
                         field: "bio".into(),
                         order: SortOrder::Asc,
+                        missing: SortMissing::Exclude,
                     }]),
                     track_total: true,
                     collapse: None,
@@ -13457,6 +13560,7 @@ mod tests {
                 sort: Some(vec![crate::types::SortSpec {
                     field: "email".into(),
                     order,
+                    missing: SortMissing::Exclude,
                 }]),
                 track_total: true,
                 collapse: None,
@@ -13511,10 +13615,12 @@ mod tests {
                 crate::types::SortSpec {
                     field: "email".into(),
                     order: SortOrder::Asc,
+                    missing: SortMissing::Exclude,
                 },
                 crate::types::SortSpec {
                     field: "age".into(),
                     order: SortOrder::Desc,
+                    missing: SortMissing::Exclude,
                 },
             ]),
             track_total: true,
@@ -13587,6 +13693,7 @@ mod tests {
             sort: Some(vec![crate::types::SortSpec {
                 field: "email".into(),
                 order: SortOrder::Asc,
+                missing: SortMissing::Exclude,
             }]),
             track_total: true,
             collapse: None,
@@ -13635,6 +13742,7 @@ mod tests {
                 sort: Some(vec![crate::types::SortSpec {
                     field: "age".into(),
                     order,
+                    missing: SortMissing::Exclude,
                 }]),
                 track_total: true,
                 collapse: None,
@@ -13693,6 +13801,7 @@ mod tests {
             sort: Some(vec![crate::types::SortSpec {
                 field: "age".into(),
                 order: SortOrder::Desc,
+                missing: SortMissing::Exclude,
             }]),
             track_total: true,
             collapse: None,
@@ -13864,6 +13973,7 @@ mod tests {
                 sort: Some(vec![crate::types::SortSpec {
                     field: "age".into(),
                     order,
+                    missing: SortMissing::Exclude,
                 }]),
                 track_total: true,
                 collapse: None,
@@ -13918,6 +14028,7 @@ mod tests {
             sort: Some(vec![crate::types::SortSpec {
                 field: "age".into(),
                 order: SortOrder::Asc,
+                missing: SortMissing::Exclude,
             }]),
             track_total: false,
             collapse: None,
@@ -16646,6 +16757,7 @@ mod offset_sort_guard_tests {
         vec![SortSpec {
             field: "price".into(),
             order: SortOrder::Asc,
+            missing: SortMissing::Exclude,
         }]
     }
 
@@ -16816,6 +16928,143 @@ mod external_version_lww_tests {
         write(&e, "d0", 20.0, None);
         assert_eq!(matches_price(&e, 20.0), vec!["d0".to_string()]);
         assert!(matches_price(&e, 10.0).is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #180: opt-in `missing: first|last|exclude` on a sort key. exclude (default)
+// drops rows lacking the value (today's behavior); first/last keep them, placed
+// before/after the present rows, and count them in an exact total.
+// @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod sort_missing_tests {
+    use super::*;
+    use crate::types::{IndexItem, SortMissing};
+
+    fn fieldspec(t: FieldType) -> FieldSpec {
+        FieldSpec {
+            field_type: t,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        }
+    }
+
+    fn schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert("price".into(), fieldspec(FieldType::Number));
+        fields.insert("cat".into(), fieldspec(FieldType::Keyword));
+        CreateCollectionRequest { fields }
+    }
+
+    fn idx(e: &Engine, eid: &str, price: Option<f64>) {
+        let mut items = vec![IndexItem {
+            external_id: eid.into(),
+            field: "cat".into(),
+            value: FieldValue::String("x".into()),
+            version: None,
+        }];
+        if let Some(p) = price {
+            items.push(IndexItem {
+                external_id: eid.into(),
+                field: "price".into(),
+                value: FieldValue::Number(p),
+                version: None,
+            });
+        }
+        e.index(
+            "c",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// d0=10, d1=20 have a price; d2 has none (all share cat="x").
+    fn seed() -> Engine {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        idx(&e, "d0", Some(10.0));
+        idx(&e, "d1", Some(20.0));
+        idx(&e, "d2", None);
+        e
+    }
+
+    fn search(
+        e: &Engine,
+        missing: SortMissing,
+        limit: u32,
+        cursor: Option<String>,
+    ) -> SearchResponse {
+        e.search(
+            "c",
+            SearchRequest {
+                query: QueryNode::Term(TermQuery {
+                    field: "cat".into(),
+                    value: FieldValue::String("x".into()),
+                }),
+                limit,
+                cursor,
+                sort: Some(vec![SortSpec {
+                    field: "price".into(),
+                    order: SortOrder::Asc,
+                    missing,
+                }]),
+                track_total: true,
+                collapse: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn ids(r: &SearchResponse) -> Vec<String> {
+        r.hits.iter().map(|h| h.external_id.clone()).collect()
+    }
+
+    /// R1: missing:last places the value-less row after present rows, counted.
+    #[test]
+    fn missing_last_placed_after_and_counted() {
+        let e = seed();
+        let r = search(&e, SortMissing::Last, 100, None);
+        assert_eq!(ids(&r), vec!["d0", "d1", "d2"]);
+        assert_eq!(r.total, 3);
+    }
+
+    /// R2: missing:first places the value-less row before present rows.
+    #[test]
+    fn missing_first_placed_before() {
+        let e = seed();
+        let r = search(&e, SortMissing::First, 100, None);
+        assert_eq!(ids(&r), vec!["d2", "d0", "d1"]);
+        assert_eq!(r.total, 3);
+    }
+
+    /// R3: default exclude drops the value-less row from results and total.
+    #[test]
+    fn exclude_default_drops_missing() {
+        let e = seed();
+        let r = search(&e, SortMissing::Exclude, 100, None);
+        assert_eq!(ids(&r), vec!["d0", "d1"]);
+        assert_eq!(r.total, 2);
+    }
+
+    /// R4: the missing-inclusive order paginates, each row once, exact total.
+    #[test]
+    fn missing_paginates_each_once() {
+        let e = seed();
+        let p1 = search(&e, SortMissing::Last, 2, None);
+        assert_eq!(ids(&p1), vec!["d0", "d1"]);
+        assert_eq!(p1.total, 3);
+        let cursor = p1.cursor.expect("a full page hands back a cursor");
+        let p2 = search(&e, SortMissing::Last, 2, Some(cursor));
+        assert_eq!(ids(&p2), vec!["d2"]);
+        assert_eq!(p2.total, 3);
     }
 }
 // CODEGEN-END

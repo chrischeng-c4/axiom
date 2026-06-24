@@ -14,7 +14,8 @@ use proptest::prelude::*;
 use lumen::storage::Engine;
 use lumen::types::{
     Analyzer, CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
-    MatchOp, MatchQuery, QueryNode, RangeQuery, SearchRequest, SortOrder, SortSpec, TermQuery,
+    MatchOp, MatchQuery, QueryNode, RangeQuery, SearchRequest, SortMissing, SortOrder, SortSpec,
+    TermQuery,
 };
 
 fn fieldspec(t: FieldType, analyzer: Option<Analyzer>) -> FieldSpec {
@@ -144,7 +145,7 @@ proptest! {
         // 5. sort by n asc, filter kw=='c': set must match, and n non-decreasing.
         let got = search_ids(&e, req(
             QueryNode::Term(TermQuery { field: "kw".into(), value: FieldValue::String("c".into()) }),
-            Some(vec![SortSpec { field: "n".into(), order: SortOrder::Asc }])));
+            Some(vec![SortSpec { field: "n".into(), order: SortOrder::Asc, missing: SortMissing::Exclude, }])));
         prop_assert_eq!(set_of(&got), bf(&|d| d.kw == 'c'), "sort set");
         // scores carry the sort value → must be non-decreasing for asc.
         for w in got.windows(2) {
@@ -154,7 +155,7 @@ proptest! {
         // 6. sort by kw asc, filter n[5,15]: set must match, and keyword non-decreasing.
         let got = search_ids(&e, req(
             range(),
-            Some(vec![SortSpec { field: "kw".into(), order: SortOrder::Asc }])));
+            Some(vec![SortSpec { field: "kw".into(), order: SortOrder::Asc, missing: SortMissing::Exclude, }])));
         prop_assert_eq!(set_of(&got), bf(&|d| d.n >= 5 && d.n < 15), "keyword sort set");
         for w in got.windows(2) {
             let a = state.get(&w[0].0).unwrap();
@@ -170,8 +171,8 @@ proptest! {
         let got = search_ids(&e, req(
             QueryNode::Range(RangeQuery { field: "n".into(), gt: None, gte: None, lt: None, lte: None }),
             Some(vec![
-                SortSpec { field: "kw".into(), order: SortOrder::Asc },
-                SortSpec { field: "n".into(), order: SortOrder::Desc },
+                SortSpec { field: "kw".into(), order: SortOrder::Asc, missing: SortMissing::Exclude, },
+                SortSpec { field: "n".into(), order: SortOrder::Desc, missing: SortMissing::Exclude, },
             ])));
         prop_assert_eq!(set_of(&got), bf(&|_| true), "composite sort set");
         for w in got.windows(2) {
@@ -187,7 +188,7 @@ proptest! {
         // 8. sort by n desc (no filter via unbounded range): full set + non-increasing.
         let got = search_ids(&e, req(
             QueryNode::Range(RangeQuery { field: "n".into(), gt: None, gte: None, lt: None, lte: None }),
-            Some(vec![SortSpec { field: "n".into(), order: SortOrder::Desc }])));
+            Some(vec![SortSpec { field: "n".into(), order: SortOrder::Desc, missing: SortMissing::Exclude, }])));
         prop_assert_eq!(set_of(&got), bf(&|_| true), "sort desc set");
         for w in got.windows(2) {
             prop_assert!(w[0].1 >= w[1].1, "sort desc not ordered");

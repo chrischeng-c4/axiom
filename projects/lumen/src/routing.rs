@@ -436,7 +436,7 @@ fn parse_cursor(s: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{FieldValue, QueryNode, SortOrder, SortSpec, TermQuery};
+    use crate::types::{FieldValue, QueryNode, SortMissing, SortOrder, SortSpec, TermQuery};
 
     #[test]
     fn shard_index_is_deterministic() {
@@ -514,6 +514,7 @@ mod tests {
         req.sort = Some(vec![SortSpec {
             field: "age".into(),
             order: SortOrder::Asc,
+            missing: SortMissing::Exclude,
         }]);
         let resp = merge_shard_search_responses(
             &req,
