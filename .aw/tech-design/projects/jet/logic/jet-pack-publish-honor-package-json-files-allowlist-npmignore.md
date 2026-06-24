@@ -62,15 +62,18 @@ changes:
     section: logic
     description: |
       Honor package.json files allowlist (glob) in collect_publish_files; .npmignore fallback when files absent; always include package.json + README/LICENSE; keep default skip-list as last resort.
+    impl_mode: hand-written
   - path: "projects/jet/src/resolver/package.rs"
     action: modify
     section: logic
     description: |
       Add a files: Option<Vec<String>> field to PackageJson if not present, for the allowlist.
+    impl_mode: hand-written
   - path: "projects/jet/src/pkg_manager/publish.rs"
     action: modify
     section: unit-test
     description: |
       Tests: files=[dist] packs only dist+package.json+README; .npmignore excludes patterns; always-include files present.
+    impl_mode: hand-written
 ```
 
