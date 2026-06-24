@@ -158,8 +158,17 @@ pub fn discover(root: &Path) -> StoryIndex {
 }
 
 /// Fold one parsed story file into the index.
+///
+/// Re-exported stories (`export { Primary } from './sibling'`) are resolved
+/// against the importing `file`: the sibling is parsed and the named story is
+/// pulled in under this file's title. Unresolvable re-exports become a
+/// diagnostic and are skipped — they never abort discovery.
 fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
-    let ParsedStoryFile { meta, stories } = parsed;
+    let ParsedStoryFile {
+        meta,
+        stories,
+        re_exports,
+    } = parsed;
     let title_path = resolve_title_path(&meta, file);
 
     let story_meta = StoryMeta {
@@ -172,25 +181,123 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
     };
 
     let title_slug = slug(&title_path.join("/"));
-    for story in stories {
-        // Merge: meta args first, story args override per key.
-        let mut merged = meta.args.clone();
-        for (k, v) in &story.args {
-            merged.insert(k.clone(), v.clone());
+    for story in &stories {
+        push_story(index, file, &title_slug, &title_path, &meta.args, story);
+    }
+
+    // Resolve each re-exported story against its sibling file.
+    for re in &re_exports {
+        match resolve_re_export(file, re) {
+            Ok(sibling) => {
+                // The re-export keeps THIS file's title, but adopts the sibling
+                // story's args; the local story is renamed to the exported name.
+                if let Some(src_story) =
+                    sibling.stories.iter().find(|s| s.export_name == re.local_name)
+                {
+                    let renamed = csf::CsfStory {
+                        export_name: re.exported_name.clone(),
+                        args: src_story.args.clone(),
+                        has_render: src_story.has_render,
+                    };
+                    // Story-level args still merge over the sibling meta args so
+                    // an inherited default is not lost.
+                    push_story(index, file, &title_slug, &title_path, &sibling.meta.args, &renamed);
+                } else {
+                    index.diagnostics.push(format!(
+                        "{}: re-export `{}` not found in `{}`",
+                        rel_display(index, file),
+                        re.local_name,
+                        re.relative_source
+                    ));
+                }
+            }
+            Err(err) => index.diagnostics.push(format!(
+                "{}: re-export from `{}` unresolved: {err}",
+                rel_display(index, file),
+                re.relative_source
+            )),
         }
-        let id = format!("{title_slug}--{}", slug(&story.export_name));
-        index.stories.push(StoryEntry {
-            id,
-            name: story.export_name.clone(),
-            export_name: story.export_name,
-            args: merged,
-            has_render: story.has_render,
-            file: file.to_path_buf(),
-            title_path: title_path.clone(),
-        });
     }
 
     index.metas.push(story_meta);
+}
+
+/// Push one story into the index, merging `base_args` (meta/sibling defaults)
+/// under the story's own args.
+fn push_story(
+    index: &mut StoryIndex,
+    file: &Path,
+    title_slug: &str,
+    title_path: &[String],
+    base_args: &BTreeMap<String, CsfValue>,
+    story: &csf::CsfStory,
+) {
+    // Merge: base args first, story args override per key.
+    let mut merged = base_args.clone();
+    for (k, v) in &story.args {
+        merged.insert(k.clone(), v.clone());
+    }
+    let id = format!("{title_slug}--{}", slug(&story.export_name));
+    index.stories.push(StoryEntry {
+        id,
+        name: story.export_name.clone(),
+        export_name: story.export_name.clone(),
+        args: merged,
+        has_render: story.has_render,
+        file: file.to_path_buf(),
+        title_path: title_path.to_vec(),
+    });
+}
+
+/// Resolve a re-export's relative source to a sibling `*.stories.*` file and
+/// parse it.
+///
+/// The specifier is resolved relative to the importing file's directory. The
+/// `.stories.<ext>` extension is usually omitted in the import, so we probe the
+/// four CSF extensions (and the literal path, in case it is spelled out).
+fn resolve_re_export(file: &Path, re: &csf::CsfReExport) -> std::io::Result<ParsedStoryFile> {
+    let dir = file.parent().unwrap_or_else(|| Path::new("."));
+    let base = dir.join(&re.relative_source);
+
+    // Candidate paths: the literal spelling first, then the four CSF extensions
+    // appended to the (extension-less) specifier.
+    let mut candidates: Vec<PathBuf> = vec![base.clone()];
+    for ext in ["ts", "tsx", "js", "jsx"] {
+        let mut p = base.clone();
+        let new_name = match base.file_name().and_then(|n| n.to_str()) {
+            Some(name) => format!("{name}.{ext}"),
+            None => continue,
+        };
+        p.set_file_name(new_name);
+        candidates.push(p);
+    }
+
+    let resolved = candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no sibling file for `{}`", re.relative_source),
+            )
+        })?;
+
+    let source = std::fs::read_to_string(&resolved)?;
+    let is_tsx = matches!(
+        resolved.extension().and_then(|e| e.to_str()),
+        Some("tsx") | Some("jsx")
+    );
+    csf::parse_csf(&source, is_tsx)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+}
+
+/// Best-effort relative display of `file` for a diagnostic. We do not have the
+/// discovery root here, so fall back to the file name.
+fn rel_display(_index: &StoryIndex, file: &Path) -> String {
+    file.file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| file.display().to_string())
 }
 
 /// The sidebar path for a meta: split `meta.title` on `/`, else derive from the
