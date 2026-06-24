@@ -201,6 +201,12 @@ pub struct LibConfig {
     /// instead of bundling each entry. Default `false`; currently a deferred
     /// follow-up in the bundler.
     pub preserve_modules: Option<bool>,
+
+    /// Emit `<entry>.d.ts` type-declaration files alongside the JS output
+    /// (isolatedDeclarations-style). When `None`, defaults to `true` for
+    /// library mode. `jet build --lib --dts` / `--no-dts` override this.
+    /// @issue #171
+    pub dts: Option<bool>,
 }
 
 /// Single task definition within the pipeline.

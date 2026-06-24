@@ -33,6 +33,9 @@ fn run_lib_build(root: &std::path::Path, formats: Vec<OutputFormat>) -> jet::bun
         conditions: vec!["import".to_string(), "default".to_string()],
         extra_externals: HashSet::new(),
         preserve_modules: false,
+        // These fixtures use untyped JS entries; declaration emission is
+        // exercised separately in `library_dts.rs`.
+        declaration: false,
     };
     build_library(options).expect("library build must succeed")
 }

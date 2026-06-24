@@ -41,6 +41,29 @@ pub struct LibBuildOptions {
     /// Preserve internal module structure instead of bundling each entry.
     /// Deferred — see [`build_library`].
     pub preserve_modules: bool,
+    /// Emit a `<entry>.d.ts` type declaration file next to each entry's JS
+    /// output (isolatedDeclarations-style). Defaults to `true` for library
+    /// builds — see [`LibBuildOptions::default`]. When off, no `.d.ts` is
+    /// written and [`EntryOutput::dts`] stays `None`.
+    /// @issue #171
+    pub declaration: bool,
+}
+
+/// Library builds default to emitting declarations on (`declaration: true`).
+/// App-mode builds never go through this path.
+/// @issue #171
+impl Default for LibBuildOptions {
+    fn default() -> Self {
+        Self {
+            project_root: PathBuf::new(),
+            out_dir: PathBuf::from("dist"),
+            formats: vec![OutputFormat::Esm],
+            conditions: vec!["import".to_string(), "default".to_string()],
+            extra_externals: HashSet::new(),
+            preserve_modules: false,
+            declaration: true,
+        }
+    }
 }
 
 /// One emitted output file.
@@ -54,6 +77,11 @@ pub struct EntryOutput {
     pub path: PathBuf,
     /// Emitted code (also written to `path`).
     pub code: String,
+    /// Absolute path to the `<entry>.d.ts` emitted for this entry, when
+    /// declaration emission is on. The same path is recorded once per format
+    /// of an entry. `None` when declarations are disabled or emission failed.
+    /// @issue #171
+    pub dts: Option<PathBuf>,
 }
 
 /// Result of a library build: one [`EntryOutput`] per (entry × format).
@@ -61,6 +89,21 @@ pub struct EntryOutput {
 pub struct LibBuildResult {
     /// All emitted outputs.
     pub entries: Vec<EntryOutput>,
+    /// Emitted `.d.ts` declaration files, keyed by the entry's public
+    /// subpath (`.`, `./client`). One per library entry when `declaration`
+    /// is on. Empty when declaration emission is disabled.
+    /// @issue #171
+    pub types: Vec<TypesOutput>,
+}
+
+/// A `.d.ts` type-declaration file emitted for one library entry.
+/// @issue #171
+#[derive(Debug, Clone)]
+pub struct TypesOutput {
+    /// Public export subpath the declarations belong to (`.`, `./client`).
+    pub subpath: String,
+    /// Absolute path the `.d.ts` was written to.
+    pub path: PathBuf,
 }
 
 /// Build a publishable library from `package.json`.
@@ -100,6 +143,7 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
         .with_context(|| format!("creating out_dir {}", options.out_dir.display()))?;
 
     let mut outputs = Vec::new();
+    let mut types_outputs = Vec::new();
 
     for entry in &entries {
         let entry_path = resolve_entry_path(&options.project_root, &entry.source)
@@ -107,6 +151,31 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
 
         // Inline internal relative modules; hoist external imports verbatim.
         let esm = bundle_library_entry(&entry_path, &externals)?;
+
+        // Emit `<entry>.d.ts` once per entry (not per format) when declaration
+        // emission is on. The isolatedDeclarations emitter reads the entry
+        // source directly so type aliases / interfaces survive the JS inline.
+        let dts_path = if options.declaration {
+            let entry_source = std::fs::read_to_string(&entry_path)
+                .with_context(|| format!("reading {} for .d.ts", entry_path.display()))?;
+            let dts = super::dts::emit_declarations(&entry_source)
+                .with_context(|| format!("emitting .d.ts for entry {}", entry.subpath))?;
+            let dts_name = dts_file_name(&entry.subpath);
+            let dts_out = options.out_dir.join(&dts_name);
+            if let Some(parent) = dts_out.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            std::fs::write(&dts_out, &dts)
+                .with_context(|| format!("writing {}", dts_out.display()))?;
+            types_outputs.push(TypesOutput {
+                subpath: entry.subpath.clone(),
+                path: dts_out.clone(),
+            });
+            Some(dts_out)
+        } else {
+            None
+        };
 
         for format in &options.formats {
             let code = match format {
@@ -136,11 +205,33 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
                 format: format.clone(),
                 path: out_path,
                 code,
+                dts: dts_path.clone(),
             });
         }
     }
 
-    Ok(LibBuildResult { entries: outputs })
+    Ok(LibBuildResult {
+        entries: outputs,
+        types: types_outputs,
+    })
+}
+
+/// Map a public export subpath to its `.d.ts` file name.
+///
+///   `.`        → `index.d.ts`
+///   `./client` → `client.d.ts`
+fn dts_file_name(subpath: &str) -> String {
+    let stem = if subpath == "." {
+        "index".to_string()
+    } else {
+        subpath
+            .trim_start_matches("./")
+            .trim_end_matches(".js")
+            .trim_end_matches(".mjs")
+            .trim_end_matches(".ts")
+            .replace('/', "_")
+    };
+    format!("{stem}.d.ts")
 }
 
 /// Map a public export subpath + format to an output file name.
@@ -502,6 +593,18 @@ mod tests {
         assert_eq!(output_file_name(".", &OutputFormat::Cjs), "index.cjs");
         assert_eq!(output_file_name("./client", &OutputFormat::Esm), "client.js");
         assert_eq!(output_file_name("./client", &OutputFormat::Cjs), "client.cjs");
+    }
+
+    #[test]
+    fn dts_file_name_maps_subpath() {
+        assert_eq!(dts_file_name("."), "index.d.ts");
+        assert_eq!(dts_file_name("./client"), "client.d.ts");
+        assert_eq!(dts_file_name("./sub/mod"), "sub_mod.d.ts");
+    }
+
+    #[test]
+    fn lib_build_options_default_enables_declarations() {
+        assert!(LibBuildOptions::default().declaration);
     }
 
     #[test]
