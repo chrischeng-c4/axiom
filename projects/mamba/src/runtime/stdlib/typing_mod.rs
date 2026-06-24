@@ -279,10 +279,7 @@ pub fn register() {
     // through `mb_getattr`'s instance-field path and reports presence. Used in
     // a type annotation, these names lower via `TypeExpr::Generic` at HIR time
     // (not runtime subscription), so the value shape is irrelevant there.
-    attrs.insert(
-        "Generic".to_string(),
-        make_typing_special_form("typing.Generic", &["__class_getitem__"]),
-    );
+    attrs.insert("Generic".to_string(), make_typing_generic_type());
     attrs.insert("ClassVar".to_string(), special_form("ClassVar"));
     attrs.insert("Final".to_string(), special_form("Final"));
 
@@ -450,52 +447,25 @@ pub fn register() {
     super::register_module("typing", attrs);
 }
 
-/// Build a surface shell for a typing construct that, as a *value*, exposes
-/// subscription dunders (`typing.Generic.__class_getitem__`,
-/// `typing.ClassVar.__getitem__`, `typing.Final.__getitem__`). Modeled as an
-/// `ObjData::Instance` (mirrors queue_mod::make_exception_class) whose fields
-/// carry each requested dunder as an inert non-None sentinel. `mb_hasattr`
-/// reports presence via value-non-None, and the non-"type" class_name keeps the
-/// probe on `mb_getattr`'s instance-field path rather than the type-object
-/// dunder fast path. The surface dimension only asserts attribute presence.
-fn make_typing_special_form(class_name: &str, dunders: &[&str]) -> MbValue {
-    use super::super::rc::{MbObjectHeader, ObjData, ObjKind};
-    use rustc_hash::FxHashMap;
-    let mut fields = FxHashMap::default();
-    if class_name == "typing.Generic" {
-        fields.insert(
-            "__name__".to_string(),
-            MbValue::from_ptr(MbObject::new_str("Generic".to_string())),
-        );
-        fields.insert(
-            "__qualname__".to_string(),
-            MbValue::from_ptr(MbObject::new_str("Generic".to_string())),
-        );
-        fields.insert(
-            "__bases__".to_string(),
-            MbValue::from_ptr(MbObject::new_tuple(vec![
-                super::super::builtins::make_type_object("object"),
-            ])),
-        );
+fn make_typing_generic_type() -> MbValue {
+    use super::super::rc::ObjData;
+    let value = super::super::builtins::make_type_object("typing.Generic");
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut fields = fields.write().unwrap();
+                fields.insert(
+                    "__module__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str("typing".to_string())),
+                );
+                fields.insert(
+                    "__class_getitem__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(String::new())),
+                );
+            }
+        }
     }
-    for d in dunders {
-        // An empty string stands in for the (value-irrelevant) descriptor slot.
-        fields.insert(
-            (*d).to_string(),
-            MbValue::from_ptr(MbObject::new_str(String::new())),
-        );
-    }
-    let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: std::sync::atomic::AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
-        data: ObjData::Instance {
-            class_name: class_name.to_string(),
-            fields: crate::runtime::rc::MbRwLock::new(fields),
-        },
-    });
-    MbValue::from_ptr(Box::into_raw(obj))
+    value
 }
 
 // ── typing algebra: special forms + parameterized aliases (#22) ──────────
