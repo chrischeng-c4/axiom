@@ -387,16 +387,19 @@ fn index_request(start_doc: u64, docs: usize) -> IndexRequest {
             external_id: format!("d{n}"),
             field: "bio".into(),
             value: FieldValue::String(format!("rust backend engineer event stream {n}")),
+            version: None,
         });
         items.push(IndexItem {
             external_id: format!("d{n}"),
             field: "city".into(),
             value: FieldValue::String(city.into()),
+            version: None,
         });
         items.push(IndexItem {
             external_id: format!("d{n}"),
             field: "age".into(),
             value: FieldValue::Number(18.0 + (n % 63) as f64),
+            version: None,
         });
     }
     IndexRequest {

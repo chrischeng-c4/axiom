@@ -2468,16 +2468,19 @@ fn scale_index_direct_range(
             external_id: d.eid.clone(),
             field: "bio".into(),
             value: FieldValue::String(d.bio),
+            version: None,
         });
         items.push(IndexItem {
             external_id: d.eid.clone(),
             field: "city".into(),
             value: FieldValue::String(d.city.to_string()),
+            version: None,
         });
         items.push(IndexItem {
             external_id: d.eid.clone(),
             field: "age".into(),
             value: FieldValue::Number(d.age as f64),
+            version: None,
         });
         if items.len() >= BATCH_DOCS * 3 {
             flush(&mut items);

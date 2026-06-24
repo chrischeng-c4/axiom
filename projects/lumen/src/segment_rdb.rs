@@ -229,6 +229,7 @@ mod tests {
                     external_id: eid.into(),
                     field: "email".into(),
                     value: FieldValue::String(v.into()),
+                    version: None,
                 }],
                 request_id: None,
             },

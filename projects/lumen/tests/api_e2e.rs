@@ -251,11 +251,13 @@ fn test_search_shard<const N: usize>(docs: [(&str, &str, i32); N]) -> Arc<lumen:
                                 external_id: external_id.to_string(),
                                 field: "email".to_string(),
                                 value: FieldValue::String(email.to_string()),
+                                version: None,
                             },
                             IndexItem {
                                 external_id: external_id.to_string(),
                                 field: "age".to_string(),
                                 value: FieldValue::Number(age as f64),
+                                version: None,
                             },
                         ]
                     })
