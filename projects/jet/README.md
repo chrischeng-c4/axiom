@@ -864,8 +864,8 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 | Native Test And Product-Flow E2E | #3785 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready_for_basic | Jet native runner, reporter, product-flow e2e, and trace gates are green for the Basic production-readiness contract. |
 | WASM And Multi-Target Execution | #3783 | implemented | passing | smoke, conformance, corpus, negative | partial | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
 | Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
-| Library Build And Package Publishing | #168 | planned | planned | none | not_ready | New capability: jet builds publishable npm packages (library mode ESM+CJS, `.d.ts`, `exports`/`main`/`module`/`types`) and publishes to public or private registries. Children A1-A3 (`jet build --lib`, type-declaration emission, publish + private-registry hardening). |
-| Component Workbench (Stories) | #169 | planned | planned | none | not_ready | New capability: jet renders CSF `*.stories.tsx` in isolation with a jet-native manager UI, controls, and HMR. Children B1-B3 (story discovery, `jet stories` dev + manager, controls); static export (B4) deferred to phase 2. |
+| Library Build And Package Publishing | #168 | implemented | verified | conformance | partial | `jet build --lib` (ESM+CJS, externalized deps/peerDeps, multi-entry), `.d.ts` emission, and `jet publish --build` with metadata validation + private-registry (`.npmrc` scoped) e2e all shipped and tested (A1-A3 merged). `partial`: `preserve_modules`/IIFE lib output, class-member `.d.ts` reduction, and some CJS re-export edge cases are TODO follow-ups. |
+| Component Workbench (Stories) | #169 | implemented | verified | conformance | partial | CSF `*.stories.tsx` discovery, `jet stories` dev manager + isolated preview, preview HMR, and a prop-type-derived Controls panel all shipped and tested (B1-B3 + B2b merged). `partial`: full hook-state-preserving React refresh, bare-import resolution beyond React, and generic/cross-file prop types are TODO follow-ups; static export (B4) deferred to phase 2. |
 
 ## Rust-Native Frontend Toolchain Replacement
 
@@ -994,24 +994,25 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| library-build-publishing | #168 | planned | jet builds publishable npm packages in library mode (ESM + optional CJS, externalized dependencies/peerDependencies, multi-entry from package.json `exports`), emits `.d.ts` type declarations, and `jet publish` builds + validates package metadata (`exports`/`main`/`module`/`types`) before publishing to public or private (GitLab/Verdaccio/Nexus) registries via `.npmrc` scoped-registry auth. App-mode `jet build` is unchanged. | smoke, conformance, corpus, negative | projects/jet/fixtures/library-build/esm-cjs<br>projects/jet/fixtures/library-build/dts<br>projects/jet/fixtures/publish/verdaccio<br>`cargo test -p jet --lib bundler -- --nocapture`<br>`cargo test -p jet --lib pkg_manager::publish -- --nocapture` |
+| library-build-publishing | #168 | implemented | jet builds publishable npm packages in library mode (ESM + optional CJS, externalized dependencies/peerDependencies, multi-entry from package.json `exports`), emits `.d.ts` type declarations, and `jet publish --build` builds + validates package metadata (`exports`/`main`/`module`/`types`) before publishing to public or private (GitLab/Verdaccio/Nexus) registries via `.npmrc` scoped-registry auth. App-mode `jet build` is unchanged. | smoke, conformance, corpus, negative | `cargo test -p jet --test library_build`<br>`cargo test -p jet --test library_dts`<br>`cargo test -p jet --test library_publish_e2e`<br>`cargo test -p jet --lib bundler::lib_build bundler::dts`<br>`cargo test -p jet --lib pkg_manager::publish` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Library publishing readiness | epic | #168 | planned | planned | none | A1 `jet build --lib` -> A2 `.d.ts` emission -> A3 publish + private-registry hardening |
-| Library Build Mode | change | #168 | planned | planned | none | `jet build --lib` ESM+CJS, externalized deps/peerDeps, multi-entry, preserve-modules |
-| Type Declaration Emission | change | #168 | planned | planned | none | `.d.ts` per public entry + `types` field; consumer `tsc --noEmit` clean |
-| Publish And Private Registry | change | #168 | planned | planned | none | `jet publish` builds + validates metadata; local Verdaccio publish/install round-trip |
+| Library publishing readiness | epic | #168 | implemented | verified | conformance | A1 `jet build --lib` -> A2 `.d.ts` emission -> A3 publish + private-registry hardening (all merged) |
+| Library Build Mode | change | #170 | implemented | verified | conformance | `cargo test -p jet --test library_build` — ESM+CJS, externalized deps/peerDeps, multi-entry (preserve-modules/IIFE TODO) |
+| Type Declaration Emission | change | #171 | implemented | verified | conformance | `cargo test -p jet --test library_dts` — `.d.ts` per entry + `types` field (isolatedDeclarations) |
+| Publish And Private Registry | change | #172 | implemented | verified | conformance | `cargo test -p jet --test library_publish_e2e` — build + metadata validate; in-process mock-registry publish/install round-trip |
 
 ### Component Workbench (Stories)
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| component-workbench | #169 | planned | jet discovers and parses CSF `*.stories.tsx` (default-export meta + named-export stories), serves a jet-native manager UI (sidebar, isolated preview, toolbar) on the jet dev server with HMR + React refresh, and derives a live Controls panel from component prop types. CSF-compatible with no Storybook runtime dependency; `jet stories build` static export is deferred to phase 2. | smoke, conformance, corpus, negative | projects/jet/fixtures/stories/csf-discovery<br>projects/jet/fixtures/stories/manager-hmr<br>projects/jet/fixtures/stories/controls<br>`cargo test -p jet --lib stories -- --nocapture` |
+| component-workbench | #169 | implemented | jet discovers and parses CSF `*.stories.tsx` (default-export meta + named-export stories), serves a jet-native manager UI (sidebar, isolated preview, toolbar) with HMR, and derives a live Controls panel from component prop types + `argTypes`. CSF-compatible with no Storybook runtime dependency; `jet stories build` static export is deferred to phase 2. | smoke, conformance, corpus, negative | `cargo test -p jet --test csf_discovery`<br>`cargo test -p jet --test manager`<br>`cargo test -p jet --test preview_hmr`<br>`cargo test -p jet --test controls`<br>`cargo test -p jet --lib stories` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Component workbench readiness | epic | #169 | planned | planned | none | B1 CSF discovery -> B2 `jet stories` manager + HMR -> B3 controls; B4 static export deferred |
-| CSF Story Discovery | change | #169 | planned | planned | none | discover/parse `*.stories.tsx` meta + named stories into a story index |
-| Stories Dev Manager | change | #169 | planned | planned | none | `jet stories` manager UI + isolated preview + HMR/React refresh on the dev server |
-| Stories Controls Panel | change | #169 | planned | planned | none | controls derived from prop types + `argTypes`; live arg edits re-render the story |
+| Component workbench readiness | epic | #169 | implemented | verified | conformance | B1 CSF discovery -> B2 `jet stories` manager -> B2b preview HMR -> B3 controls (all merged) |
+| CSF Story Discovery | change | #173 | implemented | verified | conformance | `cargo test -p jet --test csf_discovery` — glob + CSF3 meta/named-story parse into a story index |
+| Stories Dev Manager | change | #174 | implemented | verified | conformance | `cargo test -p jet --test manager` — `jet stories` command + manager UI + isolated per-story preview |
+| Stories Preview HMR | change | #176 | implemented | verified | conformance | `cargo test -p jet --test preview_hmr` — watcher + WS, preview re-render/reload, manager untouched (full hook-state refresh TODO) |
+| Stories Controls Panel | change | #175 | implemented | verified | conformance | `cargo test -p jet --test controls` — prop-type-inferred controls + `argTypes` override; live arg edits re-render the preview |
