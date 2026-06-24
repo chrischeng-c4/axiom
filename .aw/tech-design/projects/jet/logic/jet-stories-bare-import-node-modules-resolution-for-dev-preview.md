@@ -50,3 +50,10 @@ flowchart TD
     servedep --> done
     cdn --> done
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (jet-stories-bare-import) complete + deterministic: import -> specifier-kind decision -> relative(existing) / bare->resolve->resolved decision -> serve/emit dep vs esm.sh fallback -> terminal resolves in dev+static. All nodes reachable; both decisions labeled; terminal real. Builds on B2/B4.
