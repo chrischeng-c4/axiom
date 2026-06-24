@@ -51,6 +51,13 @@ use crate::dev_server::watcher::FileWatcher;
 /// Manager shell route (alias of `/`).
 pub const MANAGER_PREFIX: &str = "/__jet_stories_manager";
 
+/// React Fast Refresh runtime endpoint (#196). Must match the import specifier
+/// the transform's [`crate::transform::react_refresh::inject_react_fast_refresh`]
+/// preamble emits (`import RefreshRuntime from '/@react-refresh'`) so the
+/// preview-served modules' refresh registration resolves. Reuses the dev
+/// server's runtime shim.
+pub const REACT_REFRESH_ROUTE: &str = "/@react-refresh";
+
 /// Shared router state: the discovered index + the project root (for resolving
 /// + transforming module sources on demand), plus the HMR broadcast hub and the
 /// served-module import graph (B2b/#176).
@@ -152,6 +159,11 @@ fn build_router_with(
         .route("/__jet_stories_preview/{story_id}", get(preview_handler))
         // Preview-frame HMR WebSocket (B2b/#176).
         .route(STORIES_HMR_ROUTE, get(stories_hmr_handler))
+        // React Fast Refresh runtime (#196): the preview-served `.tsx`/`.jsx`
+        // modules carry an `import RefreshRuntime from '/@react-refresh'`
+        // preamble (injected by the transform), so the preview must serve that
+        // runtime — reusing the dev server's shim — for state-preserving refresh.
+        .route(REACT_REFRESH_ROUTE, get(react_refresh_handler))
         // Catch-all for module + static requests the preview imports.
         .route("/{*path}", get(module_handler))
         .with_state(state)
@@ -354,6 +366,17 @@ async fn preview_handler(
     let module_url = module_url_for(&state.root, &story.file);
     let html = manager::render_preview_html(story, &module_url);
     html_response(html)
+}
+
+/// `GET /@react-refresh` → the React Fast Refresh runtime shim (#196).
+///
+/// Serves the *same* runtime source the dev server serves
+/// ([`crate::dev_server::react_refresh::react_refresh_runtime_source`]), so the
+/// preview-served modules' injected `import RefreshRuntime from '/@react-refresh'`
+/// (+ `$RefreshReg$` / `$RefreshSig$` registration) resolves and the preview's
+/// HMR client can drive `performReactRefresh()` for state-preserving updates.
+async fn react_refresh_handler() -> Response {
+    js_response(crate::dev_server::react_refresh::react_refresh_runtime_source().to_string())
 }
 
 /// `GET /__jet_stories_hmr` → upgrade to the preview-frame HMR WebSocket.

@@ -26,6 +26,32 @@ const allFamilies = new Map();
 // Signature tracking for hooks-order stability.
 const allSignatures = new Map();
 
+// Host-registered refresh callbacks (#196). A host that owns the React root
+// (e.g. the jet stories isolated preview frame) registers a callback here so
+// `performReactRefresh()` can drive an in-place re-render that reuses the
+// existing root — preserving component hook state — instead of remounting.
+const refreshCallbacks = new Set();
+
+/**
+ * Register a host callback invoked on every `performReactRefresh()`.
+ * Returns an unregister function. Used by hosts that own the React root and
+ * must re-render in place (state-preserving) when a module is hot-updated.
+ */
+export function onPerformReactRefresh(cb) {
+  if (typeof cb === 'function') refreshCallbacks.add(cb);
+  return () => refreshCallbacks.delete(cb);
+}
+
+/**
+ * Look up the current (latest-registered) component type for a family id.
+ * Lets a host resolve the freshly hot-updated component implementation while
+ * keeping React's view of component identity stable.
+ */
+export function getCurrentType(id) {
+  const family = allFamilies.get(id);
+  return family ? family.current : undefined;
+}
+
 /**
  * Register a component with the refresh runtime.
  * Called as `$RefreshReg$(Component, "ComponentName")` by the transform.
@@ -120,6 +146,12 @@ export function performReactRefresh() {
       }
     } catch (_) {}
   }
+  // Drive host-registered refresh callbacks (#196). A host that owns the React
+  // root re-renders the same root in place here, so the reconciler keeps the
+  // existing fiber tree (and component hook state) instead of remounting.
+  refreshCallbacks.forEach((cb) => {
+    try { cb(); } catch (e) { console.error('[react-refresh] host callback error', e); }
+  });
 }
 
 // Default export for `import RefreshRuntime from '/@react-refresh'`
@@ -128,6 +160,8 @@ export default {
   createSignatureFunctionForTransform,
   enqueueUpdate,
   performReactRefresh,
+  onPerformReactRefresh,
+  getCurrentType,
 };
 "#
 }

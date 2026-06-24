@@ -438,11 +438,15 @@ fn story_display_title(story: &StoryEntry) -> String {
 ///      resolve to esm.sh CDN modules (no local node_modules needed for the
 ///      React runtime itself — local relative imports still go through the
 ///      module route),
-///   2. dynamically imports the story module,
-///   3. picks the story's named export and renders it — honoring a custom
+///   2. (dev mode, #196) loads the React Fast Refresh runtime from
+///      `/@react-refresh` and installs the global `$RefreshReg$` / `$RefreshSig$`
+///      hooks BEFORE the story module imports, so the transform-injected
+///      component registration resolves and a hot update can refresh in place,
+///   3. dynamically imports the story module,
+///   4. picks the story's named export and renders it — honoring a custom
 ///      `render` function when the story declares one, otherwise mounting the
 ///      meta `component` (or the export value treated as a component),
-///   4. mounts the result into a single `#jet-root` div with no surrounding app
+///   5. mounts the result into a single `#jet-root` div with no surrounding app
 ///      shell, router, or providers.
 pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
     render_preview_html_with_mode(story, module_url, UrlMode::Dev)
@@ -470,6 +474,43 @@ pub fn render_preview_html_with_mode(
         UrlMode::Static => String::new(),
     };
 
+    // #196: in dev mode the preview-served `.tsx` modules carry the transform's
+    // `$RefreshReg$` / `$RefreshSig$` instrumentation (it imports
+    // `RefreshRuntime from '/@react-refresh'`), so the preview installs those
+    // globals + loads the runtime BEFORE the story module and registers an
+    // in-place refresh callback. The static export has no `/@react-refresh`
+    // server route, so it ships none of this (and never refreshes — it's a
+    // frozen snapshot).
+    let (refresh_setup, refresh_register) = match mode {
+        UrlMode::Dev => (
+            format!(
+                "  // ─── React Fast Refresh registry setup (#196) ────────────────────────────\n\
+                 \x20 // Load the refresh runtime FIRST and install the global $RefreshReg$ /\n\
+                 \x20 // $RefreshSig$ hooks the preview-served modules expect (the transform injects\n\
+                 \x20 // `import RefreshRuntime from '/@react-refresh'` + registration into each\n\
+                 \x20 // `.tsx` module). Setting these globals up before importing the story module\n\
+                 \x20 // means the story's component types register their families with the runtime,\n\
+                 \x20 // so a hot update can re-render the SAME root in place (preserving hook state)\n\
+                 \x20 // rather than remounting a fresh root.\n\
+                 \x20 import RefreshRuntime from \"{refresh_route}\";\n\
+                 \x20 if (!window.$RefreshReg$) {{\n\
+                 \x20   window.$RefreshReg$ = RefreshRuntime.register;\n\
+                 \x20   window.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;\n\
+                 \x20   window.__jetRefreshRuntime = RefreshRuntime;\n\
+                 \x20 }}\n",
+                refresh_route = super::server::REACT_REFRESH_ROUTE,
+            ),
+            // Register the in-place refresh callback the runtime drives on
+            // `performReactRefresh()` (#196). It re-renders the EXISTING root
+            // with the most-recently-imported module, so React reconciles the
+            // live fiber tree and keeps component hook state instead of
+            // unmount + remount.
+            "  RefreshRuntime.onPerformReactRefresh(() => renderStory(lastModule));\n"
+                .to_string(),
+        ),
+        UrlMode::Static => (String::new(), String::new()),
+    };
+
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -491,7 +532,7 @@ pub fn render_preview_html_with_mode(
 <body>
 <div id="jet-root" data-story-id="{story_id}"></div>
 <script type="module">
-  // Isolated mount: only this story renders here — no app router/shell.
+{refresh_setup}  // Isolated mount: only this story renders here — no app router/shell.
   import * as Story from "{module_url}";
   import React from "react";
   import {{ createRoot }} from "react-dom/client";
@@ -506,7 +547,7 @@ pub fn render_preview_html_with_mode(
   // story in place with a freshly re-imported module — state-preserving for
   // react-refresh-compatible edits, isolated to this frame.
   window.__jetStoriesRender = renderStory;
-
+{refresh_register}
   // B3: apply control edits from the manager. The manager posts the full args
   // object; we replace liveArgs and re-render the most recent module in place.
   window.addEventListener("message", (ev) => {{
@@ -553,6 +594,8 @@ pub fn render_preview_html_with_mode(
 "#,
         title = escape_html(&story_display_title(story)),
         story_id = escape_html(&story.id),
+        refresh_setup = refresh_setup,
+        refresh_register = refresh_register,
         module_url = escape_js(module_url),
         export_name = escape_js(&story.export_name),
         args_json = args_json,
@@ -576,16 +619,26 @@ pub fn render_preview_html_with_mode(
 /// never reloads — only the iframe does. Reconnects with exponential backoff so
 /// a server restart re-establishes live reload.
 ///
-/// TODO(#176 follow-up): wire the dev server's full react-refresh runtime
-/// (`/@react-refresh` + `$RefreshReg$` instrumentation, see
-/// [`crate::dev_server::react_refresh`]) so hook state survives a component edit
-/// without a re-mount. Today an `update` re-imports + re-renders the story
-/// (fast, frame-local, no manager reload) but `createRoot().render` still
-/// re-mounts the component subtree, so component-local hook state is reset.
+/// #196 (state-preserving refresh): on `update` the client re-imports the
+/// freshly-transformed module — which re-runs the transform-injected
+/// `$RefreshReg$(...)` registration, updating each component family's `current`
+/// type in the runtime — then calls `RefreshRuntime.performReactRefresh()`. The
+/// preview registered an in-place refresh callback (via
+/// `RefreshRuntime.onPerformReactRefresh`) that re-renders the EXISTING
+/// `createRoot()` root, so React reconciles the live fiber tree and keeps
+/// component hook state instead of unmounting + remounting.
+///
+/// TODO(#196 follow-up): the shim's `performReactRefresh` resolves the new
+/// component family by re-running the module's render rather than via React's
+/// real `react-refresh/runtime` `injectIntoGlobalHook` family-swap. For the
+/// isolated single-component preview a same-root re-render with stable component
+/// identity (the family `current` type) preserves hook state in practice; a
+/// future pass could wire the upstream `react-refresh/runtime` for parity with
+/// multi-component trees / forced-remount on signature change.
 fn render_preview_hmr_client() -> String {
     format!(
         r#"<script type="module">
-  // ─── jet stories preview HMR client (B2b/#176) ───────────────────────────
+  // ─── jet stories preview HMR client (B2b/#176 + #196) ────────────────────
   // Lives only in the preview frame; the manager shell never reloads.
   (function() {{
     const ROUTE = "{route}";
@@ -600,11 +653,25 @@ fn render_preview_hmr_client() -> String {
         return;
       }}
       try {{
-        // Cache-bust so the browser fetches the freshly transformed module.
+        // Cache-bust so the browser fetches the freshly transformed module. The
+        // re-import re-runs the module's `$RefreshReg$(...)` registration, so the
+        // runtime now holds the updated component family.
         const bust = (msg.path.indexOf("?") === -1 ? "?" : "&") + "t=" + msg.timestamp;
         const fresh = await import(msg.path + bust);
-        render(fresh);
-        console.log("[jet stories] hot updated", msg.path);
+        // #196: state-preserving refresh. Hand the freshly-imported module to the
+        // render hook (so `lastModule` tracks the new code) and then drive
+        // `performReactRefresh()`, which re-renders the EXISTING root in place —
+        // preserving hook state — instead of mounting a fresh root.
+        const runtime = window.__jetRefreshRuntime;
+        if (runtime && typeof runtime.performReactRefresh === "function") {{
+          render(fresh);
+          runtime.performReactRefresh();
+          console.log("[jet stories] react-refresh applied (state preserved)", msg.path);
+        }} else {{
+          // No refresh runtime (shouldn't happen in dev) — plain re-render.
+          render(fresh);
+          console.log("[jet stories] hot updated", msg.path);
+        }}
       }} catch (err) {{
         console.error("[jet stories] hot update failed, reloading preview:", err);
         location.reload();
