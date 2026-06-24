@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-build-lib-library-build-mode-esm-cjs-externalize-deps-peerde-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -65,6 +65,71 @@ flowchart TD
     emit_esm --> write[write one file per entry x format]
     emit_cjs --> write
     write --> result([LibBuildResult entries returned])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/task_runner/config.rs"
+    action: modify
+    section: logic
+    description: |
+      Add a `[lib]` config section (LibConfig: entry, formats, externalize_all,
+      out_dir, preserve_modules) to JetConfig, register "lib" in
+      JET_TOP_LEVEL_KEYS, and surface it through JetConfig::load.
+    impl_mode: hand-written
+  - path: "projects/jet/src/resolver/package.rs"
+    action: modify
+    section: logic
+    description: |
+      Add `peerDependencies` to PackageJson and a helper to enumerate library
+      entry points from the `exports` map (plus module/main fallback) for
+      multi-entry library builds and external-dependency collection.
+    impl_mode: hand-written
+  - path: "projects/jet/src/bundler/types.rs"
+    action: modify
+    section: logic
+    description: |
+      Add library output options (OutputFormat list, preserve_modules,
+      library mode flag) onto BundleOptions so the bundler can branch on
+      ESM/CJS emission and external-import preservation.
+    impl_mode: hand-written
+  - path: "projects/jet/src/bundler/lib_build.rs"
+    action: create
+    section: logic
+    description: |
+      New library-build orchestrator implementing the contract flow: resolve
+      entries + externals (dependencies + peerDependencies) from package.json,
+      build/tree-shake per entry, emit ESM (bare `import` for externals) and
+      optional CJS (`require()` for externals), write one output per
+      (entry x format) under out_dir, return LibBuildResult.
+    impl_mode: hand-written
+  - path: "projects/jet/src/bundler/mod.rs"
+    action: modify
+    section: logic
+    description: |
+      Expose the lib_build module and a `build_library(options)` entry the CLI
+      calls in lib mode; the existing app-mode `bundle()` path is unchanged.
+    impl_mode: hand-written
+  - path: "projects/jet/src/cli.rs"
+    action: modify
+    section: cli
+    description: |
+      Add `--lib` and `--format esm,cjs` flags to `jet build`; when `--lib`
+      (or `[lib]` config) is present, dispatch to bundler::build_library instead
+      of the app build path.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/library_build.rs"
+    action: create
+    section: unit-test
+    description: |
+      Integration tests: a fixture library builds ESM with deps/peerDeps kept
+      as external bare imports, optional CJS emission, multi-entry from
+      `exports`, and an app-mode no-regression assertion.
+    impl_mode: hand-written
 ```
 
 # Reviews
