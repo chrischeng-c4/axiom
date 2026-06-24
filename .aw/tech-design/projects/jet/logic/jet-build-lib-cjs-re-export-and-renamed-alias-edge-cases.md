@@ -54,3 +54,10 @@ flowchart TD
     alias --> done
     other --> done
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic (jet-cjs-reexport) complete + deterministic: line -> shape decision (5 labeled branches) -> respective CJS rewrite -> terminal CJS line. All nodes reachable; terminal real. Extends A1 CJS emission.
