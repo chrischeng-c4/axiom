@@ -235,6 +235,11 @@ path = "tests/build/production_build_regression.rs"
 name = "tree_shaking"
 path = "tests/build/tree_shaking.rs"
 
+# tests/stories/ — jet stories: CSF story discovery + parse (Storybook replacement)
+[[test]]
+name = "csf_discovery"
+path = "tests/stories/csf_discovery.rs"
+
 # tests/task-runner/ — jet task running replaces Nx/Turbo-style workspace task execution
 [[test]]
 name = "nx_support"

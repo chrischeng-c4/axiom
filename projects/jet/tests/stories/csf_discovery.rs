@@ -1,3 +1,231 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:de93f93a" tracker="pending-tracker" reason="Fixtures (Button.stories.tsx, Card.stories.tsx, malformed) + tests: glob finds both, meta+named stories parsed with merged args, title hierarchy + stable ids, malformed file -> diagnostic without aborting discovery."
-// TODO: hand-write content for `projects/jet/tests/stories/csf_discovery.rs`.
+//! Integration tests for B1: CSF story discovery + parse (`jet stories`).
+//!
+//! Fixtures are written into a temp dir so the WalkDir/globset discovery path
+//! runs end-to-end. We cover:
+//! (a) glob discovery of both valid `.stories.tsx` files,
+//! (b) `Button` parsing to meta(title=Components/Button) + 2 named stories with
+//!     args (story args merged over meta args),
+//! (c) the index exposing a title hierarchy + stable, slugged ids,
+//! (d) a malformed file (no default export) yielding a diagnostic WITHOUT
+//!     aborting discovery of the valid files.
+
+use std::fs;
+use std::path::Path;
+
+use jet::stories::csf::CsfValue;
+use jet::stories::{discover, StoryIndex};
+use tempfile::TempDir;
+
+const BUTTON_STORIES: &str = r#"
+import { Button } from './Button';
+import type { Meta, StoryObj } from '@storybook/react';
+
+const meta = {
+  title: 'Components/Button',
+  component: Button,
+  args: { size: 'md', label: 'Default' },
+  argTypes: { size: { control: 'select' } },
+} satisfies Meta<typeof Button>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Primary: Story = {
+  args: { primary: true, label: 'Click me' },
+};
+
+export const Disabled: Story = {
+  args: { disabled: true },
+  render: () => <Button disabled />,
+};
+"#;
+
+const CARD_STORIES: &str = r#"
+import { Card } from './Card';
+
+export default {
+  title: 'Surfaces/Card',
+  component: Card,
+};
+
+export const WithFooter = {
+  args: { footer: true },
+};
+"#;
+
+const BROKEN_STORIES: &str = r#"
+// No default export -> not valid CSF.
+export const Orphan = {
+  args: { value: 1 },
+};
+"#;
+
+/// Lay down the three fixtures in nested dirs (exercises `**/` globbing).
+fn write_fixtures() -> TempDir {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(root.join("src/components/Button.stories.tsx"), BUTTON_STORIES);
+    write(root.join("src/surfaces/Card.stories.tsx"), CARD_STORIES);
+    write(root.join("src/broken/Broken.stories.tsx"), BROKEN_STORIES);
+
+    // A decoy that must NOT match the story globs.
+    write(root.join("src/components/Button.tsx"), "export const Button = () => null;\n");
+    // node_modules must be skipped entirely.
+    write(
+        root.join("node_modules/dep/Vendor.stories.tsx"),
+        BUTTON_STORIES,
+    );
+
+    dir
+}
+
+fn write(path: std::path::PathBuf, contents: &str) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("mkdir");
+    }
+    fs::write(path, contents).expect("write fixture");
+}
+
+fn index_of(dir: &Path) -> StoryIndex {
+    discover(dir)
+}
+
+/// (a) discovery finds both valid files via the glob, skips decoy + node_modules.
+#[test]
+fn discovers_valid_story_files() {
+    let dir = write_fixtures();
+    let index = index_of(dir.path());
+
+    // Two valid metas (Button + Card); Broken contributes none.
+    assert_eq!(
+        index.metas.len(),
+        2,
+        "expected Button + Card metas, got {:?}",
+        index
+            .metas
+            .iter()
+            .map(|m| m.file.display().to_string())
+            .collect::<Vec<_>>()
+    );
+
+    let titles: Vec<_> = index.metas.iter().filter_map(|m| m.title.clone()).collect();
+    assert!(titles.contains(&"Components/Button".to_string()));
+    assert!(titles.contains(&"Surfaces/Card".to_string()));
+
+    // node_modules vendor file must not leak in.
+    assert!(
+        index
+            .metas
+            .iter()
+            .all(|m| !m.file.to_string_lossy().contains("node_modules")),
+        "node_modules story files must be skipped"
+    );
+}
+
+/// (b) Button parses to meta(title=Components/Button) + 2 named stories with
+/// merged args.
+#[test]
+fn button_meta_and_stories_parsed_with_merged_args() {
+    let dir = write_fixtures();
+    let index = index_of(dir.path());
+
+    let button_meta = index
+        .metas
+        .iter()
+        .find(|m| m.title.as_deref() == Some("Components/Button"))
+        .expect("Button meta present");
+    assert_eq!(button_meta.component.as_deref(), Some("Button"));
+    assert_eq!(button_meta.title_path, vec!["Components", "Button"]);
+    assert_eq!(
+        button_meta.args.get("size"),
+        Some(&CsfValue::Str("md".into()))
+    );
+    assert!(button_meta.arg_types.contains_key("size"));
+
+    let button_stories: Vec<_> = index
+        .stories
+        .iter()
+        .filter(|s| s.file == button_meta.file)
+        .collect();
+    assert_eq!(button_stories.len(), 2, "Button has Primary + Disabled");
+
+    let primary = button_stories
+        .iter()
+        .find(|s| s.name == "Primary")
+        .expect("Primary story");
+    // Story arg overrides meta `label`, meta `size` is inherited.
+    assert_eq!(
+        primary.args.get("label"),
+        Some(&CsfValue::Str("Click me".into()))
+    );
+    assert_eq!(primary.args.get("size"), Some(&CsfValue::Str("md".into())));
+    assert_eq!(primary.args.get("primary"), Some(&CsfValue::Bool(true)));
+    assert!(!primary.has_render);
+
+    let disabled = button_stories
+        .iter()
+        .find(|s| s.name == "Disabled")
+        .expect("Disabled story");
+    assert_eq!(
+        disabled.args.get("disabled"),
+        Some(&CsfValue::Bool(true))
+    );
+    assert!(disabled.has_render, "Disabled declares a render fn");
+}
+
+/// (c) the index exposes a title hierarchy + stable, slugged ids.
+#[test]
+fn index_exposes_title_hierarchy_and_stable_ids() {
+    let dir = write_fixtures();
+    let index = index_of(dir.path());
+
+    let hierarchy = index.title_hierarchy();
+    assert!(hierarchy.contains(&vec!["Components".to_string()]));
+    assert!(hierarchy.contains(&vec!["Components".to_string(), "Button".to_string()]));
+    assert!(hierarchy.contains(&vec!["Surfaces".to_string()]));
+    assert!(hierarchy.contains(&vec!["Surfaces".to_string(), "Card".to_string()]));
+
+    // Stable, deterministic, unique ids.
+    let ids: Vec<_> = index.stories.iter().map(|s| s.id.clone()).collect();
+    assert!(ids.contains(&"components-button--primary".to_string()));
+    assert!(ids.contains(&"components-button--disabled".to_string()));
+    // `WithFooter` is a single identifier (no separator) -> `withfooter`.
+    assert!(ids.contains(&"surfaces-card--withfooter".to_string()));
+
+    let mut sorted = ids.clone();
+    sorted.sort();
+    assert_eq!(ids, sorted, "stories are returned id-sorted");
+
+    let unique: std::collections::BTreeSet<_> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "ids are unique");
+
+    // Re-running discovery yields identical ids (stability).
+    let again = index_of(dir.path());
+    let ids_again: Vec<_> = again.stories.iter().map(|s| s.id.clone()).collect();
+    assert_eq!(ids, ids_again);
+}
+
+/// (d) the malformed file produces a diagnostic and does NOT abort discovery of
+/// the valid files.
+#[test]
+fn malformed_file_yields_diagnostic_without_aborting() {
+    let dir = write_fixtures();
+    let index = index_of(dir.path());
+
+    // Valid files still fully discovered.
+    assert_eq!(index.metas.len(), 2);
+    assert_eq!(index.stories.len(), 3); // Primary + Disabled + WithFooter
+
+    // The malformed file is surfaced as a diagnostic.
+    assert!(
+        index
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("Broken.stories.tsx") && d.contains("parse error")),
+        "expected a parse-error diagnostic for Broken.stories.tsx, got {:?}",
+        index.diagnostics
+    );
+}
 // HANDWRITE-END
