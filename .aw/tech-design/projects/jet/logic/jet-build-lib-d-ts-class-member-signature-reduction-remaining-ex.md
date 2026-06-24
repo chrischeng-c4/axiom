@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-jet-build-lib-d-ts-class-member-signature-reduction-remaining-ex-md
-fill_sections: [logic]
+fill_sections: [logic, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -54,6 +54,32 @@ flowchart TD
     more -->|yes| member
     more -->|no| emit[emit export declare class]
     emit --> done([ambient class declaration])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/bundler/dts.rs"
+    action: modify
+    section: logic
+    description: |
+      Reduce exported class declarations to ambient form: methods -> signatures
+      (drop bodies), public fields -> name: type, drop private/#-private members,
+      keep constructor signature. Cover the remaining export shapes flagged TODO
+      (annotated complex default export, re-export passthrough) where statically
+      determinable.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/library_dts.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Tests: exported class emits export declare class with method signatures,
+      public field types, private members dropped; previously-deferred export
+      shapes emit valid declarations; existing dts tests pass.
+    impl_mode: hand-written
 ```
 
 # Reviews
