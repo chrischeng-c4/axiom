@@ -214,6 +214,42 @@ pub struct LibConfig {
     /// library mode. `jet build --lib --dts` / `--no-dts` override this.
     /// @issue #171
     pub dts: Option<bool>,
+
+    /// CSS cascade-merge: an ordered list of `style.css` files (paths relative
+    /// to the project root, e.g. dependent packages' `dist/style.css`) to
+    /// concatenate into the output `style.css`. Declared order IS cascade order:
+    /// files are concatenated in the order given (first listed appears first in
+    /// the output, so its rules can be overridden by later ones). When `None`,
+    /// no cascade-merge runs and the lib build is byte-identical to today.
+    /// Replaces the bespoke `mergeDepStyles` vite plugin.
+    pub css_merge: Option<Vec<String>>,
+
+    /// Raw-asset copy: directories to copy verbatim into the output dir,
+    /// preserving subpaths, so consumers can deep-import
+    /// `@pkg/assets/icons/x.svg`. Each [`RawCopy`] names a `from` directory
+    /// (relative to the project root) and an optional `to` destination (relative
+    /// to the out dir; default = the same relative path as `from`). When `None`,
+    /// no copy runs. Replaces the bespoke `copyRawAssets` vite plugin.
+    pub raw_copy: Option<Vec<RawCopy>>,
+}
+
+/// One raw-asset directory copy directive within `[lib].raw_copy`.
+///
+/// Example:
+/// ```toml
+/// [[lib.raw_copy]]
+/// from = "assets/icons"
+/// to = "icons"
+/// ```
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RawCopy {
+    /// Source directory to copy verbatim, relative to the project root.
+    pub from: String,
+
+    /// Destination directory relative to the out dir. When `None`, the tree is
+    /// copied to the same relative path as `from`.
+    pub to: Option<String>,
 }
 
 /// Single task definition within the pipeline.
@@ -745,6 +781,58 @@ conditions = ["import", "node", "default"]
             .resolve_conditions()
             .expect("[resolve.conditions] must round-trip through JetConfig::load");
         assert_eq!(conds, &["import", "node", "default"]);
+    }
+
+    /// `[lib].css_merge` and `[lib].raw_copy` round-trip through the parser so
+    /// the lib-build path can wire CSS cascade-merge + raw-asset copy. Declared
+    /// order of `css_merge` is preserved (cascade order); `raw_copy` supports an
+    /// explicit `to` and defaults it to `None` (= same relative path as `from`).
+    #[test]
+    fn jet_config_parses_lib_css_merge_and_raw_copy() {
+        let toml_str = r#"
+[lib]
+css_merge = ["../button/dist/style.css", "../input/dist/style.css"]
+
+[[lib.raw_copy]]
+from = "assets/icons"
+to = "icons"
+
+[[lib.raw_copy]]
+from = "assets/images"
+"#;
+        let config: JetConfig = toml::from_str(toml_str).unwrap();
+        let lib = config.lib.expect("[lib] section should parse");
+
+        let css = lib.css_merge.expect("[lib].css_merge should parse");
+        assert_eq!(
+            css,
+            vec![
+                "../button/dist/style.css".to_string(),
+                "../input/dist/style.css".to_string(),
+            ],
+            "css_merge must preserve declared (cascade) order"
+        );
+
+        let raw = lib.raw_copy.expect("[lib].raw_copy should parse");
+        assert_eq!(raw.len(), 2);
+        assert_eq!(raw[0].from, "assets/icons");
+        assert_eq!(raw[0].to.as_deref(), Some("icons"));
+        assert_eq!(raw[1].from, "assets/images");
+        assert_eq!(raw[1].to, None, "absent `to` defaults to None");
+    }
+
+    /// A `[lib]` section without `css_merge` / `raw_copy` leaves both `None`, so
+    /// no merge/copy runs and the lib build stays byte-identical to today.
+    #[test]
+    fn jet_config_lib_css_merge_and_raw_copy_default_none() {
+        let toml_str = r#"
+[lib]
+formats = ["esm"]
+"#;
+        let config: JetConfig = toml::from_str(toml_str).unwrap();
+        let lib = config.lib.expect("[lib] section should parse");
+        assert!(lib.css_merge.is_none());
+        assert!(lib.raw_copy.is_none());
     }
 
     /// #1233 R2 / R4 — Slice 7. `JetConfig::load` lifts the typo from

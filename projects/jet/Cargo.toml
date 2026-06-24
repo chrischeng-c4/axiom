@@ -235,6 +235,9 @@ path = "tests/build/library_build.rs"
 name = "library_dts"
 path = "tests/build/library_dts.rs"
 [[test]]
+name = "lib_css_merge"
+path = "tests/build/lib_css_merge.rs"
+[[test]]
 name = "production_build_regression"
 path = "tests/build/production_build_regression.rs"
 [[test]]
