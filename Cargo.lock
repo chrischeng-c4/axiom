@@ -1627,6 +1627,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cclab-openapi-codegen"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cclab-pg"
 version = "0.4.1"
 dependencies = [
