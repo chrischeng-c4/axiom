@@ -19,17 +19,43 @@
 //!   (an inline object type — read directly)
 //!
 //! The named props type (`ButtonProps`) is then resolved against an `interface`
-//! declaration or a `type` alias **in the same file**, both of which reduce to a
-//! TS object type (`{ name: type; ... }`) whose members we read.
+//! declaration or a `type` alias. The declaration is looked up **in the same
+//! file** first, and — when the component's file path is known — against a
+//! sibling file the props type is imported from.
 //!
-//! ## Deferred (TODO(#175 follow-up))
+//! ## Cross-file / intersection / generic resolution (#198)
 //!
-//! These shapes are recognized-but-skipped rather than mis-parsed; each returns
-//! an empty/partial result gracefully instead of erroring:
-//! - generic props types (`ButtonProps<T>`),
-//! - props types imported from another file (cross-file resolution),
-//! - intersection / union props types (`A & B`, `A | B`),
-//! - mapped / conditional / utility types (`Partial<...>`, `Pick<...>`).
+//! [`extract_props_at`] threads the component's on-disk file path, which unlocks
+//! three further shapes beyond the same-file simple case:
+//!
+//! - **Intersection** `type Props = Base & Extra`: each operand is resolved
+//!   (same-file interface/type alias or an imported sibling type) and the
+//!   members are unioned, de-duplicated by prop name (**first operand wins** on a
+//!   name clash, mirroring TS's left-to-right declaration order for controls).
+//! - **Cross-file imported prop type**: when the props type name is brought in by
+//!   `import type { Props } from "./types"` / `import { Props } from "./types"`,
+//!   the sibling file is resolved relative to the component file (project-local
+//!   `.ts`/`.tsx`/`.d.ts`/… only; `node_modules` / bare specifiers are skipped),
+//!   parsed, and that file's matching interface / type alias is read.
+//! - **Generic** `Props<Variant>`: the generic interface/type alias is read with
+//!   a best-effort substitution of the concrete type argument for the type
+//!   parameter inside each member's type text. Members that don't reference the
+//!   parameter are read verbatim.
+//!
+//! Every unresolved shape degrades to an empty/partial result rather than
+//! erroring, so controls fall back to "no props" instead of failing the preview.
+//!
+//! ## Deferred (TODO(#198 follow-up))
+//!
+//! These remain recognized-but-skipped (graceful empty/partial, never a crash):
+//! - mapped / conditional / utility types (`Partial<...>`, `Pick<...>`,
+//!   `T extends U ? A : B`, `{ [K in Keys]: V }`),
+//! - deep / nested generic substitution (only a flat type-param → arg textual
+//!   substitution is performed),
+//! - union props types (`A | B`) and `node_modules`-sourced prop types,
+//! - re-export barrels (`export { Props } from "./x"`) for the imported type.
+
+use std::path::{Path, PathBuf};
 
 use tree_sitter::{Node, Parser};
 
@@ -45,20 +71,35 @@ pub struct PropDef {
 }
 
 /// Extract the ordered prop definitions of `component_name` from a component
-/// source file.
+/// source file, **without** following cross-file imports.
+///
+/// This is the same-file-only entry point; prefer [`extract_props_at`] when the
+/// component's on-disk path is known so imported / cross-file prop types resolve.
 ///
 /// Returns an empty vector (never an error) when the component, its props type,
 /// or that type's definition can't be found — controls degrade to "no props"
 /// rather than failing the whole preview.
 pub fn extract_props(component_source: &str, component_name: &str) -> Vec<PropDef> {
-    let mut parser = Parser::new();
-    if parser
-        .set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())
-        .is_err()
-    {
-        return Vec::new();
-    }
-    let Some(tree) = parser.parse(component_source, None) else {
+    extract_props_at(component_source, component_name, None)
+}
+
+/// Extract the ordered prop definitions of `component_name`, optionally
+/// following imports relative to `component_path` (the component's on-disk file).
+///
+/// When `component_path` is `Some`, an imported props type (`import type { Props
+/// } from "./types"`) resolves to its sibling file. With `None`, cross-file
+/// imports are skipped (same behavior as [`extract_props`]). All other shapes —
+/// same-file simple, intersection of same-file operands, and generics — work in
+/// both modes.
+///
+/// Like [`extract_props`], this never errors: any unresolved shape yields an
+/// empty/partial result so controls degrade to "no props".
+pub fn extract_props_at(
+    component_source: &str,
+    component_name: &str,
+    component_path: Option<&Path>,
+) -> Vec<PropDef> {
+    let Some(tree) = parse_tsx(component_source) else {
         return Vec::new();
     };
     let root = tree.root_node();
@@ -69,17 +110,31 @@ pub fn extract_props(component_source: &str, component_name: &str) -> Vec<PropDe
     };
 
     // 2. Resolve that type to an object type and read its members.
+    let resolver = Resolver::new(component_source, root, component_path);
     match props_type {
         PropsType::Inline(obj) => read_object_type_members(component_source, obj),
-        PropsType::Named(name) => resolve_named_props_type(component_source, root, &name),
+        PropsType::Named(name) => resolver.resolve_named(&name, &[]),
+        PropsType::Generic(name, args) => resolver.resolve_named(&name, &args),
     }
 }
 
-/// The props type of a component: either an inline object type node, or the
-/// name of a type to resolve elsewhere in the file.
+/// Parse `source` as TSX, returning `None` if the parser can't be built or the
+/// parse fails. Centralizes the language setup the entry points share.
+fn parse_tsx(source: &str) -> Option<tree_sitter::Tree> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())
+        .ok()?;
+    parser.parse(source, None)
+}
+
+/// The props type of a component: an inline object type node, the name of a type
+/// to resolve elsewhere, or a generic instantiation (`Name<Arg, ...>`) carrying
+/// the concrete type-argument source texts.
 enum PropsType<'a> {
     Inline(Node<'a>),
     Named(String),
+    Generic(String, Vec<String>),
 }
 
 /// Find the props type of `component_name`, scanning top-level declarations for
@@ -200,69 +255,360 @@ fn props_type_from_params<'a>(source: &str, callable: Node<'a>) -> Option<PropsT
     Some(props_type_from_type_node(source, type_node))
 }
 
-/// Classify a type node as an inline object type or a named type reference.
+/// Classify a type node as an inline object type, a named type reference, or a
+/// generic instantiation (`Name<Arg, ...>`).
 fn props_type_from_type_node<'a>(source: &str, type_node: Node<'a>) -> PropsType<'a> {
     match type_node.kind() {
         // `{ primary: boolean; ... }`
         "object_type" => PropsType::Inline(type_node),
         // `ButtonProps`
         "type_identifier" => PropsType::Named(node_text(type_node, source).to_string()),
-        // `Props.Whatever` or generic — TODO(#175 follow-up): cross-file /
-        // generic / qualified props types are not resolved; treat the leading
-        // identifier as a best-effort name so same-file matches still work.
+        // `Props<Variant>` — a generic instantiation. Carry the base name plus
+        // each concrete type-argument's source text for best-effort substitution.
+        "generic_type" => generic_props_type(source, type_node)
+            .unwrap_or_else(|| PropsType::Named(node_text(type_node, source).to_string())),
+        // `Props.Whatever` (qualified) or anything else — TODO(#198 follow-up):
+        // qualified / utility / mapped props types are not resolved; treat the
+        // node text as a best-effort name so same-file matches still work.
         _ => PropsType::Named(node_text(type_node, source).to_string()),
     }
 }
 
-/// Resolve a named props type (`ButtonProps`) to its members by finding the
-/// matching `interface` or `type` alias declaration in the same file.
-fn resolve_named_props_type(source: &str, root: Node, type_name: &str) -> Vec<PropDef> {
+/// Decompose a `generic_type` node (`Name<Arg, ...>`) into its base type name and
+/// the source text of each type argument. Returns `None` if the base name isn't a
+/// plain `type_identifier` (e.g. a qualified `A.B<...>`).
+fn generic_props_type<'a>(source: &str, generic: Node<'a>) -> Option<PropsType<'a>> {
+    let name_node = first_child_of_kind(generic, "type_identifier")?;
+    let name = node_text(name_node, source).to_string();
+    let args = match first_child_of_kind(generic, "type_arguments") {
+        Some(type_args) => named_children(type_args)
+            .into_iter()
+            .map(|a| node_text(a, source).trim().to_string())
+            .collect(),
+        None => Vec::new(),
+    };
+    Some(PropsType::Generic(name, args))
+}
+
+/// Resolves a named props type to its member [`PropDef`]s, following same-file
+/// interface/type-alias declarations, intersections of those, generic
+/// substitution, and (when a file path is known) cross-file imports.
+///
+/// One resolver is scoped to a single component source + its root node + its
+/// on-disk path; cross-file hops re-parse the imported sibling and recurse into a
+/// fresh resolver anchored at *that* file (so its own relative imports resolve).
+struct Resolver<'a> {
+    source: &'a str,
+    root: Node<'a>,
+    /// The component file's own path, used to resolve relative imports. `None`
+    /// disables cross-file resolution.
+    path: Option<PathBuf>,
+}
+
+impl<'a> Resolver<'a> {
+    fn new(source: &'a str, root: Node<'a>, path: Option<&Path>) -> Self {
+        Self {
+            source,
+            root,
+            path: path.map(Path::to_path_buf),
+        }
+    }
+
+    /// Resolve `type_name` (optionally with generic `type_args`) to its props.
+    ///
+    /// Tries, in order: a same-file interface/type-alias declaration; then — if
+    /// unresolved and a path is known — an imported sibling declaration. Returns
+    /// an empty vector when nothing resolves.
+    fn resolve_named(&self, type_name: &str, type_args: &[String]) -> Vec<PropDef> {
+        if let Some(decl) = self.find_local_decl(type_name) {
+            return self.props_from_decl(self.source, decl, type_args);
+        }
+        // Cross-file: the name is imported from a sibling file.
+        if self.path.is_some() {
+            if let Some(props) = self.resolve_imported(type_name, type_args) {
+                return props;
+            }
+        }
+        Vec::new()
+    }
+
+    /// Find a top-level `interface`/`type` declaration named `type_name` in this
+    /// resolver's source (including `export`-wrapped declarations).
+    fn find_local_decl(&self, type_name: &str) -> Option<Node<'a>> {
+        find_type_decl(self.source, self.root, type_name)
+    }
+
+    /// Read the props of a resolved `interface`/`type_alias` declaration,
+    /// substituting `type_args` for the declaration's generic parameters.
+    fn props_from_decl(&self, source: &str, decl: Node, type_args: &[String]) -> Vec<PropDef> {
+        let subst = type_param_substitution(source, decl, type_args);
+        match decl.kind() {
+            "interface_declaration" => {
+                // `interface Name<...> extends Base { ... }` — read the body and,
+                // best-effort, fold in any extended bases that resolve locally.
+                let mut out = Vec::new();
+                if let Some(body) = first_child_of_kind(decl, "interface_body")
+                    .or_else(|| first_child_of_kind(decl, "object_type"))
+                {
+                    out = read_object_type_members_subst(source, body, &subst);
+                }
+                for base in interface_extends_names(source, decl) {
+                    merge_props(&mut out, self.resolve_named(&base, &[]));
+                }
+                out
+            }
+            "type_alias_declaration" => self.props_from_type_alias(source, decl, &subst),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Read the props of a `type Name = <rhs>` alias: a direct object type, or an
+    /// intersection whose operands are each resolved + unioned.
+    fn props_from_type_alias(
+        &self,
+        source: &str,
+        decl: Node,
+        subst: &[(String, String)],
+    ) -> Vec<PropDef> {
+        // The rhs is the alias's `value` field (its last non-type-parameter child).
+        let Some(rhs) = type_alias_rhs(decl) else {
+            return Vec::new();
+        };
+        match rhs.kind() {
+            // `type P = { ... }`
+            "object_type" => read_object_type_members_subst(source, rhs, subst),
+            // `type P = Base & Extra & { inline: ... }`
+            "intersection_type" => self.props_from_intersection(source, rhs, subst),
+            // `type P = Other` / `type P = Other<Arg>` — alias to another type.
+            "type_identifier" => {
+                self.resolve_named(node_text(rhs, source), &[])
+            }
+            "generic_type" => match generic_props_type(source, rhs) {
+                Some(PropsType::Generic(name, args)) => self.resolve_named(&name, &args),
+                _ => Vec::new(),
+            },
+            // TODO(#198 follow-up): unions / conditional / mapped / utility-type
+            // rhs (`A | B`, `Partial<...>`, `{ [K in Keys]: V }`) are not
+            // destructured — graceful empty.
+            _ => Vec::new(),
+        }
+    }
+
+    /// Union the members of every operand of an intersection (`A & B & {..}`).
+    ///
+    /// Each operand is resolved (a same-file/imported named type, an inline
+    /// object literal, or a nested generic) and the results are merged, first
+    /// operand winning on a prop-name clash.
+    fn props_from_intersection(
+        &self,
+        source: &str,
+        intersection: Node,
+        subst: &[(String, String)],
+    ) -> Vec<PropDef> {
+        let mut out: Vec<PropDef> = Vec::new();
+        for operand in named_children(intersection) {
+            let operand_props = match operand.kind() {
+                "object_type" => read_object_type_members_subst(source, operand, subst),
+                "type_identifier" => self.resolve_named(node_text(operand, source), &[]),
+                "generic_type" => match generic_props_type(source, operand) {
+                    Some(PropsType::Generic(name, args)) => self.resolve_named(&name, &args),
+                    _ => Vec::new(),
+                },
+                // Nested intersection (rare) — recurse.
+                "intersection_type" => self.props_from_intersection(source, operand, subst),
+                // TODO(#198 follow-up): union operands inside an intersection are
+                // not destructured.
+                _ => Vec::new(),
+            };
+            merge_props(&mut out, operand_props);
+        }
+        out
+    }
+
+    /// Resolve `type_name` via a sibling file it is imported from.
+    ///
+    /// Finds an `import`/`import type` statement that binds `type_name` and has a
+    /// **relative** specifier, resolves the sibling file next to this resolver's
+    /// path, re-parses it, and resolves `type_name` (with `type_args`) there.
+    /// Returns `None` for bare/`node_modules` specifiers or unresolvable paths.
+    fn resolve_imported(&self, type_name: &str, type_args: &[String]) -> Option<Vec<PropDef>> {
+        let component_path = self.path.as_ref()?;
+        let specifier = import_specifier_for(self.source, self.root, type_name)?;
+        // Project-local relative imports only; never chase node_modules / bare.
+        if !specifier.starts_with('.') {
+            return None;
+        }
+        let base_dir = component_path.parent()?;
+        let resolved = resolve_relative_type_file(base_dir, &specifier)?;
+        let imported_source = std::fs::read_to_string(&resolved).ok()?;
+        let tree = parse_tsx(&imported_source)?;
+        let imported_root = tree.root_node();
+        let inner = Resolver::new(&imported_source, imported_root, Some(&resolved));
+        Some(inner.resolve_named(type_name, type_args))
+    }
+}
+
+/// Find a top-level `interface`/`type` declaration named `type_name` in `root`'s
+/// source, unwrapping a leading `export`.
+fn find_type_decl<'a>(source: &str, root: Node<'a>, type_name: &str) -> Option<Node<'a>> {
     for child in named_children(root) {
         let decl = match child.kind() {
             "interface_declaration" | "type_alias_declaration" => child,
             "export_statement" => match named_children(child).into_iter().find(|n| {
-                matches!(
-                    n.kind(),
-                    "interface_declaration" | "type_alias_declaration"
-                )
+                matches!(n.kind(), "interface_declaration" | "type_alias_declaration")
             }) {
                 Some(d) => d,
                 None => continue,
             },
             _ => continue,
         };
-
-        // The declared type name is the `type_identifier` child.
         let name = first_child_of_kind(decl, "type_identifier")
             .map(|n| node_text(n, source).to_string());
-        if name.as_deref() != Some(type_name) {
-            continue;
-        }
-
-        match decl.kind() {
-            "interface_declaration" => {
-                // interface ... { interface_body / object_type }
-                if let Some(body) = first_child_of_kind(decl, "interface_body")
-                    .or_else(|| first_child_of_kind(decl, "object_type"))
-                {
-                    return read_object_type_members(source, body);
-                }
-            }
-            "type_alias_declaration" => {
-                // type ButtonProps = { ... };  — read the object_type rhs.
-                // TODO(#175 follow-up): intersections / unions / utility types
-                // on the rhs are not destructured; only a direct object type is.
-                if let Some(obj) = named_children(decl)
-                    .into_iter()
-                    .find(|n| n.kind() == "object_type")
-                {
-                    return read_object_type_members(source, obj);
-                }
-            }
-            _ => {}
+        if name.as_deref() == Some(type_name) {
+            return Some(decl);
         }
     }
-    Vec::new()
+    None
+}
+
+/// The rhs (`value`) node of a `type X = <rhs>` alias: its last named child after
+/// the name and any `type_parameters`.
+fn type_alias_rhs(decl: Node) -> Option<Node> {
+    named_children(decl)
+        .into_iter()
+        .rev()
+        .find(|n| !matches!(n.kind(), "type_identifier" | "type_parameters"))
+}
+
+/// The base type names of an `interface X extends A, B { ... }` clause.
+///
+/// Best-effort: only plain `type_identifier` bases are returned (generic /
+/// qualified bases are skipped — TODO(#198 follow-up)).
+fn interface_extends_names(source: &str, decl: Node) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(clause) = first_child_of_kind(decl, "extends_type_clause") {
+        for base in named_children(clause) {
+            if base.kind() == "type_identifier" {
+                out.push(node_text(base, source).to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Build the `[(param, arg)]` substitution map for a generic declaration, pairing
+/// each declared `type_parameter` name with the concrete `type_args` text by
+/// position. Extra params (no matching arg) are dropped.
+fn type_param_substitution(
+    source: &str,
+    decl: Node,
+    type_args: &[String],
+) -> Vec<(String, String)> {
+    if type_args.is_empty() {
+        return Vec::new();
+    }
+    let Some(params) = first_child_of_kind(decl, "type_parameters") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (param, arg) in named_children(params)
+        .into_iter()
+        .filter(|p| p.kind() == "type_parameter")
+        .zip(type_args)
+    {
+        if let Some(name) = first_child_of_kind(param, "type_identifier") {
+            out.push((node_text(name, source).to_string(), arg.clone()));
+        }
+    }
+    out
+}
+
+/// Merge `incoming` props into `out`, skipping any whose name already exists
+/// (first occurrence wins — left-to-right declaration / intersection order).
+fn merge_props(out: &mut Vec<PropDef>, incoming: Vec<PropDef>) {
+    for prop in incoming {
+        if !out.iter().any(|p| p.name == prop.name) {
+            out.push(prop);
+        }
+    }
+}
+
+/// Resolve a relative module specifier to an existing type-bearing file under
+/// `base_dir`, probing TS/JS extensions, `.d.ts`, and an `index.*` barrel.
+fn resolve_relative_type_file(base_dir: &Path, specifier: &str) -> Option<PathBuf> {
+    let joined = base_dir.join(specifier);
+    if joined.is_file() {
+        return Some(joined);
+    }
+    const EXTS: &[&str] = &["ts", "tsx", "d.ts", "jsx", "js"];
+    for ext in EXTS {
+        let candidate = joined.with_extension(ext);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    for ext in EXTS {
+        let candidate = joined.join(format!("index.{ext}"));
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Find the relative import specifier that binds the type name `type_name` in
+/// `root`'s source (`import type { Props } from "./types"`,
+/// `import { Props } from "./types"`, `import { Foo as Props } ...`). Returns the
+/// specifier (`./types`) of the first matching import.
+fn import_specifier_for(source: &str, root: Node, type_name: &str) -> Option<String> {
+    for child in named_children(root) {
+        if child.kind() != "import_statement" {
+            continue;
+        }
+        let import_text = node_text(child, source);
+        if !import_binds_type(import_text, type_name) {
+            continue;
+        }
+        // The specifier is the import's (last) string child.
+        let source_node = {
+            let mut c = child.walk();
+            child
+                .named_children(&mut c)
+                .filter(|n| n.kind() == "string")
+                .last()
+        }?;
+        let raw = node_text(source_node, source);
+        return Some(raw.trim_matches(|q| q == '"' || q == '\'' || q == '`').to_string());
+    }
+    None
+}
+
+/// True when an import statement's text binds the local type name `name` as a
+/// named (possibly aliased) import. Default/namespace imports of a *type* are not
+/// valid TS, so only the `{ ... }` clause is inspected.
+fn import_binds_type(import_text: &str, name: &str) -> bool {
+    let Some(open) = import_text.find('{') else {
+        return false;
+    };
+    let Some(close_rel) = import_text[open..].find('}') else {
+        return false;
+    };
+    let inner = &import_text[open + 1..open + close_rel];
+    for spec in inner.split(',') {
+        // The local binding is the token after `as`, else the token itself; drop
+        // a leading per-specifier `type` keyword (`import { type Props }`).
+        let local = spec
+            .rsplit(" as ")
+            .next()
+            .unwrap_or(spec)
+            .trim()
+            .trim_start_matches("type ")
+            .trim();
+        if local == name {
+            return true;
+        }
+    }
+    false
 }
 
 /// Read the `name: type` members of a TS object/interface body in source order.
@@ -270,10 +616,22 @@ fn resolve_named_props_type(source: &str, root: Node, type_name: &str) -> Vec<Pr
 /// Each `property_signature` contributes a [`PropDef`]; the `?` token marks the
 /// prop optional. Index signatures, method signatures, and spreads are skipped.
 fn read_object_type_members(source: &str, body: Node) -> Vec<PropDef> {
+    read_object_type_members_subst(source, body, &[])
+}
+
+/// Like [`read_object_type_members`], but textually substitutes each
+/// `(param, arg)` in `subst` for a generic type parameter referenced inside a
+/// member's type text. Best-effort: only whole-word identifier occurrences of a
+/// param are replaced (so `T` → `Variant`, but `Theme` is untouched).
+fn read_object_type_members_subst(
+    source: &str,
+    body: Node,
+    subst: &[(String, String)],
+) -> Vec<PropDef> {
     let mut out = Vec::new();
     for member in named_children(body) {
         if member.kind() != "property_signature" {
-            // TODO(#175 follow-up): method_signature / index_signature /
+            // TODO(#198 follow-up): method_signature / index_signature /
             // call_signature members are not surfaced as props.
             continue;
         }
@@ -282,16 +640,51 @@ fn read_object_type_members(source: &str, body: Node) -> Vec<PropDef> {
         };
         let name = node_text(name_node, source).to_string();
         let optional = member_is_optional(member);
-        let type_text = first_child_of_kind(member, "type_annotation")
+        let raw_type = first_child_of_kind(member, "type_annotation")
             .and_then(|ann| named_children(ann).into_iter().next())
             .map(|t| node_text(t, source).trim().to_string())
             .unwrap_or_default();
+        let type_text = apply_type_param_subst(&raw_type, subst);
         out.push(PropDef {
             name,
             type_text,
             optional,
         });
     }
+    out
+}
+
+/// Substitute each generic `(param, arg)` for whole-word occurrences of `param`
+/// in `type_text`. A whole word is a maximal run of identifier characters
+/// (`[A-Za-z0-9_$]`), so `T` is replaced but `Theme`/`xT` are not.
+fn apply_type_param_subst(type_text: &str, subst: &[(String, String)]) -> String {
+    if subst.is_empty() {
+        return type_text.to_string();
+    }
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let mut out = String::with_capacity(type_text.len());
+    let mut token = String::new();
+    let flush = |token: &mut String, out: &mut String| {
+        if token.is_empty() {
+            return;
+        }
+        let replacement = subst
+            .iter()
+            .find(|(param, _)| param == token)
+            .map(|(_, arg)| arg.as_str())
+            .unwrap_or(token.as_str());
+        out.push_str(replacement);
+        token.clear();
+    };
+    for c in type_text.chars() {
+        if is_ident(c) {
+            token.push(c);
+        } else {
+            flush(&mut token, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut token, &mut out);
     out
 }
 
@@ -393,6 +786,132 @@ export function Tag(props: { name: string; closable?: boolean }) { return null; 
     #[test]
     fn unknown_component_yields_empty() {
         assert!(extract_props(BUTTON, "Missing").is_empty());
+    }
+
+    // ── #198: intersection / generic / extends (same-file, no path) ───────────
+
+    #[test]
+    fn intersection_unions_local_operands() {
+        let src = r#"
+interface Base { id: string; primary: boolean; }
+type Extra = { count: number; label: string; };
+type Props = Base & Extra;
+export function Widget(props: Props) { return null; }
+"#;
+        let props = extract_props(src, "Widget");
+        let names: Vec<&str> = props.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["id", "primary", "count", "label"]);
+        assert_eq!(props[2].type_text, "number");
+    }
+
+    #[test]
+    fn intersection_first_operand_wins_on_clash() {
+        let src = r#"
+interface Base { size: "sm" | "lg"; }
+type Extra = { size: number; };
+type Props = Base & Extra;
+export const Box = (props: Props) => null;
+"#;
+        let props = extract_props(src, "Box");
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].name, "size");
+        assert_eq!(props[0].type_text, "\"sm\" | \"lg\"", "first operand wins");
+    }
+
+    #[test]
+    fn generic_substitutes_type_argument() {
+        let src = r#"
+interface GenProps<T> { value: T; label: string; }
+export function Field(props: GenProps<number>) { return null; }
+"#;
+        let props = extract_props(src, "Field");
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].name, "value");
+        assert_eq!(props[0].type_text, "number", "T substituted with number");
+        assert_eq!(props[1].type_text, "string");
+    }
+
+    #[test]
+    fn generic_react_fc_with_type_arg() {
+        let src = r#"
+import React from 'react';
+interface GenProps<T> { value: T; }
+const Field: React.FC<GenProps<boolean>> = (props) => null;
+"#;
+        let props = extract_props(src, "Field");
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].type_text, "boolean");
+    }
+
+    #[test]
+    fn generic_without_arg_reads_unparameterized_members() {
+        // No type argument supplied at the use site → members read verbatim
+        // (the param-typed member keeps its `T` text, falls back to Text control).
+        let src = r#"
+interface GenProps<T> { value: T; label: string; }
+export function Field(props: GenProps) { return null; }
+"#;
+        let props = extract_props(src, "Field");
+        let names: Vec<&str> = props.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["value", "label"]);
+        assert_eq!(props[0].type_text, "T");
+    }
+
+    #[test]
+    fn interface_extends_folds_in_base_members() {
+        let src = r#"
+interface Base { id: string; }
+interface Props extends Base { label: string; }
+export function Widget(props: Props) { return null; }
+"#;
+        let props = extract_props(src, "Widget");
+        let names: Vec<&str> = props.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["label", "id"]);
+    }
+
+    #[test]
+    fn unresolvable_generic_degrades_to_empty() {
+        // A utility/mapped-type rhs we don't destructure → graceful empty.
+        let src = r#"
+type Props = Partial<{ a: string }>;
+export function Widget(props: Props) { return null; }
+"#;
+        assert!(extract_props(src, "Widget").is_empty());
+    }
+
+    #[test]
+    fn imported_props_resolve_from_sibling_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("types.ts"),
+            "export interface Props { id: string; active: boolean; }\n",
+        )
+        .unwrap();
+        let component = root.join("Widget.tsx");
+        std::fs::write(
+            &component,
+            r#"
+import type { Props } from "./types";
+export function Widget(props: Props) { return null; }
+"#,
+        )
+        .unwrap();
+
+        let source = std::fs::read_to_string(&component).unwrap();
+        let props = extract_props_at(&source, "Widget", Some(&component));
+        let names: Vec<&str> = props.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["id", "active"]);
+    }
+
+    #[test]
+    fn imported_props_without_path_yield_empty() {
+        // Same source, but no path → cross-file import is not followed.
+        let source = r#"
+import type { Props } from "./types";
+export function Widget(props: Props) { return null; }
+"#;
+        assert!(extract_props(source, "Widget").is_empty());
     }
 }
 // HANDWRITE-END
