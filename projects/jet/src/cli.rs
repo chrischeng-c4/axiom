@@ -261,6 +261,27 @@ pub fn command() -> Command {
                         ),
                 ),
         )
+        .subcommand(
+            // B2 (#174) — jet stories: native Storybook-style workbench.
+            // Discovers `*.stories.@(ts|tsx|js|jsx)`, serves a sidebar +
+            // toolbar manager UI, and renders the selected story in
+            // isolation (no app router/shell). HMR is out of scope (B2b/#176);
+            // navigation does a full preview reload.
+            Command::new("stories")
+                .about("Start the native stories workbench (Storybook replacement)")
+                .arg(
+                    Arg::new("port")
+                        .short('p')
+                        .long("port")
+                        .help("Port to run on (default: 6006)"),
+                )
+                .arg(
+                    Arg::new("host")
+                        .long("host")
+                        .default_value("127.0.0.1")
+                        .help("Host to bind to"),
+                ),
+        )
         .subcommand(serve_command())
         .subcommand(
             Command::new("build")
@@ -1993,6 +2014,20 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
         },
 
         Some(("serve", m)) => handle_serve_command(&root_dir, m).await,
+
+        Some(("stories", m)) => {
+            // B2 (#174) — discover stories under the project root and serve the
+            // native workbench. Default port 6006 mirrors Storybook's default.
+            let port = m
+                .get_one::<String>("port")
+                .and_then(|s| parse_cli_numeric_flag::<u16>("--port", s))
+                .unwrap_or(6006);
+            let host = m
+                .get_one::<String>("host")
+                .cloned()
+                .unwrap_or_else(|| "127.0.0.1".to_string());
+            crate::stories::start_stories_workbench(&root_dir, host, port).await
+        }
 
         Some(("dev", m)) => {
             if let Some(("shutdown", sm)) = m.subcommand() {
