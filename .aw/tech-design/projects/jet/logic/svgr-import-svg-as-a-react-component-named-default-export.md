@@ -78,4 +78,3 @@ changes:
       Tests: importing an .svg yields a component rendering <svg> with forwarded props; named vs default export; plain asset-url import still works.
     impl_mode: hand-written
 ```
-
