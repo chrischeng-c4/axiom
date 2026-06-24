@@ -14203,6 +14203,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     let data = fields.read().unwrap().get("_data").copied();
                     if let Some(data) = data {
                         if !data.is_none() {
+                            if super::stdlib::collections_mod::user_wrapper_kind(class_name)
+                                == Some("dict")
+                            {
+                                match name.as_str() {
+                                    "keys" => return super::dict_ops::mb_dict_keys_abc_view(data),
+                                    "values" => return super::dict_ops::mb_dict_values_abc_view(data),
+                                    "items" => return super::dict_ops::mb_dict_items_abc_view(data),
+                                    _ => {}
+                                }
+                            }
                             let raw = mb_call_method(data, method_name, args);
                             // `copy()` returns the SAME wrapper class (CPython:
                             // UserList.copy() -> UserList), not the bare payload.
@@ -14335,9 +14345,9 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         let a0 = arg_items.first().copied().unwrap_or(MbValue::none());
                         let a1 = arg_items.get(1).copied().unwrap_or(MbValue::none());
                         match name.as_str() {
-                            "keys" => return super::dict_ops::mb_dict_keys(data),
-                            "values" => return super::dict_ops::mb_dict_values(data),
-                            "items" => return super::dict_ops::mb_dict_items(data),
+                            "keys" => return super::dict_ops::mb_dict_keys_view(data),
+                            "values" => return super::dict_ops::mb_dict_values_view(data),
+                            "items" => return super::dict_ops::mb_dict_items_view(data),
                             "get" => return super::dict_ops::mb_dict_get(data, a0, a1),
                             "pop" => return super::dict_ops::mb_dict_pop(data, a0, a1),
                             "setdefault" => {

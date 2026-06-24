@@ -885,6 +885,119 @@ pub fn mb_dict_keys(dict: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(Vec::new()))
 }
 
+fn dict_view_class_kind(class_name: &str) -> Option<&'static str> {
+    match class_name.rsplit('.').next().unwrap_or(class_name) {
+        "dict_keys" | "KeysView" => Some("keys"),
+        "dict_items" | "ItemsView" => Some("items"),
+        "dict_values" | "ValuesView" => Some("values"),
+        _ => None,
+    }
+}
+
+fn dict_view_make(dict: MbValue, class_name: &str) -> MbValue {
+    unsafe { super::rc::retain_if_ptr(dict) };
+    let view = MbValue::from_ptr(MbObject::new_instance(class_name.to_string()));
+    if let Some(ptr) = view.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.write().unwrap().insert("_data".to_string(), dict);
+            }
+        }
+    }
+    view
+}
+
+pub fn mb_dict_keys_view(dict: MbValue) -> MbValue {
+    dict_view_make(dict, "dict_keys")
+}
+
+pub fn mb_dict_values_view(dict: MbValue) -> MbValue {
+    dict_view_make(dict, "dict_values")
+}
+
+pub fn mb_dict_items_view(dict: MbValue) -> MbValue {
+    dict_view_make(dict, "dict_items")
+}
+
+pub(crate) fn mb_dict_keys_abc_view(dict: MbValue) -> MbValue {
+    dict_view_make(dict, "KeysView")
+}
+
+pub(crate) fn mb_dict_values_abc_view(dict: MbValue) -> MbValue {
+    dict_view_make(dict, "ValuesView")
+}
+
+pub(crate) fn mb_dict_items_abc_view(dict: MbValue) -> MbValue {
+    dict_view_make(dict, "ItemsView")
+}
+
+pub(crate) fn dict_view_elements(view: MbValue) -> Option<Vec<MbValue>> {
+    let ptr = view.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            let kind = dict_view_class_kind(class_name)?;
+            let data = fields.read().unwrap().get("_data").copied()?;
+            let list = match kind {
+                "keys" => mb_dict_keys(data),
+                "items" => mb_dict_items(data),
+                "values" => mb_dict_values(data),
+                _ => return None,
+            };
+            return Some(super::builtins::extract_items(list));
+        }
+    }
+    None
+}
+
+pub(crate) fn dict_view_len(view: MbValue) -> Option<i64> {
+    let ptr = view.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            dict_view_class_kind(class_name)?;
+            let data = fields.read().unwrap().get("_data").copied()?;
+            return mb_dict_len(data).as_int();
+        }
+    }
+    None
+}
+
+pub(crate) fn dict_view_is_setlike(view: MbValue) -> bool {
+    let Some(ptr) = view.as_ptr() else { return false };
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            return matches!(dict_view_class_kind(class_name), Some("keys" | "items"));
+        }
+    }
+    false
+}
+
+pub(crate) fn dict_view_as_set(view: MbValue) -> Option<MbValue> {
+    if !dict_view_is_setlike(view) {
+        return None;
+    }
+    let items = dict_view_elements(view)?;
+    let list = MbValue::from_ptr(MbObject::new_list_borrowed(items));
+    Some(super::set_ops::mb_set_from_list(list))
+}
+
+pub(crate) fn dict_view_or(a: MbValue, b: MbValue) -> Option<MbValue> {
+    if dict_view_is_setlike(a) {
+        let left = dict_view_as_set(a)?;
+        return Some(super::set_ops::mb_set_union(left, b));
+    }
+    if dict_view_is_setlike(b) {
+        if let Some(ptr) = a.as_ptr() {
+            unsafe {
+                if matches!((*ptr).data, ObjData::Set(_) | ObjData::FrozenSet(_)) {
+                    let right = dict_view_as_set(b)?;
+                    return Some(super::set_ops::mb_set_union(a, right));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// dict.values() -> list of values
 pub fn mb_dict_values(dict: MbValue) -> MbValue {
     unsafe {
@@ -1416,9 +1529,9 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
             let default = if argc() > 1 { arg(1) } else { MbValue::none() };
             mb_dict_setdefault(receiver, arg(0), default)
         }
-        "keys" => mb_dict_keys(receiver),
-        "values" => mb_dict_values(receiver),
-        "items" => mb_dict_items(receiver),
+        "keys" => mb_dict_keys_view(receiver),
+        "values" => mb_dict_values_view(receiver),
+        "items" => mb_dict_items_view(receiver),
         "pop" => {
             if argc() > 1 {
                 mb_dict_pop(receiver, arg(0), arg(1))
