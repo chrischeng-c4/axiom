@@ -6199,6 +6199,7 @@ dependencies = [
  "base64 0.22.1",
  "bytemuck",
  "byteorder",
+ "cclab-openapi-codegen",
  "chrono",
  "ciborium",
  "clap",

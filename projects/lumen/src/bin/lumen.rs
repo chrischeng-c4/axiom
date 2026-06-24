@@ -155,6 +155,10 @@ enum SpecFormat {
 
 #[derive(Parser)]
 struct SpecArgs {
+    /// Generate a typed client from this spec instead of printing it.
+    /// @spec projects/lumen/tech-design/interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md
+    #[command(subcommand)]
+    gen: Option<SpecSub>,
     /// Schema format to emit when neither `--shapes` nor `--fields` is set.
     #[arg(long, value_enum, default_value_t = SpecFormat::Openapi)]
     format: SpecFormat,
@@ -164,6 +168,43 @@ struct SpecArgs {
     /// Emit the field-type / analyzer catalog instead.
     #[arg(long)]
     fields: bool,
+}
+
+/// `lumen spec` subcommands.
+#[derive(Subcommand)]
+enum SpecSub {
+    /// Generate a typed API client (TypeScript / Python / Rust) from lumen's
+    /// OpenAPI document, written into `--out`.
+    Gen(GenArgs),
+}
+
+#[derive(Parser)]
+struct GenArgs {
+    /// Target language for the generated client.
+    #[arg(long, value_enum)]
+    lang: GenLang,
+    /// Output directory for the generated files.
+    #[arg(long)]
+    out: PathBuf,
+    /// HTTP backend for the TypeScript client (ignored for py/rust).
+    #[arg(long, value_enum, default_value_t = GenHttp::Fetch)]
+    http: GenHttp,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum GenLang {
+    /// TypeScript: types + fetch/axios client + TanStack Query hooks.
+    Ts,
+    /// Python: pydantic models + httpx client.
+    Py,
+    /// Rust: serde models + reqwest client.
+    Rust,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum GenHttp {
+    Fetch,
+    Axios,
 }
 
 #[derive(Parser)]
@@ -243,6 +284,10 @@ async fn main() -> Result<()> {
     match cli.cmd {
         Command::Serve(args) => serve(args).await,
         Command::Spec(args) => {
+            // `spec gen` writes a typed client; everything else prints to stdout.
+            if let Some(SpecSub::Gen(gen)) = args.gen {
+                return spec_gen(gen);
+            }
             // Offline self-description: no engine, no server, no I/O beyond stdout.
             let out = if args.shapes {
                 serde_json::to_string_pretty(&lumen::spec::query_shapes())?
@@ -294,6 +339,40 @@ async fn main() -> Result<()> {
         }
         Command::K8s(args) => k8s(args).await,
     }
+}
+
+/// `lumen spec gen` — generate a typed client from lumen's own OpenAPI document
+/// (offline; no engine or server) and write it into `--out`.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md
+fn spec_gen(args: GenArgs) -> Result<()> {
+    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    let lang = match args.lang {
+        GenLang::Ts => Lang::Ts,
+        GenLang::Py => Lang::Py,
+        GenLang::Rust => Lang::Rust,
+    };
+    let opts = GenOptions {
+        lang,
+        spec_path: PathBuf::new(),
+        out_dir: args.out.clone(),
+        client_name: "createClient".to_string(),
+        http_client: match args.http {
+            GenHttp::Fetch => HttpClient::Fetch,
+            GenHttp::Axios => HttpClient::Axios,
+        },
+        emit_types: true,
+        emit_client: true,
+        // TanStack Query hooks are a TypeScript-only concern.
+        emit_hooks: matches!(lang, Lang::Ts),
+    };
+    let output = generate(&lumen::spec::openapi_json(), &opts)?;
+    std::fs::create_dir_all(&args.out)?;
+    for file in &output.files {
+        let path = args.out.join(&file.rel_path);
+        std::fs::write(&path, &file.contents)?;
+        println!("generated {}", path.display());
+    }
+    Ok(())
 }
 
 /// `lumen k8s` — operator control plane. Same binary/image as `serve`; the
