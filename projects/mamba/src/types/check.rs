@@ -427,6 +427,38 @@ impl TypeChecker {
                     let sym = self.symbols.define(name.clone(), SymbolKind::Enum);
                     self.set_sym_type(sym.0, enum_ty);
                 }
+                Stmt::ExprStmt(_) => {
+                    if let Some(fn_def) =
+                        crate::exec_literal::global_literal_exec_fn_def(&stmt.node)
+                    {
+                        let sym = self.symbols.lookup(&fn_def.name).unwrap_or_else(|| {
+                            self.symbols
+                                .define(fn_def.name.clone(), SymbolKind::Function)
+                        });
+                        let star_pos = fn_def
+                            .params
+                            .iter()
+                            .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
+                        let is_variadic = star_pos.is_some()
+                            || fn_def
+                                .params
+                                .iter()
+                                .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
+                        let effective_params =
+                            star_pos.map_or(fn_def.params.as_slice(), |pos| &fn_def.params[..pos]);
+                        let param_types: Vec<TypeId> = effective_params
+                            .iter()
+                            .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
+                            .map(|p| self.resolve_type_expr(&p.ty))
+                            .collect();
+                        let fn_ty = self.tcx.intern(Ty::Fn {
+                            params: param_types,
+                            ret: self.tcx.any(),
+                            variadic: is_variadic,
+                        });
+                        self.set_sym_type(sym.0, fn_ty);
+                    }
+                }
                 Stmt::TypeAlias {
                     name,
                     type_params,
