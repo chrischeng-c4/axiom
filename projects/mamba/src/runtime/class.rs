@@ -197,6 +197,30 @@ pub(crate) fn class_members(class_name: &str) -> Vec<(String, MbValue)> {
     })
 }
 
+fn class_namespace_mappingproxy(
+    class_name: &str,
+    type_fields: Option<&super::rc::MbRwLock<super::rc::InstanceFields>>,
+) -> MbValue {
+    let dict = super::dict_ops::mb_dict_new();
+    if let Some(fields) = type_fields {
+        let entries: Vec<(String, MbValue)> = fields
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        for (k, v) in entries {
+            let key = MbValue::from_ptr(MbObject::new_str(k));
+            super::dict_ops::mb_dict_setitem(dict, key, v);
+        }
+    }
+    for (k, v, _from_method_table) in class_own_members(class_name) {
+        let key = MbValue::from_ptr(MbObject::new_str(k));
+        super::dict_ops::mb_dict_setitem(dict, key, v);
+    }
+    super::dict_ops::mappingproxy_from_mapping(dict)
+}
+
 pub(crate) fn compute_user_abstractmethods(class_name: &str) -> Vec<String> {
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
@@ -4818,6 +4842,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         super::rc::retain_if_ptr(data);
                         return data;
                     }
+                    if super::dict_ops::dict_view_kind(obj).is_some()
+                        && matches!(attr_name.as_str(), "__contains__" | "isdisjoint")
+                    {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
                     // io in-memory streams: `.closed` reflects the _closed flag.
                     if matches!(
                         class_name.as_str(),
@@ -4967,14 +4996,13 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         return MbValue::from_ptr(Box::into_raw(bound));
                     }
                     if class_name == "type" && attr_name == "__dict__" {
-                        let dict = super::dict_ops::mb_dict_new();
-                        for (k, v) in fields.read().unwrap().iter() {
-                            let key = MbValue::from_ptr(
-                                super::rc::MbObject::new_str(k.clone()),
-                            );
-                            super::dict_ops::mb_dict_setitem(dict, key, *v);
-                        }
-                        return super::dict_ops::mappingproxy_from_mapping(dict);
+                        let type_name = fields
+                            .read()
+                            .unwrap()
+                            .get("__name__")
+                            .and_then(|v| extract_str(*v))
+                            .unwrap_or_default();
+                        return class_namespace_mappingproxy(&type_name, Some(fields));
                     }
                     // R13: __dict__ access suppression.
                     // If class defines __slots__ without '__dict__', raise AttributeError for __dict__.
@@ -5118,6 +5146,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(s.as_str()));
                     if class_found {
                         match attr_name.as_str() {
+                            "__dict__" => {
+                                return class_namespace_mappingproxy(s, None);
+                            }
                             "__mro__" => {
                                 let mro = CLASS_REGISTRY.with(|reg| {
                                     reg.borrow().get(s.as_str()).map(|cls| cls.mro.clone())
@@ -10812,6 +10843,15 @@ pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
             return mb_obj_delitem(obj, tuple_key);
         }
     }
+    if super::dict_ops::mappingproxy_mapping(obj).is_some() {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "'mappingproxy' object does not support item deletion".to_string(),
+            )),
+        );
+        return;
+    }
     // ET.Element subscript deletion: del e[i] / del e[a:b].
     if let Some(kids) = element_children_list(obj) {
         let slice_parts: Option<(Option<i64>, Option<i64>)> = key.as_ptr().and_then(|p| unsafe {
@@ -11323,6 +11363,9 @@ pub fn mb_obj_len(obj: MbValue) -> MbValue {
 /// If obj is a dict-like collections Instance (defaultdict, Counter, OrderedDict),
 /// return its backing `_data` dict. Otherwise None.
 pub(crate) fn unwrap_dictlike_data(obj: MbValue) -> Option<MbValue> {
+    if let Some(data) = super::dict_ops::mappingproxy_mapping(obj) {
+        return Some(data);
+    }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let super::rc::ObjData::Instance {
@@ -12108,6 +12151,31 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     let name = extract_str(method_name).unwrap_or_default();
     if let Some(result) = super::dict_ops::dict_view_method(receiver, &name, args) {
         return result;
+    }
+    if let Some(data) = super::dict_ops::mappingproxy_mapping(receiver) {
+        let items = super::builtins::extract_items(args);
+        match name.as_str() {
+            "keys" => return super::dict_ops::mb_dict_keys_view(data),
+            "values" => return super::dict_ops::mb_dict_values_view(data),
+            "items" => return super::dict_ops::mb_dict_items_view(data),
+            "get" => {
+                let key = items.first().copied().unwrap_or_else(MbValue::none);
+                let default = items.get(1).copied().unwrap_or_else(MbValue::none);
+                return super::dict_ops::mb_dict_get(data, key, default);
+            }
+            "copy" => return super::dict_ops::mb_dict_copy(data),
+            "__contains__" => {
+                let key = items.first().copied().unwrap_or_else(MbValue::none);
+                return super::dict_ops::mb_dict_contains(data, key);
+            }
+            "__len__" => return super::dict_ops::mb_dict_len(data),
+            "__iter__" => return super::iter::mb_iter(data),
+            "__getitem__" => {
+                let key = items.first().copied().unwrap_or_else(MbValue::none);
+                return super::dict_ops::mb_dict_getitem(data, key);
+            }
+            _ => {}
+        }
     }
 
     if receiver.as_func().is_some() && name == "_convert" {

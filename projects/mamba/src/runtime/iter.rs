@@ -528,7 +528,9 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     ref class_name,
                     ref fields,
                 } => {
-                    if let Some(items) = super::dict_ops::dict_view_elements(obj) {
+                    if let Some(data) = super::dict_ops::mappingproxy_mapping(obj) {
+                        return mb_iter(data);
+                    } else if let Some(items) = super::dict_ops::dict_view_elements(obj) {
                         IterKind::List(MbValue::from_ptr(MbObject::new_list_borrowed(items)))
                     } else
                     // tempfile NamedTemporaryFile / SpooledTemporaryFile
@@ -1291,39 +1293,45 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
                     .map(|k| super::dict_ops::dict_key_to_mbvalue(k))
                     .collect(),
                 ObjData::Instance { ref class_name, .. } => {
-                    // User __reversed__ dunder returns its own iterator;
-                    // without one, reversed(obj) is a TypeError, not None.
-                    let cls = class_name.clone();
-                    let m = super::class::lookup_method(&cls, "__reversed__");
-                    if !m.is_none() {
-                        let method =
-                            MbValue::from_ptr(MbObject::new_str("__reversed__".to_string()));
-                        let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
-                        return super::class::mb_call_method(seq, method, args);
-                    }
-                    // Sequence-protocol fallback: a class with __len__ AND
-                    // __getitem__ is reversible (yield obj[len-1] .. obj[0]),
-                    // matching CPython's reversed() even without __reversed__.
-                    let has_len = !super::class::lookup_method(&cls, "__len__").is_none();
-                    let has_getitem = !super::class::lookup_method(&cls, "__getitem__").is_none();
-                    if has_len && has_getitem {
-                        let n = super::builtins::mb_len(seq).as_int().unwrap_or(0).max(0);
-                        let mut items: Vec<MbValue> = Vec::with_capacity(n as usize);
-                        for i in (0..n).rev() {
-                            items.push(super::class::mb_obj_getitem(seq, MbValue::from_int(i)));
-                            if super::exception::current_exception_type().is_some() {
-                                return MbValue::none();
-                            }
-                        }
+                    if let Some(mut items) = super::dict_ops::dict_view_elements(seq) {
+                        items.reverse();
                         items
                     } else {
-                        super::exception::mb_raise(
-                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(format!(
-                                "'{cls}' object is not reversible"
-                            ))),
-                        );
-                        return MbValue::none();
+                        // User __reversed__ dunder returns its own iterator;
+                        // without one, reversed(obj) is a TypeError, not None.
+                        let cls = class_name.clone();
+                        let m = super::class::lookup_method(&cls, "__reversed__");
+                        if !m.is_none() {
+                            let method =
+                                MbValue::from_ptr(MbObject::new_str("__reversed__".to_string()));
+                            let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                            return super::class::mb_call_method(seq, method, args);
+                        }
+                        // Sequence-protocol fallback: a class with __len__ AND
+                        // __getitem__ is reversible (yield obj[len-1] .. obj[0]),
+                        // matching CPython's reversed() even without __reversed__.
+                        let has_len = !super::class::lookup_method(&cls, "__len__").is_none();
+                        let has_getitem =
+                            !super::class::lookup_method(&cls, "__getitem__").is_none();
+                        if has_len && has_getitem {
+                            let n = super::builtins::mb_len(seq).as_int().unwrap_or(0).max(0);
+                            let mut items: Vec<MbValue> = Vec::with_capacity(n as usize);
+                            for i in (0..n).rev() {
+                                items.push(super::class::mb_obj_getitem(seq, MbValue::from_int(i)));
+                                if super::exception::current_exception_type().is_some() {
+                                    return MbValue::none();
+                                }
+                            }
+                            items
+                        } else {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(format!(
+                                    "'{cls}' object is not reversible"
+                                ))),
+                            );
+                            return MbValue::none();
+                        }
                     }
                 }
                 _ => return MbValue::none(),
