@@ -33,7 +33,7 @@ SDD is the methodology + library that powers `score` and (eventually)
 
 | Workflow | Drives | Direction | Termination |
 |---|---|---|---|
-| **正流程 (forward CRRR)** | One change at a time: issue → td → cb → merge | Forward, single-issue | Issue closes |
+| **正流程 (forward, linear)** | One change at a time: issue → td (author → gen → fill) → merge. Linear — no review/revise; the gate is EC. | Forward, single-issue | Issue closes |
 | **標準化 (regenerability)** | Audit the whole repo + apply 1 fix per tick until invariant holds | Loop, cross-issue | coverage = 100% |
 
 A 標準化 fix often opens a 正流程 issue to land the change, but the two
@@ -49,12 +49,12 @@ priority order in `aw standardize managed next` (highest priority first):
 | # | Action | What it does | Today's CLI |
 |---|---|---|---|
 | 0 | **inventory** | Classify every `.rs` in scope; compute coverage % | `aw standardize managed report` / `aw standardize managed next` |
-| 1 | **regen_drift** | Re-emit a CODEGEN block that drifted from spec output | `aw cb gen` regenerates; `cb check` detects |
+| 1 | **regen_drift** | Re-emit a CODEGEN block that drifted from spec output | `aw td gen` regenerates; `aw td code-check` detects |
 | 2 | **promote_handwrite** | Gap-blocker closed → HANDWRITE → CODEGEN (byte-equiv) | none — promotion is manual |
 | 3 | **issue_marker_gap** | HANDWRITE without gap-blocker → file issue + update marker | manual |
-| 4 | **fix_spec_rule** | TD spec violates R1–R7 → fix | `td check` reports; fix via CRRR `td revise` |
+| 4 | **fix_spec_rule** | TD spec violates R1–R7 → fix | `td check` reports; fix by re-authoring the TD section + re-`gen` (no review/revise) |
 | 5 | **fold_shadow** | Spec exists but hand-written shadow code lives outside markers | none — hardest gap |
-| 6 | **claim_code** | Untracked in-scope code → write spec + wrap HANDWRITE | `aw cb claim` covers code→spec; CODEGEN promotion is follow-up |
+| 6 | **claim_code** | Untracked in-scope code → write spec + wrap HANDWRITE | `aw td code-claim` covers code→spec; CODEGEN promotion is follow-up |
 
 After managed coverage reaches 100%, use `aw standardize regenerable run sdd`
 to drive the second layer: no remaining HANDWRITE blocks in SDD.

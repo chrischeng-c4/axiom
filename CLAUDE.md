@@ -43,8 +43,7 @@ Do not use removed top-level helpers such as `aw check`, `aw hover`,
 | `aw run` | Root-driven workflow runner. Choose exactly one root with `--project <project>`, `--capability <project>:<capability-id>`, or `--wi <id>`; follow `invoke.command` and `agent_prompt` until `completion.workflow_complete=true` or `requires_hitl=true`. |
 | `aw capability` | Product capability completion loop: `report`, `next`, `run`, and `check`. README is the default `cap_path` and uses Markdown H1-Hn capability headings plus contract/work-root tables. YAML `## Capability:` sections and legacy capability tables are migration input only. |
 | `aw wi` | Work-item inventory, planning, and CRRR: `draft`, `list`, `show`, `create`, `update`, `close`, `find`, `epicize`, `atomize`, `estimate`, `prioritize`, `sprintize`, `enrich`, `validate`, `fill-section`, `review`, `arbitrate`. Planning commands write local artifacts under `/tmp/aw/{project}/...` and do not publish tracker changes. |
-| `aw td` | Tech-design lifecycle and checks: `create`, `validate`, `review`, `revise`, `merge`, `arbitrate`, plus read-only/utility verbs `check`, `ast`, `migrate-mermaid`, `claim`. |
-| `aw cb` | Code-artifact lifecycle: `gen`, `check`, `claim`, `fill`, `review`, `revise`, `arbitrate`. |
+| `aw td` | Tech-design + generated-code lifecycle (LINEAR — no review/revise; the merge gate is EC): `create`, `validate`, `gen`, `fill`, `merge`, plus read-only/utility verbs `check`, `ast`, `migrate-mermaid`, `lock`, `claim`, `gen-source`, `code-check`, `code-claim`. (Code-artifact verbs are folded in here; there is no top-level `aw cb`.) |
 | `aw standardize` | Existing-project takeover workflow and remediation guidance. `capability`, `managed`, `semantic`, `traceability`, and `regenerable` expose `report`, `next`, and `run` to drive bounded repair work; readiness metrics live in `aw health`. |
 | `aw health` | Aggregate project readiness metrics: capability readiness, managed/semantic/traceability coverage, command traceability, regenerable maturity, cb verify, cold verify, configured test gates, and HITL status. Use `--verify-traceability --verify-cb --verify-cold --verify-tests` when production readiness must be evaluated. |
 
@@ -111,12 +110,14 @@ may still parse, but new docs and examples should use `aw wi`.
 ## SDD and Codegen Rules
 
 Specs are the source of truth. Consult `projects/agentic-workflow/tech-design/` first;
-fall back to source code only when needed, then consider `aw cb claim`.
+fall back to source code only when needed, then consider `aw td code-claim`.
 
 Every implementation change goes through Agentic Workflow unless the user explicitly asks
-to bypass it: `aw wi` -> `aw td` -> `aw cb` -> `aw td merge`. The
+to bypass it. The lifecycle is LINEAR (no review/revise; the gate is EC):
+`aw wi` -> `aw td` (author -> `gen` -> `fill`) -> `aw td merge`. The
 CLI owns the concrete phase queue, prompt text, validation gates, commits, git
-trailers, and next command.
+trailers, and next command. Run `aw llm` for the binary-owned orientation (the
+loop model: aw=loop, wi=state, caps=goal, ec=verifier, td=artifact).
 
 Existing-project takeover uses `aw standardize` for bounded workflow guidance
 and `aw health` for the project-readiness metric surface.
