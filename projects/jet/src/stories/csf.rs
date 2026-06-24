@@ -20,12 +20,23 @@
 //! - `export default { ... };` (object inlined in the default export),
 //! - `export const Primary = { args: { ... } };` named stories,
 //! - object literals wrapped in `satisfies Meta<...>` / `as const` /
-//!   a type-annotation (`: Story`) — the wrappers are transparently unwrapped.
+//!   a type-annotation (`: Story`) — the wrappers are transparently unwrapped,
+//! - the legacy CSF2 `const Primary = Template.bind({});` story shape, with
+//!   later top-level `Primary.args = { ... };` / `Primary.storyName = '...'`
+//!   mutations folded back onto the story,
+//! - spread args (`args: { ...base, label: 'x' }`) where `base` is a statically
+//!   known object in the same file (a `const base = { ... }` or another story's
+//!   args) — the spread members are merged in, then explicit keys override,
+//! - re-exported stories (`export { Primary } from './elsewhere'`,
+//!   `export { A as B } from './elsewhere'`) are surfaced as
+//!   [`ParsedStoryFile::re_exports`] for the caller to resolve (this parser is
+//!   source-only and does not read sibling files).
 //!
-//! Deferred (TODO, tracked for a later iteration):
-//! - the legacy CSF2 `Template.bind({})` + `Story.args = {}` mutation shape,
-//! - `export { Primary } from './elsewhere'` re-exported stories,
-//! - spread args (`args: { ...base, label: 'x' }`) — the spread is ignored.
+//! Deferred (TODO(#199 follow-up), graceful skip — never a crash):
+//! - spread from an imported / dynamically computed base (unresolvable spreads
+//!   keep the explicit keys and drop only the spread),
+//! - computed / dynamic story names,
+//! - the legacy `storiesOf(...)` imperative API.
 
 use std::collections::BTreeMap;
 
@@ -79,7 +90,27 @@ pub struct CsfStory {
     /// Story-level `args:` object (merged over meta args by the index).
     pub args: BTreeMap<String, CsfValue>,
     /// Whether the story declares its own `render:` function.
+    ///
+    /// For a CSF2 `Template.bind({})` story this is `true`: the story renders
+    /// through the bound template, so it carries its own render just like a
+    /// CSF3 story with an explicit `render:` field.
     pub has_render: bool,
+}
+
+/// A re-exported story (`export { Primary } from './button.stories'`).
+///
+/// `parse_csf` is source-only and cannot read the sibling file, so it surfaces
+/// these for the caller (`discover`) to resolve against the importing file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CsfReExport {
+    /// The name this file exposes the story as (the `B` in `A as B`, else the
+    /// plain name).
+    pub exported_name: String,
+    /// The name of the story in the source module (the `A` in `A as B`, else
+    /// the plain name).
+    pub local_name: String,
+    /// The module specifier the story is re-exported from (`./button.stories`).
+    pub relative_source: String,
 }
 
 /// The full parse of one story file.
@@ -87,6 +118,8 @@ pub struct CsfStory {
 pub struct ParsedStoryFile {
     pub meta: CsfMeta,
     pub stories: Vec<CsfStory>,
+    /// Re-exported stories pulled from sibling files; resolved by the caller.
+    pub re_exports: Vec<CsfReExport>,
 }
 
 /// Parse the CSF structure of a story file.
@@ -95,14 +128,19 @@ pub struct ParsedStoryFile {
 /// JS/JSX/TS so we always parse with it (the bundler does the same), but the
 /// flag is kept for API symmetry and future grammar specialization.
 pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
-    // Confirm a default export exists before doing the (more expensive) walk;
-    // a story file with no default export is not valid CSF.
+    // Confirm the file is CSF: it must either declare a default export (the
+    // meta) or re-export stories from a sibling (a barrel/aggregator file). A
+    // file with neither is not a story file.
     let imports = extract_imports(source, true)?;
     let has_default = imports
         .exports
         .iter()
         .any(|e| e.kind == ExportKind::Default);
-    if !has_default {
+    let has_re_export = imports
+        .exports
+        .iter()
+        .any(|e| e.kind == ExportKind::Named && e.source.is_some());
+    if !has_default && !has_re_export {
         return Err(anyhow!(
             "no default export found (CSF requires `export default` meta)"
         ));
@@ -116,10 +154,16 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
     let root = tree.root_node();
 
     // First pass: collect every top-level `const NAME = {...}` so a default
-    // export written as `export default meta` can resolve `meta` to its object.
+    // export written as `export default meta` can resolve `meta` to its object,
+    // and so spread args (`{ ...base }`) can resolve `base` to its members.
     let mut top_level_consts: BTreeMap<String, Node> = BTreeMap::new();
     let mut default_object: Option<Node> = None;
+    // (export_name, object_node) for CSF3 `export const X = { ... }` stories.
     let mut named_stories: Vec<(String, Node)> = Vec::new();
+    // CSF2 `const X = Template.bind({})` story identifiers (in source order).
+    let mut bound_stories: Vec<String> = Vec::new();
+    // Re-exported stories: `export { A as B } from './x'`.
+    let mut re_exports: Vec<CsfReExport> = Vec::new();
 
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
@@ -128,19 +172,29 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
                 for (name, value) in declarators(source, child) {
                     if let Some(obj) = unwrap_to_object(value) {
                         top_level_consts.insert(name, obj);
+                    } else if is_bind_call(source, value) {
+                        // CSF2 `const Primary = Template.bind({})`.
+                        bound_stories.push(name);
                     }
                 }
             }
             "export_statement" => {
                 if is_default_export(child) {
                     default_object = default_export_object(source, child, &top_level_consts);
+                } else if let Some(src) = re_export_source(source, child) {
+                    // `export { Primary, A as B } from './elsewhere'`.
+                    collect_re_exports(source, child, &src, &mut re_exports);
                 } else if let Some(decl) = first_child_of_kind(child, "lexical_declaration")
                     .or_else(|| first_child_of_kind(child, "variable_declaration"))
                 {
-                    // `export const Primary = {...}` — one or more named stories.
+                    // `export const Primary = {...}` — one or more named stories,
+                    // or `export const Primary = Template.bind({})` (CSF2 export
+                    // form). Track which exported names are bound templates.
                     for (name, value) in declarators(source, decl) {
                         if let Some(obj) = unwrap_to_object(value) {
                             named_stories.push((name, obj));
+                        } else if is_bind_call(source, value) {
+                            bound_stories.push(name);
                         }
                     }
                 }
@@ -154,12 +208,46 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
         None => CsfMeta::default(),
     };
 
-    let stories = named_stories
+    // Second pass: collect top-level `X.args = {...}` / `X.storyName = '...'`
+    // mutations so CSF2 bound stories can pick up their args, and so any story
+    // can reference another story's args in a spread.
+    let mutations = collect_story_mutations(source, root);
+
+    // A resolver scope for spread args: top-level const objects keyed by name.
+    let scope = SpreadScope {
+        consts: &top_level_consts,
+    };
+
+    let mut stories: Vec<CsfStory> = named_stories
         .into_iter()
-        .map(|(export_name, obj)| parse_story_object(source, &export_name, obj))
+        .map(|(export_name, obj)| parse_story_object(source, &export_name, obj, &scope, &mutations))
         .collect();
 
-    Ok(ParsedStoryFile { meta, stories })
+    // CSF2 bound-template stories: render comes from the bound template, args
+    // come from the later `X.args = {...}` mutation (if any).
+    for name in bound_stories {
+        // A name may be both a bound template and (mistakenly) re-declared as an
+        // object; the object form already produced a story, so skip duplicates.
+        if stories.iter().any(|s| s.export_name == name) {
+            continue;
+        }
+        let args = mutations
+            .get(&name)
+            .map(|m| resolve_args(&m.args_pairs, source, &scope, &mutations))
+            .unwrap_or_default();
+        stories.push(CsfStory {
+            export_name: name,
+            args,
+            // The render is supplied by the bound template.
+            has_render: true,
+        });
+    }
+
+    Ok(ParsedStoryFile {
+        meta,
+        stories,
+        re_exports,
+    })
 }
 
 /// Read the meta object's `component` / `title` / `args` / `argTypes` fields.
@@ -191,14 +279,23 @@ fn parse_meta_object(source: &str, obj: Node) -> CsfMeta {
 }
 
 /// Read a named story's `args` object and detect a `render` field.
-fn parse_story_object(source: &str, export_name: &str, obj: Node) -> CsfStory {
+///
+/// `args` is resolved through [`resolve_args`] so a spread (`{ ...base, x }`)
+/// is expanded against the file's static scope.
+fn parse_story_object(
+    source: &str,
+    export_name: &str,
+    obj: Node,
+    scope: &SpreadScope,
+    mutations: &BTreeMap<String, StoryMutation>,
+) -> CsfStory {
     let mut args = BTreeMap::new();
     let mut has_render = false;
     for (key, value) in object_pairs(source, obj) {
         match key.as_str() {
             "args" => {
-                if let CsfValue::Object(map) = value_of(source, value) {
-                    args = map;
+                if value.kind() == "object" {
+                    args = resolve_object_args(value, source, scope, mutations);
                 }
             }
             "render" => has_render = true,
@@ -209,6 +306,278 @@ fn parse_story_object(source: &str, export_name: &str, obj: Node) -> CsfStory {
         export_name: export_name.to_string(),
         args,
         has_render,
+    }
+}
+
+// ── CSF2 mutations + spread resolution ────────────────────────────────────────
+
+/// Static scope for resolving spread args within a single file: top-level
+/// `const NAME = {object}` declarations keyed by identifier.
+struct SpreadScope<'a> {
+    consts: &'a BTreeMap<String, Node<'a>>,
+}
+
+/// A top-level `X.args = {...}` / `X.storyName = '...'` mutation, used by both
+/// CSF2 bound stories and `...X.args` spreads.
+struct StoryMutation<'a> {
+    /// The `args =` RHS object's `pair`/`spread_element` nodes, in source order.
+    args_pairs: Vec<Node<'a>>,
+    /// `X.storyName = '...'` value, if assigned. (Surfaced for completeness;
+    /// the story index keys off the export identifier today.)
+    #[allow(dead_code)]
+    story_name: Option<String>,
+}
+
+/// Walk the top level for `X.args = {...}` and `X.storyName = '...'`
+/// assignment statements, grouping them by the mutated identifier `X`.
+fn collect_story_mutations<'a>(source: &str, root: Node<'a>) -> BTreeMap<String, StoryMutation<'a>> {
+    let mut out: BTreeMap<String, StoryMutation> = BTreeMap::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        if child.kind() != "expression_statement" {
+            continue;
+        }
+        let Some(assign) = first_child_of_kind(child, "assignment_expression") else {
+            continue;
+        };
+        // LHS must be `X.<prop>` (a member_expression with an identifier base).
+        let kids = named_children(assign);
+        let Some(lhs) = kids.first().copied() else {
+            continue;
+        };
+        if lhs.kind() != "member_expression" {
+            continue;
+        }
+        let lhs_kids = named_children(lhs);
+        let (Some(base), Some(prop)) = (lhs_kids.first(), lhs_kids.get(1)) else {
+            continue;
+        };
+        if base.kind() != "identifier" || prop.kind() != "property_identifier" {
+            continue;
+        }
+        let story = node_text(*base, source).to_string();
+        let prop_name = node_text(*prop, source);
+        let Some(rhs) = kids.get(1).copied() else {
+            continue;
+        };
+
+        let entry = out.entry(story).or_insert_with(|| StoryMutation {
+            args_pairs: Vec::new(),
+            story_name: None,
+        });
+        match prop_name {
+            "args" => {
+                if rhs.kind() == "object" {
+                    entry.args_pairs = object_member_nodes(rhs);
+                }
+            }
+            "storyName" => {
+                if rhs.kind() == "string" {
+                    entry.story_name = Some(strip_quotes(node_text(rhs, source)));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The `pair` / `spread_element` children of an `object` literal, in order.
+fn object_member_nodes(obj: Node) -> Vec<Node> {
+    named_children(obj)
+        .into_iter()
+        .filter(|c| matches!(c.kind(), "pair" | "spread_element"))
+        .collect()
+}
+
+/// Resolve a story's `args` from an `object` literal node, expanding spreads.
+fn resolve_object_args(
+    obj: Node,
+    source: &str,
+    scope: &SpreadScope,
+    mutations: &BTreeMap<String, StoryMutation>,
+) -> BTreeMap<String, CsfValue> {
+    resolve_args(&object_member_nodes(obj), source, scope, mutations)
+}
+
+/// Build an args map from an object's ordered member nodes, expanding any
+/// `spread_element` against the static scope.
+///
+/// Spread semantics match JS object spread: earlier members are overwritten by
+/// later ones, so an explicit key after a spread wins. An unresolvable spread
+/// (imported / dynamic base) is skipped gracefully — the explicit keys remain.
+fn resolve_args(
+    members: &[Node],
+    source: &str,
+    scope: &SpreadScope,
+    mutations: &BTreeMap<String, StoryMutation>,
+) -> BTreeMap<String, CsfValue> {
+    resolve_args_guarded(members, source, scope, mutations, 0)
+}
+
+/// Recursion-guarded inner resolver (spread bases may themselves spread).
+fn resolve_args_guarded(
+    members: &[Node],
+    source: &str,
+    scope: &SpreadScope,
+    mutations: &BTreeMap<String, StoryMutation>,
+    depth: usize,
+) -> BTreeMap<String, CsfValue> {
+    let mut out = BTreeMap::new();
+    // Cheap cycle / runaway guard for self-referential spreads.
+    if depth > 8 {
+        return out;
+    }
+    for member in members {
+        match member.kind() {
+            "pair" => {
+                if let Some((key, value)) = pair_kv(*member, source) {
+                    out.insert(key, value_of(source, value));
+                }
+            }
+            "spread_element" => {
+                // `...base` -> resolve a statically-known object's members.
+                if let Some(base) = spread_base_members(*member, source, scope, mutations) {
+                    let resolved =
+                        resolve_args_guarded(&base, source, scope, mutations, depth + 1);
+                    for (k, v) in resolved {
+                        out.insert(k, v);
+                    }
+                }
+                // Unresolvable spread (imported / dynamic): TODO(#199 follow-up)
+                // — skip it, keep the explicit keys.
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Resolve the member nodes a `spread_element` (`...X` or `...X.args`) refers
+/// to, if the base is statically known in this file. Returns `None` for
+/// anything dynamic / imported.
+fn spread_base_members<'a>(
+    spread: Node<'a>,
+    source: &str,
+    scope: &SpreadScope<'a>,
+    mutations: &'a BTreeMap<String, StoryMutation<'a>>,
+) -> Option<Vec<Node<'a>>> {
+    let inner = named_children(spread).into_iter().next()?;
+    match inner.kind() {
+        // `...base` where `const base = { ... }` exists at the top level.
+        "identifier" => {
+            let name = node_text(inner, source);
+            scope.consts.get(name).map(|obj| object_member_nodes(*obj))
+        }
+        // `...Primary.args` — reuse another CSF2 story's `X.args` mutation.
+        "member_expression" => {
+            let kids = named_children(inner);
+            let (base, prop) = (kids.first()?, kids.get(1)?);
+            if base.kind() == "identifier" && prop.kind() == "property_identifier" {
+                let base_name = node_text(*base, source);
+                let prop_name = node_text(*prop, source);
+                if prop_name == "args" {
+                    if let Some(m) = mutations.get(base_name) {
+                        return Some(m.args_pairs.clone());
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// `(key, value_node)` of a `pair`, with the key string-normalized.
+fn pair_kv<'a>(pair: Node<'a>, source: &str) -> Option<(String, Node<'a>)> {
+    let key = first_child_of_kind(pair, "property_identifier")
+        .or_else(|| first_child_of_kind(pair, "string"))?;
+    let value = pair_value(pair)?;
+    let key_text = match key.kind() {
+        "string" => strip_quotes(node_text(key, source)),
+        _ => node_text(key, source).to_string(),
+    };
+    Some((key_text, value))
+}
+
+/// True when `value` is a `Template.bind({...})`-shaped call expression: a call
+/// on a `member_expression` whose property identifier is exactly `bind`.
+fn is_bind_call(source: &str, value: Node) -> bool {
+    // Unwrap `as`/`satisfies`/parens around the call (rare, but cheap).
+    let Some(call) = unwrap_to_call(value) else {
+        return false;
+    };
+    let Some(callee) = first_child_of_kind(call, "member_expression") else {
+        return false;
+    };
+    named_children(callee)
+        .into_iter()
+        .filter(|c| c.kind() == "property_identifier")
+        .any(|c| node_text(c, source) == "bind")
+}
+
+/// Unwrap `as`/`satisfies`/parenthesized wrappers to reach a `call_expression`.
+fn unwrap_to_call(node: Node) -> Option<Node> {
+    match node.kind() {
+        "call_expression" => Some(node),
+        "satisfies_expression" | "as_expression" | "parenthesized_expression" => {
+            named_children(node).into_iter().find_map(unwrap_to_call)
+        }
+        _ => None,
+    }
+}
+
+// ── re-export collection ───────────────────────────────────────────────────────
+
+/// The module specifier of a re-exporting `export { ... } from '...'` statement,
+/// or `None` if this is not a re-export.
+fn re_export_source(source: &str, export_stmt: Node) -> Option<String> {
+    // A re-export has both an `export_clause` and a trailing `string` source.
+    let has_clause = first_child_of_kind(export_stmt, "export_clause").is_some();
+    if !has_clause {
+        return None;
+    }
+    let src = first_child_of_kind(export_stmt, "string")?;
+    Some(strip_quotes(node_text(src, source)))
+}
+
+/// Collect each `export_specifier` of an `export { A, B as C } from '...'` into
+/// a [`CsfReExport`].
+fn collect_re_exports(
+    source: &str,
+    export_stmt: Node,
+    relative_source: &str,
+    out: &mut Vec<CsfReExport>,
+) {
+    let Some(clause) = first_child_of_kind(export_stmt, "export_clause") else {
+        return;
+    };
+    for spec in named_children(clause) {
+        if spec.kind() != "export_specifier" {
+            continue;
+        }
+        let idents: Vec<Node> = named_children(spec)
+            .into_iter()
+            .filter(|c| c.kind() == "identifier")
+            .collect();
+        let (local_name, exported_name) = match idents.as_slice() {
+            // `A as B`: local = A, exported = B.
+            [a, b] => (
+                node_text(*a, source).to_string(),
+                node_text(*b, source).to_string(),
+            ),
+            // `A`: local = exported = A.
+            [a] => {
+                let n = node_text(*a, source).to_string();
+                (n.clone(), n)
+            }
+            _ => continue,
+        };
+        out.push(CsfReExport {
+            exported_name,
+            local_name,
+            relative_source: relative_source.to_string(),
+        });
     }
 }
 
@@ -441,6 +810,87 @@ export const WithFooter = { args: { footer: true } };
 export const Orphan = { args: {} };
 "#;
         assert!(parse_csf(src, true).is_err());
+    }
+
+    #[test]
+    fn csf2_template_bind_with_args_and_story_name() {
+        let src = r#"
+import { Toggle } from './Toggle';
+export default { title: 'Legacy/Toggle', component: Toggle };
+
+const Template = (args) => <Toggle {...args} />;
+const Primary = Template.bind({});
+Primary.args = { label: "Hi", on: true };
+Primary.storyName = "The Primary";
+
+export const Secondary = Template.bind({});
+Secondary.args = { label: "Lo" };
+
+export { Primary };
+"#;
+        let parsed = parse_csf(src, true).expect("parses");
+        // Both bound templates surface as stories.
+        let names: Vec<_> = parsed.stories.iter().map(|s| s.export_name.as_str()).collect();
+        assert!(names.contains(&"Primary"), "got {names:?}");
+        assert!(names.contains(&"Secondary"), "got {names:?}");
+
+        let primary = parsed
+            .stories
+            .iter()
+            .find(|s| s.export_name == "Primary")
+            .unwrap();
+        assert_eq!(primary.args.get("label"), Some(&CsfValue::Str("Hi".into())));
+        assert_eq!(primary.args.get("on"), Some(&CsfValue::Bool(true)));
+        assert!(primary.has_render, "bound template supplies render");
+    }
+
+    #[test]
+    fn spread_args_merge_static_const() {
+        let src = r#"
+import { Panel } from './Panel';
+export default { title: 'Layout/Panel', component: Panel };
+
+const base = { x: 1, y: 1 };
+export const Spread = { args: { ...base, x: 2 } };
+export const Dynamic = { args: { ...imported, only: 9 } };
+"#;
+        let parsed = parse_csf(src, true).expect("parses");
+        let spread = parsed
+            .stories
+            .iter()
+            .find(|s| s.export_name == "Spread")
+            .unwrap();
+        assert_eq!(spread.args.get("y"), Some(&CsfValue::Number("1".into())));
+        // explicit `x: 2` overrides spread `base.x = 1`.
+        assert_eq!(spread.args.get("x"), Some(&CsfValue::Number("2".into())));
+
+        let dynamic = parsed
+            .stories
+            .iter()
+            .find(|s| s.export_name == "Dynamic")
+            .unwrap();
+        assert_eq!(dynamic.args.get("only"), Some(&CsfValue::Number("9".into())));
+        assert!(!dynamic.args.contains_key("x"), "unresolvable spread dropped");
+    }
+
+    #[test]
+    fn re_exports_are_surfaced_for_the_caller() {
+        let src = r#"
+export { Primary } from './button.stories';
+export { A as B } from './other.stories';
+"#;
+        let parsed = parse_csf(src, true).expect("re-export-only file is valid CSF");
+        assert_eq!(parsed.re_exports.len(), 2);
+
+        let primary = &parsed.re_exports[0];
+        assert_eq!(primary.exported_name, "Primary");
+        assert_eq!(primary.local_name, "Primary");
+        assert_eq!(primary.relative_source, "./button.stories");
+
+        let renamed = &parsed.re_exports[1];
+        assert_eq!(renamed.local_name, "A");
+        assert_eq!(renamed.exported_name, "B");
+        assert_eq!(renamed.relative_source, "./other.stories");
     }
 }
 // HANDWRITE-END
