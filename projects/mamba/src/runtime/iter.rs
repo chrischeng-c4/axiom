@@ -6,7 +6,9 @@ use super::rc::{MbObject, ObjData};
 /// Implements Python's __iter__/__next__ protocol with iterators for
 /// built-in types (list, dict, tuple, str, range).
 use super::value::MbValue;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 /// Iterator state — stores the current position and source.
 pub struct MbIterator {
@@ -91,6 +93,23 @@ pub enum IterKind {
     /// so a raising/empty source is handled eagerly. Empty `items` exhausts
     /// immediately; otherwise `pos` walks the cache modulo its length.
     Cycle { items: Vec<MbValue>, pos: usize },
+    /// itertools.groupby outer iterator.
+    GroupByOuter { state: Rc<RefCell<GroupByState>> },
+    /// Active group iterator yielded by itertools.groupby.
+    GroupByGroup { state: Rc<RefCell<GroupByState>>, group_index: usize, cursor: usize },
+}
+
+pub struct GroupByGroupSpec {
+    pub key: MbValue,
+    pub start: usize,
+    pub end: usize,
+}
+
+pub struct GroupByState {
+    pub items: Vec<MbValue>,
+    pub groups: Vec<GroupByGroupSpec>,
+    pub next_group: usize,
+    pub active_group: Option<usize>,
 }
 
 /// Base for iterator IDs — must not overlap with generator IDs (which start at 1).
@@ -215,6 +234,8 @@ pub fn mb_iter_type_name(v: MbValue) -> Option<&'static str> {
             IterKind::Count { .. } => "count",
             IterKind::Repeat { .. } => "repeat",
             IterKind::Cycle { .. } => "cycle",
+            IterKind::GroupByOuter { .. } => "groupby",
+            IterKind::GroupByGroup { .. } => "_grouper",
         })
     })
 }
@@ -1140,6 +1161,25 @@ pub fn mb_cycle_iter(iterable: MbValue) -> MbValue {
     MbValue::from_int(id as i64)
 }
 
+pub fn mb_groupby_iter(items: Vec<MbValue>, groups: Vec<GroupByGroupSpec>) -> MbValue {
+    for &item in &items { unsafe { super::rc::retain_if_ptr(item); } }
+    for group in &groups { unsafe { super::rc::retain_if_ptr(group.key); } }
+    let state = Rc::new(RefCell::new(GroupByState {
+        items,
+        groups,
+        next_group: 0,
+        active_group: None,
+    }));
+    let iter = MbIterator {
+        kind: IterKind::GroupByOuter { state },
+        index: 0,
+        exhausted: false, peeked: None,
+    };
+    let id = alloc_iter_id();
+    ITERATORS.with(|iters| { iters.borrow_mut().insert(id, iter); });
+    MbValue::from_int(id as i64)
+}
+
 /// Create an enumerate iterator.
 pub fn mb_enumerate(iterable: MbValue, start: MbValue) -> MbValue {
     let inner_id = mb_iter(iterable);
@@ -1682,6 +1722,10 @@ pub fn mb_next(iter_handle: MbValue) -> MbValue {
                 }
                 return val;
             }
+            if let Some(val) = advance_groupby_if_applicable(id as u64) {
+                unsafe { super::rc::retain_if_ptr(val); }
+                return val;
+            }
             let val = ITERATORS.with(|iters| {
                 let mut iters = iters.borrow_mut();
                 if let Some(iter) = iters.get_mut(&(id as u64)) {
@@ -2019,6 +2063,18 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                 unsafe {
                     super::rc::retain_if_ptr(val);
                 }
+                return val;
+            }
+            if let Some(val) = advance_groupby_if_applicable(id as u64) {
+                let exhausted = ITERATORS.with(|iters| {
+                    iters.borrow().get(&(id as u64)).map(|i| i.exhausted).unwrap_or(false)
+                });
+                if exhausted && val.is_none() {
+                    super::exception::set_current_exception(
+                        super::exception::MbException::new("StopIteration", ""),
+                    );
+                }
+                unsafe { super::rc::retain_if_ptr(val); }
                 return val;
             }
             let val = ITERATORS.with(|iters| {
@@ -2394,6 +2450,44 @@ pub fn mb_has_next(iter_handle: MbValue) -> MbValue {
                 }
                 let val =
                     advance_userdefined_if_applicable(id as u64).unwrap_or_else(MbValue::none);
+                return ITERATORS.with(|iters| {
+                    if let Some(iter) = iters.borrow_mut().get_mut(&(id as u64)) {
+                        if iter.exhausted {
+                            MbValue::from_bool(false)
+                        } else {
+                            iter.peeked = Some(val);
+                            MbValue::from_bool(true)
+                        }
+                    } else {
+                        MbValue::from_bool(false)
+                    }
+                });
+            }
+        }
+        // GroupBy iterators share state between the outer iterator and the
+        // active group iterator, so advance out-of-line like other composite
+        // iterators and cache the peeked value here.
+        {
+            let is_groupby = ITERATORS.with(|iters| {
+                iters.borrow().get(&(id as u64))
+                    .map(|it| matches!(
+                        it.kind,
+                        IterKind::GroupByOuter { .. } | IterKind::GroupByGroup { .. }
+                    ))
+                    .unwrap_or(false)
+            });
+            if is_groupby {
+                let short = ITERATORS.with(|iters| {
+                    let it = iters.borrow();
+                    it.get(&(id as u64)).map(|i| {
+                        if i.exhausted { Some(MbValue::from_bool(false)) }
+                        else if i.peeked.is_some() { Some(MbValue::from_bool(true)) }
+                        else { None }
+                    }).unwrap_or(None)
+                });
+                if let Some(v) = short { return v; }
+                let val = advance_groupby_if_applicable(id as u64)
+                    .unwrap_or_else(MbValue::none);
                 return ITERATORS.with(|iters| {
                     if let Some(iter) = iters.borrow_mut().get_mut(&(id as u64)) {
                         if iter.exhausted {
@@ -3132,6 +3226,118 @@ fn advance_zip_if_applicable(id: u64) -> Option<MbValue> {
     Some(MbValue::from_ptr(MbObject::new_tuple(vals)))
 }
 
+fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
+    enum Info {
+        Outer { state: Rc<RefCell<GroupByState>>, peeked: Option<MbValue> },
+        Group {
+            state: Rc<RefCell<GroupByState>>,
+            group_index: usize,
+            cursor: usize,
+            peeked: Option<MbValue>,
+        },
+    }
+
+    let info = ITERATORS.with(|iters| {
+        let mut iters = iters.borrow_mut();
+        let iter = iters.get_mut(&id)?;
+        if iter.exhausted { return None; }
+        match &mut iter.kind {
+            IterKind::GroupByOuter { state } => {
+                Some(Info::Outer { state: Rc::clone(state), peeked: iter.peeked.take() })
+            }
+            IterKind::GroupByGroup { state, group_index, cursor } => Some(Info::Group {
+                state: Rc::clone(state),
+                group_index: *group_index,
+                cursor: *cursor,
+                peeked: iter.peeked.take(),
+            }),
+            _ => None,
+        }
+    })?;
+
+    match info {
+        Info::Outer { peeked: Some(v), .. } => Some(v),
+        Info::Outer { state, .. } => {
+            let next = {
+                let mut state_ref = state.borrow_mut();
+                if state_ref.next_group >= state_ref.groups.len() {
+                    state_ref.active_group = None;
+                    None
+                } else {
+                    let group_index = state_ref.next_group;
+                    state_ref.next_group += 1;
+                    state_ref.active_group = Some(group_index);
+                    Some((state_ref.groups[group_index].key, group_index))
+                }
+            };
+
+            let Some((key, group_index)) = next else {
+                ITERATORS.with(|iters| {
+                    if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                        iter.exhausted = true;
+                    }
+                });
+                return Some(MbValue::none());
+            };
+
+            let group_iter = MbIterator {
+                kind: IterKind::GroupByGroup {
+                    state: Rc::clone(&state),
+                    group_index,
+                    cursor: 0,
+                },
+                index: 0,
+                exhausted: false, peeked: None,
+            };
+            let group_id = alloc_iter_id();
+            ITERATORS.with(|iters| { iters.borrow_mut().insert(group_id, group_iter); });
+            Some(MbValue::from_ptr(MbObject::new_tuple(vec![
+                key,
+                MbValue::from_int(group_id as i64),
+            ])))
+        }
+        Info::Group { peeked: Some(v), .. } => Some(v),
+        Info::Group { state, group_index, cursor, .. } => {
+            let value = {
+                let state_ref = state.borrow();
+                if state_ref.active_group != Some(group_index) {
+                    None
+                } else if let Some(group) = state_ref.groups.get(group_index) {
+                    let pos = group.start + cursor;
+                    if pos < group.end {
+                        Some(state_ref.items[pos])
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+            match value {
+                Some(v) => {
+                    ITERATORS.with(|iters| {
+                        if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                            if let IterKind::GroupByGroup { cursor, .. } = &mut iter.kind {
+                                *cursor += 1;
+                            }
+                        }
+                    });
+                    Some(v)
+                }
+                None => {
+                    ITERATORS.with(|iters| {
+                        if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                            iter.exhausted = true;
+                        }
+                    });
+                    Some(MbValue::none())
+                }
+            }
+        }
+    }
+}
+
 /// Advance an iterator and return the next value.
 fn advance_iter(iter: &mut MbIterator) -> MbValue {
     // Consume any pre-fetched peeked value before re-advancing.
@@ -3351,6 +3557,10 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
                 }
                 v
             }
+        }
+        IterKind::GroupByOuter { .. } | IterKind::GroupByGroup { .. } => {
+            iter.exhausted = true;
+            MbValue::none()
         }
     }
 }
