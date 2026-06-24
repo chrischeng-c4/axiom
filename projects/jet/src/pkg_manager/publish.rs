@@ -981,3 +981,42 @@ mod tests {
     }
 }
 // CODEGEN-END
+// SPEC-MANAGED: .aw/tech-design/projects/jet/logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md#logic
+// CODEGEN-BEGIN
+pub fn collect() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Decision: package.json files allowlist present?
+    if todo!("decision: package.json files allowlist present?") /* yes */ {
+        // SPEC-REF: .aw/tech-design/projects/jet/logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md#jet-pack-files-filesonly
+        // TODO: Implement process step: include ONLY files-glob matches
+        todo!("process: include ONLY files-glob matches");
+        // SPEC-REF: .aw/tech-design/projects/jet/logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md#jet-pack-files-always
+        // TODO: Implement process step: always add package.json + README/LICENSE
+        todo!("process: always add package.json + README/LICENSE");
+        todo!("terminal: final tarball file list");
+    } else { /* no */
+        // Decision: .npmignore present?
+        if todo!("decision: .npmignore present?") /* yes */ {
+            // SPEC-REF: .aw/tech-design/projects/jet/logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md#jet-pack-files-ignore
+            // TODO: Implement process step: default tree minus .npmignore patterns
+            todo!("process: default tree minus .npmignore patterns");
+            // SPEC-REF: .aw/tech-design/projects/jet/logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md#jet-pack-files-always
+            // TODO: Implement process step: always add package.json + README/LICENSE
+            todo!("process: always add package.json + README/LICENSE");
+            todo!("terminal: final tarball file list");
+        } else { /* no */
+            // SPEC-REF: .aw/tech-design/projects/jet/logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md#jet-pack-files-deflist
+            // TODO: Implement process step: default skip-list (node_modules/.git/...)
+            todo!("process: default skip-list (node_modules/.git/...)");
+            // SPEC-REF: .aw/tech-design/projects/jet/logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md#jet-pack-files-always
+            // TODO: Implement process step: always add package.json + README/LICENSE
+            todo!("process: always add package.json + README/LICENSE");
+            todo!("terminal: final tarball file list");
+        }
+    }
+    // Terminal: done -> final tarball file list
+}
+// CODEGEN-END
+// SPEC-MANAGED: .aw/tech-design/projects/jet/logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md#unit-test
+// CODEGEN-BEGIN
+
+// CODEGEN-END
