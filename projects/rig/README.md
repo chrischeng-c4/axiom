@@ -1,5 +1,7 @@
 # rig
 
+## Brief
+
 **Declarative test-scenario harness engine for the cclab ecosystem.**
 
 `rig` runs declarative SCENARIOS (e2e behavior, TOML step DSL) and LOAD
@@ -40,23 +42,85 @@ rig run --dir tests/rig/scenarios [--vat] [--pins tests/rig/config/pins]
 
 | verb | status | behavior |
 |---|---|---|
-| `rig run [--scenario <f> \| --dir <d>] [--pins <d>] [--update-baselines] [--vat]` | v0 | discover → lint → execute → gate → one JSON report |
+| `rig test [--dir <d>] [--dimension <d>] [--case <id>] [--collect] [--pins <d>] [--update-baselines]` | v1 | lifecycle-case launcher: discover `[case]` TOMLs → prepare/exercise(N)/clean → fold one report |
+| `rig run [--scenario <f> \| --dir <d>] [--pins <d>] [--update-baselines] [--vat]` | v0 (deprecated) | flat scenarios: discover → lint → execute → gate → one JSON report |
 | `rig lint [--dir <d>]` | v0 | record-contract check only, no execution |
 | `rig report` | v0 | re-project `.rig/last-report.json` (read-only) |
-| `rig spec` / `rig llm` | v1 | offline self-description / agent playbook (stubs: exit 3) |
 
-## Capability Index
+
+## Capabilities
+
+Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
+
+### Capability Index
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| scenario-engine | axiom#5 | implemented | smoke | smoke | candidate | record contract + lint, step DSL (http/sample/assert/wait_until/measure_rss/exec/sleep), verdict bucketing, rig.report/1 |
-| load-pins | axiom#5 | implemented | smoke | smoke | candidate | open-loop loadgen (coordinated-omission honest), floor/ratchet pins, per-host JSON baseline store |
-| vat-wrapped-runs | axiom#5 | implemented | smoke | smoke | candidate | `--vat` shells `vat run`, parses JSONL checkpoints, lifts the inner report, removes the vat |
+| Scenario Engine | axiom#5 | implemented | verified | smoke | ready | record contract + lint, step DSL (http/sample/assert/wait_until/measure_rss/exec/sleep), verdict bucketing, rig.report/1 |
+| Load Pins | axiom#5 | implemented | verified | smoke | ready | open-loop loadgen (coordinated-omission honest), floor/ratchet pins, per-host JSON baseline store |
+| Vat Wrapped Runs | axiom#5 | implemented | verified | smoke | ready | `--vat` shells `vat run`, parses JSONL checkpoints, lifts the inner report, removes the vat |
+
+### Scenario Engine
+
+ID: scenario-engine
+Type: DeveloperTool
+Surfaces: CLI: `rig test [--dir <d>] [--dimension <d>] [--case <id>]` + `rig run --scenario <f>` + `rig run --dir <d>` + `rig lint --dir <d>` + `rig report` - Scenario/case orchestration, deprecated flat scenario execution, record linting, and report reprojection entrypoints.
+EC Dimensions: behavior: `rig` - declarative scenario records, step DSL execution, assertions, verdict bucketing, and rig.report/1 output
+Root WI: axiom#5
+Status: verified
+Required Verification: smoke
+Promise:
+`rig run` discovers declarative scenario records, executes step DSL actions, buckets verdicts, and emits one deterministic `rig.report/1` JSON document.
+Gate Inventory:
+- `cargo test -p rig`; `target/debug/rig lint --dir projects/rig/tests/fixtures/scenarios`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Record contract check and JSON report | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
+| Scenario step DSL execution | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
+
+### Load Pins
+
+ID: load-pins
+Type: DeveloperTool
+Surfaces: CLI: `rig test --pins <d>` + `rig test --update-baselines` + `rig run --pins <d>` + `rig run --update-baselines` - Open-loop load profile execution and baseline pin gate entrypoints.
+EC Dimensions: efficiency: `rig` - open-loop load profiles, p50/p99/error-rate observations, and floor/ratchet pins against host baselines
+Root WI: axiom#5
+Status: verified
+Required Verification: smoke
+Promise:
+`rig` runs open-loop load profiles and gates measured values against floor/ratchet pins in a host-scoped baseline store.
+Gate Inventory:
+- `cargo test -p rig`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Open-loop load generator | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
+| Floor and ratchet pin gates | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
+
+### Vat Wrapped Runs
+
+ID: vat-wrapped-runs
+Type: DeveloperTool
+Surfaces: CLI: `rig test --vat` + `rig run --vat` - Delegated scenario execution through vat-managed environments while preserving rig report folding.
+EC Dimensions: behavior: `rig + vat` - rig delegates environment setup to vat, consumes vat JSONL checkpoints, and lifts the inner rig report; stability: `rig + vat` - vat-managed services, readiness, timeout policy, cleanup, and retained report/error folding across scenario runs
+Root WI: axiom#5
+Status: verified
+Required Verification: smoke
+Promise:
+`rig --vat` delegates environment setup to `vat`, consumes JSONL checkpoints, and lifts the inner rig report without owning resource isolation.
+Gate Inventory:
+- `cargo test -p rig`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Vat delegated scenario execution | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
 
 Verified smoke (2026-06-10): lumen's resilience (partition/packet-loss via
 toxiproxy) + endurance (RSS plateau) + load (search p99 pin) scenarios run
 green locally and through `rig run --vat` with vat-managed services;
 `cargo test -p rig -p rig-cli` green.
+
 
 ## Known limits (v0)
 

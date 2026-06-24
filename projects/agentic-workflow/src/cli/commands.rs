@@ -12,6 +12,7 @@ use crate::cli::issues;
 use crate::cli::project;
 use crate::cli::run as run_root;
 use crate::cli::standardize;
+use crate::cli::sync;
 
 /// Agentic Workflow CLI commands
 #[derive(Subcommand)]
@@ -42,7 +43,6 @@ pub enum Commands {
     Health(project::ProjectHealthArgs),
 
     /// Product capability completion loop: report/next/run/check.
-    #[command(alias = "caps")]
     Capability(capability::CapabilityArgs),
 
     /// Generator gap request surface after takeover readiness.
@@ -51,7 +51,10 @@ pub enum Commands {
     /// Root-driven workflow runner for project, capability, epic, or change scopes.
     Run(run_root::RunArgs),
 
-    /// Manage work-items — list/show/create/CRRR across local + GitHub backends.
+    /// Auto-discover projects and refresh the `.aw/config.toml` registry block.
+    Sync(sync::SyncArgs),
+
+    /// Manage work-items — list/show/create/validate across local + GitHub backends.
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
     #[command(name = "wi")]
     Issues(issues::IssuesArgs),
@@ -59,12 +62,8 @@ pub enum Commands {
     /// Cross-checkout agent messaging via shared plain-text channel
     Chat(chat::ChatArgs),
 
-    /// Tech-design lifecycle (create/validate/review/revise/merge)
+    /// Tech-design and generated-code lifecycle
     Td(crate::cli::td::TdArgs),
-
-    /// Code-artifact workflow verbs (generation, checks, HANDWRITE fill/review).
-    // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
-    Cb(crate::cli::cb::CbArgs),
 
     /// External-contract lifecycle: generate tests/tool configs and verify EC gates.
     Ec(ec::EcArgs),
@@ -100,6 +99,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Run(args) => {
             run_root::run(args).await?;
         }
+        Commands::Sync(args) => {
+            sync::run(args)?;
+        }
         Commands::Issues(args) => {
             issues::run(args).await?;
         }
@@ -108,9 +110,6 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Td(args) => {
             crate::cli::td::run(args).await?;
-        }
-        Commands::Cb(args) => {
-            crate::cli::cb::run(args).await?;
         }
         Commands::Ec(args) => {
             ec::run(args)?;

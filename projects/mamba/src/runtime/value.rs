@@ -22,16 +22,15 @@
 ///   010 = bool (payload: 0 or 1)
 ///   011 = None
 ///   100 = function pointer (48-bit code address)
-
 use super::rc::MbObject;
 
 /// Tag bits within the NaN payload.
-const TAG_PTR: u64   = 0;
-const TAG_INT: u64   = 1;
-const TAG_BOOL: u64  = 2;
-const TAG_NONE: u64  = 3;
+const TAG_PTR: u64 = 0;
+const TAG_INT: u64 = 1;
+const TAG_BOOL: u64 = 2;
+const TAG_NONE: u64 = 3;
 /// Function pointer — stores a 48-bit code address (JIT or extern).
-const TAG_FUNC: u64  = 4;
+const TAG_FUNC: u64 = 4;
 /// The `NotImplemented` singleton — returned from rich comparison dunders
 /// to signal that the reflected operation should be tried.
 const TAG_NOTIMPLEMENTED: u64 = 5;
@@ -39,6 +38,10 @@ const TAG_NOTIMPLEMENTED: u64 = 5;
 /// is exhausted. Distinct from `None` (which is a valid yielded value) and
 /// from any other tagged MbValue. Internal-only; never visible to user code.
 const TAG_STOP_ITER: u64 = 6;
+/// The `Ellipsis` singleton (`...`) — a real interned value so that
+/// `Ellipsis is Ellipsis` holds, `repr(...)` renders `Ellipsis`, and
+/// `type(...)` reports `ellipsis`.
+const TAG_ELLIPSIS: u64 = 7;
 
 /// The NaN prefix: sign=1, exponent=0x7FF, quiet bit=1 → bits 63..51
 const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
@@ -94,6 +97,11 @@ impl MbValue {
         Self(NAN_PREFIX | (TAG_NOTIMPLEMENTED << TAG_SHIFT))
     }
 
+    /// The singleton `Ellipsis` value (`...`).
+    pub fn ellipsis() -> Self {
+        Self(NAN_PREFIX | (TAG_ELLIPSIS << TAG_SHIFT))
+    }
+
     /// The StopIteration sentinel — returned by `mb_next_or_stop` to signal
     /// iterator exhaustion. Internal use only; must never reach user code.
     #[inline(always)]
@@ -119,8 +127,7 @@ impl MbValue {
 
     pub fn is_float(self) -> bool {
         // A value is a float if it does NOT have our NaN prefix
-        (self.0 & NAN_PREFIX) != NAN_PREFIX
-            || self.0 == f64::NAN.to_bits() // canonical NaN is a float
+        (self.0 & NAN_PREFIX) != NAN_PREFIX || self.0 == f64::NAN.to_bits() // canonical NaN is a float
     }
 
     pub fn is_int(self) -> bool {
@@ -139,6 +146,10 @@ impl MbValue {
         self.tag() == Some(TAG_NOTIMPLEMENTED)
     }
 
+    pub fn is_ellipsis(self) -> bool {
+        self.tag() == Some(TAG_ELLIPSIS)
+    }
+
     pub fn is_ptr(self) -> bool {
         self.tag() == Some(TAG_PTR)
     }
@@ -154,7 +165,11 @@ impl MbValue {
     // ── Value extraction ──
 
     pub fn as_float(self) -> Option<f64> {
-        if self.is_float() { Some(f64::from_bits(self.0)) } else { None }
+        if self.is_float() {
+            Some(f64::from_bits(self.0))
+        } else {
+            None
+        }
     }
 
     pub fn as_int(self) -> Option<i64> {
@@ -226,10 +241,14 @@ impl MbValue {
     }
 
     /// Raw bits for codegen.
-    pub fn to_bits(self) -> u64 { self.0 }
+    pub fn to_bits(self) -> u64 {
+        self.0
+    }
 
     /// Construct from raw bits.
-    pub fn from_bits(bits: u64) -> Self { Self(bits) }
+    pub fn from_bits(bits: u64) -> Self {
+        Self(bits)
+    }
 }
 
 impl std::fmt::Debug for MbValue {
@@ -238,6 +257,8 @@ impl std::fmt::Debug for MbValue {
             write!(f, "None")
         } else if self.is_not_implemented() {
             write!(f, "NotImplemented")
+        } else if self.is_ellipsis() {
+            write!(f, "Ellipsis")
         } else if let Some(i) = self.as_int() {
             write!(f, "{i}")
         } else if let Some(b) = self.as_bool() {
@@ -272,7 +293,17 @@ mod tests {
 
     #[test]
     fn test_int_roundtrip() {
-        for i in [0, 1, -1, 42, -42, 1000000, -1000000, (1i64 << 47) - 1, -(1i64 << 47)] {
+        for i in [
+            0,
+            1,
+            -1,
+            42,
+            -42,
+            1000000,
+            -1000000,
+            (1i64 << 47) - 1,
+            -(1i64 << 47),
+        ] {
             let v = MbValue::from_int(i);
             assert!(v.is_int(), "expected int for {i}");
             assert_eq!(v.as_int(), Some(i), "roundtrip failed for {i}");
@@ -329,7 +360,7 @@ mod tests {
     #[test]
     fn test_max_48bit_int() {
         let max = (1i64 << 47) - 1; // 140737488355327
-        let min = -(1i64 << 47);    // -140737488355328
+        let min = -(1i64 << 47); // -140737488355328
         assert_eq!(MbValue::from_int(max).as_int(), Some(max));
         assert_eq!(MbValue::from_int(min).as_int(), Some(min));
     }
@@ -360,7 +391,9 @@ mod tests {
         assert!(!v.is_none());
         let recovered = v.as_ptr().unwrap();
         assert_eq!(recovered, obj);
-        unsafe { super::super::rc::mb_release(obj); }
+        unsafe {
+            super::super::rc::mb_release(obj);
+        }
     }
 
     #[test]
@@ -447,7 +480,9 @@ mod tests {
         let v = MbValue::from_ptr(obj);
         let dbg = format!("{:?}", v);
         assert!(dbg.starts_with("<object@0x"));
-        unsafe { super::super::rc::mb_release(obj); }
+        unsafe {
+            super::super::rc::mb_release(obj);
+        }
     }
 
     #[test]
@@ -785,7 +820,9 @@ mod tests {
         assert!(!v.is_none());
         let recovered = v.as_ptr().unwrap();
         assert_eq!(recovered, list);
-        unsafe { super::super::rc::mb_release(list); }
+        unsafe {
+            super::super::rc::mb_release(list);
+        }
     }
 
     #[test]
@@ -794,7 +831,9 @@ mod tests {
         let v = MbValue::from_ptr(dict);
         assert!(v.is_ptr());
         assert_eq!(v.as_func(), None);
-        unsafe { super::super::rc::mb_release(dict); }
+        unsafe {
+            super::super::rc::mb_release(dict);
+        }
     }
 
     #[test]
@@ -802,7 +841,9 @@ mod tests {
         let obj = MbObject::new_str("hello".to_string());
         let v = MbValue::from_ptr(obj);
         assert_eq!(v.as_func(), None);
-        unsafe { super::super::rc::mb_release(obj); }
+        unsafe {
+            super::super::rc::mb_release(obj);
+        }
     }
 
     // ── FUNC exclusivity ──
@@ -948,5 +989,4 @@ mod tests {
         assert!(v.is_float());
         assert_eq!(v.as_float(), Some(-1e300));
     }
-
 }

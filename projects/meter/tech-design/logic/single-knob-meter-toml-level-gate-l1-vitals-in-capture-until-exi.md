@@ -1,7 +1,7 @@
 ---
 id: meter-capture-vitals-contract
 summary: Single-knob meter.toml (level + [gate]) measurement contract, L1 vitals in capture (getrusage cpu/RSS + wall), until-exit sampling window with opaque --drive composition seam, collapsed artifact output, and removal of dead stress/load-test residue.
-fill_sections: [logic, config, cli, unit-test]
+fill_sections: [logic, config, cli, unit-test, changes]
 capability_refs:
   - id: runtime-resource-attribution
     role: primary
@@ -314,3 +314,41 @@ requirementDiagram
 - [config] contract-complete: JSON Schema pins the level enum (quoted "off"), gate ceilings with 0-disables semantics, additionalProperties: false guards against traffic-key creep, and the description encodes the永不加 latency-percentile constraint.
 - [cli] contract-complete: both verbs' usage strings and behavior lines pin precedence, window semantics, --drive opacity, hooks/deep not-yet-implemented error, and the absence of load-generation flags.
 - [unit-test] contract-complete: R1-R6 each verified by a named element; risk and verify method declared; matches WI #3 acceptance criteria one-to-one.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: implementation
+changes:
+  - path: "projects/meter/src/capture/vitals.rs"
+    action: modify
+    section: logic
+    impl_mode: codegen
+    description: |
+      Implements the vitals capture flow: child lifecycle, getrusage-derived
+      CPU/RSS/wall findings, gate breach folding, and sampler handoff.
+  - path: "projects/meter/src/capture/run.rs"
+    action: modify
+    section: cli
+    impl_mode: codegen
+    description: |
+      Implements the profile/run CLI semantics for level precedence,
+      until-exit measurement windows, duration caps, and opaque --drive
+      composition.
+  - path: "projects/meter/src/capture/mod.rs"
+    action: modify
+    section: config
+    impl_mode: codegen
+    description: |
+      Implements the single-knob meter.toml level and optional gate contract
+      consumed by capture mode.
+  - path: "projects/meter/tests/capture_vitals.rs"
+    action: modify
+    section: unit-test
+    impl_mode: codegen
+    description: |
+      Verifies level precedence, vitals findings, gate breach behavior,
+      measurement window semantics, collapsed artifacts, and stress residue
+      removal.
+```

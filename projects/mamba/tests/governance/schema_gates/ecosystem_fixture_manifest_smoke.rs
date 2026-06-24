@@ -48,8 +48,7 @@ fn manifest_path() -> PathBuf {
 fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
-        .join("conformance")
+        .join("cpython")
 }
 
 fn load_manifest() -> toml::Value {
@@ -82,9 +81,7 @@ fn ecosystem_fixture_manifest_is_well_formed_and_files_exist() {
         let table = match entry.as_table() {
             Some(t) => t,
             None => {
-                violations.push(format!(
-                    "  - {id}: entry must be a TOML table"
-                ));
+                violations.push(format!("  - {id}: entry must be a TOML table"));
                 continue;
             }
         };
@@ -98,9 +95,7 @@ fn ecosystem_fixture_manifest_is_well_formed_and_files_exist() {
                 continue;
             }
             None => {
-                violations.push(format!(
-                    "  - {id}: missing required `category` field"
-                ));
+                violations.push(format!("  - {id}: missing required `category` field"));
                 continue;
             }
         };
@@ -125,19 +120,24 @@ fn ecosystem_fixture_manifest_is_well_formed_and_files_exist() {
             }
         };
 
-        // Consistency: relpath should begin with "<category>/<module>/" so
-        // the table key + relpath are sufficient to navigate the fixture
-        // without ever reading the `command` field.
-        let expected_prefix = format!("{category}/{module}/");
+        // Consistency: the relpath must place the fixture in the
+        // dimension-first tree slot its category + module imply, so the
+        // table key + relpath are sufficient to navigate the fixture
+        // without ever reading the `command` field. stdlib fixtures live
+        // in the facet tree (`real_world/std-libs/<module>/`); 3p
+        // fixtures live in the no-record regression tree
+        // (`_regression/3rd-libs/<module>/real_world/`).
+        let expected_prefix = match category {
+            "stdlib" => format!("real_world/std-libs/{module}/"),
+            _ => format!("_regression/3rd-libs/{module}/real_world/"),
+        };
         if !relpath.starts_with(&expected_prefix) {
             violations.push(format!(
                 "  - {id}: relpath = {relpath:?} must start with {expected_prefix:?}",
             ));
         }
         if !relpath.ends_with(".py") {
-            violations.push(format!(
-                "  - {id}: relpath = {relpath:?} must end with .py",
-            ));
+            violations.push(format!("  - {id}: relpath = {relpath:?} must end with .py",));
         }
 
         // File existence — the headline acceptance.
@@ -251,9 +251,7 @@ fn ecosystem_fixture_manifest_is_well_formed_and_files_exist() {
                 "  - {id}: command = {cmd:?} must reference relpath \
                  {relpath:?} so manifest entries stay self-describing",
             )),
-            None => violations.push(format!(
-                "  - {id}: missing required `command` field"
-            )),
+            None => violations.push(format!("  - {id}: missing required `command` field")),
         }
     }
 
@@ -294,7 +292,9 @@ fn ecosystem_fixture_stdlib_dependency_rollup_groups_by_module() {
     let mut rollup: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for (id, entry) in fixtures {
-        let Some(table) = entry.as_table() else { continue };
+        let Some(table) = entry.as_table() else {
+            continue;
+        };
         let Some(arr) = table
             .get("required_stdlib_modules")
             .and_then(|v| v.as_array())
@@ -409,7 +409,9 @@ fn ecosystem_fixture_manifest_required_fixtures_are_no_network() {
     let mut violations: Vec<String> = Vec::new();
 
     for (id, entry) in fixtures {
-        let Some(table) = entry.as_table() else { continue };
+        let Some(table) = entry.as_table() else {
+            continue;
+        };
         let Some(relpath) = table.get("relpath").and_then(|v| v.as_str()) else {
             continue;
         };

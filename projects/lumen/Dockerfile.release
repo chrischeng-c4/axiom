@@ -38,7 +38,7 @@ RUN set -eux; \
 # children, so no tini/init shim is required.
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=fetch /tmp/lumen /usr/local/bin/lumen
-# 7373 = client API. The write log lives in NATS, not in this container.
+# 7373 = client API. The write log lives in the broker, not in this container.
 EXPOSE 7373
 ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]

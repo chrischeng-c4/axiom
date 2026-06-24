@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("governance")
         .join("gates")
         .join("pkgmgr")
         .join("extras_resolution")
@@ -72,7 +72,10 @@ fn pkgmgr_extras_base_package_and_extra_blocks_pin_one_optional_dep() {
         .get("version")
         .and_then(|v| v.as_str())
         .expect("`[base_package].version` must be set");
-    assert!(!base_version.is_empty(), "base package version must be non-empty");
+    assert!(
+        !base_version.is_empty(),
+        "base package version must be non-empty"
+    );
 
     let extra = doc
         .get("extra")
@@ -97,7 +100,10 @@ fn pkgmgr_extras_base_package_and_extra_blocks_pin_one_optional_dep() {
         .get("dependency_version")
         .and_then(|v| v.as_str())
         .expect("`[extra].dependency_version` must be set");
-    assert!(!extra_version.is_empty(), "extra dependency version must be non-empty");
+    assert!(
+        !extra_version.is_empty(),
+        "extra dependency version must be non-empty"
+    );
 }
 
 #[test]
@@ -143,7 +149,8 @@ fn pkgmgr_extras_without_extra_case_excludes_extra_dependency() {
         "`[without_extra_case].must_install_base` must be true"
     );
     assert_eq!(
-        case.get("must_not_install_extra_dependency").and_then(|v| v.as_bool()),
+        case.get("must_not_install_extra_dependency")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[without_extra_case].must_not_install_extra_dependency` must be true"
     );
@@ -220,7 +227,8 @@ fn pkgmgr_extras_with_extra_case_includes_extra_dependency() {
         "`[with_extra_case].must_install_base` must be true"
     );
     assert_eq!(
-        case.get("must_install_extra_dependency").and_then(|v| v.as_bool()),
+        case.get("must_install_extra_dependency")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[with_extra_case].must_install_extra_dependency` must be true"
     );
@@ -245,12 +253,19 @@ fn pkgmgr_extras_with_extra_case_includes_extra_dependency() {
 #[test]
 fn pkgmgr_extras_lockfile_diff_assertion_pins_both_directions() {
     let doc = crate::common::load_toml(&manifest_path());
-    let diff = doc.get("lockfile_diff_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[lockfile_diff_assertion]` block \
+    let diff = doc
+        .get("lockfile_diff_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[lockfile_diff_assertion]` block \
          (acceptance: \"Assert lockfile contents differ deterministically.\")",
-    );
+        );
 
-    for flag in &["deterministic", "byte_identical_on_replay", "extras_field_required_when_requested"] {
+    for flag in &[
+        "deterministic",
+        "byte_identical_on_replay",
+        "extras_field_required_when_requested",
+    ] {
         assert_eq!(
             diff.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -294,10 +309,13 @@ fn pkgmgr_extras_lockfile_diff_assertion_pins_both_directions() {
 #[test]
 fn pkgmgr_extras_runtime_lockfile_consistency_pins_both_directions() {
     let doc = crate::common::load_toml(&manifest_path());
-    let cons = doc.get("runtime_lockfile_consistency").and_then(|v| v.as_table()).expect(
-        "missing `[runtime_lockfile_consistency]` block \
+    let cons = doc
+        .get("runtime_lockfile_consistency")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[runtime_lockfile_consistency]` block \
          (acceptance: \"Runtime import of extra dependency matches lockfile state.\")",
-    );
+        );
 
     for flag in &[
         "without_extra_import_matches_lockfile",
@@ -382,7 +400,8 @@ fn pkgmgr_extras_pins_out_of_scope_per_issue_2690() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("all_marker_and_extras_combinations").and_then(|v| v.as_bool()),
+        oos.get("all_marker_and_extras_combinations")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].all_marker_and_extras_combinations` must be true \
          (issue text: \"Out of scope: all marker and extras combinations.\")"

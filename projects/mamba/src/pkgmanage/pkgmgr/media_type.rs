@@ -250,9 +250,22 @@ fn read_quoted(s: &str, i: &mut usize) -> Result<String, IndexError> {
 }
 
 fn is_tchar(b: u8) -> bool {
-    matches!(b,
-        b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.'
-        | b'^' | b'_' | b'`' | b'|' | b'~'
+    matches!(
+        b,
+        b'!' | b'#'
+            | b'$'
+            | b'%'
+            | b'&'
+            | b'\''
+            | b'*'
+            | b'+'
+            | b'-'
+            | b'.'
+            | b'^'
+            | b'_'
+            | b'`'
+            | b'|'
+            | b'~'
     ) || b.is_ascii_alphanumeric()
 }
 
@@ -310,7 +323,10 @@ mod tests {
     #[test]
     fn parses_quoted_parameter_value() {
         let m = parse_media_type("text/html; boundary=\"---a;b---\"").unwrap();
-        assert_eq!(m.params.get("boundary").map(String::as_str), Some("---a;b---"));
+        assert_eq!(
+            m.params.get("boundary").map(String::as_str),
+            Some("---a;b---")
+        );
     }
 
     #[test]

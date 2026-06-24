@@ -12,7 +12,7 @@
 //     for age-based eviction; out of scope here per #2685).
 //   - Offline; no implicit network or user-home traversal.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::fs;
 use std::io::Write as _;
@@ -46,20 +46,16 @@ fn action_clean() -> Result<()> {
         return Ok(());
     }
     let mut removed = 0usize;
-    for entry in fs::read_dir(&root)
-        .with_context(|| format!("read {}", root.display()))?
-    {
+    for entry in fs::read_dir(&root).with_context(|| format!("read {}", root.display()))? {
         let entry = entry.with_context(|| format!("walk {}", root.display()))?;
         let path = entry.path();
         let kind = entry
             .file_type()
             .with_context(|| format!("stat {}", path.display()))?;
         if kind.is_dir() {
-            fs::remove_dir_all(&path)
-                .with_context(|| format!("remove dir {}", path.display()))?;
+            fs::remove_dir_all(&path).with_context(|| format!("remove dir {}", path.display()))?;
         } else {
-            fs::remove_file(&path)
-                .with_context(|| format!("remove file {}", path.display()))?;
+            fs::remove_file(&path).with_context(|| format!("remove file {}", path.display()))?;
         }
         removed += 1;
     }

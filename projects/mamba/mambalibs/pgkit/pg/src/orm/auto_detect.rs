@@ -4,7 +4,7 @@
 //! and generates migration SQL automatically.
 
 use crate::schema::{
-    ColumnInfo, ColumnType, ForeignKeyInfo, IndexInfo, SchemaInspector, SchemaDiff, TableInfo,
+    ColumnInfo, ColumnType, ForeignKeyInfo, IndexInfo, SchemaDiff, SchemaInspector, TableInfo,
 };
 use crate::{Connection, DataBridgeError, Result};
 use chrono::Utc;
@@ -393,18 +393,16 @@ impl AutoDetector {
                                     table_name, new.name, constraint
                                 ));
                             }
-                            ColumnChange::DefaultChanged { new, .. } => {
-                                match &new.default {
-                                    Some(d) => summary.push(format!(
-                                        "ALTER COLUMN {}.{} SET DEFAULT {}",
-                                        table_name, new.name, d
-                                    )),
-                                    None => summary.push(format!(
-                                        "ALTER COLUMN {}.{} DROP DEFAULT",
-                                        table_name, new.name
-                                    )),
-                                }
-                            }
+                            ColumnChange::DefaultChanged { new, .. } => match &new.default {
+                                Some(d) => summary.push(format!(
+                                    "ALTER COLUMN {}.{} SET DEFAULT {}",
+                                    table_name, new.name, d
+                                )),
+                                None => summary.push(format!(
+                                    "ALTER COLUMN {}.{} DROP DEFAULT",
+                                    table_name, new.name
+                                )),
+                            },
                         }
                     }
 

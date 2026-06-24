@@ -1,8 +1,8 @@
+use super::ast::*;
+use super::Parser;
 use crate::error::MambaError;
 use crate::lexer::token::TokenKind;
 use crate::source::span::{Span, Spanned};
-use super::ast::*;
-use super::Parser;
 
 /// Binding power for Pratt parsing.
 fn prefix_bp(op: &UnaryOp) -> u8 {
@@ -16,9 +16,16 @@ fn prefix_bp(op: &UnaryOp) -> u8 {
 fn is_comparison_op(op: &BinOp) -> bool {
     matches!(
         op,
-        BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
-        | BinOp::Eq | BinOp::NotEq
-        | BinOp::Is | BinOp::IsNot | BinOp::In | BinOp::NotIn
+        BinOp::Lt
+            | BinOp::Gt
+            | BinOp::LtEq
+            | BinOp::GtEq
+            | BinOp::Eq
+            | BinOp::NotEq
+            | BinOp::Is
+            | BinOp::IsNot
+            | BinOp::In
+            | BinOp::NotIn
     )
 }
 
@@ -26,16 +33,22 @@ fn infix_bp(op: &BinOp) -> (u8, u8) {
     match op {
         BinOp::Or => (1, 2),
         BinOp::And => (3, 4),
-        BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt
-        | BinOp::LtEq | BinOp::GtEq
-        | BinOp::Is | BinOp::IsNot | BinOp::In | BinOp::NotIn => (7, 8),
+        BinOp::Eq
+        | BinOp::NotEq
+        | BinOp::Lt
+        | BinOp::Gt
+        | BinOp::LtEq
+        | BinOp::GtEq
+        | BinOp::Is
+        | BinOp::IsNot
+        | BinOp::In
+        | BinOp::NotIn => (7, 8),
         BinOp::BitOr => (9, 10),
         BinOp::BitXor => (11, 12),
         BinOp::BitAnd => (13, 14),
         BinOp::LShift | BinOp::RShift => (15, 16),
         BinOp::Add | BinOp::Sub => (17, 18),
-        BinOp::Mul | BinOp::Div | BinOp::FloorDiv
-        | BinOp::Mod | BinOp::MatMul => (19, 20),
+        BinOp::Mul | BinOp::Div | BinOp::FloorDiv | BinOp::Mod | BinOp::MatMul => (19, 20),
         BinOp::Pow => (24, 23), // Right-associative
     }
 }
@@ -60,7 +73,11 @@ impl<'a> Parser<'a> {
             }
             elems.push(self.parse_expr()?);
         }
-        let span = elems.first().unwrap().span.merge(elems.last().unwrap().span);
+        let span = elems
+            .first()
+            .unwrap()
+            .span
+            .merge(elems.last().unwrap().span);
         Ok(Spanned::new(Expr::TupleLit(elems), span))
     }
 
@@ -98,7 +115,10 @@ impl<'a> Parser<'a> {
                 let value = self.parse_expr()?;
                 let span = Span::new(self.file_id, start, value.span.end);
                 return Ok(Spanned::new(
-                    Expr::Walrus { target: name, value: Box::new(value) },
+                    Expr::Walrus {
+                        target: name,
+                        value: Box::new(value),
+                    },
                     span,
                 ));
             }
@@ -168,10 +188,7 @@ impl<'a> Parser<'a> {
                                 let start = operands.first().unwrap().span;
                                 let end = operands.last().unwrap().span;
                                 let span = start.merge(end);
-                                lhs = Spanned::new(
-                                    Expr::ChainedCompare { operands, ops },
-                                    span,
-                                );
+                                lhs = Spanned::new(Expr::ChainedCompare { operands, ops }, span);
                                 continue;
                             }
                         }
@@ -181,7 +198,11 @@ impl<'a> Parser<'a> {
 
             let span = lhs.span.merge(rhs.span);
             lhs = Spanned::new(
-                Expr::BinOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+                Expr::BinOp {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
                 span,
             );
         }
@@ -190,9 +211,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_prefix(&mut self) -> crate::error::Result<Spanned<Expr>> {
-        let token = self.peek().ok_or_else(|| {
-            MambaError::syntax(Span::dummy(), "unexpected end of input")
-        })?;
+        let token = self
+            .peek()
+            .ok_or_else(|| MambaError::syntax(Span::dummy(), "unexpected end of input"))?;
         let start = token.start;
 
         match &token.kind {
@@ -233,7 +254,9 @@ impl<'a> Parser<'a> {
                             let is_raw = matches!(self.peek_kind(), Some(TokenKind::RawFStr(_)));
                             self.advance();
                             let mut parts = vec![FStringPart::Literal(buf)];
-                            parts.extend(parse_fstring_parts(&s, is_raw));
+                            parts.extend(parse_fstring_parts(&s, is_raw).map_err(|m| {
+                                crate::error::MambaError::syntax(self.span_from(start), m)
+                            })?);
                             // keep absorbing trailing literals/f-strings.
                             loop {
                                 match self.peek_kind() {
@@ -244,9 +267,17 @@ impl<'a> Parser<'a> {
                                         self.advance();
                                     }
                                     Some(TokenKind::FStr(s2)) | Some(TokenKind::RawFStr(s2)) => {
-                                        let raw2 = matches!(self.peek_kind(), Some(TokenKind::RawFStr(_)));
+                                        let raw2 =
+                                            matches!(self.peek_kind(), Some(TokenKind::RawFStr(_)));
                                         self.advance();
-                                        parts.extend(parse_fstring_parts(&s2, raw2));
+                                        parts.extend(parse_fstring_parts(&s2, raw2).map_err(
+                                            |m| {
+                                                crate::error::MambaError::syntax(
+                                                    self.span_from(start),
+                                                    m,
+                                                )
+                                            },
+                                        )?);
                                     }
                                     _ => break,
                                 }
@@ -275,7 +306,8 @@ impl<'a> Parser<'a> {
                 let v = v.clone();
                 let is_raw = matches!(self.peek_kind(), Some(TokenKind::RawFStr(_)));
                 self.advance();
-                let mut parts = parse_fstring_parts(&v, is_raw);
+                let mut parts = parse_fstring_parts(&v, is_raw)
+                    .map_err(|m| crate::error::MambaError::syntax(self.span_from(start), m))?;
                 // f-string + (str | f-string) implicit join.
                 loop {
                     match self.peek_kind() {
@@ -288,7 +320,9 @@ impl<'a> Parser<'a> {
                         Some(TokenKind::FStr(s)) | Some(TokenKind::RawFStr(s)) => {
                             let raw2 = matches!(self.peek_kind(), Some(TokenKind::RawFStr(_)));
                             self.advance();
-                            parts.extend(parse_fstring_parts(&s, raw2));
+                            parts.extend(parse_fstring_parts(&s, raw2).map_err(|m| {
+                                crate::error::MambaError::syntax(self.span_from(start), m)
+                            })?);
                         }
                         _ => break,
                     }
@@ -318,7 +352,10 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Self_ => {
                 self.advance();
-                Ok(Spanned::new(Expr::Ident("self".to_string()), self.span_from(start)))
+                Ok(Spanned::new(
+                    Expr::Ident("self".to_string()),
+                    self.span_from(start),
+                ))
             }
             TokenKind::Plus => {
                 self.advance();
@@ -326,7 +363,10 @@ impl<'a> Parser<'a> {
                 let operand = self.parse_expr_bp(bp)?;
                 let span = Span::new(self.file_id, start, operand.span.end);
                 Ok(Spanned::new(
-                    Expr::UnaryOp { op: UnaryOp::Pos, operand: Box::new(operand) },
+                    Expr::UnaryOp {
+                        op: UnaryOp::Pos,
+                        operand: Box::new(operand),
+                    },
                     span,
                 ))
             }
@@ -336,7 +376,10 @@ impl<'a> Parser<'a> {
                 let operand = self.parse_expr_bp(bp)?;
                 let span = Span::new(self.file_id, start, operand.span.end);
                 Ok(Spanned::new(
-                    Expr::UnaryOp { op: UnaryOp::Neg, operand: Box::new(operand) },
+                    Expr::UnaryOp {
+                        op: UnaryOp::Neg,
+                        operand: Box::new(operand),
+                    },
                     span,
                 ))
             }
@@ -346,7 +389,10 @@ impl<'a> Parser<'a> {
                 let operand = self.parse_expr_bp(bp)?;
                 let span = Span::new(self.file_id, start, operand.span.end);
                 Ok(Spanned::new(
-                    Expr::UnaryOp { op: UnaryOp::Not, operand: Box::new(operand) },
+                    Expr::UnaryOp {
+                        op: UnaryOp::Not,
+                        operand: Box::new(operand),
+                    },
                     span,
                 ))
             }
@@ -356,15 +402,25 @@ impl<'a> Parser<'a> {
                 let operand = self.parse_expr_bp(bp)?;
                 let span = Span::new(self.file_id, start, operand.span.end);
                 Ok(Spanned::new(
-                    Expr::UnaryOp { op: UnaryOp::BitNot, operand: Box::new(operand) },
+                    Expr::UnaryOp {
+                        op: UnaryOp::BitNot,
+                        operand: Box::new(operand),
+                    },
                     span,
                 ))
             }
             // Type keywords usable as expressions: int(x), bool(x), etc.
-            TokenKind::IntType | TokenKind::FloatType | TokenKind::BoolType
-            | TokenKind::StrType | TokenKind::ListType | TokenKind::DictType
-            | TokenKind::TupleType | TokenKind::Type | TokenKind::Enum
-            | TokenKind::Match | TokenKind::Case => {
+            TokenKind::IntType
+            | TokenKind::FloatType
+            | TokenKind::BoolType
+            | TokenKind::StrType
+            | TokenKind::ListType
+            | TokenKind::DictType
+            | TokenKind::TupleType
+            | TokenKind::Type
+            | TokenKind::Enum
+            | TokenKind::Match
+            | TokenKind::Case => {
                 let name = self.current_text().to_string();
                 self.advance();
                 Ok(Spanned::new(Expr::Ident(name), self.span_from(start)))
@@ -400,7 +456,10 @@ impl<'a> Parser<'a> {
                     let generators = self.parse_comprehension_clauses()?;
                     let span = expr.span;
                     let gen = Spanned::new(
-                        Expr::GeneratorExpr { element: Box::new(expr), generators },
+                        Expr::GeneratorExpr {
+                            element: Box::new(expr),
+                            generators,
+                        },
                         span,
                     );
                     args.push(CallArg::Positional(gen));
@@ -426,7 +485,13 @@ impl<'a> Parser<'a> {
         }
         let (end_s, end_e) = self.expect(TokenKind::RParen)?;
         let span = func.span.merge(Span::new(self.file_id, end_s, end_e));
-        Ok(Spanned::new(Expr::Call { func: Box::new(func), args }, span))
+        Ok(Spanned::new(
+            Expr::Call {
+                func: Box::new(func),
+                args,
+            },
+            span,
+        ))
     }
 
     fn parse_attr(&mut self, object: Spanned<Expr>) -> crate::error::Result<Spanned<Expr>> {
@@ -434,7 +499,13 @@ impl<'a> Parser<'a> {
         let (ns, ne) = self.expect_name()?;
         let attr = self.text_at(ns, ne).to_string();
         let span = object.span.merge(Span::new(self.file_id, ns, ne));
-        Ok(Spanned::new(Expr::Attr { object: Box::new(object), attr }, span))
+        Ok(Spanned::new(
+            Expr::Attr {
+                object: Box::new(object),
+                attr,
+            },
+            span,
+        ))
     }
 
     fn parse_index_or_slice(
@@ -450,23 +521,35 @@ impl<'a> Parser<'a> {
             let mut elems = vec![first];
             while self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();
-                if self.peek_kind() == Some(TokenKind::RBracket) { break; }
+                if self.peek_kind() == Some(TokenKind::RBracket) {
+                    break;
+                }
                 elems.push(self.parse_subscript_element()?);
             }
             let (end_s, end_e) = self.expect(TokenKind::RBracket)?;
             let outer = Span::new(self.file_id, end_s, end_e);
-            let tuple_span = elems.first().unwrap().span.merge(elems.last().unwrap().span);
+            let tuple_span = elems
+                .first()
+                .unwrap()
+                .span
+                .merge(elems.last().unwrap().span);
             let index = Spanned::new(Expr::TupleLit(elems), tuple_span);
             let span = object.span.merge(outer);
             return Ok(Spanned::new(
-                Expr::Index { object: Box::new(object), index: Box::new(index) },
+                Expr::Index {
+                    object: Box::new(object),
+                    index: Box::new(index),
+                },
                 span,
             ));
         }
         let (end_s, end_e) = self.expect(TokenKind::RBracket)?;
         let span = object.span.merge(Span::new(self.file_id, end_s, end_e));
         Ok(Spanned::new(
-            Expr::Index { object: Box::new(object), index: Box::new(first) },
+            Expr::Index {
+                object: Box::new(object),
+                index: Box::new(first),
+            },
             span,
         ))
     }
@@ -494,9 +577,8 @@ impl<'a> Parser<'a> {
             .map(|s| s.span.start)
             .unwrap_or_else(|| self.tokens[self.pos].start);
         let (_colon_s, colon_e) = self.expect(TokenKind::Colon)?;
-        let is_terminator = |k: &TokenKind| {
-            matches!(k, TokenKind::Colon | TokenKind::Comma | TokenKind::RBracket)
-        };
+        let is_terminator =
+            |k: &TokenKind| matches!(k, TokenKind::Colon | TokenKind::Comma | TokenKind::RBracket);
         let stop = if !self.peek_kind().as_ref().map_or(true, is_terminator) {
             Some(Box::new(self.parse_expr()?))
         } else {
@@ -603,7 +685,7 @@ fn finish_fstring_literal(lit: String, is_raw: bool) -> String {
 /// Parse f-string content into literal/expression parts.  `is_raw` carries the
 /// `r` prefix (`rf'...'` / `fr'...'`): when set, backslash escapes in the
 /// literal runs are kept verbatim.
-fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
+fn parse_fstring_parts(content: &str, is_raw: bool) -> Result<Vec<FStringPart>, String> {
     let mut parts = Vec::new();
     // Accumulate the literal run as raw bytes so multi-byte UTF-8 characters
     // survive intact; decode to a `String` (lossily, though `content` is valid
@@ -674,7 +756,9 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
                         i += 1;
                     } else if b == b'}' {
                         depth -= 1;
-                        if depth > 0 { i += 1; }
+                        if depth > 0 {
+                            i += 1;
+                        }
                     } else if b == b'\'' || b == b'"' {
                         str_stack.push(b);
                         i += 1;
@@ -692,38 +776,75 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
                     } else if b == quote {
                         str_stack.pop();
                         i += 1;
-                    } else if b == b'\'' || b == b'"' {
-                        str_stack.push(b);
-                        i += 1;
                     } else {
+                        // Any other byte — including the OTHER quote kind —
+                        // is plain string content (`f"""{"eric's"}"""`).
                         i += 1;
                     }
                 }
             }
+            if depth > 0 {
+                return Err("f-string: expecting '}'".to_string());
+            }
             let raw = &content[start..i];
             i += 1; // skip closing }
-            // Split on first top-level `:` to separate expression from format spec.
-            // We must not split inside brackets/parens/strings (e.g., `d['key']`).
+                    // Split on first top-level `:` to separate expression from format spec.
+                    // We must not split inside brackets/parens/strings (e.g., `d['key']`).
             let (expr_with_conv, format_spec) = split_expr_and_spec(raw);
             // Peel off `!r`, `!s`, or `!a` conversion suffix at top level.
-            let (expr_str, conversion) = split_expr_and_conversion(expr_with_conv);
+            let (expr_str0, conversion) = split_expr_and_conversion(expr_with_conv);
+            // `=` self-documenting form (PEP 498 / 3.8 debug specifier):
+            // `{expr=}`, `{expr = }`, `{expr=!r}`, `{expr=:spec}`. The text up
+            // to and including the `=` (plus surrounding whitespace) is echoed
+            // verbatim, then the value follows — repr by default unless an
+            // explicit conversion or spec is present.
+            let trimmed = expr_str0.trim_end();
+            let is_debug_eq = trimmed.ends_with('=')
+                && !trimmed.ends_with("==")
+                && !trimmed.ends_with("!=")
+                && !trimmed.ends_with("<=")
+                && !trimmed.ends_with(">=")
+                && !trimmed.ends_with(":=");
+            let (expr_str, debug_echo) = if is_debug_eq {
+                (
+                    trimmed[..trimmed.len() - 1].trim_end(),
+                    Some(expr_str0.to_string()),
+                )
+            } else {
+                (expr_str0, None)
+            };
+            if expr_str.trim().is_empty() {
+                return Err("f-string: valid expression required before '}'".to_string());
+            }
             // Detect nested f-strings: if the entire expression is `f"..."` or
             // `f'...'`, recursively invoke parse_fstring_parts on the inner
             // content for more direct handling (PEP-701 nested f-strings).
             let mut expr_node = if let Some(inner) = strip_fstring_literal(expr_str) {
                 // The nested literal is `f"..."`/`f'...'` (strip_fstring_literal
                 // only matches the bare `f` prefix), so it is never raw.
-                let inner_parts = parse_fstring_parts(inner, false);
+                let inner_parts = parse_fstring_parts(inner, false)?;
                 Expr::FString(inner_parts)
             } else {
                 parse_fstring_expr(expr_str)
             };
+            if matches!(expr_node, Expr::Starred(_)) || expr_str.trim_start().starts_with('*') {
+                return Err("f-string: cannot use starred expression here".to_string());
+            }
             let span = Span::dummy();
+            if let Some(echo) = debug_echo {
+                parts.push(FStringPart::Literal(echo));
+            }
             // Apply conversion by wrapping the expression in a call to the
             // corresponding builtin. `!s` is a no-op because the default
             // conversion already calls str(). `!r` and `!a` both go through
-            // repr() — mamba doesn't distinguish ASCII yet.
-            if let Some(conv) = conversion {
+            // repr() — mamba doesn't distinguish ASCII yet. The `=` debug
+            // form defaults to repr when no conversion or spec is given.
+            let effective_conv = match conversion {
+                Some(c) => Some(c),
+                None if is_debug_eq && format_spec.is_none() => Some('r'),
+                None => None,
+            };
+            if let Some(conv) = effective_conv {
                 if conv == 'r' || conv == 'a' {
                     let inner = Spanned::new(expr_node, span);
                     expr_node = Expr::Call {
@@ -732,7 +853,15 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
                     };
                 }
             }
-            parts.push(FStringPart::Expr(Spanned::new(expr_node, span), format_spec));
+            // Structure the spec: a static spec is one Literal part; a spec
+            // containing replacement fields parses recursively so the nested
+            // expressions evaluate at runtime ({value:{width}}).
+            let spec_parts = match format_spec {
+                None => None,
+                Some(sp) if !sp.contains('{') => Some(vec![FStringPart::Literal(sp)]),
+                Some(sp) => Some(parse_fstring_parts(&sp, is_raw)?),
+            };
+            parts.push(FStringPart::Expr(Spanned::new(expr_node, span), spec_parts));
         } else {
             // Copy the raw byte into the literal run; multi-byte UTF-8 sequences
             // are preserved (decoded as a unit when the run is flushed) instead
@@ -747,7 +876,7 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
             is_raw,
         )));
     }
-    parts
+    Ok(parts)
 }
 
 /// If `s` is a standalone f-string literal (`f"..."` or `f'...'`), return
@@ -779,7 +908,9 @@ fn strip_fstring_literal(s: &str) -> Option<&str> {
                 j += if j + 1 < ib.len() { 2 } else { 1 };
                 continue;
             }
-            if b == q { in_str = None; }
+            if b == q {
+                in_str = None;
+            }
         } else {
             match b {
                 b'{' => depth += 1,
@@ -796,7 +927,9 @@ fn strip_fstring_literal(s: &str) -> Option<&str> {
         }
         j += 1;
     }
-    if depth != 0 { return None; }
+    if depth != 0 {
+        return None;
+    }
     Some(inner)
 }
 
@@ -830,7 +963,9 @@ fn split_expr_and_conversion(raw: &str) -> (&str, Option<char>) {
                 i += if i + 1 < bytes.len() { 2 } else { 1 };
                 continue;
             }
-            if b == q { in_str = None; }
+            if b == q {
+                in_str = None;
+            }
         } else {
             match b {
                 b'\'' | b'"' => in_str = Some(b),
@@ -873,7 +1008,9 @@ fn split_expr_and_spec(raw: &str) -> (&str, Option<String>) {
                 i += if i + 1 < bytes.len() { 2 } else { 1 };
                 continue;
             }
-            if b == q { in_str = None; }
+            if b == q {
+                in_str = None;
+            }
         } else {
             match b {
                 b'\'' | b'"' => in_str = Some(b),
@@ -894,12 +1031,12 @@ fn split_expr_and_spec(raw: &str) -> (&str, Option<String>) {
 mod tests {
     use super::*;
     use crate::parser;
-    use crate::parser::ast::{
-        BinOp, CallArg, Expr, FStringPart, Stmt, UnaryOp,
-    };
+    use crate::parser::ast::{BinOp, CallArg, Expr, FStringPart, Stmt, UnaryOp};
     use crate::source::span::FileId;
 
-    fn fid() -> FileId { FileId(0) }
+    fn fid() -> FileId {
+        FileId(0)
+    }
     fn parse_expr_str(src: &str) -> Expr {
         let full = format!("{src}\n");
         let module = parser::parse(&full, fid()).expect("parse failed");
@@ -982,7 +1119,10 @@ mod tests {
     #[test]
     fn test_unary_pos() {
         match parse_expr_str("+5") {
-            Expr::UnaryOp { op: UnaryOp::Pos, operand } => {
+            Expr::UnaryOp {
+                op: UnaryOp::Pos,
+                operand,
+            } => {
                 assert!(matches!(operand.node, Expr::IntLit(5)));
             }
             other => panic!("expected UnaryOp::Pos, got {other:?}"),
@@ -992,7 +1132,10 @@ mod tests {
     #[test]
     fn test_unary_neg() {
         match parse_expr_str("-10") {
-            Expr::UnaryOp { op: UnaryOp::Neg, operand } => {
+            Expr::UnaryOp {
+                op: UnaryOp::Neg,
+                operand,
+            } => {
                 assert!(matches!(operand.node, Expr::IntLit(10)));
             }
             other => panic!("expected UnaryOp::Neg, got {other:?}"),
@@ -1002,7 +1145,10 @@ mod tests {
     #[test]
     fn test_unary_not() {
         match parse_expr_str("not True") {
-            Expr::UnaryOp { op: UnaryOp::Not, operand } => {
+            Expr::UnaryOp {
+                op: UnaryOp::Not,
+                operand,
+            } => {
                 assert!(matches!(operand.node, Expr::BoolLit(true)));
             }
             other => panic!("expected UnaryOp::Not, got {other:?}"),
@@ -1012,7 +1158,10 @@ mod tests {
     #[test]
     fn test_unary_bitnot() {
         match parse_expr_str("~x") {
-            Expr::UnaryOp { op: UnaryOp::BitNot, operand } => {
+            Expr::UnaryOp {
+                op: UnaryOp::BitNot,
+                operand,
+            } => {
                 assert!(matches!(operand.node, Expr::Ident(ref n) if n == "x"));
             }
             other => panic!("expected UnaryOp::BitNot, got {other:?}"),
@@ -1024,7 +1173,11 @@ mod tests {
     #[test]
     fn test_add() {
         match parse_expr_str("1 + 2") {
-            Expr::BinOp { op: BinOp::Add, lhs, rhs } => {
+            Expr::BinOp {
+                op: BinOp::Add,
+                lhs,
+                rhs,
+            } => {
                 assert!(matches!(lhs.node, Expr::IntLit(1)));
                 assert!(matches!(rhs.node, Expr::IntLit(2)));
             }
@@ -1036,7 +1189,11 @@ mod tests {
     fn test_mul_higher_than_add() {
         // 1 + 2 * 3 => Add(1, Mul(2, 3))
         match parse_expr_str("1 + 2 * 3") {
-            Expr::BinOp { op: BinOp::Add, lhs, rhs } => {
+            Expr::BinOp {
+                op: BinOp::Add,
+                lhs,
+                rhs,
+            } => {
                 assert!(matches!(lhs.node, Expr::IntLit(1)));
                 assert!(matches!(rhs.node, Expr::BinOp { op: BinOp::Mul, .. }));
             }
@@ -1048,10 +1205,18 @@ mod tests {
     fn test_pow_right_associative() {
         // 2 ** 3 ** 4 => Pow(2, Pow(3, 4))
         match parse_expr_str("2 ** 3 ** 4") {
-            Expr::BinOp { op: BinOp::Pow, lhs, rhs } => {
+            Expr::BinOp {
+                op: BinOp::Pow,
+                lhs,
+                rhs,
+            } => {
                 assert!(matches!(lhs.node, Expr::IntLit(2)));
                 match rhs.node {
-                    Expr::BinOp { op: BinOp::Pow, lhs: inner_l, rhs: inner_r } => {
+                    Expr::BinOp {
+                        op: BinOp::Pow,
+                        lhs: inner_l,
+                        rhs: inner_r,
+                    } => {
                         assert!(matches!(inner_l.node, Expr::IntLit(3)));
                         assert!(matches!(inner_r.node, Expr::IntLit(4)));
                     }
@@ -1074,7 +1239,11 @@ mod tests {
     fn test_logical_and_or() {
         // a or b and c => Or(a, And(b, c))
         match parse_expr_str("a or b and c") {
-            Expr::BinOp { op: BinOp::Or, lhs, rhs } => {
+            Expr::BinOp {
+                op: BinOp::Or,
+                lhs,
+                rhs,
+            } => {
                 assert!(matches!(lhs.node, Expr::Ident(ref n) if n == "a"));
                 assert!(matches!(rhs.node, Expr::BinOp { op: BinOp::And, .. }));
             }
@@ -1085,15 +1254,21 @@ mod tests {
     #[test]
     fn test_bitwise_ops() {
         match parse_expr_str("a | b") {
-            Expr::BinOp { op: BinOp::BitOr, .. } => {}
+            Expr::BinOp {
+                op: BinOp::BitOr, ..
+            } => {}
             other => panic!("expected BitOr, got {other:?}"),
         }
         match parse_expr_str("a & b") {
-            Expr::BinOp { op: BinOp::BitAnd, .. } => {}
+            Expr::BinOp {
+                op: BinOp::BitAnd, ..
+            } => {}
             other => panic!("expected BitAnd, got {other:?}"),
         }
         match parse_expr_str("a ^ b") {
-            Expr::BinOp { op: BinOp::BitXor, .. } => {}
+            Expr::BinOp {
+                op: BinOp::BitXor, ..
+            } => {}
             other => panic!("expected BitXor, got {other:?}"),
         }
     }
@@ -1101,11 +1276,15 @@ mod tests {
     #[test]
     fn test_shift_ops() {
         match parse_expr_str("a << b") {
-            Expr::BinOp { op: BinOp::LShift, .. } => {}
+            Expr::BinOp {
+                op: BinOp::LShift, ..
+            } => {}
             other => panic!("expected LShift, got {other:?}"),
         }
         match parse_expr_str("a >> b") {
-            Expr::BinOp { op: BinOp::RShift, .. } => {}
+            Expr::BinOp {
+                op: BinOp::RShift, ..
+            } => {}
             other => panic!("expected RShift, got {other:?}"),
         }
     }
@@ -1113,7 +1292,10 @@ mod tests {
     #[test]
     fn test_floor_div() {
         match parse_expr_str("a // b") {
-            Expr::BinOp { op: BinOp::FloorDiv, .. } => {}
+            Expr::BinOp {
+                op: BinOp::FloorDiv,
+                ..
+            } => {}
             other => panic!("expected FloorDiv, got {other:?}"),
         }
     }
@@ -1133,7 +1315,9 @@ mod tests {
             other => panic!("expected Is, got {other:?}"),
         }
         match parse_expr_str("x is not None") {
-            Expr::BinOp { op: BinOp::IsNot, .. } => {}
+            Expr::BinOp {
+                op: BinOp::IsNot, ..
+            } => {}
             other => panic!("expected IsNot, got {other:?}"),
         }
     }
@@ -1145,7 +1329,9 @@ mod tests {
             other => panic!("expected In, got {other:?}"),
         }
         match parse_expr_str("x not in y") {
-            Expr::BinOp { op: BinOp::NotIn, .. } => {}
+            Expr::BinOp {
+                op: BinOp::NotIn, ..
+            } => {}
             other => panic!("expected NotIn, got {other:?}"),
         }
     }
@@ -1232,16 +1418,14 @@ mod tests {
     #[test]
     fn test_slice_start_stop() {
         match parse_expr_str("a[1:3]") {
-            Expr::Index { index, .. } => {
-                match index.node {
-                    Expr::Slice { start, stop, step } => {
-                        assert!(start.is_some());
-                        assert!(stop.is_some());
-                        assert!(step.is_none());
-                    }
-                    other => panic!("expected Slice, got {other:?}"),
+            Expr::Index { index, .. } => match index.node {
+                Expr::Slice { start, stop, step } => {
+                    assert!(start.is_some());
+                    assert!(stop.is_some());
+                    assert!(step.is_none());
                 }
-            }
+                other => panic!("expected Slice, got {other:?}"),
+            },
             other => panic!("expected Index(Slice), got {other:?}"),
         }
     }
@@ -1249,16 +1433,14 @@ mod tests {
     #[test]
     fn test_slice_no_start() {
         match parse_expr_str("a[:3]") {
-            Expr::Index { index, .. } => {
-                match index.node {
-                    Expr::Slice { start, stop, step } => {
-                        assert!(start.is_none());
-                        assert!(stop.is_some());
-                        assert!(step.is_none());
-                    }
-                    other => panic!("expected Slice, got {other:?}"),
+            Expr::Index { index, .. } => match index.node {
+                Expr::Slice { start, stop, step } => {
+                    assert!(start.is_none());
+                    assert!(stop.is_some());
+                    assert!(step.is_none());
                 }
-            }
+                other => panic!("expected Slice, got {other:?}"),
+            },
             other => panic!("expected Index(Slice), got {other:?}"),
         }
     }
@@ -1266,16 +1448,14 @@ mod tests {
     #[test]
     fn test_slice_with_step() {
         match parse_expr_str("a[::2]") {
-            Expr::Index { index, .. } => {
-                match index.node {
-                    Expr::Slice { start, stop, step } => {
-                        assert!(start.is_none());
-                        assert!(stop.is_none());
-                        assert!(step.is_some());
-                    }
-                    other => panic!("expected Slice, got {other:?}"),
+            Expr::Index { index, .. } => match index.node {
+                Expr::Slice { start, stop, step } => {
+                    assert!(start.is_none());
+                    assert!(stop.is_none());
+                    assert!(step.is_some());
                 }
-            }
+                other => panic!("expected Slice, got {other:?}"),
+            },
             other => panic!("expected Index(Slice), got {other:?}"),
         }
     }
@@ -1317,14 +1497,14 @@ mod tests {
 
     #[test]
     fn test_parse_fstring_parts_literal_only() {
-        let parts = parse_fstring_parts("hello world", false);
+        let parts = parse_fstring_parts("hello world", false).unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "hello world"));
     }
 
     #[test]
     fn test_parse_fstring_parts_single_expr() {
-        let parts = parse_fstring_parts("hello {name}", false);
+        let parts = parse_fstring_parts("hello {name}", false).unwrap();
         assert_eq!(parts.len(), 2);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "hello "));
         assert!(matches!(&parts[1], FStringPart::Expr(_, None)));
@@ -1332,17 +1512,19 @@ mod tests {
 
     #[test]
     fn test_parse_fstring_parts_with_format_spec() {
-        let parts = parse_fstring_parts("{x:.2f}", false);
+        let parts = parse_fstring_parts("{x:.2f}", false).unwrap();
         assert_eq!(parts.len(), 1);
         match &parts[0] {
-            FStringPart::Expr(_, Some(spec)) => assert_eq!(spec, ".2f"),
+            FStringPart::Expr(_, Some(spec)) => {
+                assert!(matches!(&spec[..], [FStringPart::Literal(l)] if l == ".2f"));
+            }
             other => panic!("expected Expr with spec, got {other:?}"),
         }
     }
 
     #[test]
     fn test_parse_fstring_parts_escaped_braces() {
-        let parts = parse_fstring_parts("{{literal}}", false);
+        let parts = parse_fstring_parts("{{literal}}", false).unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "{literal}"));
     }
@@ -1351,7 +1533,7 @@ mod tests {
     fn test_parse_fstring_literal_escapes_cooked() {
         // Non-raw f-string: literal runs get Python escape processing, so
         // `\n` collapses to a newline (matching `str` literals).
-        let parts = parse_fstring_parts("a\\nb", false);
+        let parts = parse_fstring_parts("a\\nb", false).unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "a\nb"));
     }
@@ -1359,7 +1541,7 @@ mod tests {
     #[test]
     fn test_parse_fstring_literal_escapes_raw_kept() {
         // Raw f-string (`rf'...'`/`fr'...'`): backslash escapes stay verbatim.
-        let parts = parse_fstring_parts("a\\nb", true);
+        let parts = parse_fstring_parts("a\\nb", true).unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "a\\nb"));
     }
@@ -1401,7 +1583,10 @@ mod tests {
     fn test_empty_dict_literal_as_stmt() {
         match parse_expr_str("{}") {
             Expr::DictLit(entries) => {
-                assert!(entries.is_empty(), "empty dict literal should have 0 entries");
+                assert!(
+                    entries.is_empty(),
+                    "empty dict literal should have 0 entries"
+                );
             }
             other => panic!("expected DictLit, got {other:?}"),
         }
@@ -1434,10 +1619,14 @@ mod tests {
     fn test_empty_dict_subscript() {
         match parse_expr_str("{}['x']") {
             Expr::Index { object, index } => {
-                assert!(matches!(object.node, Expr::DictLit(ref e) if e.is_empty()),
-                    "index object should be empty DictLit");
-                assert!(matches!(index.node, Expr::StrLit(ref s) if s == "x"),
-                    "index should be 'x'");
+                assert!(
+                    matches!(object.node, Expr::DictLit(ref e) if e.is_empty()),
+                    "index object should be empty DictLit"
+                );
+                assert!(
+                    matches!(index.node, Expr::StrLit(ref s) if s == "x"),
+                    "index should be 'x'"
+                );
             }
             other => panic!("expected Index on DictLit, got {other:?}"),
         }

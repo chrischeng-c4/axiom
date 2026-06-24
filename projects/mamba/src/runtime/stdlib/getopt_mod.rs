@@ -1,3 +1,5 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// getopt module for Mamba.
 ///
 /// Implements Python 3.12 `getopt` stdlib: C-style command line option parsing.
@@ -12,23 +14,20 @@
 ///   - "help", "verbose"  — flags with no argument
 ///   - "output="          — option requiring an argument
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 // ── Helpers ──
 
 /// Extract a Rust String from an MbValue that holds a heap string object.
 /// Returns None if the value is not a string.
 fn extract_str(val: MbValue) -> Option<String> {
-    val.as_ptr()
-        .and_then(|ptr| unsafe {
-            use super::super::rc::ObjData;
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
+    val.as_ptr().and_then(|ptr| unsafe {
+        use super::super::rc::ObjData;
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
 }
 
 /// Extract a Vec<String> from an MbValue that holds a List of string objects.
@@ -39,10 +38,7 @@ fn extract_list_of_strings(val: MbValue) -> Vec<String> {
             use super::super::rc::ObjData;
             if let ObjData::List(ref rw) = (*ptr).data {
                 let guard = rw.read().ok()?;
-                let results: Vec<String> = guard
-                    .iter()
-                    .filter_map(|v| extract_str(*v))
-                    .collect();
+                let results: Vec<String> = guard.iter().filter_map(|v| extract_str(*v)).collect();
                 Some(results)
             } else {
                 None
@@ -248,7 +244,10 @@ unsafe extern "C" fn dispatch_getopt_error(args_ptr: *const MbValue, nargs: usiz
     fields.insert("msg".to_string(), msg);
     fields.insert("message".to_string(), msg);
     fields.insert("opt".to_string(), opt);
-    fields.insert("args".to_string(), MbValue::from_ptr(MbObject::new_tuple(vec![msg])));
+    fields.insert(
+        "args".to_string(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![msg])),
+    );
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -286,7 +285,8 @@ pub fn register() {
         s.borrow_mut().insert(err_addr as u64);
     });
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(err_addr as u64, "GetoptError".to_string());
+        m.borrow_mut()
+            .insert(err_addr as u64, "GetoptError".to_string());
     });
     {
         let mut slots: HashMap<String, MbValue> = HashMap::new();
@@ -294,8 +294,7 @@ pub fn register() {
         slots.insert("__cause__".to_string(), slot);
         slots.insert("__context__".to_string(), slot);
         slots.insert("__suppress_context__".to_string(), slot);
-        super::super::class::mb_class_register(
-            "GetoptError", vec!["Exception".to_string()], slots);
+        super::super::class::mb_class_register("GetoptError", vec!["Exception".to_string()], slots);
     }
     super::register_module("getopt", attrs);
 }
@@ -366,8 +365,8 @@ fn build_result(pairs: Vec<(String, String)>, remaining: Vec<String>) -> MbValue
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::rc::ObjData;
+    use super::*;
 
     fn make_str(s: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(s.to_string()))
@@ -385,16 +384,26 @@ mod tests {
         unsafe {
             if let ObjData::Tuple(ref items) = (*ptr).data {
                 assert_eq!(items.len(), 2, "outer tuple must have 2 elements");
-                let opts_count = items[0].as_ptr().map(|p| {
-                    if let ObjData::List(ref rw) = (*p).data {
-                        rw.read().map(|g| g.len()).unwrap_or(0)
-                    } else { 0 }
-                }).unwrap_or(0);
-                let rem_count = items[1].as_ptr().map(|p| {
-                    if let ObjData::List(ref rw) = (*p).data {
-                        rw.read().map(|g| g.len()).unwrap_or(0)
-                    } else { 0 }
-                }).unwrap_or(0);
+                let opts_count = items[0]
+                    .as_ptr()
+                    .map(|p| {
+                        if let ObjData::List(ref rw) = (*p).data {
+                            rw.read().map(|g| g.len()).unwrap_or(0)
+                        } else {
+                            0
+                        }
+                    })
+                    .unwrap_or(0);
+                let rem_count = items[1]
+                    .as_ptr()
+                    .map(|p| {
+                        if let ObjData::List(ref rw) = (*p).data {
+                            rw.read().map(|g| g.len()).unwrap_or(0)
+                        } else {
+                            0
+                        }
+                    })
+                    .unwrap_or(0);
                 (opts_count, rem_count)
             } else {
                 panic!("expected outer Tuple");
@@ -486,9 +495,17 @@ mod tests {
         assert_eq!(opts_count, 1, "expected 1 option");
         assert_eq!(rem_count, 0, "expected 0 remaining");
 
-        let result2 = mb_getopt_getopt(make_list(vec!["-o", "foo"]), make_str("o:"), make_list(vec![]));
+        let result2 = mb_getopt_getopt(
+            make_list(vec!["-o", "foo"]),
+            make_str("o:"),
+            make_list(vec![]),
+        );
         assert_eq!(get_opt_key(result2, 0), "-o");
-        let result3 = mb_getopt_getopt(make_list(vec!["-o", "foo"]), make_str("o:"), make_list(vec![]));
+        let result3 = mb_getopt_getopt(
+            make_list(vec!["-o", "foo"]),
+            make_str("o:"),
+            make_list(vec![]),
+        );
         assert_eq!(get_opt_val(result3, 0), "foo");
     }
 
@@ -504,7 +521,11 @@ mod tests {
         assert_eq!(opts_count, 1, "expected 1 option");
         assert_eq!(rem_count, 0, "expected 0 remaining");
 
-        let result2 = mb_getopt_getopt(make_list(vec!["--help"]), make_str(""), make_list(vec!["help"]));
+        let result2 = mb_getopt_getopt(
+            make_list(vec!["--help"]),
+            make_str(""),
+            make_list(vec!["help"]),
+        );
         assert_eq!(get_opt_key(result2, 0), "--help");
     }
 
@@ -520,9 +541,17 @@ mod tests {
         assert_eq!(opts_count, 1, "expected 1 option");
         assert_eq!(rem_count, 0, "expected 0 remaining");
 
-        let result2 = mb_getopt_getopt(make_list(vec!["--output=foo"]), make_str(""), make_list(vec!["output="]));
+        let result2 = mb_getopt_getopt(
+            make_list(vec!["--output=foo"]),
+            make_str(""),
+            make_list(vec!["output="]),
+        );
         assert_eq!(get_opt_key(result2, 0), "--output");
-        let result3 = mb_getopt_getopt(make_list(vec!["--output=foo"]), make_str(""), make_list(vec!["output="]));
+        let result3 = mb_getopt_getopt(
+            make_list(vec!["--output=foo"]),
+            make_str(""),
+            make_list(vec!["output="]),
+        );
         assert_eq!(get_opt_val(result3, 0), "foo");
     }
 
@@ -536,12 +565,26 @@ mod tests {
         let longopts = make_list(vec![]);
         let result = mb_getopt_getopt(args, shortopts, longopts);
         let (opts_count, rem_count) = unwrap_result_counts(result);
-        assert_eq!(opts_count, 1, "POSIX getopt: only -v before non-option 'foo'");
-        assert_eq!(rem_count, 2, "POSIX getopt: remaining must contain 'foo' and '-h'");
+        assert_eq!(
+            opts_count, 1,
+            "POSIX getopt: only -v before non-option 'foo'"
+        );
+        assert_eq!(
+            rem_count, 2,
+            "POSIX getopt: remaining must contain 'foo' and '-h'"
+        );
 
-        let result2 = mb_getopt_getopt(make_list(vec!["-v", "foo", "-h"]), make_str("vh"), make_list(vec![]));
+        let result2 = mb_getopt_getopt(
+            make_list(vec!["-v", "foo", "-h"]),
+            make_str("vh"),
+            make_list(vec![]),
+        );
         assert_eq!(get_remaining(result2, 0), "foo");
-        let result3 = mb_getopt_getopt(make_list(vec!["-v", "foo", "-h"]), make_str("vh"), make_list(vec![]));
+        let result3 = mb_getopt_getopt(
+            make_list(vec!["-v", "foo", "-h"]),
+            make_str("vh"),
+            make_list(vec![]),
+        );
         assert_eq!(get_remaining(result3, 1), "-h");
     }
 
@@ -558,7 +601,11 @@ mod tests {
         assert_eq!(opts_count, 2, "GNU getopt: both -v and -h must be parsed");
         assert_eq!(rem_count, 1, "GNU getopt: only 'foo' remains");
 
-        let result2 = mb_getopt_gnu_getopt(make_list(vec!["-v", "foo", "-h"]), make_str("vh"), make_list(vec![]));
+        let result2 = mb_getopt_gnu_getopt(
+            make_list(vec!["-v", "foo", "-h"]),
+            make_str("vh"),
+            make_list(vec![]),
+        );
         assert_eq!(get_remaining(result2, 0), "foo");
     }
 
@@ -575,7 +622,11 @@ mod tests {
         assert_eq!(opts_count, 1, "only -v parsed before --");
         assert_eq!(rem_count, 1, "-h after -- goes into remaining");
 
-        let result2 = mb_getopt_getopt(make_list(vec!["-v", "--", "-h"]), make_str("vh"), make_list(vec![]));
+        let result2 = mb_getopt_getopt(
+            make_list(vec!["-v", "--", "-h"]),
+            make_str("vh"),
+            make_list(vec![]),
+        );
         assert_eq!(get_remaining(result2, 0), "-h");
     }
 }

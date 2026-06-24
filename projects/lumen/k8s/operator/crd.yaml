@@ -32,7 +32,7 @@ spec:
         description: Auto-generated derived type for LumenSpec via `CustomResource`
         properties:
           spec:
-            description: '`lumen.dev/v1alpha1` `Lumen`. Namespaced: every child object the operator renders lands in this object''s namespace, so multiple independent lumen deployments can coexist by name.'
+            description: '`lumen.dev/v1alpha1` `Lumen`. Namespaced: every child object the operator renders lands in this object''s namespace, so multiple independent lumen deployments can coexist by name. @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source'
             properties:
               auth:
                 default: disabled
@@ -41,8 +41,54 @@ spec:
                 - disabled
                 - required
                 type: string
+              broker:
+                default:
+                  externalUrl: null
+                  image: relay:latest
+                  subject: lumen-wal
+                  replicas: 1
+                  storage: 20Gi
+                  storageClass: null
+                  cpu: '1'
+                  memory: 1Gi
+                description: Relay write-log broker. Managed by default; set `externalUrl` to point at an existing broker and skip provisioning one.
+                properties:
+                  cpu:
+                    default: '1'
+                    description: Per-broker CPU, applied as request==limit.
+                    type: string
+                  externalUrl:
+                    description: Point serving pods at an existing broker. When set, the operator renders NO broker objects (StatefulSet/Services/PDB) and wires `LUMEN_RELAY_URL` straight to this value.
+                    nullable: true
+                    type: string
+                  image:
+                    default: relay:latest
+                    description: Managed Relay image. The image should contain the `relay-server` binary.
+                    type: string
+                  memory:
+                    default: 1Gi
+                    description: Per-broker memory, applied as request==limit.
+                    type: string
+                  replicas:
+                    default: 1
+                    description: Managed-broker replica count. `1` is the current managed mode; use `externalUrl` for production Relay HA until relay-raft exposes the full broadcast subscribe API.
+                    format: int32
+                    type: integer
+                  storage:
+                    default: 20Gi
+                    description: Per-broker PVC size. e.g. `"20Gi"`, `"100Gi"`.
+                    type: string
+                  storageClass:
+                    description: PVC StorageClass. Unset → cluster default (portable; kind → local-path `standard`). Set to e.g. `"ssd"` in cloud.
+                    nullable: true
+                    type: string
+                  subject:
+                    default: lumen-wal
+                    description: Relay subject carrying the Lumen WAL.
+                    type: string
+                type: object
               image:
-                description: Serving + (managed) NATS-sidecar-free container image, e.g. `lumen:latest`. Required.
+                description: Serving + (managed) broker-sidecar-free container image, e.g. `lumen:latest`. Required.
                 type: string
               imagePullPolicy:
                 description: Image pull policy. Defaults to `IfNotPresent`.
@@ -59,42 +105,6 @@ spec:
                 description: Log level (`trace|debug|info|warn|error`). Defaults to `info`.
                 nullable: true
                 type: string
-              nats:
-                default:
-                  externalUrl: null
-                  replicas: 1
-                  storage: 20Gi
-                  storageClass: null
-                  cpu: '1'
-                  memory: 1Gi
-                description: NATS write-log broker. Managed by default; set `externalUrl` to point at an existing broker and skip provisioning one.
-                properties:
-                  cpu:
-                    default: '1'
-                    description: Per-broker CPU, applied as request==limit.
-                    type: string
-                  externalUrl:
-                    description: Point serving pods at an existing broker. When set, the operator renders NO NATS objects (StatefulSet/Services/ConfigMap) and wires `LUMEN_NATS_URL` straight to this value.
-                    nullable: true
-                    type: string
-                  memory:
-                    default: 1Gi
-                    description: Per-broker memory, applied as request==limit.
-                    type: string
-                  replicas:
-                    default: 1
-                    description: Managed-broker replica count. `1` (dev/staging) or `3+` for an HA JetStream cluster — the operator wires `--routes` when `> 1`.
-                    format: int32
-                    type: integer
-                  storage:
-                    default: 20Gi
-                    description: Per-broker PVC size. e.g. `"20Gi"`, `"100Gi"`.
-                    type: string
-                  storageClass:
-                    description: PVC StorageClass. Unset → cluster default (portable; kind → local-path `standard`). Set to e.g. `"ssd"` in cloud.
-                    nullable: true
-                    type: string
-                type: object
               observability:
                 default: false
                 description: Emit a ServiceMonitor + PrometheusRule. Requires the prometheus-operator CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
@@ -163,9 +173,13 @@ spec:
             - image
             type: object
           status:
-            description: Status subresource, written back by the reconcile loop.
+            description: Status subresource, written back by the reconcile loop. @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
             nullable: true
             properties:
+              brokerReady:
+                default: false
+                description: Whether the Relay broker is Ready (managed) or assumed up (external).
+                type: boolean
               desiredReplicas:
                 default: 0
                 description: Desired serving replicas (HPA floor at apply, or the live count).
@@ -175,10 +189,6 @@ spec:
                 default: ''
                 description: Last human-readable reconcile message.
                 type: string
-              natsReady:
-                default: false
-                description: Whether the NATS broker is Ready (managed) or assumed up (external).
-                type: boolean
               observedGeneration:
                 default: 0
                 description: The `.metadata.generation` this status reflects (drift detection).

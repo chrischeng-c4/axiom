@@ -5,10 +5,11 @@
 //! JSON with the expected top-level shape (no server, no I/O).
 
 use lumen::spec::{
-    field_catalog, json_schema_json, llm_guide_md, llm_quickstart_md, llm_recipes_md, openapi_json,
-    query_shapes,
+    field_catalog, json_schema_json, llm_integration_md, llm_outline_md, llm_quickstart_md,
+    llm_recipes_md, llm_workflow_md, openapi_json, openapi_yaml, query_shapes,
 };
 use serde_json::Value;
+use serde_yaml::Value as YamlValue;
 
 #[test]
 fn openapi_is_valid_json_with_search_path() {
@@ -21,6 +22,32 @@ fn openapi_is_valid_json_with_search_path() {
     let paths = v["paths"].as_object().expect("has paths");
     assert!(
         paths.keys().any(|p| p.contains("/search")),
+        "exposes a search path: {:?}",
+        paths.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn openapi_yaml_is_valid_with_search_path() {
+    let v: YamlValue = serde_yaml::from_str(&openapi_yaml()).expect("openapi is valid YAML");
+    let root = v.as_mapping().expect("OpenAPI YAML root is a mapping");
+    let openapi = root
+        .get(YamlValue::String("openapi".into()))
+        .and_then(YamlValue::as_str);
+    assert_eq!(
+        openapi.map(|s| s.starts_with("3.")),
+        Some(true),
+        "OpenAPI 3.x YAML document"
+    );
+    let paths = root
+        .get(YamlValue::String("paths".into()))
+        .and_then(YamlValue::as_mapping)
+        .expect("has paths");
+    assert!(
+        paths
+            .keys()
+            .filter_map(YamlValue::as_str)
+            .any(|p| p.contains("/search")),
         "exposes a search path: {:?}",
         paths.keys().collect::<Vec<_>>()
     );
@@ -123,12 +150,28 @@ fn field_catalog_matches_the_real_enums() {
     }
 }
 
-// --- `lumen llm *` agent integration playbook (offline) --------------------
+// --- `lumen llm *` agent integration topics (offline) ----------------------
 
 #[test]
-fn llm_guide_covers_the_integration_model() {
-    let g = llm_guide_md();
-    assert!(!g.trim().is_empty(), "guide is non-empty");
+fn llm_outline_maps_agent_topics() {
+    let outline = llm_outline_md();
+    assert!(!outline.trim().is_empty(), "outline is non-empty");
+    for needle in [
+        "lumen llm workflow",
+        "lumen llm integration",
+        "lumen llm quickstart",
+        "lumen llm recipes",
+        "lumen spec --format openapi-yaml",
+        "lumen spec",
+    ] {
+        assert!(outline.contains(needle), "outline missing `{needle}`");
+    }
+}
+
+#[test]
+fn llm_workflow_covers_the_integration_model() {
+    let g = llm_workflow_md();
+    assert!(!g.trim().is_empty(), "workflow is non-empty");
     // Mental model + the 4-step workflow + flavor guide + non-goals must be
     // present so an agent can wire lumen in without a docs site.
     for needle in [
@@ -142,7 +185,28 @@ fn llm_guide_covers_the_integration_model() {
         ":7373",          // connection
         "Do NOT",         // non-goals
     ] {
-        assert!(g.contains(needle), "guide missing `{needle}`");
+        assert!(g.contains(needle), "workflow missing `{needle}`");
+    }
+}
+
+#[test]
+fn llm_integration_recommends_postgres_alloydb_adapter_boundary() {
+    let integration = llm_integration_md();
+    assert!(
+        !integration.trim().is_empty(),
+        "integration topic is non-empty"
+    );
+    for needle in [
+        "Recommended Postgres / AlloyDB integration",
+        "outbox",
+        "ACK/retry/DLQ",
+        "Do not publish directly to lumen's broker stream",
+        "Ownership boundary",
+    ] {
+        assert!(
+            integration.contains(needle),
+            "integration topic missing `{needle}`"
+        );
     }
 }
 

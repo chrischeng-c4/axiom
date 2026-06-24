@@ -17,7 +17,5 @@ pub use bulk::{BulkConfig, BulkExecutor, BulkResult};
 pub use connection::{Connection, PoolConfig, RetryConfig};
 pub use executor::{execute_with_retry, ExecutorConfig, QueryExecutor};
 pub use row::{RelationConfig, Row};
-pub use transaction::{
-    AccessMode, IsolationLevel, Transaction, TransactionOptions,
-};
+pub use transaction::{AccessMode, IsolationLevel, Transaction, TransactionOptions};
 pub use types::{row_to_extracted, ExtractedValue};

@@ -8,22 +8,23 @@
 //!   threading, time, types, warnings.
 //!
 //! Carve-outs:
-//!   - No async stream wiring: `Popen.stdin`/`stdout`/`stderr` are plain
-//!     None fields; `communicate`, `wait`, `poll` are not wired through
-//!     method dispatch yet. `Popen(...)` runs the command synchronously
-//!     to completion and stores `returncode` so the common
-//!     `p = Popen(...); p.returncode` pattern is observable.
+//!   - `Popen(...)` runs the command synchronously to completion and
+//!     stores `returncode` plus the captured streams; `communicate()`,
+//!     `wait()`, `poll()`, `kill()`/`terminate()`/`send_signal()` and the
+//!     context-manager dunders dispatch through the registered Popen
+//!     class. `Popen.stdin`/`stdout`/`stderr` attribute streams are still
+//!     plain None fields (no live pipe objects).
 //!   - `shell=True` keyword argument is not parsed. The argv-list shape
 //!     (`run(["cmd", "arg"])`) and the whitespace-split string shape
 //!     (`run("cmd arg")`) are both honored, mirroring the existing
 //!     `extract_args` contract.
-//!   - `env`, `cwd`, `timeout`, `input`, `capture_output`, `text`,
-//!     `encoding`, and other keyword arguments are accepted by the
-//!     variadic dispatchers but silently ignored. Stdout/stderr are
-//!     captured by default (CPython's `run` default is no capture; this
-//!     deviation matches the existing #397 contract and keeps the
-//!     CompletedProcess fields populated). `check_output` returns the
-//!     child stdout as `bytes`, matching CPython's no-`text=` default.
+//!   - `run` / `check_output` parse `env`, `cwd`, `input`, `check`,
+//!     `capture_output`, `text`/`encoding`/`universal_newlines`,
+//!     `stdout`/`stderr` selectors (PIPE/STDOUT/DEVNULL), and `timeout`
+//!     (TimeoutExpired) through the shared spawn engine. CPython's
+//!     no-capture default is honored: un-captured CompletedProcess
+//!     streams are None; `check_output` returns the child stdout as
+//!     `bytes`, matching CPython's no-`text=` default.
 //!   - Error reporting matches CPython's OSError family: spawning a
 //!     missing/unexecutable command raises `FileNotFoundError` /
 //!     `PermissionError` / `NotADirectoryError`; a NUL byte in argv raises
@@ -63,12 +64,12 @@
 //!     `import subprocess; subprocess.os` is rare enough to defer to a
 //!     proper module-aliasing pass.
 
-use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
-use std::sync::atomic::AtomicU32;
-use super::super::value::MbValue;
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU32;
 
 // -- Variadic dispatchers --
 
@@ -93,36 +94,60 @@ macro_rules! disp_variadic_all {
     };
 }
 
-disp_variadic!(dispatch_run, mb_subprocess_run);
+disp_variadic_all!(dispatch_run, mb_subprocess_run_all);
 disp_variadic!(dispatch_call, mb_subprocess_call);
-disp_variadic!(dispatch_check_output, mb_subprocess_check_output);
+disp_variadic_all!(dispatch_check_output, mb_subprocess_check_output_all);
 disp_variadic!(dispatch_check_call, mb_subprocess_check_call);
 disp_variadic!(dispatch_getoutput, mb_subprocess_getoutput);
 disp_variadic!(dispatch_getstatusoutput, mb_subprocess_getstatusoutput);
 disp_variadic!(dispatch_list2cmdline, mb_subprocess_list2cmdline);
 disp_variadic_all!(dispatch_popen, mb_subprocess_popen_impl);
-disp_variadic_all!(dispatch_completed_process, mb_subprocess_completed_process_new);
-disp_variadic_all!(dispatch_called_process_error, mb_subprocess_called_process_error_new);
+disp_variadic_all!(
+    dispatch_completed_process,
+    mb_subprocess_completed_process_new
+);
+disp_variadic_all!(
+    dispatch_called_process_error,
+    mb_subprocess_called_process_error_new
+);
 disp_variadic_all!(dispatch_timeout_expired, mb_subprocess_timeout_expired_new);
-disp_variadic_all!(dispatch_subprocess_error, mb_subprocess_subprocess_error_new);
+disp_variadic_all!(
+    dispatch_subprocess_error,
+    mb_subprocess_subprocess_error_new
+);
 
 /// Register the subprocess module.
 pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("run",                  dispatch_run                  as *const () as usize),
-        ("call",                 dispatch_call                 as *const () as usize),
-        ("check_output",         dispatch_check_output         as *const () as usize),
-        ("check_call",           dispatch_check_call           as *const () as usize),
-        ("getoutput",            dispatch_getoutput            as *const () as usize),
-        ("getstatusoutput",      dispatch_getstatusoutput      as *const () as usize),
-        ("list2cmdline",         dispatch_list2cmdline         as *const () as usize),
-        ("Popen",                dispatch_popen                as *const () as usize),
-        ("CompletedProcess",     dispatch_completed_process    as *const () as usize),
-        ("CalledProcessError",   dispatch_called_process_error as *const () as usize),
-        ("TimeoutExpired",       dispatch_timeout_expired      as *const () as usize),
-        ("SubprocessError",      dispatch_subprocess_error     as *const () as usize),
+        ("run", dispatch_run as *const () as usize),
+        ("call", dispatch_call as *const () as usize),
+        ("check_output", dispatch_check_output as *const () as usize),
+        ("check_call", dispatch_check_call as *const () as usize),
+        ("getoutput", dispatch_getoutput as *const () as usize),
+        (
+            "getstatusoutput",
+            dispatch_getstatusoutput as *const () as usize,
+        ),
+        ("list2cmdline", dispatch_list2cmdline as *const () as usize),
+        ("Popen", dispatch_popen as *const () as usize),
+        (
+            "CompletedProcess",
+            dispatch_completed_process as *const () as usize,
+        ),
+        (
+            "CalledProcessError",
+            dispatch_called_process_error as *const () as usize,
+        ),
+        (
+            "TimeoutExpired",
+            dispatch_timeout_expired as *const () as usize,
+        ),
+        (
+            "SubprocessError",
+            dispatch_subprocess_error as *const () as usize,
+        ),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -136,11 +161,23 @@ pub fn register() {
     // `except subprocess.CalledProcessError` resolve the dispatcher
     // function pointer back to the instance's `class_name`.
     let class_dispatchers: Vec<(&str, usize)> = vec![
-        ("CompletedProcess",   dispatch_completed_process    as *const () as usize),
-        ("Popen",              dispatch_popen                as *const () as usize),
-        ("CalledProcessError", dispatch_called_process_error as *const () as usize),
-        ("TimeoutExpired",     dispatch_timeout_expired      as *const () as usize),
-        ("SubprocessError",    dispatch_subprocess_error     as *const () as usize),
+        (
+            "CompletedProcess",
+            dispatch_completed_process as *const () as usize,
+        ),
+        ("Popen", dispatch_popen as *const () as usize),
+        (
+            "CalledProcessError",
+            dispatch_called_process_error as *const () as usize,
+        ),
+        (
+            "TimeoutExpired",
+            dispatch_timeout_expired as *const () as usize,
+        ),
+        (
+            "SubprocessError",
+            dispatch_subprocess_error as *const () as usize,
+        ),
     ];
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
@@ -157,38 +194,92 @@ pub fn register() {
     // instance's `class_name`. `wait` is variadic — its packed positional
     // list (`[timeout]`) is accepted and ignored.
     {
-        let wait_addr = popen_wait as *const () as usize;
-        super::super::module::register_variadic_func(wait_addr as u64);
         let mut methods: HashMap<String, MbValue> = HashMap::new();
-        methods.insert("wait".to_string(), MbValue::from_func(wait_addr));
+        for (name, addr) in [
+            ("wait", popen_wait as *const () as usize),
+            ("communicate", popen_communicate as *const () as usize),
+            ("poll", popen_poll as *const () as usize),
+            ("kill", popen_kill as *const () as usize),
+            ("terminate", popen_kill as *const () as usize),
+            ("send_signal", popen_kill as *const () as usize),
+            ("__enter__", popen_enter as *const () as usize),
+            ("__exit__", popen_exit as *const () as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                s.borrow_mut().insert(addr as u64);
+            });
+            methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
         super::super::class::mb_class_register("Popen", Vec::new(), methods);
     }
 
+    // CompletedProcess.check_returncode() — raises CalledProcessError when
+    // the recorded returncode is non-zero, mirrors CPython.
+    {
+        let addr = completed_check_returncode as *const () as usize;
+        super::super::module::register_variadic_func(addr as u64);
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+        let mut methods: HashMap<String, MbValue> = HashMap::new();
+        methods.insert("check_returncode".to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register("CompletedProcess", Vec::new(), methods);
+    }
+
     // Integer constants — match CPython's negative sentinels.
-    attrs.insert("PIPE".into(),    MbValue::from_int(-1));
-    attrs.insert("STDOUT".into(),  MbValue::from_int(-2));
+    attrs.insert("PIPE".into(), MbValue::from_int(-1));
+    attrs.insert("STDOUT".into(), MbValue::from_int(-2));
     attrs.insert("DEVNULL".into(), MbValue::from_int(-3));
 
     // `__all__` — CPython's subprocess public API. Deliberately omits the
     // low-level `list2cmdline` helper, matching CPython 3.12 exactly.
     let all_names = [
-        "Popen", "PIPE", "STDOUT", "call", "check_call", "getstatusoutput",
-        "getoutput", "check_output", "run", "CalledProcessError", "DEVNULL",
-        "SubprocessError", "TimeoutExpired", "CompletedProcess",
+        "Popen",
+        "PIPE",
+        "STDOUT",
+        "call",
+        "check_call",
+        "getstatusoutput",
+        "getoutput",
+        "check_output",
+        "run",
+        "CalledProcessError",
+        "DEVNULL",
+        "SubprocessError",
+        "TimeoutExpired",
+        "CompletedProcess",
     ];
     let all_list: Vec<MbValue> = all_names
         .iter()
         .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string())))
         .collect();
-    attrs.insert("__all__".into(), MbValue::from_ptr(MbObject::new_list(all_list)));
-    attrs.insert("__name__".into(),
-        MbValue::from_ptr(MbObject::new_str("subprocess".to_string())));
+    attrs.insert(
+        "__all__".into(),
+        MbValue::from_ptr(MbObject::new_list(all_list)),
+    );
+    attrs.insert(
+        "__name__".into(),
+        MbValue::from_ptr(MbObject::new_str("subprocess".to_string())),
+    );
 
     // Module re-exports — placeholders for `dir(subprocess)` parity.
     for sub in [
-        "builtins", "contextlib", "errno", "fcntl", "io", "locale", "os",
-        "select", "selectors", "signal", "sys", "threading", "time",
-        "types", "warnings",
+        "builtins",
+        "contextlib",
+        "errno",
+        "fcntl",
+        "io",
+        "locale",
+        "os",
+        "select",
+        "selectors",
+        "signal",
+        "sys",
+        "threading",
+        "time",
+        "types",
+        "warnings",
     ] {
         attrs.insert(sub.to_string(), MbValue::none());
     }
@@ -200,7 +291,11 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -310,7 +405,9 @@ fn extract_args(val: MbValue) -> Result<Vec<String>, ()> {
 /// because the C-level environ encoding forbids NUL. A legitimate env name or
 /// value never contains NUL, so this fires only on genuinely invalid input.
 fn env_dict_has_nul(dict_val: MbValue) -> bool {
-    let Some(ptr) = dict_val.as_ptr() else { return false; };
+    let Some(ptr) = dict_val.as_ptr() else {
+        return false;
+    };
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             if let Ok(map) = lock.read() {
@@ -340,7 +437,9 @@ fn env_dict_has_nul(dict_val: MbValue) -> bool {
 /// NUL in a variable name or value — never on a valid `env=`.
 fn args_have_nul_env(a: &[MbValue]) -> bool {
     for extra in a.iter().skip(1) {
-        let Some(ptr) = extra.as_ptr() else { continue; };
+        let Some(ptr) = extra.as_ptr() else {
+            continue;
+        };
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 if let Ok(map) = lock.read() {
@@ -360,12 +459,17 @@ fn args_have_nul_env(a: &[MbValue]) -> bool {
 /// Retain a heap value before storing it in a second slot (e.g. aliasing
 /// `output` into both `output` and `stdout`). No-op for inline values.
 fn retain(val: MbValue) {
-    unsafe { super::super::rc::retain_if_ptr(val); }
+    unsafe {
+        super::super::rc::retain_if_ptr(val);
+    }
 }
 
 fn new_instance_with_fields(class_name: &str, fields: FxHashMap<String, MbValue>) -> MbValue {
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: RwLock::new(fields),
@@ -385,8 +489,14 @@ fn make_completed_process(
     let mut f = FxHashMap::default();
     f.insert("args".into(), args_repr);
     f.insert("returncode".into(), MbValue::from_int(returncode as i64));
-    f.insert("stdout".into(), MbValue::from_ptr(MbObject::new_str(stdout.to_string())));
-    f.insert("stderr".into(), MbValue::from_ptr(MbObject::new_str(stderr.to_string())));
+    f.insert(
+        "stdout".into(),
+        MbValue::from_ptr(MbObject::new_str(stdout.to_string())),
+    );
+    f.insert(
+        "stderr".into(),
+        MbValue::from_ptr(MbObject::new_str(stderr.to_string())),
+    );
     new_instance_with_fields("CompletedProcess", f)
 }
 
@@ -461,8 +571,240 @@ fn returncode_of(status: &std::process::ExitStatus) -> i32 {
     -1
 }
 
-/// subprocess.run(args) -> CompletedProcess instance
+/// Keyword options the `run`/`check_*` family accepts; parsed from the
+/// trailing kwargs dict the call lowering appends.
+#[derive(Default)]
+struct SpawnOpts {
+    env: Option<Vec<(String, String)>>,
+    cwd: Option<String>,
+    input: Option<Vec<u8>>,
+    check: bool,
+    capture_output: bool,
+    text: bool,
+    /// stdout/stderr selectors: 0 inherit, -1 PIPE, -2 STDOUT, -3 DEVNULL.
+    stdout_sel: i64,
+    stderr_sel: i64,
+    timeout: Option<f64>,
+}
+
+fn kwargs_dict(a: &[MbValue]) -> Option<MbValue> {
+    let last = a.last()?;
+    let ptr = last.as_ptr()?;
+    unsafe {
+        if matches!((*ptr).data, ObjData::Dict(_)) {
+            Some(*last)
+        } else {
+            None
+        }
+    }
+}
+
+fn dict_get(d: MbValue, key: &str) -> Option<MbValue> {
+    use super::super::dict_ops::DictKey;
+    let ptr = d.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .unwrap()
+                .get(&DictKey::Str(key.to_string()))
+                .copied()
+        } else {
+            None
+        }
+    }
+}
+
+fn parse_spawn_opts(a: &[MbValue]) -> SpawnOpts {
+    let mut opts = SpawnOpts::default();
+    let Some(kw) = kwargs_dict(a) else {
+        return opts;
+    };
+    if let Some(env) = dict_get(kw, "env") {
+        if let Some(ptr) = env.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    use super::super::dict_ops::DictKey;
+                    let mut pairs = Vec::new();
+                    for (k, v) in lock.read().unwrap().iter() {
+                        if let (DictKey::Str(name), Some(val)) = (k, extract_str(*v)) {
+                            pairs.push((name.clone(), val));
+                        }
+                    }
+                    opts.env = Some(pairs);
+                }
+            }
+        }
+    }
+    opts.cwd = dict_get(kw, "cwd").and_then(extract_str);
+    opts.input = dict_get(kw, "input").and_then(|v| {
+        if let Some(s) = extract_str(v) {
+            return Some(s.into_bytes());
+        }
+        v.as_ptr().and_then(|p| unsafe {
+            match (*p).data {
+                ObjData::Bytes(ref b) => Some(b.clone()),
+                ObjData::ByteArray(ref lock) => Some(lock.read().unwrap().clone()),
+                _ => None,
+            }
+        })
+    });
+    opts.check = dict_get(kw, "check").and_then(|v| v.as_bool()) == Some(true);
+    opts.capture_output = dict_get(kw, "capture_output").and_then(|v| v.as_bool()) == Some(true);
+    opts.text = dict_get(kw, "text").and_then(|v| v.as_bool()) == Some(true)
+        || dict_get(kw, "encoding").is_some()
+        || dict_get(kw, "universal_newlines").and_then(|v| v.as_bool()) == Some(true);
+    opts.stdout_sel = dict_get(kw, "stdout").and_then(|v| v.as_int()).unwrap_or(0);
+    opts.stderr_sel = dict_get(kw, "stderr").and_then(|v| v.as_int()).unwrap_or(0);
+    opts.timeout =
+        dict_get(kw, "timeout").and_then(|v| v.as_float().or_else(|| v.as_int().map(|i| i as f64)));
+    opts
+}
+
+/// Spawn engine shared by run/call/check_call/check_output: applies
+/// env/cwd/stdin wiring, enforces `timeout` (TimeoutExpired), and returns
+/// `(returncode, stdout, stderr)`. `Err(())` means an exception was raised.
+fn spawn_with_opts(
+    cmd_args: &[String],
+    opts: &SpawnOpts,
+    capture: bool,
+) -> Result<(i32, Vec<u8>, Vec<u8>), ()> {
+    use std::process::Stdio;
+
+    let mut cmd = std::process::Command::new(&cmd_args[0]);
+    cmd.args(&cmd_args[1..]);
+    if let Some(ref pairs) = opts.env {
+        cmd.env_clear();
+        cmd.envs(pairs.iter().map(|(k, v)| (k, v)));
+    }
+    if let Some(ref cwd) = opts.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.stdin(if opts.input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
+    let want_stdout = capture || opts.capture_output || opts.stdout_sel == -1;
+    let want_stderr = opts.capture_output || opts.stderr_sel == -1 || opts.stderr_sel == -2;
+    cmd.stdout(match opts.stdout_sel {
+        -3 => Stdio::null(),
+        _ if want_stdout => Stdio::piped(),
+        _ => Stdio::inherit(),
+    });
+    cmd.stderr(match opts.stderr_sel {
+        -3 => Stdio::null(),
+        _ if want_stderr => Stdio::piped(),
+        _ => Stdio::inherit(),
+    });
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            raise(spawn_error_type(&e), &spawn_error_message(&e, &cmd_args[0]));
+            return Err(());
+        }
+    };
+
+    if let Some(ref input) = opts.input {
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write as _;
+            let _ = stdin.write_all(input);
+            // Drop closes the pipe so the child sees EOF.
+        }
+    }
+
+    // Drain pipes on threads so a chatty child can't deadlock against an
+    // un-read pipe while we poll for exit.
+    let out_handle = child.stdout.take().map(|mut s| {
+        std::thread::spawn(move || {
+            use std::io::Read as _;
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let err_handle = child.stderr.take().map(|mut s| {
+        std::thread::spawn(move || {
+            use std::io::Read as _;
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf);
+            buf
+        })
+    });
+
+    let status = if let Some(secs) = opts.timeout {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs_f64(secs.max(0.0));
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        raise(
+                            "TimeoutExpired",
+                            &format!(
+                                "Command '{}' timed out after {} seconds",
+                                cmd_args.join(" "),
+                                secs
+                            ),
+                        );
+                        return Err(());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => {
+                    raise("OSError", &format!("wait failed: {e}"));
+                    return Err(());
+                }
+            }
+        }
+    } else {
+        match child.wait() {
+            Ok(s) => s,
+            Err(e) => {
+                raise("OSError", &format!("wait failed: {e}"));
+                return Err(());
+            }
+        }
+    };
+
+    let mut stdout = out_handle.and_then(|h| h.join().ok()).unwrap_or_default();
+    let stderr = err_handle.and_then(|h| h.join().ok()).unwrap_or_default();
+    // stderr=subprocess.STDOUT folds the error stream into stdout.
+    let stderr = if opts.stderr_sel == -2 {
+        stdout.extend_from_slice(&stderr);
+        Vec::new()
+    } else {
+        stderr
+    };
+
+    Ok((returncode_of(&status), stdout, stderr))
+}
+
+fn stream_value(data: Vec<u8>, captured: bool, text: bool) -> MbValue {
+    if !captured {
+        return MbValue::none();
+    }
+    if text {
+        MbValue::from_ptr(MbObject::new_str(
+            String::from_utf8_lossy(&data).replace("\r\n", "\n"),
+        ))
+    } else {
+        MbValue::from_ptr(MbObject::new_bytes(data))
+    }
+}
+
+/// subprocess.run(args, **kwargs) -> CompletedProcess instance
 pub fn mb_subprocess_run(args: MbValue) -> MbValue {
+    mb_subprocess_run_all(&[args])
+}
+
+/// Full-signature `subprocess.run` (capture_output / text / env / cwd /
+/// input / check / stdout / stderr / timeout).
+pub fn mb_subprocess_run_all(a: &[MbValue]) -> MbValue {
+    let args = a.first().copied().unwrap_or_else(MbValue::none);
     let Ok(cmd_args) = extract_args(args) else {
         // A non-str/bytes argv element raised TypeError inside extract_args.
         return MbValue::none();
@@ -475,22 +817,32 @@ pub fn mb_subprocess_run(args: MbValue) -> MbValue {
         return raise("ValueError", "embedded null byte");
     }
 
-    let result = std::process::Command::new(&cmd_args[0])
-        .args(&cmd_args[1..])
-        .output();
+    let opts = parse_spawn_opts(a);
+    let Ok((code, stdout, stderr)) = spawn_with_opts(&cmd_args, &opts, false) else {
+        return MbValue::none();
+    };
 
-    match result {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let code = returncode_of(&output.status);
-            make_completed_process(args, code, &stdout, &stderr)
-        }
-        // CPython: a missing/unexecutable command raises the OSError family
-        // (FileNotFoundError / PermissionError / NotADirectoryError) from the
-        // failed exec in the child, not a CompletedProcess.
-        Err(e) => raise(spawn_error_type(&e), &spawn_error_message(&e, &cmd_args[0])),
+    if opts.check && code != 0 {
+        return raise(
+            "CalledProcessError",
+            &format!("Command '{cmd_args:?}' returned non-zero exit status {code}."),
+        );
     }
+
+    let out_captured = opts.capture_output || opts.stdout_sel == -1;
+    let err_captured = opts.capture_output || opts.stderr_sel == -1;
+    let mut f = FxHashMap::default();
+    f.insert("args".into(), args);
+    f.insert("returncode".into(), MbValue::from_int(code as i64));
+    f.insert(
+        "stdout".into(),
+        stream_value(stdout, out_captured, opts.text),
+    );
+    f.insert(
+        "stderr".into(),
+        stream_value(stderr, err_captured, opts.text),
+    );
+    new_instance_with_fields("CompletedProcess", f)
 }
 
 /// subprocess.call(args) -> returncode (int)
@@ -524,6 +876,13 @@ pub fn mb_subprocess_call(args: MbValue) -> MbValue {
 /// and raises `CalledProcessError` on a non-zero exit. A missing command
 /// raises the OSError family from the failed exec.
 pub fn mb_subprocess_check_output(args: MbValue) -> MbValue {
+    mb_subprocess_check_output_all(&[args])
+}
+
+/// Full-signature `check_output` (input / stderr=STDOUT / env / cwd / text /
+/// timeout) on the shared spawn engine.
+pub fn mb_subprocess_check_output_all(a: &[MbValue]) -> MbValue {
+    let args = a.first().copied().unwrap_or_else(MbValue::none);
     let Ok(cmd_args) = extract_args(args) else {
         // A non-str/bytes argv element raised TypeError inside extract_args.
         return MbValue::none();
@@ -535,23 +894,16 @@ pub fn mb_subprocess_check_output(args: MbValue) -> MbValue {
         return raise("ValueError", "embedded null byte");
     }
 
-    let result = std::process::Command::new(&cmd_args[0])
-        .args(&cmd_args[1..])
-        .output();
-
-    match result {
-        Ok(output) if output.status.success() => {
-            // CPython default (no text=/encoding=) is bytes.
-            MbValue::from_ptr(MbObject::new_bytes(output.stdout))
-        }
-        Ok(output) => {
-            let code = returncode_of(&output.status);
-            let out = MbValue::from_ptr(MbObject::new_bytes(output.stdout));
-            let err = MbValue::from_ptr(MbObject::new_bytes(output.stderr));
-            raise_called_process_error(code, &cmd_args, out, err)
-        }
-        Err(e) => raise(spawn_error_type(&e), &spawn_error_message(&e, &cmd_args[0])),
+    let opts = parse_spawn_opts(a);
+    let Ok((code, stdout, stderr)) = spawn_with_opts(&cmd_args, &opts, true) else {
+        return MbValue::none();
+    };
+    if code == 0 {
+        return stream_value(stdout, true, opts.text);
     }
+    let out = MbValue::from_ptr(MbObject::new_bytes(stdout));
+    let err = MbValue::from_ptr(MbObject::new_bytes(stderr));
+    raise_called_process_error(code, &cmd_args, out, err)
 }
 
 /// subprocess.check_call(args) -> 0 or raises CalledProcessError
@@ -611,14 +963,18 @@ fn raise_called_process_error(
         cmd_args.join(" "),
         returncode
     );
-    f.insert("message".into(),
-        MbValue::from_ptr(MbObject::new_str(msg.clone())));
+    f.insert(
+        "message".into(),
+        MbValue::from_ptr(MbObject::new_str(msg.clone())),
+    );
     // `args` is the Exception base's positional tuple; CPython's str(exc)
     // uses the formatted message, so store that as the single arg.
-    f.insert("args".into(),
-        MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_ptr(MbObject::new_str(msg)),
-        ])));
+    f.insert(
+        "args".into(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+            MbObject::new_str(msg),
+        )])),
+    );
 
     let inst = new_instance_with_fields("CalledProcessError", f);
     super::super::class::mb_raise_instance(inst);
@@ -658,7 +1014,9 @@ fn run_shell(cmd: MbValue) -> (i32, String) {
             let mut s = String::from_utf8_lossy(&output.stdout).to_string();
             s.push_str(&String::from_utf8_lossy(&output.stderr));
             // Strip a single trailing newline to match CPython.
-            if s.ends_with('\n') { s.pop(); }
+            if s.ends_with('\n') {
+                s.pop();
+            }
             (returncode_of(&output.status), s)
         }
         Err(e) => (-1, e.to_string()),
@@ -679,13 +1037,18 @@ pub fn mb_subprocess_list2cmdline(seq: MbValue) -> MbValue {
     };
     let mut out = String::new();
     for (i, a) in args.iter().enumerate() {
-        if i > 0 { out.push(' '); }
+        if i > 0 {
+            out.push(' ');
+        }
         let needs_quote = a.is_empty()
-            || a.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'' || c == '\\');
+            || a.chars()
+                .any(|c| c.is_whitespace() || c == '"' || c == '\'' || c == '\\');
         if needs_quote {
             out.push('"');
             for c in a.chars() {
-                if c == '"' || c == '\\' { out.push('\\'); }
+                if c == '"' || c == '\\' {
+                    out.push('\\');
+                }
                 out.push(c);
             }
             out.push('"');
@@ -727,10 +1090,7 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
     // is never a legitimate value for any Popen keyword.
     if let Some(bufsize) = a.get(1) {
         if extract_str(*bufsize).is_some() {
-            return raise(
-                "TypeError",
-                "bufsize must be an integer",
-            );
+            return raise("TypeError", "bufsize must be an integer");
         }
     }
 
@@ -774,6 +1134,16 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
             let code = returncode_of(&output.status);
             fields.insert("returncode".into(), MbValue::from_int(code as i64));
             fields.insert("pid".into(), MbValue::from_int(0));
+            // Captured child streams for `communicate()` — the carve-out
+            // runs the child synchronously, so they are fully available.
+            fields.insert(
+                "_captured_stdout".into(),
+                MbValue::from_ptr(MbObject::new_bytes(output.stdout)),
+            );
+            fields.insert(
+                "_captured_stderr".into(),
+                MbValue::from_ptr(MbObject::new_bytes(output.stderr)),
+            );
         }
         // A missing/unexecutable command raises the OSError family, matching
         // CPython's behaviour at construction time.
@@ -782,6 +1152,75 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
         }
     }
     new_instance_with_fields("Popen", fields)
+}
+
+/// `CompletedProcess.check_returncode()` — no-op on zero, raises
+/// `CalledProcessError` otherwise.
+unsafe extern "C" fn completed_check_returncode(self_v: MbValue, _args: MbValue) -> MbValue {
+    let code = self_v
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("returncode")
+                    .and_then(|v| v.as_int())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+    if code != 0 {
+        return raise(
+            "CalledProcessError",
+            &format!("Command returned non-zero exit status {code}."),
+        );
+    }
+    MbValue::none()
+}
+
+/// `Popen.communicate(input=None, timeout=None)` -> `(stdout, stderr)`.
+/// The child already ran to completion at construction, so this returns
+/// the captured streams; a post-hoc `input` cannot be delivered and is
+/// ignored.
+unsafe extern "C" fn popen_communicate(self_v: MbValue, _args: MbValue) -> MbValue {
+    let field = |name: &str| -> MbValue {
+        if let Some(ptr) = self_v.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    if let Some(v) = fields.read().unwrap().get(name).copied() {
+                        return v;
+                    }
+                }
+            }
+        }
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+    };
+    let out = field("_captured_stdout");
+    let err = field("_captured_stderr");
+    MbValue::from_ptr(MbObject::new_tuple(vec![out, err]))
+}
+
+/// `Popen.poll()` -> returncode (child already exited in the carve-out).
+unsafe extern "C" fn popen_poll(self_v: MbValue, args: MbValue) -> MbValue {
+    unsafe { popen_wait(self_v, args) }
+}
+
+/// `Popen.kill()` / `terminate()` / `send_signal(sig)` — the child already
+/// exited; CPython tolerates signaling an exited child, so these no-op.
+unsafe extern "C" fn popen_kill(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::none()
+}
+
+/// `with Popen(...) as p:` — enter returns self; exit closes the
+/// (already-drained) pipes and never suppresses exceptions.
+unsafe extern "C" fn popen_enter(self_v: MbValue, _args: MbValue) -> MbValue {
+    self_v
+}
+
+unsafe extern "C" fn popen_exit(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_bool(false)
 }
 
 /// `Popen.wait(timeout=None)` -> returncode (int).
@@ -851,12 +1290,16 @@ pub fn mb_subprocess_called_process_error_new(a: &[MbValue]) -> MbValue {
         "Command '{}' returned non-zero exit status {}.",
         cmd_repr, returncode
     );
-    f.insert("message".into(),
-        MbValue::from_ptr(MbObject::new_str(msg.clone())));
-    f.insert("args".into(),
-        MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_ptr(MbObject::new_str(msg)),
-        ])));
+    f.insert(
+        "message".into(),
+        MbValue::from_ptr(MbObject::new_str(msg.clone())),
+    );
+    f.insert(
+        "args".into(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+            MbObject::new_str(msg),
+        )])),
+    );
     new_instance_with_fields("CalledProcessError", f)
 }
 
@@ -890,12 +1333,16 @@ pub fn mb_subprocess_timeout_expired_new(a: &[MbValue]) -> MbValue {
         "Command '{}' timed out after {} seconds",
         cmd_repr, timeout_repr
     );
-    f.insert("message".into(),
-        MbValue::from_ptr(MbObject::new_str(msg.clone())));
-    f.insert("args".into(),
-        MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_ptr(MbObject::new_str(msg)),
-        ])));
+    f.insert(
+        "message".into(),
+        MbValue::from_ptr(MbObject::new_str(msg.clone())),
+    );
+    f.insert(
+        "args".into(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+            MbObject::new_str(msg),
+        )])),
+    );
     new_instance_with_fields("TimeoutExpired", f)
 }
 
@@ -908,9 +1355,13 @@ pub fn mb_subprocess_subprocess_error_new(a: &[MbValue]) -> MbValue {
         f.insert("message".into(), MbValue::from_ptr(MbObject::new_str(s)));
     }
     let tuple_items: Vec<MbValue> = a.iter().copied().collect();
-    for &v in &tuple_items { retain(v); }
-    f.insert("args".into(),
-        MbValue::from_ptr(MbObject::new_tuple(tuple_items)));
+    for &v in &tuple_items {
+        retain(v);
+    }
+    f.insert(
+        "args".into(),
+        MbValue::from_ptr(MbObject::new_tuple(tuple_items)),
+    );
     new_instance_with_fields("SubprocessError", f)
 }
 
@@ -926,7 +1377,9 @@ mod tests {
         if let Some(ptr) = instance.as_ptr() {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                    if let Some(v) = fields.read().unwrap().get(field) { return *v; }
+                    if let Some(v) = fields.read().unwrap().get(field) {
+                        return *v;
+                    }
                 }
             }
         }
@@ -941,21 +1394,37 @@ mod tests {
         instance.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 Some(class_name.clone())
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
     #[test]
     fn test_run_echo_completed_process() {
-        let args = MbValue::from_ptr(MbObject::new_list(vec![
-            s("echo"),
-            s("hello"),
-        ]));
-        let result = mb_subprocess_run(args);
+        // CPython: run() without capture_output leaves stdout as None;
+        // request capture_output + text to observe the child's output.
+        let args = MbValue::from_ptr(MbObject::new_list(vec![s("echo"), s("hello")]));
+        let kwargs = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(
+            kwargs,
+            s("capture_output"),
+            MbValue::from_bool(true),
+        );
+        crate::runtime::dict_ops::mb_dict_setitem(kwargs, s("text"), MbValue::from_bool(true));
+        let result = mb_subprocess_run_all(&[args, kwargs]);
         assert_eq!(class_name(result).as_deref(), Some("CompletedProcess"));
         assert_eq!(get_field(result, "returncode").as_int(), Some(0));
         let stdout = get_str(get_field(result, "stdout")).unwrap_or_default();
         assert!(stdout.contains("hello"), "stdout = {:?}", stdout);
+
+        // Default (no capture): stdout stays None, returncode recorded.
+        let args2 = MbValue::from_ptr(MbObject::new_list(vec![s("true")]));
+        let plain = mb_subprocess_run_all(&[args2]);
+        assert!(
+            get_field(plain, "stdout").is_none(),
+            "uncaptured stdout is None"
+        );
     }
 
     #[test]
@@ -965,7 +1434,11 @@ mod tests {
 
     fn get_bytes(val: MbValue) -> Option<Vec<u8>> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
+            if let ObjData::Bytes(ref b) = (*ptr).data {
+                Some(b.clone())
+            } else {
+                None
+            }
         })
     }
 
@@ -1022,7 +1495,9 @@ mod tests {
                 assert_eq!(items.len(), 2);
                 assert_eq!(items[0].as_int(), Some(0));
                 assert_eq!(get_str(items[1]).as_deref(), Some("hi"));
-            } else { panic!("expected Tuple"); }
+            } else {
+                panic!("expected Tuple");
+            }
         }
     }
 
@@ -1033,26 +1508,22 @@ mod tests {
             if let ObjData::Tuple(ref items) = (*r.as_ptr().unwrap()).data {
                 assert_eq!(items.len(), 2);
                 assert_ne!(items[0].as_int(), Some(0));
-            } else { panic!("expected Tuple"); }
+            } else {
+                panic!("expected Tuple");
+            }
         }
     }
 
     #[test]
     fn test_list2cmdline_simple() {
-        let list = MbValue::from_ptr(MbObject::new_list(vec![
-            s("echo"),
-            s("hello"),
-        ]));
+        let list = MbValue::from_ptr(MbObject::new_list(vec![s("echo"), s("hello")]));
         let out = mb_subprocess_list2cmdline(list);
         assert_eq!(get_str(out).as_deref(), Some("echo hello"));
     }
 
     #[test]
     fn test_list2cmdline_quotes_whitespace() {
-        let list = MbValue::from_ptr(MbObject::new_list(vec![
-            s("echo"),
-            s("hello world"),
-        ]));
+        let list = MbValue::from_ptr(MbObject::new_list(vec![s("echo"), s("hello world")]));
         let out = mb_subprocess_list2cmdline(list);
         assert_eq!(get_str(out).as_deref(), Some("echo \"hello world\""));
     }
@@ -1078,7 +1549,10 @@ mod tests {
     fn test_completed_process_constructor() {
         // CompletedProcess(args, returncode, stdout, stderr)
         let cp = mb_subprocess_completed_process_new(&[
-            s("echo"), MbValue::from_int(0), s("out"), s("err"),
+            s("echo"),
+            MbValue::from_int(0),
+            s("out"),
+            s("err"),
         ]);
         assert_eq!(class_name(cp).as_deref(), Some("CompletedProcess"));
         assert_eq!(get_field(cp, "returncode").as_int(), Some(0));
@@ -1090,17 +1564,14 @@ mod tests {
     fn test_called_process_error_constructor_fields() {
         // CalledProcessError(returncode, cmd, output, stderr)
         let cmd = MbValue::from_ptr(MbObject::new_list(vec![s("false")]));
-        let e1 = mb_subprocess_called_process_error_new(&[
-            MbValue::from_int(7), cmd, s("o"), s("e"),
-        ]);
+        let e1 =
+            mb_subprocess_called_process_error_new(&[MbValue::from_int(7), cmd, s("o"), s("e")]);
         assert_eq!(class_name(e1).as_deref(), Some("CalledProcessError"));
         assert_eq!(get_field(e1, "returncode").as_int(), Some(7));
         assert_eq!(get_str(get_field(e1, "output")).as_deref(), Some("o"));
         assert_eq!(get_str(get_field(e1, "stderr")).as_deref(), Some("e"));
 
-        let e2 = mb_subprocess_timeout_expired_new(&[
-            s("cmd"), MbValue::from_int(5),
-        ]);
+        let e2 = mb_subprocess_timeout_expired_new(&[s("cmd"), MbValue::from_int(5)]);
         assert_eq!(class_name(e2).as_deref(), Some("TimeoutExpired"));
         assert_eq!(get_field(e2, "timeout").as_int(), Some(5));
 
@@ -1112,10 +1583,12 @@ mod tests {
     #[test]
     fn test_register_wires_full_surface() {
         register();
-        let snap = super::super::super::module::NATIVE_FUNC_ADDRS
-            .with(|s| s.borrow().len());
+        let snap = super::super::super::module::NATIVE_FUNC_ADDRS.with(|s| s.borrow().len());
         // 12 dispatchers should each be registered; the set is monotonic
         // across the test process so we only assert presence is non-zero.
-        assert!(snap >= 12, "expected at least 12 native func addrs registered");
+        assert!(
+            snap >= 12,
+            "expected at least 12 native func addrs registered"
+        );
     }
 }

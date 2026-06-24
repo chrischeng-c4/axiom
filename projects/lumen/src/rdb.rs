@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! RDB — point-in-time snapshots of the materialized index, tagged with
 //! the WAL sequence they correspond to.
@@ -7,7 +7,7 @@
 //! half). Its job is to **bound cold-start and broker retention**: a
 //! fresh serving node loads the latest RDB to get a baseline at
 //! `up_to_seq`, then tails the log from `up_to_seq + 1` instead of
-//! replaying the whole stream. The broker (NATS) then only needs to
+//! replaying the whole stream. The broker then only needs to
 //! retain history back to the oldest live RDB.
 //!
 //! An [`RdbStore`] is where snapshots live. v1 ships [`LocalFsRdbStore`]
@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use crate::storage::{Engine, SnapshotV1};
 
 /// A snapshot plus the log sequence it is current as of.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 pub struct RdbSnapshot {
     /// The WAL sequence this snapshot incorporates. A node that loads
     /// this baseline tails the log from `up_to_seq + 1`.
@@ -33,7 +33,7 @@ pub struct RdbSnapshot {
     pub snapshot: SnapshotV1,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 impl RdbSnapshot {
     /// Capture the engine's current state as a snapshot tagged with
     /// `up_to_seq` (the caller passes the coordinator's applied
@@ -54,7 +54,8 @@ impl RdbSnapshot {
     /// text float arrays — far smaller and faster to parse than JSON.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut raw = Vec::new();
-        ciborium::into_writer(self, &mut raw).map_err(|e| anyhow::anyhow!("cbor encode RDB: {e}"))?;
+        ciborium::into_writer(self, &mut raw)
+            .map_err(|e| anyhow::anyhow!("cbor encode RDB: {e}"))?;
         Ok(lz4_flex::compress_prepend_size(&raw))
     }
 
@@ -67,6 +68,7 @@ impl RdbSnapshot {
 /// Where RDB snapshots are persisted. Object-store adapters (S3/GCS)
 /// implement this with the same byte layout as [`LocalFsRdbStore`].
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 pub trait RdbStore: Send + Sync {
     /// Persist `rdb` and make it the new latest.
     async fn save(&self, rdb: &RdbSnapshot) -> Result<()>;
@@ -81,13 +83,13 @@ pub trait RdbStore: Send + Sync {
 /// Filesystem-backed RDB store: `<root>/rdb-<seq>.lrb`. The newest
 /// `rdb-*.lrb` (by sequence) is the latest — no separate pointer file
 /// needed, the sequence in the name is the total order.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 pub struct LocalFsRdbStore {
     root: PathBuf,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 impl LocalFsRdbStore {
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
@@ -119,8 +121,8 @@ impl LocalFsRdbStore {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 impl RdbStore for LocalFsRdbStore {
     async fn save(&self, rdb: &RdbSnapshot) -> Result<()> {
         let bytes = rdb.encode()?;

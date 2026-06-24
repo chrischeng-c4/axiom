@@ -31,28 +31,37 @@ user asks whether a project is healthy, production-ready, blocked, or why
 
 ## Command
 
-`aw health` emits a low-token agent-facing metrics envelope by default and owns
-the readiness gate. Do not add `--json`; it is a deprecated compatibility
-no-op. Use `--human` or `--pretty` only when the user asks for a
-human-readable or debug-formatted report. Use `-v/--verbose` only when progress
-events are useful. Use focused sections such as `regenerable`, `gates`, or
+`aw health` emits a low-token AW takeover envelope by default: humans scan
+`adoption`, and agents chase incomplete items through `followups`. Do not add
+`--json`; it is a deprecated compatibility no-op. Use `--human` or `--pretty`
+only when the user asks for a human-readable or debug-formatted report. Use
+`-v/--verbose` only when progress events are useful. Use `full` or focused
+sections such as `regenerable`, `gates`, `hygiene`, `ec`, `td-lock`, or
 `blockers` only when detail is needed.
 
 ```bash
 aw health --project <project>
 aw health --project <project> regenerable
+aw health --project <project> hygiene
 aw health --project <project> full
 ```
 
 Use the stdout envelope as authoritative:
 
-- `completion.workflow_complete=true` and `readiness.production_ready=true`:
-  report ready.
+- `ready=true` and `completion.workflow_complete=true`: report AW takeover
+  ready.
 - `completion.requires_hitl=true`: surface the HITL reason and stop.
 - `next.kind=run_command`: run the exact `next.command` only if the user asked
   to fix or continue the workflow; otherwise report it as the next action.
-- `readiness.blocker_count` or `production_blocker_count` > 0: list the first
-  concrete blockers and the command from `next.command` when present.
+- `adoption`: report only the five big areas and their `state`/`summary` when
+  the user wants a status read.
+- `followups`: use these as the agent work queue for incomplete areas; each
+  item may include `command`, compact `metrics`, and `blockers_preview`.
+- `implementation` followups include configured test and code hygiene gates;
+  use `aw health --project <project> hygiene` when format, lint, or warning
+  status is the only needed detail.
+- `blockers.production_blocker_count` or `blockers.blocker_count` > 0: treat as
+  global readiness context, but prefer `followups` for what to do next.
 - `payload_path`: inspect only when stdout is too summarized or the user asks
   for detail.
 
@@ -61,7 +70,8 @@ Use the stdout envelope as authoritative:
 - Health is a measurement surface. Do not edit files just because health is
   failing unless the user asked to fix the project.
 - Do not confuse `regenerable_percent` with production readiness. The gate is
-  `readiness.production_ready`.
+  the default `ready` value for AW takeover, and detailed production readiness
+  lives in `aw health --project <project> full`.
 - If `aw health --verbose` prints progress events before the final result,
   wait for the final `event=result` envelope before answering.
 - Prefer the installed `aw` only after it has been built or verified recently;

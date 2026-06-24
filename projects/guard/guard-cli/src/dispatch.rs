@@ -74,10 +74,10 @@ pub struct ScanArgs {
     /// Run an exact meter evidence command through `sh -c`.
     #[arg(long = "meter-command")]
     pub meter_commands: Vec<String>,
-    /// Run an arena comparison spec as security budget evidence.
+    /// Run a legacy arena comparison spec as optional security budget evidence.
     #[arg(long = "arena-spec")]
     pub arena_specs: Vec<PathBuf>,
-    /// Run an exact arena evidence command through `sh -c`.
+    /// Run an exact legacy arena evidence command through `sh -c`.
     #[arg(long = "arena-command")]
     pub arena_commands: Vec<String>,
     /// Do not persist `.guard/last-report.json`.
@@ -128,11 +128,11 @@ pub fn dispatch(cmd: GuardCommand) -> GuardReport {
         }),
         Verb::Spec => GuardReport::stub(
             "spec",
-            "guard.report/1: compass-backed static/security-lint findings plus optional vat/rig/meter/arena evidence adapters.",
+            "guard.report/1: compass-backed static/security-lint findings plus optional vat/rig/meter evidence adapters; legacy arena flags remain supported.",
         ),
         Verb::Llm => GuardReport::stub(
             "llm",
-            "Use `guard scan <path> --profile security-lint` for security posture. Add vat/rig/meter/arena evidence flags when dynamic evidence is required. Treat non-zero findings as actionable unless a documented guard policy exception exists.",
+            "Use `guard scan <path> --profile security-lint` for security posture. Add vat/rig/meter evidence flags when dynamic evidence is required. Legacy arena evidence flags are compatibility-only. Treat non-zero findings as actionable unless a documented guard policy exception exists.",
         ),
     }
 }

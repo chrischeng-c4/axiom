@@ -1,19 +1,16 @@
+use super::rc::{MbObject, ObjData};
 /// Bytes and ByteArray operations for the Mamba runtime (#405).
 ///
 /// Implements Python-compatible bytes/bytearray methods.
-
 use super::value::MbValue;
-use super::rc::{MbObject, ObjData};
 
 /// Helper: get immutable reference to bytes data.
 /// Returns a cloned Vec<u8> since ByteArray is now behind RwLock.
 unsafe fn as_bytes_cloned(val: MbValue) -> Option<Vec<u8>> {
-    val.as_ptr().and_then(|ptr| {
-        match &(*ptr).data {
-            ObjData::Bytes(ref data) => Some(data.clone()),
-            ObjData::ByteArray(ref lock) => Some(lock.read().unwrap().clone()),
-            _ => None,
-        }
+    val.as_ptr().and_then(|ptr| match &(*ptr).data {
+        ObjData::Bytes(ref data) => Some(data.clone()),
+        ObjData::ByteArray(ref lock) => Some(lock.read().unwrap().clone()),
+        _ => None,
     })
 }
 
@@ -37,7 +34,8 @@ fn raise_count_overflow() {
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
         MbValue::from_ptr(MbObject::new_str(
-            "cannot fit 'int' into an index-sized integer".to_string())),
+            "cannot fit 'int' into an index-sized integer".to_string(),
+        )),
     );
 }
 
@@ -90,23 +88,29 @@ fn validated_bytes_from_items(items: &[MbValue]) -> Option<Vec<u8>> {
             }
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                MbValue::from_ptr(MbObject::new_str("byte must be in range(0, 256)".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "byte must be in range(0, 256)".to_string(),
+                )),
             );
             return None;
         }
         // BigInt is an integer that's always out of byte range -> ValueError;
         // any other type is not an integer -> TypeError.
-        let is_bigint = unsafe { matches!(v.as_ptr().map(|p| &(*p).data), Some(ObjData::BigInt(_))) };
+        let is_bigint =
+            unsafe { matches!(v.as_ptr().map(|p| &(*p).data), Some(ObjData::BigInt(_))) };
         if is_bigint {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                MbValue::from_ptr(MbObject::new_str("byte must be in range(0, 256)".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "byte must be in range(0, 256)".to_string(),
+                )),
             );
         } else {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(
-                    "'object' cannot be interpreted as an integer".to_string())),
+                    "'object' cannot be interpreted as an integer".to_string(),
+                )),
             );
         }
         return None;
@@ -128,13 +132,17 @@ unsafe fn drain_handle_to_u8s(handle: MbValue) -> Option<Vec<u8>> {
         let h = super::iter::mb_iter(handle);
         let mut out = Vec::new();
         loop {
-            if super::iter::mb_has_next(h).as_bool() != Some(true) { break; }
+            if super::iter::mb_has_next(h).as_bool() != Some(true) {
+                break;
+            }
             out.push(super::iter::mb_next(h));
         }
         out
     };
     let data = validated_bytes_from_items(&items);
-    for &it in &items { super::rc::release_if_ptr(it); }
+    for &it in &items {
+        super::rc::release_if_ptr(it);
+    }
     data
 }
 
@@ -155,7 +163,10 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
         }
     }
     if let Some(n) = source.as_int() {
-        if n < 0 { raise_negative_count(); return MbValue::none(); }
+        if n < 0 {
+            raise_negative_count();
+            return MbValue::none();
+        }
         return MbValue::from_ptr(MbObject::new_bytes(vec![0u8; n as usize]));
     }
     if let Some(ptr) = source.as_ptr() {
@@ -179,7 +190,36 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
                     };
                 }
                 // A BigInt count is too large for a size-sized integer.
-                ObjData::BigInt(_) => { raise_count_overflow(); return MbValue::none(); }
+                ObjData::BigInt(_) => {
+                    raise_count_overflow();
+                    return MbValue::none();
+                }
+                ObjData::Instance { ref class_name, .. } => {
+                    // User __bytes__ dunder; a class without one cannot
+                    // convert (CPython TypeError, not a silent b'').
+                    let cls = class_name.clone();
+                    let m = super::class::lookup_method(&cls, "__bytes__");
+                    if !m.is_none() {
+                        let method = MbValue::from_ptr(MbObject::new_str("__bytes__".to_string()));
+                        let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                        let r = super::class::mb_call_method(source, method, args);
+                        if let Some(rp) = r.as_ptr() {
+                            if matches!((*rp).data, ObjData::Bytes(_)) {
+                                return r;
+                            }
+                        }
+                        if super::exception::mb_has_exception().as_bool() == Some(true) {
+                            return MbValue::none();
+                        }
+                    }
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "cannot convert '{cls}' object to bytes"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
                 _ => {}
             }
         }
@@ -224,7 +264,10 @@ pub fn mb_bytearray_new(source: MbValue) -> MbValue {
         }
     }
     if let Some(n) = source.as_int() {
-        if n < 0 { raise_negative_count(); return MbValue::none(); }
+        if n < 0 {
+            raise_negative_count();
+            return MbValue::none();
+        }
         return MbValue::from_ptr(MbObject::new_bytearray(vec![0u8; n as usize]));
     }
     if let Some(ptr) = source.as_ptr() {
@@ -247,7 +290,10 @@ pub fn mb_bytearray_new(source: MbValue) -> MbValue {
                         None => MbValue::none(),
                     };
                 }
-                ObjData::BigInt(_) => { raise_count_overflow(); return MbValue::none(); }
+                ObjData::BigInt(_) => {
+                    raise_count_overflow();
+                    return MbValue::none();
+                }
                 _ => {}
             }
         }
@@ -361,7 +407,21 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                     decode_utf32(&data, false)
                 }
             }
-            _ => decode_utf8(&data, err),
+            _ => {
+                // A known non-text codec (quopri, base64, ...) is a LookupError
+                // via bytes.decode; unrecognised names keep the lenient utf-8
+                // fallback.
+                if let Some(canon) = super::string_ops::nontext_codec_name(&enc) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{canon}' is not a text encoding; use codecs.decode() to handle arbitrary codecs"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
+                decode_utf8(&data, err)
+            }
         };
         MbValue::from_ptr(MbObject::new_str(s))
     }
@@ -369,7 +429,10 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
 
 fn encoding_errors_kind(errors: MbValue) -> ErrorsKind {
     let raw = errors.as_ptr().and_then(|p| unsafe {
-        match &(*p).data { ObjData::Str(s) => Some(s.as_str()), _ => None }
+        match &(*p).data {
+            ObjData::Str(s) => Some(s.as_str()),
+            _ => None,
+        }
     });
     match raw {
         Some("ignore") => ErrorsKind::Ignore,
@@ -379,7 +442,11 @@ fn encoding_errors_kind(errors: MbValue) -> ErrorsKind {
 }
 
 #[derive(Copy, Clone)]
-enum ErrorsKind { Strict, Ignore, Replace }
+enum ErrorsKind {
+    Strict,
+    Ignore,
+    Replace,
+}
 
 fn decode_utf8(data: &[u8], err: ErrorsKind) -> String {
     // Walk the buffer one UTF-8 sequence at a time. On invalid bytes:
@@ -391,7 +458,10 @@ fn decode_utf8(data: &[u8], err: ErrorsKind) -> String {
     let mut i = 0;
     while i < data.len() {
         match std::str::from_utf8(&data[i..]) {
-            Ok(rest) => { out.push_str(rest); break; }
+            Ok(rest) => {
+                out.push_str(rest);
+                break;
+            }
             Err(e) => {
                 let valid = e.valid_up_to();
                 out.push_str(std::str::from_utf8(&data[i..i + valid]).unwrap_or(""));
@@ -430,8 +500,13 @@ fn decode_latin1(data: &[u8]) -> String {
 fn decode_utf16(data: &[u8], big_endian: bool) -> String {
     let units: Vec<u16> = data
         .chunks_exact(2)
-        .map(|c| if big_endian { u16::from_be_bytes([c[0], c[1]]) }
-                 else { u16::from_le_bytes([c[0], c[1]]) })
+        .map(|c| {
+            if big_endian {
+                u16::from_be_bytes([c[0], c[1]])
+            } else {
+                u16::from_le_bytes([c[0], c[1]])
+            }
+        })
         .collect();
     char::decode_utf16(units.into_iter())
         .map(|r| r.unwrap_or('\u{FFFD}'))
@@ -441,8 +516,11 @@ fn decode_utf16(data: &[u8], big_endian: bool) -> String {
 fn decode_utf32(data: &[u8], big_endian: bool) -> String {
     data.chunks_exact(4)
         .map(|c| {
-            let u = if big_endian { u32::from_be_bytes([c[0], c[1], c[2], c[3]]) }
-                    else { u32::from_le_bytes([c[0], c[1], c[2], c[3]]) };
+            let u = if big_endian {
+                u32::from_be_bytes([c[0], c[1], c[2], c[3]])
+            } else {
+                u32::from_le_bytes([c[0], c[1], c[2], c[3]])
+            };
             char::from_u32(u).unwrap_or('\u{FFFD}')
         })
         .collect()
@@ -503,14 +581,18 @@ pub fn mb_bytes_hex_with_sep(bytes: MbValue, sep: MbValue, bytes_per_sep: MbValu
                     result.push_str(&format!("{:02x}", data[j]));
                 }
                 i = rem;
-                if i < n { result.push(sep); }
+                if i < n {
+                    result.push(sep);
+                }
             }
             while i < n {
                 for j in 0..group {
                     result.push_str(&format!("{:02x}", data[i + j]));
                 }
                 i += group;
-                if i < n { result.push(sep); }
+                if i < n {
+                    result.push(sep);
+                }
             }
         } else {
             // Group from the left: rightmost group may be shorter.
@@ -521,7 +603,9 @@ pub fn mb_bytes_hex_with_sep(bytes: MbValue, sep: MbValue, bytes_per_sep: MbValu
                     result.push_str(&format!("{:02x}", data[j]));
                 }
                 i = end;
-                if i < n { result.push(sep); }
+                if i < n {
+                    result.push(sep);
+                }
             }
         }
         MbValue::from_ptr(MbObject::new_str(result))
@@ -539,7 +623,11 @@ pub fn mb_bytes_find(haystack: MbValue, needle: MbValue) -> MbValue {
 /// found").
 fn needle_as_bytes(needle: MbValue) -> Option<Vec<u8>> {
     if let Some(i) = needle.as_int() {
-        return if (0..=255).contains(&i) { Some(vec![i as u8]) } else { None };
+        return if (0..=255).contains(&i) {
+            Some(vec![i as u8])
+        } else {
+            None
+        };
     }
     unsafe { as_bytes_cloned(needle) }
 }
@@ -548,7 +636,12 @@ fn needle_as_bytes(needle: MbValue) -> Option<Vec<u8>> {
 /// Mirrors `str.find`'s clamp rules: defaults `0`/`len`, negatives
 /// counted from the end and clamped to 0, positives capped at `len`.
 /// The returned index is absolute (not relative to start).
-pub fn mb_bytes_find_range(haystack: MbValue, needle: MbValue, start: MbValue, end: MbValue) -> MbValue {
+pub fn mb_bytes_find_range(
+    haystack: MbValue,
+    needle: MbValue,
+    start: MbValue,
+    end: MbValue,
+) -> MbValue {
     unsafe {
         if let (Some(h), Some(n)) = (as_bytes_cloned(haystack), needle_as_bytes(needle)) {
             let (s, e) = clamp_range(h.len(), start, end);
@@ -596,10 +689,20 @@ pub fn mb_bytes_rfind(haystack: MbValue, needle: MbValue, start: MbValue, end: M
 fn clamp_range(len: usize, start: MbValue, end: MbValue) -> (usize, usize) {
     let len_i = len as i64;
     let mut s = start.as_int().unwrap_or(0);
-    if s < 0 { s = (s + len_i).max(0); } else if s > len_i { s = len_i; }
+    if s < 0 {
+        s = (s + len_i).max(0);
+    } else if s > len_i {
+        s = len_i;
+    }
     let mut e = end.as_int().unwrap_or(len_i);
-    if e < 0 { e = (e + len_i).max(0); } else if e > len_i { e = len_i; }
-    if e < s { e = s; }
+    if e < 0 {
+        e = (e + len_i).max(0);
+    } else if e > len_i {
+        e = len_i;
+    }
+    if e < s {
+        e = s;
+    }
     (s as usize, e as usize)
 }
 
@@ -628,7 +731,8 @@ pub fn mb_bytes_contains(bytes: MbValue, value: MbValue) -> MbValue {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                         MbValue::from_ptr(MbObject::new_str(
-                            "byte must be in range(0, 256)".to_string())),
+                            "byte must be in range(0, 256)".to_string(),
+                        )),
                     );
                     return MbValue::none();
                 }
@@ -639,7 +743,8 @@ pub fn mb_bytes_contains(bytes: MbValue, value: MbValue) -> MbValue {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(
-                        "byte must be in range(0, 256)".to_string())),
+                        "byte must be in range(0, 256)".to_string(),
+                    )),
                 );
                 return MbValue::none();
             }
@@ -649,15 +754,14 @@ pub fn mb_bytes_contains(bytes: MbValue, value: MbValue) -> MbValue {
                 if sub.is_empty() {
                     return MbValue::from_bool(true);
                 }
-                return MbValue::from_bool(
-                    data.windows(sub.len()).any(|w| w == sub.as_slice())
-                );
+                return MbValue::from_bool(data.windows(sub.len()).any(|w| w == sub.as_slice()));
             }
             // Neither an integer nor a bytes-like object → TypeError.
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(
-                    "a bytes-like object is required".to_string())),
+                    "a bytes-like object is required".to_string(),
+                )),
             );
             return MbValue::none();
         }
@@ -709,7 +813,10 @@ pub fn mb_bytearray_pop(ba: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = ba.as_ptr() {
             if let ObjData::ByteArray(ref lock) = (*ptr).data {
-                return lock.write().unwrap().pop()
+                return lock
+                    .write()
+                    .unwrap()
+                    .pop()
                     .map(|b| MbValue::from_int(b as i64))
                     .unwrap_or(MbValue::none());
             }
@@ -737,8 +844,28 @@ pub fn mb_bytes_count(haystack: MbValue, needle: MbValue) -> MbValue {
 /// `bytes.count(sub, start=0, end=len)` — count non-overlapping
 /// occurrences of `sub` within the slice. Empty needle returns
 /// `len(slice) + 1` to match CPython.
-pub fn mb_bytes_count_range(haystack: MbValue, needle: MbValue, start: MbValue, end: MbValue) -> MbValue {
+pub fn mb_bytes_count_range(
+    haystack: MbValue,
+    needle: MbValue,
+    start: MbValue,
+    end: MbValue,
+) -> MbValue {
     unsafe {
+        // An int needle counts a single byte value (`b"mississippi".count(ord("i"))`).
+        let needle = if let Some(i) = needle.as_int() {
+            if !(0..=255).contains(&i) {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "byte must be in range(0, 256)".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+            MbValue::from_ptr(MbObject::new_bytes(vec![i as u8]))
+        } else {
+            needle
+        };
         if let (Some(h), Some(n)) = (as_bytes_cloned(haystack), as_bytes_cloned(needle)) {
             let (s, e) = clamp_range(h.len(), start, end);
             let slice = &h[s..e];
@@ -771,9 +898,16 @@ pub fn mb_bytes_startswith(haystack: MbValue, prefix: MbValue) -> MbValue {
 }
 
 /// `bytes.startswith(prefix, start=0, end=len)` — slice-aware test.
-pub fn mb_bytes_startswith_range(haystack: MbValue, prefix: MbValue, start: MbValue, end: MbValue) -> MbValue {
+pub fn mb_bytes_startswith_range(
+    haystack: MbValue,
+    prefix: MbValue,
+    start: MbValue,
+    end: MbValue,
+) -> MbValue {
     unsafe {
-        let Some(h) = as_bytes_cloned(haystack) else { return MbValue::from_bool(false); };
+        let Some(h) = as_bytes_cloned(haystack) else {
+            return MbValue::from_bool(false);
+        };
         let (s, e) = clamp_range(h.len(), start, end);
         let slice = &h[s..e];
         if let Some(ptr) = prefix.as_ptr() {
@@ -803,9 +937,16 @@ pub fn mb_bytes_endswith(haystack: MbValue, suffix: MbValue) -> MbValue {
 }
 
 /// `bytes.endswith(suffix, start=0, end=len)` — slice-aware test.
-pub fn mb_bytes_endswith_range(haystack: MbValue, suffix: MbValue, start: MbValue, end: MbValue) -> MbValue {
+pub fn mb_bytes_endswith_range(
+    haystack: MbValue,
+    suffix: MbValue,
+    start: MbValue,
+    end: MbValue,
+) -> MbValue {
     unsafe {
-        let Some(h) = as_bytes_cloned(haystack) else { return MbValue::from_bool(false); };
+        let Some(h) = as_bytes_cloned(haystack) else {
+            return MbValue::from_bool(false);
+        };
         let (s, e) = clamp_range(h.len(), start, end);
         let slice = &h[s..e];
         if let Some(ptr) = suffix.as_ptr() {
@@ -835,7 +976,12 @@ pub fn mb_bytes_replace(haystack: MbValue, old: MbValue, new: MbValue) -> MbValu
 
 /// `bytes.replace(old, new, count=-1)` — replace at most `count` occurrences.
 /// `count == -1` (or negative) means "all", matching CPython.
-pub fn mb_bytes_replace_count(haystack: MbValue, old: MbValue, new: MbValue, count: MbValue) -> MbValue {
+pub fn mb_bytes_replace_count(
+    haystack: MbValue,
+    old: MbValue,
+    new: MbValue,
+    count: MbValue,
+) -> MbValue {
     unsafe {
         if let (Some(h), Some(o), Some(n)) = (
             as_bytes_cloned(haystack),
@@ -851,10 +997,15 @@ pub fn mb_bytes_replace_count(haystack: MbValue, old: MbValue, new: MbValue, cou
                 // the empty needle matches `len + 1` positions.
                 let mut result = Vec::new();
                 for byte in &h {
-                    if remaining > 0 { result.extend_from_slice(&n); remaining -= 1; }
+                    if remaining > 0 {
+                        result.extend_from_slice(&n);
+                        remaining -= 1;
+                    }
                     result.push(*byte);
                 }
-                if remaining > 0 { result.extend_from_slice(&n); }
+                if remaining > 0 {
+                    result.extend_from_slice(&n);
+                }
                 return MbValue::from_ptr(MbObject::new_bytes(result));
             }
             let mut result = Vec::new();
@@ -894,7 +1045,10 @@ fn bytes_clamp_rev(i: i64, len: i64) -> i64 {
 
 /// bytes[start:stop:step] → new bytes
 pub fn mb_bytes_slice_full(
-    bytes: MbValue, start: MbValue, stop: MbValue, step: MbValue,
+    bytes: MbValue,
+    start: MbValue,
+    stop: MbValue,
+    step: MbValue,
 ) -> MbValue {
     unsafe {
         if let Some(data) = as_bytes_cloned(bytes) {
@@ -904,11 +1058,20 @@ pub fn mb_bytes_slice_full(
                 return MbValue::from_ptr(MbObject::new_bytes(Vec::new()));
             }
             let (s, e) = if st > 0 {
-                let s = start.as_int().map(|i| bytes_clamp_index(i, len)).unwrap_or(0);
-                let e = stop.as_int().map(|i| bytes_clamp_index(i, len)).unwrap_or(len);
+                let s = start
+                    .as_int()
+                    .map(|i| bytes_clamp_index(i, len))
+                    .unwrap_or(0);
+                let e = stop
+                    .as_int()
+                    .map(|i| bytes_clamp_index(i, len))
+                    .unwrap_or(len);
                 (s, e)
             } else {
-                let s = start.as_int().map(|i| bytes_clamp_rev(i, len)).unwrap_or(len - 1);
+                let s = start
+                    .as_int()
+                    .map(|i| bytes_clamp_rev(i, len))
+                    .unwrap_or(len - 1);
                 let e = stop.as_int().map(|i| bytes_clamp_rev(i, len)).unwrap_or(-1);
                 (s, e)
             };
@@ -916,12 +1079,16 @@ pub fn mb_bytes_slice_full(
             let mut i = s;
             if st > 0 {
                 while i < e {
-                    if i >= 0 && i < len { result.push(data[i as usize]); }
+                    if i >= 0 && i < len {
+                        result.push(data[i as usize]);
+                    }
                     i += st;
                 }
             } else {
                 while i > e {
-                    if i >= 0 && i < len { result.push(data[i as usize]); }
+                    if i >= 0 && i < len {
+                        result.push(data[i as usize]);
+                    }
                     i += st;
                 }
             }
@@ -957,14 +1124,20 @@ pub fn mb_bytes_split_max(haystack: MbValue, sep: MbValue, maxsplit: MbValue) ->
                 let mut i = 0usize;
                 let len = h.len();
                 while i < len {
-                    while i < len && h[i].is_ascii_whitespace() { i += 1; }
-                    if i >= len { break; }
+                    while i < len && h[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    if i >= len {
+                        break;
+                    }
                     if !unlimited && splits_done >= max {
                         result.push(MbValue::from_ptr(MbObject::new_bytes(h[i..].to_vec())));
                         return MbValue::from_ptr(MbObject::new_list(result));
                     }
                     let start = i;
-                    while i < len && !h[i].is_ascii_whitespace() { i += 1; }
+                    while i < len && !h[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
                     result.push(MbValue::from_ptr(MbObject::new_bytes(h[start..i].to_vec())));
                     splits_done += 1;
                 }
@@ -982,7 +1155,9 @@ pub fn mb_bytes_split_max(haystack: MbValue, sep: MbValue, maxsplit: MbValue) ->
                         break;
                     }
                     if let Some(pos) = h[start..].windows(s.len()).position(|w| w == s.as_slice()) {
-                        result.push(MbValue::from_ptr(MbObject::new_bytes(h[start..start + pos].to_vec())));
+                        result.push(MbValue::from_ptr(MbObject::new_bytes(
+                            h[start..start + pos].to_vec(),
+                        )));
                         start += pos + s.len();
                         splits_done += 1;
                     } else {
@@ -1014,7 +1189,9 @@ pub fn mb_bytes_join(sep: MbValue, parts: MbValue) -> MbValue {
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
                     for item in items.iter() {
-                        if !first { result.extend_from_slice(&sep_data); }
+                        if !first {
+                            result.extend_from_slice(&sep_data);
+                        }
                         if let Some(data) = as_bytes_cloned(*item) {
                             result.extend_from_slice(&data);
                         }
@@ -1023,7 +1200,9 @@ pub fn mb_bytes_join(sep: MbValue, parts: MbValue) -> MbValue {
                 }
                 ObjData::Tuple(ref items) => {
                     for item in items.iter() {
-                        if !first { result.extend_from_slice(&sep_data); }
+                        if !first {
+                            result.extend_from_slice(&sep_data);
+                        }
                         if let Some(data) = as_bytes_cloned(*item) {
                             result.extend_from_slice(&data);
                         }
@@ -1142,13 +1321,18 @@ fn strip_bytes(data: &[u8], strip_set: &Option<Vec<u8>>, left: bool, right: bool
     };
 
     let start = if left {
-        data.iter().position(|b| !should_strip(b)).unwrap_or(data.len())
+        data.iter()
+            .position(|b| !should_strip(b))
+            .unwrap_or(data.len())
     } else {
         0
     };
 
     let end = if right {
-        data.iter().rposition(|b| !should_strip(b)).map(|p| p + 1).unwrap_or(start)
+        data.iter()
+            .rposition(|b| !should_strip(b))
+            .map(|p| p + 1)
+            .unwrap_or(start)
     } else {
         data.len()
     };
@@ -1196,24 +1380,36 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
                 unsafe {
                     if let Some(ptr) = arg(argc() - 1).as_ptr() {
                         matches!((*ptr).data, ObjData::Dict(_))
-                    } else { false }
+                    } else {
+                        false
+                    }
                 }
-            } else { false };
+            } else {
+                false
+            };
             let positional_count = if last_is_kwargs { argc() - 1 } else { argc() };
-            if positional_count >= 1 { encoding = arg(0); }
-            if positional_count >= 2 { errors = arg(1); }
+            if positional_count >= 1 {
+                encoding = arg(0);
+            }
+            if positional_count >= 2 {
+                errors = arg(1);
+            }
             if last_is_kwargs {
                 unsafe {
                     if let Some(ptr) = arg(argc() - 1).as_ptr() {
                         if let ObjData::Dict(ref lock) = (*ptr).data {
                             let guard = lock.read().unwrap();
                             if encoding.is_none() {
-                                if let Some(&v) = guard.get(&super::dict_ops::DictKey::Str("encoding".into())) {
+                                if let Some(&v) =
+                                    guard.get(&super::dict_ops::DictKey::Str("encoding".into()))
+                                {
                                     encoding = v;
                                 }
                             }
                             if errors.is_none() {
-                                if let Some(&v) = guard.get(&super::dict_ops::DictKey::Str("errors".into())) {
+                                if let Some(&v) =
+                                    guard.get(&super::dict_ops::DictKey::Str("errors".into()))
+                                {
                                     errors = v;
                                 }
                             }
@@ -1259,9 +1455,10 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
         }
         "join" => mb_bytes_join(receiver, arg(0)),
         "strip" => {
-            let is_bytearray = receiver.as_ptr().map(|ptr| unsafe {
-                matches!((*ptr).data, ObjData::ByteArray(_))
-            }).unwrap_or(false);
+            let is_bytearray = receiver
+                .as_ptr()
+                .map(|ptr| unsafe { matches!((*ptr).data, ObjData::ByteArray(_)) })
+                .unwrap_or(false);
             if is_bytearray {
                 mb_bytearray_strip(receiver, arg(0))
             } else {
@@ -1269,9 +1466,10 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             }
         }
         "lstrip" => {
-            let is_bytearray = receiver.as_ptr().map(|ptr| unsafe {
-                matches!((*ptr).data, ObjData::ByteArray(_))
-            }).unwrap_or(false);
+            let is_bytearray = receiver
+                .as_ptr()
+                .map(|ptr| unsafe { matches!((*ptr).data, ObjData::ByteArray(_)) })
+                .unwrap_or(false);
             if is_bytearray {
                 mb_bytearray_lstrip(receiver, arg(0))
             } else {
@@ -1279,9 +1477,10 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             }
         }
         "rstrip" => {
-            let is_bytearray = receiver.as_ptr().map(|ptr| unsafe {
-                matches!((*ptr).data, ObjData::ByteArray(_))
-            }).unwrap_or(false);
+            let is_bytearray = receiver
+                .as_ptr()
+                .map(|ptr| unsafe { matches!((*ptr).data, ObjData::ByteArray(_)) })
+                .unwrap_or(false);
             if is_bytearray {
                 mb_bytearray_rstrip(receiver, arg(0))
             } else {
@@ -1289,11 +1488,23 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             }
         }
         // ByteArray-specific
-        "append" => { mb_bytearray_append(receiver, arg(0)); MbValue::none() }
-        "extend" => { mb_bytearray_extend(receiver, arg(0)); MbValue::none() }
-        "clear" => { mb_bytearray_clear(receiver); MbValue::none() }
+        "append" => {
+            mb_bytearray_append(receiver, arg(0));
+            MbValue::none()
+        }
+        "extend" => {
+            mb_bytearray_extend(receiver, arg(0));
+            MbValue::none()
+        }
+        "clear" => {
+            mb_bytearray_clear(receiver);
+            MbValue::none()
+        }
         "pop" => mb_bytearray_pop(receiver),
-        "reverse" => { mb_bytearray_reverse(receiver); MbValue::none() }
+        "reverse" => {
+            mb_bytearray_reverse(receiver);
+            MbValue::none()
+        }
         "partition" => mb_bytes_partition(receiver, arg(0)),
         "rpartition" => mb_bytes_rpartition(receiver, arg(0)),
         "index" => {
@@ -1318,7 +1529,11 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
         "capitalize" => mb_bytes_via_str(receiver, |s| {
             let mut chars = s.chars();
             match chars.next() {
-                Some(c) => format!("{}{}", c.to_uppercase().collect::<String>(), chars.as_str().to_lowercase()),
+                Some(c) => format!(
+                    "{}{}",
+                    c.to_uppercase().collect::<String>(),
+                    chars.as_str().to_lowercase()
+                ),
                 None => String::new(),
             }
         }),
@@ -1327,7 +1542,11 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             let mut new_word = true;
             for c in s.chars() {
                 if c.is_alphabetic() {
-                    if new_word { out.extend(c.to_uppercase()); } else { out.extend(c.to_lowercase()); }
+                    if new_word {
+                        out.extend(c.to_uppercase());
+                    } else {
+                        out.extend(c.to_lowercase());
+                    }
                     new_word = false;
                 } else {
                     out.push(c);
@@ -1337,11 +1556,17 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             out
         }),
         "swapcase" => mb_bytes_via_str(receiver, |s| {
-            s.chars().map(|c| {
-                if c.is_uppercase() { c.to_lowercase().collect::<String>() }
-                else if c.is_lowercase() { c.to_uppercase().collect::<String>() }
-                else { c.to_string() }
-            }).collect()
+            s.chars()
+                .map(|c| {
+                    if c.is_uppercase() {
+                        c.to_lowercase().collect::<String>()
+                    } else if c.is_lowercase() {
+                        c.to_uppercase().collect::<String>()
+                    } else {
+                        c.to_string()
+                    }
+                })
+                .collect()
         }),
         "casefold" => mb_bytes_via_str(receiver, |s| s.to_lowercase()),
         "lower" => mb_bytes_via_str(receiver, |s| s.to_lowercase()),
@@ -1361,15 +1586,17 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
         "removesuffix" => mb_bytes_removesuffix(receiver, arg(0)),
         "copy" => {
             let cloned: Option<Vec<u8>> = unsafe { as_bytes_cloned(receiver) };
-            cloned.map(|d| MbValue::from_ptr(MbObject::new_bytes(d))).unwrap_or_else(MbValue::none)
+            cloned
+                .map(|d| MbValue::from_ptr(MbObject::new_bytes(d)))
+                .unwrap_or_else(MbValue::none)
         }
         "__alloc__" => MbValue::from_int(0),
         _ => {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    format!("'bytes' object has no attribute '{name}'"),
-                )),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "'bytes' object has no attribute '{name}'"
+                ))),
             );
             MbValue::none()
         }
@@ -1383,9 +1610,10 @@ fn extract_bytes(val: MbValue) -> Option<Vec<u8>> {
 }
 
 fn bytes_to_value(receiver: MbValue, data: Vec<u8>) -> MbValue {
-    let is_bytearray = receiver.as_ptr().map(|ptr| unsafe {
-        matches!((*ptr).data, ObjData::ByteArray(_))
-    }).unwrap_or(false);
+    let is_bytearray = receiver
+        .as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::ByteArray(_)) })
+        .unwrap_or(false);
     if is_bytearray {
         MbValue::from_ptr(MbObject::new_bytearray(data))
     } else {
@@ -1414,12 +1642,23 @@ pub fn mb_bytes_partition(receiver: MbValue, sep: MbValue) -> MbValue {
             make(Vec::new()),
         ]));
     }
-    if let Some(idx) = data.windows(sep_b.len()).position(|w| w == sep_b.as_slice()) {
+    if let Some(idx) = data
+        .windows(sep_b.len())
+        .position(|w| w == sep_b.as_slice())
+    {
         let before = data[..idx].to_vec();
         let after = data[idx + sep_b.len()..].to_vec();
-        MbValue::from_ptr(MbObject::new_tuple(vec![make(before), make(sep_b), make(after)]))
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            make(before),
+            make(sep_b),
+            make(after),
+        ]))
     } else {
-        MbValue::from_ptr(MbObject::new_tuple(vec![make(data), make(Vec::new()), make(Vec::new())]))
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            make(data),
+            make(Vec::new()),
+            make(Vec::new()),
+        ]))
     }
 }
 
@@ -1434,12 +1673,23 @@ pub fn mb_bytes_rpartition(receiver: MbValue, sep: MbValue) -> MbValue {
             make(data),
         ]));
     }
-    if let Some(idx) = data.windows(sep_b.len()).rposition(|w| w == sep_b.as_slice()) {
+    if let Some(idx) = data
+        .windows(sep_b.len())
+        .rposition(|w| w == sep_b.as_slice())
+    {
         let before = data[..idx].to_vec();
         let after = data[idx + sep_b.len()..].to_vec();
-        MbValue::from_ptr(MbObject::new_tuple(vec![make(before), make(sep_b), make(after)]))
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            make(before),
+            make(sep_b),
+            make(after),
+        ]))
     } else {
-        MbValue::from_ptr(MbObject::new_tuple(vec![make(Vec::new()), make(Vec::new()), make(data)]))
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            make(Vec::new()),
+            make(Vec::new()),
+            make(data),
+        ]))
     }
 }
 
@@ -1454,7 +1704,12 @@ pub fn mb_bytes_index(receiver: MbValue, needle: MbValue, start: MbValue, end: M
     r
 }
 
-pub fn mb_bytes_rindex(receiver: MbValue, needle: MbValue, start: MbValue, end: MbValue) -> MbValue {
+pub fn mb_bytes_rindex(
+    receiver: MbValue,
+    needle: MbValue,
+    start: MbValue,
+    end: MbValue,
+) -> MbValue {
     let r = mb_bytes_rfind(receiver, needle, start, end);
     if r.as_int() == Some(-1) {
         super::exception::mb_raise(
@@ -1468,7 +1723,9 @@ pub fn mb_bytes_rindex(receiver: MbValue, needle: MbValue, start: MbValue, end: 
 pub fn mb_bytes_center(receiver: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
     let w = width.as_int().unwrap_or(0).max(0) as usize;
-    if data.len() >= w { return bytes_to_value(receiver, data); }
+    if data.len() >= w {
+        return bytes_to_value(receiver, data);
+    }
     let pad = w - data.len();
     let left = pad / 2;
     let right = pad - left;
@@ -1483,7 +1740,9 @@ pub fn mb_bytes_center(receiver: MbValue, width: MbValue, fill: MbValue) -> MbVa
 pub fn mb_bytes_ljust(receiver: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
     let w = width.as_int().unwrap_or(0).max(0) as usize;
-    if data.len() >= w { return bytes_to_value(receiver, data); }
+    if data.len() >= w {
+        return bytes_to_value(receiver, data);
+    }
     let f = fill_byte(fill);
     let mut out = data.clone();
     out.extend(std::iter::repeat_n(f, w - data.len()));
@@ -1493,7 +1752,9 @@ pub fn mb_bytes_ljust(receiver: MbValue, width: MbValue, fill: MbValue) -> MbVal
 pub fn mb_bytes_rjust(receiver: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
     let w = width.as_int().unwrap_or(0).max(0) as usize;
-    if data.len() >= w { return bytes_to_value(receiver, data); }
+    if data.len() >= w {
+        return bytes_to_value(receiver, data);
+    }
     let f = fill_byte(fill);
     let pad = w - data.len();
     let mut out = Vec::with_capacity(w);
@@ -1508,7 +1769,9 @@ pub fn mb_bytes_translate(receiver: MbValue, table: MbValue, delete: MbValue) ->
     let delete_b = extract_bytes(delete).unwrap_or_default();
     let mut out = Vec::with_capacity(data.len());
     for &b in &data {
-        if delete_b.contains(&b) { continue; }
+        if delete_b.contains(&b) {
+            continue;
+        }
         let mapped = match &table_b {
             Some(t) if t.len() == 256 => t[b as usize],
             _ => b,
@@ -1535,7 +1798,9 @@ pub fn mb_bytes_splitlines(receiver: MbValue, _keepends: MbValue) -> MbValue {
             start = i + 1;
         } else if data[i] == b'\r' {
             lines.push(bytes_to_value(receiver, data[start..i].to_vec()));
-            if i + 1 < data.len() && data[i+1] == b'\n' { i += 1; }
+            if i + 1 < data.len() && data[i + 1] == b'\n' {
+                i += 1;
+            }
             start = i + 1;
         }
         i += 1;
@@ -1556,14 +1821,18 @@ pub fn mb_bytes_via_str<F: Fn(&str) -> String>(receiver: MbValue, f: F) -> MbVal
 pub fn mb_bytes_zfill(receiver: MbValue, width: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
     let w = width.as_int().unwrap_or(0).max(0) as usize;
-    if data.len() >= w { return bytes_to_value(receiver, data); }
+    if data.len() >= w {
+        return bytes_to_value(receiver, data);
+    }
     let pad = w - data.len();
     let mut out = Vec::with_capacity(w);
     let (sign, body) = match data.first() {
         Some(b) if *b == b'+' || *b == b'-' => (Some(*b), &data[1..]),
         _ => (None, data.as_slice()),
     };
-    if let Some(s) = sign { out.push(s); }
+    if let Some(s) = sign {
+        out.push(s);
+    }
     out.extend(std::iter::repeat_n(b'0', pad));
     out.extend_from_slice(body);
     bytes_to_value(receiver, out)
@@ -1581,7 +1850,11 @@ pub fn mb_bytes_expandtabs(receiver: MbValue, tabsize: MbValue) -> MbValue {
             col += pad;
         } else {
             out.push(b);
-            if b == b'\n' || b == b'\r' { col = 0; } else { col += 1; }
+            if b == b'\n' || b == b'\r' {
+                col = 0;
+            } else {
+                col += 1;
+            }
         }
     }
     bytes_to_value(receiver, out)
@@ -1589,15 +1862,23 @@ pub fn mb_bytes_expandtabs(receiver: MbValue, tabsize: MbValue) -> MbValue {
 
 pub fn mb_bytes_predicate<F: Fn(u8) -> bool>(receiver: MbValue, f: F) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    if data.is_empty() { return MbValue::from_bool(false); }
+    if data.is_empty() {
+        return MbValue::from_bool(false);
+    }
     MbValue::from_bool(data.iter().all(|&b| f(b)))
 }
 
 pub fn mb_bytes_alpha_pred<F: Fn(u8) -> bool>(receiver: MbValue, f: F) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
     let any_alpha = data.iter().any(|b| b.is_ascii_alphabetic());
-    if !any_alpha { return MbValue::from_bool(false); }
-    MbValue::from_bool(data.iter().filter(|b| b.is_ascii_alphabetic()).all(|&b| f(b)))
+    if !any_alpha {
+        return MbValue::from_bool(false);
+    }
+    MbValue::from_bool(
+        data.iter()
+            .filter(|b| b.is_ascii_alphabetic())
+            .all(|&b| f(b)),
+    )
 }
 
 pub fn mb_bytes_removeprefix(receiver: MbValue, prefix: MbValue) -> MbValue {
@@ -1671,7 +1952,8 @@ mod tests {
     #[test]
     fn test_bytes_new_from_list() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(72), MbValue::from_int(105),
+            MbValue::from_int(72),
+            MbValue::from_int(105),
         ]));
         let b = mb_bytes_new(list);
         assert_eq!(mb_bytes_len(b).as_int(), Some(2));
@@ -1712,10 +1994,15 @@ mod tests {
         // out-of-range path stays covered (was previously a stale len==1024 assert).
         super::super::exception::mb_clear_exception();
         let big = super::super::iter::mb_reversed(super::super::iter::mb_range_iter(
-            MbValue::from_int(0), MbValue::from_int(1024), MbValue::from_int(1),
+            MbValue::from_int(0),
+            MbValue::from_int(1024),
+            MbValue::from_int(1),
         ));
         let r = mb_bytes_new(big);
-        assert!(r.is_none(), "bytes() of out-of-range values must not return a value");
+        assert!(
+            r.is_none(),
+            "bytes() of out-of-range values must not return a value"
+        );
         assert_eq!(
             super::super::exception::current_exception_type().as_deref(),
             Some("ValueError"),
@@ -1782,7 +2069,8 @@ mod tests {
     #[test]
     fn test_bytearray_new_from_list() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(65), MbValue::from_int(66),
+            MbValue::from_int(65),
+            MbValue::from_int(66),
         ]));
         let ba = mb_bytearray_new(list);
         assert_eq!(mb_bytes_len(ba).as_int(), Some(2));
@@ -1902,7 +2190,10 @@ mod tests {
     #[test]
     fn test_bytes_contains_int() {
         let b = make_bytes(b"abc");
-        assert_eq!(mb_bytes_contains(b, MbValue::from_int(b'a' as i64)).as_bool(), Some(true));
+        assert_eq!(
+            mb_bytes_contains(b, MbValue::from_int(b'a' as i64)).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
@@ -1915,7 +2206,10 @@ mod tests {
     #[test]
     fn test_bytes_contains_not_found() {
         let b = make_bytes(b"abc");
-        assert_eq!(mb_bytes_contains(b, MbValue::from_int(b'z' as i64)).as_bool(), Some(false));
+        assert_eq!(
+            mb_bytes_contains(b, MbValue::from_int(b'z' as i64)).as_bool(),
+            Some(false)
+        );
     }
 
     // ── bytearray mutations ──
@@ -2027,8 +2321,14 @@ mod tests {
     #[test]
     fn test_py312_bytes_indexing_returns_int() {
         let b = MbValue::from_ptr(MbObject::new_bytes(vec![104, 101, 108, 108, 111]));
-        assert_eq!(mb_bytes_getitem(b, MbValue::from_int(0)).as_int(), Some(104));
-        assert_eq!(mb_bytes_getitem(b, MbValue::from_int(-1)).as_int(), Some(111));
+        assert_eq!(
+            mb_bytes_getitem(b, MbValue::from_int(0)).as_int(),
+            Some(104)
+        );
+        assert_eq!(
+            mb_bytes_getitem(b, MbValue::from_int(-1)).as_int(),
+            Some(111)
+        );
     }
 
     #[test]
@@ -2061,7 +2361,10 @@ mod tests {
         let b = MbValue::from_ptr(MbObject::new_bytes(vec![104, 101, 108]));
         let prefix = MbValue::from_ptr(MbObject::new_bytes(vec![104, 101]));
         let args = MbValue::from_ptr(MbObject::new_list(vec![prefix]));
-        assert_eq!(dispatch_bytes_method("startswith", b, args).as_bool(), Some(true));
+        assert_eq!(
+            dispatch_bytes_method("startswith", b, args).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
@@ -2069,7 +2372,10 @@ mod tests {
         let b = MbValue::from_ptr(MbObject::new_bytes(vec![104, 101, 108]));
         let suffix = MbValue::from_ptr(MbObject::new_bytes(vec![101, 108]));
         let args = MbValue::from_ptr(MbObject::new_list(vec![suffix]));
-        assert_eq!(dispatch_bytes_method("endswith", b, args).as_bool(), Some(true));
+        assert_eq!(
+            dispatch_bytes_method("endswith", b, args).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
@@ -2089,7 +2395,10 @@ mod tests {
         let args = MbValue::from_ptr(MbObject::new_list(vec![old, new_b]));
         let result = dispatch_bytes_method("replace", b, args);
         assert_eq!(mb_bytes_len(result).as_int(), Some(4));
-        assert_eq!(mb_bytes_getitem(result, MbValue::from_int(0)).as_int(), Some(9));
+        assert_eq!(
+            mb_bytes_getitem(result, MbValue::from_int(0)).as_int(),
+            Some(9)
+        );
     }
 
     // ── R3: Scenario-matching tests from spec ──

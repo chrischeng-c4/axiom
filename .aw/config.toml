@@ -111,6 +111,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "cap"
 path = "projects/cap"
+td_path = "projects/cap/tech-design"
 label = "project:cap"
 
 [[projects.workspaces]]
@@ -125,6 +126,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "vat"
 path = "projects/vat"
+td_path = "projects/vat/tech-design"
 cap_path = "projects/vat/README.md"
 label = "project:vat"
 
@@ -140,6 +142,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "arena"
 path = "projects/arena"
+td_path = "projects/arena/tech-design"
 cap_path = "projects/arena/README.md"
 label = "project:arena"
 
@@ -155,6 +158,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "guard"
 path = "projects/guard"
+td_path = "projects/guard/tech-design"
 cap_path = "projects/guard/README.md"
 label = "project:guard"
 
@@ -170,6 +174,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "rig"
 path = "projects/rig"
+td_path = "projects/rig/tech-design"
 cap_path = "projects/rig/README.md"
 label = "project:rig"
 
@@ -198,20 +203,19 @@ test_cmd = "cargo test -p mamba"
 [[projects]]
 name = "lumen"
 path = "projects/lumen"
+td_path = "projects/lumen/tech-design"
 cap_path = "projects/lumen/README.md"
 label = "project:lumen"
 # EC tool bindings (contract before implementation). `aw health --verify-ec`
 # dispatches each bound dimension to its external tool; unbound categories
-# (e.g. behavior, security) fall back to the manifest command. One spec, two
-# surfaces: the same workload is driven both as a vat runner (self-provisioning)
-# and as the verify-ec command (host-provisioned).
-#   benchmark (效能) -> arena: lumen vs pg AND OpenSearch search-latency, one
-#                        3-target run, ratcheting gate (lumen must beat both).
-#   stability (穩定性) -> rig: resilience scenarios (partition recovery + 5%
-#                        packet-loss p99 budget) over toxiproxy.
+# (e.g. behavior, security) fall back to the manifest command.
+#   efficiency (效能) -> vat provisions PG/OpenSearch, then meter wraps the
+#                         ratcheted lumen-vs-pg/OpenSearch perf gate.
+#   stability (穩定性) -> vat provisions lumen/toxiproxy, then rig runs the
+#                        resilience scenarios and p99 budgets.
 # behavior (功能) and security (安全) stay cargo gates per the EC-gatekeeper map.
-ec.benchmark = { tool = "arena", spec = "projects/arena/examples/lumen-vs-pg-and-opensearch.toml" }
-ec.stability = { tool = "rig", dir = "projects/lumen/tests/rig/scenarios/resilience" }
+ec.efficiency = { tool = "meter", meter = "projects/lumen", command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter" }
+ec.stability = { tool = "rig", dir = "projects/lumen/tests/rig/cases/resilience", command = "cd projects/lumen && ../../target/debug/vat run rig-resilience" }
 
 [[projects.workspaces]]
 name = "lumen"
@@ -223,74 +227,75 @@ verify_cold = true
 
 [[projects]]
 name = "pg"
-path = "projects/pgkit"
-td_path = ".aw/tech-design/projects/pgkit"
+path = "projects/mamba/mambalibs/pgkit"
+td_path = ".aw/tech-design/projects/pg"
+cap_path = "projects/mamba/mambalibs/pgkit/pg/README.md"
 label = "project:pg"
 
 [[projects.workspaces]]
 name = "pg"
-paths = ["projects/pgkit/pg/**"]
+paths = ["projects/mamba/mambalibs/pgkit/pg/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-pg"
 
 [[projects.workspaces]]
 name = "pg-cli"
-paths = ["projects/pgkit/pg-cli/**"]
+paths = ["projects/mamba/mambalibs/pgkit/pg-cli/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-pg-cli"
 
 [[projects.workspaces]]
 name = "pg-mamba"
-paths = ["projects/pgkit/pg-mamba/**"]
+paths = ["projects/mamba/mambalibs/pgkit/binding/**"]
 target = "rust"
-test_cmd = "cargo test -p cclab-pg-mamba"
+test_cmd = "cargo test -p pgkit-binding"
 
 
 [[projects]]
 name = "agentkit"
-path = "projects/agentkit"
+path = "projects/mamba/mambalibs/agentkit"
 td_path = ".aw/tech-design/projects/agentkit"
 label = "project:agentkit"
 
 [[projects.workspaces]]
 name = "agentkit-core"
-paths = ["projects/agentkit/core/**"]
+paths = ["projects/mamba/mambalibs/agentkit/core/**"]
 target = "rust"
 test_cmd = "cargo test -p agent"
 
 [[projects.workspaces]]
 name = "agentkit-mamba"
-paths = ["projects/agentkit/mamba/**"]
+paths = ["projects/mamba/mambalibs/agentkit/binding/**"]
 target = "rust"
-test_cmd = "cargo test -p agent-mamba"
+test_cmd = "cargo test -p agentkit-binding"
 
 [[projects.workspaces]]
 name = "agentkit-graph"
-paths = ["projects/agentkit/graph/**"]
+paths = ["projects/mamba/mambalibs/agentkit/graph/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-graph"
 
 [[projects.workspaces]]
 name = "agentkit-llm"
-paths = ["projects/agentkit/llm/**"]
+paths = ["projects/mamba/mambalibs/agentkit/llm/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-llm"
 
 [[projects.workspaces]]
 name = "agentkit-tools"
-paths = ["projects/agentkit/tools/**"]
+paths = ["projects/mamba/mambalibs/agentkit/tools/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-tools"
 
 [[projects.workspaces]]
 name = "agentkit-frontend"
-paths = ["projects/agentkit/frontend/**"]
+paths = ["projects/mamba/mambalibs/agentkit/frontend/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-frontend"
 
 [[projects.workspaces]]
 name = "agentkit-backend"
-paths = ["projects/agentkit/backend/**"]
+paths = ["projects/mamba/mambalibs/agentkit/backend/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-backend"
 
@@ -342,6 +347,44 @@ paths = [
 target = "schemas"
 test_cmd = "true"
 
+
+[[projects]]
+name = "relay"
+path = "projects/relay"
+td_path = "projects/relay/tech-design"
+cap_path = "projects/relay/README.md"
+label = "project:relay"
+# Relay EC dispatch is vat-isolated; meter owns performance evidence and guard
+# owns security evidence. Legacy arena comparison remains advisory dogfood until
+# native broker adapters are promoted to required EC.
+ec.efficiency = { tool = "meter", meter = "projects/relay", command = "cd projects/relay && ../../target/debug/vat run meter-perf" }
+ec.security = { tool = "guard", dir = "projects/relay", command = "cd projects/relay && ../../target/debug/vat run guard-security" }
+
+[[projects.workspaces]]
+name = "relay"
+paths = ["projects/relay/**"]
+target = "rust"
+test_cmd = "cargo test -p relay"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+[[projects]]
+name = "keep"
+path = "projects/keep"
+td_path = "projects/keep/tech-design"
+cap_path = "projects/keep/README.md"
+label = "project:keep"
+ec.efficiency = { tool = "meter", meter = "projects/keep", command = "cd projects/keep && ../../target/debug/vat run meter-efficiency" }
+ec.security = { tool = "guard", dir = "projects/keep", command = "cd projects/keep && ../../target/debug/vat run guard-security" }
+
+[[projects.workspaces]]
+name = "keep"
+paths = ["projects/keep/**"]
+target = "rust"
+test_cmd = "cargo test -p keep"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Agents — registry of LLM runners available for work-item assignment.
 #
@@ -386,15 +429,6 @@ strengths = [
 # BEGIN AW SYNC — auto-generated, do not edit by hand
 
 [[projects]]
-name = "cclab-array"
-path = "crates/cclab-array"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-array/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-array"
-
-[[projects]]
 name = "cclab-aurora"
 path = "crates/cclab-aurora"
 
@@ -402,15 +436,6 @@ path = "crates/cclab-aurora"
 paths = ["crates/cclab-aurora/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-aurora"
-
-[[projects]]
-name = "cclab-cli"
-path = "crates/cclab-cli"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-cli/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-cli"
 
 [[projects]]
 name = "cclab-cli-registry"
@@ -422,25 +447,6 @@ target = "rust"
 test_cmd = "cargo test -p cclab-cli-registry"
 
 [[projects]]
-name = "cclab-cmd"
-path = "crates/cclab-cmd"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-cmd/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-cmd"
-
-[[projects]]
-name = "compass"
-aliases = ["cclab-compass"]
-path = "libs/compass"
-
-[[projects.workspaces]]
-paths = ["libs/compass/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-compass"
-
-[[projects]]
 name = "cclab-core"
 path = "crates/cclab-core"
 
@@ -448,15 +454,6 @@ path = "crates/cclab-core"
 paths = ["crates/cclab-core/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-core"
-
-[[projects]]
-name = "cclab-crypto"
-path = "crates/cclab-crypto"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-crypto/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-crypto"
 
 [[projects]]
 name = "cclab-ctx-inf-db"
@@ -502,15 +499,6 @@ path = "crates/cclab-grid-wasm"
 paths = ["crates/cclab-grid-wasm/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-grid-wasm"
-
-[[projects]]
-name = "cclab-hive"
-path = "crates/cclab-hive"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-hive/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-hive"
 
 [[projects]]
 name = "cclab-kv"
@@ -567,47 +555,6 @@ target = "rust"
 test_cmd = "cargo test -p cclab-mcp-mamba"
 
 [[projects]]
-name = "cclab-media"
-path = "crates/cclab-media"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-media/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-media"
-
-[[projects]]
-name = "cclab-mongo"
-path = "crates/cclab-mongo"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-mongo/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-mongo"
-
-[[projects]]
-name = "cclab-plot"
-path = "crates/cclab-plot"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-plot/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-plot"
-
-[[projects]]
-name = "meter"
-path = "projects/meter"
-cap_path = "projects/meter/README.md"
-label = "project:meter"
-
-[[projects.workspaces]]
-name = "meter"
-paths = ["projects/meter/**"]
-target = "rust"
-test_cmd = "cargo test -p meter"
-verify_cold = true
-codegen.profile = "rust/score-crate"
-
-[[projects]]
 name = "cclab-qc-mamba"
 path = "crates/cclab-qc-mamba"
 
@@ -615,15 +562,6 @@ path = "crates/cclab-qc-mamba"
 paths = ["crates/cclab-qc-mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-qc-mamba"
-
-[[projects]]
-name = "cclab-razer"
-path = "crates/cclab-razer"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-razer/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-razer"
 
 [[projects]]
 name = "cclab-runtime-mamba"
@@ -653,15 +591,6 @@ target = "rust"
 test_cmd = "cargo test -p cclab-schema-mamba"
 
 [[projects]]
-name = "cclab-sci"
-path = "crates/cclab-sci"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-sci/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-sci"
-
-[[projects]]
 name = "cclab-server"
 path = "crates/cclab-server"
 
@@ -687,15 +616,6 @@ path = "crates/cclab-tqdm"
 paths = ["crates/cclab-tqdm/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-tqdm"
-
-[[projects]]
-name = "cclab-typer"
-path = "crates/cclab-typer"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-typer/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-typer"
 
 [[projects]]
 name = "cclab-util"
@@ -725,23 +645,13 @@ target = "rust"
 test_cmd = "cargo test -p agentic-workflow"
 
 [[projects]]
-name = "agentkit"
-path = "projects/agentkit"
+name = "arena"
+path = "projects/arena"
 
 [[projects.workspaces]]
-name = "agentkit"
-paths = ["projects/agentkit/**"]
-target = "schemas"
-test_cmd = "true"
-
-[[projects]]
-name = "apikit-demo"
-path = "projects/apikit-demo"
-
-[[projects.workspaces]]
-paths = ["projects/apikit-demo/**"]
+paths = ["projects/arena/**"]
 target = "rust"
-test_cmd = "cargo test -p apikit-demo"
+test_cmd = "cargo test -p arena"
 
 [[projects]]
 name = "cap"
@@ -753,20 +663,13 @@ target = "rust"
 test_cmd = "cargo test -p cap"
 
 [[projects]]
-name = "conductor"
-path = "projects/conductor"
+name = "cgdb"
+path = "projects/cgdb"
 
 [[projects.workspaces]]
-name = "be"
-paths = ["projects/conductor/be/**"]
-target = "python"
-test_cmd = "cd projects/conductor/be && uv run pytest"
-
-[[projects.workspaces]]
-name = "fe"
-paths = ["projects/conductor/fe/**"]
-target = "typescript"
-test_cmd = "cd projects/conductor/fe && npx vitest run"
+paths = ["projects/cgdb/**"]
+target = "rust"
+test_cmd = "cargo test -p cgdb-smoke"
 
 [[projects]]
 name = "cue"
@@ -784,12 +687,22 @@ paths = ["projects/cue/fe/**"]
 target = "typescript"
 
 [[projects]]
-name = "das-v2"
-path = "projects/das-v2"
+name = "guard"
+path = "projects/guard"
 
 [[projects.workspaces]]
-paths = ["projects/das-v2/**"]
-target = "python"
+paths = ["projects/guard/**"]
+target = "rust"
+test_cmd = "cargo test -p guard"
+
+[[projects]]
+name = "httpkit-demo"
+path = "projects/httpkit-demo"
+
+[[projects.workspaces]]
+paths = ["projects/httpkit-demo/**"]
+target = "rust"
+test_cmd = "cargo test -p httpkit-demo"
 
 [[projects]]
 name = "jet"
@@ -801,6 +714,15 @@ target = "rust"
 test_cmd = "cargo test -p jet"
 
 [[projects]]
+name = "lumen"
+path = "projects/lumen"
+
+[[projects.workspaces]]
+paths = ["projects/lumen/**"]
+target = "rust"
+test_cmd = "cargo test -p lumen"
+
+[[projects]]
 name = "mamba"
 path = "projects/mamba"
 
@@ -810,13 +732,59 @@ target = "rust"
 test_cmd = "cargo test -p mamba"
 
 [[projects]]
-name = "pgkit"
-path = "projects/pgkit"
+name = "meter"
+path = "projects/meter"
 
 [[projects.workspaces]]
-name = "pgkit"
-paths = ["projects/pgkit/**"]
+paths = ["projects/meter/**"]
+target = "rust"
+test_cmd = "cargo test -p meter"
+
+[[projects]]
+name = "qc"
+path = "projects/qc"
+
+[[projects.workspaces]]
+name = "qc"
+paths = ["projects/qc/**"]
 target = "schemas"
 test_cmd = "true"
+
+[[projects]]
+name = "queue"
+path = "projects/queue"
+
+[[projects.workspaces]]
+name = "queue"
+paths = ["projects/queue/**"]
+target = "schemas"
+test_cmd = "true"
+
+[[projects]]
+name = "rig"
+path = "projects/rig"
+
+[[projects.workspaces]]
+paths = ["projects/rig/**"]
+target = "rust"
+test_cmd = "cargo test -p rig"
+
+[[projects]]
+name = "vat"
+path = "projects/vat"
+
+[[projects.workspaces]]
+paths = ["projects/vat/**"]
+target = "rust"
+test_cmd = "cargo test -p vat"
+
+[[projects]]
+name = "compass"
+path = "libs/compass"
+
+[[projects.workspaces]]
+paths = ["libs/compass/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-compass"
 
 # END AW SYNC

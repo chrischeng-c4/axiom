@@ -1,9 +1,9 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md#source
 // CODEGEN-BEGIN
-//! `aw cb` CLI — code-artifact workflow verbs.
+//! Code-artifact workflow verb implementations inherited by `aw td`.
 //!
 //! `cb` is the canonical namespace for code generation, code checks, and
-//! HANDWRITE marker fill/review flows. The lifecycle phase written by `cb gen`
+//! HANDWRITE marker fill/review flows. The lifecycle phase written by `td gen`
 //! is `cb_genned` and the canonical `Lifecycle-Stage:` trailer is `Cb-Gen`.
 //!
 //! @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
@@ -17,7 +17,7 @@ use crate::cli::td::{self, AuditArgs, AuditGroupBy, GenCodeArgs};
 
 const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
-// Top-level args group for `aw cb ...`.
+// Args group for code-artifact verbs now mounted under `aw td`.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 #[derive(Debug, Args)]
@@ -26,13 +26,16 @@ pub struct CbArgs {
     pub command: CbCommand,
 }
 
-// `aw cb` subcommands.
+// Code-artifact subcommands inherited by `aw td`.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 #[derive(Debug, Subcommand)]
 pub enum CbCommand {
     // Generate implementation code from an approved TD spec.
     Gen(CbGenArgs),
+    // Forward-generate a target source file from a per-file rust-source-unit
+    // TD (routes through the @spec-injecting lossless item-tree generator).
+    GenSource(CbGenSourceArgs),
     // Audit code-space files for CODEGEN drift, MarkerGap, Uncovered,
     // and Handwrite items.
     Check(CbCheckArgs),
@@ -42,7 +45,7 @@ pub enum CbCommand {
     // Fill handwrite marker blocks in generated code (Phase 3).
     // Brief mode: lock the next marker payload in WI projection.
     // `--apply --marker <id>` mode: merge and commit one marker, then
-    // lock the next marker or dispatch `aw cb check`.
+    // lock the next marker or dispatch `aw td code-check`.
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#cli
     Fill(CbFillArgs),
     // Review filled HANDWRITE markers (Phase 3 CRRR step 3 of 4).
@@ -59,7 +62,7 @@ pub enum CbCommand {
     Arbitrate(crate::cli::cb_arbitrate::CbArbitrateArgs),
 }
 
-// Args for `aw cb fill <slug>` — Phase 3 marker-fill workflow.
+// Args for `aw td fill <slug>` — Phase 3 marker-fill workflow.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#cli
 #[derive(Debug, Args)]
@@ -93,7 +96,7 @@ pub struct CbFillArgs {
     pub no_review: bool,
 }
 
-// Args for `aw cb claim <code-path>`.
+// Args for `aw td code-claim <code-path>`.
 #[derive(Debug, Args)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md#source
 pub struct CbClaimArgs {
@@ -120,8 +123,8 @@ pub struct CbClaimArgs {
     pub non_interactive: bool,
 }
 
-// Args for `aw cb gen <slug>` or
-// `aw cb gen --force-regen --project <project>`.
+// Args for `aw td gen <slug>` or
+// `aw td gen --force-regen --project <project>`.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 #[derive(Debug, Args)]
@@ -166,7 +169,7 @@ pub struct CbGenArgs {
     pub sync_public_api: bool,
 }
 
-// Args for `aw cb check <target>`.
+// Args for `aw td code-check <target>`.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 #[derive(Debug, Args)]
@@ -181,13 +184,14 @@ pub struct CbCheckArgs {
     pub group_by: Option<AuditGroupBy>,
 }
 
-// Dispatch for `aw cb ...`.
+// Dispatch for code-artifact verbs.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 pub async fn run(args: CbArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     match &args.command {
         CbCommand::Check(_) => {}
+        CbCommand::GenSource(_) => {}
         CbCommand::Gen(a) => {
             if let Some(slug) = a.slug.as_deref() {
                 crate::cli::workflow_guard::guard_issue_mutation(&project_root, Some(("cb", slug)))
@@ -218,6 +222,7 @@ pub async fn run(args: CbArgs) -> Result<()> {
     }
     match args.command {
         CbCommand::Gen(a) => run_gen(a).await,
+        CbCommand::GenSource(a) => run_gen_source(a),
         CbCommand::Check(a) => run_check(a),
         CbCommand::Claim(a) => run_claim(a).await,
         CbCommand::Fill(a) => crate::cli::cb_fill::run(a).await,
@@ -227,7 +232,49 @@ pub async fn run(args: CbArgs) -> Result<()> {
     }
 }
 
-// Implementation of `aw cb gen`.
+// Args for `aw td gen-source --spec <td> --target <rs>`.
+#[derive(Debug, Args)]
+pub struct CbGenSourceArgs {
+    // Repo-relative path to the per-file source TD (with a `## Source`
+    // rust-source-unit fence).
+    #[arg(long)]
+    pub spec: String,
+    // Repo-relative path to the target source file to write.
+    #[arg(long)]
+    pub target: String,
+    // Print the generated source to stdout without writing the target.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+// Forward-generate a target source file from a per-file rust-source-unit TD,
+// reusing the same generator path as codegen (@spec injection + lossless
+// item-tree regeneration). The forward inverse of `td gen --force-regen`
+// (which syncs TD<-source); this writes source<-TD.
+pub fn run_gen_source(args: CbGenSourceArgs) -> Result<()> {
+    let root = crate::find_project_root()?;
+    let spec_abs = root.join(&args.spec);
+    let target_abs = root.join(&args.target);
+    let report = crate::generate::apply::run_apply_scoped_targets(
+        &spec_abs,
+        &root,
+        args.dry_run,
+        std::slice::from_ref(&target_abs),
+    )
+    .map_err(|e| anyhow::anyhow!("gen-source apply {} -> {}: {e}", args.spec, args.target))?;
+    eprintln!(
+        "gen-source {} -> {}: {} block(s) updated, {} file(s) created, wrote={} (dry_run={})",
+        args.spec,
+        args.target,
+        report.total_blocks_updated(),
+        report.files_created(),
+        report.wrote_files,
+        args.dry_run,
+    );
+    Ok(())
+}
+
+// Implementation of `aw td gen`.
 ///
 // Slug mode delegates to the approved-TD lifecycle pipeline. `--force-regen`
 // replays canonical source TD entries for codegen-owned files under a
@@ -398,7 +445,7 @@ fn run_force_regen(
     }
 
     println!(
-        "cb gen --force-regen --project {}{}: {} spec(s) from {}, {} file update(s), {} created, {} CODEGEN block(s), {} public API manifest update(s){}",
+        "td gen --force-regen --project {}{}: {} spec(s) from {}, {} file update(s), {} created, {} CODEGEN block(s), {} public API manifest update(s){}",
         project,
         workspace
             .map(|name| format!(" --workspace {name}"))
@@ -437,7 +484,7 @@ fn run_force_regen_verify(
 
     if !mismatches.is_empty() {
         anyhow::bail!(
-            "cb gen --force-regen --project {project}{} --verify failed: {} file(s) differ after TD replay:\n{}",
+            "td gen --force-regen --project {project}{} --verify failed: {} file(s) differ after TD replay:\n{}",
             workspace
                 .map(|name| format!(" --workspace {name}"))
                 .unwrap_or_default(),
@@ -447,7 +494,7 @@ fn run_force_regen_verify(
     }
     if !conformance.failures.is_empty() {
         anyhow::bail!(
-            "cb gen --force-regen --project {project}{} --verify failed deterministic conformance: {} finding(s):\n{}",
+            "td gen --force-regen --project {project}{} --verify failed deterministic conformance: {} finding(s):\n{}",
             workspace
                 .map(|name| format!(" --workspace {name}"))
                 .unwrap_or_default(),
@@ -457,7 +504,7 @@ fn run_force_regen_verify(
     }
 
     println!(
-        "cb gen --force-regen --project {}{} --verify: {} spec(s), {} source root(s), byte-equivalent after TD replay",
+        "td gen --force-regen --project {}{} --verify: {} spec(s), {} source root(s), byte-equivalent after TD replay",
         project,
         workspace
             .map(|name| format!(" --workspace {name}"))
@@ -482,7 +529,7 @@ fn run_force_regen_verify_cold(project: &str, workspace: Option<&str>) -> Result
 
     if !failures.is_empty() {
         anyhow::bail!(
-            "cb gen --force-regen --project {project}{} --verify-cold failed: {} finding(s):\n{}",
+            "td gen --force-regen --project {project}{} --verify-cold failed: {} finding(s):\n{}",
             workspace
                 .map(|name| format!(" --workspace {name}"))
                 .unwrap_or_default(),
@@ -492,7 +539,7 @@ fn run_force_regen_verify_cold(project: &str, workspace: Option<&str>) -> Result
     }
 
     println!(
-        "cb gen --force-regen --project {}{} --verify-cold: {} spec(s), {} source root(s), rebuilt expected targets from TD only",
+        "td gen --force-regen --project {}{} --verify-cold: {} spec(s), {} source root(s), rebuilt expected targets from TD only",
         project,
         workspace
             .map(|name| format!(" --workspace {name}"))
@@ -770,7 +817,7 @@ fn percent_of(part: usize, total: usize) -> f64 {
 }
 
 // Return the same deterministic cb force-regeneration verification signals as
-// `cb gen --force-regen --verify` without printing the verbose CLI report.
+// `td gen --force-regen --verify` without printing the verbose CLI report.
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
 pub fn project_force_regen_verify_summary(project: &str) -> Result<CbVerifySummary> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;
@@ -980,8 +1027,10 @@ fn format_rust_files(paths: &[std::path::PathBuf]) -> Result<()> {
     if rust_files.is_empty() {
         return Ok(());
     }
+    let rustfmt = crate::git::find_rustfmt_bin()
+        .context("rustfmt binary not found on PATH or rustup defaults")?;
     for chunk in rust_files.chunks(100) {
-        let output = std::process::Command::new("rustfmt")
+        let output = std::process::Command::new(&rustfmt)
             .arg("--edition")
             .arg("2021")
             .arg("--config")
@@ -1042,7 +1091,7 @@ fn resolve_project_force_regen_scope(
 ) -> Result<ForceRegenScope> {
     let config_path = cwd.join(".aw").join("config.toml");
     if !config_path.exists() {
-        anyhow::bail!("cb gen --force-regen requires .aw/config.toml project routing");
+        anyhow::bail!("td gen --force-regen requires .aw/config.toml project routing");
     }
 
     let content = std::fs::read_to_string(&config_path)
@@ -1061,7 +1110,7 @@ fn resolve_project_force_regen_scope(
             .map(|p| p.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        anyhow::bail!("unknown cb gen project `{project_name}`. Available projects: {available}");
+        anyhow::bail!("unknown td gen project `{project_name}`. Available projects: {available}");
     };
 
     let td_root =
@@ -1076,10 +1125,10 @@ fn resolve_project_force_regen_scope(
     if source_roots.is_empty() {
         if let Some(workspace_name) = workspace_name {
             anyhow::bail!(
-                "cb gen project `{project_name}` workspace `{workspace_name}` has no source paths"
+                "td gen project `{project_name}` workspace `{workspace_name}` has no source paths"
             );
         }
-        anyhow::bail!("cb gen project `{project_name}` has no source path or workspace paths");
+        anyhow::bail!("td gen project `{project_name}` has no source path or workspace paths");
     }
     source_roots.sort();
     source_roots.dedup();
@@ -1157,7 +1206,7 @@ fn workspace_source_roots(
             .collect::<Vec<_>>()
             .join(", ");
         anyhow::bail!(
-            "unknown cb gen workspace `{workspace_name}` for project `{project_name}`. Available workspaces: {available}"
+            "unknown td gen workspace `{workspace_name}` for project `{project_name}`. Available workspaces: {available}"
         );
     };
 
@@ -1192,7 +1241,7 @@ fn project_cold_verify_workspaces(
             .map(|p| p.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        anyhow::bail!("unknown cb gen project `{project_name}`. Available projects: {available}");
+        anyhow::bail!("unknown td gen project `{project_name}`. Available projects: {available}");
     };
 
     project_config
@@ -1650,7 +1699,7 @@ fn force_regen_replay_mismatches_with_quiet(
     })();
     if std::env::var_os("SCORE_KEEP_FORCE_REGEN_VERIFY_ROOT").is_some() {
         eprintln!(
-            "[cb gen] kept force-regen verify root at {}",
+            "[td gen] kept force-regen verify root at {}",
             temp_root.display()
         );
     } else {
@@ -1976,7 +2025,7 @@ impl ForceRegenConformanceReport {
         }
     }
 
-    fn enforce_complete_codegen_file_coverage(&mut self) {
+    fn enforce_complete_source_ownership_coverage(&mut self) {
         if self.unmanaged_code_files.is_empty() {
             return;
         }
@@ -1988,7 +2037,7 @@ impl ForceRegenConformanceReport {
         targets.sort();
         targets.truncate(5);
         self.failures.push(format!(
-            "deterministic source coverage incomplete: {}/{} source file(s) have CODEGEN blocks; unmanaged files: {}",
+            "deterministic source ownership incomplete: {}/{} source file(s) have CODEGEN or HANDWRITE ownership markers; unmanaged files: {}",
             self.managed_code_files,
             self.code_files,
             targets.join(", ")
@@ -2018,17 +2067,22 @@ fn verify_force_regen_conformance(
         let rel_path = path.strip_prefix(cwd).unwrap_or(&path).to_path_buf();
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
+        if is_aw_ec_generated_content(&content) {
+            report.non_code_files += 1;
+            continue;
+        }
 
         let blocks = parse_codegen_blocks(&content);
-        if blocks.is_empty() {
+        let handwrite_owned = has_handwrite_ownership_marker(&content);
+        if blocks.is_empty() && !handwrite_owned {
             report.unmanaged_code_files.push(SemanticReviewUnit {
                 spec_ref: "(none)".to_string(),
                 target_path: rel_path.clone(),
-                reason: "no-codegen-block".to_string(),
+                reason: "no-ownership-marker".to_string(),
             });
         }
         report.codegen_blocks += blocks.len();
-        if !blocks.is_empty() {
+        if !blocks.is_empty() || handwrite_owned {
             report.managed_code_files += 1;
         }
         let parsed_module = match analyzer.parse_file(&path, &content) {
@@ -2130,9 +2184,22 @@ fn verify_force_regen_conformance(
         }
     }
 
-    report.enforce_complete_codegen_file_coverage();
+    report.enforce_complete_source_ownership_coverage();
     report.enforce_complete_public_api_semantic_conformance();
     Ok(report)
+}
+
+fn has_handwrite_ownership_marker(content: &str) -> bool {
+    content.lines().any(|line| {
+        let trimmed = line.trim();
+        let body = trimmed
+            .strip_prefix("// ")
+            .or_else(|| trimmed.strip_prefix("# "))
+            .or_else(|| trimmed.strip_prefix("<!-- "))
+            .map(|body| body.strip_suffix(" -->").unwrap_or(body))
+            .unwrap_or(trimmed);
+        body.starts_with("HANDWRITE-BEGIN") || body.starts_with("<HANDWRITE")
+    })
 }
 
 fn collect_source_scope_files(scope: &ForceRegenScope) -> Result<Vec<std::path::PathBuf>> {
@@ -2302,8 +2369,10 @@ fn classify_source_template(
 fn spec_declares_source_section(spec_content: &str) -> bool {
     spec_content.contains("<!-- type: source")
         || spec_content.contains("<!-- type: rust-source-unit")
+        || spec_content.contains("<!-- type: text-source-unit")
         || spec_content.contains("section: source")
         || spec_content.contains("section: rust-source-unit")
+        || spec_content.contains("section: text-source-unit")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2809,10 +2878,11 @@ mod tests {
         cb_verify_summary_from_report, classify_codegen_origin_spec, collect_force_regen_specs,
         commit_force_regen, compare_source_roots, extract_cold_rebuild_target_paths,
         extract_project_root_llms_target_paths, extract_spec_managed_ref,
-        extract_spec_managed_refs, format_rust_files, is_minified_asset_file,
-        resolve_project_force_regen_scope, run_force_regen_specs, sample_count,
-        sample_semantic_review_units, td_public_symbol_semantic_coverage,
-        upsert_public_api_overview, upsert_public_api_overview_targets,
+        extract_spec_managed_refs, format_rust_files, has_handwrite_ownership_marker,
+        is_minified_asset_file, resolve_project_force_regen_scope, run_force_regen_specs,
+        sample_count, sample_semantic_review_units, spec_declares_source_section,
+        td_public_symbol_semantic_coverage, upsert_public_api_overview,
+        upsert_public_api_overview_targets, verify_force_regen_conformance,
         write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs,
         ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
         PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
@@ -2867,6 +2937,20 @@ mod tests {
             classify_codegen_origin_spec(artifact_replay),
             CbCodegenOriginClass::ArtifactReplay
         );
+    }
+
+    #[test]
+    fn spec_declares_text_source_unit_as_source_section() {
+        let text_source_unit = "\
+## Source
+<!-- type: text-source-unit lang: javascript -->
+
+```javascript
+console.log('ok');
+```
+";
+
+        assert!(spec_declares_source_section(text_source_unit));
     }
 
     fn init_git_repo(root: &std::path::Path) {
@@ -3202,6 +3286,37 @@ paths = ["examples/fixture_platform/backend/**"]
                 td_root.join("interfaces/src/lib.md"),
                 td_root.join("interfaces/src/schema.md")
             ]
+        );
+    }
+
+    #[test]
+    fn cb_verify_skips_aw_ec_generated_wrappers_outside_td_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let td_root = root.join("projects/demo/tech-design");
+        let source_root = root.join("projects/demo");
+        std::fs::create_dir_all(&td_root).unwrap();
+        std::fs::create_dir_all(source_root.join("tests")).unwrap();
+        std::fs::write(td_root.join("app.md"), "# app\n").unwrap();
+        std::fs::write(
+            source_root.join("tests/behavior_demo_contract.rs"),
+            "// SPEC-MANAGED: projects/demo/external-contracts/behavior/demo.md#demo-contract\n// CODEGEN-BEGIN\n// AW-EC-BEGIN\n// @ec demo-contract\n// AW-EC-END\n#[test]\n#[ignore = \"generated EC wrapper\"]\nfn demo_contract() {}\n// CODEGEN-END\n",
+        )
+        .unwrap();
+
+        let scope = ForceRegenScope {
+            td_root,
+            source_roots: vec![source_root],
+        };
+        let report = verify_force_regen_conformance(root, &scope).unwrap();
+
+        assert!(
+            report
+                .failures
+                .iter()
+                .all(|failure| !failure.contains("outside project td_path")),
+            "unexpected failures: {:?}",
+            report.failures
         );
     }
 
@@ -3852,20 +3967,39 @@ pub fn signature_only() -> Result<()>
                 target_path: std::path::PathBuf::from(
                     "projects/agentic-workflow/src/generate/marker.rs",
                 ),
-                reason: "no-codegen-block".to_string(),
+                reason: "no-ownership-marker".to_string(),
             }],
             ..Default::default()
         };
 
-        report.enforce_complete_codegen_file_coverage();
+        report.enforce_complete_source_ownership_coverage();
 
         assert_eq!(report.failures.len(), 1);
-        assert!(report.failures[0].contains("1/2 source file(s) have CODEGEN blocks"));
+        assert!(report.failures[0]
+            .contains("1/2 source file(s) have CODEGEN or HANDWRITE ownership markers"));
         assert!(report.failures[0].contains("projects/agentic-workflow/src/generate/marker.rs"));
+    }
+
+    #[test]
+    fn cb_gen_force_regen_accepts_handwrite_ownership_marker() {
+        assert!(has_handwrite_ownership_marker(
+            "// SPEC-MANAGED: projects/demo/tech-design/source.md#source\n\
+             // HANDWRITE-BEGIN gap=\"g\" tracker=\"t\" reason=\"not generated yet\"\n\
+             fn main() {}\n\
+             // HANDWRITE-END\n"
+        ));
+        assert!(has_handwrite_ownership_marker(
+            "# <HANDWRITE gap=\"g\" tracker=\"t\" reason=\"not generated yet\">\n\
+             echo ok\n\
+             # </HANDWRITE>\n"
+        ));
+        assert!(!has_handwrite_ownership_marker(
+            "let marker = \"HANDWRITE-BEGIN\";"
+        ));
     }
 }
 
-// Implementation of `aw cb check` — delegates to the pre-existing
+// Implementation of `aw td code-check` — delegates to the pre-existing
 // audit pipeline. Path defaults to `.` when omitted to match
 // the historical audit behaviour.
 ///
@@ -3883,7 +4017,7 @@ pub fn run_check(args: CbCheckArgs) -> Result<()> {
 
 // ── cb claim ────────────────────────────────────────────────────────
 
-// Implementation of `aw cb claim <code-path>` — recovery verb.
+// Implementation of `aw td code-claim <code-path>` — recovery verb.
 ///
 // Wraps the fillback pipeline to adopt existing code into the score lifecycle
 // in the current checkout.
@@ -3968,9 +4102,9 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         "action": "done",
         "slug": derived_slug,
         "message": if committed {
-            "cb claim: spec written; Cb-Claim trailer committed"
+            "td code-claim: spec written; Cb-Claim trailer committed"
         } else {
-            "cb claim: spec written (no trailer committed)"
+            "td code-claim: spec written (no trailer committed)"
         },
     });
     println!("{}", serde_json::to_string_pretty(&env)?);
@@ -3998,7 +4132,7 @@ async fn create_issue_stub(
     if backend.get(slug).await?.is_some() {
         return Ok(()); // skip when an issue already exists for the slug
     }
-    let title = format!("Adopted (cb claim): {}", code_path);
+    let title = format!("Adopted (td code-claim): {}", code_path);
     let stub = crate::issues::Issue {
         issue_type: IssueType::Enhancement,
         title: title.clone(),
@@ -4012,7 +4146,7 @@ async fn create_issue_stub(
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: Some(chrono::Utc::now().to_rfc3339()),
         slug: slug.to_string(),
-        body: format!("# {}\n\nIssue stub created by `aw cb claim`.\n", title),
+        body: format!("# {}\n\nIssue stub created by `aw td code-claim`.\n", title),
         related: Vec::new(),
         implements: Vec::new(),
         phase: None,

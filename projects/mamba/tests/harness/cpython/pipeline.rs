@@ -198,6 +198,20 @@ fn run_fixture(path: &std::path::Path) -> datatest_stable::Result<()> {
     }
 
     let src = std::fs::read_to_string(path)?;
+
+    // Dimension-first migration: record-based conformance fixtures (the
+    // `[tool.mamba]` tree) live directly under tests/cpython and are owned
+    // by the live-CPython-oracle runner. Only `# RUN:`-directive fixtures
+    // (today: `_regression/core/grammar/`) belong to this pipeline harness;
+    // everything else is skipped, mirroring the runner's inverse
+    // `[pipeline-skip]` rule.
+    if !src
+        .lines()
+        .any(|line| line.trim_start().starts_with("# RUN:"))
+    {
+        return Ok(());
+    }
+
     let directives = parse_directives(&src);
 
     match directives.run.as_str() {
@@ -210,4 +224,16 @@ fn run_fixture(path: &std::path::Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-harness!(run_fixture, "tests/cpython", r".*\.py$");
+// `# RUN:`-directive fixtures only exist under _regression/core/{grammar,
+// jit,parse,typecheck} (verified by `grep -rl '# RUN:' tests/cpython`).
+// Collecting just that subtree instead of the whole 46k-fixture universe
+// drops this harness's startup from ~80s to seconds — every other fixture
+// was read and skipped one by one. If a new RUN: directory appears outside
+// this subtree, extend the regex (run_fixture still hard-skips non-RUN
+// files, so an omission fails loud in the directory's own runner, not
+// silently here).
+harness!(
+    run_fixture,
+    "tests/cpython",
+    r"tests/cpython/_regression/core/(grammar|jit|parse|typecheck)/.*\.py$"
+);

@@ -577,6 +577,60 @@ pub fn command() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("codegen")
+                .about("Generate frontend code from API specs")
+                .subcommand(
+                    Command::new("openapi")
+                        .about(
+                            "Generate TypeScript types, a typed fetch client, \
+                             and TanStack Query hooks from an OpenAPI 3.0/3.1 \
+                             spec.",
+                        )
+                        .arg(
+                            Arg::new("spec")
+                                .required(true)
+                                .help("Path to the OpenAPI document (openapi.json)."),
+                        )
+                        .arg(
+                            Arg::new("out")
+                                .long("out")
+                                .short('o')
+                                .default_value("src/api")
+                                .help("Output directory for generated .ts files."),
+                        )
+                        .arg(
+                            Arg::new("types-only")
+                                .long("types-only")
+                                .action(ArgAction::SetTrue)
+                                .help("Emit only types.ts (no client, no hooks)."),
+                        )
+                        .arg(
+                            Arg::new("no-hooks")
+                                .long("no-hooks")
+                                .action(ArgAction::SetTrue)
+                                .conflicts_with("types-only")
+                                .help("Skip React Query hooks (still emit types + client)."),
+                        )
+                        .arg(
+                            Arg::new("client-name")
+                                .long("client-name")
+                                .default_value("createClient")
+                                .help("Name of the generated client factory function."),
+                        )
+                        .arg(
+                            Arg::new("http")
+                                .long("http")
+                                .value_parser(["fetch", "axios"])
+                                .default_value("fetch")
+                                .help(
+                                    "HTTP runtime for the generated client: \
+                                     native `fetch` (default) or `axios` (peer \
+                                     dependency of the generated output).",
+                                ),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("run")
                 .about("Run a script, file, or task (no args = list scripts)")
                 .arg(
@@ -804,9 +858,9 @@ pub fn command() -> Command {
         .subcommand(
             // @spec .aw/tech-design/projects/jet/specs/2385.md#cli
             Command::new("e2e")
-                .about("Run or review product-flow E2E cases")
+                .about("Run, visually review, or publish manual product-flow E2E cases")
                 .long_about(
-                    "Run or review product-flow E2E cases. \
+                    "Run, visually review, or publish manual product-flow E2E cases. \
                      Use `jet test` for frontend unit, component, and integration-style tests.",
                 )
                 .allow_external_subcommands(true)
@@ -888,8 +942,9 @@ pub fn command() -> Command {
                             "Open the Cypress-like human runner for product-flow E2E cases. \
                              Cypress-like describes the human review UX only; \
                              Jet does not use the Cypress runtime or Cypress Cloud. \
-                             The runner launches a desktop-style review shell; \
-                             the AUT runs in a separate visible controlled Jet Browser target, \
+                             The runner launches one tabbed browser window: \
+                             tab 0 shows the case list and detail panels, \
+                             and the AUT runs in a separate visible controlled tab, \
                              executes cases serially, and shows case timelines, pause/next/replay controls, \
                              selector context, assertion detail, screenshots, console, and network panels.",
                         )
@@ -911,9 +966,50 @@ pub fn command() -> Command {
                                 .help("Per-case timeout in ms"),
                         )
                         .arg(
+                            Arg::new("slow-mo")
+                                .long("slow-mo")
+                                .value_parser(clap::value_parser!(u64))
+                                .default_value("500")
+                                .help(
+                                    "Visual review pacing delay in ms between page actions. \
+                                     Use 0 for full speed.",
+                                ),
+                        )
+                        .arg(
+                            Arg::new("browser")
+                                .long("browser")
+                                .value_name("BROWSER")
+                                .default_value("chrome")
+                                .value_parser(["chrome", "chromium"])
+                                .help(
+                                    "Browser for human visual review: chrome uses the system Chrome app; \
+                                     chromium uses Jet's pinned Chromium.",
+                                ),
+                        )
+                        .arg(
                             Arg::new("evidence-dir")
                                 .long("evidence-dir")
                                 .help("Directory for review app state and evidence"),
+                        )
+                        .arg(
+                            Arg::new("serve")
+                                .long("serve")
+                                .value_name("MODE")
+                                .default_value("off")
+                                .value_parser(["off", "dev", "prod"])
+                                .help(
+                                    "Start an agent-first Jet server for this visual run: off, dev, prod. \
+                                     Cannot be combined with --base-url.",
+                                ),
+                        )
+                        .arg(
+                            Arg::new("base-url")
+                                .long("base-url")
+                                .value_name("URL")
+                                .help(
+                                    "External AUT base URL for relative page.goto paths. \
+                                     Cannot be combined with --serve dev/prod.",
+                                ),
                         )
                         .arg(
                             Arg::new("dry-run")
@@ -925,7 +1021,84 @@ pub fn command() -> Command {
                             Arg::new("no-open")
                                 .long("no-open")
                                 .action(ArgAction::SetTrue)
-                                .help("Export the runner shell/evidence without launching the desktop-style review shell"),
+                                .help("Export the runner shell/evidence without launching the tabbed review window"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("manual")
+                        .about("Generate human-readable manual docs from product-flow E2E cases")
+                        .long_about(
+                            "Generate human-readable manual docs from product-flow E2E cases. \
+                             Manual mode is owned by Jet: it runs the same E2E runtime serially, \
+                             keeps fresh browser isolation per case, writes machine evidence, \
+                             and publishes Markdown/HTML docs plus copied screenshot artifacts \
+                             for human reading.",
+                        )
+                        .arg(
+                            Arg::new("cases")
+                                .num_args(0..)
+                                .help("Optional E2E case file(s) to run and document"),
+                        )
+                        .arg(
+                            Arg::new("grep")
+                                .long("grep")
+                                .short('g')
+                                .help("Regex filter on full case name"),
+                        )
+                        .arg(
+                            Arg::new("timeout")
+                                .long("timeout")
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Per-case timeout in ms"),
+                        )
+                        .arg(
+                            Arg::new("serve")
+                                .long("serve")
+                                .value_name("MODE")
+                                .default_value("off")
+                                .value_parser(["off", "dev", "prod"])
+                                .help(
+                                    "Start an agent-first Jet server for this manual run: off, dev, prod. \
+                                     Cannot be combined with --base-url.",
+                                ),
+                        )
+                        .arg(
+                            Arg::new("base-url")
+                                .long("base-url")
+                                .value_name("URL")
+                                .help(
+                                    "External AUT base URL for relative page.goto paths. \
+                                     Cannot be combined with --serve dev/prod.",
+                                ),
+                        )
+                        .arg(
+                            Arg::new("trace")
+                                .long("trace")
+                                .value_name("MODE")
+                                .default_value("retain-on-failure")
+                                .help("Trace capture mode for manual evidence: off, on, retain-on-failure"),
+                        )
+                        .arg(
+                            Arg::new("evidence-dir")
+                                .long("evidence-dir")
+                                .help("Directory for machine-readable E2E evidence"),
+                        )
+                        .arg(
+                            Arg::new("out-dir")
+                                .long("out-dir")
+                                .default_value("docs/e2e-manual")
+                                .help("Directory for generated manual Markdown/HTML and screenshot assets"),
+                        )
+                        .arg(
+                            Arg::new("title")
+                                .long("title")
+                                .help("Title for the generated manual"),
+                        )
+                        .arg(
+                            Arg::new("json")
+                                .long("json")
+                                .action(ArgAction::SetTrue)
+                                .help("Print the manual evidence bundle JSON to stdout"),
                         ),
                 ),
         )
@@ -1677,6 +1850,37 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             }
             _ => {
                 anyhow::bail!("Unknown config subcommand. Try one of: lint, schema.")
+            }
+        },
+
+        Some(("codegen", cm)) => match cm.subcommand() {
+            Some(("openapi", om)) => {
+                let spec_path = PathBuf::from(om.get_one::<String>("spec").unwrap());
+                let out_arg = PathBuf::from(om.get_one::<String>("out").unwrap());
+                let out_dir = if out_arg.is_absolute() {
+                    out_arg
+                } else {
+                    root_dir.join(out_arg)
+                };
+                let types_only = om.get_flag("types-only");
+                let http_client = match om.get_one::<String>("http").map(String::as_str) {
+                    Some("axios") => crate::codegen::HttpClient::Axios,
+                    _ => crate::codegen::HttpClient::Fetch,
+                };
+                let opts = crate::codegen::GenOptions {
+                    spec_path,
+                    out_dir,
+                    client_name: om.get_one::<String>("client-name").cloned().unwrap(),
+                    http_client,
+                    emit_types: true,
+                    emit_client: !types_only,
+                    emit_hooks: !types_only && !om.get_flag("no-hooks"),
+                };
+                let exit = crate::codegen::run(&opts);
+                std::process::exit(exit);
+            }
+            _ => {
+                anyhow::bail!("Unknown codegen subcommand. Try: openapi.")
             }
         },
 
@@ -2860,6 +3064,13 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     grep: om.get_one::<String>("grep").cloned(),
                     timeout_ms: om.get_one::<u64>("timeout").copied(),
                     evidence_dir,
+                    serve: crate::e2e::parse_serve_mode(om.get_one::<String>("serve"))?,
+                    base_url: om.get_one::<String>("base-url").cloned(),
+                    slow_mo_ms: om
+                        .get_one::<u64>("slow-mo")
+                        .copied()
+                        .unwrap_or(crate::e2e::DEFAULT_OPEN_SLOW_MO_MS),
+                    browser: crate::e2e::parse_open_browser_mode(om.get_one::<String>("browser"))?,
                     dry_run: om.get_flag("dry-run"),
                     no_open: om.get_flag("no-open"),
                 };
@@ -2869,13 +3080,45 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 }
                 Ok(())
             }
+            Some(("manual", mm)) => {
+                let evidence_dir = mm
+                    .get_one::<String>("evidence-dir")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| {
+                        crate::e2e::default_evidence_dir(&root_dir, crate::e2e::E2eMode::Manual)
+                    });
+                let opts = crate::e2e::E2eManualOptions {
+                    project_root: root_dir.clone(),
+                    cases: mm
+                        .get_many::<String>("cases")
+                        .map(|v| v.map(PathBuf::from).collect())
+                        .unwrap_or_default(),
+                    grep: mm.get_one::<String>("grep").cloned(),
+                    timeout_ms: mm.get_one::<u64>("timeout").copied(),
+                    trace: crate::e2e::parse_trace_mode(mm.get_one::<String>("trace"))?,
+                    evidence_dir,
+                    out_dir: mm
+                        .get_one::<String>("out-dir")
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| root_dir.join("docs").join("e2e-manual")),
+                    serve: crate::e2e::parse_serve_mode(mm.get_one::<String>("serve"))?,
+                    base_url: mm.get_one::<String>("base-url").cloned(),
+                    title: mm.get_one::<String>("title").cloned(),
+                    print_json: mm.get_flag("json"),
+                };
+                let result = crate::e2e::run_manual_mode(opts).await?;
+                if crate::e2e::summary_exit_code(&result.bundle) != 0 {
+                    std::process::exit(crate::e2e::summary_exit_code(&result.bundle));
+                }
+                Ok(())
+            }
             Some((other, _)) => {
                 anyhow::bail!(
-                    "Unknown e2e subcommand '{other}'. Try 'jet e2e run' or 'jet e2e open'."
+                    "Unknown e2e subcommand '{other}'. Try 'jet e2e run', 'jet e2e open', or 'jet e2e manual'."
                 )
             }
             None => {
-                anyhow::bail!("Unknown e2e subcommand. Try 'jet e2e run' or 'jet e2e open'.")
+                anyhow::bail!("Unknown e2e subcommand. Try 'jet e2e run', 'jet e2e open', or 'jet e2e manual'.")
             }
         },
 
@@ -4638,19 +4881,49 @@ mod e2e_command_contract_tests {
 
     // @spec .aw/tech-design/projects/jet/specs/2385.md#test-plan
     #[test]
-    fn e2e_open_help_describes_desktop_shell_and_visible_jet_browser_without_cypress_runtime() {
+    fn e2e_open_help_describes_tabbed_window_and_visible_jet_browser_without_cypress_runtime() {
         let help = help_text(&["jet", "e2e", "open", "--help"]);
         assert!(
-            help.contains("desktop-style review shell"),
-            "open help must name the desktop-style review shell: {help}"
+            help.contains("one tabbed browser window"),
+            "open help must name the tabbed browser window: {help}"
         );
         assert!(
-            help.contains("visible controlled Jet Browser"),
-            "open help must name the visible controlled Jet Browser: {help}"
+            help.contains("separate visible controlled tab"),
+            "open help must name the visible controlled tab: {help}"
         );
         assert!(
             help.contains("does not use the Cypress runtime or Cypress Cloud"),
             "open help must reject Cypress runtime/cloud dependency: {help}"
+        );
+        assert!(
+            help.contains("--serve") && help.contains("--base-url"),
+            "open help must expose Jet-owned web app launch inputs: {help}"
+        );
+        assert!(
+            help.contains("--slow-mo"),
+            "open help must expose human-review pacing control: {help}"
+        );
+        assert!(
+            help.contains("--browser") && help.contains("chrome") && help.contains("chromium"),
+            "open help must expose Chrome vs pinned Chromium selection: {help}"
+        );
+    }
+
+    // @spec .aw/tech-design/projects/jet/specs/2385.md#test-plan
+    #[test]
+    fn e2e_manual_help_describes_jet_owned_docs_mode() {
+        let help = help_text(&["jet", "e2e", "manual", "--help"]);
+        assert!(
+            help.contains("Manual mode is owned by Jet"),
+            "manual help must make Jet ownership explicit: {help}"
+        );
+        assert!(
+            help.contains("Markdown/HTML docs") && help.contains("--out-dir"),
+            "manual help must expose generated docs output: {help}"
+        );
+        assert!(
+            help.contains("fresh browser isolation per case"),
+            "manual help must preserve E2E isolation semantics: {help}"
         );
     }
 
@@ -4916,7 +5189,9 @@ mod e2e_command_contract_tests {
             "unknown diagnostic must be e2e-specific: {msg}"
         );
         assert!(
-            msg.contains("jet e2e run") && msg.contains("jet e2e open"),
+            msg.contains("jet e2e run")
+                && msg.contains("jet e2e open")
+                && msg.contains("jet e2e manual"),
             "unknown diagnostic must suggest the valid modes: {msg}"
         );
     }
@@ -4967,12 +5242,62 @@ mod e2e_command_contract_tests {
         );
 
         let open_matches = command()
-            .try_get_matches_from(["jet", "e2e", "open", "--dry-run", "--no-open"])
+            .try_get_matches_from([
+                "jet",
+                "e2e",
+                "open",
+                "--base-url",
+                "http://127.0.0.1:5177/",
+                "--slow-mo",
+                "750",
+                "--browser",
+                "chromium",
+                "--dry-run",
+                "--no-open",
+            ])
             .unwrap();
         let (_, e2e) = open_matches.subcommand().unwrap();
         let (_, open) = e2e.subcommand().unwrap();
+        assert_eq!(
+            open.get_one::<String>("base-url").map(String::as_str),
+            Some("http://127.0.0.1:5177/")
+        );
+        assert_eq!(open.get_one::<u64>("slow-mo").copied(), Some(750));
+        assert_eq!(
+            open.get_one::<String>("browser").map(String::as_str),
+            Some("chromium")
+        );
         assert!(open.get_flag("dry-run"));
         assert!(open.get_flag("no-open"));
+
+        let manual_matches = command()
+            .try_get_matches_from([
+                "jet",
+                "e2e",
+                "manual",
+                "--out-dir",
+                "docs/manual",
+                "--title",
+                "Product Manual",
+                "--base-url",
+                "http://127.0.0.1:5177/",
+                "e2e/product.spec.ts",
+            ])
+            .unwrap();
+        let (_, e2e) = manual_matches.subcommand().unwrap();
+        let (_, manual) = e2e.subcommand().unwrap();
+        assert_eq!(
+            manual.get_one::<String>("out-dir").map(String::as_str),
+            Some("docs/manual")
+        );
+        assert_eq!(
+            manual.get_one::<String>("title").map(String::as_str),
+            Some("Product Manual")
+        );
+        assert_eq!(
+            manual.get_one::<String>("base-url").map(String::as_str),
+            Some("http://127.0.0.1:5177/")
+        );
     }
 }
 

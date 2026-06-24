@@ -20,8 +20,8 @@ use tokio::sync::Semaphore;
 use crate::pkgmanage::pkgmgr::{
     cache::{
         artifact_path, default_cache_dir, promote_to_content_addressed, read_cached_artifact,
-        read_cached_etag, read_cached_metadata, read_content_addressed_artifact,
-        write_cached_etag, write_cached_metadata, METADATA_TTL_SECS,
+        read_cached_etag, read_cached_metadata, read_content_addressed_artifact, write_cached_etag,
+        write_cached_metadata, METADATA_TTL_SECS,
     },
     json_api::parse_json_metadata,
     simple_api::{parse_simple_html, parse_simple_json},
@@ -69,10 +69,7 @@ impl IndexClient {
     /// - [`IndexError::NotFound`] — HTTP 404
     /// - [`IndexError::NetworkError`] — transport error or non-retryable non-2xx after retries
     /// - [`IndexError::ParseError`] — response body is not valid PyPI JSON
-    pub async fn fetch_metadata_json(
-        &self,
-        name: &str,
-    ) -> Result<PackageMetadata, IndexError> {
+    pub async fn fetch_metadata_json(&self, name: &str) -> Result<PackageMetadata, IndexError> {
         let cache_dir = self.effective_cache_dir();
 
         // Cache hit — return immediately without HTTP.
@@ -86,7 +83,11 @@ impl IndexClient {
         let cached_etag = read_cached_etag(&cache_dir, name, "json").await;
 
         let normalized = normalize_name(name);
-        let url = format!("{}/pypi/{}/json", self.index_url.trim_end_matches('/'), normalized);
+        let url = format!(
+            "{}/pypi/{}/json",
+            self.index_url.trim_end_matches('/'),
+            normalized
+        );
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(self.timeout_secs))
@@ -129,7 +130,8 @@ impl IndexClient {
                         match read_cached_metadata(&cache_dir, name, "json", u64::MAX).await {
                             Some(stale) => {
                                 // Refresh mtime so TTL resets from now.
-                                let _ = write_cached_metadata(&cache_dir, name, "json", &stale).await;
+                                let _ =
+                                    write_cached_metadata(&cache_dir, name, "json", &stale).await;
                                 return Ok(stale);
                             }
                             None => {
@@ -151,7 +153,11 @@ impl IndexClient {
                         if attempt >= self.retry_max {
                             return Err(IndexError::NetworkError {
                                 url: url.clone(),
-                                detail: format!("retryable status {} after {} attempts", status, attempt + 1),
+                                detail: format!(
+                                    "retryable status {} after {} attempts",
+                                    status,
+                                    attempt + 1
+                                ),
                             });
                         }
                         backoff_sleep(attempt).await;
@@ -174,10 +180,13 @@ impl IndexClient {
                         .map(|s| s.to_string());
 
                     // 2xx — read the body and parse it.
-                    let body = response.text().await.map_err(|e| IndexError::NetworkError {
-                        url: url.clone(),
-                        detail: format!("failed to read response body: {e}"),
-                    })?;
+                    let body = response
+                        .text()
+                        .await
+                        .map_err(|e| IndexError::NetworkError {
+                            url: url.clone(),
+                            detail: format!("failed to read response body: {e}"),
+                        })?;
 
                     let meta = parse_json_metadata(&body).map_err(|e| match e {
                         IndexError::ParseError { detail, .. } => IndexError::ParseError {
@@ -221,10 +230,7 @@ impl IndexClient {
     /// - [`IndexError::NotFound`] — HTTP 404
     /// - [`IndexError::NetworkError`] — transport error or non-retryable non-2xx after retries
     /// - [`IndexError::ParseError`] — response body does not parse as the expected format
-    pub async fn fetch_metadata_simple(
-        &self,
-        name: &str,
-    ) -> Result<PackageMetadata, IndexError> {
+    pub async fn fetch_metadata_simple(&self, name: &str) -> Result<PackageMetadata, IndexError> {
         let cache_dir = self.effective_cache_dir();
 
         // Cache hit — return immediately without HTTP.
@@ -255,9 +261,10 @@ impl IndexClient {
         let mut attempt = 0u32;
         loop {
             // REQ: AC4 — attach If-None-Match when a cached ETag is available.
-            let req = client
-                .get(&url)
-                .header("Accept", "application/vnd.pypi.simple.v1+json, text/html;q=0.5");
+            let req = client.get(&url).header(
+                "Accept",
+                "application/vnd.pypi.simple.v1+json, text/html;q=0.5",
+            );
             let req = if let Some(ref etag) = cached_etag {
                 req.header("If-None-Match", etag)
             } else {
@@ -342,10 +349,13 @@ impl IndexClient {
                         .and_then(|v| v.to_str().ok())
                         .map(|s| s.to_string());
 
-                    let body = response.text().await.map_err(|e| IndexError::NetworkError {
-                        url: url.clone(),
-                        detail: format!("failed to read response body: {e}"),
-                    })?;
+                    let body = response
+                        .text()
+                        .await
+                        .map_err(|e| IndexError::NetworkError {
+                            url: url.clone(),
+                            detail: format!("failed to read response body: {e}"),
+                        })?;
 
                     let is_json = content_type
                         .split(';')
@@ -417,10 +427,12 @@ impl IndexClient {
         // Ensure the artifacts directory exists.
         let dest = artifact_path(&cache_dir, name, &file.filename);
         if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| IndexError::CacheIo {
-                path: parent.display().to_string(),
-                detail: format!("create_dir_all failed: {e}"),
-            })?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| IndexError::CacheIo {
+                    path: parent.display().to_string(),
+                    detail: format!("create_dir_all failed: {e}"),
+                })?;
         }
         let tmp_path = PathBuf::from(format!("{}.tmp", dest.display()));
         let sidecar_path = PathBuf::from(format!("{}.sha256", dest.display()));
@@ -525,10 +537,12 @@ impl IndexClient {
 
             // Open .tmp for writing.
             let mut tmp_file =
-                tokio::fs::File::create(&tmp_path).await.map_err(|e| IndexError::CacheIo {
-                    path: tmp_path.display().to_string(),
-                    detail: format!("create .tmp failed: {e}"),
-                })?;
+                tokio::fs::File::create(&tmp_path)
+                    .await
+                    .map_err(|e| IndexError::CacheIo {
+                        path: tmp_path.display().to_string(),
+                        detail: format!("create .tmp failed: {e}"),
+                    })?;
 
             use tokio::io::AsyncWriteExt;
             while let Some(chunk_result) = stream.next().await {
@@ -581,10 +595,12 @@ impl IndexClient {
                 })?;
 
             // Atomic rename .tmp → final path.
-            tokio::fs::rename(&tmp_path, &dest).await.map_err(|e| IndexError::CacheIo {
-                path: dest.display().to_string(),
-                detail: format!("rename .tmp → final failed: {e}"),
-            })?;
+            tokio::fs::rename(&tmp_path, &dest)
+                .await
+                .map_err(|e| IndexError::CacheIo {
+                    path: dest.display().to_string(),
+                    detail: format!("rename .tmp → final failed: {e}"),
+                })?;
 
             // Best-effort: promote the verified bytes into the content-addressed
             // store so future downloads of the same digest (across different
@@ -609,10 +625,7 @@ impl IndexClient {
     ///
     /// Returns the first non-`NotFound` error encountered, or `NotFound` if
     /// both strategies fail to find the package.
-    pub async fn fetch_metadata(
-        &self,
-        name: &str,
-    ) -> Result<PackageMetadata, IndexError> {
+    pub async fn fetch_metadata(&self, name: &str) -> Result<PackageMetadata, IndexError> {
         match self.fetch_metadata_json(name).await {
             Ok(meta) => Ok(meta),
             Err(IndexError::NotFound { .. }) => self.fetch_metadata_simple(name).await,
@@ -738,10 +751,13 @@ impl IndexClient {
                             detail: format!("unexpected HTTP status {}", status),
                         });
                     }
-                    let body = response.text().await.map_err(|e| IndexError::NetworkError {
-                        url: url.clone(),
-                        detail: format!("failed to read response body: {e}"),
-                    })?;
+                    let body = response
+                        .text()
+                        .await
+                        .map_err(|e| IndexError::NetworkError {
+                            url: url.clone(),
+                            detail: format!("failed to read response body: {e}"),
+                        })?;
                     return parse_version_requires(&body).map_err(|e| match e {
                         IndexError::ParseError { detail, .. } => IndexError::ParseError {
                             url: url.clone(),
@@ -876,7 +892,10 @@ mod tests {
             .expect("should succeed");
 
         assert_eq!(meta.name, "requests");
-        assert!(!meta.versions.is_empty(), "versions should have at least 1 entry");
+        assert!(
+            !meta.versions.is_empty(),
+            "versions should have at least 1 entry"
+        );
         assert!(meta.releases.contains_key("2.31.0"));
     }
 
@@ -968,7 +987,10 @@ mod tests {
 
         assert_eq!(meta.name, "requests");
         assert_eq!(meta.source, "simple-api");
-        assert!(meta.releases.contains_key("2.31.0"), "version 2.31.0 should be present");
+        assert!(
+            meta.releases.contains_key("2.31.0"),
+            "version 2.31.0 should be present"
+        );
     }
 
     // REQ: test_fetch_metadata_simple_html_fallback — content-type text/html → html parser used
@@ -992,7 +1014,10 @@ mod tests {
 
         assert_eq!(meta.name, "requests");
         assert_eq!(meta.source, "simple-api");
-        assert!(meta.releases.contains_key("2.31.0"), "version 2.31.0 should be present");
+        assert!(
+            meta.releases.contains_key("2.31.0"),
+            "version 2.31.0 should be present"
+        );
     }
 
     // REQ: test_fetch_metadata_falls_back_on_404 — /pypi/.../json 404 → falls back to simple/ → success
@@ -1023,7 +1048,10 @@ mod tests {
             .await
             .expect("should succeed via simple-api fallback");
 
-        assert_eq!(meta.source, "simple-api", "should be sourced from simple-api after fallback");
+        assert_eq!(
+            meta.source, "simple-api",
+            "should be sourced from simple-api after fallback"
+        );
         assert!(meta.releases.contains_key("2.31.0"));
     }
 
@@ -1065,7 +1093,11 @@ mod tests {
         };
 
         let result = client.download_artifact("mypkg", &file).await;
-        assert!(result.is_ok(), "download should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "download should succeed: {:?}",
+            result.err()
+        );
         let path = result.unwrap();
         assert!(path.exists(), "downloaded file should exist on disk");
 
@@ -1073,7 +1105,11 @@ mod tests {
         let sidecar_path = std::path::PathBuf::from(format!("{}.sha256", path.display()));
         assert!(sidecar_path.exists(), "sidecar should exist");
         let sidecar_content = std::fs::read_to_string(&sidecar_path).unwrap();
-        assert_eq!(sidecar_content.trim(), digest, "sidecar should contain correct digest");
+        assert_eq!(
+            sidecar_content.trim(),
+            digest,
+            "sidecar should contain correct digest"
+        );
     }
 
     // REQ: test_download_artifact_hash_mismatch_raises
@@ -1125,7 +1161,10 @@ mod tests {
         use crate::pkgmanage::pkgmgr::cache::artifact_path;
         let dest = artifact_path(tmp.path(), "mypkg", "mypkg-2.0.0-py3-none-any.whl");
         let tmp_file = std::path::PathBuf::from(format!("{}.tmp", dest.display()));
-        assert!(!tmp_file.exists(), ".tmp file should be deleted after mismatch");
+        assert!(
+            !tmp_file.exists(),
+            ".tmp file should be deleted after mismatch"
+        );
     }
 
     // REQ: test_fetch_metadata_json_cache_hit_skips_network
@@ -1197,7 +1236,10 @@ mod tests {
         let file = ReleaseFile {
             filename: "foo-1.0-py3-none-any.whl".to_string(),
             url: format!("{}/pkg/foo-1.0-py3-none-any.whl", server.uri()),
-            hash: FileHash { algorithm: "sha256".to_string(), digest: wrong_digest.clone() },
+            hash: FileHash {
+                algorithm: "sha256".to_string(),
+                digest: wrong_digest.clone(),
+            },
             requires_python: None,
             size: None,
             upload_time: None,
@@ -1207,13 +1249,23 @@ mod tests {
             source: Some("simple-api".to_string()),
         };
 
-        let err = client.download_artifact("foo", &file).await
+        let err = client
+            .download_artifact("foo", &file)
+            .await
             .expect_err("should fail with HashMismatch");
 
         match err {
-            IndexError::HashMismatch { expected, actual, .. } => {
-                assert_eq!(expected, wrong_digest, "expected field must echo the advertised hash");
-                assert_eq!(actual, real_digest, "actual field must contain the true digest");
+            IndexError::HashMismatch {
+                expected, actual, ..
+            } => {
+                assert_eq!(
+                    expected, wrong_digest,
+                    "expected field must echo the advertised hash"
+                );
+                assert_eq!(
+                    actual, real_digest,
+                    "actual field must contain the true digest"
+                );
             }
             other => panic!("expected HashMismatch, got: {:?}", other),
         }
@@ -1292,13 +1344,19 @@ mod tests {
         assert_eq!(meta.name, "requests");
 
         let etag = read_cached_etag(tmp.path(), "requests", "json").await;
-        assert_eq!(etag, Some("W/\"etag-v1\"".to_string()), "ETag sidecar should be written");
+        assert_eq!(
+            etag,
+            Some("W/\"etag-v1\"".to_string()),
+            "ETag sidecar should be written"
+        );
     }
 
     // REQ: AC4 — 304 Not Modified returns stale cached metadata without a new network body.
     #[tokio::test]
     async fn test_fetch_metadata_json_304_returns_stale_cached_metadata() {
-        use crate::pkgmanage::pkgmgr::cache::{metadata_path, write_cached_etag, write_cached_metadata};
+        use crate::pkgmanage::pkgmgr::cache::{
+            metadata_path, write_cached_etag, write_cached_metadata,
+        };
         use wiremock::matchers::header;
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -1320,7 +1378,10 @@ mod tests {
         let meta_file = metadata_path(tmp.path(), "requests", "json");
         let c_path = std::ffi::CString::new(meta_file.to_str().unwrap()).unwrap();
         // Set both atime and mtime to 1 second past epoch.
-        let ancient = libc::timeval { tv_sec: 1, tv_usec: 0 };
+        let ancient = libc::timeval {
+            tv_sec: 1,
+            tv_usec: 0,
+        };
         unsafe { libc::utimes(c_path.as_ptr(), [ancient, ancient].as_ptr()) };
 
         // Mock returns 304 when If-None-Match matches.
@@ -1397,7 +1458,10 @@ mod tests {
         // test_fetch_metadata_json_304_returns_stale_cached_metadata (L1184-1189).
         let meta_file = metadata_path(tmp.path(), "requests", "json");
         let c_path = std::ffi::CString::new(meta_file.to_str().unwrap()).unwrap();
-        let ancient = libc::timeval { tv_sec: 1, tv_usec: 0 };
+        let ancient = libc::timeval {
+            tv_sec: 1,
+            tv_usec: 0,
+        };
         unsafe { libc::utimes(c_path.as_ptr(), [ancient, ancient].as_ptr()) };
 
         // Second call — sends If-None-Match from cached ETag, receives 304, returns cached metadata.
@@ -1407,8 +1471,14 @@ mod tests {
             .expect("second fetch (304) should return Ok with cached metadata");
         assert_eq!(meta2.name, "requests");
         assert_eq!(
-            meta2.releases.keys().collect::<std::collections::BTreeSet<_>>(),
-            meta1.releases.keys().collect::<std::collections::BTreeSet<_>>(),
+            meta2
+                .releases
+                .keys()
+                .collect::<std::collections::BTreeSet<_>>(),
+            meta1
+                .releases
+                .keys()
+                .collect::<std::collections::BTreeSet<_>>(),
             "304 round-trip must return the same metadata set as the 200 response"
         );
 
@@ -1467,7 +1537,11 @@ mod tests {
             .await;
 
         let client = make_client(&server.uri());
-        let names = vec!["pkgone".to_string(), "nosuchpkg".to_string(), "pkgtwo".to_string()];
+        let names = vec![
+            "pkgone".to_string(),
+            "nosuchpkg".to_string(),
+            "pkgtwo".to_string(),
+        ];
         // max_in_flight = 2 exercises semaphore.
         let results = client.fetch_metadata_batch(names.clone(), 2).await;
 

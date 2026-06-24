@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Shard routing.
 //!
@@ -28,7 +28,7 @@ use crate::types::{
     SearchRequest, SearchResponse, SortOrder,
 };
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub fn shard_index(collection_id: &str, shard_count: u32) -> u32 {
     debug_assert!(shard_count > 0, "shard_count must be > 0");
     let mut hasher = crc32fast::Hasher::new();
@@ -41,7 +41,7 @@ pub fn shard_index(collection_id: &str, shard_count: u32) -> u32 {
 /// function splits documents *inside* that collection across local shard engines
 /// so write apply can run on multiple cores while each document remains owned by
 /// exactly one shard.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub fn document_shard_index(collection_id: &str, external_id: &str, shard_count: usize) -> usize {
     debug_assert!(shard_count > 0, "shard_count must be > 0");
     let mut hasher = crc32fast::Hasher::new();
@@ -53,18 +53,18 @@ pub fn document_shard_index(collection_id: &str, external_id: &str, shard_count:
 
 /// DNS for a given shard's stable client entry (any replica will do —
 /// the server forwards writes internally).
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub fn shard_host(prefix: &str, shard: u32, headless_service: &str) -> String {
     format!("{prefix}-{shard}.{headless_service}")
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub struct EngineShardSearch {
     shards: Arc<Vec<Arc<Engine>>>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 impl EngineShardSearch {
     pub fn new(shards: Vec<Arc<Engine>>) -> Self {
         Self {
@@ -81,7 +81,7 @@ impl EngineShardSearch {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 impl SearchBackend for EngineShardSearch {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> {
         search_shards_parallel(
@@ -101,13 +101,13 @@ impl SearchBackend for EngineShardSearch {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub struct EngineShardWrite {
     writers: Arc<Vec<Arc<WriteCoordinator>>>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 impl EngineShardWrite {
     pub fn new(writers: Vec<Arc<WriteCoordinator>>) -> Self {
         Self {
@@ -131,8 +131,8 @@ impl EngineShardWrite {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 impl WriteBackend for EngineShardWrite {
     async fn create_collection(
         &self,
@@ -321,7 +321,7 @@ impl WriteBackend for EngineShardWrite {
 /// production sharded router can resolve values from shard-local metadata, while
 /// the scale bench derives deterministic corpus values without widening the
 /// public response type.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub fn search_shards_parallel<S, F, K>(
     collection_id: &str,
     req: SearchRequest,
@@ -359,7 +359,7 @@ where
     ))
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub fn merge_shard_search_responses<K>(
     req: &SearchRequest,
     responses: impl IntoIterator<Item = SearchResponse>,

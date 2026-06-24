@@ -229,9 +229,7 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
             return val;
         }
         let exc_type = MbValue::from_ptr(MbObject::new_str("ModuleNotFoundError".to_string()));
-        let msg = MbValue::from_ptr(MbObject::new_str(
-            format!("No module named '{name}'"),
-        ));
+        let msg = MbValue::from_ptr(MbObject::new_str(format!("No module named '{name}'")));
         super::exception::mb_raise(exc_type, msg);
         return MbValue::none();
     }
@@ -255,14 +253,18 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
 /// Insert `name → val` into `sys.modules` (the dict stored as sys.modules attr).
 fn update_sys_modules(name: &str, val: MbValue) {
     let modules_dict = MODULES.with(|mods| {
-        mods.borrow().get("sys").and_then(|m| m.attrs.get("modules").copied())
+        mods.borrow()
+            .get("sys")
+            .and_then(|m| m.attrs.get("modules").copied())
     });
     if let Some(dict) = modules_dict {
         if let Some(ptr) = dict.as_ptr() {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let mut map = lock.write().unwrap();
-                    unsafe { super::rc::retain_if_ptr(val); }
+                    unsafe {
+                        super::rc::retain_if_ptr(val);
+                    }
                     map.insert(name.into(), val);
                 }
             }
@@ -278,7 +280,9 @@ fn update_sys_modules(name: &str, val: MbValue) {
 /// reverse, so a user injection is invisible to `mb_import` unless recovered here.
 fn lookup_sys_modules(name: &str) -> Option<MbValue> {
     let modules_dict = MODULES.with(|mods| {
-        mods.borrow().get("sys").and_then(|m| m.attrs.get("modules").copied())
+        mods.borrow()
+            .get("sys")
+            .and_then(|m| m.attrs.get("modules").copied())
     })?;
     let ptr = modules_dict.as_ptr()?;
     unsafe {
@@ -321,10 +325,12 @@ pub fn mb_import_from(module_name: MbValue, names: MbValue) -> MbValue {
                                     values.push(val);
                                 }
                                 None => {
-                                    let exc_type = MbValue::from_ptr(MbObject::new_str("ImportError".to_string()));
-                                    let msg = MbValue::from_ptr(MbObject::new_str(
-                                        format!("cannot import name '{attr_name}' from '{name}'"),
+                                    let exc_type = MbValue::from_ptr(MbObject::new_str(
+                                        "ImportError".to_string(),
                                     ));
+                                    let msg = MbValue::from_ptr(MbObject::new_str(format!(
+                                        "cannot import name '{attr_name}' from '{name}'"
+                                    )));
                                     super::exception::mb_raise(exc_type, msg);
                                     return MbValue::none();
                                 }
@@ -584,9 +590,9 @@ pub fn mb_module_getattr(module_name: MbValue, attr: MbValue) -> MbValue {
 
     // Attribute not found — raise ImportError (CPython Rule 6).
     let exc_type = MbValue::from_ptr(MbObject::new_str("ImportError".to_string()));
-    let msg = MbValue::from_ptr(MbObject::new_str(
-        format!("cannot import name '{attr_name}' from '{name}'"),
-    ));
+    let msg = MbValue::from_ptr(MbObject::new_str(format!(
+        "cannot import name '{attr_name}' from '{name}'"
+    )));
     super::exception::mb_raise(exc_type, msg);
     MbValue::none()
 }
@@ -991,10 +997,12 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
     };
 
     // 2. Parse
-    let module = match parser::parse(&source, FileId(9999)) {
+    let mut module = match parser::parse(&source, FileId(9999)) {
         Ok(m) => m,
         Err(_) => return,
     };
+    crate::lower::pep695::desugar_module(&mut module);
+    let module = module;
 
     // 3. Type-check
     let mut checker = TypeChecker::new();
@@ -1693,11 +1701,17 @@ mod tests {
         let names = MbValue::from_ptr(MbObject::new_list(vec![s("missing_key")]));
         let result = mb_import_from(s("partial_from_mod2"), names);
         // CPython raises ImportError for missing attrs; mamba should match.
-        assert!(result.is_none(), "should return none sentinel after raising ImportError");
+        assert!(
+            result.is_none(),
+            "should return none sentinel after raising ImportError"
+        );
         let exc = super::super::exception::mb_get_exception();
         assert!(!exc.is_none(), "ImportError should be set");
         let exc_type = super::super::exception::get_exception_type_pub(exc).unwrap_or_default();
-        assert_eq!(exc_type, "ImportError", "exception type should be ImportError");
+        assert_eq!(
+            exc_type, "ImportError",
+            "exception type should be ImportError"
+        );
         super::super::exception::mb_clear_exception();
     }
 
@@ -1719,18 +1733,19 @@ mod tests {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let fields = fields.read().unwrap();
                 assert_eq!(
-                    fields.get("filename").and_then(|v| extract_str(*v)).as_deref(),
+                    fields
+                        .get("filename")
+                        .and_then(|v| extract_str(*v))
+                        .as_deref(),
                     Some("badsyntax_future6.py")
                 );
                 assert_eq!(fields.get("lineno").and_then(|v| v.as_int()), Some(3));
                 assert_eq!(fields.get("offset").and_then(|v| v.as_int()), Some(1));
-                assert!(
-                    fields
-                        .get("message")
-                        .and_then(|v| extract_str(*v))
-                        .unwrap_or_default()
-                        .contains("badsyntax_future6.py, line 3")
-                );
+                assert!(fields
+                    .get("message")
+                    .and_then(|v| extract_str(*v))
+                    .unwrap_or_default()
+                    .contains("badsyntax_future6.py, line 3"));
             } else {
                 panic!("expected SyntaxError instance");
             }

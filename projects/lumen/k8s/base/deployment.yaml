@@ -8,7 +8,7 @@ metadata:
     role: server
 spec:
   # Symmetric, ephemeral "cattle". Each pod holds a full in-memory
-  # materialized index rebuilt by tailing the NATS write log (optionally
+  # materialized index rebuilt by tailing the Relay write log (optionally
   # bootstrapped from an RDB snapshot). No PVC: the index is derived state.
   # The HPA owns the live replica count; this is the floor at apply time.
   replicas: 3
@@ -82,9 +82,13 @@ spec:
             # Bind all interfaces inside the pod network namespace.
             - name: LUMEN_HOST
               value: "0.0.0.0"
-            # Write-log mode: tail mutations from NATS JetStream.
+            # Write-log mode: tail mutations from Relay.
             - name: LUMEN_WAL
-              value: "nats"
+              value: "relay"
+            - name: LUMEN_RELAY_SUBSCRIBER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             # Graceful-drain window; should track terminationGracePeriodSeconds.
             - name: LUMEN_GRACE_SECS
               value: "30"
@@ -93,11 +97,16 @@ spec:
                 configMapKeyRef:
                   name: lumen-config
                   key: LUMEN_PORT
-            - name: LUMEN_NATS_URL
+            - name: LUMEN_RELAY_URL
               valueFrom:
                 configMapKeyRef:
                   name: lumen-config
-                  key: LUMEN_NATS_URL
+                  key: LUMEN_RELAY_URL
+            - name: LUMEN_RELAY_SUBJECT
+              valueFrom:
+                configMapKeyRef:
+                  name: lumen-config
+                  key: LUMEN_RELAY_SUBJECT
             - name: LUMEN_LOG_FORMAT
               valueFrom:
                 configMapKeyRef:
@@ -119,7 +128,7 @@ spec:
           readinessProbe:
             # 503 until the log tail has caught up (and again while draining).
             # Generous failureThreshold lets a cold pod rebuild its index
-            # from the NATS log before it is rolled or restarted.
+            # from the broker log before it is rolled or restarted.
             httpGet:
               path: /readyz
               port: http

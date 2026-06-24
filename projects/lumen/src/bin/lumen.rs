@@ -1,18 +1,19 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-bin.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! `lumen` — the unified CLI. Today it has one subcommand, `serve`,
-//! which runs a serving node.
+//! `lumen` — the single agent-first CLI: `serve` (serving node), `spec` /
+//! `llm` (offline integration contract + agent topics), and `k8s` (operator
+//! + CRD generation). Agents start here: `lumen llm outline`.
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
-//! write log (the broker). Apply happens in the background subscribe
-//! loop — see `coordinator` / `wal`. Cluster topology lives in the
-//! broker, not here; this binary only needs to know its bind address,
-//! its log backend, and (for sharded routing) the shard count.
+//! configured write log. In single-node mode that log is local; in explicit
+//! broker mode it is Relay/NATS; in primary-replica mode Lumen owns ordering
+//! and replication via raftcore. Apply happens in the background subscribe
+//! loop — see `coordinator` / `wal`.
 //!
 //! ```text
 //! lumen serve                          # single node, in-process log, :7373
-//! lumen serve --wal nats --nats-url nats://nats:4222
+//! lumen serve --wal relay --relay-url http://relay:7000
 //! lumen serve --host 0.0.0.0 --port 7373 --log-format json
 //! ```
 
@@ -47,22 +48,46 @@ enum Command {
     /// Run a serving node (HTTP API + background apply loop).
     Serve(ServeArgs),
     /// Print lumen's machine-readable integration spec — offline, no server.
-    /// Default: the OpenAPI 3 document; `--format json-schema` for the data
-    /// types; `--shapes` for the query-shape cookbook; `--fields` for the
-    /// field-type / analyzer catalog.
+    /// Default: the OpenAPI 3 JSON document; `--format openapi-yaml` for
+    /// LLM-readable OpenAPI YAML; `--format json-schema` for the data types;
+    /// `--shapes` for the query-shape cookbook; `--fields` for the field-type /
+    /// analyzer catalog.
     Spec(SpecArgs),
-    /// Print the agent integration playbook — offline, no server. `guide` (how
-    /// to wire lumen in: mental model + declare→ingest→search→hydrate + flavor
-    /// guide + non-goals), `quickstart` (copy-paste end-to-end), or `recipes`
-    /// (task → ready-to-POST query bodies). Markdown by default; `--format json`
-    /// for a machine-readable form.
+    /// Print agent-facing LLM topics — offline, no server. `outline` maps the
+    /// available topics; `workflow` covers mental model +
+    /// declare→ingest→search→hydrate; `integration` covers Postgres/AlloyDB
+    /// adapter boundaries; `quickstart` is copy-paste end-to-end; `recipes`
+    /// are task → ready-to-POST query bodies. Markdown by default; `--format
+    /// json` for a machine-readable form.
     Llm(LlmArgs),
+    /// Kubernetes operator + CRD generation. `operator` runs the Lumen reconcile
+    /// controller (requires a build with `--features operator`); `gen-crd` prints
+    /// the Lumen CustomResourceDefinition YAML for `kubectl apply`.
+    K8s(K8sArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sArgs {
+    #[command(subcommand)]
+    cmd: K8sCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sCmd {
+    /// Run the Lumen CRD reconcile controller (container CMD; needs `--features operator`).
+    Operator,
+    /// Print the Lumen CustomResourceDefinition as YAML and exit.
+    GenCrd,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
 enum LlmTopic {
-    /// The integration playbook (default).
-    Guide,
+    /// Topic map for agent context selection (default).
+    Outline,
+    /// Product model, declare → ingest → search → hydrate, and non-goals.
+    Workflow,
+    /// Recommended database/pubsub adapter boundary.
+    Integration,
     /// A copy-paste create → index → search walkthrough.
     Quickstart,
     /// Task → ready-to-POST query bodies (same source as `spec --shapes`).
@@ -79,8 +104,8 @@ enum LlmFormat {
 
 #[derive(Parser)]
 struct LlmArgs {
-    /// Which part of the playbook to print.
-    #[arg(value_enum, default_value_t = LlmTopic::Guide)]
+    /// Which agent-facing topic to print.
+    #[arg(value_enum, default_value_t = LlmTopic::Outline)]
     topic: LlmTopic,
     /// Output format.
     #[arg(long, value_enum, default_value_t = LlmFormat::Md)]
@@ -91,8 +116,11 @@ struct LlmArgs {
 enum WalBackend {
     /// In-process log. Single-node / dev. No external dependency.
     Embedded,
-    /// NATS JetStream. Clustered: the broker owns the log + fan-out.
+    /// NATS JetStream legacy backend.
     Nats,
+    /// relay broadcast (#124). Explicit external broker mode.
+    #[cfg(feature = "relay-wal")]
+    Relay,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -116,8 +144,11 @@ enum Persistence {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum SpecFormat {
-    /// Full OpenAPI 3 document (default).
+    /// Full OpenAPI 3 document as JSON (default).
     Openapi,
+    /// Full OpenAPI 3 document as YAML for LLM/agent reading.
+    #[value(alias = "yaml", alias = "openapi.yaml")]
+    OpenapiYaml,
     /// Just the component schemas (request/response data types).
     JsonSchema,
 }
@@ -160,6 +191,19 @@ struct ServeArgs {
     /// rollout) retries with backoff instead of crash-looping.
     #[arg(long, env = "LUMEN_NATS_CONNECT_TIMEOUT_SECS", default_value_t = 120)]
     nats_connect_timeout_secs: u64,
+    /// relay base URL (used when `--wal relay`).
+    #[cfg(feature = "relay-wal")]
+    #[arg(long, env = "LUMEN_RELAY_URL", default_value = "http://localhost:7000")]
+    relay_url: String,
+    /// relay subject carrying the lumen WAL (used when `--wal relay`).
+    #[cfg(feature = "relay-wal")]
+    #[arg(long, env = "LUMEN_RELAY_SUBJECT", default_value = "lumen-wal")]
+    relay_subject: String,
+    /// relay broadcast subscriber id for this serving node. Defaults to POD_NAME
+    /// or HOSTNAME when unset, so every pod keeps an independent replay cursor.
+    #[cfg(feature = "relay-wal")]
+    #[arg(long, env = "LUMEN_RELAY_SUBSCRIBER_ID")]
+    relay_subscriber_id: Option<String>,
     /// Shard count for client-side routing (`crc32(collection) % N`).
     /// Install-time topology constant.
     #[arg(long, env = "SHARD_COUNT", default_value_t = 1)]
@@ -207,6 +251,7 @@ async fn main() -> Result<()> {
             } else {
                 match args.format {
                     SpecFormat::Openapi => lumen::spec::openapi_json(),
+                    SpecFormat::OpenapiYaml => lumen::spec::openapi_yaml(),
                     SpecFormat::JsonSchema => lumen::spec::json_schema_json(),
                 }
             };
@@ -216,7 +261,9 @@ async fn main() -> Result<()> {
         Command::Llm(args) => {
             // Offline: no engine, no server, no I/O beyond stdout.
             let md = match args.topic {
-                LlmTopic::Guide => lumen::spec::llm_guide_md(),
+                LlmTopic::Outline => lumen::spec::llm_outline_md(),
+                LlmTopic::Workflow => lumen::spec::llm_workflow_md(),
+                LlmTopic::Integration => lumen::spec::llm_integration_md(),
                 LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
                 LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
             };
@@ -228,8 +275,14 @@ async fn main() -> Result<()> {
                     LlmTopic::Recipes => {
                         serde_json::to_string_pretty(&lumen::spec::query_shapes())?
                     }
-                    LlmTopic::Guide => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "guide", "markdown": md }),
+                    LlmTopic::Outline => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "outline", "markdown": md }),
+                    )?,
+                    LlmTopic::Workflow => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "workflow", "markdown": md }),
+                    )?,
+                    LlmTopic::Integration => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "integration", "markdown": md }),
                     )?,
                     LlmTopic::Quickstart => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "quickstart", "markdown": md }),
@@ -239,11 +292,46 @@ async fn main() -> Result<()> {
             println!("{out}");
             Ok(())
         }
+        Command::K8s(args) => k8s(args).await,
     }
 }
 
+/// `lumen k8s` — operator control plane. Same binary/image as `serve`; the
+/// kube-rs dependency tree is gated behind the `operator` feature so a default
+/// build stays kube-free. The subcommand is always present in `--help`; without
+/// the feature it errors clearly instead of silently missing.
+#[cfg(feature = "operator")]
+async fn k8s(args: K8sArgs) -> Result<()> {
+    match args.cmd {
+        K8sCmd::GenCrd => {
+            print!("{}", lumen::operator::crd_yaml());
+            Ok(())
+        }
+        K8sCmd::Operator => {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+                )
+                .init();
+            lumen::operator::run().await
+        }
+    }
+}
+
+#[cfg(not(feature = "operator"))]
+async fn k8s(_args: K8sArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without operator support; rebuild with \
+         `--features operator` (the published image includes it)"
+    )
+}
+
 async fn serve(args: ServeArgs) -> Result<()> {
-    init_tracing(&args.log_level, args.log_format, args.otlp_endpoint.as_deref());
+    init_tracing(
+        &args.log_level,
+        args.log_format,
+        args.otlp_endpoint.as_deref(),
+    );
 
     let engine = Arc::new(Engine::new());
 
@@ -253,7 +341,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
     if let Some(endpoint) = args.otlp_endpoint.as_deref() {
         match init_otel_meter(endpoint, engine.clone()) {
             Ok(()) => tracing::info!(otlp_endpoint = endpoint, "OTLP metrics push enabled"),
-            Err(e) => tracing::error!(error = %e, "OTLP metrics init failed; /metrics pull still works"),
+            Err(e) => {
+                tracing::error!(error = %e, "OTLP metrics init failed; /metrics pull still works")
+            }
         }
     }
 
@@ -270,6 +360,25 @@ async fn serve(args: ServeArgs) -> Result<()> {
                     .await
                     .context("connect NATS write log")?,
             )
+        }
+        #[cfg(feature = "relay-wal")]
+        WalBackend::Relay => {
+            tracing::info!(
+                url = %args.relay_url,
+                subject = %args.relay_subject,
+                subscriber_id = ?args.relay_subscriber_id,
+                "wal=relay (broadcast)"
+            );
+            let relay = match &args.relay_subscriber_id {
+                Some(id) => lumen::wal_relay::RelayWal::new_with_subscriber_id(
+                    &args.relay_url,
+                    &args.relay_subject,
+                    id,
+                ),
+                None => lumen::wal_relay::RelayWal::new(&args.relay_url, &args.relay_subject),
+            }
+            .context("connect relay write log")?;
+            Arc::new(relay)
         }
     };
 
@@ -327,7 +436,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     };
 
     // Local AOF (segment mode only): RDB (segment checkpoint, up to `start_seq`)
-    // → AOF replay (`start_seq+1 .. A`) → NATS tail (`A+1 ..`). After replay the
+    // → AOF replay (`start_seq+1 .. A`) → broker tail (`A+1 ..`). After replay the
     // apply loop keeps appending to this same writer, and the checkpoint
     // snapshotter trims it. The default CBOR path never builds one.
     let aof_writer: Option<lumen::coordinator::SharedAof> = if segment_mode {
@@ -335,7 +444,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             Some(dir) => {
                 let aof_path = std::path::Path::new(dir).join("aof.log");
                 // (b) Replay the AOF over the RDB baseline, advancing the cold-start
-                // sequence to the AOF head `A` so the loop tails NATS from `A+1`.
+                // sequence to the AOF head `A` so the loop tails the broker from `A+1`.
                 let replayed = lumen::aof::replay_aof_into(&engine, &aof_path, start_seq)
                     .context("replay AOF over segment baseline")?;
                 if replayed > start_seq {
@@ -646,17 +755,15 @@ fn build_otel_tracer(
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(exporter)
-        .with_trace_config(
-            opentelemetry_sdk::trace::Config::default().with_resource(
-                opentelemetry_sdk::Resource::new(vec![
-                    opentelemetry::KeyValue::new("service.name", "lumen"),
-                    opentelemetry::KeyValue::new(
-                        "service.version",
-                        env!("CARGO_PKG_VERSION").to_string(),
-                    ),
-                ]),
-            ),
-        )
+        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
+            opentelemetry_sdk::Resource::new(vec![
+                opentelemetry::KeyValue::new("service.name", "lumen"),
+                opentelemetry::KeyValue::new(
+                    "service.version",
+                    env!("CARGO_PKG_VERSION").to_string(),
+                ),
+            ]),
+        ))
         .install_batch(opentelemetry_sdk::runtime::Tokio)?;
     Ok(tracer)
 }
@@ -700,20 +807,62 @@ fn init_otel_meter(
             let _ = meter
                 .u64_observable_counter($name)
                 .with_description($desc)
-                .with_callback(move |o| o.observe(eng.metrics().$field.load(Ordering::Relaxed), &[]))
+                .with_callback(move |o| {
+                    o.observe(eng.metrics().$field.load(Ordering::Relaxed), &[])
+                })
                 .init();
         }};
     }
-    obs_counter!("lumen_index_writes_total", index_writes_total, "Total index writes");
-    obs_counter!("lumen_index_bytes_total", index_bytes_total, "Total bytes indexed");
-    obs_counter!("lumen_search_requests_total", search_requests_total, "Total search requests");
-    obs_counter!("lumen_search_latency_ms_sum", search_latency_ms_sum, "Search latency ms sum");
-    obs_counter!("lumen_search_latency_ms_count", search_latency_ms_count, "Search latency count");
-    obs_counter!("lumen_duplicates_requests_total", duplicates_requests_total, "Total duplicates requests");
-    obs_counter!("lumen_collections_created_total", collections_created_total, "Total collections created");
-    obs_counter!("lumen_schema_fields_total", schema_fields_total, "Total schema fields");
-    obs_counter!("lumen_posting_cache_hits_total", posting_cache_hits_total, "Posting cache hits");
-    obs_counter!("lumen_posting_cache_misses_total", posting_cache_misses_total, "Posting cache misses");
+    obs_counter!(
+        "lumen_index_writes_total",
+        index_writes_total,
+        "Total index writes"
+    );
+    obs_counter!(
+        "lumen_index_bytes_total",
+        index_bytes_total,
+        "Total bytes indexed"
+    );
+    obs_counter!(
+        "lumen_search_requests_total",
+        search_requests_total,
+        "Total search requests"
+    );
+    obs_counter!(
+        "lumen_search_latency_ms_sum",
+        search_latency_ms_sum,
+        "Search latency ms sum"
+    );
+    obs_counter!(
+        "lumen_search_latency_ms_count",
+        search_latency_ms_count,
+        "Search latency count"
+    );
+    obs_counter!(
+        "lumen_duplicates_requests_total",
+        duplicates_requests_total,
+        "Total duplicates requests"
+    );
+    obs_counter!(
+        "lumen_collections_created_total",
+        collections_created_total,
+        "Total collections created"
+    );
+    obs_counter!(
+        "lumen_schema_fields_total",
+        schema_fields_total,
+        "Total schema fields"
+    );
+    obs_counter!(
+        "lumen_posting_cache_hits_total",
+        posting_cache_hits_total,
+        "Posting cache hits"
+    );
+    obs_counter!(
+        "lumen_posting_cache_misses_total",
+        posting_cache_misses_total,
+        "Posting cache misses"
+    );
 
     // storage_bytes is a gauge (can decrease).
     {
@@ -721,7 +870,9 @@ fn init_otel_meter(
         let _ = meter
             .u64_observable_gauge("lumen_storage_bytes")
             .with_description("Current storage bytes")
-            .with_callback(move |o| o.observe(eng.metrics().storage_bytes.load(Ordering::Relaxed), &[]))
+            .with_callback(move |o| {
+                o.observe(eng.metrics().storage_bytes.load(Ordering::Relaxed), &[])
+            })
             .init();
     }
 

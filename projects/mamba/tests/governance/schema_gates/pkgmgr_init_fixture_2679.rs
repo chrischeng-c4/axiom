@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("governance")
         .join("gates")
         .join("pkgmgr")
         .join("init")
@@ -141,11 +141,10 @@ fn pkgmgr_init_reentry_policy_is_pinned() {
         .and_then(|v| v.as_table())
         .expect("manifest.toml missing `[reentry]` block");
 
-    let policy = reentry
-        .get("policy")
-        .and_then(|v| v.as_str())
-        .expect("`[reentry].policy` must be set (acceptance: \
-         \"Re-running init fails or is idempotent according to documented policy.\")");
+    let policy = reentry.get("policy").and_then(|v| v.as_str()).expect(
+        "`[reentry].policy` must be set (acceptance: \
+         \"Re-running init fails or is idempotent according to documented policy.\")",
+    );
     assert!(
         matches!(
             policy,
@@ -194,11 +193,10 @@ fn pkgmgr_init_reentry_policy_is_pinned() {
 fn pkgmgr_init_isolation_pins_no_global_state() {
     let doc = crate::common::load_toml(&manifest_path());
 
-    let isolation = doc
-        .get("isolation")
-        .and_then(|v| v.as_table())
-        .expect("manifest.toml missing `[isolation]` block \
-         (acceptance: \"No user home or global cache state is modified.\")");
+    let isolation = doc.get("isolation").and_then(|v| v.as_table()).expect(
+        "manifest.toml missing `[isolation]` block \
+         (acceptance: \"No user home or global cache state is modified.\")",
+    );
 
     for flag in &[
         "forbid_writes_outside_project",

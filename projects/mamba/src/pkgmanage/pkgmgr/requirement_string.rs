@@ -325,10 +325,7 @@ mod tests {
         // PEP 508 markers compare against quoted strings; a `;` inside such
         // a string must not be treated as the marker separator.
         let r = req("requests >= 2.31 ; sys_platform == \"linux;weird\"");
-        assert_eq!(
-            r.marker.as_deref(),
-            Some("sys_platform == \"linux;weird\"")
-        );
+        assert_eq!(r.marker.as_deref(), Some("sys_platform == \"linux;weird\""));
     }
 
     #[test]
@@ -394,9 +391,7 @@ mod tests {
         // marker-splitter follows quote state. The trailing `;` is then
         // swallowed as if inside the quote, leaving us unterminated at
         // end-of-string — surfaced as a parse error.
-        assert!(
-            Requirement::parse("pkg \"oops ; python_version >= \"3.10\"").is_err()
-        );
+        assert!(Requirement::parse("pkg \"oops ; python_version >= \"3.10\"").is_err());
     }
 
     #[test]
@@ -409,15 +404,14 @@ mod tests {
 
     #[test]
     fn whitespace_between_every_token_is_tolerated() {
-        let r = req("  requests   [  socks  ,  security  ]   >=  2.31   ;  python_version  >=  \"3.10\"  ");
+        let r = req(
+            "  requests   [  socks  ,  security  ]   >=  2.31   ;  python_version  >=  \"3.10\"  ",
+        );
         assert_eq!(r.name, "requests");
         assert!(r.extras.contains("socks"));
         assert!(r.extras.contains("security"));
         assert_eq!(r.specifier.as_deref(), Some(">=  2.31"));
-        assert_eq!(
-            r.marker.as_deref(),
-            Some("python_version  >=  \"3.10\"")
-        );
+        assert_eq!(r.marker.as_deref(), Some("python_version  >=  \"3.10\""));
     }
 
     #[test]

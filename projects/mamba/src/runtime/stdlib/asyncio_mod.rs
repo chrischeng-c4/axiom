@@ -1,16 +1,15 @@
+use super::super::async_task::{
+    mb_async_wait as rt_async_wait, mb_await as rt_await, mb_create_task as rt_create_task,
+    mb_gather as rt_gather, mb_run_until_complete, mb_sleep as rt_sleep,
+};
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// asyncio module for Mamba — delegates to async_rt / async_task event loop.
 ///
 /// Wires user-facing asyncio API (asyncio.run, asyncio.sleep, asyncio.gather,
 /// asyncio.create_task, asyncio.wait, asyncio.shield) to the existing
 /// coroutine runtime in `runtime::async_task`.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::async_task::{
-    mb_run_until_complete, mb_sleep as rt_sleep, mb_gather as rt_gather,
-    mb_create_task as rt_create_task, mb_await as rt_await,
-    mb_async_wait as rt_async_wait,
-};
 
 // ── Native dispatchers (C-ABI wrappers over typed Rust fns) ──
 
@@ -69,7 +68,10 @@ pub fn register() {
         ("run", dispatch_run as *const () as usize),
         ("sleep", dispatch_sleep as *const () as usize),
         ("create_task", dispatch_create_task as *const () as usize),
-        ("ensure_future", dispatch_ensure_future as *const () as usize),
+        (
+            "ensure_future",
+            dispatch_ensure_future as *const () as usize,
+        ),
         ("gather", dispatch_gather as *const () as usize),
         ("wait", dispatch_wait as *const () as usize),
         ("wait_for", dispatch_wait_for as *const () as usize),
@@ -83,9 +85,18 @@ pub fn register() {
     }
 
     // Constants
-    attrs.insert("FIRST_COMPLETED".into(), MbValue::from_ptr(MbObject::new_str("FIRST_COMPLETED".into())));
-    attrs.insert("FIRST_EXCEPTION".into(), MbValue::from_ptr(MbObject::new_str("FIRST_EXCEPTION".into())));
-    attrs.insert("ALL_COMPLETED".into(), MbValue::from_ptr(MbObject::new_str("ALL_COMPLETED".into())));
+    attrs.insert(
+        "FIRST_COMPLETED".into(),
+        MbValue::from_ptr(MbObject::new_str("FIRST_COMPLETED".into())),
+    );
+    attrs.insert(
+        "FIRST_EXCEPTION".into(),
+        MbValue::from_ptr(MbObject::new_str("FIRST_EXCEPTION".into())),
+    );
+    attrs.insert(
+        "ALL_COMPLETED".into(),
+        MbValue::from_ptr(MbObject::new_str("ALL_COMPLETED".into())),
+    );
 
     // Surface-fill: top-level classes (CPython 3.12 `dir(asyncio)`) that have no
     // dedicated runtime type yet. Registered as callable shells (same pattern as
@@ -97,36 +108,94 @@ pub fn register() {
     // carry an `args` attribute (so `hasattr(asyncio.X, "args")` passes), not as
     // bare callable shells.
     let class_names: &[&str] = &[
-        "AbstractChildWatcher", "AbstractEventLoop", "AbstractEventLoopPolicy",
-        "AbstractServer", "Barrier", "BaseEventLoop", "BaseProtocol",
-        "BaseTransport", "BoundedSemaphore", "BrokenBarrierError",
-        "BufferedProtocol", "Condition", "DatagramProtocol",
-        "DatagramTransport", "DefaultEventLoopPolicy", "Event",
-        "FastChildWatcher", "Future", "Handle", "IncompleteReadError",
-        "LifoQueue", "LimitOverrunError", "Lock",
-        "MultiLoopChildWatcher", "PidfdChildWatcher", "PriorityQueue",
-        "Protocol", "Queue", "QueueEmpty", "QueueFull", "ReadTransport",
-        "Runner", "SafeChildWatcher", "SelectorEventLoop", "Semaphore",
-        "SendfileNotAvailableError", "Server", "StreamReader",
-        "StreamReaderProtocol", "StreamWriter", "SubprocessProtocol",
-        "SubprocessTransport", "Task", "TaskGroup", "ThreadedChildWatcher",
-        "Timeout", "TimerHandle", "Transport", "WriteTransport",
+        "AbstractChildWatcher",
+        "AbstractEventLoop",
+        "AbstractEventLoopPolicy",
+        "AbstractServer",
+        "Barrier",
+        "BaseEventLoop",
+        "BaseProtocol",
+        "BaseTransport",
+        "BoundedSemaphore",
+        "BrokenBarrierError",
+        "BufferedProtocol",
+        "Condition",
+        "DatagramProtocol",
+        "DatagramTransport",
+        "DefaultEventLoopPolicy",
+        "Event",
+        "FastChildWatcher",
+        "Future",
+        "Handle",
+        "IncompleteReadError",
+        "LifoQueue",
+        "LimitOverrunError",
+        "Lock",
+        "MultiLoopChildWatcher",
+        "PidfdChildWatcher",
+        "PriorityQueue",
+        "Protocol",
+        "Queue",
+        "QueueEmpty",
+        "QueueFull",
+        "ReadTransport",
+        "Runner",
+        "SafeChildWatcher",
+        "SelectorEventLoop",
+        "Semaphore",
+        "SendfileNotAvailableError",
+        "Server",
+        "StreamReader",
+        "StreamReaderProtocol",
+        "StreamWriter",
+        "SubprocessProtocol",
+        "SubprocessTransport",
+        "Task",
+        "TaskGroup",
+        "ThreadedChildWatcher",
+        "Timeout",
+        "TimerHandle",
+        "Transport",
+        "WriteTransport",
     ];
     // Top-level functions present in CPython 3.12 `dir(asyncio)` that are not
     // already wired to a real dispatcher above. Registered as callable shells.
     let func_names: &[&str] = &[
-        "all_tasks", "as_completed", "create_eager_task_factory",
-        "create_subprocess_exec", "create_subprocess_shell", "current_task",
-        "eager_task_factory", "get_child_watcher", "get_event_loop",
-        "get_event_loop_policy", "get_running_loop", "iscoroutine",
-        "iscoroutinefunction", "isfuture", "new_event_loop", "open_connection",
-        "open_unix_connection", "run_coroutine_threadsafe", "set_child_watcher",
-        "set_event_loop", "set_event_loop_policy", "start_server",
-        "start_unix_server", "timeout", "timeout_at", "to_thread", "wrap_future",
+        "all_tasks",
+        "as_completed",
+        "create_eager_task_factory",
+        "create_subprocess_exec",
+        "create_subprocess_shell",
+        "current_task",
+        "eager_task_factory",
+        "get_child_watcher",
+        "get_event_loop",
+        "get_event_loop_policy",
+        "get_running_loop",
+        "iscoroutine",
+        "iscoroutinefunction",
+        "isfuture",
+        "new_event_loop",
+        "open_connection",
+        "open_unix_connection",
+        "run_coroutine_threadsafe",
+        "set_child_watcher",
+        "set_event_loop",
+        "set_event_loop_policy",
+        "start_server",
+        "start_unix_server",
+        "timeout",
+        "timeout_at",
+        "to_thread",
+        "wrap_future",
         // Private (underscore) task-bookkeeping helpers present in CPython 3.12
         // `dir(asyncio)` — surface probes only `hasattr(asyncio, NAME)`.
-        "_enter_task", "_leave_task", "_register_task", "_unregister_task",
-        "_get_running_loop", "_set_running_loop",
+        "_enter_task",
+        "_leave_task",
+        "_register_task",
+        "_unregister_task",
+        "_get_running_loop",
+        "_set_running_loop",
     ];
     for name in class_names.iter().chain(func_names.iter()) {
         attrs.insert((*name).to_string(), MbValue::from_func(shell));
@@ -159,29 +228,59 @@ pub fn register() {
 }
 
 /// asyncio.run(coro) — drive the event loop until coro completes.
+/// CPython 3.12 raises ValueError when the argument is not a coroutine;
+/// coroutine handles are integer ids registered in the COROUTINES map.
 pub fn mb_asyncio_run(coro: MbValue) -> MbValue {
+    let is_coro = coro
+        .as_int()
+        .map(|id| {
+            super::super::async_rt::COROUTINES
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&(id as u64))
+        })
+        .unwrap_or(false);
+    if !is_coro {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("a coroutine was expected".to_string())),
+        );
+        return MbValue::none();
+    }
     mb_run_until_complete(coro)
 }
 
 /// asyncio.shield(aw) — pass through (no cancellation semantics yet).
-pub fn mb_asyncio_shield(aws: MbValue) -> MbValue { aws }
+pub fn mb_asyncio_shield(aws: MbValue) -> MbValue {
+    aws
+}
 
 // ── Legacy stubs kept for any existing in-tree callers ──
 // TODO: remove once all call sites migrate to dispatch-based API.
 
 pub fn mb_asyncio_Future() -> MbValue {
     let dict = MbObject::new_dict();
-    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
-        lock.write().unwrap().insert("__type__".into(), MbValue::from_ptr(MbObject::new_str("Future".to_string())));
-    }}
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*dict).data {
+            lock.write().unwrap().insert(
+                "__type__".into(),
+                MbValue::from_ptr(MbObject::new_str("Future".to_string())),
+            );
+        }
+    }
     MbValue::from_ptr(dict)
 }
 
 pub fn mb_asyncio_Task() -> MbValue {
     let dict = MbObject::new_dict();
-    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
-        lock.write().unwrap().insert("__type__".into(), MbValue::from_ptr(MbObject::new_str("Task".to_string())));
-    }}
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*dict).data {
+            lock.write().unwrap().insert(
+                "__type__".into(),
+                MbValue::from_ptr(MbObject::new_str("Task".to_string())),
+            );
+        }
+    }
     MbValue::from_ptr(dict)
 }
 

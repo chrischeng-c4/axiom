@@ -1,6 +1,12 @@
 ---
 id: semantic-arena-install-script
 summary: Lossless source-unit coverage for the arena project install script.
+capability_refs:
+  - id: n-target-comparison-runner
+    role: primary
+    claim: sequential-target-fanout-and-measurement
+    coverage: partial
+    rationale: "The project install script keeps arena's N-target comparison runner CLI install surface available to agents."
 fill_sections: [text-source-unit, changes]
 ---
 

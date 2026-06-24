@@ -1,8 +1,8 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/cb_arbitrate.md#source
 // CODEGEN-BEGIN
-//! `aw cb arbitrate` — terminal escalation verb for the CB CRRR loop.
+//! `aw td code-arbitrate` — terminal escalation verb for the code-artifact CRRR loop.
 //!
-//! Invoked when `aw cb review --apply` records a second `needs-revision`
+//! Invoked when `aw td code-review --apply` records a second `needs-revision`
 //! verdict. Advances phase to `cb_arbitrated`, commits a
 //! `Lifecycle-Stage: Cb-Arbitrate` trailer, and prints human guidance for
 //! the two recovery paths (force-merge or send-back).
@@ -15,7 +15,7 @@ use clap::Args;
 
 use crate::cli::remote_push::maybe_push_remote;
 
-// Args for `aw cb arbitrate <slug>`.
+// Args for `aw td code-arbitrate <slug>`.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
 #[derive(Debug, Args)]
@@ -109,7 +109,7 @@ pub async fn run_arbitrate(args: CbArbitrateArgs) -> Result<()> {
     eprintln!("  Read the # Reviews section in the issue, then either:");
     eprintln!("    - Force-merge:  aw td merge {}", args.slug);
     eprintln!(
-        "    - Send-back:    edit the flagged HANDWRITE blocks back to stubs and re-run `aw cb fill {}`",
+        "    - Send-back:    edit the flagged HANDWRITE blocks back to stubs and re-run `aw td fill {}`",
         args.slug
     );
 

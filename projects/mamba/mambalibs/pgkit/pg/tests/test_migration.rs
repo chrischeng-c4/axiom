@@ -10,8 +10,8 @@
 
 use cclab_pg::{Connection, Migration, MigrationRunner, PoolConfig};
 use qc::{expect, AssertionError};
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 /// Helper to create a test database connection
 async fn create_test_connection() -> Connection {
@@ -29,7 +29,10 @@ async fn create_test_connection() -> Connection {
 async fn create_migration_runner(table_name: &str) -> (MigrationRunner, Connection) {
     let conn = create_test_connection().await;
     let runner = MigrationRunner::new(conn.clone(), Some(table_name.to_string()));
-    runner.init().await.expect("Failed to initialize migration runner");
+    runner
+        .init()
+        .await
+        .expect("Failed to initialize migration runner");
     (runner, conn)
 }
 
@@ -48,7 +51,7 @@ async fn table_exists(conn: &Connection, table_name: &str) -> bool {
     let pool = conn.pool();
     let result: Option<String> = sqlx::query_scalar(
         "SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_name = $1"
+         WHERE table_schema = 'public' AND table_name = $1",
     )
     .bind(table_name)
     .fetch_optional(pool)
@@ -72,7 +75,7 @@ async fn test_migration_runner_init() -> Result<(), AssertionError> {
     let columns: Vec<String> = sqlx::query_scalar(
         "SELECT column_name FROM information_schema.columns
          WHERE table_name = $1
-         ORDER BY ordinal_position"
+         ORDER BY ordinal_position",
     )
     .bind(table_name)
     .fetch_all(pool)
@@ -104,7 +107,8 @@ async fn test_apply_migration_creates_table() -> Result<(), AssertionError> {
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             email TEXT UNIQUE NOT NULL
-        )".to_string(),
+        )"
+        .to_string(),
         "DROP TABLE test_migration_users".to_string(),
     );
 
@@ -143,7 +147,8 @@ async fn test_revert_migration_drops_table() -> Result<(), AssertionError> {
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             price DECIMAL(10, 2)
-        )".to_string(),
+        )"
+        .to_string(),
         "DROP TABLE test_migration_products".to_string(),
     );
 
@@ -179,7 +184,8 @@ async fn test_checksum_validation_detects_modification() -> Result<(), Assertion
         "CREATE TABLE test_migration_orders (
             id SERIAL PRIMARY KEY,
             total DECIMAL(10, 2)
-        )".to_string(),
+        )"
+        .to_string(),
         "DROP TABLE test_migration_orders".to_string(),
     );
 
@@ -193,7 +199,8 @@ async fn test_checksum_validation_detects_modification() -> Result<(), Assertion
             id SERIAL PRIMARY KEY,
             total DECIMAL(10, 2),
             status TEXT -- MODIFIED: added new column
-        )".to_string(),
+        )"
+        .to_string(),
         "DROP TABLE test_migration_orders".to_string(),
     );
 
@@ -239,7 +246,8 @@ async fn test_migration_status_tracking() -> Result<(), AssertionError> {
         Migration::new(
             "20250112_000006".to_string(),
             "create comments".to_string(),
-            "CREATE TABLE test_migration_comments (id SERIAL PRIMARY KEY, content TEXT)".to_string(),
+            "CREATE TABLE test_migration_comments (id SERIAL PRIMARY KEY, content TEXT)"
+                .to_string(),
             "DROP TABLE test_migration_comments".to_string(),
         ),
     ];
@@ -305,7 +313,8 @@ async fn test_rollback_consistency() -> Result<(), AssertionError> {
                 id SERIAL PRIMARY KEY,
                 title TEXT,
                 author_id INTEGER REFERENCES test_migration_authors(id)
-            )".to_string(),
+            )"
+            .to_string(),
             "DROP TABLE test_migration_books".to_string(),
         ),
         Migration::new(
@@ -315,7 +324,8 @@ async fn test_rollback_consistency() -> Result<(), AssertionError> {
                 id SERIAL PRIMARY KEY,
                 book_id INTEGER REFERENCES test_migration_books(id),
                 rating INTEGER
-            )".to_string(),
+            )"
+            .to_string(),
             "DROP TABLE test_migration_reviews".to_string(),
         ),
     ];
@@ -436,11 +446,13 @@ async fn test_migration_with_multiple_statements() -> Result<(), AssertionError>
         );
 
         CREATE INDEX idx_invoices_customer ON test_migration_invoices(customer_id);
-        "#.to_string(),
+        "#
+        .to_string(),
         r#"
         DROP TABLE test_migration_invoices;
         DROP TABLE test_migration_customers;
-        "#.to_string(),
+        "#
+        .to_string(),
     );
 
     // Apply migration
@@ -455,7 +467,7 @@ async fn test_migration_with_multiple_statements() -> Result<(), AssertionError>
     let index_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pg_indexes
          WHERE schemaname = 'public'
-         AND tablename IN ('test_migration_customers', 'test_migration_invoices')"
+         AND tablename IN ('test_migration_customers', 'test_migration_invoices')",
     )
     .fetch_one(pool)
     .await
@@ -481,7 +493,9 @@ async fn test_migration_with_multiple_statements() -> Result<(), AssertionError>
 async fn test_migration_from_file() -> Result<(), AssertionError> {
     // Create a temporary directory for migration files
     let temp_dir = TempDir::new().unwrap();
-    let migration_file = temp_dir.path().join("20250112_120000_create_test_table.sql");
+    let migration_file = temp_dir
+        .path()
+        .join("20250112_120000_create_test_table.sql");
 
     // Write a migration file
     let migration_content = r#"
@@ -505,9 +519,24 @@ DROP TABLE test_migration_from_file;
 
     // Verify migration was parsed correctly
     expect(migration.version.as_str()).to_equal(&"20250112_120000")?;
-    expect(migration.name.contains("Create test table for file loading")).to_be_true()?;
-    expect(migration.up.contains("CREATE TABLE test_migration_from_file")).to_be_true()?;
-    expect(migration.down.contains("DROP TABLE test_migration_from_file")).to_be_true()?;
+    expect(
+        migration
+            .name
+            .contains("Create test table for file loading"),
+    )
+    .to_be_true()?;
+    expect(
+        migration
+            .up
+            .contains("CREATE TABLE test_migration_from_file"),
+    )
+    .to_be_true()?;
+    expect(
+        migration
+            .down
+            .contains("DROP TABLE test_migration_from_file"),
+    )
+    .to_be_true()?;
     expect(!migration.checksum.is_empty()).to_be_true()?;
 
     // Apply the migration
@@ -537,9 +566,18 @@ async fn test_load_from_directory() -> Result<(), AssertionError> {
 
     // Create migration files
     let files = vec![
-        ("20250112_000001_first.sql", "-- UP\nCREATE TABLE first (id SERIAL);\n-- DOWN\nDROP TABLE first;"),
-        ("20250112_000002_second.sql", "-- UP\nCREATE TABLE second (id SERIAL);\n-- DOWN\nDROP TABLE second;"),
-        ("20250112_000003_third.sql", "-- UP\nCREATE TABLE third (id SERIAL);\n-- DOWN\nDROP TABLE third;"),
+        (
+            "20250112_000001_first.sql",
+            "-- UP\nCREATE TABLE first (id SERIAL);\n-- DOWN\nDROP TABLE first;",
+        ),
+        (
+            "20250112_000002_second.sql",
+            "-- UP\nCREATE TABLE second (id SERIAL);\n-- DOWN\nDROP TABLE second;",
+        ),
+        (
+            "20250112_000003_third.sql",
+            "-- UP\nCREATE TABLE third (id SERIAL);\n-- DOWN\nDROP TABLE third;",
+        ),
     ];
 
     for (filename, content) in &files {
@@ -576,12 +614,14 @@ async fn test_migration_transaction_rollback_on_error() -> Result<(), AssertionE
         CREATE TABLE test_migration_temp2 (id SERIAL PRIMARY KEY);
         THIS IS INVALID SQL;
         CREATE TABLE test_migration_temp3 (id SERIAL PRIMARY KEY);
-        "#.to_string(),
+        "#
+        .to_string(),
         r#"
         DROP TABLE test_migration_temp3;
         DROP TABLE test_migration_temp2;
         DROP TABLE test_migration_temp1;
-        "#.to_string(),
+        "#
+        .to_string(),
     );
 
     // Attempt to apply migration (should fail)
@@ -652,9 +692,18 @@ async fn test_pending_migrations() -> Result<(), AssertionError> {
 
     // Clean up
     let pool = conn.pool();
-    sqlx::query("DROP TABLE IF EXISTS test_migration_m1 CASCADE").execute(pool).await.unwrap();
-    sqlx::query("DROP TABLE IF EXISTS test_migration_m2 CASCADE").execute(pool).await.unwrap();
-    sqlx::query("DROP TABLE IF EXISTS test_migration_m3 CASCADE").execute(pool).await.unwrap();
+    sqlx::query("DROP TABLE IF EXISTS test_migration_m1 CASCADE")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE IF EXISTS test_migration_m2 CASCADE")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE IF EXISTS test_migration_m3 CASCADE")
+        .execute(pool)
+        .await
+        .unwrap();
     cleanup_migration_table(&conn, migration_table).await;
 
     Ok(())

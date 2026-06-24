@@ -373,13 +373,14 @@ pub(crate) fn resolve_target_exec(target: &Target) -> Result<PathBuf, SampleErro
             build.args(["build", "--message-format=json", "--bench", name]);
         }
         Target::Exec(path) => {
-            if !path.exists() {
+            if path.exists() || path.components().count() == 1 {
+                return Ok(path.clone());
+            } else {
                 return Err(SampleError::Spawn(format!(
                     "exec target `{}` does not exist",
                     path.display()
                 )));
             }
-            return Ok(path.clone());
         }
     }
     // Capture stdout (JSON artifact stream); inherit stderr so build progress is

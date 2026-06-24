@@ -1,5 +1,11 @@
 ---
 id: projects-arena-arena-cli-src-dispatch-rs
+capability_refs:
+  - id: n-target-comparison-runner
+    role: primary
+    claim: sequential-target-fanout-and-measurement
+    coverage: partial
+    rationale: "This source unit implements arena CLI, spec parsing, measurement, or runner orchestration for N-target comparisons."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,18 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/arena/arena-cli/src/dispatch.rs`, captured as a rust-source-unit (td_ast) item-tree
-during arena standardization onto the codegen ladder.
+Public API manifest for `projects/arena/arena-cli/src/dispatch.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ArenaCommand` | projects/arena/arena-cli/src/dispatch.rs | struct | pub | 24 |  |
+| `OutputOpts` | projects/arena/arena-cli/src/dispatch.rs | struct | pub | 33 |  |
+| `RunArgs` | projects/arena/arena-cli/src/dispatch.rs | struct | pub | 54 |  |
+| `Verb` | projects/arena/arena-cli/src/dispatch.rs | enum | pub | 41 |  |
+| `execute` | projects/arena/arena-cli/src/dispatch.rs | function | pub | 71 | execute(cmd: ArenaCommand) -> ArenaReport |
+| `print_report` | projects/arena/arena-cli/src/dispatch.rs | function | pub | 128 | print_report(report: &ArenaReport, out: &OutputOpts) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

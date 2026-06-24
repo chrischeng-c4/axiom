@@ -11,7 +11,6 @@
 /// TC-4: Stdlib functions return None fix (P0-R4)
 /// TC-5: Comprehension scope isolation (P0-R5) — end-to-end
 /// TC-6: Walrus operator := scope fix (P0-R6) — end-to-end
-
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -28,7 +27,7 @@ const TEST_TIMEOUT_SECS: u64 = 10;
 
 /// Run Python source through the full JIT pipeline, capturing stdout.
 fn jit_capture(src: &str) -> String {
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     let module = parser::parse(src, FileId(0)).expect("parse failed");
     let mut checker = TypeChecker::new();
@@ -92,7 +91,12 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
+                diff.push_str(&format!(
+                    "  line {}: expected {:?}, got {:?}\n",
+                    i + 1,
+                    e,
+                    a
+                ));
             }
         }
         panic!(
@@ -110,9 +114,7 @@ fn assert_output(actual: &str, expected: &str) {
 /// THEN: stdout prints "25"
 #[test]
 fn test_p0_r1_simple_lambda() {
-    let output = jit_capture(
-        "square = lambda x: x * x\nprint(square(5))\n",
-    );
+    let output = jit_capture("square = lambda x: x * x\nprint(square(5))\n");
     assert_output(&output, "25\n");
 }
 
@@ -121,9 +123,7 @@ fn test_p0_r1_simple_lambda() {
 /// THEN: stdout prints "7"
 #[test]
 fn test_p0_r1_nested_lambda_closure() {
-    let output = jit_capture(
-        "adder = lambda x: lambda y: x + y\nprint(adder(3)(4))\n",
-    );
+    let output = jit_capture("adder = lambda x: lambda y: x + y\nprint(adder(3)(4))\n");
     assert_output(&output, "7\n");
 }
 
@@ -132,18 +132,14 @@ fn test_p0_r1_nested_lambda_closure() {
 /// THEN: stdout prints "20"
 #[test]
 fn test_p0_r1_lambda_capture_enclosing() {
-    let output = jit_capture(
-        "x = 10\nf = lambda: x * 2\nprint(f())\n",
-    );
+    let output = jit_capture("x = 10\nf = lambda: x * 2\nprint(f())\n");
     assert_output(&output, "20\n");
 }
 
 /// TC-1 supplemental: Lambda with multiple arguments.
 #[test]
 fn test_p0_r1_lambda_multiple_args() {
-    let output = jit_capture(
-        "add = lambda x, y: x + y\nprint(add(3, 4))\n",
-    );
+    let output = jit_capture("add = lambda x, y: x + y\nprint(add(3, 4))\n");
     assert_output(&output, "7\n");
 }
 
@@ -353,9 +349,7 @@ print(math.sqrt(16.0))
 /// THEN: stdout prints "[0, 1, 4, 9, 16]"
 #[test]
 fn test_p0_r5_list_comprehension_basic() {
-    let output = jit_capture(
-        "squares = [x * x for x in range(5)]\nprint(squares)\n",
-    );
+    let output = jit_capture("squares = [x * x for x in range(5)]\nprint(squares)\n");
     assert_output(&output, "[0, 1, 4, 9, 16]\n");
 }
 
@@ -364,9 +358,7 @@ fn test_p0_r5_list_comprehension_basic() {
 /// THEN: stdout prints "{0: 0, 1: 2, 2: 4, 3: 6}"
 #[test]
 fn test_p0_r5_dict_comprehension_basic() {
-    let output = jit_capture(
-        "d = {k: k * 2 for k in range(4)}\nprint(d)\n",
-    );
+    let output = jit_capture("d = {k: k * 2 for k in range(4)}\nprint(d)\n");
     assert_output(&output, "{0: 0, 1: 2, 2: 4, 3: 6}\n");
 }
 
@@ -375,9 +367,7 @@ fn test_p0_r5_dict_comprehension_basic() {
 /// THEN: stdout prints "55"
 #[test]
 fn test_p0_r5_generator_expr_sum() {
-    let output = jit_capture(
-        "total = sum(n * n for n in range(6))\nprint(total)\n",
-    );
+    let output = jit_capture("total = sum(n * n for n in range(6))\nprint(total)\n");
     assert_output(&output, "55\n");
 }
 
@@ -386,9 +376,7 @@ fn test_p0_r5_generator_expr_sum() {
 /// THEN: stdout prints "[0, 2, 4, 6, 8]"
 #[test]
 fn test_p0_r5_list_comp_with_condition() {
-    let output = jit_capture(
-        "evens = [n for n in range(10) if n % 2 == 0]\nprint(evens)\n",
-    );
+    let output = jit_capture("evens = [n for n in range(10) if n % 2 == 0]\nprint(evens)\n");
     assert_output(&output, "[0, 2, 4, 6, 8]\n");
 }
 

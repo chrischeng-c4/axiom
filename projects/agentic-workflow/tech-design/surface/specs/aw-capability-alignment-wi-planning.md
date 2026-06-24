@@ -33,6 +33,18 @@ capability_refs:
     claim: capability-readiness-reporting
     coverage: full
     rationale: "This spec defines capability readiness report, next, run, and check behavior."
+  - id: capability-control-plane
+    role: primary
+    gap: capability-project-sweep
+    claim: capability-project-sweep
+    coverage: full
+    rationale: "This spec defines capability sweep grouping, draft queues, WI plan queues, and executable action queues."
+  - id: capability-control-plane
+    role: primary
+    gap: missing-readme-initialization
+    claim: missing-readme-initialization
+    coverage: full
+    rationale: "This spec defines capability init behavior for projects with missing capability README shells."
   - id: work-item-planning
     role: primary
     gap: capability-to-epic-planning
@@ -48,10 +60,19 @@ capability_refs:
 command_refs:
   - command: aw run
   - command: aw capability
+  - command: aw capability apply-draft
   - command: aw capability check
+  - command: aw capability draft
+  - command: aw capability init
+  - command: aw capability migrate
   - command: aw capability next
   - command: aw capability report
   - command: aw capability run
+  - command: aw capability set-ec-dimension
+  - command: aw capability set-status
+  - command: aw capability set-surface
+  - command: aw capability set-type
+  - command: aw capability sweep
 ---
 
 # AW Capability Alignment WI Planning
@@ -68,8 +89,10 @@ scenarios:
     when: ["agent infers a candidate capability map"]
     then:
       - "candidate is not written to cap_path until human confirmation"
-      - "published README uses Markdown H1-Hn capability headings with contract/work-root tables"
-      - "YAML capability sections and legacy capability tables are migration input only and cannot count as verified"
+      - "published README uses # Project, ## Brief, ## Capabilities, ### Capability Index, and ### capability roots"
+      - "each capability root uses field-style contract lines for ID, Type, Surfaces, EC Dimensions, Root WI, Status, Required Verification, Promise, and Gate Inventory"
+      - "the lower Work Root table stays table-shaped because each row is naturally one work root"
+      - "YAML capability sections, Field/Value contract tables, and legacy one-row contract tables are migration input only and cannot count as verified"
 
   - id: S2
     title: "roadmap-sized request becomes epic or atomization draft"
@@ -108,22 +131,58 @@ scenarios:
   - id: S6
     title: "capability command emits deterministic next action"
     given: ["project README contains Markdown capability headings and contract/work-root tables"]
-    when: ["aw capability report|next|run|check executes for the project"]
+    when: ["aw capability init creates a missing capability map shell, aw capability report|next|run|check executes for the project, or aw capability sweep executes across configured projects"]
     then:
+      - "init creates only a canonical README shell and does not invent capability promises"
+      - "draft emits pending-review field-style capability contracts with placeholders for Type, Surfaces, EC Dimensions, Root WI, Promise, and Gate Inventory"
+      - "draft may truncate Candidate Roots summary cells, but Draft Canonical README Promise fields preserve the full source prose"
+      - "draft emits a Review Decisions worksheet with one row per candidate root so HITL review can record confirm, rename, split, merge, defer, type, surface, EC dimension, WI, and gate decisions before README mutation"
+      - "draft treats non-contract Markdown tables with a Capability column, such as Required Platform Capabilities, as pending-review candidate roots instead of emitting only a blank worksheet"
+      - "draft treats Markdown bullets under explicit Features or Modules sections as pending-review candidate roots, and falls back to Implemented sections only when no clearer candidate list exists"
+      - "draft reads project-local aw.toml [capability.profile].traits, renders selected traits plus derived required baseline capabilities, and treats missing baseline capabilities as pending-review candidate roots"
+      - "trait-derived baseline capabilities are mandatory minimums for the project profile, not the complete capability set, and domain-specific capabilities remain human-reviewed capability roots"
+      - "http2_api derives a lightweight HTTP/2 API-list baseline without requiring OpenAPI completeness, kubernetes_native derives a Kubernetes deployment baseline, and primary_replicas derives a primary/replica topology baseline only for projects that select the trait"
+      - "draft keeps candidate review order aligned with README source line order across heading, table, and list inputs"
+      - "draft extracts trailing issue references such as (#3331) into Root WI without baking the issue number into the capability title or proposed ID"
+      - "sweep --write-drafts emits a draft review index that separates inferred candidate review from human definition-needed worksheets"
+      - "apply-draft refuses unreviewed placeholder drafts, including unresolved Review Decisions worksheets, and writes only reviewed canonical capability sections"
+      - "apply-draft materializes completed Review Decisions values into the canonical README section before applying it, so reviewers do not need to duplicate Type, Surfaces, EC Dimensions, Root WI, and gate decisions"
+      - "format migration repair can strip a previously generated canonical tail that starts at either H2 or H3 Capability Index"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
+      - "report/next compact summaries expose capability type, surface, EC dimension, and efficiency backfill coverage so agents can inspect #78 contract facets without reading the full README"
+      - "report/next/run/check JSON output treats stdout broken-pipe as a successful early reader close so agent pipe sampling does not look like a capability failure"
       - "next emits exactly one next_action"
+      - "report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing instead of treating absent tracker evidence as a recreate-WI instruction"
+      - "active README WI refs that are stale, missing from live inventory, or hidden by --skip-issue-inventory route to ReconcileWiRefs rather than CreateWi"
+      - "aw wi plan resolves README active WI refs that are absent from the open issue inventory through backend get lookups and emits Tracker WI Ref Lookups with closed, not_found, or lookup_error status for HITL reconciliation"
       - "run executes at most one bounded tick unless --max-ticks raises the bound"
       - "check validates README capability format and TD capability refs without lifecycle execution"
+      - "check validates project-local capability profile required baseline capabilities against README capability IDs"
+      - "sweep emits grouped project rows by report status and next_action kind without mutating capability maps"
+      - "sweep --write-rollout emits one AW-owned rollout handoff plus check, draft, WI-plan, action-queue, and HITL review packet artifacts"
+      - "sweep groups skipped-inventory README WI-ref work as reconcile_wi_refs:issue_inventory_skipped so agents do not treat tracker reconciliation as new WI backlog"
 
   - id: S7
     title: "confirmed capability carries verification contract"
     given: ["capability status is confirmed, auditing, blocked, or verified"]
     when: ["aw capability check validates cap_path"]
     then:
+      - "capability type is one of AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool"
+      - "CapabilityType classifies one capability's EC-dimension ceiling and is not the project archetype; project archetype-like planning belongs to project-local capability profile traits"
+      - "surfaces list public interfaces such as CLI, HTTP, UI, file/config, generated artifacts, or agent hook entrypoints with short purposes"
+      - "EC Dimensions list declared proof dimensions and runners; behavior is required for production when the capability is non-candidate"
+      - "Service may require behavior, efficiency, security, and stability; Devops behavior and stability; DeveloperTool/RuntimeTool behavior, efficiency, and stability; SecurityTool behavior, security, and stability; AgentFirst behavior"
+      - "non-behavior dimensions become production-required only when the README declares content for that dimension or an efficiency backfill slot"
+      - "efficiency dimensions may declare Efficiency Operating Point and Efficiency Cube, and generated/backfilled efficiency sections are owned by aw ec"
+      - "Efficiency Operating Point and Efficiency Cube form one atomic backfill slot; if either field is present, both must be non-empty"
+      - "set-ec-dimension accepts Efficiency Operating Point and Efficiency Cube only for the efficiency EC dimension"
       - "capability must define required verification through README tables"
       - "required claims must include maturity plus either a gate command or a fixture/inventory reference"
       - "TD primary capability_refs must name a known claim for contracted capabilities"
       - "aw wi plan uses required claims as bounded WI planning inputs"
+      - "aw wi plan labels claim planning evidence as gate commands, fixture/inventory references, or prose evidence so agents do not mistake fixture-only claims for missing gate commands"
+      - "aw wi plan emits a capability-level Review Summary that groups claim candidates by capability before the detailed planning matrix"
+      - "aw wi plan adds tracker lookup evidence for README WI refs that are missing from the open issue inventory, without creating replacement WI candidates automatically"
   - id: S8
     title: "root runner rolls child completion upward"
     given: ["agent invokes aw run with a project, capability, epic, or change root"]
@@ -234,9 +293,62 @@ authoritative stop condition: `action=done` only means the current root is done,
 while `completion.workflow_complete=true` means the root workflow has reached
 project-level 100%. Planning artifacts stay local under
 `/tmp/aw/{project}/...`; tracker mutation remains in the CRRR lane.
-Each capability H2 uses a vertical `Field | Value` metadata table followed by a
-work-root table; legacy single-row metadata tables remain parseable but are not
-the preferred README format.
+The canonical README capability map is Markdown-first and optimized for agents
+that need to understand the project before touching code:
+
+```md
+# Project
+
+## Brief
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+
+### <Capability Name>
+
+ID: <capability-id>
+Type: <AgentFirst|Service|Devops|DeveloperTool|RuntimeTool|SecurityTool>
+Surfaces:
+- CLI: `command` - short command purpose
+- HTTP: `METHOD /path` - short API purpose
+EC Dimensions:
+- behavior: `<runner>` - contract summary
+- efficiency: `<runner>` - operating point / cube summary
+- security: `<runner>` - security gate summary
+- stability: `<runner>` - resilience gate summary
+Efficiency Operating Point: <operating-point-id>
+Efficiency Cube: projects/<project>/.aw/ec/efficiency/<capability>.cube.json
+Root WI: #123
+Status: candidate|confirmed|auditing|blocked|verified|retired
+Required Verification: smoke, conformance, corpus, negative, dogfood
+Promise:
+...
+Gate Inventory:
+- ...
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+```
+
+Capability roots live under `## Capabilities` as `###` headings; they are not
+sibling `##` sections. The top contract is field-style text, not a one-row
+Markdown table and not a `Field | Value` table. The lower Work Root table stays
+table-shaped because each row is naturally one work root. YAML capability
+sections, `Field | Value` metadata tables, and one-row capability contract
+tables remain parseable only as migration input.
+
+Binary commands are public surfaces. README lists each command with a short
+purpose; detailed flags and option grammar stay in command help output.
+Behavior runners depend on the surface: web app end-to-end behavior uses
+`jet e2e` when the browser workflow drives frontend and API behavior together,
+pure backend API behavior uses `rig`, efficiency uses `meter` usually with a
+`rig` scenario and explicit operating point/cube, security uses `guard`, and
+`vat` is runner-like orchestration. `arena` is legacy compatibility rather than
+the default runner for new capability contracts.
 
 ## CLI
 <!-- type: cli lang: yaml -->
@@ -259,10 +371,20 @@ commands:
     behavior: "run the project standardization parent workflow to the first incomplete layer, then continue until production health is ready or a blocker/HITL stops the chain; blocked capability maps produce next.kind=blocked without a follow-up command"
     mutates_tracker: false
   - path: [capability, report]
-    behavior: "read README Markdown capability tables, WI inventory, TD refs, CB/evidence, and optional verification gates or inventory refs"
+    args:
+      - name: include-issue-inventory
+        meaning: "force WI evidence loading when backend state is needed"
+      - name: skip-issue-inventory
+        meaning: "produce a README/TD-only report when issue backend access is unavailable or intentionally out of scope"
+    behavior: "read canonical README field-style capability contracts, migration-input legacy tables, WI inventory, TD refs, CB/evidence, EC dimension metadata, and optional verification gates or inventory refs"
     output: "JSON/text envelope with capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
     mutates_tracker: false
   - path: [capability, next]
+    args:
+      - name: include-issue-inventory
+        meaning: "force WI evidence loading when backend state is needed"
+      - name: skip-issue-inventory
+        meaning: "route from README/TD evidence only when issue backend access is unavailable"
     behavior: "emit exactly one deterministic next_action without lifecycle execution"
     mutates_tracker: false
   - path: [capability, run]
@@ -271,9 +393,39 @@ commands:
         meaning: "required for bounded execution"
       - name: max-ticks
         meaning: "defaults to one bounded tick"
+      - name: include-issue-inventory
+        meaning: "force WI evidence loading when backend state is needed"
+      - name: skip-issue-inventory
+        meaning: "run bounded README/TD-only ticks when issue backend access is unavailable"
     behavior: "execute the next bounded capability tick"
+  - path: [capability, draft]
+    behavior: "write pending-review inferred field-style capability contract drafts under /tmp without editing cap_path; Candidate Roots table summaries may be truncated, Draft Canonical README Promise fields preserve full source prose, candidate order follows README source lines, and trailing issue refs are separated into Root WI"
+    mutates_tracker: false
+  - path: [capability, apply-draft]
+    behavior: "apply a human-reviewed placeholder-free draft to cap_path and refuse unreviewed drafts"
+    mutates_tracker: false
+  - path: [capability, migrate]
+    behavior: "rewrite YAML, Field/Value, or one-row capability maps to canonical field-style Markdown contracts"
+    mutates_tracker: false
   - path: [capability, check]
-    behavior: "validate README Markdown capability format and TD capability refs"
+    args:
+      - name: include-issue-inventory
+        meaning: "include WI evidence while checking README format and TD refs"
+      - name: skip-issue-inventory
+        meaning: "keep the check README/TD-only; this is the default"
+    behavior: "validate canonical README field-style capability format, capability type/surface/EC dimension data, generated efficiency backfill slots, and TD capability refs"
+    mutates_tracker: false
+  - path: [capability, set-type]
+    behavior: "persist a reviewed capability type into the README field-style contract"
+    mutates_tracker: false
+  - path: [capability, set-status]
+    behavior: "persist a reviewed capability status into the README field-style contract"
+    mutates_tracker: false
+  - path: [capability, set-surface]
+    behavior: "upsert a reviewed public surface entry into the README field-style contract"
+    mutates_tracker: false
+  - path: [capability, set-ec-dimension]
+    behavior: "upsert a reviewed EC dimension entry into the README field-style contract; efficiency backfill options are allowed only for the efficiency dimension and must provide both operating point and cube"
     mutates_tracker: false
   - path: [wi, plan]
     behavior: "read cap_path or project README Markdown capability tables, then write a local capability-to-WI planning draft; YAML/legacy tables require migration"
@@ -298,6 +450,17 @@ validation:
   capability_status: [candidate, confirmed, auditing, blocked, verified, retired]
   capability_gap_status: [open, in_progress, blocked, closed, deferred]
   capability_claim_maturity: [smoke, conformance, corpus, negative, dogfood]
+  capability_type: [AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, SecurityTool]
+  capability_surface_kind: [CLI, HTTP, UI, File, Config, Artifact, AgentHook]
+  ec_dimension: [behavior, efficiency, security, stability]
+  ec_runner_defaults:
+    web_app_e2e: jet e2e
+    backend_api: rig
+    efficiency: meter
+    efficiency_scenario: rig
+    security: guard
+    orchestration: vat
+    legacy_compatibility: arena
   work_root_impl: [planned, partial, implemented, blocked, out_of_scope]
   work_root_verification: [none, planned, failing, passing, verified, blocked]
   td_capability_ref_role: [primary, contributes, affected, regression_guard, out_of_scope]
@@ -305,6 +468,13 @@ validation:
   contract_rules:
     - "candidate may omit required verification"
     - "confirmed/auditing/blocked/verified require required verification through tables"
+    - "capability roots are ### headings under ## Capabilities"
+    - "top capability contracts are field-style lines, not one-row tables"
+    - "old YAML sections, Field/Value tables, and one-row contract tables are migration input only"
+    - "type defines the production-required EC dimension ceiling"
+    - "non-behavior EC dimensions are production-required only when declared in README or generated efficiency backfill slots"
+    - "aw ec owns generated/backfilled efficiency sections and cube slots"
+    - "efficiency backfill slots are atomic: operating point and cube must be supplied together and cannot be attached to non-efficiency dimensions"
     - "required claims require maturity and at least one gate command or fixture/inventory reference"
     - "primary TD refs to contracted capabilities require known claim"
   blocked_values:
@@ -356,7 +526,7 @@ requirements:
     verifymethod: test
   capability_h2_schema:
     id: AW-CAP-WI-8
-    text: "aw capability check validates README Markdown capability headings/tables and treats YAML or legacy tables as migration input"
+    text: "aw capability check validates README ## Brief / ## Capabilities / ### Capability Index / ### field-style capability contracts and treats YAML or legacy tables as migration input"
     risk: high
     verifymethod: test
   td_capability_refs:
@@ -366,13 +536,103 @@ requirements:
     verifymethod: test
   capability_contract:
     id: AW-CAP-WI-10
-    text: "aw capability check requires non-candidate capabilities to declare required verification through README tables or gate inventory refs"
+    text: "aw capability check requires non-candidate capabilities to declare type, surfaces, EC dimensions, and required verification through README fields or gate inventory refs"
     risk: high
     verifymethod: test
   claim_scoped_wi_plan:
     id: AW-CAP-WI-11
     text: "aw wi plan emits claim-scoped WI candidates from required capability claims"
     risk: high
+    verifymethod: test
+  draft_promise_preservation:
+    id: AW-CAP-WI-12
+    text: "aw capability draft preserves full source prose in Draft Canonical README Promise fields even when candidate summaries are truncated"
+    risk: high
+    verifymethod: test
+  draft_table_candidate_roots:
+    id: AW-CAP-WI-13
+    text: "aw capability draft uses README tables with a Capability column as pending-review candidate roots when no canonical capability contracts exist"
+    risk: medium
+    verifymethod: test
+  draft_list_candidate_roots:
+    id: AW-CAP-WI-14
+    text: "aw capability draft uses README Features/Modules bullets, or Implemented bullets as a fallback, as pending-review candidate roots when no canonical capability contracts exist"
+    risk: medium
+    verifymethod: test
+  issue_inventory_optional:
+    id: AW-CAP-WI-15
+    text: "aw capability report/next/run/check expose include/skip issue-inventory flags so README and TD parsing remain usable when the issue backend is unavailable"
+    risk: medium
+    verifymethod: test
+  wi_plan_review_summary:
+    id: AW-CAP-WI-16
+    text: "aw wi plan emits a capability-level review summary with candidate counts, existing WI refs, next operator, and first action before the detailed matrix"
+    risk: medium
+    verifymethod: test
+  draft_index_review_summary:
+    id: AW-CAP-WI-17
+    text: "aw capability sweep --write-drafts emits a review summary and suggested review order so candidate-root drafts are separated from definition-needed worksheets"
+    risk: medium
+    verifymethod: test
+  skip_issue_inventory_lifecycle:
+    id: AW-CAP-WI-18
+    text: "aw capability report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing while preserving tracker-backed recreate-WI protection when issue inventory is required"
+    risk: medium
+    verifymethod: test
+  migration_tail_repair_heading_levels:
+    id: AW-CAP-WI-19
+    text: "aw capability migration duplicate-repair can strip a previously generated canonical tail that starts at either H2 or H3 Capability Index before reparsing"
+    risk: medium
+    verifymethod: test
+  summary_contract_facets:
+    id: AW-CAP-WI-20
+    text: "aw capability compact summaries expose typed capability count, surface kinds, EC dimensions, and efficiency backfill slot count for agent-readable #78 contract review"
+    risk: medium
+    verifymethod: test
+  json_stdout_pipe:
+    id: AW-CAP-WI-21
+    text: "aw capability JSON output treats stdout broken-pipe as a successful early reader close"
+    risk: medium
+    verifymethod: test
+  draft_review_decisions:
+    id: AW-CAP-WI-22
+    text: "aw capability draft emits a Review Decisions worksheet for HITL root/type/surface/EC/WI/gate review before README mutation"
+    risk: medium
+    verifymethod: test
+  draft_review_decisions_apply_gate:
+    id: AW-CAP-WI-23
+    text: "aw capability apply-draft refuses drafts whose Review Decisions worksheet still contains unresolved default decisions or placeholders"
+    risk: high
+    verifymethod: test
+  draft_review_decisions_materialize:
+    id: AW-CAP-WI-24
+    text: "aw capability apply-draft materializes completed Review Decisions into the canonical README section before README mutation"
+    risk: high
+    verifymethod: test
+  efficiency_backfill_atomic:
+    id: AW-CAP-WI-25
+    text: "aw capability set-ec-dimension rejects partial efficiency backfill slots and rejects efficiency slots on non-efficiency dimensions"
+    risk: high
+    verifymethod: test
+  rollout_review_packet:
+    id: AW-CAP-WI-26
+    text: "aw capability sweep --write-rollout emits one AW-owned rollout handoff plus check, draft, WI-plan, action-queue, and HITL review packet artifacts"
+    risk: medium
+    verifymethod: test
+  reconcile_wi_refs_lane:
+    id: AW-CAP-WI-27
+    text: "aw capability report/sweep routes stale or skipped README WI refs through ReconcileWiRefs and reconcile_wi_refs:issue_inventory_skipped, not CreateWi"
+    risk: high
+    verifymethod: test
+  wi_plan_tracker_lookup:
+    id: AW-CAP-WI-28
+    text: "aw wi plan resolves README WI refs missing from open inventory into Tracker WI Ref Lookups with closed, not_found, or lookup_error status"
+    risk: medium
+    verifymethod: test
+  draft_candidate_title_normalization:
+    id: AW-CAP-WI-29
+    text: "aw capability draft preserves README source order and extracts trailing issue refs into Root WI without duplicating them in capability titles or IDs"
+    risk: medium
     verifymethod: test
 elements:
   issues_unit_tests:
@@ -397,6 +657,20 @@ relations:
   - { from: capability_unit_tests, to: td_capability_refs, kind: verifies }
   - { from: capability_unit_tests, to: capability_contract, kind: verifies }
   - { from: issues_unit_tests, to: claim_scoped_wi_plan, kind: verifies }
+  - { from: issues_unit_tests, to: wi_plan_review_summary, kind: verifies }
+  - { from: capability_unit_tests, to: draft_promise_preservation, kind: verifies }
+  - { from: capability_unit_tests, to: draft_index_review_summary, kind: verifies }
+  - { from: capability_unit_tests, to: skip_issue_inventory_lifecycle, kind: verifies }
+  - { from: capability_unit_tests, to: migration_tail_repair_heading_levels, kind: verifies }
+  - { from: capability_unit_tests, to: summary_contract_facets, kind: verifies }
+  - { from: capability_unit_tests, to: json_stdout_pipe, kind: verifies }
+  - { from: capability_unit_tests, to: draft_review_decisions, kind: verifies }
+  - { from: capability_unit_tests, to: draft_review_decisions_apply_gate, kind: verifies }
+  - { from: capability_unit_tests, to: draft_review_decisions_materialize, kind: verifies }
+  - { from: capability_unit_tests, to: efficiency_backfill_atomic, kind: verifies }
+  - { from: capability_unit_tests, to: rollout_review_packet, kind: verifies }
+  - { from: capability_unit_tests, to: reconcile_wi_refs_lane, kind: verifies }
+  - { from: issues_unit_tests, to: wi_plan_tracker_lookup, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {
@@ -465,6 +739,108 @@ requirementDiagram
         risk: high
         verifymethod: test
     }
+    requirement draft_promise_preservation {
+        id: AW-CAP-WI-12
+        text: "aw capability draft preserves full Promise prose"
+        risk: high
+        verifymethod: test
+    }
+    requirement draft_table_candidate_roots {
+        id: AW-CAP-WI-13
+        text: "draft treats Capability tables as candidate roots"
+        risk: medium
+        verifymethod: test
+    }
+    requirement draft_list_candidate_roots {
+        id: AW-CAP-WI-14
+        text: "draft treats feature/module lists as candidate roots"
+        risk: medium
+        verifymethod: test
+    }
+    requirement issue_inventory_optional {
+        id: AW-CAP-WI-15
+        text: "issue inventory can be included or skipped"
+        risk: medium
+        verifymethod: test
+    }
+    requirement wi_plan_review_summary {
+        id: AW-CAP-WI-16
+        text: "wi plan emits capability review summary"
+        risk: medium
+        verifymethod: test
+    }
+    requirement draft_index_review_summary {
+        id: AW-CAP-WI-17
+        text: "draft sweep emits review summary and order"
+        risk: medium
+        verifymethod: test
+    }
+    requirement skip_issue_inventory_lifecycle {
+        id: AW-CAP-WI-18
+        text: "skip issue inventory keeps lifecycle routing safe"
+        risk: medium
+        verifymethod: test
+    }
+    requirement migration_tail_repair_heading_levels {
+        id: AW-CAP-WI-19
+        text: "migration repair accepts H2 or H3 Capability Index"
+        risk: medium
+        verifymethod: test
+    }
+    requirement summary_contract_facets {
+        id: AW-CAP-WI-20
+        text: "compact summaries expose contract facets"
+        risk: medium
+        verifymethod: test
+    }
+    requirement json_stdout_pipe {
+        id: AW-CAP-WI-21
+        text: "JSON output treats broken pipe as successful close"
+        risk: medium
+        verifymethod: test
+    }
+    requirement draft_review_decisions {
+        id: AW-CAP-WI-22
+        text: "draft emits Review Decisions worksheet"
+        risk: medium
+        verifymethod: test
+    }
+    requirement draft_review_decisions_apply_gate {
+        id: AW-CAP-WI-23
+        text: "apply-draft rejects unresolved Review Decisions"
+        risk: high
+        verifymethod: test
+    }
+    requirement draft_review_decisions_materialize {
+        id: AW-CAP-WI-24
+        text: "apply-draft materializes reviewed decisions"
+        risk: high
+        verifymethod: test
+    }
+    requirement efficiency_backfill_atomic {
+        id: AW-CAP-WI-25
+        text: "efficiency backfill slots are atomic"
+        risk: high
+        verifymethod: test
+    }
+    requirement rollout_review_packet {
+        id: AW-CAP-WI-26
+        text: "write-rollout emits rollout and HITL packet"
+        risk: medium
+        verifymethod: test
+    }
+    requirement reconcile_wi_refs_lane {
+        id: AW-CAP-WI-27
+        text: "stale README WI refs route to ReconcileWiRefs"
+        risk: high
+        verifymethod: test
+    }
+    requirement wi_plan_tracker_lookup {
+        id: AW-CAP-WI-28
+        text: "wi plan emits tracker lookup statuses"
+        risk: medium
+        verifymethod: test
+    }
     element issues_unit_tests {
         type: "cargo-test"
     }
@@ -491,6 +867,23 @@ requirementDiagram
     capability_unit_tests - verifies -> td_capability_refs
     capability_unit_tests - verifies -> capability_contract
     issues_unit_tests - verifies -> claim_scoped_wi_plan
+    capability_unit_tests - verifies -> draft_promise_preservation
+    capability_unit_tests - verifies -> draft_table_candidate_roots
+    capability_unit_tests - verifies -> draft_list_candidate_roots
+    capability_unit_tests - verifies -> issue_inventory_optional
+    issues_unit_tests - verifies -> wi_plan_review_summary
+    capability_unit_tests - verifies -> draft_index_review_summary
+    capability_unit_tests - verifies -> skip_issue_inventory_lifecycle
+    capability_unit_tests - verifies -> migration_tail_repair_heading_levels
+    capability_unit_tests - verifies -> summary_contract_facets
+    capability_unit_tests - verifies -> json_stdout_pipe
+    capability_unit_tests - verifies -> draft_review_decisions
+    capability_unit_tests - verifies -> draft_review_decisions_apply_gate
+    capability_unit_tests - verifies -> draft_review_decisions_materialize
+    capability_unit_tests - verifies -> efficiency_backfill_atomic
+    capability_unit_tests - verifies -> rollout_review_packet
+    issues_unit_tests - verifies -> wi_plan_tracker_lookup
+    capability_unit_tests - verifies -> reconcile_wi_refs_lane
 ```
 
 ## Changes
@@ -502,12 +895,22 @@ changes:
     action: modify
     section: cli
     impl_mode: hand-written
-    description: Document HITL capability anchoring and Markdown capability table rules.
+    description: Document HITL capability anchoring, Markdown capability table rules, rollout queues, and tracker WI-ref reconciliation lanes.
   - path: projects/agentic-workflow/src/cli/capability.rs
     action: modify
     section: cli
     impl_mode: hand-written
     description: Add Markdown capability table parsing, claim progress reporting, TD claim validation, and claim-scoped next actions.
+  - path: projects/agentic-workflow/src/cli/capability.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: Validate efficiency backfill slots as atomic operating-point plus cube contracts scoped only to the efficiency EC dimension.
+  - path: projects/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md
+    action: modify
+    section: scenarios
+    impl_mode: hand-written
+    description: Specify the README capability efficiency backfill slot contract and its unit-test requirement.
   - path: projects/agentic-workflow/src/cli/issues.rs
     action: modify
     section: cli
@@ -589,10 +992,10 @@ changes:
     impl_mode: hand-written
     description: Update the aw init CLAUDE.md template with atomize, prioritize readiness, and bounded-WI guidance.
   - path: projects/agentic-workflow/templates/cli/mainthread/skills/aw-capability/SKILL.md
-    action: add
+    action: modify
     section: cli
     impl_mode: hand-written
-    description: Add aw-capability to the embedded Claude Code skill templates.
+    description: Keep the embedded aw-capability skill template aligned with rollout queues and tracker WI-ref reconciliation lanes.
   - path: projects/agentic-workflow/templates/cli/mainthread/skills/aw-wi/SKILL.md
     action: modify
     section: cli

@@ -29,25 +29,25 @@ The parent workflow coordinates these readiness layers and maturity signals:
 1. Resolve the project from the prompt, current branch, or `.aw/config.toml`.
 2. Run the parent workflow first:
    ```bash
-   aw standardize <project>
+   aw standardize --project <project>
    ```
 3. Follow stdout exactly. If `completion.workflow_complete=true`, stop. If
    `next.kind=run_command`, run the exact `next.command`, perform one bounded
-   tick, then rerun `aw standardize <project>` for rollup.
+   tick, then rerun `aw standardize --project <project>` for rollup.
 4. Capability remediation is routed through `aw capability run <project>
    --non-interactive --max-ticks 1` when the parent emits that command.
 5. For targeted layer debugging, use the layer command without compatibility
    flags:
    ```bash
-   aw standardize managed run <project> --non-interactive --max-ticks 1
-   aw standardize semantic run <project> --non-interactive --max-ticks 1
-   aw standardize traceability run <project> --non-interactive --max-ticks 1
+   aw standardize managed run --project <project> --non-interactive --max-ticks 1
+   aw standardize semantic run --project <project> --non-interactive --max-ticks 1
+   aw standardize traceability run --project <project> --non-interactive --max-ticks 1
    ```
 6. If traceability reports a blocker, do one bounded classification tick:
    - For command blockers, decide `promote` by mapping command -> TD `command_refs` -> README `capability_refs`, or `delete` by removing the command from runtime, active docs, skills, templates, tests, and support code.
    - For TD/source/CB blockers, attach the edge to a capability-owned TD, mark TDs `capability_scope: internal` only when no production source/CB edge exists, or delete dead material.
    - Do not bulk backfill unrelated TDs or commands.
-   Then rerun `aw standardize <project>`.
+   Then rerun `aw standardize --project <project>`.
 7. When standardization layers are ready, run the project-health metric and gate
    report:
    ```bash
@@ -65,12 +65,12 @@ The parent workflow coordinates these readiness layers and maturity signals:
    work directly:
    - `capability-format-migration`: migrate YAML/legacy capability maps into Markdown tables.
    - `fix_spec_rule`: edit the target TD spec until `aw td check <target>` passes.
-   - `regen_drift`: regenerate or repair the affected CODEGEN block, then run `aw cb check <target>`.
+   - `regen_drift`: regenerate or repair the affected CODEGEN block, then run `aw td code-check <target>`.
    - `semantic_td_missing`: create or update the semantic TD only when AST/source evidence supports the claim.
    - `generator_primitive_gap`: improve the generator primitive or open/update the work item that owns that gap.
    - `command_no_td_ref`: classify one command as promote/delete; promote by adding a TD `command_refs` claim with valid `capability_refs`, or delete it from the active surface.
    - other blocked actions: answer the question in the envelope or make the indicated targeted edit.
-11. After each mainthread edit, rerun `aw standardize <project>`.
+11. After each mainthread edit, rerun `aw standardize --project <project>`.
 
 ## Rules
 

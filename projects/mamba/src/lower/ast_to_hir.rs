@@ -1,16 +1,15 @@
-/// AST → HIR lowering (#277).
-///
-/// Converts a parsed + type-checked AST into HIR, resolving all names to
-/// SymbolIds and all types to TypeIds. Desugars compound constructs
-/// (elif chains, augmented assignments).
-
-use std::collections::HashMap;
 use crate::error::MambaError;
 use crate::hir::*;
 use crate::parser::ast;
 use crate::resolve::SymbolId;
 use crate::source::span::{Span, Spanned};
 use crate::types::{TypeChecker, TypeId};
+/// AST → HIR lowering (#277).
+///
+/// Converts a parsed + type-checked AST into HIR, resolving all names to
+/// SymbolIds and all types to TypeIds. Desugars compound constructs
+/// (elif chains, augmented assignments).
+use std::collections::HashMap;
 
 /// Check whether a function body contains `yield` or `yield from` expressions.
 ///
@@ -46,47 +45,83 @@ fn stmt_has_yield(stmt: &ast::Stmt) -> bool {
         ast::Stmt::AugAssign { target, value, .. } => {
             expr_has_yield(&target.node) || expr_has_yield(&value.node)
         }
-        ast::Stmt::If { condition, body, elif_clauses, else_body } => {
+        ast::Stmt::If {
+            condition,
+            body,
+            elif_clauses,
+            else_body,
+        } => {
             expr_has_yield(&condition.node)
                 || body.iter().any(|s| stmt_has_yield(&s.node))
                 || elif_clauses.iter().any(|(c, b)| {
                     expr_has_yield(&c.node) || b.iter().any(|s| stmt_has_yield(&s.node))
                 })
-                || else_body.as_ref().map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
+                || else_body
+                    .as_ref()
+                    .map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
         }
-        ast::Stmt::While { condition, body, else_body } => {
+        ast::Stmt::While {
+            condition,
+            body,
+            else_body,
+        } => {
             expr_has_yield(&condition.node)
                 || body.iter().any(|s| stmt_has_yield(&s.node))
-                || else_body.as_ref().map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
+                || else_body
+                    .as_ref()
+                    .map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
         }
-        ast::Stmt::For { iter, body, else_body, .. }
-        | ast::Stmt::AsyncFor { iter, body, else_body, .. } => {
+        ast::Stmt::For {
+            iter,
+            body,
+            else_body,
+            ..
+        }
+        | ast::Stmt::AsyncFor {
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
             expr_has_yield(&iter.node)
                 || body.iter().any(|s| stmt_has_yield(&s.node))
-                || else_body.as_ref().map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
+                || else_body
+                    .as_ref()
+                    .map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
         }
         ast::Stmt::Match { expr, arms } => {
             expr_has_yield(&expr.node)
-                || arms.iter().any(|a| a.body.iter().any(|s| stmt_has_yield(&s.node)))
+                || arms
+                    .iter()
+                    .any(|a| a.body.iter().any(|s| stmt_has_yield(&s.node)))
         }
-        ast::Stmt::Try { body, handlers, else_body, finally_body } => {
+        ast::Stmt::Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+        } => {
             body.iter().any(|s| stmt_has_yield(&s.node))
-                || handlers.iter().any(|h| h.body.iter().any(|s| stmt_has_yield(&s.node)))
-                || else_body.as_ref().map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
-                || finally_body.as_ref().map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
+                || handlers
+                    .iter()
+                    .any(|h| h.body.iter().any(|s| stmt_has_yield(&s.node)))
+                || else_body
+                    .as_ref()
+                    .map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
+                || finally_body
+                    .as_ref()
+                    .map_or(false, |b| b.iter().any(|s| stmt_has_yield(&s.node)))
         }
         ast::Stmt::Raise { value, from } => {
             value.as_ref().map_or(false, |e| expr_has_yield(&e.node))
                 || from.as_ref().map_or(false, |e| expr_has_yield(&e.node))
         }
-        ast::Stmt::With { items, body }
-        | ast::Stmt::AsyncWith { items, body } => {
+        ast::Stmt::With { items, body } | ast::Stmt::AsyncWith { items, body } => {
             items.iter().any(|w| expr_has_yield(&w.context.node))
                 || body.iter().any(|s| stmt_has_yield(&s.node))
         }
         ast::Stmt::Assert { test, msg } => {
-            expr_has_yield(&test.node)
-                || msg.as_ref().map_or(false, |e| expr_has_yield(&e.node))
+            expr_has_yield(&test.node) || msg.as_ref().map_or(false, |e| expr_has_yield(&e.node))
         }
         ast::Stmt::Del(e) => expr_has_yield(&e.node),
     }
@@ -110,9 +145,7 @@ fn expr_has_yield(expr: &ast::Expr) -> bool {
         | ast::Expr::Ellipsis
         | ast::Expr::Ident(_) => false,
 
-        ast::Expr::BinOp { lhs, rhs, .. } => {
-            expr_has_yield(&lhs.node) || expr_has_yield(&rhs.node)
-        }
+        ast::Expr::BinOp { lhs, rhs, .. } => expr_has_yield(&lhs.node) || expr_has_yield(&rhs.node),
         ast::Expr::UnaryOp { operand, .. } => expr_has_yield(&operand.node),
         ast::Expr::Call { func, args } => {
             expr_has_yield(&func.node)
@@ -132,30 +165,44 @@ fn expr_has_yield(expr: &ast::Expr) -> bool {
                 || stop.as_ref().map_or(false, |e| expr_has_yield(&e.node))
                 || step.as_ref().map_or(false, |e| expr_has_yield(&e.node))
         }
-        ast::Expr::ListLit(es)
-        | ast::Expr::SetLit(es)
-        | ast::Expr::TupleLit(es) => es.iter().any(|e| expr_has_yield(&e.node)),
-        ast::Expr::DictLit(pairs) => {
-            pairs.iter().any(|(k, v)| {
-                k.as_ref().map_or(false, |e| expr_has_yield(&e.node))
-                    || expr_has_yield(&v.node)
-            })
+        ast::Expr::ListLit(es) | ast::Expr::SetLit(es) | ast::Expr::TupleLit(es) => {
+            es.iter().any(|e| expr_has_yield(&e.node))
         }
-        ast::Expr::IfExpr { body, condition, else_body } => {
+        ast::Expr::DictLit(pairs) => pairs.iter().any(|(k, v)| {
+            k.as_ref().map_or(false, |e| expr_has_yield(&e.node)) || expr_has_yield(&v.node)
+        }),
+        ast::Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
             expr_has_yield(&body.node)
                 || expr_has_yield(&condition.node)
                 || expr_has_yield(&else_body.node)
         }
-        ast::Expr::ListComp { element, generators }
-        | ast::Expr::SetComp { element, generators }
-        | ast::Expr::GeneratorExpr { element, generators } => {
+        ast::Expr::ListComp {
+            element,
+            generators,
+        }
+        | ast::Expr::SetComp {
+            element,
+            generators,
+        }
+        | ast::Expr::GeneratorExpr {
+            element,
+            generators,
+        } => {
             expr_has_yield(&element.node)
                 || generators.iter().any(|g| {
                     expr_has_yield(&g.iter.node)
                         || g.conditions.iter().any(|c| expr_has_yield(&c.node))
                 })
         }
-        ast::Expr::DictComp { key, value, generators } => {
+        ast::Expr::DictComp {
+            key,
+            value,
+            generators,
+        } => {
             expr_has_yield(&key.node)
                 || expr_has_yield(&value.node)
                 || generators.iter().any(|g| {
@@ -163,10 +210,17 @@ fn expr_has_yield(expr: &ast::Expr) -> bool {
                         || g.conditions.iter().any(|c| expr_has_yield(&c.node))
                 })
         }
-        ast::Expr::FString(parts) => parts.iter().any(|p| match p {
-            ast::FStringPart::Literal(_) => false,
-            ast::FStringPart::Expr(e, _) => expr_has_yield(&e.node),
-        }),
+        ast::Expr::FString(parts) => {
+            fn part_has_yield(p: &ast::FStringPart) -> bool {
+                match p {
+                    ast::FStringPart::Literal(_) => false,
+                    ast::FStringPart::Expr(e, spec) => {
+                        expr_has_yield(&e.node) || spec.iter().flatten().any(part_has_yield)
+                    }
+                }
+            }
+            parts.iter().any(part_has_yield)
+        }
         ast::Expr::Await(e) => expr_has_yield(&e.node),
         ast::Expr::Walrus { value, .. } => expr_has_yield(&value.node),
         ast::Expr::ChainedCompare { operands, .. } => {
@@ -185,6 +239,12 @@ enum FloatHint {
     Float,
     Int,
     Unknown,
+    /// Call sites pass a float at this position AND a non-float at another
+    /// (or float mixed with an unknown). The param cannot use the raw-int or
+    /// raw-float convention — a raw f64 in an int slot reinterprets its bits as
+    /// an int — so it must be `any` (NaN-boxed). Only ever produced by the
+    /// call-site hint merge, never by `ast_expr_float_hint`.
+    Boxed,
 }
 
 /// Names of `math.*` (and `cmath.*`) functions that always return a Python
@@ -193,12 +253,42 @@ enum FloatHint {
 fn math_attr_returns_float(attr: &str) -> bool {
     matches!(
         attr,
-        "sqrt" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
-            | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh"
-            | "exp" | "expm1" | "log" | "log2" | "log10" | "log1p"
-            | "pow" | "hypot" | "fabs" | "fmod" | "remainder" | "dist"
-            | "degrees" | "radians" | "gamma" | "lgamma" | "erf" | "erfc"
-            | "copysign" | "nextafter" | "ulp" | "cbrt"
+        "sqrt"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "atan2"
+            | "sinh"
+            | "cosh"
+            | "tanh"
+            | "asinh"
+            | "acosh"
+            | "atanh"
+            | "exp"
+            | "expm1"
+            | "log"
+            | "log2"
+            | "log10"
+            | "log1p"
+            | "pow"
+            | "hypot"
+            | "fabs"
+            | "fmod"
+            | "remainder"
+            | "dist"
+            | "degrees"
+            | "radians"
+            | "gamma"
+            | "lgamma"
+            | "erf"
+            | "erfc"
+            | "copysign"
+            | "nextafter"
+            | "ulp"
+            | "cbrt"
     )
 }
 
@@ -218,9 +308,7 @@ fn ast_expr_float_hint(
         ast::Expr::BoolLit(_) => FloatHint::Int,
         ast::Expr::Ident(name) => env.get(name).copied().unwrap_or(FloatHint::Unknown),
         ast::Expr::UnaryOp { op, operand } => match op {
-            UnaryOp::Neg | UnaryOp::Pos => {
-                ast_expr_float_hint(&operand.node, env, func_ret_float)
-            }
+            UnaryOp::Neg | UnaryOp::Pos => ast_expr_float_hint(&operand.node, env, func_ret_float),
             _ => FloatHint::Unknown,
         },
         ast::Expr::BinOp { op, lhs, rhs } => {
@@ -229,8 +317,12 @@ fn ast_expr_float_hint(
             match op {
                 // True division always produces a float in Python 3.
                 BinOp::Div => FloatHint::Float,
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod
-                | BinOp::FloorDiv | BinOp::Pow => {
+                BinOp::Add
+                | BinOp::Sub
+                | BinOp::Mul
+                | BinOp::Mod
+                | BinOp::FloorDiv
+                | BinOp::Pow => {
                     if l == FloatHint::Float || r == FloatHint::Float {
                         FloatHint::Float
                     } else if l == FloatHint::Int && r == FloatHint::Int {
@@ -309,9 +401,139 @@ fn ast_container_is_all_float(
     func_ret_float: &HashMap<String, FloatHint>,
 ) -> bool {
     !items.is_empty()
-        && items.iter().all(|e| {
-            ast_expr_float_hint(&e.node, env, func_ret_float) == FloatHint::Float
+        && items
+            .iter()
+            .all(|e| ast_expr_float_hint(&e.node, env, func_ret_float) == FloatHint::Float)
+}
+
+/// Detect an unambiguous static call-binding violation of a known function's
+/// signature, returning the CPython-faithful `TypeError` message (or `None`
+/// when the call is valid or anything is uncertain — then the call lowers
+/// normally). `sig` entries are `(name, has_default, kw_only, is_star,
+/// is_double_star, pos_only)`. The caller guarantees `args` is splat-free.
+///
+/// Each check fires only where CPython unconditionally raises, so a correct
+/// call never trips it. Checked in CPython's surfacing order so a single-fault
+/// call yields the right message: duplicate value, positional-only-as-keyword,
+/// unexpected keyword, too many positional, missing required keyword-only.
+fn arg_bind_violation(
+    fname: &str,
+    sig: &[(String, bool, bool, bool, bool, bool)],
+    args: &[ast::CallArg],
+) -> Option<String> {
+    let has_star = sig.iter().any(|p| p.3);
+    let has_dstar = sig.iter().any(|p| p.4);
+    // Params fillable by position, in declared order (not *,**, not kw-only).
+    // Positional-only params are included — they bind by position.
+    let pos_params: Vec<&(String, bool, bool, bool, bool, bool)> =
+        sig.iter().filter(|p| !p.2 && !p.3 && !p.4).collect();
+    let n_pos = args
+        .iter()
+        .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+        .count();
+    let kw_names: Vec<&str> = args
+        .iter()
+        .filter_map(|a| match a {
+            ast::CallArg::Keyword { name, .. } => Some(name.as_str()),
+            _ => None,
         })
+        .collect();
+    let param_named = |n: &str| sig.iter().any(|p| !p.3 && !p.4 && p.0 == n);
+    let is_pos_only = |n: &str| sig.iter().any(|p| p.5 && p.0 == n);
+
+    // (1) Duplicate value: a keyword names a NON-positional-only param already
+    // bound by position. (A positional-only name as keyword never binds to the
+    // positional slot — it lands in **kwargs or is rejected below.)
+    for (i, p) in pos_params.iter().enumerate() {
+        if i < n_pos && !p.5 && kw_names.contains(&p.0.as_str()) {
+            return Some(format!(
+                "{fname}() got multiple values for argument '{}'",
+                p.0
+            ));
+        }
+    }
+
+    // (2) Positional-only parameters passed by keyword (only an error without
+    // `**kwargs` to absorb them). CPython lists all such names in one group.
+    if !has_dstar {
+        let posonly_kw: Vec<&str> = kw_names
+            .iter()
+            .copied()
+            .filter(|n| is_pos_only(n))
+            .collect();
+        if !posonly_kw.is_empty() {
+            return Some(format!(
+                "{fname}() got some positional-only arguments passed as \
+                 keyword arguments: '{}'",
+                posonly_kw.join(", ")
+            ));
+        }
+    }
+
+    // (3) Unexpected keyword: names no parameter and there is no `**kwargs`.
+    // Reports the first offending name, as CPython does.
+    if !has_dstar {
+        if let Some(bad) = kw_names.iter().find(|n| !param_named(n)) {
+            return Some(format!(
+                "{fname}() got an unexpected keyword argument '{bad}'"
+            ));
+        }
+    }
+
+    // (4) Too many positional, with no `*args` to absorb the overflow and no
+    // positional default (a default switches CPython to "from X to Y" wording).
+    // When keyword-only args are also supplied the count is reported in two
+    // segments; otherwise the plain form. Only emit when every supplied keyword
+    // binds a keyword-only param, so the two-segment count is exact.
+    if !has_star && n_pos > pos_params.len() && pos_params.iter().all(|p| !p.1) {
+        let take = pos_params.len();
+        let kwonly_supplied = kw_names
+            .iter()
+            .filter(|n| sig.iter().any(|p| p.2 && p.0 == **n))
+            .count();
+        let take_word = if take == 1 { "argument" } else { "arguments" };
+        if kw_names.is_empty() {
+            return Some(format!(
+                "{fname}() takes {take} positional {take_word} but {n_pos} were given"
+            ));
+        } else if kwonly_supplied == kw_names.len() {
+            let pos_word = if n_pos == 1 { "argument" } else { "arguments" };
+            let k_word = if kwonly_supplied == 1 {
+                "argument"
+            } else {
+                "arguments"
+            };
+            return Some(format!(
+                "{fname}() takes {take} positional {take_word} but {n_pos} \
+                 positional {pos_word} (and {kwonly_supplied} keyword-only \
+                 {k_word}) were given"
+            ));
+        }
+        // Mixed keyword shape — leave to the normal call path.
+    }
+
+    // (5) Missing required keyword-only argument(s): kw-only, no default, not
+    // supplied by name.
+    let missing: Vec<&str> = sig
+        .iter()
+        .filter(|p| p.2 && !p.3 && !p.4 && !p.1)
+        .map(|p| p.0.as_str())
+        .filter(|n| !kw_names.contains(n))
+        .collect();
+    if !missing.is_empty() {
+        let n = missing.len();
+        let word = if n == 1 { "argument" } else { "arguments" };
+        let names = missing
+            .iter()
+            .map(|m| format!("'{m}'"))
+            .collect::<Vec<_>>()
+            .join(if n == 2 { " and " } else { ", " });
+        return Some(format!(
+            "{fname}() missing {n} required keyword-only {word}: {names}"
+        ));
+    }
+
+    None
 }
 
 /// Walk a function body collecting a name→FloatHint environment for locals that
@@ -358,7 +580,9 @@ fn collect_local_float_env(
                 }
             }
             // Recurse into control flow so locals assigned in branches are seen.
-            ast::Stmt::If { body: b, else_body, .. } => {
+            ast::Stmt::If {
+                body: b, else_body, ..
+            } => {
                 collect_local_float_env(b, env, func_ret_float);
                 if let Some(els) = else_body {
                     collect_local_float_env(els, env, func_ret_float);
@@ -390,7 +614,19 @@ fn collect_call_arg_hints(
                 entry.push(h);
             } else {
                 let cur = entry[i];
-                entry[i] = if cur == h { cur } else { FloatHint::Unknown };
+                entry[i] = if cur == h {
+                    cur
+                } else if cur == FloatHint::Boxed
+                    || h == FloatHint::Boxed
+                    || cur == FloatHint::Float
+                    || h == FloatHint::Float
+                {
+                    // A float at one site mixed with anything else at another:
+                    // the param must be NaN-boxed (`any`), never raw-int.
+                    FloatHint::Boxed
+                } else {
+                    FloatHint::Unknown
+                };
             }
         }
     }
@@ -404,12 +640,20 @@ fn collect_call_arg_hints(
         if let ast::Expr::Call { func, args } = e {
             if let ast::Expr::Ident(name) = &func.node {
                 // Only record when all args are simple positional.
-                if args.iter().all(|a| matches!(a, ast::CallArg::Positional(_))) {
+                if args
+                    .iter()
+                    .all(|a| matches!(a, ast::CallArg::Positional(_)))
+                {
                     seen.insert(name.clone());
-                    let hs: Vec<FloatHint> = args.iter().map(|a| match a {
-                        ast::CallArg::Positional(x) => ast_expr_float_hint(&x.node, env, func_ret),
-                        _ => FloatHint::Unknown,
-                    }).collect();
+                    let hs: Vec<FloatHint> = args
+                        .iter()
+                        .map(|a| match a {
+                            ast::CallArg::Positional(x) => {
+                                ast_expr_float_hint(&x.node, env, func_ret)
+                            }
+                            _ => FloatHint::Unknown,
+                        })
+                        .collect();
                     merge(out, name, hs);
                 }
             }
@@ -417,9 +661,9 @@ fn collect_call_arg_hints(
             walk_expr(&func.node, env, func_ret, out, seen);
             for a in args {
                 if let ast::CallArg::Positional(x)
-                    | ast::CallArg::Keyword { value: x, .. }
-                    | ast::CallArg::StarArg(x)
-                    | ast::CallArg::DoubleStarArg(x) = a
+                | ast::CallArg::Keyword { value: x, .. }
+                | ast::CallArg::StarArg(x)
+                | ast::CallArg::DoubleStarArg(x) = a
                 {
                     walk_expr(&x.node, env, func_ret, out, seen);
                 }
@@ -432,14 +676,18 @@ fn collect_call_arg_hints(
                 walk_expr(&lhs.node, env, func_ret, out, seen);
                 walk_expr(&rhs.node, env, func_ret, out, seen);
             }
-            ast::Expr::UnaryOp { operand, .. } => walk_expr(&operand.node, env, func_ret, out, seen),
+            ast::Expr::UnaryOp { operand, .. } => {
+                walk_expr(&operand.node, env, func_ret, out, seen)
+            }
             ast::Expr::Attr { object, .. } => walk_expr(&object.node, env, func_ret, out, seen),
             ast::Expr::Index { object, index } => {
                 walk_expr(&object.node, env, func_ret, out, seen);
                 walk_expr(&index.node, env, func_ret, out, seen);
             }
             ast::Expr::ListLit(items) | ast::Expr::TupleLit(items) | ast::Expr::SetLit(items) => {
-                for it in items { walk_expr(&it.node, env, func_ret, out, seen); }
+                for it in items {
+                    walk_expr(&it.node, env, func_ret, out, seen);
+                }
             }
             _ => {}
         }
@@ -455,23 +703,48 @@ fn collect_call_arg_hints(
             match &s.node {
                 ast::Stmt::ExprStmt(e) => walk_expr(&e.node, env, func_ret, out, seen),
                 ast::Stmt::Assign { value, .. } => walk_expr(&value.node, env, func_ret, out, seen),
-                ast::Stmt::VarDecl { value, .. } => walk_expr(&value.node, env, func_ret, out, seen),
-                ast::Stmt::AugAssign { value, .. } => walk_expr(&value.node, env, func_ret, out, seen),
+                ast::Stmt::VarDecl { value, .. } => {
+                    walk_expr(&value.node, env, func_ret, out, seen)
+                }
+                ast::Stmt::AugAssign { value, .. } => {
+                    walk_expr(&value.node, env, func_ret, out, seen)
+                }
                 ast::Stmt::Return(Some(e)) => walk_expr(&e.node, env, func_ret, out, seen),
-                ast::Stmt::If { condition, body, else_body, .. } => {
+                ast::Stmt::If {
+                    condition,
+                    body,
+                    else_body,
+                    ..
+                } => {
                     walk_expr(&condition.node, env, func_ret, out, seen);
                     walk_stmts(body, env, func_ret, out, seen);
-                    if let Some(els) = else_body { walk_stmts(els, env, func_ret, out, seen); }
+                    if let Some(els) = else_body {
+                        walk_stmts(els, env, func_ret, out, seen);
+                    }
                 }
-                ast::Stmt::While { condition, body, else_body, .. } => {
+                ast::Stmt::While {
+                    condition,
+                    body,
+                    else_body,
+                    ..
+                } => {
                     walk_expr(&condition.node, env, func_ret, out, seen);
                     walk_stmts(body, env, func_ret, out, seen);
-                    if let Some(els) = else_body { walk_stmts(els, env, func_ret, out, seen); }
+                    if let Some(els) = else_body {
+                        walk_stmts(els, env, func_ret, out, seen);
+                    }
                 }
-                ast::Stmt::For { iter, body, else_body, .. } => {
+                ast::Stmt::For {
+                    iter,
+                    body,
+                    else_body,
+                    ..
+                } => {
                     walk_expr(&iter.node, env, func_ret, out, seen);
                     walk_stmts(body, env, func_ret, out, seen);
-                    if let Some(els) = else_body { walk_stmts(els, env, func_ret, out, seen); }
+                    if let Some(els) = else_body {
+                        walk_stmts(els, env, func_ret, out, seen);
+                    }
                 }
                 ast::Stmt::FnDef { body, .. } | ast::Stmt::AsyncFnDef { body, .. } => {
                     walk_stmts(body, env, func_ret, out, seen);
@@ -506,24 +779,40 @@ fn infer_return_float_hint(
                     match ast_expr_float_hint(&e.node, env, func_ret) {
                         FloatHint::Float => *any_float = true,
                         FloatHint::Int => *any_int = true,
-                        FloatHint::Unknown => {}
+                        // `Boxed` is a call-site-merge-only state; ast_expr_float_hint
+                        // never yields it. Treat like Unknown for return inference.
+                        FloatHint::Unknown | FloatHint::Boxed => {}
                     }
                 }
-                ast::Stmt::If { body: b, else_body, .. }
-                | ast::Stmt::While { body: b, else_body, .. } => {
-                    walk(b, env, func_ret, any_float, any_int);
-                    if let Some(els) = else_body { walk(els, env, func_ret, any_float, any_int); }
+                ast::Stmt::If {
+                    body: b, else_body, ..
                 }
-                ast::Stmt::For { body: b, else_body, .. } => {
+                | ast::Stmt::While {
+                    body: b, else_body, ..
+                } => {
                     walk(b, env, func_ret, any_float, any_int);
-                    if let Some(els) = else_body { walk(els, env, func_ret, any_float, any_int); }
+                    if let Some(els) = else_body {
+                        walk(els, env, func_ret, any_float, any_int);
+                    }
+                }
+                ast::Stmt::For {
+                    body: b, else_body, ..
+                } => {
+                    walk(b, env, func_ret, any_float, any_int);
+                    if let Some(els) = else_body {
+                        walk(els, env, func_ret, any_float, any_int);
+                    }
                 }
                 _ => {}
             }
         }
     }
     walk(body, env, func_ret, &mut any_float, &mut any_int);
-    if any_float && !any_int { FloatHint::Float } else { FloatHint::Unknown }
+    if any_float && !any_int {
+        FloatHint::Float
+    } else {
+        FloatHint::Unknown
+    }
 }
 
 /// Infer a function's return type from its `return` statements.
@@ -548,21 +837,47 @@ fn infer_return_type_from_ast(
                     ast::Expr::BoolLit(_) => Some(tc.tcx.bool()),
                     ast::Expr::StrLit(_) => Some(tc.tcx.str()),
                     ast::Expr::NoneLit => Some(tc.tcx.none()),
+                    // Container returns are provably heap values — falling
+                    // through to int_ty would make binops on the call result
+                    // take the raw-i64 fast path (e.g. `f() | g()` compiles
+                    // to a bitwise `bor` of two NaN-boxed POINTERS → UB).
+                    // Widen to Any so operators dispatch through the runtime.
+                    ast::Expr::ListLit(_)
+                    | ast::Expr::SetLit(_)
+                    | ast::Expr::DictLit(_)
+                    | ast::Expr::TupleLit(_) => Some(tc.tcx.any()),
+                    ast::Expr::Call { func, .. }
+                        if matches!(
+                            &func.node,
+                            ast::Expr::Ident(n) if matches!(
+                                n.as_str(),
+                                "set" | "frozenset" | "dict" | "list" | "tuple" | "sorted"
+                            )
+                        ) =>
+                    {
+                        Some(tc.tcx.any())
+                    }
                     _ => {
                         // Consult the float-hint analysis for non-literal returns.
                         // Only force `float` when provably float; otherwise fall
                         // through (None → int_ty) to preserve integer fast paths.
-                        if ast_expr_float_hint(&expr.node, env, func_ret_float)
-                            == FloatHint::Float
-                        {
-                            Some(tc.tcx.float())
-                        } else {
-                            None
+                        match ast_expr_float_hint(&expr.node, env, func_ret_float) {
+                            FloatHint::Float => Some(tc.tcx.float()),
+                            // Returning a NaN-boxed (`any`) value — e.g. an
+                            // unannotated param that mixed-typed call sites
+                            // boxed. Widen to Any so the caller treats the
+                            // result as a boxed MbValue, not raw i64.
+                            FloatHint::Boxed => Some(tc.tcx.any()),
+                            _ => None,
                         }
                     }
                 };
             }
-            ast::Stmt::If { body: if_body, else_body, .. } => {
+            ast::Stmt::If {
+                body: if_body,
+                else_body,
+                ..
+            } => {
                 if let Some(ty) = infer_return_type_from_ast(if_body, tc, env, func_ret_float) {
                     return Some(ty);
                 }
@@ -617,53 +932,110 @@ fn stmt_collect_value_compared_params(
     };
     match stmt {
         ExprStmt(e) | Del(e) => scan(e, out),
-        Return(opt) => { if let Some(e) = opt { scan(e, out); } }
+        Return(opt) => {
+            if let Some(e) = opt {
+                scan(e, out);
+            }
+        }
         VarDecl { value, .. } => scan(value, out),
-        Assign { target, value } => { scan(target, out); scan(value, out); }
-        AugAssign { target, value, .. } => { scan(target, out); scan(value, out); }
-        If { condition, body, elif_clauses, else_body } => {
+        Assign { target, value } => {
+            scan(target, out);
+            scan(value, out);
+        }
+        AugAssign { target, value, .. } => {
+            scan(target, out);
+            scan(value, out);
+        }
+        If {
+            condition,
+            body,
+            elif_clauses,
+            else_body,
+        } => {
             scan(condition, out);
             collect_value_compared_params(body, params, out);
             for (c, b) in elif_clauses {
                 scan(c, out);
                 collect_value_compared_params(b, params, out);
             }
-            if let Some(b) = else_body { collect_value_compared_params(b, params, out); }
+            if let Some(b) = else_body {
+                collect_value_compared_params(b, params, out);
+            }
         }
-        While { condition, body, else_body } => {
+        While {
+            condition,
+            body,
+            else_body,
+        } => {
             scan(condition, out);
             collect_value_compared_params(body, params, out);
-            if let Some(b) = else_body { collect_value_compared_params(b, params, out); }
+            if let Some(b) = else_body {
+                collect_value_compared_params(b, params, out);
+            }
         }
-        For { iter, body, else_body, .. } | AsyncFor { iter, body, else_body, .. } => {
+        For {
+            iter,
+            body,
+            else_body,
+            ..
+        }
+        | AsyncFor {
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
             scan(iter, out);
             collect_value_compared_params(body, params, out);
-            if let Some(b) = else_body { collect_value_compared_params(b, params, out); }
+            if let Some(b) = else_body {
+                collect_value_compared_params(b, params, out);
+            }
         }
         Match { expr, arms } => {
             scan(expr, out);
             for a in arms {
-                if let Some(g) = &a.guard { scan(g, out); }
+                if let Some(g) = &a.guard {
+                    scan(g, out);
+                }
                 collect_value_compared_params(&a.body, params, out);
             }
         }
-        Try { body, handlers, else_body, finally_body } => {
+        Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+        } => {
             collect_value_compared_params(body, params, out);
-            for h in handlers { collect_value_compared_params(&h.body, params, out); }
-            if let Some(b) = else_body { collect_value_compared_params(b, params, out); }
-            if let Some(b) = finally_body { collect_value_compared_params(b, params, out); }
+            for h in handlers {
+                collect_value_compared_params(&h.body, params, out);
+            }
+            if let Some(b) = else_body {
+                collect_value_compared_params(b, params, out);
+            }
+            if let Some(b) = finally_body {
+                collect_value_compared_params(b, params, out);
+            }
         }
         Raise { value, from } => {
-            if let Some(e) = value { scan(e, out); }
-            if let Some(e) = from { scan(e, out); }
+            if let Some(e) = value {
+                scan(e, out);
+            }
+            if let Some(e) = from {
+                scan(e, out);
+            }
         }
         With { items, body } | AsyncWith { items, body } => {
-            for w in items { scan(&w.context, out); }
+            for w in items {
+                scan(&w.context, out);
+            }
             collect_value_compared_params(body, params, out);
         }
         Assert { test, msg } => {
             scan(test, out);
-            if let Some(e) = msg { scan(e, out); }
+            if let Some(e) = msg {
+                scan(e, out);
+            }
         }
         // Nested defs/classes have their own scope; their params shadow ours.
         // Do not descend — a same-named inner param is a different binding.
@@ -682,7 +1054,9 @@ fn expr_collect_value_compared_params(
     // Ident operand that names a param.
     let mark = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
         if let ast::Expr::Ident(n) = &e.node {
-            if params.contains(n) { out.insert(n.clone()); }
+            if params.contains(n) {
+                out.insert(n.clone());
+            }
         }
     };
     if let BinOp { op, lhs, rhs } = expr {
@@ -700,8 +1074,12 @@ fn expr_collect_value_compared_params(
                 op,
                 ast::BinOp::Eq | ast::BinOp::NotEq | ast::BinOp::In | ast::BinOp::NotIn
             ) {
-                if let Some(l) = operands.get(i) { mark(l, out); }
-                if let Some(r) = operands.get(i + 1) { mark(r, out); }
+                if let Some(l) = operands.get(i) {
+                    mark(l, out);
+                }
+                if let Some(r) = operands.get(i + 1) {
+                    mark(r, out);
+                }
             }
         }
     }
@@ -710,7 +1088,10 @@ fn expr_collect_value_compared_params(
         expr_collect_value_compared_params(&e.node, params, out);
     };
     match expr {
-        BinOp { lhs, rhs, .. } => { rec(lhs, out); rec(rhs, out); }
+        BinOp { lhs, rhs, .. } => {
+            rec(lhs, out);
+            rec(rhs, out);
+        }
         UnaryOp { operand, .. } => rec(operand, out),
         Call { func, args } => {
             rec(func, out);
@@ -724,49 +1105,106 @@ fn expr_collect_value_compared_params(
             }
         }
         Attr { object, .. } => rec(object, out),
-        Index { object, index } => { rec(object, out); rec(index, out); }
+        Index { object, index } => {
+            rec(object, out);
+            rec(index, out);
+        }
         Slice { start, stop, step } => {
-            if let Some(e) = start { rec(e, out); }
-            if let Some(e) = stop { rec(e, out); }
-            if let Some(e) = step { rec(e, out); }
+            if let Some(e) = start {
+                rec(e, out);
+            }
+            if let Some(e) = stop {
+                rec(e, out);
+            }
+            if let Some(e) = step {
+                rec(e, out);
+            }
         }
         ListLit(es) | SetLit(es) | TupleLit(es) | UnpackTarget(es) => {
-            for e in es { rec(e, out); }
+            for e in es {
+                rec(e, out);
+            }
         }
         DictLit(pairs) => {
             for (k, v) in pairs {
-                if let Some(k) = k { rec(k, out); }
+                if let Some(k) = k {
+                    rec(k, out);
+                }
                 rec(v, out);
             }
         }
-        IfExpr { body, condition, else_body } => {
-            rec(body, out); rec(condition, out); rec(else_body, out);
+        IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            rec(body, out);
+            rec(condition, out);
+            rec(else_body, out);
         }
-        ListComp { element, generators }
-        | SetComp { element, generators }
-        | GeneratorExpr { element, generators } => {
+        ListComp {
+            element,
+            generators,
+        }
+        | SetComp {
+            element,
+            generators,
+        }
+        | GeneratorExpr {
+            element,
+            generators,
+        } => {
             rec(element, out);
             for g in generators {
                 rec(&g.iter, out);
-                for c in &g.conditions { rec(c, out); }
+                for c in &g.conditions {
+                    rec(c, out);
+                }
             }
         }
-        DictComp { key, value, generators } => {
-            rec(key, out); rec(value, out);
+        DictComp {
+            key,
+            value,
+            generators,
+        } => {
+            rec(key, out);
+            rec(value, out);
             for g in generators {
                 rec(&g.iter, out);
-                for c in &g.conditions { rec(c, out); }
+                for c in &g.conditions {
+                    rec(c, out);
+                }
             }
         }
         FString(parts) => {
-            for p in parts {
-                if let ast::FStringPart::Expr(e, _) = p { rec(e, out); }
+            fn walk_parts(
+                parts: &[ast::FStringPart],
+                out: &mut std::collections::HashSet<String>,
+                rec: &impl Fn(&Spanned<ast::Expr>, &mut std::collections::HashSet<String>),
+            ) {
+                for p in parts {
+                    if let ast::FStringPart::Expr(e, spec) = p {
+                        rec(e, out);
+                        if let Some(sp) = spec {
+                            walk_parts(sp, out, rec);
+                        }
+                    }
+                }
+            }
+            walk_parts(parts, out, &rec);
+        }
+        Yield(opt) => {
+            if let Some(e) = opt {
+                rec(e, out);
             }
         }
-        Yield(opt) => { if let Some(e) = opt { rec(e, out); } }
         YieldFrom(e) | Await(e) | Starred(e) => rec(e, out),
         Walrus { value, .. } => rec(value, out),
-        ChainedCompare { operands, .. } => { for e in operands { rec(e, out); } }
+        ChainedCompare { operands, .. } => {
+            for e in operands {
+                rec(e, out);
+            }
+        }
         // Lambda has its own param scope; same-named params shadow ours.
         Lambda { .. } => {}
         _ => {}
@@ -801,8 +1239,20 @@ fn is_numeric_callee(func: &ast::Expr) -> bool {
     match func {
         ast::Expr::Ident(n) => matches!(
             n.as_str(),
-            "abs" | "round" | "pow" | "divmod" | "min" | "max" | "sum"
-                | "int" | "float" | "complex" | "bin" | "hex" | "oct" | "bool"
+            "abs"
+                | "round"
+                | "pow"
+                | "divmod"
+                | "min"
+                | "max"
+                | "sum"
+                | "int"
+                | "float"
+                | "complex"
+                | "bin"
+                | "hex"
+                | "oct"
+                | "bool"
         ),
         // math.sqrt, math.isnan, math.copysign, math.floor, ... — any `math.*`.
         ast::Expr::Attr { object, .. } => matches!(
@@ -823,71 +1273,135 @@ fn stmt_collect_numeric_used_params(
     };
     let mark = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
         if let ast::Expr::Ident(n) = &e.node {
-            if params.contains(n) { out.insert(n.clone()); }
+            if params.contains(n) {
+                out.insert(n.clone());
+            }
         }
     };
     match stmt {
         ExprStmt(e) | Del(e) => scan(e, out),
-        Return(opt) => { if let Some(e) = opt { scan(e, out); } }
+        Return(opt) => {
+            if let Some(e) = opt {
+                scan(e, out);
+            }
+        }
         VarDecl { value, .. } => scan(value, out),
-        Assign { target, value } => { scan(target, out); scan(value, out); }
+        Assign { target, value } => {
+            scan(target, out);
+            scan(value, out);
+        }
         AugAssign { target, value, op } => {
             // `x += ...` arithmetic ops treat the target as numeric.
             if matches!(
                 op,
-                ast::AugOp::Add | ast::AugOp::Sub | ast::AugOp::Mul | ast::AugOp::Div
-                    | ast::AugOp::FloorDiv | ast::AugOp::Mod | ast::AugOp::Pow
-                    | ast::AugOp::BitAnd | ast::AugOp::BitOr | ast::AugOp::BitXor
-                    | ast::AugOp::LShift | ast::AugOp::RShift
+                ast::AugOp::Add
+                    | ast::AugOp::Sub
+                    | ast::AugOp::Mul
+                    | ast::AugOp::Div
+                    | ast::AugOp::FloorDiv
+                    | ast::AugOp::Mod
+                    | ast::AugOp::Pow
+                    | ast::AugOp::BitAnd
+                    | ast::AugOp::BitOr
+                    | ast::AugOp::BitXor
+                    | ast::AugOp::LShift
+                    | ast::AugOp::RShift
             ) {
                 mark(target, out);
             }
             scan(target, out);
             scan(value, out);
         }
-        If { condition, body, elif_clauses, else_body } => {
+        If {
+            condition,
+            body,
+            elif_clauses,
+            else_body,
+        } => {
             scan(condition, out);
             collect_numeric_used_params(body, params, out);
             for (c, b) in elif_clauses {
                 scan(c, out);
                 collect_numeric_used_params(b, params, out);
             }
-            if let Some(b) = else_body { collect_numeric_used_params(b, params, out); }
+            if let Some(b) = else_body {
+                collect_numeric_used_params(b, params, out);
+            }
         }
-        While { condition, body, else_body } => {
+        While {
+            condition,
+            body,
+            else_body,
+        } => {
             scan(condition, out);
             collect_numeric_used_params(body, params, out);
-            if let Some(b) = else_body { collect_numeric_used_params(b, params, out); }
+            if let Some(b) = else_body {
+                collect_numeric_used_params(b, params, out);
+            }
         }
-        For { iter, body, else_body, .. } | AsyncFor { iter, body, else_body, .. } => {
+        For {
+            iter,
+            body,
+            else_body,
+            ..
+        }
+        | AsyncFor {
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
             scan(iter, out);
             collect_numeric_used_params(body, params, out);
-            if let Some(b) = else_body { collect_numeric_used_params(b, params, out); }
+            if let Some(b) = else_body {
+                collect_numeric_used_params(b, params, out);
+            }
         }
         Match { expr, arms } => {
             scan(expr, out);
             for a in arms {
-                if let Some(g) = &a.guard { scan(g, out); }
+                if let Some(g) = &a.guard {
+                    scan(g, out);
+                }
                 collect_numeric_used_params(&a.body, params, out);
             }
         }
-        Try { body, handlers, else_body, finally_body } => {
+        Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+        } => {
             collect_numeric_used_params(body, params, out);
-            for h in handlers { collect_numeric_used_params(&h.body, params, out); }
-            if let Some(b) = else_body { collect_numeric_used_params(b, params, out); }
-            if let Some(b) = finally_body { collect_numeric_used_params(b, params, out); }
+            for h in handlers {
+                collect_numeric_used_params(&h.body, params, out);
+            }
+            if let Some(b) = else_body {
+                collect_numeric_used_params(b, params, out);
+            }
+            if let Some(b) = finally_body {
+                collect_numeric_used_params(b, params, out);
+            }
         }
         Raise { value, from } => {
-            if let Some(e) = value { scan(e, out); }
-            if let Some(e) = from { scan(e, out); }
+            if let Some(e) = value {
+                scan(e, out);
+            }
+            if let Some(e) = from {
+                scan(e, out);
+            }
         }
         With { items, body } | AsyncWith { items, body } => {
-            for w in items { scan(&w.context, out); }
+            for w in items {
+                scan(&w.context, out);
+            }
             collect_numeric_used_params(body, params, out);
         }
         Assert { test, msg } => {
             scan(test, out);
-            if let Some(e) = msg { scan(e, out); }
+            if let Some(e) = msg {
+                scan(e, out);
+            }
         }
         FnDef { .. } | AsyncFnDef { .. } | ClassDef { .. } | EnumDef { .. } => {}
         _ => {}
@@ -902,19 +1416,32 @@ fn expr_collect_numeric_used_params(
     use ast::Expr::*;
     let mark = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
         if let ast::Expr::Ident(n) = &e.node {
-            if params.contains(n) { out.insert(n.clone()); }
+            if params.contains(n) {
+                out.insert(n.clone());
+            }
         }
     };
     // Arithmetic / bitwise / ordering binops mark direct Ident operands numeric.
     if let BinOp { op, lhs, rhs } = expr {
         if matches!(
             op,
-            ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul | ast::BinOp::Div
-                | ast::BinOp::FloorDiv | ast::BinOp::Mod | ast::BinOp::Pow
+            ast::BinOp::Add
+                | ast::BinOp::Sub
+                | ast::BinOp::Mul
+                | ast::BinOp::Div
+                | ast::BinOp::FloorDiv
+                | ast::BinOp::Mod
+                | ast::BinOp::Pow
                 | ast::BinOp::MatMul
-                | ast::BinOp::BitAnd | ast::BinOp::BitOr | ast::BinOp::BitXor
-                | ast::BinOp::LShift | ast::BinOp::RShift
-                | ast::BinOp::Lt | ast::BinOp::Gt | ast::BinOp::LtEq | ast::BinOp::GtEq
+                | ast::BinOp::BitAnd
+                | ast::BinOp::BitOr
+                | ast::BinOp::BitXor
+                | ast::BinOp::LShift
+                | ast::BinOp::RShift
+                | ast::BinOp::Lt
+                | ast::BinOp::Gt
+                | ast::BinOp::LtEq
+                | ast::BinOp::GtEq
         ) {
             mark(lhs, out);
             mark(rhs, out);
@@ -926,14 +1453,21 @@ fn expr_collect_numeric_used_params(
                 op,
                 ast::BinOp::Lt | ast::BinOp::Gt | ast::BinOp::LtEq | ast::BinOp::GtEq
             ) {
-                if let Some(l) = operands.get(i) { mark(l, out); }
-                if let Some(r) = operands.get(i + 1) { mark(r, out); }
+                if let Some(l) = operands.get(i) {
+                    mark(l, out);
+                }
+                if let Some(r) = operands.get(i + 1) {
+                    mark(r, out);
+                }
             }
         }
     }
     // Unary +/-/~ operand is numeric.
     if let UnaryOp { op, operand } = expr {
-        if matches!(op, ast::UnaryOp::Pos | ast::UnaryOp::Neg | ast::UnaryOp::BitNot) {
+        if matches!(
+            op,
+            ast::UnaryOp::Pos | ast::UnaryOp::Neg | ast::UnaryOp::BitNot
+        ) {
             mark(operand, out);
         }
     }
@@ -954,7 +1488,10 @@ fn expr_collect_numeric_used_params(
         expr_collect_numeric_used_params(&e.node, params, out);
     };
     match expr {
-        BinOp { lhs, rhs, .. } => { rec(lhs, out); rec(rhs, out); }
+        BinOp { lhs, rhs, .. } => {
+            rec(lhs, out);
+            rec(rhs, out);
+        }
         UnaryOp { operand, .. } => rec(operand, out),
         Call { func, args } => {
             rec(func, out);
@@ -968,49 +1505,106 @@ fn expr_collect_numeric_used_params(
             }
         }
         Attr { object, .. } => rec(object, out),
-        Index { object, index } => { rec(object, out); rec(index, out); }
+        Index { object, index } => {
+            rec(object, out);
+            rec(index, out);
+        }
         Slice { start, stop, step } => {
-            if let Some(e) = start { rec(e, out); }
-            if let Some(e) = stop { rec(e, out); }
-            if let Some(e) = step { rec(e, out); }
+            if let Some(e) = start {
+                rec(e, out);
+            }
+            if let Some(e) = stop {
+                rec(e, out);
+            }
+            if let Some(e) = step {
+                rec(e, out);
+            }
         }
         ListLit(es) | SetLit(es) | TupleLit(es) | UnpackTarget(es) => {
-            for e in es { rec(e, out); }
+            for e in es {
+                rec(e, out);
+            }
         }
         DictLit(pairs) => {
             for (k, v) in pairs {
-                if let Some(k) = k { rec(k, out); }
+                if let Some(k) = k {
+                    rec(k, out);
+                }
                 rec(v, out);
             }
         }
-        IfExpr { body, condition, else_body } => {
-            rec(body, out); rec(condition, out); rec(else_body, out);
+        IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            rec(body, out);
+            rec(condition, out);
+            rec(else_body, out);
         }
-        ListComp { element, generators }
-        | SetComp { element, generators }
-        | GeneratorExpr { element, generators } => {
+        ListComp {
+            element,
+            generators,
+        }
+        | SetComp {
+            element,
+            generators,
+        }
+        | GeneratorExpr {
+            element,
+            generators,
+        } => {
             rec(element, out);
             for g in generators {
                 rec(&g.iter, out);
-                for c in &g.conditions { rec(c, out); }
+                for c in &g.conditions {
+                    rec(c, out);
+                }
             }
         }
-        DictComp { key, value, generators } => {
-            rec(key, out); rec(value, out);
+        DictComp {
+            key,
+            value,
+            generators,
+        } => {
+            rec(key, out);
+            rec(value, out);
             for g in generators {
                 rec(&g.iter, out);
-                for c in &g.conditions { rec(c, out); }
+                for c in &g.conditions {
+                    rec(c, out);
+                }
             }
         }
         FString(parts) => {
-            for p in parts {
-                if let ast::FStringPart::Expr(e, _) = p { rec(e, out); }
+            fn walk_parts(
+                parts: &[ast::FStringPart],
+                out: &mut std::collections::HashSet<String>,
+                rec: &impl Fn(&Spanned<ast::Expr>, &mut std::collections::HashSet<String>),
+            ) {
+                for p in parts {
+                    if let ast::FStringPart::Expr(e, spec) = p {
+                        rec(e, out);
+                        if let Some(sp) = spec {
+                            walk_parts(sp, out, rec);
+                        }
+                    }
+                }
+            }
+            walk_parts(parts, out, &rec);
+        }
+        Yield(opt) => {
+            if let Some(e) = opt {
+                rec(e, out);
             }
         }
-        Yield(opt) => { if let Some(e) = opt { rec(e, out); } }
         YieldFrom(e) | Await(e) | Starred(e) => rec(e, out),
         Walrus { value, .. } => rec(value, out),
-        ChainedCompare { operands, .. } => { for e in operands { rec(e, out); } }
+        ChainedCompare { operands, .. } => {
+            for e in operands {
+                rec(e, out);
+            }
+        }
         Lambda { .. } => {}
         _ => {}
     }
@@ -1025,27 +1619,43 @@ fn collect_ast_pattern_bindings(pat: &Spanned<ast::Pattern>) -> std::collections
 
 fn collect_ast_bindings_inner(pat: &ast::Pattern, names: &mut std::collections::BTreeSet<String>) {
     match pat {
-        ast::Pattern::Binding(name) => { names.insert(name.clone()); }
+        ast::Pattern::Binding(name) => {
+            names.insert(name.clone());
+        }
         ast::Pattern::Or(alts) => {
-            for alt in alts { collect_ast_bindings_inner(&alt.node, names); }
+            for alt in alts {
+                collect_ast_bindings_inner(&alt.node, names);
+            }
         }
         ast::Pattern::Sequence(pats) => {
-            for p in pats { collect_ast_bindings_inner(&p.node, names); }
+            for p in pats {
+                collect_ast_bindings_inner(&p.node, names);
+            }
         }
         ast::Pattern::As { pattern, name } => {
             collect_ast_bindings_inner(&pattern.node, names);
             names.insert(name.clone());
         }
         ast::Pattern::ClassPattern { patterns, .. } => {
-            for (_, p) in patterns { collect_ast_bindings_inner(&p.node, names); }
+            for (_, p) in patterns {
+                collect_ast_bindings_inner(&p.node, names);
+            }
         }
         ast::Pattern::Mapping { pairs, rest } => {
-            for (_, p) in pairs { collect_ast_bindings_inner(&p.node, names); }
-            if let Some(r) = rest { names.insert(r.clone()); }
+            for (_, p) in pairs {
+                collect_ast_bindings_inner(&p.node, names);
+            }
+            if let Some(r) = rest {
+                names.insert(r.clone());
+            }
         }
-        ast::Pattern::Star(Some(name)) => { names.insert(name.clone()); }
+        ast::Pattern::Star(Some(name)) => {
+            names.insert(name.clone());
+        }
         ast::Pattern::Constructor { fields, .. } => {
-            for f in fields { names.insert(f.clone()); }
+            for f in fields {
+                names.insert(f.clone());
+            }
         }
         _ => {}
     }
@@ -1056,6 +1666,75 @@ fn collect_ast_bindings_inner(pat: &ast::Pattern, names: &mut std::collections::
 /// module `__annotations__` dict (e.g. "int", "list[int]", "int | str"). Only
 /// the key presence is load-bearing for current fixtures; the repr is a stable
 /// human-readable value.
+/// Build introspection signature metadata (the runtime FUNC_PARAMS payload)
+/// from the AST parameter list of a `def`. Kinds follow CPython's
+/// `inspect.Parameter` ordinals; defaults are captured only when they are
+/// simple literals (everything else records "has a default" with a None
+/// placeholder). `self` receivers are skipped — CPython bound-method
+/// signatures exclude them.
+fn func_sig_meta(
+    params: &[ast::Param],
+    return_ty: &Option<Spanned<ast::TypeExpr>>,
+) -> crate::hir::HirFuncSig {
+    use crate::hir::{HirFuncSig, HirParamSig, HirSigDefault};
+    let mut out = Vec::new();
+    for p in params {
+        if p.name == "self" {
+            continue;
+        }
+        let kind = match p.kind {
+            ast::ParamKind::Star => 2u8,
+            ast::ParamKind::DoubleStar => 4u8,
+            ast::ParamKind::Regular if p.kw_only => 3u8,
+            ast::ParamKind::Regular if p.pos_only => 0u8,
+            ast::ParamKind::Regular => 1u8,
+        };
+        let (default, default_opaque) = match &p.default {
+            Option::None => (Option::None, false),
+            Some(expr) => match &expr.node {
+                ast::Expr::IntLit(v) => (Some(HirSigDefault::Int(*v)), false),
+                ast::Expr::FloatLit(v) => (Some(HirSigDefault::Float(*v)), false),
+                ast::Expr::StrLit(s) => (Some(HirSigDefault::Str(s.clone())), false),
+                ast::Expr::BoolLit(b) => (Some(HirSigDefault::Bool(*b)), false),
+                ast::Expr::NoneLit => (Some(HirSigDefault::None), false),
+                ast::Expr::UnaryOp {
+                    op: ast::UnaryOp::Neg,
+                    operand,
+                } => match &operand.node {
+                    ast::Expr::IntLit(v) => (Some(HirSigDefault::Int(v.wrapping_neg())), false),
+                    ast::Expr::FloatLit(v) => (Some(HirSigDefault::Float(-*v)), false),
+                    _ => (Option::None, true),
+                },
+                _ => (Option::None, true),
+            },
+        };
+        out.push(HirParamSig {
+            name: p.name.clone(),
+            kind,
+            default,
+            default_opaque,
+            annotation: annotation_repr_opt(&p.ty.node),
+        });
+    }
+    HirFuncSig {
+        params: out,
+        return_annotation: return_ty
+            .as_ref()
+            .and_then(|t| annotation_repr_opt(&t.node)),
+    }
+}
+
+/// Textual annotation for introspection, or None for the parser's implicit
+/// `Any` filler (an un-annotated param/return parses as `Named("Any")`).
+fn annotation_repr_opt(ty: &ast::TypeExpr) -> Option<String> {
+    let repr = type_expr_repr(ty);
+    if repr == "Any" {
+        None
+    } else {
+        Some(repr)
+    }
+}
+
 fn type_expr_repr(ty: &ast::TypeExpr) -> String {
     match ty {
         ast::TypeExpr::Named(n) => n.clone(),
@@ -1081,6 +1760,56 @@ fn type_expr_repr(ty: &ast::TypeExpr) -> String {
     }
 }
 
+/// Leaf name of a (possibly dotted) annotation type name: `typing.ClassVar`
+/// → `ClassVar`, `ClassVar` → `ClassVar`.
+fn type_name_leaf(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
+
+/// Does the annotation name this PEP 557 marker (`ClassVar`, `InitVar`,
+/// `KW_ONLY`), bare or generic (`ClassVar[str]`), plain or dotted
+/// (`typing.ClassVar[int]`, `dataclasses.KW_ONLY`)?
+fn type_expr_is_marker(ty: &ast::TypeExpr, marker: &str) -> bool {
+    match ty {
+        ast::TypeExpr::Named(n) => type_name_leaf(n) == marker,
+        ast::TypeExpr::Generic { name, .. } => type_name_leaf(name) == marker,
+        _ => false,
+    }
+}
+
+/// Does this decorator expression denote `@dataclass` (PEP 557)? Matches the
+/// bare name (`@dataclass`), attribute form (`@dataclasses.dataclass`), and
+/// the called forms of both (`@dataclass(frozen=True)`).
+fn decorator_is_dataclass(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(n) => n == "dataclass",
+        ast::Expr::Attr { attr, .. } => attr == "dataclass",
+        ast::Expr::Call { func, .. } => decorator_is_dataclass(&func.node),
+        _ => false,
+    }
+}
+
+/// Is this class-body default value a `field(...)` / `dataclasses.field(...)`
+/// call carrying `init=False`? Such fields are excluded from the synthesized
+/// `__init__` parameter list (PEP 557).
+fn field_call_has_init_false(expr: &ast::Expr) -> bool {
+    let ast::Expr::Call { func, args } = expr else {
+        return false;
+    };
+    let is_field = match &func.node {
+        ast::Expr::Ident(n) => n == "field",
+        ast::Expr::Attr { attr, .. } => attr == "field",
+        _ => false,
+    };
+    if !is_field {
+        return false;
+    }
+    args.iter().any(|a| {
+        matches!(a, ast::CallArg::Keyword { name, value }
+            if name == "init" && matches!(value.node, ast::Expr::BoolLit(false)))
+    })
+}
+
 pub fn lower_module(
     module: &ast::Module,
     checker: &TypeChecker,
@@ -1092,7 +1821,11 @@ pub fn lower_module(
         // result.sym_names may already contain method names stored during lower_class
         // (via direct result.sym_names.insert); those must survive scope clears (#827).
         for (name, &id) in &lowerer.local_names {
-            lowerer.result.sym_names.entry(id).or_insert_with(|| name.clone());
+            lowerer
+                .result
+                .sym_names
+                .entry(id)
+                .or_insert_with(|| name.clone());
         }
         // Flush remaining scope types (enter_local_scope already flushed earlier scopes).
         for (&k, &v) in &lowerer.local_types {
@@ -1105,10 +1838,8 @@ pub fn lower_module(
 }
 
 /// REPL accumulated symbol info: SymbolId → (name, type).
-pub type ReplSymInfo = std::collections::HashMap<
-    crate::resolve::SymbolId,
-    (String, crate::types::TypeId),
->;
+pub type ReplSymInfo =
+    std::collections::HashMap<crate::resolve::SymbolId, (String, crate::types::TypeId)>;
 
 /// REPL-aware AST→HIR lowering: pre-seeds known global names and types from
 /// previous iterations so that references to persisted variables resolve correctly.
@@ -1134,7 +1865,11 @@ pub fn lower_module_repl(
         // result.sym_names may already contain method names stored during lower_class
         // (via direct result.sym_names.insert); those must survive scope clears (#827).
         for (name, &id) in &lowerer.local_names {
-            lowerer.result.sym_names.entry(id).or_insert_with(|| name.clone());
+            lowerer
+                .result
+                .sym_names
+                .entry(id)
+                .or_insert_with(|| name.clone());
         }
         // Flush remaining scope types (enter_local_scope already flushed earlier scopes).
         for (&k, &v) in &lowerer.local_types {
@@ -1166,6 +1901,27 @@ struct AstLowerer<'a> {
     /// Function parameter info for kwargs resolution at call sites.
     /// Maps function name → vec of (param_name, default_expr_option).
     func_param_info: HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
+    /// Static arg-binding validation: top-level function name → param shape
+    /// `(name, has_default, kw_only, is_star, is_double_star, pos_only)`,
+    /// captured at the def so the call-site validator can raise a
+    /// CPython-faithful TypeError for too-many-positional / duplicate-argument /
+    /// missing-required-keyword-only / unexpected-keyword / positional-only-as-
+    /// keyword calls. Only top-level defs are recorded and only bare-Ident,
+    /// splat-free calls are checked, so a violation is unambiguous before we
+    /// raise.
+    arg_bind_sigs: HashMap<String, Vec<(String, bool, bool, bool, bool, bool)>>,
+    /// PEP 557: per-dataclass synthesized __init__ parameter shapes, kept
+    /// separately from `func_param_info` so subclasses can prepend their base
+    /// dataclass's params (Derived(Counted) accepts Counted's fields first).
+    dataclass_init_params:
+        HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
+    /// PEP 557: local names bound to `dataclasses.dataclass` / `field` /
+    /// `replace` by a `from dataclasses import ...` statement. Bare-Ident
+    /// calls to these names pack keyword args into a trailing dict (the
+    /// native-dispatcher kwargs convention) instead of flattening them to
+    /// positionals — `dataclass(frozen=True)` / `field(default_factory=list)`
+    /// / `replace(obj, a=99)` all need their keyword names at runtime.
+    dataclasses_kwarg_idents: std::collections::HashSet<String>,
     /// Function-name SymbolId → declared return type. Populated *before* a
     /// function's body is lowered so recursive calls can read the callee's
     /// return type (without this, the call falls through to `any_ty`,
@@ -1195,6 +1951,11 @@ struct AstLowerer<'a> {
     /// (e.g. `scale = 0.25; def ff(j): return j * scale`) infers a float return.
     /// Seeded into each function's return-inference env below the params.
     module_float_globals: HashMap<String, FloatHint>,
+    /// PEP 695 type-parameter names of the function currently being lowered
+    /// (`def f[T](x: T) -> T`). A `T`-annotated param/return is a boxed
+    /// MbValue at runtime (the TypeVar erases to `any`), so the int-default
+    /// fallback for unresolved annotations must not fire for these names.
+    active_type_params: std::collections::HashSet<String>,
 }
 
 impl<'a> AstLowerer<'a> {
@@ -1209,10 +1970,12 @@ impl<'a> AstLowerer<'a> {
                 sym_names: std::collections::HashMap::new(),
                 sym_types: std::collections::HashMap::new(),
                 module_annotations: Vec::new(),
+                func_sigs: std::collections::HashMap::new(),
             },
             errors: Vec::new(),
             local_assigned_names: Vec::new(),
             local_declared_names: Vec::new(),
+            active_type_params: std::collections::HashSet::new(),
             local_names: HashMap::new(),
             local_types: HashMap::new(),
             next_local_sym: 1_000_000,
@@ -1220,6 +1983,9 @@ impl<'a> AstLowerer<'a> {
             outer_scope_names: HashMap::new(),
             cell_override_syms: std::collections::HashSet::new(),
             func_param_info: HashMap::new(),
+            arg_bind_sigs: HashMap::new(),
+            dataclass_init_params: HashMap::new(),
+            dataclasses_kwarg_idents: std::collections::HashSet::new(),
             func_return_tys: HashMap::new(),
             func_param_float_hint: HashMap::new(),
             func_ret_float_hint: HashMap::new(),
@@ -1280,12 +2046,12 @@ impl<'a> AstLowerer<'a> {
         use ast::TypeExpr;
         match &ty.node {
             TypeExpr::Named(name) => match name.as_str() {
-                "int"   => self.checker.tcx.int(),
+                "int" => self.checker.tcx.int(),
                 "float" => self.checker.tcx.float(),
-                "bool"  => self.checker.tcx.bool(),
-                "str"   => self.checker.tcx.str(),
-                "None"  => self.checker.tcx.none(),
-                "Any"   => self.checker.tcx.any(),
+                "bool" => self.checker.tcx.bool(),
+                "str" => self.checker.tcx.str(),
+                "None" => self.checker.tcx.none(),
+                "Any" => self.checker.tcx.any(),
                 _ => {
                     // Try type alias, then class symbol in checker
                     if let Some(id) = self.checker.tcx.resolve_alias(name) {
@@ -1293,7 +2059,9 @@ impl<'a> AstLowerer<'a> {
                     }
                     if let Some(sym) = self.checker.symbols.lookup(name) {
                         let t = self.checker.get_sym_type(sym.0);
-                        if t != self.checker.tcx.error() { return t; }
+                        if t != self.checker.tcx.error() {
+                            return t;
+                        }
                     }
                     self.checker.tcx.any()
                 }
@@ -1301,13 +2069,17 @@ impl<'a> AstLowerer<'a> {
             TypeExpr::Generic { name, args } => match name.as_str() {
                 "list" | "List" if args.len() == 1 => {
                     let elem = self.resolve_type_expr_ro(&args[0]);
-                    self.checker.tcx.find(&crate::types::Ty::List(elem))
+                    self.checker
+                        .tcx
+                        .find(&crate::types::Ty::List(elem))
                         .unwrap_or_else(|| self.checker.tcx.any())
                 }
                 "dict" | "Dict" if args.len() == 2 => {
                     let k = self.resolve_type_expr_ro(&args[0]);
                     let v = self.resolve_type_expr_ro(&args[1]);
-                    self.checker.tcx.find(&crate::types::Ty::Dict(k, v))
+                    self.checker
+                        .tcx
+                        .find(&crate::types::Ty::Dict(k, v))
                         .unwrap_or_else(|| self.checker.tcx.any())
                 }
                 _ => self.checker.tcx.any(),
@@ -1330,9 +2102,22 @@ impl<'a> AstLowerer<'a> {
         let mut unannotated_params: HashMap<String, Vec<bool>> = HashMap::new();
         let mut fn_bodies: Vec<(String, &[Spanned<ast::Stmt>])> = Vec::new();
         for stmt in &module.stmts {
-            if let ast::Stmt::FnDef { name, params, return_ty, body, decorators, .. }
-                | ast::Stmt::AsyncFnDef { name, params, return_ty, body, decorators, .. }
-                = &stmt.node
+            if let ast::Stmt::FnDef {
+                name,
+                params,
+                return_ty,
+                body,
+                decorators,
+                ..
+            }
+            | ast::Stmt::AsyncFnDef {
+                name,
+                params,
+                return_ty,
+                body,
+                decorators,
+                ..
+            } = &stmt.node
             {
                 // Only consider plain, undecorated functions with no return
                 // annotation and only regular positional params — these are the
@@ -1341,7 +2126,8 @@ impl<'a> AstLowerer<'a> {
                     && return_ty.is_none()
                     && params.iter().all(|p| p.kind == ast::ParamKind::Regular);
                 if simple {
-                    let unann: Vec<bool> = params.iter()
+                    let unann: Vec<bool> = params
+                        .iter()
                         .map(|p| matches!(&p.ty.node, ast::TypeExpr::Named(n) if n == "Any"))
                         .collect();
                     unannotated_params.insert(name.clone(), unann);
@@ -1356,21 +2142,23 @@ impl<'a> AstLowerer<'a> {
         let no_ret0: HashMap<String, FloatHint> = HashMap::new();
         // Record a float-element container global under the sentinel key so
         // `name[i]` infers float (see `ast_expr_float_hint`'s Index arm).
-        let mut note_container = |globals: &mut HashMap<String, FloatHint>, name: &str, value: &ast::Expr| {
-            if let ast::Expr::ListLit(items)
+        let mut note_container =
+            |globals: &mut HashMap<String, FloatHint>, name: &str, value: &ast::Expr| {
+                if let ast::Expr::ListLit(items)
                 | ast::Expr::TupleLit(items)
                 | ast::Expr::SetLit(items) = value
-            {
-                if ast_container_is_all_float(items, globals, &no_ret0) {
-                    globals.insert(float_container_key(name), FloatHint::Float);
+                {
+                    if ast_container_is_all_float(items, globals, &no_ret0) {
+                        globals.insert(float_container_key(name), FloatHint::Float);
+                    }
                 }
-            }
-        };
+            };
         for stmt in &module.stmts {
             match &stmt.node {
                 ast::Stmt::Assign { target, value } => {
                     if let ast::Expr::Ident(name) = &target.node {
-                        let h = ast_expr_float_hint(&value.node, &self.module_float_globals, &no_ret0);
+                        let h =
+                            ast_expr_float_hint(&value.node, &self.module_float_globals, &no_ret0);
                         if h != FloatHint::Unknown {
                             self.module_float_globals.insert(name.clone(), h);
                         }
@@ -1396,16 +2184,30 @@ impl<'a> AstLowerer<'a> {
         let no_ret: HashMap<String, FloatHint> = HashMap::new();
         let mut call_hints: HashMap<String, Vec<FloatHint>> = HashMap::new();
         let mut have_call: std::collections::HashSet<String> = std::collections::HashSet::new();
-        collect_call_arg_hints(&module.stmts, &self.module_float_globals, &no_ret, &mut call_hints, &mut have_call);
+        collect_call_arg_hints(
+            &module.stmts,
+            &self.module_float_globals,
+            &no_ret,
+            &mut call_hints,
+            &mut have_call,
+        );
 
         for (fname, hints) in call_hints {
             // Only keep param hints for functions whose params are unannotated;
             // intersect positions with the unannotated mask so annotated params
             // are never overridden.
             if let Some(mask) = unannotated_params.get(&fname) {
-                let merged: Vec<FloatHint> = hints.iter().enumerate().map(|(i, &h)| {
-                    if mask.get(i).copied().unwrap_or(false) { h } else { FloatHint::Unknown }
-                }).collect();
+                let merged: Vec<FloatHint> = hints
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &h)| {
+                        if mask.get(i).copied().unwrap_or(false) {
+                            h
+                        } else {
+                            FloatHint::Unknown
+                        }
+                    })
+                    .collect();
                 self.func_param_float_hint.insert(fname.clone(), merged);
             }
         }
@@ -1421,11 +2223,17 @@ impl<'a> AstLowerer<'a> {
                 // Build env from param hints.
                 let mut env: HashMap<String, FloatHint> = HashMap::new();
                 // Seed module-level float globals first; params/locals shadow them.
-                env.extend(self.module_float_globals.iter().map(|(k, &v)| (k.clone(), v)));
+                env.extend(
+                    self.module_float_globals
+                        .iter()
+                        .map(|(k, &v)| (k.clone(), v)),
+                );
                 if let (Some(param_names), Some(hints)) = (
                     module.stmts.iter().find_map(|s| match &s.node {
                         ast::Stmt::FnDef { name, params, .. }
-                        | ast::Stmt::AsyncFnDef { name, params, .. } if name == fname => {
+                        | ast::Stmt::AsyncFnDef { name, params, .. }
+                            if name == fname =>
+                        {
                             Some(params.iter().map(|p| p.name.clone()).collect::<Vec<_>>())
                         }
                         _ => None,
@@ -1440,13 +2248,19 @@ impl<'a> AstLowerer<'a> {
                 }
                 collect_local_float_env(body, &mut env, &self.func_ret_float_hint);
                 let ret = infer_return_float_hint(body, &env, &self.func_ret_float_hint);
-                let prev = self.func_ret_float_hint.get(fname).copied().unwrap_or(FloatHint::Unknown);
+                let prev = self
+                    .func_ret_float_hint
+                    .get(fname)
+                    .copied()
+                    .unwrap_or(FloatHint::Unknown);
                 if prev != ret {
                     self.func_ret_float_hint.insert(fname.clone(), ret);
                     changed = true;
                 }
             }
-            if !changed { break; }
+            if !changed {
+                break;
+            }
         }
     }
 
@@ -1458,21 +2272,74 @@ impl<'a> AstLowerer<'a> {
         self.collect_float_hints(module);
         for stmt in &module.stmts {
             match &stmt.node {
-                ast::Stmt::FnDef { name, params, return_ty, body, decorators, .. } => {
+                ast::Stmt::FnDef {
+                    name,
+                    type_params,
+                    params,
+                    return_ty,
+                    body,
+                    decorators,
+                    ..
+                } => {
                     // Register param info for kwargs resolution at call sites.
-                    self.func_param_info.insert(name.clone(), params.iter().map(|p| {
-                        (p.name.clone(), p.default.clone(), p.kind)
-                    }).collect());
+                    self.func_param_info.insert(
+                        name.clone(),
+                        params
+                            .iter()
+                            .map(|p| (p.name.clone(), p.default.clone(), p.kind))
+                            .collect(),
+                    );
+                    // Param shape for static call-site arg-binding validation.
+                    // Only undecorated defs: a decorator can replace the callable
+                    // with an arbitrary wrapper whose signature differs.
+                    if decorators.is_empty() {
+                        self.arg_bind_sigs.insert(
+                            name.clone(),
+                            params
+                                .iter()
+                                .map(|p| {
+                                    (
+                                        p.name.clone(),
+                                        p.default.is_some(),
+                                        p.kw_only,
+                                        p.kind == ast::ParamKind::Star,
+                                        p.kind == ast::ParamKind::DoubleStar,
+                                        p.pos_only,
+                                    )
+                                })
+                                .collect(),
+                        );
+                    } else {
+                        // A redefinition that is decorated must not keep a stale
+                        // bare-signature entry from an earlier plain def.
+                        self.arg_bind_sigs.remove(name);
+                    }
                     let is_decorated = !decorators.is_empty();
+                    // PEP 695: make this def's type-param names visible to the
+                    // param/return type lowering (TypeVar-annotated values are
+                    // boxed `any`, never raw ints).
+                    let saved_tps = std::mem::replace(
+                        &mut self.active_type_params,
+                        type_params.iter().map(|p| p.name.clone()).collect(),
+                    );
                     let lowered = if is_decorated {
                         self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                     } else {
                         self.lower_fn(name, params, return_ty, body, stmt.span)
                     };
+                    self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
+                        // Introspection: record the declared signature shape so
+                        // module init can prime the runtime FUNC_PARAMS registry
+                        // (inspect.signature / getfullargspec).
+                        self.result
+                            .func_sigs
+                            .insert(func.name.0, func_sig_meta(params, return_ty));
                         func.is_generator = contains_yield(body);
-                        func.decorators = decorators.iter()
-                            .filter_map(|d| self.lower_expr(d)).collect();
+                        func.decorators = decorators
+                            .iter()
+                            .filter_map(|d| self.lower_expr(d))
+                            .collect();
                         if !func.decorators.is_empty() {
                             // Params were already lowered with any_ty (body expressions
                             // route through NaN-aware runtime dispatch). Force the return
@@ -1496,14 +2363,34 @@ impl<'a> AstLowerer<'a> {
                         self.result.functions.push(func);
                     }
                 }
-                ast::Stmt::AsyncFnDef { name, params, return_ty, body, decorators, .. } => {
+                ast::Stmt::AsyncFnDef {
+                    name,
+                    type_params,
+                    params,
+                    return_ty,
+                    body,
+                    decorators,
+                    ..
+                } => {
                     let is_decorated = !decorators.is_empty();
+                    // PEP 695: make this def's type-param names visible to the
+                    // param/return type lowering (TypeVar-annotated values are
+                    // boxed `any`, never raw ints).
+                    let saved_tps = std::mem::replace(
+                        &mut self.active_type_params,
+                        type_params.iter().map(|p| p.name.clone()).collect(),
+                    );
                     let lowered = if is_decorated {
                         self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                     } else {
                         self.lower_fn(name, params, return_ty, body, stmt.span)
                     };
+                    self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
+                        // Introspection: same FUNC_PARAMS priming as sync defs.
+                        self.result
+                            .func_sigs
+                            .insert(func.name.0, func_sig_meta(params, return_ty));
                         let has_yield = contains_yield(body);
                         // `async def f(): yield` is an async generator — CPython
                         // returns an async-generator object, not a coroutine.
@@ -1525,8 +2412,10 @@ impl<'a> AstLowerer<'a> {
                         } else {
                             func.is_async = true;
                         }
-                        func.decorators = decorators.iter()
-                            .filter_map(|d| self.lower_expr(d)).collect();
+                        func.decorators = decorators
+                            .iter()
+                            .filter_map(|d| self.lower_expr(d))
+                            .collect();
                         if !func.decorators.is_empty() {
                             let any_ty = self.checker.tcx.any();
                             func.return_ty = any_ty;
@@ -1539,65 +2428,23 @@ impl<'a> AstLowerer<'a> {
                         self.result.functions.push(func);
                     }
                 }
-                ast::Stmt::ClassDef { name, body, bases, decorators, keyword_args, .. } => {
-                    if let Some(mut cls) = self.lower_class(name, body, stmt.span) {
-                        // Resolve all base classes for multiple inheritance (P1 OOP)
-                        cls.all_bases = bases.iter().filter_map(|b| {
-                            if let ast::Expr::Ident(name) = &b.node {
-                                self.resolve_name(name, stmt.span)
-                            } else if let ast::Expr::Attr { attr, .. } = &b.node {
-                                // `class X(unittest.TestCase):` — treat the
-                                // attribute's bare name as the base class id
-                                // so MRO walks find the runtime-registered
-                                // class. Fall back to declaring the symbol
-                                // when it isn't in scope yet so the
-                                // resolver doesn't drop the base.
-                                self.resolve_name(attr, stmt.span)
-                                    .or_else(|| Some(self.define_local(attr, self.checker.tcx.any())))
-                            } else {
-                                None
-                            }
-                        }).collect();
-                        // Keep first base for backward compatibility
-                        cls.base = cls.all_bases.first().copied();
-                        cls.decorators = decorators.iter()
-                            .filter_map(|d| self.lower_expr(d)).collect();
-                        // Extract metaclass keyword arg if present. The value
-                        // may be a bare name (`metaclass=Meta`) or an attribute
-                        // access (`metaclass=abc.ABCMeta`); in both cases the
-                        // metaclass identity is the leaf name.
-                        cls.metaclass = keyword_args.iter().find_map(|(k, v)| {
-                            if k == "metaclass" {
-                                match &v.node {
-                                    ast::Expr::Ident(meta_name) => Some(meta_name.clone()),
-                                    ast::Expr::Attr { attr, .. } => Some(attr.clone()),
-                                    _ => None,
-                                }
-                            } else {
-                                None
-                            }
-                        });
-                        // R10: Extract non-metaclass keyword arguments for __init_subclass__.
-                        cls.class_kwargs = keyword_args.iter()
-                            .filter(|(k, _)| k != "metaclass")
-                            .filter_map(|(k, v)| {
-                                self.lower_expr(v).map(|expr| (k.clone(), expr))
-                            })
-                            .collect();
-                        // Emit a ClassDefPlaceholder so decorator application
-                        // happens at the textual position (#1690). Without
-                        // a placeholder, decorators were applied at module-end
-                        // (the #1686 stop-gap), which broke patterns like
-                        // `@deco class C; obj = C()` where the post-class
-                        // statement expects the decorated class.
-                        if !cls.decorators.is_empty() {
-                            self.result.top_level.push(HirStmt::ClassDefPlaceholder {
-                                name: cls.name,
-                                span: stmt.span,
-                            });
-                        }
-                        self.result.classes.push(cls);
-                    }
+                ast::Stmt::ClassDef {
+                    name,
+                    body,
+                    bases,
+                    decorators,
+                    keyword_args,
+                    ..
+                } => {
+                    self.collect_class_stmt(
+                        name,
+                        body,
+                        bases,
+                        decorators,
+                        keyword_args,
+                        stmt.span,
+                        true,
+                    );
                 }
                 _ => {
                     // Module-scope variable annotations record their name in the
@@ -1606,11 +2453,13 @@ impl<'a> AstLowerer<'a> {
                     // qualify; the dict is auto-created at module init.
                     match &stmt.node {
                         ast::Stmt::BareAnnotation { name, ty } => {
-                            self.result.module_annotations
+                            self.result
+                                .module_annotations
                                 .push((name.clone(), type_expr_repr(&ty.node)));
                         }
                         ast::Stmt::VarDecl { name, ty, .. } => {
-                            self.result.module_annotations
+                            self.result
+                                .module_annotations
                                 .push((name.clone(), type_expr_repr(&ty.node)));
                         }
                         _ => {}
@@ -1742,83 +2591,119 @@ impl<'a> AstLowerer<'a> {
         } else {
             self.func_param_float_hint.get(name).cloned()
         };
-        let hir_params: Vec<(SymbolId, TypeId)> = params.iter().enumerate().map(|(idx, p)| {
-            let param_ty = if is_method {
-                any_ty
-            } else if p.kind == ast::ParamKind::Star || p.kind == ast::ParamKind::DoubleStar {
-                // *args receives a NaN-boxed MbList, **kwargs receives a NaN-boxed MbDict.
-                // Both must use any_ty so codegen treats them as MbValue (not raw i64).
-                any_ty
-            } else if is_decorated {
-                // Decorated functions are called through mb_call1_val /
-                // mb_call_spread, which pass NaN-boxed MbValues regardless of
-                // annotation. Use any_ty for all params so body expressions
-                // route through the NaN-aware runtime dispatch (`mb_lt`,
-                // `mb_sub`, `mb_str_concat`, …). Exception: if the caller
-                // annotated the type explicitly, honor the annotation — the
-                // wrapper passes boxed values but primitive annotations let
-                // hir_to_mir insert an unbox at entry.
-                let resolved = self.resolve_type_expr_ro(&p.ty);
-                if resolved == any_ty { any_ty } else { resolved }
-            } else {
-                let resolved = self.resolve_type_expr_ro(&p.ty);
-                if resolved == any_ty {
-                    // Only fall back to raw-int convention for bare/unannotated params.
-                    // Generic/Union/Tuple annotations that failed interning must stay `any`
-                    // so the param is treated as a boxed NaN-value at pattern-match time.
-                    match &p.ty.node {
-                        ast::TypeExpr::Generic { .. }
-                        | ast::TypeExpr::Union(_)
-                        | ast::TypeExpr::Tuple(_)
-                        | ast::TypeExpr::Optional(_) => any_ty,
-                        // An unannotated param used in `==`/`!=`/`in` must compare
-                        // by value, so it cannot keep the raw-int identity path.
-                        _ if value_compared_params.contains(&p.name) => any_ty,
-                        // Unannotated generator params stay `any` (NaN-boxed) — the
-                        // int default is unsound for float args crossing the i64
-                        // generator trampoline ABI.
-                        _ if is_gen_fn => any_ty,
-                        _ => {
-                            // Unannotated param: default int, but promote to float
-                            // when every call site passes a float at this position.
-                            if param_float_hints.as_ref()
-                                .and_then(|h| h.get(idx))
-                                .copied() == Some(FloatHint::Float)
-                            {
-                                float_ty
-                            } else {
-                                int_ty
-                            }
-                        }
+        let hir_params: Vec<(SymbolId, TypeId)> = params
+            .iter()
+            .enumerate()
+            .map(|(idx, p)| {
+                let param_ty = if is_method {
+                    any_ty
+                } else if p.kind == ast::ParamKind::Star || p.kind == ast::ParamKind::DoubleStar {
+                    // *args receives a NaN-boxed MbList, **kwargs receives a NaN-boxed MbDict.
+                    // Both must use any_ty so codegen treats them as MbValue (not raw i64).
+                    any_ty
+                } else if is_decorated {
+                    // Decorated functions are called through mb_call1_val /
+                    // mb_call_spread, which pass NaN-boxed MbValues regardless of
+                    // annotation. Use any_ty for all params so body expressions
+                    // route through the NaN-aware runtime dispatch (`mb_lt`,
+                    // `mb_sub`, `mb_str_concat`, …). Exception: if the caller
+                    // annotated the type explicitly, honor the annotation — the
+                    // wrapper passes boxed values but primitive annotations let
+                    // hir_to_mir insert an unbox at entry.
+                    let resolved = self.resolve_type_expr_ro(&p.ty);
+                    if resolved == any_ty {
+                        any_ty
+                    } else {
+                        resolved
                     }
                 } else {
-                    resolved
-                }
-            };
-            let pid = self.define_local(&p.name, param_ty);
-            (pid, param_ty)
-        }).collect();
+                    let resolved = self.resolve_type_expr_ro(&p.ty);
+                    if resolved == any_ty {
+                        // Only fall back to raw-int convention for bare/unannotated params.
+                        // Generic/Union/Tuple annotations that failed interning must stay `any`
+                        // so the param is treated as a boxed NaN-value at pattern-match time.
+                        match &p.ty.node {
+                            ast::TypeExpr::Generic { .. }
+                            | ast::TypeExpr::Union(_)
+                            | ast::TypeExpr::Tuple(_)
+                            | ast::TypeExpr::Optional(_) => any_ty,
+                            // PEP 695: a `T`-annotated param of a generic function
+                            // is a boxed MbValue at runtime (call sites box every
+                            // primitive destined for a TypeVar param) — the
+                            // raw-int default would reinterpret boxed bits.
+                            ast::TypeExpr::Named(n)
+                                if self.active_type_params.contains(n.as_str()) =>
+                            {
+                                any_ty
+                            }
+                            // An unannotated param used in `==`/`!=`/`in` must compare
+                            // by value, so it cannot keep the raw-int identity path.
+                            _ if value_compared_params.contains(&p.name) => any_ty,
+                            // Unannotated generator params stay `any` (NaN-boxed) — the
+                            // int default is unsound for float args crossing the i64
+                            // generator trampoline ABI.
+                            _ if is_gen_fn => any_ty,
+                            _ => {
+                                // Unannotated param: default int, but promote to float
+                                // when every call site passes a float at this position,
+                                // or to `any` (boxed) when float is mixed with a
+                                // non-float — a raw f64 in an int slot leaks its bits
+                                // as an int (e.g. `isinstance(0.5, int)` → True).
+                                match param_float_hints.as_ref().and_then(|h| h.get(idx)).copied() {
+                                    Some(FloatHint::Float) => float_ty,
+                                    Some(FloatHint::Boxed) => any_ty,
+                                    _ => int_ty,
+                                }
+                            }
+                        }
+                    } else {
+                        resolved
+                    }
+                };
+                let pid = self.define_local(&p.name, param_ty);
+                (pid, param_ty)
+            })
+            .collect();
 
         // Return type: use annotation if available; otherwise infer from body.
         let ret_ty = if is_method {
             any_ty
         } else {
-            let resolved = _return_ty.as_ref()
+            let resolved = _return_ty
+                .as_ref()
                 .map(|rt| self.resolve_type_expr_ro(rt))
                 .unwrap_or(any_ty);
-            if resolved == any_ty {
+            // PEP 695: `-> T` returns a boxed MbValue (TypeVar erases to
+            // any); skip the float/int return inference entirely.
+            let ret_is_type_param = matches!(
+                _return_ty.as_ref().map(|rt| &rt.node),
+                Some(ast::TypeExpr::Named(n))
+                    if self.active_type_params.contains(n.as_str())
+            );
+            if ret_is_type_param {
+                any_ty
+            } else if resolved == any_ty {
                 // Build a name→FloatHint environment from the (possibly float-
                 // promoted) param types plus float-typed locals, then infer the
                 // return type. Provably-float returns become `float`; everything
                 // else falls through to int (preserving integer fast paths).
                 let mut env: HashMap<String, FloatHint> = HashMap::new();
                 // Seed module-level float globals first; params/locals shadow them.
-                env.extend(self.module_float_globals.iter().map(|(k, &v)| (k.clone(), v)));
+                env.extend(
+                    self.module_float_globals
+                        .iter()
+                        .map(|(k, &v)| (k.clone(), v)),
+                );
                 for (p, &(_, pty)) in params.iter().zip(hir_params.iter()) {
                     let h = if pty == float_ty {
                         FloatHint::Float
                     } else if pty == int_ty {
                         FloatHint::Int
+                    } else if pty == any_ty {
+                        // A NaN-boxed param (e.g. mixed float/non-float call
+                        // sites): returning it directly yields an `any` result,
+                        // not raw int.
+                        FloatHint::Boxed
                     } else {
                         FloatHint::Unknown
                     };
@@ -1839,11 +2724,11 @@ impl<'a> AstLowerer<'a> {
         let mut pre_assigned: Vec<String> = Vec::new();
         let mut pre_declared: Vec<String> = Vec::new();
         crate::resolve::pass::collect_assignment_targets(
-            body, &mut pre_assigned, &mut pre_declared,
+            body,
+            &mut pre_assigned,
+            &mut pre_declared,
         );
-        crate::resolve::pass::collect_walrus_targets_in_stmts(
-            body, &mut pre_assigned,
-        );
+        crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut pre_assigned);
         let saved_local_assigned = std::mem::take(&mut self.local_assigned_names);
         let saved_declared = std::mem::take(&mut self.local_declared_names);
         self.local_assigned_names = pre_assigned;
@@ -1861,8 +2746,7 @@ impl<'a> AstLowerer<'a> {
             self.func_return_tys.insert(name_id, ret_ty);
         }
 
-        let hir_body: Vec<HirStmt> = body.iter()
-            .filter_map(|s| self.lower_stmt(s)).collect();
+        let hir_body: Vec<HirStmt> = body.iter().filter_map(|s| self.lower_stmt(s)).collect();
 
         self.local_assigned_names = saved_local_assigned;
         self.local_declared_names = saved_declared;
@@ -1884,7 +2768,10 @@ impl<'a> AstLowerer<'a> {
         // names — `locals()` snapshots inside that function would then be
         // unable to resolve names.
         for (name, &sym_id) in &self.local_names {
-            self.result.sym_names.entry(sym_id).or_insert_with(|| name.clone());
+            self.result
+                .sym_names
+                .entry(sym_id)
+                .or_insert_with(|| name.clone());
         }
         // HANDWRITE-END
 
@@ -1895,7 +2782,8 @@ impl<'a> AstLowerer<'a> {
         self.outer_scope_names = saved_outer_scope;
         self.cell_override_syms = saved_cell_syms;
 
-        let has_star_args = params.iter().any(|p| p.kind == ast::ParamKind::Star);
+        let star_param_pos = params.iter().position(|p| p.kind == ast::ParamKind::Star);
+        let has_star_args = star_param_pos.is_some();
         let has_kwargs = params.iter().any(|p| p.kind == ast::ParamKind::DoubleStar);
         Some(HirFunction {
             name: name_id,
@@ -1908,8 +2796,166 @@ impl<'a> AstLowerer<'a> {
             is_generator: false,
             decorators: Vec::new(),
             has_star_args,
+            star_param_pos,
             has_kwargs,
         })
+    }
+
+    /// Collect a `class` statement into the module class set: lower the body,
+    /// register dataclass init params, record decorators / metaclass /
+    /// class-attr assigns, and emit a ClassDefPlaceholder marker when needed.
+    /// Returns the class symbol when the class needs a ClassDefPlaceholder
+    /// (decorators or class-attr assigns). When `placeholder_to_top` the
+    /// marker is pushed to top_level (module top-level path); otherwise the
+    /// CALLER must emit it into its own statement stream (nested classes in
+    /// try/if/for bodies — previously silently dropped there).
+    fn collect_class_stmt(
+        &mut self,
+        name: &str,
+        body: &[Spanned<ast::Stmt>],
+        bases: &[Spanned<ast::Expr>],
+        decorators: &[Spanned<ast::Expr>],
+        keyword_args: &[(String, Spanned<ast::Expr>)],
+        span: crate::source::span::Span,
+        placeholder_to_top: bool,
+    ) -> Option<SymbolId> {
+        let placeholder_sym: std::cell::Cell<Option<SymbolId>> = std::cell::Cell::new(None);
+        let stmt_span = span;
+        let dataclass_decorated = decorators.iter().any(|d| decorator_is_dataclass(&d.node));
+        if let Some(mut cls) = self.lower_class(name, body, stmt_span, dataclass_decorated) {
+            // PEP 557: register the synthesized __init__'s parameter
+            // shape (declaration order; base dataclass fields first;
+            // ClassVar / KW_ONLY sentinel / field(init=False) fields
+            // excluded; InitVars included) so call sites resolve
+            // keyword args and fill defaults exactly like calls to
+            // classes with an explicit __init__. Skipped when the
+            // class defines its own __init__ (pre-scan already
+            // registered it).
+            if dataclass_decorated && !self.func_param_info.contains_key(name) {
+                let mut params: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
+                    Vec::new();
+                // Inherited dataclass init params first (single
+                // inheritance chains; names overridden by the
+                // subclass are replaced in place below).
+                for b in bases {
+                    let base_name = match &b.node {
+                        ast::Expr::Ident(n) => Some(n.clone()),
+                        ast::Expr::Attr { attr, .. } => Some(attr.clone()),
+                        _ => None,
+                    };
+                    if let Some(bn) = base_name {
+                        if let Some(binfo) = self.dataclass_init_params.get(&bn) {
+                            params.extend(binfo.iter().cloned());
+                        }
+                    }
+                }
+                for s in body.iter() {
+                    let (fname, ann, default) = match &s.node {
+                        ast::Stmt::VarDecl {
+                            name: fname,
+                            ty,
+                            value,
+                        } => (fname, ty, Some(value.clone())),
+                        ast::Stmt::BareAnnotation { name: fname, ty } => (fname, ty, None),
+                        _ => continue,
+                    };
+                    if fname == "__match_args__" || fname == "__slots__" {
+                        continue;
+                    }
+                    // ClassVar fields and the KW_ONLY sentinel are
+                    // not __init__ params; field(init=False) opts out.
+                    if type_expr_is_marker(&ann.node, "ClassVar")
+                        || type_expr_is_marker(&ann.node, "KW_ONLY")
+                    {
+                        continue;
+                    }
+                    if default
+                        .as_ref()
+                        .is_some_and(|v| field_call_has_init_false(&v.node))
+                    {
+                        continue;
+                    }
+                    let entry = (fname.clone(), default, ast::ParamKind::Regular);
+                    if let Some(pos) = params.iter().position(|(n, _, _)| n == fname) {
+                        params[pos] = entry;
+                    } else {
+                        params.push(entry);
+                    }
+                }
+                self.dataclass_init_params
+                    .insert(name.to_string(), params.clone());
+                self.func_param_info.insert(name.to_string(), params);
+            }
+            // Resolve all base classes for multiple inheritance (P1 OOP)
+            cls.all_bases = bases
+                .iter()
+                .filter_map(|b| {
+                    if let ast::Expr::Ident(name) = &b.node {
+                        self.resolve_name(name, stmt_span)
+                    } else if let ast::Expr::Attr { attr, .. } = &b.node {
+                        // `class X(unittest.TestCase):` — treat the
+                        // attribute's bare name as the base class id
+                        // so MRO walks find the runtime-registered
+                        // class. Fall back to declaring the symbol
+                        // when it isn't in scope yet so the
+                        // resolver doesn't drop the base.
+                        self.resolve_name(attr, stmt_span)
+                            .or_else(|| Some(self.define_local(attr, self.checker.tcx.any())))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            // Keep first base for backward compatibility
+            cls.base = cls.all_bases.first().copied();
+            cls.decorators = decorators
+                .iter()
+                .filter_map(|d| self.lower_expr(d))
+                .collect();
+            // Extract metaclass keyword arg if present. The value
+            // may be a bare name (`metaclass=Meta`) or an attribute
+            // access (`metaclass=abc.ABCMeta`); in both cases the
+            // metaclass identity is the leaf name.
+            cls.metaclass = keyword_args.iter().find_map(|(k, v)| {
+                if k == "metaclass" {
+                    match &v.node {
+                        ast::Expr::Ident(meta_name) => Some(meta_name.clone()),
+                        ast::Expr::Attr { attr, .. } => Some(attr.clone()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            });
+            // R10: Extract non-metaclass keyword arguments for __init_subclass__.
+            cls.class_kwargs = keyword_args
+                .iter()
+                .filter(|(k, _)| k != "metaclass")
+                .filter_map(|(k, v)| self.lower_expr(v).map(|expr| (k.clone(), expr)))
+                .collect();
+            // Emit a ClassDefPlaceholder so decorator application
+            // happens at the textual position (#1690). Without
+            // a placeholder, decorators were applied at module-end
+            // (the #1686 stop-gap), which broke patterns like
+            // `@deco class C; obj = C()` where the post-class
+            // statement expects the decorated class.
+            // Classes with class-level attribute assignments also
+            // need one: initializer expressions like
+            // `X = enum.auto()` must evaluate at the class's
+            // textual position, after preceding imports/bindings
+            // have run (P2-R3 ordering, #1686 motivation).
+            if !cls.decorators.is_empty() || !cls.class_attr_assigns.is_empty() {
+                if placeholder_to_top {
+                    self.result.top_level.push(HirStmt::ClassDefPlaceholder {
+                        name: cls.name,
+                        span: stmt_span,
+                    });
+                }
+                placeholder_sym.set(Some(cls.name));
+            }
+            self.result.classes.push(cls);
+        }
+        placeholder_sym.get()
     }
 
     fn lower_class(
@@ -1917,8 +2963,13 @@ impl<'a> AstLowerer<'a> {
         name: &str,
         body: &[Spanned<ast::Stmt>],
         span: Span,
+        dataclass_decorated: bool,
     ) -> Option<HirClass> {
         let name_id = self.resolve_name(name, span)?;
+        // PEP 557: ordered (field_name, annotation_repr, default_expr) facts
+        // from class-body annotations, recorded only for @dataclass classes so
+        // the runtime synthesizer can build __init__/__repr__/__eq__/etc.
+        let mut dataclass_fields: Vec<(String, String, Option<HirExpr>)> = Vec::new();
         let mut fields = Vec::new();
         let mut methods = Vec::new();
         // Track all method name→SymbolId mappings so they survive scope clears
@@ -1936,10 +2987,16 @@ impl<'a> AstLowerer<'a> {
         // If no explicit __match_args__ assignment is found, we'll use these as match args.
         let mut init_derived_match_args: Option<Vec<String>> = None;
         for stmt in body {
-            if let ast::Stmt::FnDef { name: mname, params, .. } = &stmt.node {
+            if let ast::Stmt::FnDef {
+                name: mname,
+                params,
+                ..
+            } = &stmt.node
+            {
                 if *mname == "__init__" {
                     // Collect param names, skip "self"
-                    let names: Vec<String> = params.iter()
+                    let names: Vec<String> = params
+                        .iter()
                         .filter(|p| p.name != "self")
                         .map(|p| p.name.clone())
                         .collect();
@@ -1950,11 +3007,13 @@ impl<'a> AstLowerer<'a> {
                     // `ClassName(arg)` call sites can fill defaults via the same
                     // resolution path used for free functions.
                     let init_param_info: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
-                        params.iter()
+                        params
+                            .iter()
                             .filter(|p| p.name != "self")
                             .map(|p| (p.name.clone(), p.default.clone(), p.kind))
                             .collect();
-                    self.func_param_info.insert(name.to_string(), init_param_info);
+                    self.func_param_info
+                        .insert(name.to_string(), init_param_info);
                     break;
                 }
             }
@@ -1962,23 +3021,65 @@ impl<'a> AstLowerer<'a> {
 
         for stmt in body {
             match &stmt.node {
-                ast::Stmt::VarDecl { name: fname, value, .. } => {
+                ast::Stmt::VarDecl {
+                    name: fname,
+                    ty,
+                    value,
+                } => {
                     // `__match_args__: tuple = ("x", "y")` — typed var declaration (#827)
                     if fname == "__match_args__" {
                         if let ast::Expr::TupleLit(elems) = &value.node {
-                            let names: Vec<String> = elems.iter()
+                            let names: Vec<String> = elems
+                                .iter()
                                 .filter_map(|e| {
-                                    if let ast::Expr::StrLit(s) = &e.node { Some(s.clone()) } else { None }
+                                    if let ast::Expr::StrLit(s) = &e.node {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
                                 })
                                 .collect();
                             explicit_match_args = Some(names);
                         }
-                    } else if let Some(fid) = self.resolve_name(fname, stmt.span) {
-                        fields.push((fid, self.checker.tcx.int()));
+                    } else {
+                        if let Some(fid) = self.resolve_name(fname, stmt.span) {
+                            fields.push((fid, self.checker.tcx.int()));
+                        }
+                        // PEP 557: annotated assignment with default value.
+                        if dataclass_decorated && fname != "__slots__" {
+                            let default = self.lower_expr(value);
+                            dataclass_fields.push((
+                                fname.clone(),
+                                type_expr_repr(&ty.node),
+                                default,
+                            ));
+                        }
                     }
                 }
-                ast::Stmt::FnDef { name: mname, params, return_ty, body: mbody, decorators, .. }
-                | ast::Stmt::AsyncFnDef { name: mname, params, return_ty, body: mbody, decorators, .. } => {
+                // PEP 557: bare annotation `x: float` — an ordered dataclass
+                // field fact with no default. (Outside dataclasses these are
+                // type-info-only and remain dropped.)
+                ast::Stmt::BareAnnotation { name: fname, ty } => {
+                    if dataclass_decorated {
+                        dataclass_fields.push((fname.clone(), type_expr_repr(&ty.node), None));
+                    }
+                }
+                ast::Stmt::FnDef {
+                    name: mname,
+                    params,
+                    return_ty,
+                    body: mbody,
+                    decorators,
+                    ..
+                }
+                | ast::Stmt::AsyncFnDef {
+                    name: mname,
+                    params,
+                    return_ty,
+                    body: mbody,
+                    decorators,
+                    ..
+                } => {
                     let is_async_method = matches!(stmt.node, ast::Stmt::AsyncFnDef { .. });
                     // Always allocate a fresh SymbolId for each class method.
                     // Using define_local would reuse the same SymbolId when multiple classes
@@ -1993,7 +3094,15 @@ impl<'a> AstLowerer<'a> {
                     };
                     method_name_map.push((mname.to_string(), method_sym));
                     let method_is_decorated = !decorators.is_empty();
-                    if let Some(mut m) = self.lower_fn_inner(mname, params, return_ty, mbody, stmt.span, true, method_is_decorated) {
+                    if let Some(mut m) = self.lower_fn_inner(
+                        mname,
+                        params,
+                        return_ty,
+                        mbody,
+                        stmt.span,
+                        true,
+                        method_is_decorated,
+                    ) {
                         let has_yield = contains_yield(mbody);
                         if is_async_method {
                             // `async def` method: route same way the top-level
@@ -2012,7 +3121,8 @@ impl<'a> AstLowerer<'a> {
                         // Capture method decorators so hir_to_mir can wrap the method
                         // in a property/classmethod/staticmethod descriptor at class
                         // registration time.
-                        m.decorators = decorators.iter()
+                        m.decorators = decorators
+                            .iter()
                             .filter_map(|d| self.lower_expr(d))
                             .collect();
                         methods.push(m);
@@ -2025,9 +3135,14 @@ impl<'a> AstLowerer<'a> {
                     if let ast::Expr::Ident(aname) = &target.node {
                         if aname == "__match_args__" {
                             if let ast::Expr::TupleLit(elems) = &value.node {
-                                let names: Vec<String> = elems.iter()
+                                let names: Vec<String> = elems
+                                    .iter()
                                     .filter_map(|e| {
-                                        if let ast::Expr::StrLit(s) = &e.node { Some(s.clone()) } else { None }
+                                        if let ast::Expr::StrLit(s) = &e.node {
+                                            Some(s.clone())
+                                        } else {
+                                            None
+                                        }
                                     })
                                     .collect();
                                 explicit_match_args = Some(names);
@@ -2040,9 +3155,14 @@ impl<'a> AstLowerer<'a> {
                                 _ => None,
                             };
                             if let Some(elems) = elems_opt {
-                                let slot_names: Vec<String> = elems.iter()
+                                let slot_names: Vec<String> = elems
+                                    .iter()
                                     .filter_map(|e| {
-                                        if let ast::Expr::StrLit(s) = &e.node { Some(s.clone()) } else { None }
+                                        if let ast::Expr::StrLit(s) = &e.node {
+                                            Some(s.clone())
+                                        } else {
+                                            None
+                                        }
                                     })
                                     .collect();
                                 slots = Some(slot_names);
@@ -2079,25 +3199,94 @@ impl<'a> AstLowerer<'a> {
         // If neither is found, fall back to field declaration order (matches type checker
         // behavior so that `case Point(1, 2):` works at runtime too — #827).
         let resolved_match_args = explicit_match_args.or(init_derived_match_args).or_else(|| {
-            if fields.is_empty() {
+            // PEP 557: for @dataclass classes the runtime decorator computes
+            // `__match_args__` from the processed field list (kw_only and
+            // ClassVar excluded) — suppress the raw field-order fallback so
+            // the decorator's or_insert is not pre-empted by a wrong tuple.
+            if dataclass_decorated || fields.is_empty() {
                 None
             } else {
-                let field_names: Vec<String> = body.iter().filter_map(|s| {
-                    if let ast::Stmt::VarDecl { name: fname, .. } = &s.node {
-                        if fname != "__match_args__" { Some(fname.clone()) } else { None }
-                    } else {
-                        None
-                    }
-                }).collect();
-                if field_names.is_empty() { None } else { Some(field_names) }
+                let field_names: Vec<String> = body
+                    .iter()
+                    .filter_map(|s| {
+                        if let ast::Stmt::VarDecl { name: fname, .. } = &s.node {
+                            if fname != "__match_args__" {
+                                Some(fname.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if field_names.is_empty() {
+                    None
+                } else {
+                    Some(field_names)
+                }
             }
         });
 
-        Some(HirClass { name: name_id, base: None, all_bases: Vec::new(), fields, methods, span, decorators: Vec::new(), explicit_match_args: resolved_match_args, metaclass: None, class_attr_assigns, slots, class_kwargs: Vec::new() })
+        // Class-body docstring: first bare string statement (inspect.getdoc).
+        let class_doc = body.first().and_then(|s| {
+            if let ast::Stmt::ExprStmt(e) = &s.node {
+                if let ast::Expr::StrLit(d) = &e.node {
+                    Some(d.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        Some(HirClass {
+            name: name_id,
+            base: None,
+            all_bases: Vec::new(),
+            fields,
+            methods,
+            span,
+            decorators: Vec::new(),
+            explicit_match_args: resolved_match_args,
+            metaclass: None,
+            class_attr_assigns,
+            slots,
+            class_kwargs: Vec::new(),
+            dataclass_fields,
+            doc: class_doc,
+        })
     }
 
     fn lower_stmt(&mut self, stmt: &Spanned<ast::Stmt>) -> Option<HirStmt> {
         match &stmt.node {
+            // Classes nested inside try/if/for bodies: collect like a
+            // top-level class (registration is hoisted), and leave a
+            // ClassDefPlaceholder IN this statement stream so decorators and
+            // class-attr initializers run at the textual position — inside
+            // the enclosing try's handler scope.
+            ast::Stmt::ClassDef {
+                name,
+                body,
+                bases,
+                decorators,
+                keyword_args,
+                ..
+            } => {
+                let sym = self.collect_class_stmt(
+                    name,
+                    body,
+                    bases,
+                    decorators,
+                    keyword_args,
+                    stmt.span,
+                    false,
+                );
+                return sym.map(|name| HirStmt::ClassDefPlaceholder {
+                    name,
+                    span: stmt.span,
+                });
+            }
             ast::Stmt::VarDecl { name, value, .. } => {
                 let val = self.lower_expr(value)?;
                 // Mirror the Assign first-definition path: when the resolve
@@ -2114,8 +3303,7 @@ impl<'a> AstLowerer<'a> {
                 // binding per Python scoping. Detect that the body assigns
                 // to the name (mirrors Assign's `is_function_local_target`)
                 // and prefer a fresh local in that case.
-                let is_function_local_target =
-                    self.local_assigned_names.iter().any(|n| n == name)
+                let is_function_local_target = self.local_assigned_names.iter().any(|n| n == name)
                     && !self.local_declared_names.iter().any(|n| n == name)
                     && !self.local_names.contains_key(name);
                 let sym = if is_function_local_target {
@@ -2149,6 +3337,18 @@ impl<'a> AstLowerer<'a> {
             ast::Stmt::Assign { target, value } => {
                 // Ident assignments: define locally if new, reassign if exists
                 if let ast::Expr::Ident(name) = &target.node {
+                    // Alias tracking for the kwargs-dict call convention:
+                    // `quantiles = statistics.quantiles` must keep keyword
+                    // names at bare-ident call sites, like the import form.
+                    if let ast::Expr::Attr { object, attr } = &value.node {
+                        if attr == "quantiles" {
+                            if let ast::Expr::Ident(m) = &object.node {
+                                if m == "statistics" {
+                                    self.dataclasses_kwarg_idents.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
                     let val = self.lower_expr(value)?;
                     // Python scoping: inside a function body, an assignment
                     // to a name that's NOT already local defines a new local
@@ -2157,13 +3357,15 @@ impl<'a> AstLowerer<'a> {
                     // declared via `global` / `nonlocal`.
                     let is_function_local_target =
                         self.local_assigned_names.iter().any(|n| n == name)
-                        && !self.local_declared_names.iter().any(|n| n == name)
-                        && !self.local_names.contains_key(name);
+                            && !self.local_declared_names.iter().any(|n| n == name)
+                            && !self.local_names.contains_key(name);
                     if is_function_local_target || self.resolve_name(name, stmt.span).is_none() {
                         // Implicit declaration — creates a fresh local.
                         let sym = self.define_local(name, val.ty());
                         return Some(HirStmt::Let {
-                            target: sym, ty: val.ty(), value: val,
+                            target: sym,
+                            ty: val.ty(),
+                            value: val,
                             span: stmt.span,
                         });
                     }
@@ -2186,7 +3388,9 @@ impl<'a> AstLowerer<'a> {
                         match val {
                             HirExpr::Var(s, _) => HirExpr::Var(s, self.checker.tcx.any()),
                             HirExpr::Call { func, args, .. } => HirExpr::Call {
-                                func, args, ty: self.checker.tcx.any(),
+                                func,
+                                args,
+                                ty: self.checker.tcx.any(),
                             },
                             other => other,
                         }
@@ -2194,20 +3398,135 @@ impl<'a> AstLowerer<'a> {
                         val
                     };
                     return Some(HirStmt::Assign {
-                        target: HirLValue::Var(sym), value: val_boxed,
+                        target: HirLValue::Var(sym),
+                        value: val_boxed,
                         span: stmt.span,
                     });
                 }
                 let lv = self.lower_lvalue(target)?;
                 let val = self.lower_expr(value)?;
-                Some(HirStmt::Assign { target: lv, value: val, span: stmt.span })
+                Some(HirStmt::Assign {
+                    target: lv,
+                    value: val,
+                    span: stmt.span,
+                })
             }
             ast::Stmt::AugAssign { target, op, value } => {
                 // Desugar: x += e → x = x + e
-                let lv = self.lower_lvalue(target)?;
-                let lhs = self.lower_expr(target)?;
+                //
+                // CPython evaluates the target's receiver (and index) exactly
+                // ONCE in `a[i] += v` / `a.b += v`. The naive desugar lowers
+                // `target` twice (lvalue setitem + rvalue getitem), re-running
+                // any side effects — `faces[rng.randint(1,6)-1] += 1` drew TWO
+                // indices (read one slot, write another, corrupting the tally).
+                // For non-atomic receiver/index sub-exprs, bind them to fresh
+                // temps via Walrus inside the RVALUE (Assign lowers the value
+                // before the target, so the temps are live when the setitem
+                // path reads them as plain Vars).
+                fn hir_atomic(e: &HirExpr) -> bool {
+                    matches!(
+                        e,
+                        HirExpr::Var(..) | HirExpr::IntLit(..) | HirExpr::FloatLit(..)
+                            | HirExpr::StrLit(..) | HirExpr::BoolLit(..) | HirExpr::NoneLit(..)
+                            // Slice nodes are special-cased at Index sites
+                            // (packed to (start, stop, step)); hoisting one
+                            // into a Walrus temp would bypass that packing.
+                            // Cloning keeps the pre-fix behavior for slices.
+                            | HirExpr::Slice { .. }
+                    )
+                }
+                let is_index_or_attr = matches!(
+                    target.node,
+                    ast::Expr::Index { .. } | ast::Expr::Attr { .. }
+                );
+                let (lv, lhs) = if is_index_or_attr {
+                    let mut lhs = self.lower_expr(target)?;
+                    let mut hoist = |slot: &mut Box<HirExpr>, tag: &str, this: &mut Self| {
+                        if hir_atomic(slot) {
+                            return (**slot).clone();
+                        }
+                        let ty = slot.ty();
+                        let name = format!("__aug_{tag}_{}", this.next_local_sym);
+                        let sym = this.define_local(&name, ty);
+                        let orig = std::mem::replace(&mut **slot, HirExpr::NoneLit(ty));
+                        **slot = HirExpr::Walrus {
+                            target: sym,
+                            value: Box::new(orig),
+                            ty,
+                        };
+                        HirExpr::Var(sym, ty)
+                    };
+                    let lv = match &mut lhs {
+                        HirExpr::Index { object, index, .. } => {
+                            let lv_obj = hoist(object, "obj", self);
+                            let lv_idx = hoist(index, "idx", self);
+                            HirLValue::Index {
+                                object: Box::new(lv_obj),
+                                index: Box::new(lv_idx),
+                            }
+                        }
+                        HirExpr::Attr { object, attr, .. } => {
+                            let lv_obj = hoist(object, "obj", self);
+                            HirLValue::Attr {
+                                object: Box::new(lv_obj),
+                                attr: attr.clone(),
+                            }
+                        }
+                        _ => self.lower_lvalue(target)?,
+                    };
+                    (lv, lhs)
+                } else {
+                    // Var/unpack targets: keep the original order — lower_lvalue
+                    // first so an unbound name is defined before the read.
+                    let lv = self.lower_lvalue(target)?;
+                    let lhs = self.lower_expr(target)?;
+                    (lv, lhs)
+                };
                 let rhs = self.lower_expr(value)?;
                 let hir_op = lower_aug_op(*op);
+                // In-place dunder dispatch (CPython tries `__iadd__` etc. before
+                // `__add__`): for a non-primitive (instance) target, route
+                // `a <op>= b` through a runtime helper that calls the in-place
+                // dunder when present and otherwise falls back to the normal
+                // binary op. Primitive targets (int/float/bool) keep the fast
+                // BinOp path below. Only the six ops with an in-place helper
+                // are rerouted; others fall through.
+                {
+                    use crate::types::Ty;
+                    let lhs_primitive = matches!(
+                        self.checker.tcx.get(lhs.ty()),
+                        Ty::Int | Ty::Float | Ty::Bool
+                    );
+                    let helper = if lhs_primitive {
+                        None
+                    } else {
+                        match op {
+                            ast::AugOp::Add => Some("mb_iadd"),
+                            ast::AugOp::Sub => Some("mb_isub"),
+                            ast::AugOp::Mul => Some("mb_imul"),
+                            ast::AugOp::BitAnd => Some("mb_iand"),
+                            ast::AugOp::BitOr => Some("mb_ior"),
+                            ast::AugOp::BitXor => Some("mb_ixor"),
+                            _ => None,
+                        }
+                    };
+                    if let Some(helper) = helper {
+                        let any_ty = self.checker.tcx.any();
+                        let call = HirExpr::Call {
+                            func: Box::new(HirExpr::StrLit(helper.to_string(), any_ty)),
+                            args: vec![lhs, rhs],
+                            ty: any_ty,
+                        };
+                        if let HirLValue::Var(sym) = &lv {
+                            self.local_types.insert(*sym, any_ty);
+                        }
+                        return Some(HirStmt::Assign {
+                            target: lv,
+                            value: call,
+                            span: stmt.span,
+                        });
+                    }
+                }
                 // Python truediv always returns float: x /= 2 → float even if both are int.
                 // Widen variable type to Any so subsequent reads don't double-box.
                 let is_truediv = matches!(op, ast::AugOp::Div);
@@ -2218,7 +3537,10 @@ impl<'a> AstLowerer<'a> {
                 let mixed_float = {
                     use crate::types::Ty;
                     matches!(
-                        (self.checker.tcx.get(lhs.ty()), self.checker.tcx.get(rhs.ty())),
+                        (
+                            self.checker.tcx.get(lhs.ty()),
+                            self.checker.tcx.get(rhs.ty())
+                        ),
                         (Ty::Int | Ty::Bool, Ty::Float) | (Ty::Float, Ty::Int | Ty::Bool)
                     )
                 };
@@ -2229,7 +3551,10 @@ impl<'a> AstLowerer<'a> {
                     lhs.ty()
                 };
                 let binop = HirExpr::BinOp {
-                    op: hir_op, lhs: Box::new(lhs), rhs: Box::new(rhs), ty,
+                    op: hir_op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    ty,
                 };
                 // Update variable type when we widened so subsequent reads
                 // (print(x), x == 0.5) don't treat the float result as a raw int.
@@ -2238,40 +3563,76 @@ impl<'a> AstLowerer<'a> {
                         self.local_types.insert(*sym, ty);
                     }
                 }
-                Some(HirStmt::Assign { target: lv, value: binop, span: stmt.span })
+                Some(HirStmt::Assign {
+                    target: lv,
+                    value: binop,
+                    span: stmt.span,
+                })
             }
             ast::Stmt::Return(expr) => {
                 let val = expr.as_ref().and_then(|e| self.lower_expr(e));
-                Some(HirStmt::Return { value: val, span: stmt.span })
+                Some(HirStmt::Return {
+                    value: val,
+                    span: stmt.span,
+                })
             }
-            ast::Stmt::If { condition, body, elif_clauses, else_body } => {
+            ast::Stmt::If {
+                condition,
+                body,
+                elif_clauses,
+                else_body,
+            } => {
                 let cond = self.lower_expr(condition)?;
-                let then_b: Vec<HirStmt> = body.iter()
-                    .filter_map(|s| self.lower_stmt(s)).collect();
+                let then_b: Vec<HirStmt> = body.iter().filter_map(|s| self.lower_stmt(s)).collect();
                 // Desugar elif chains into nested if/else
                 let else_b = self.lower_elif_chain(elif_clauses, else_body);
                 Some(HirStmt::If {
-                    cond, then_body: then_b, else_body: else_b, span: stmt.span,
+                    cond,
+                    then_body: then_b,
+                    else_body: else_b,
+                    span: stmt.span,
                 })
             }
-            ast::Stmt::While { condition, body, else_body } => {
+            ast::Stmt::While {
+                condition,
+                body,
+                else_body,
+            } => {
                 let cond = self.lower_expr(condition)?;
-                let b: Vec<HirStmt> = body.iter()
-                    .filter_map(|s| self.lower_stmt(s)).collect();
-                let eb: Vec<HirStmt> = else_body.iter()
+                let b: Vec<HirStmt> = body.iter().filter_map(|s| self.lower_stmt(s)).collect();
+                let eb: Vec<HirStmt> = else_body
+                    .iter()
                     .flat_map(|stmts| stmts.iter())
                     .filter_map(|s| self.lower_stmt(s))
                     .collect();
-                Some(HirStmt::While { cond, body: b, else_body: eb, span: stmt.span })
+                Some(HirStmt::While {
+                    cond,
+                    body: b,
+                    else_body: eb,
+                    span: stmt.span,
+                })
             }
-            ast::Stmt::For { targets, var_ty, iter, body, else_body }
-            | ast::Stmt::AsyncFor { targets, var_ty, iter, body, else_body } => {
+            ast::Stmt::For {
+                targets,
+                var_ty,
+                iter,
+                body,
+                else_body,
+            }
+            | ast::Stmt::AsyncFor {
+                targets,
+                var_ty,
+                iter,
+                body,
+                else_body,
+            } => {
                 let it = self.lower_expr(iter)?;
                 let any_ty = self.checker.tcx.any();
                 let span = stmt.span;
 
                 // Infer element type: explicit annotation > range() → int > any
-                let elem_ty = var_ty.as_ref()
+                let elem_ty = var_ty
+                    .as_ref()
                     .map(|t| self.resolve_type_expr_ro(t))
                     .unwrap_or_else(|| self.infer_for_elem_ty(iter));
 
@@ -2283,76 +3644,146 @@ impl<'a> AstLowerer<'a> {
                     let tmp_name = format!("__for_tmp_{}", self.next_local_sym);
                     let tmp_sym = self.define_local(&tmp_name, any_ty);
                     // Define all named targets so the body can reference them.
-                    let target_syms: Vec<SymbolId> = targets.iter()
+                    let target_syms: Vec<SymbolId> = targets
+                        .iter()
                         .map(|t| self.define_local(t, any_ty))
                         .collect();
                     // Build unpack assignment: (a, b, ...) = __for_tmp
-                    let unpack_targets: Vec<HirLValue> = target_syms.iter()
-                        .map(|&sym| HirLValue::Var(sym))
-                        .collect();
+                    let unpack_targets: Vec<HirLValue> =
+                        target_syms.iter().map(|&sym| HirLValue::Var(sym)).collect();
                     let unpack_stmt = HirStmt::Assign {
-                        target: HirLValue::Unpack { targets: unpack_targets, star_index: None },
+                        target: HirLValue::Unpack {
+                            targets: unpack_targets,
+                            star_index: None,
+                        },
                         value: HirExpr::Var(tmp_sym, any_ty),
                         span,
                     };
                     let mut b: Vec<HirStmt> = vec![unpack_stmt];
                     b.extend(body.iter().filter_map(|s| self.lower_stmt(s)));
-                    let eb: Vec<HirStmt> = else_body.iter()
+                    let eb: Vec<HirStmt> = else_body
+                        .iter()
                         .flat_map(|stmts| stmts.iter())
                         .filter_map(|s| self.lower_stmt(s))
                         .collect();
-                    Some(HirStmt::For { var: tmp_sym, iter: it, body: b, else_body: eb, span })
+                    Some(HirStmt::For {
+                        var: tmp_sym,
+                        iter: it,
+                        body: b,
+                        else_body: eb,
+                        span,
+                    })
                 } else {
                     let var_id = self.define_local(&targets[0], elem_ty);
-                    let b: Vec<HirStmt> = body.iter()
-                        .filter_map(|s| self.lower_stmt(s)).collect();
-                    let eb: Vec<HirStmt> = else_body.iter()
+                    let b: Vec<HirStmt> = body.iter().filter_map(|s| self.lower_stmt(s)).collect();
+                    let eb: Vec<HirStmt> = else_body
+                        .iter()
                         .flat_map(|stmts| stmts.iter())
                         .filter_map(|s| self.lower_stmt(s))
                         .collect();
-                    Some(HirStmt::For { var: var_id, iter: it, body: b, else_body: eb, span })
+                    Some(HirStmt::For {
+                        var: var_id,
+                        iter: it,
+                        body: b,
+                        else_body: eb,
+                        span,
+                    })
                 }
             }
             ast::Stmt::Break => Some(HirStmt::Break { span: stmt.span }),
             ast::Stmt::Continue => Some(HirStmt::Continue { span: stmt.span }),
             ast::Stmt::ExprStmt(expr) => {
                 let e = self.lower_expr(expr)?;
-                Some(HirStmt::Expr { expr: e, span: stmt.span })
+                Some(HirStmt::Expr {
+                    expr: e,
+                    span: stmt.span,
+                })
             }
             ast::Stmt::Pass => None,
-            ast::Stmt::Try { body, handlers, else_body, finally_body } => {
-                let hir_body: Vec<HirStmt> = body.iter()
-                    .filter_map(|s| self.lower_stmt(s)).collect();
-                let hir_handlers: Vec<HirExceptHandler> = handlers.iter().map(|h| {
-                    // Define handler name locally so body can reference it
-                    let name_sym = h.name.as_ref().map(|n| {
-                        self.define_local(n, self.checker.tcx.any())
-                    });
-                    HirExceptHandler {
-                        exc_type: h.exc_type.as_ref().and_then(|e| self.lower_expr(e)),
-                        name: name_sym,
-                        body: h.body.iter().filter_map(|s| self.lower_stmt(s)).collect(),
-                        is_star: h.is_star,
-                        span: h.span,
-                    }
-                }).collect();
-                let hir_else = else_body.as_ref()
+            ast::Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                let hir_body: Vec<HirStmt> =
+                    body.iter().filter_map(|s| self.lower_stmt(s)).collect();
+                let hir_handlers: Vec<HirExceptHandler> = handlers
+                    .iter()
+                    .map(|h| {
+                        // Define handler name locally so body can reference it
+                        let name_sym = h
+                            .name
+                            .as_ref()
+                            .map(|n| self.define_local(n, self.checker.tcx.any()));
+                        HirExceptHandler {
+                            exc_type: h.exc_type.as_ref().and_then(|e| self.lower_expr(e)),
+                            name: name_sym,
+                            body: h.body.iter().filter_map(|s| self.lower_stmt(s)).collect(),
+                            is_star: h.is_star,
+                            span: h.span,
+                        }
+                    })
+                    .collect();
+                let hir_else = else_body
+                    .as_ref()
                     .map(|eb| eb.iter().filter_map(|s| self.lower_stmt(s)).collect())
                     .unwrap_or_default();
-                let hir_finally = finally_body.as_ref()
+                let hir_finally = finally_body
+                    .as_ref()
                     .map(|fb| fb.iter().filter_map(|s| self.lower_stmt(s)).collect())
                     .unwrap_or_default();
                 Some(HirStmt::Try {
-                    body: hir_body, handlers: hir_handlers,
-                    else_body: hir_else, finally_body: hir_finally, span: stmt.span,
+                    body: hir_body,
+                    handlers: hir_handlers,
+                    else_body: hir_else,
+                    finally_body: hir_finally,
+                    span: stmt.span,
                 })
             }
             ast::Stmt::Raise { value, from } => {
                 let v = value.as_ref().and_then(|e| self.lower_expr(e));
                 let f = from.as_ref().and_then(|e| self.lower_expr(e));
-                Some(HirStmt::Raise { value: v, from: f, span: stmt.span })
+                Some(HirStmt::Raise {
+                    value: v,
+                    from: f,
+                    span: stmt.span,
+                })
             }
-            ast::Stmt::Import { module, names, module_alias } => {
+            ast::Stmt::Import {
+                module,
+                names,
+                module_alias,
+            } => {
+                // PEP 557: track local bindings of dataclasses.{dataclass,
+                // field, replace} so bare-Ident calls to them keep keyword
+                // names (trailing-kwargs-dict convention) at the call site.
+                if module.len() == 1 && module[0] == "dataclasses" {
+                    if let Some(names) = names {
+                        for (orig, alias) in names {
+                            if matches!(orig.as_str(), "dataclass" | "field" | "replace") {
+                                self.dataclasses_kwarg_idents
+                                    .insert(alias.clone().unwrap_or_else(|| orig.clone()));
+                            }
+                        }
+                    }
+                }
+                // statistics.quantiles has a keyword-only signature
+                // (`quantiles(data, *, n=4, method=...)`): its dispatcher must
+                // distinguish `quantiles(data, n=4)` (fine) from
+                // `quantiles(data, 4)` (TypeError), which requires keyword
+                // names to survive lowering via the trailing-kwargs-dict
+                // convention rather than flattening to positionals.
+                if module.len() == 1 && module[0] == "statistics" {
+                    if let Some(names) = names {
+                        for (orig, alias) in names {
+                            if orig == "quantiles" {
+                                self.dataclasses_kwarg_idents
+                                    .insert(alias.clone().unwrap_or_else(|| orig.clone()));
+                            }
+                        }
+                    }
+                }
                 Some(HirStmt::Import {
                     import: HirImport {
                         module: module.clone(),
@@ -2367,7 +3798,8 @@ impl<'a> AstLowerer<'a> {
             ast::Stmt::BareAnnotation { .. } => None,
             ast::Stmt::With { items, body } | ast::Stmt::AsyncWith { items, body } => {
                 let is_async = matches!(stmt.node, ast::Stmt::AsyncWith { .. });
-                let hir_items: Vec<(HirExpr, Option<SymbolId>)> = items.iter()
+                let hir_items: Vec<(HirExpr, Option<SymbolId>)> = items
+                    .iter()
                     .filter_map(|item| {
                         let ctx = self.lower_expr(&item.context)?;
                         // `with expr as name` always binds `name` — define it if new,
@@ -2377,74 +3809,130 @@ impl<'a> AstLowerer<'a> {
                                 .unwrap_or_else(|| self.define_local(n, self.checker.tcx.any()))
                         });
                         Some((ctx, alias))
-                    }).collect();
-                let b: Vec<HirStmt> = body.iter()
-                    .filter_map(|s| self.lower_stmt(s)).collect();
-                Some(HirStmt::With { items: hir_items, body: b, is_async, span: stmt.span })
+                    })
+                    .collect();
+                let b: Vec<HirStmt> = body.iter().filter_map(|s| self.lower_stmt(s)).collect();
+                Some(HirStmt::With {
+                    items: hir_items,
+                    body: b,
+                    is_async,
+                    span: stmt.span,
+                })
             }
             ast::Stmt::Assert { test, msg } => {
                 let t = self.lower_expr(test)?;
                 let m = msg.as_ref().and_then(|e| self.lower_expr(e));
-                Some(HirStmt::Assert { test: t, msg: m, span: stmt.span })
+                Some(HirStmt::Assert {
+                    test: t,
+                    msg: m,
+                    span: stmt.span,
+                })
             }
             ast::Stmt::Del(target) => {
                 let lv = self.lower_lvalue(target)?;
-                Some(HirStmt::Del { target: lv, span: stmt.span })
+                Some(HirStmt::Del {
+                    target: lv,
+                    span: stmt.span,
+                })
             }
             ast::Stmt::Global(names) => {
-                let syms: Vec<SymbolId> = names.iter()
-                    .filter_map(|n| self.resolve_name(n, stmt.span)).collect();
-                Some(HirStmt::Global { names: syms, span: stmt.span })
+                let syms: Vec<SymbolId> = names
+                    .iter()
+                    .filter_map(|n| self.resolve_name(n, stmt.span))
+                    .collect();
+                Some(HirStmt::Global {
+                    names: syms,
+                    span: stmt.span,
+                })
             }
             ast::Stmt::Nonlocal(names) => {
-                let syms: Vec<SymbolId> = names.iter().filter_map(|n| {
-                    // Look up in outer scope first to get the same synthetic SymbolId.
-                    // This ensures inner-function references use the same slot as the outer.
-                    if let Some(&outer_sym) = self.outer_scope_names.get(n.as_str()) {
-                        // Bind the name in the current (inner) scope to the outer SymbolId.
-                        self.local_names.insert(n.clone(), outer_sym);
-                        // Mark this SymbolId as a Cell (shared via global storage).
-                        self.cell_override_syms.insert(outer_sym);
-                        return Some(outer_sym);
-                    }
-                    self.resolve_name(n, stmt.span)
-                }).collect();
-                Some(HirStmt::Nonlocal { names: syms, span: stmt.span })
+                let syms: Vec<SymbolId> = names
+                    .iter()
+                    .filter_map(|n| {
+                        // Look up in outer scope first to get the same synthetic SymbolId.
+                        // This ensures inner-function references use the same slot as the outer.
+                        if let Some(&outer_sym) = self.outer_scope_names.get(n.as_str()) {
+                            // Bind the name in the current (inner) scope to the outer SymbolId.
+                            self.local_names.insert(n.clone(), outer_sym);
+                            // Mark this SymbolId as a Cell (shared via global storage).
+                            self.cell_override_syms.insert(outer_sym);
+                            return Some(outer_sym);
+                        }
+                        self.resolve_name(n, stmt.span)
+                    })
+                    .collect();
+                Some(HirStmt::Nonlocal {
+                    names: syms,
+                    span: stmt.span,
+                })
             }
             ast::Stmt::Match { expr, arms } => {
                 let subject = self.lower_expr(expr)?;
                 // Stash subject type so lower_pattern can use it for capture bindings (#827).
                 let subject_ty = subject.ty();
                 let prev_subj_ty = self.current_match_subject_ty.replace(subject_ty);
-                let cases: Vec<HirMatchCase> = arms.iter().filter_map(|arm| {
-                    let pattern = self.lower_pattern(&arm.pattern)?;
-                    let guard = arm.guard.as_ref().and_then(|g| self.lower_expr(g));
-                    let body: Vec<HirStmt> = arm.body.iter()
-                        .filter_map(|s| self.lower_stmt(s)).collect();
-                    Some(HirMatchCase { pattern, guard, body, span: arm.span })
-                }).collect();
+                let cases: Vec<HirMatchCase> = arms
+                    .iter()
+                    .filter_map(|arm| {
+                        let pattern = self.lower_pattern(&arm.pattern)?;
+                        let guard = arm.guard.as_ref().and_then(|g| self.lower_expr(g));
+                        let body: Vec<HirStmt> =
+                            arm.body.iter().filter_map(|s| self.lower_stmt(s)).collect();
+                        Some(HirMatchCase {
+                            pattern,
+                            guard,
+                            body,
+                            span: arm.span,
+                        })
+                    })
+                    .collect();
                 self.current_match_subject_ty = prev_subj_ty;
-                Some(HirStmt::Match { subject, cases, span: stmt.span })
+                Some(HirStmt::Match {
+                    subject,
+                    cases,
+                    span: stmt.span,
+                })
             }
-            ast::Stmt::FnDef { name, params, return_ty, body, decorators, .. } => {
+            ast::Stmt::FnDef {
+                name,
+                type_params,
+                params,
+                return_ty,
+                body,
+                decorators,
+                ..
+            } => {
                 // Register param info for kwargs resolution.
-                self.func_param_info.insert(name.clone(), params.iter().map(|p| {
-                    (p.name.clone(), p.default.clone(), p.kind)
-                }).collect());
+                self.func_param_info.insert(
+                    name.clone(),
+                    params
+                        .iter()
+                        .map(|p| (p.name.clone(), p.default.clone(), p.kind))
+                        .collect(),
+                );
                 // Nested function definition inside a function body.
                 // Define the function name in the current (outer) local scope first so the
                 // outer function body can call it, and so resolve_name works inside lower_fn.
                 let fn_sym = self.define_local(name, self.checker.tcx.any());
                 let is_decorated = !decorators.is_empty();
+                // PEP 695: see the module-level FnDef arm — type-param names
+                // must reach the param/return type lowering.
+                let saved_tps = std::mem::replace(
+                    &mut self.active_type_params,
+                    type_params.iter().map(|p| p.name.clone()).collect(),
+                );
                 let lowered = if is_decorated {
                     self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                 } else {
                     self.lower_fn(name, params, return_ty, body, stmt.span)
                 };
+                self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
                     func.is_generator = contains_yield(body);
-                    func.decorators = decorators.iter()
-                        .filter_map(|d| self.lower_expr(d)).collect();
+                    func.decorators = decorators
+                        .iter()
+                        .filter_map(|d| self.lower_expr(d))
+                        .collect();
                     // Propagate the cell symbols discovered in this nested function back
                     // to the outer scope so the outer function also uses global storage
                     // for those shared variables.
@@ -2457,17 +3945,35 @@ impl<'a> AstLowerer<'a> {
                 // now in result.functions). The local sym binding allows callers to emit
                 // a Call MirInst against fn_sym.
                 let _ = fn_sym;
-                Some(HirStmt::FuncDefPlaceholder { name: fn_sym, span: stmt.span })
+                Some(HirStmt::FuncDefPlaceholder {
+                    name: fn_sym,
+                    span: stmt.span,
+                })
             }
-            ast::Stmt::AsyncFnDef { name, params, return_ty, body, decorators, .. } => {
+            ast::Stmt::AsyncFnDef {
+                name,
+                type_params,
+                params,
+                return_ty,
+                body,
+                decorators,
+                ..
+            } => {
                 // Nested async function inside a function body — same as FnDef above.
                 let fn_sym = self.define_local(name, self.checker.tcx.any());
                 let is_decorated = !decorators.is_empty();
+                // PEP 695: see the module-level FnDef arm — type-param names
+                // must reach the param/return type lowering.
+                let saved_tps = std::mem::replace(
+                    &mut self.active_type_params,
+                    type_params.iter().map(|p| p.name.clone()).collect(),
+                );
                 let lowered = if is_decorated {
                     self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                 } else {
                     self.lower_fn(name, params, return_ty, body, stmt.span)
                 };
+                self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
                     if contains_yield(body) {
                         // Same async-generator routing as the top-level
@@ -2477,15 +3983,20 @@ impl<'a> AstLowerer<'a> {
                     } else {
                         func.is_async = true;
                     }
-                    func.decorators = decorators.iter()
-                        .filter_map(|d| self.lower_expr(d)).collect();
+                    func.decorators = decorators
+                        .iter()
+                        .filter_map(|d| self.lower_expr(d))
+                        .collect();
                     for sym in &func.captures {
                         self.cell_override_syms.insert(*sym);
                     }
                     self.result.functions.push(func);
                 }
                 let _ = fn_sym;
-                Some(HirStmt::FuncDefPlaceholder { name: fn_sym, span: stmt.span })
+                Some(HirStmt::FuncDefPlaceholder {
+                    name: fn_sym,
+                    span: stmt.span,
+                })
             }
             _ => None,
         }
@@ -2501,8 +4012,7 @@ impl<'a> AstLowerer<'a> {
                 Some(c) => c,
                 None => return Vec::new(),
             };
-            let then_b: Vec<HirStmt> = body.iter()
-                .filter_map(|s| self.lower_stmt(s)).collect();
+            let then_b: Vec<HirStmt> = body.iter().filter_map(|s| self.lower_stmt(s)).collect();
             let else_b = self.lower_elif_chain(&elifs[1..], else_body);
             vec![HirStmt::If {
                 cond: hir_cond,
@@ -2515,6 +4025,22 @@ impl<'a> AstLowerer<'a> {
         } else {
             Vec::new()
         }
+    }
+
+    /// Lower f-string parts, recursing into structured format specs so
+    /// nested replacement fields ({value:{width}}) evaluate at runtime.
+    fn lower_fstring_parts(&mut self, parts: &[ast::FStringPart]) -> Vec<HirFStringPart> {
+        parts
+            .iter()
+            .filter_map(|p| match p {
+                ast::FStringPart::Literal(s) => Some(HirFStringPart::Literal(s.clone())),
+                ast::FStringPart::Expr(e, spec) => {
+                    let he = self.lower_expr(e)?;
+                    let hir_spec = spec.as_ref().map(|sp| self.lower_fstring_parts(sp));
+                    Some(HirFStringPart::Expr(he, hir_spec))
+                }
+            })
+            .collect()
     }
 
     fn lower_expr(&mut self, expr: &Spanned<ast::Expr>) -> Option<HirExpr> {
@@ -2544,6 +4070,13 @@ impl<'a> AstLowerer<'a> {
             }
             ast::Expr::BoolLit(b) => Some(HirExpr::BoolLit(*b, self.checker.tcx.bool())),
             ast::Expr::NoneLit => Some(HirExpr::NoneLit(self.checker.tcx.none())),
+            // `...` lowers as a read of the builtin `Ellipsis` symbol, which
+            // hir_to_mir folds to MirConst::Ellipsis — same singleton as the
+            // name `Ellipsis`, so `... is Ellipsis` holds.
+            ast::Expr::Ellipsis => {
+                let sym = self.resolve_name("Ellipsis", expr.span)?;
+                Some(HirExpr::Var(sym, self.checker.tcx.any()))
+            }
             ast::Expr::Ident(name) => {
                 let sym = if let Some(id) = self.resolve_name(name, expr.span) {
                     id
@@ -2569,17 +4102,28 @@ impl<'a> AstLowerer<'a> {
                     // `is` / `is not` always use primitive identity comparison
                     // (icmp equal on raw bits), so result is always raw bool.
                     HirBinOp::Is | HirBinOp::IsNot => self.checker.tcx.bool(),
-                    HirBinOp::Eq | HirBinOp::NotEq | HirBinOp::Lt | HirBinOp::Gt
-                    | HirBinOp::LtEq | HirBinOp::GtEq
-                    | HirBinOp::In | HirBinOp::NotIn => {
+                    HirBinOp::Eq
+                    | HirBinOp::NotEq
+                    | HirBinOp::Lt
+                    | HirBinOp::Gt
+                    | HirBinOp::LtEq
+                    | HirBinOp::GtEq
+                    | HirBinOp::In
+                    | HirBinOp::NotIn => {
                         // If operands are non-primitive, runtime dispatch returns
                         // NaN-boxed result → use Any to prevent double-boxing.
                         let lt = self.checker.tcx.get(l.ty());
                         let rt = self.checker.tcx.get(r.ty());
-                        let needs_runtime = !matches!(lt,
-                            crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
-                        ) || !matches!(rt,
-                            crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
+                        let needs_runtime = !matches!(
+                            lt,
+                            crate::types::Ty::Int
+                                | crate::types::Ty::Float
+                                | crate::types::Ty::Bool
+                        ) || !matches!(
+                            rt,
+                            crate::types::Ty::Int
+                                | crate::types::Ty::Float
+                                | crate::types::Ty::Bool
                         );
                         if needs_runtime {
                             self.checker.tcx.any()
@@ -2592,7 +4136,9 @@ impl<'a> AstLowerer<'a> {
                         // so result type is Any to prevent double-boxing.
                         if matches!(hir_op, HirBinOp::And | HirBinOp::Or) {
                             return Some(HirExpr::BinOp {
-                                op: hir_op, lhs: Box::new(l), rhs: Box::new(r),
+                                op: hir_op,
+                                lhs: Box::new(l),
+                                rhs: Box::new(r),
                                 ty: self.checker.tcx.any(),
                             });
                         }
@@ -2602,9 +4148,9 @@ impl<'a> AstLowerer<'a> {
                         let is_mixed = matches!(
                             (lt, rt),
                             (crate::types::Ty::Int, crate::types::Ty::Float)
-                            | (crate::types::Ty::Float, crate::types::Ty::Int)
-                            | (crate::types::Ty::Bool, crate::types::Ty::Float)
-                            | (crate::types::Ty::Float, crate::types::Ty::Bool)
+                                | (crate::types::Ty::Float, crate::types::Ty::Int)
+                                | (crate::types::Ty::Bool, crate::types::Ty::Float)
+                                | (crate::types::Ty::Float, crate::types::Ty::Bool)
                         );
                         // Python true division always returns float
                         let is_true_div = matches!(hir_op, HirBinOp::Div)
@@ -2614,16 +4160,18 @@ impl<'a> AstLowerer<'a> {
                         // Exception: bool & bool, bool | bool, bool ^ bool → Bool (Python)
                         let both_bool = matches!(lt, crate::types::Ty::Bool)
                             && matches!(rt, crate::types::Ty::Bool);
-                        let is_bitwise_bool = both_bool && matches!(
-                            hir_op,
-                            HirBinOp::BitAnd | HirBinOp::BitOr | HirBinOp::BitXor
-                        );
-                        let is_bool_promotion = !is_bitwise_bool && matches!(
-                            (lt, rt),
-                            (crate::types::Ty::Bool, crate::types::Ty::Bool)
-                            | (crate::types::Ty::Bool, crate::types::Ty::Int)
-                            | (crate::types::Ty::Int, crate::types::Ty::Bool)
-                        );
+                        let is_bitwise_bool = both_bool
+                            && matches!(
+                                hir_op,
+                                HirBinOp::BitAnd | HirBinOp::BitOr | HirBinOp::BitXor
+                            );
+                        let is_bool_promotion = !is_bitwise_bool
+                            && matches!(
+                                (lt, rt),
+                                (crate::types::Ty::Bool, crate::types::Ty::Bool)
+                                    | (crate::types::Ty::Bool, crate::types::Ty::Int)
+                                    | (crate::types::Ty::Int, crate::types::Ty::Bool)
+                            );
                         // Class operands → runtime dunder dispatch returns NaN-boxed Any.
                         let has_class = matches!(lt, crate::types::Ty::Class { .. })
                             || matches!(rt, crate::types::Ty::Class { .. });
@@ -2644,13 +4192,22 @@ impl<'a> AstLowerer<'a> {
                         // that has a `mb_*` runtime entry boxes its result.
                         let runtime_dispatched = matches!(
                             hir_op,
-                            HirBinOp::Add | HirBinOp::Sub | HirBinOp::Mul
-                            | HirBinOp::Div | HirBinOp::FloorDiv | HirBinOp::Mod
-                            | HirBinOp::Pow
-                            | HirBinOp::Eq | HirBinOp::NotEq
-                            | HirBinOp::Lt | HirBinOp::Gt
-                            | HirBinOp::LtEq | HirBinOp::GtEq
-                            | HirBinOp::BitOr | HirBinOp::BitAnd | HirBinOp::BitXor
+                            HirBinOp::Add
+                                | HirBinOp::Sub
+                                | HirBinOp::Mul
+                                | HirBinOp::Div
+                                | HirBinOp::FloorDiv
+                                | HirBinOp::Mod
+                                | HirBinOp::Pow
+                                | HirBinOp::Eq
+                                | HirBinOp::NotEq
+                                | HirBinOp::Lt
+                                | HirBinOp::Gt
+                                | HirBinOp::LtEq
+                                | HirBinOp::GtEq
+                                | HirBinOp::BitOr
+                                | HirBinOp::BitAnd
+                                | HirBinOp::BitXor
                         );
                         if is_mixed || is_true_div || has_class || (has_any && runtime_dispatched) {
                             self.checker.tcx.any()
@@ -2664,7 +4221,10 @@ impl<'a> AstLowerer<'a> {
                     }
                 };
                 Some(HirExpr::BinOp {
-                    op: hir_op, lhs: Box::new(l), rhs: Box::new(r), ty,
+                    op: hir_op,
+                    lhs: Box::new(l),
+                    rhs: Box::new(r),
+                    ty,
                 })
             }
             ast::Expr::UnaryOp { op, operand } => {
@@ -2676,24 +4236,60 @@ impl<'a> AstLowerer<'a> {
                 // - `-`/`+` preserves operand type
                 let ty = match hir_op {
                     HirUnaryOp::Not => self.checker.tcx.bool(),
-                    HirUnaryOp::BitNot if matches!(self.checker.tcx.get(inner.ty()), crate::types::Ty::Bool) => {
+                    HirUnaryOp::BitNot
+                        if matches!(self.checker.tcx.get(inner.ty()), crate::types::Ty::Bool) =>
+                    {
                         self.checker.tcx.int()
                     }
                     _ => inner.ty(),
                 };
                 Some(HirExpr::UnaryOp {
-                    op: hir_op, operand: Box::new(inner), ty,
+                    op: hir_op,
+                    operand: Box::new(inner),
+                    ty,
                 })
             }
             ast::Expr::Call { func, args } => {
                 let any_ty = self.checker.tcx.any();
                 let str_ty = self.checker.tcx.str();
+                // Static arg-binding validation: a bare-Ident call to a known
+                // top-level function, with no *args/**kwargs splat, whose
+                // argument shape unambiguously violates the callee's signature,
+                // lowers to a runtime TypeError matching CPython (the would-be
+                // call is replaced). Conservative: skips on any splat or unknown
+                // callee, so a valid call is never rejected.
+                if let ast::Expr::Ident(fname) = &func.node {
+                    if let Some(sig) = self.arg_bind_sigs.get(fname).cloned() {
+                        let splat_free = args.iter().all(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                            )
+                        });
+                        if splat_free {
+                            if let Some(msg) = arg_bind_violation(fname, &sig, args) {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(msg, str_ty)],
+                                    ty: any_ty,
+                                });
+                            }
+                        }
+                    }
+                }
                 // all(x for x in it) / any(x for x in it) must preserve
                 // generator-expression laziness so the builtin can short-circuit.
                 if let ast::Expr::Ident(name) = &func.node {
                     if (name == "all" || name == "any") && args.len() == 1 {
                         if let ast::CallArg::Positional(arg) = &args[0] {
-                            if let ast::Expr::GeneratorExpr { element, generators } = &arg.node {
+                            if let ast::Expr::GeneratorExpr {
+                                element,
+                                generators,
+                            } = &arg.node
+                            {
                                 let saved = self.save_comp_scope(generators);
                                 let gens = self.lower_comprehensions(generators);
                                 let elem = self.lower_expr(element)?;
@@ -2710,10 +4306,14 @@ impl<'a> AstLowerer<'a> {
                 }
                 // Special case: dict(a=1, b=2) with all-keyword args → HirExpr::Dict
                 if let ast::Expr::Ident(name) = &func.node {
-                    if name == "dict" && !args.is_empty()
-                        && args.iter().all(|a| matches!(a, ast::CallArg::Keyword { .. }))
+                    if name == "dict"
+                        && !args.is_empty()
+                        && args
+                            .iter()
+                            .all(|a| matches!(a, ast::CallArg::Keyword { .. }))
                     {
-                        let entries: Vec<(HirExpr, HirExpr)> = args.iter()
+                        let entries: Vec<(HirExpr, HirExpr)> = args
+                            .iter()
                             .filter_map(|a| {
                                 if let ast::CallArg::Keyword { name: k, value } = a {
                                     let key = HirExpr::StrLit(k.clone(), str_ty);
@@ -2724,7 +4324,10 @@ impl<'a> AstLowerer<'a> {
                                 }
                             })
                             .collect();
-                        return Some(HirExpr::Dict { entries, ty: any_ty });
+                        return Some(HirExpr::Dict {
+                            entries,
+                            ty: any_ty,
+                        });
                     }
                 }
                 // Kwargs-aware builtin dispatch: when a known builtin is called
@@ -2732,7 +4335,9 @@ impl<'a> AstLowerer<'a> {
                 // keyword semantics. Without this, keyword names are lost during
                 // HIR lowering and the flattened positional args cause either wrong
                 // behavior or Cranelift verifier errors.
-                let has_kwargs = args.iter().any(|a| matches!(a, ast::CallArg::Keyword { .. }));
+                let has_kwargs = args
+                    .iter()
+                    .any(|a| matches!(a, ast::CallArg::Keyword { .. }));
                 // `"...".format(*seq)` / `.format(**mapping)` carry no inline
                 // Keyword arg, so `has_kwargs` is false and the call would fall
                 // through to the generic mb_call_spread path — which has no
@@ -2745,111 +4350,214 @@ impl<'a> AstLowerer<'a> {
                 // `attr == "sort"/"dumps"`, so entering here for a format-splat
                 // call only reaches the format case.)
                 let is_format_splat = matches!(&func.node, ast::Expr::Attr { attr, .. } if attr == "format")
-                    && args.iter().any(|a| matches!(
-                        a,
-                        ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)
-                    ));
+                    && args.iter().any(|a| {
+                        matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_))
+                    });
                 if has_kwargs || is_format_splat {
                     if let ast::Expr::Ident(name) = &func.node {
                         let none_hir = HirExpr::NoneLit(any_ty);
 
                         // print(*args, sep=' ', end='\n') → mb_print_kwargs(args_list, sep, end)
                         if name == "print" {
-                            let hir_pos: Vec<HirExpr> = args.iter().filter_map(|a| {
-                                if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
-                            }).collect();
-                            let args_list = HirExpr::List { elements: hir_pos, ty: any_ty };
-                            let sep = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "sep" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
-                            let end = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "end" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
-                            let file = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "file" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
+                            let hir_pos: Vec<HirExpr> = args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            let args_list = HirExpr::List {
+                                elements: hir_pos,
+                                ty: any_ty,
+                            };
+                            let sep = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "sep" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
+                            let end = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "end" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
+                            let file = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "file" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_print_kwargs_file".to_string(), any_ty)),
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_print_kwargs_file".to_string(),
+                                    any_ty,
+                                )),
                                 args: vec![args_list, sep, end, file],
                                 ty: any_ty,
                             });
                         }
                         // sorted(iterable, key=None, reverse=False) → mb_sorted_kwargs
                         if name == "sorted" {
-                            let pos: Vec<HirExpr> = args.iter().filter_map(|a| {
-                                if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
-                            }).collect();
-                            let iterable = pos.into_iter().next().unwrap_or_else(|| none_hir.clone());
-                            let key = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "key" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
-                            let reverse = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "reverse" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
+                            let pos: Vec<HirExpr> = args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            let iterable =
+                                pos.into_iter().next().unwrap_or_else(|| none_hir.clone());
+                            let key = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "key" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
+                            let reverse = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "reverse" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_sorted_kwargs".to_string(), any_ty)),
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_sorted_kwargs".to_string(),
+                                    any_ty,
+                                )),
                                 args: vec![iterable, key, reverse],
                                 ty: any_ty,
                             });
                         }
                         // min(iterable, key=None, default=None) → mb_min_kwargs
                         if name == "min" {
-                            let pos: Vec<HirExpr> = args.iter().filter_map(|a| {
-                                if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
-                            }).collect();
+                            let pos: Vec<HirExpr> = args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
                             let iterable = if pos.len() >= 2 {
-                                HirExpr::List { elements: pos, ty: any_ty }
+                                HirExpr::List {
+                                    elements: pos,
+                                    ty: any_ty,
+                                }
                             } else {
                                 pos.into_iter().next().unwrap_or_else(|| none_hir.clone())
                             };
-                            let key = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "key" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
-                            let default = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "default" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
+                            let key = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "key" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
+                            let default = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "default" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_min_kwargs".to_string(), any_ty)),
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_min_kwargs".to_string(),
+                                    any_ty,
+                                )),
                                 args: vec![iterable, key, default],
                                 ty: any_ty,
                             });
                         }
                         // max(iterable, key=None, default=None) → mb_max_kwargs
                         if name == "max" {
-                            let pos: Vec<HirExpr> = args.iter().filter_map(|a| {
-                                if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
-                            }).collect();
+                            let pos: Vec<HirExpr> = args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
                             let iterable = if pos.len() >= 2 {
-                                HirExpr::List { elements: pos, ty: any_ty }
+                                HirExpr::List {
+                                    elements: pos,
+                                    ty: any_ty,
+                                }
                             } else {
                                 pos.into_iter().next().unwrap_or_else(|| none_hir.clone())
                             };
-                            let key = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "key" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
-                            let default = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "default" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
+                            let key = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "key" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
+                            let default = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "default" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_max_kwargs".to_string(), any_ty)),
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_max_kwargs".to_string(),
+                                    any_ty,
+                                )),
                                 args: vec![iterable, key, default],
                                 ty: any_ty,
                             });
@@ -2859,17 +4567,38 @@ impl<'a> AstLowerer<'a> {
                         // positional bool, blowing up Cranelift signature
                         // verification at the `mb_zip(arg, arg, arg)` call site.
                         if name == "zip" {
-                            let pos: Vec<HirExpr> = args.iter().filter_map(|a| {
-                                if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
-                            }).collect();
-                            let iterables = HirExpr::List { elements: pos, ty: any_ty };
-                            let strict = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "strict" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| HirExpr::BoolLit(false, self.checker.tcx.bool()));
+                            let pos: Vec<HirExpr> = args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            let iterables = HirExpr::List {
+                                elements: pos,
+                                ty: any_ty,
+                            };
+                            let strict = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "strict" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| {
+                                    HirExpr::BoolLit(false, self.checker.tcx.bool())
+                                });
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_zip_strict".to_string(), any_ty)),
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_zip_strict".to_string(),
+                                    any_ty,
+                                )),
                                 args: vec![iterables, strict],
                                 ty: any_ty,
                             });
@@ -2880,17 +4609,34 @@ impl<'a> AstLowerer<'a> {
                                 matches!(a, ast::CallArg::Keyword { name: n, .. } if n == "start")
                             });
                             if has_start {
-                                let pos: Vec<HirExpr> = args.iter().filter_map(|a| {
-                                    if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
-                                }).collect();
-                                let iterable = pos.into_iter().next().unwrap_or_else(|| none_hir.clone());
-                                let start = args.iter().find_map(|a| {
-                                    if let ast::CallArg::Keyword { name: n, value } = a {
-                                        if n == "start" { return self.lower_expr(value); }
-                                    } None
-                                }).unwrap_or_else(|| none_hir.clone());
+                                let pos: Vec<HirExpr> = args
+                                    .iter()
+                                    .filter_map(|a| {
+                                        if let ast::CallArg::Positional(e) = a {
+                                            self.lower_expr(e)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                let iterable =
+                                    pos.into_iter().next().unwrap_or_else(|| none_hir.clone());
+                                let start = args
+                                    .iter()
+                                    .find_map(|a| {
+                                        if let ast::CallArg::Keyword { name: n, value } = a {
+                                            if n == "start" {
+                                                return self.lower_expr(value);
+                                            }
+                                        }
+                                        None
+                                    })
+                                    .unwrap_or_else(|| none_hir.clone());
                                 return Some(HirExpr::Call {
-                                    func: Box::new(HirExpr::StrLit("mb_sum_with_start".to_string(), any_ty)),
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_sum_with_start".to_string(),
+                                        any_ty,
+                                    )),
                                     args: vec![iterable, start],
                                     ty: any_ty,
                                 });
@@ -2903,19 +4649,31 @@ impl<'a> AstLowerer<'a> {
                         // misroutes `open(p, encoding='utf-8')` as mode='utf-8'.
                         // Pull `mode` from positional[1] or the `mode=` keyword.
                         if name == "open" {
-                            let pos: Vec<HirExpr> = args.iter().filter_map(|a| {
-                                if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
-                            }).collect();
+                            let pos: Vec<HirExpr> = args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
                             let mut pos_iter = pos.into_iter();
                             let path = pos_iter.next().unwrap_or_else(|| none_hir.clone());
-                            let mode = pos_iter.next().or_else(|| {
-                                args.iter().find_map(|a| {
-                                    if let ast::CallArg::Keyword { name: n, value } = a {
-                                        if n == "mode" { return self.lower_expr(value); }
-                                    }
-                                    None
+                            let mode = pos_iter
+                                .next()
+                                .or_else(|| {
+                                    args.iter().find_map(|a| {
+                                        if let ast::CallArg::Keyword { name: n, value } = a {
+                                            if n == "mode" {
+                                                return self.lower_expr(value);
+                                            }
+                                        }
+                                        None
+                                    })
                                 })
-                            }).unwrap_or_else(|| HirExpr::StrLit("r".to_string(), str_ty));
+                                .unwrap_or_else(|| HirExpr::StrLit("r".to_string(), str_ty));
                             return Some(HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit("mb_open".to_string(), any_ty)),
                                 args: vec![path, mode],
@@ -2929,18 +4687,33 @@ impl<'a> AstLowerer<'a> {
                         // .sort(key=f, reverse=r) → mb_list_sort_kwargs(list, key, reverse)
                         if attr == "sort" {
                             let recv = self.lower_expr(object)?;
-                            let key = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "key" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
-                            let reverse = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "reverse" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
+                            let key = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "key" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
+                            let reverse = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "reverse" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_list_sort_kwargs".to_string(), any_ty)),
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_list_sort_kwargs".to_string(),
+                                    any_ty,
+                                )),
                                 args: vec![recv, key, reverse],
                                 ty: any_ty,
                             });
@@ -2952,18 +4725,36 @@ impl<'a> AstLowerer<'a> {
                         if attr == "dumps" {
                             if let ast::Expr::Ident(obj_name) = &object.node {
                                 if obj_name == "json" {
-                                    let val = args.iter().find_map(|a| {
-                                        if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
-                                    }).unwrap_or_else(|| HirExpr::NoneLit(any_ty));
-                                    let kwargs_entries: Vec<(HirExpr, HirExpr)> = args.iter().filter_map(|a| {
-                                        if let ast::CallArg::Keyword { name, value } = a {
-                                            let key = HirExpr::StrLit(name.clone(), self.checker.tcx.str());
-                                            let v = self.lower_expr(value)?;
-                                            Some((key, v))
-                                        } else { None }
-                                    }).collect();
+                                    let val = args
+                                        .iter()
+                                        .find_map(|a| {
+                                            if let ast::CallArg::Positional(e) = a {
+                                                self.lower_expr(e)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or_else(|| HirExpr::NoneLit(any_ty));
+                                    let kwargs_entries: Vec<(HirExpr, HirExpr)> = args
+                                        .iter()
+                                        .filter_map(|a| {
+                                            if let ast::CallArg::Keyword { name, value } = a {
+                                                let key = HirExpr::StrLit(
+                                                    name.clone(),
+                                                    self.checker.tcx.str(),
+                                                );
+                                                let v = self.lower_expr(value)?;
+                                                Some((key, v))
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect();
                                     if !kwargs_entries.is_empty() {
-                                        let kwargs_dict = HirExpr::Dict { entries: kwargs_entries, ty: any_ty };
+                                        let kwargs_dict = HirExpr::Dict {
+                                            entries: kwargs_entries,
+                                            ty: any_ty,
+                                        };
                                         let f = self.lower_expr(func)?;
                                         return Some(HirExpr::Call {
                                             func: Box::new(f),
@@ -2988,30 +4779,31 @@ impl<'a> AstLowerer<'a> {
                             // Build the positional list, interleaving inline
                             // positionals into a running List literal and folding
                             // each `*seq` through mb_args_concat in source order.
-                            let mut pos_acc: HirExpr =
-                                HirExpr::List { elements: Vec::new(), ty: any_ty };
+                            let mut pos_acc: HirExpr = HirExpr::List {
+                                elements: Vec::new(),
+                                ty: any_ty,
+                            };
                             let mut pending: Vec<HirExpr> = Vec::new();
-                            let flush =
-                                |pending: &mut Vec<HirExpr>, acc: &mut HirExpr, any_ty| {
-                                    if pending.is_empty() {
-                                        return;
-                                    }
-                                    let chunk = HirExpr::List {
-                                        elements: std::mem::take(pending),
-                                        ty: any_ty,
-                                    };
-                                    *acc = HirExpr::Call {
-                                        func: Box::new(HirExpr::StrLit(
-                                            "mb_args_concat".to_string(),
-                                            any_ty,
-                                        )),
-                                        args: vec![std::mem::replace(
-                                            acc,
-                                            HirExpr::NoneLit(any_ty),
-                                        ), chunk],
-                                        ty: any_ty,
-                                    };
+                            let flush = |pending: &mut Vec<HirExpr>, acc: &mut HirExpr, any_ty| {
+                                if pending.is_empty() {
+                                    return;
+                                }
+                                let chunk = HirExpr::List {
+                                    elements: std::mem::take(pending),
+                                    ty: any_ty,
                                 };
+                                *acc = HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_args_concat".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![
+                                        std::mem::replace(acc, HirExpr::NoneLit(any_ty)),
+                                        chunk,
+                                    ],
+                                    ty: any_ty,
+                                };
+                            };
                             for a in args {
                                 match a {
                                     ast::CallArg::Positional(e) => {
@@ -3042,16 +4834,22 @@ impl<'a> AstLowerer<'a> {
                             // duplicate keyword key across splats; mamba currently
                             // last-wins instead (narrow strictness gap, shared with
                             // the general **kwargs path — not introduced here).
-                            let kwargs_entries: Vec<(HirExpr, HirExpr)> =
-                                args.iter().filter_map(|a| {
+                            let kwargs_entries: Vec<(HirExpr, HirExpr)> = args
+                                .iter()
+                                .filter_map(|a| {
                                     if let ast::CallArg::Keyword { name, value } = a {
                                         let key = HirExpr::StrLit(name.clone(), str_ty);
                                         let val = self.lower_expr(value)?;
                                         Some((key, val))
-                                    } else { None }
-                                }).collect();
-                            let mut kwargs_dict =
-                                HirExpr::Dict { entries: kwargs_entries, ty: any_ty };
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            let mut kwargs_dict = HirExpr::Dict {
+                                entries: kwargs_entries,
+                                ty: any_ty,
+                            };
                             for a in args {
                                 if let ast::CallArg::DoubleStarArg(e) = a {
                                     if let Some(he) = self.lower_expr(e) {
@@ -3067,7 +4865,10 @@ impl<'a> AstLowerer<'a> {
                                 }
                             }
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_str_format_kwargs".to_string(), any_ty)),
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_str_format_kwargs".to_string(),
+                                    any_ty,
+                                )),
                                 args: vec![recv, pos_list, kwargs_dict],
                                 ty: any_ty,
                             });
@@ -3102,9 +4903,7 @@ impl<'a> AstLowerer<'a> {
                             }
                             ast::CallArg::Keyword { name, value } => {
                                 if let Some(he) = self.lower_expr(value) {
-                                    let key = HirExpr::StrLit(
-                                        name.clone(), self.checker.tcx.str(),
-                                    );
+                                    let key = HirExpr::StrLit(name.clone(), self.checker.tcx.str());
                                     kw_entries.push((key, he));
                                 }
                             }
@@ -3133,16 +4932,25 @@ impl<'a> AstLowerer<'a> {
                     } else if star_exprs.is_empty() {
                         // Unreachable in practice (has_star implies a StarArg branch
                         // pushed something into star_exprs), kept as a safety net.
-                        HirExpr::List { elements: list_elems.clone(), ty: any_ty }
+                        HirExpr::List {
+                            elements: list_elems.clone(),
+                            ty: any_ty,
+                        }
                     } else {
-                        let prefix = HirExpr::List { elements: list_elems.clone(), ty: any_ty };
+                        let prefix = HirExpr::List {
+                            elements: list_elems.clone(),
+                            ty: any_ty,
+                        };
                         // Fold each star expr in turn so multi-star calls work:
                         //   acc_0 = prefix
                         //   acc_{i+1} = mb_args_concat(acc_i, star_i)
                         let mut acc = prefix;
                         for star in star_exprs.drain(..) {
                             acc = HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_args_concat".to_string(), any_ty)),
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_args_concat".to_string(),
+                                    any_ty,
+                                )),
                                 args: vec![acc, star],
                                 ty: any_ty,
                             };
@@ -3160,12 +4968,18 @@ impl<'a> AstLowerer<'a> {
                     // positional slab — are unaffected.
                     let is_attr_call = matches!(func.node, ast::Expr::Attr { .. });
                     if is_attr_call && !kw_entries.is_empty() {
-                        let kwargs_dict = HirExpr::Dict { entries: kw_entries, ty: any_ty };
+                        let kwargs_dict = HirExpr::Dict {
+                            entries: kw_entries,
+                            ty: any_ty,
+                        };
                         spread_list = HirExpr::Call {
                             func: Box::new(HirExpr::StrLit("mb_args_concat".to_string(), any_ty)),
                             args: vec![
                                 spread_list,
-                                HirExpr::List { elements: vec![kwargs_dict], ty: any_ty },
+                                HirExpr::List {
+                                    elements: vec![kwargs_dict],
+                                    ty: any_ty,
+                                },
                             ],
                             ty: any_ty,
                         };
@@ -3196,23 +5010,44 @@ impl<'a> AstLowerer<'a> {
                         // print has kwargs in addition to *args; reuse the kwargs surface.
                         if name == "print" {
                             let none_hir = HirExpr::NoneLit(any_ty);
-                            let sep = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "sep" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
-                            let end = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "end" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
-                            let file = args.iter().find_map(|a| {
-                                if let ast::CallArg::Keyword { name: n, value } = a {
-                                    if n == "file" { return self.lower_expr(value); }
-                                } None
-                            }).unwrap_or_else(|| none_hir.clone());
+                            let sep = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "sep" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
+                            let end = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "end" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
+                            let file = args
+                                .iter()
+                                .find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "file" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| none_hir.clone());
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_print_kwargs_file".to_string(), any_ty)),
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_print_kwargs_file".to_string(),
+                                    any_ty,
+                                )),
                                 args: vec![spread_list, sep, end, file],
                                 ty: any_ty,
                             });
@@ -3227,13 +5062,25 @@ impl<'a> AstLowerer<'a> {
                 // Generic kwargs + default resolution: if the callee is a known
                 // user function and the call has keyword args OR fewer positional
                 // args than params (defaults should fill the gap), reorder and pad.
-                let has_kwargs = args.iter().any(|a| matches!(a, ast::CallArg::Keyword { .. }));
-                let pos_count = args.iter().filter(|a| matches!(a, ast::CallArg::Positional(_))).count();
+                let has_kwargs = args
+                    .iter()
+                    .any(|a| matches!(a, ast::CallArg::Keyword { .. }));
+                let pos_count = args
+                    .iter()
+                    .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                    .count();
                 let needs_default_fill = {
-                    let fname = if let ast::Expr::Ident(ref n) = func.node { Some(n.clone()) } else { None };
-                    fname.as_ref().and_then(|n| self.func_param_info.get(n))
+                    let fname = if let ast::Expr::Ident(ref n) = func.node {
+                        Some(n.clone())
+                    } else {
+                        None
+                    };
+                    fname
+                        .as_ref()
+                        .and_then(|n| self.func_param_info.get(n))
                         .map(|info| {
-                            let regular_count = info.iter()
+                            let regular_count = info
+                                .iter()
                                 .filter(|(_, _, k)| *k == ast::ParamKind::Regular)
                                 .count();
                             pos_count < regular_count && info.iter().any(|(_, d, _)| d.is_some())
@@ -3245,26 +5092,61 @@ impl<'a> AstLowerer<'a> {
                 // constructed kwargs dict sentinel (otherwise a positional arg gets
                 // mistaken for the kwargs dict at the variadic-packing step).
                 let callee_is_variadic = {
-                    let fname = if let ast::Expr::Ident(ref n) = func.node { Some(n.clone()) } else { None };
-                    fname.as_ref().and_then(|n| self.func_param_info.get(n))
+                    let fname = if let ast::Expr::Ident(ref n) = func.node {
+                        Some(n.clone())
+                    } else {
+                        None
+                    };
+                    fname
+                        .as_ref()
+                        .and_then(|n| self.func_param_info.get(n))
                         .map(|info| {
-                            info.iter().any(|(_, _, k)|
-                                *k == ast::ParamKind::Star || *k == ast::ParamKind::DoubleStar)
+                            info.iter().any(|(_, _, k)| {
+                                *k == ast::ParamKind::Star || *k == ast::ParamKind::DoubleStar
+                            })
                         })
                         .unwrap_or(false)
                 };
                 if has_kwargs || needs_default_fill || callee_is_variadic {
-                    let func_name = if let ast::Expr::Ident(ref n) = func.node { Some(n.clone()) } else { None };
+                    let func_name = if let ast::Expr::Ident(ref n) = func.node {
+                        Some(n.clone())
+                    } else {
+                        None
+                    };
                     if let Some(ref fname) = func_name {
                         if let Some(param_info) = self.func_param_info.get(fname).cloned() {
                             // Separate regular params from *args/**kwargs for ordered resolution.
-                            let regular_params: Vec<(usize, &(String, Option<Spanned<ast::Expr>>, ast::ParamKind))> =
-                                param_info.iter().enumerate()
-                                    .filter(|(_, (_, _, k))| *k == ast::ParamKind::Regular)
-                                    .collect();
-                            let has_star = param_info.iter().any(|(_, _, k)| *k == ast::ParamKind::Star);
-                            let has_dstar = param_info.iter().any(|(_, _, k)| *k == ast::ParamKind::DoubleStar);
-                            let mut ordered: Vec<Option<HirExpr>> = vec![None; regular_params.len()];
+                            let regular_params: Vec<(
+                                usize,
+                                &(String, Option<Spanned<ast::Expr>>, ast::ParamKind),
+                            )> = param_info
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, (_, _, k))| *k == ast::ParamKind::Regular)
+                                .collect();
+                            let has_star = param_info
+                                .iter()
+                                .any(|(_, _, k)| *k == ast::ParamKind::Star);
+                            let has_dstar = param_info
+                                .iter()
+                                .any(|(_, _, k)| *k == ast::ParamKind::DoubleStar);
+                            // Positional-only param names: a keyword of the same
+                            // name does NOT bind the param (CPython) — with
+                            // **kwargs it lands in the dict. pos_only is only in
+                            // arg_bind_sigs (top-level undecorated defs); empty
+                            // elsewhere, preserving prior behavior.
+                            let posonly_names: std::collections::HashSet<String> = if has_dstar {
+                                self.arg_bind_sigs
+                                    .get(fname)
+                                    .map(|sig| {
+                                        sig.iter().filter(|p| p.5).map(|p| p.0.clone()).collect()
+                                    })
+                                    .unwrap_or_default()
+                            } else {
+                                std::collections::HashSet::new()
+                            };
+                            let mut ordered: Vec<Option<HirExpr>> =
+                                vec![None; regular_params.len()];
                             let mut excess_pos: Vec<HirExpr> = Vec::new();
                             let mut excess_kw: Vec<(String, HirExpr)> = Vec::new();
                             let mut pos_idx = 0;
@@ -3281,13 +5163,19 @@ impl<'a> AstLowerer<'a> {
                                         }
                                     }
                                     ast::CallArg::Keyword { name: kw, value } => {
-                                        // Try to match keyword arg to a regular param name.
-                                        if let Some(idx) = regular_params.iter()
-                                            .position(|(_, (n, _, _))| n == kw)
-                                        {
+                                        // Try to match keyword arg to a regular param name —
+                                        // but never a positional-only param (it cannot be
+                                        // filled by keyword; the keyword belongs in **kwargs).
+                                        let matched = if posonly_names.contains(kw) {
+                                            None
+                                        } else {
+                                            regular_params.iter().position(|(_, (n, _, _))| n == kw)
+                                        };
+                                        if let Some(idx) = matched {
                                             ordered[idx] = self.lower_expr(value);
                                         } else if has_dstar {
-                                            // Unmatched kwargs go to **kwargs dict.
+                                            // Unmatched (or positional-only) kwargs go to the
+                                            // **kwargs dict.
                                             if let Some(expr) = self.lower_expr(value) {
                                                 excess_kw.push((kw.clone(), expr));
                                             }
@@ -3310,25 +5198,38 @@ impl<'a> AstLowerer<'a> {
                             // They are handled at MIR lowering time via variadic packing.
                             // However, we pass them as trailing HirExpr elements so the MIR
                             // lowering can recognize them.
-                            let mut hir_args: Vec<HirExpr> = ordered.into_iter().flatten().collect();
+                            let mut hir_args: Vec<HirExpr> =
+                                ordered.into_iter().flatten().collect();
                             // For *args: append excess positional args (MIR will pack them)
                             hir_args.extend(excess_pos);
                             // For **kwargs: if present, skip here — handled at MIR level
                             // We store excess kwargs as a dict literal in the call args.
                             if has_dstar && !excess_kw.is_empty() {
-                                let dict_entries: Vec<(HirExpr, HirExpr)> = excess_kw.into_iter()
+                                let dict_entries: Vec<(HirExpr, HirExpr)> = excess_kw
+                                    .into_iter()
                                     .map(|(k, v)| {
                                         let key = HirExpr::StrLit(k, self.checker.tcx.str());
                                         (key, v)
-                                    }).collect();
-                                let dict = HirExpr::Dict { entries: dict_entries, ty: any_ty };
+                                    })
+                                    .collect();
+                                let dict = HirExpr::Dict {
+                                    entries: dict_entries,
+                                    ty: any_ty,
+                                };
                                 hir_args.push(dict);
                             } else if has_dstar {
                                 // No excess kwargs — pass an empty dict
-                                let dict = HirExpr::Dict { entries: vec![], ty: any_ty };
+                                let dict = HirExpr::Dict {
+                                    entries: vec![],
+                                    ty: any_ty,
+                                };
                                 hir_args.push(dict);
                             }
-                            return Some(HirExpr::Call { func: Box::new(f), args: hir_args, ty: any_ty });
+                            return Some(HirExpr::Call {
+                                func: Box::new(f),
+                                args: hir_args,
+                                ty: any_ty,
+                            });
                         }
                     }
                 }
@@ -3336,40 +5237,126 @@ impl<'a> AstLowerer<'a> {
                 // kwargs into a dict literal appended to the positional args
                 // so mb_call_method's runtime dispatcher can unpack them.
                 let is_method_call = matches!(func.node, ast::Expr::Attr { .. });
-                let has_any_kwargs = args.iter().any(|a|
-                    matches!(a, ast::CallArg::Keyword { .. }));
-                let hir_args: Vec<HirExpr> = if is_method_call && has_any_kwargs {
+                let has_any_kwargs = args
+                    .iter()
+                    .any(|a| matches!(a, ast::CallArg::Keyword { .. }));
+                let has_dstar = args
+                    .iter()
+                    .any(|a| matches!(a, ast::CallArg::DoubleStarArg(_)));
+                // Bare-Ident calls to native/stdlib constructors use the SAME
+                // trailing-kwargs-dict convention as method calls, so
+                // `Counter(a=3)` / `deque(maxlen=2)` keep their keyword names
+                // instead of flattening to positionals. Scoped to a known
+                // native allowlist: user functions reached through dynamic
+                // dispatch (mb_call0/mb_call1_val/mb_call_spread) bind args
+                // positionally and would misread an appended dict — closing
+                // that gap needs runtime kwargs binding for JIT-compiled
+                // functions, tracked separately. (User functions/classes that
+                // ARE statically known were already handled by the
+                // func_param_info reorder path above and never reach here.)
+                let is_native_kwargs_ident = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name) if matches!(
+                        name.as_str(),
+                        "Counter" | "OrderedDict" | "deque" | "defaultdict" | "dict"
+                            // namedtuple takes rename= / defaults= / module=
+                            | "namedtuple"
+                            // UserDict seeds its payload from kwargs
+                            | "UserDict"
+                            // unittest.mock factories take config kwargs
+                            // (return_value= / side_effect= / spec=).
+                            | "MagicMock" | "Mock" | "AsyncMock" | "PropertyMock"
+                            | "NonCallableMock" | "NonCallableMagicMock"
+                            | "patch" | "mock_open" | "call"
+                            // urllib.parse functions with behavioral kwargs
+                            | "parse_qs" | "parse_qsl" | "urlencode"
+                    ) || self.dataclasses_kwarg_idents.contains(name.as_str())
+                );
+                let pack_trailing_kwargs = (is_method_call && has_any_kwargs)
+                    || (is_native_kwargs_ident && (has_any_kwargs || has_dstar));
+                let hir_args: Vec<HirExpr> = if pack_trailing_kwargs {
                     let mut out: Vec<HirExpr> = Vec::new();
-                    let mut kw_entries: Vec<(HirExpr, HirExpr)> = Vec::new();
+                    // Trailing kwargs accumulator: runs of explicit keywords
+                    // become Dict literals; each `**mapping` splat is folded in
+                    // source order through mb_dict_merge (later wins), instead
+                    // of leaking into the positional slab where the dispatcher
+                    // would misbind it as a leading argument.
+                    let mut kw_acc: Option<HirExpr> = None;
+                    let mut pending: Vec<(HirExpr, HirExpr)> = Vec::new();
+                    fn merge_dicts(acc: HirExpr, next: HirExpr, any_ty: TypeId) -> HirExpr {
+                        HirExpr::Call {
+                            func: Box::new(HirExpr::StrLit("mb_dict_merge".to_string(), any_ty)),
+                            args: vec![acc, next],
+                            ty: any_ty,
+                        }
+                    }
+                    fn flush_pending(
+                        pending: &mut Vec<(HirExpr, HirExpr)>,
+                        kw_acc: &mut Option<HirExpr>,
+                        any_ty: TypeId,
+                    ) {
+                        if pending.is_empty() {
+                            return;
+                        }
+                        let chunk = HirExpr::Dict {
+                            entries: std::mem::take(pending),
+                            ty: any_ty,
+                        };
+                        *kw_acc = Some(match kw_acc.take() {
+                            None => chunk,
+                            Some(prev) => merge_dicts(prev, chunk, any_ty),
+                        });
+                    }
                     for a in args {
                         match a {
                             ast::CallArg::Positional(e) => {
-                                if let Some(he) = self.lower_expr(e) { out.push(he); }
+                                if let Some(he) = self.lower_expr(e) {
+                                    out.push(he);
+                                }
                             }
                             ast::CallArg::Keyword { name, value } => {
                                 if let Some(he) = self.lower_expr(value) {
-                                    let key = HirExpr::StrLit(
-                                        name.clone(), self.checker.tcx.str(),
-                                    );
-                                    kw_entries.push((key, he));
+                                    let key = HirExpr::StrLit(name.clone(), self.checker.tcx.str());
+                                    pending.push((key, he));
                                 }
                             }
-                            ast::CallArg::StarArg(e) | ast::CallArg::DoubleStarArg(e) => {
-                                if let Some(he) = self.lower_expr(e) { out.push(he); }
+                            ast::CallArg::DoubleStarArg(e) => {
+                                if let Some(he) = self.lower_expr(e) {
+                                    flush_pending(&mut pending, &mut kw_acc, any_ty);
+                                    kw_acc = Some(match kw_acc.take() {
+                                        // Lone splat: pass the mapping through
+                                        // unchanged (same shape the fallback
+                                        // path produced for `dict(**m)`).
+                                        None => he,
+                                        Some(prev) => merge_dicts(prev, he, any_ty),
+                                    });
+                                }
+                            }
+                            // StarArg is unreachable here (the has_star branch
+                            // above returns early); keep the bare push as a
+                            // safety net.
+                            ast::CallArg::StarArg(e) => {
+                                if let Some(he) = self.lower_expr(e) {
+                                    out.push(he);
+                                }
                             }
                         }
                     }
-                    out.push(HirExpr::Dict { entries: kw_entries, ty: any_ty });
+                    flush_pending(&mut pending, &mut kw_acc, any_ty);
+                    out.push(kw_acc.unwrap_or(HirExpr::Dict {
+                        entries: vec![],
+                        ty: any_ty,
+                    }));
                     out
                 } else {
-                    args.iter().filter_map(|a| {
-                        match a {
+                    args.iter()
+                        .filter_map(|a| match a {
                             ast::CallArg::Positional(e) => self.lower_expr(e),
                             ast::CallArg::Keyword { value, .. } => self.lower_expr(value),
                             ast::CallArg::StarArg(e) => self.lower_expr(e),
                             ast::CallArg::DoubleStarArg(e) => self.lower_expr(e),
-                        }
-                    }).collect()
+                        })
+                        .collect()
                 };
                 // Use the declared return type only for user-defined functions so callers
                 // don't incorrectly unbox the raw primitive they return (#827).
@@ -3386,10 +5373,13 @@ impl<'a> AstLowerer<'a> {
                     // even though the HirFunction isn't pushed to result.functions until
                     // lowering finishes (fire 50: closes factorial's CheckedMul fast-path
                     // gap noted in fire 49).
-                    let hir_return_ty = self.func_return_tys.get(sym).copied()
-                        .or_else(|| self.result.functions.iter()
+                    let hir_return_ty = self.func_return_tys.get(sym).copied().or_else(|| {
+                        self.result
+                            .functions
+                            .iter()
                             .find(|hf| hf.name == *sym)
-                            .map(|hf| hf.return_ty));
+                            .map(|hf| hf.return_ty)
+                    });
                     if let Some(ret_ty) = hir_return_ty {
                         ret_ty
                     } else {
@@ -3398,24 +5388,40 @@ impl<'a> AstLowerer<'a> {
                 } else {
                     self.checker.tcx.any()
                 };
-                Some(HirExpr::Call { func: Box::new(f), args: hir_args, ty })
+                Some(HirExpr::Call {
+                    func: Box::new(f),
+                    args: hir_args,
+                    ty,
+                })
             }
             ast::Expr::Attr { object, attr } => {
                 let obj = self.lower_expr(object)?;
                 let ty = self.checker.tcx.any();
-                Some(HirExpr::Attr { object: Box::new(obj), attr: attr.clone(), ty })
+                Some(HirExpr::Attr {
+                    object: Box::new(obj),
+                    attr: attr.clone(),
+                    ty,
+                })
             }
             ast::Expr::Index { object, index } => {
                 let obj = self.lower_expr(object)?;
                 let idx = self.lower_expr(index)?;
                 let ty = self.checker.tcx.any();
                 Some(HirExpr::Index {
-                    object: Box::new(obj), index: Box::new(idx), ty,
+                    object: Box::new(obj),
+                    index: Box::new(idx),
+                    ty,
                 })
             }
             ast::Expr::ListLit(elems) => {
-                let hir_elems: Vec<HirExpr> = elems.iter()
-                    .filter_map(|e| self.lower_expr(e)).collect();
+                if elems
+                    .iter()
+                    .any(|e| matches!(e.node, ast::Expr::Starred(_)))
+                {
+                    return self.lower_starred_display(elems, None);
+                }
+                let hir_elems: Vec<HirExpr> =
+                    elems.iter().filter_map(|e| self.lower_expr(e)).collect();
                 // Infer element type from the first element to enable typed match patterns.
                 // A typed list (e.g. list[int]) lets sequence patterns propagate the capture
                 // type so nested bindings get the right primitive type (#827).
@@ -3424,7 +5430,9 @@ impl<'a> AstLowerer<'a> {
                     let elem_ty = first.ty();
                     // Only type the list if the element type is concrete (not any/error)
                     if elem_ty != self.checker.tcx.any() && elem_ty != self.checker.tcx.error() {
-                        self.checker.tcx.find(&crate::types::Ty::List(elem_ty))
+                        self.checker
+                            .tcx
+                            .find(&crate::types::Ty::List(elem_ty))
                             .unwrap_or(self.checker.tcx.any())
                     } else {
                         self.checker.tcx.any()
@@ -3432,11 +5440,20 @@ impl<'a> AstLowerer<'a> {
                 } else {
                     self.checker.tcx.any()
                 };
-                Some(HirExpr::List { elements: hir_elems, ty: list_ty })
+                Some(HirExpr::List {
+                    elements: hir_elems,
+                    ty: list_ty,
+                })
             }
             ast::Expr::TupleLit(elems) => {
-                let hir_elems: Vec<HirExpr> = elems.iter()
-                    .filter_map(|e| self.lower_expr(e)).collect();
+                if elems
+                    .iter()
+                    .any(|e| matches!(e.node, ast::Expr::Starred(_)))
+                {
+                    return self.lower_starred_display(elems, Some("mb_tuple_from_iterable"));
+                }
+                let hir_elems: Vec<HirExpr> =
+                    elems.iter().filter_map(|e| self.lower_expr(e)).collect();
                 // Build a proper Tuple type from element types so that sequence patterns
                 // on tuple subjects can propagate per-slot types (#827).
                 // The type checker has already interned Ty::Tuple([...]) during its pass,
@@ -3444,18 +5461,24 @@ impl<'a> AstLowerer<'a> {
                 let elem_tys: Vec<crate::types::TypeId> =
                     hir_elems.iter().map(|e| e.ty()).collect();
                 let tup_ty = if !elem_tys.is_empty() {
-                    self.checker.tcx.find(&crate::types::Ty::Tuple(elem_tys))
+                    self.checker
+                        .tcx
+                        .find(&crate::types::Ty::Tuple(elem_tys))
                         .unwrap_or_else(|| self.checker.tcx.any())
                 } else {
                     self.checker.tcx.any()
                 };
-                Some(HirExpr::Tuple { elements: hir_elems, ty: tup_ty })
+                Some(HirExpr::Tuple {
+                    elements: hir_elems,
+                    ty: tup_ty,
+                })
             }
             ast::Expr::DictLit(entries) => {
                 // For unpack entries `{**d, ...}`, lower the value (k=None → unpack expr).
                 // We represent them as (unpack_sentinel_expr, value) where sentinel is `None`
                 // lowered as a no-key marker.  For now, we flatten unpacks using `any` key.
-                let hir_entries: Vec<(HirExpr, HirExpr)> = entries.iter()
+                let hir_entries: Vec<(HirExpr, HirExpr)> = entries
+                    .iter()
                     .filter_map(|(k, v)| {
                         let hir_val = self.lower_expr(v)?;
                         let hir_key = if let Some(key) = k {
@@ -3470,11 +5493,19 @@ impl<'a> AstLowerer<'a> {
                             HirExpr::NoneLit(ty)
                         };
                         Some((hir_key, hir_val))
-                    }).collect();
+                    })
+                    .collect();
                 let dict_ty = self.checker.tcx.any();
-                Some(HirExpr::Dict { entries: hir_entries, ty: dict_ty })
+                Some(HirExpr::Dict {
+                    entries: hir_entries,
+                    ty: dict_ty,
+                })
             }
-            ast::Expr::IfExpr { body, condition, else_body } => {
+            ast::Expr::IfExpr {
+                body,
+                condition,
+                else_body,
+            } => {
                 let then_val = self.lower_expr(body)?;
                 let cond = self.lower_expr(condition)?;
                 let else_val = self.lower_expr(else_body)?;
@@ -3493,62 +5524,109 @@ impl<'a> AstLowerer<'a> {
                 // call time). We must lower them BEFORE binding the lambda
                 // params into local_names, or a default like `x=i` would
                 // incorrectly shadow the outer `i`.
-                let hir_defaults: Vec<Option<Box<HirExpr>>> = params.iter().map(|p| {
-                    p.default.as_ref().and_then(|d| self.lower_expr(d)).map(Box::new)
-                }).collect();
+                let hir_defaults: Vec<Option<Box<HirExpr>>> = params
+                    .iter()
+                    .map(|p| {
+                        p.default
+                            .as_ref()
+                            .and_then(|d| self.lower_expr(d))
+                            .map(Box::new)
+                    })
+                    .collect();
                 // Temporarily register lambda params in local_names so resolve_name()
                 // finds them when lowering the body.  Type-checker scopes are already
                 // popped at lowering time, so we inject the params manually and then
                 // restore the previous mapping afterwards.
                 let mut saved: Vec<(String, Option<SymbolId>)> = Vec::new();
-                let hir_params: Vec<(SymbolId, TypeId)> = params.iter().map(|p| {
-                    let old = self.local_names.get(&p.name).copied();
-                    saved.push((p.name.clone(), old));
-                    // Always allocate a fresh ID so lambda params never alias outer vars.
-                    let pid = SymbolId(self.next_local_sym);
-                    self.next_local_sym += 1;
-                    self.local_names.insert(p.name.clone(), pid);
-                    self.local_types.insert(pid, any_ty);
-                    (pid, any_ty)
-                }).collect();
+                let hir_params: Vec<(SymbolId, TypeId)> = params
+                    .iter()
+                    .map(|p| {
+                        let old = self.local_names.get(&p.name).copied();
+                        saved.push((p.name.clone(), old));
+                        // Always allocate a fresh ID so lambda params never alias outer vars.
+                        let pid = SymbolId(self.next_local_sym);
+                        self.next_local_sym += 1;
+                        self.local_names.insert(p.name.clone(), pid);
+                        self.local_types.insert(pid, any_ty);
+                        // Record the real name in sym_names so introspection
+                        // (inspect.signature, arity-error messages) reports `x`/`y`
+                        // rather than the `arg0`/`arg1` placeholder — local_names is
+                        // restored below, dropping the temporary binding otherwise.
+                        self.result
+                            .sym_names
+                            .entry(pid)
+                            .or_insert_with(|| p.name.clone());
+                        (pid, any_ty)
+                    })
+                    .collect();
 
                 let body_result = self.lower_expr(body);
 
                 // Restore local_names to pre-lambda state.
                 for (name, old) in saved {
                     match old {
-                        Some(id) => { self.local_names.insert(name, id); }
-                        None => { self.local_names.remove(&name); }
+                        Some(id) => {
+                            self.local_names.insert(name, id);
+                        }
+                        None => {
+                            self.local_names.remove(&name);
+                        }
                     }
                 }
 
                 let body_expr = body_result?;
                 let ty = any_ty;
-                Some(HirExpr::Lambda { params: hir_params, defaults: hir_defaults, body: Box::new(body_expr), ty })
+                Some(HirExpr::Lambda {
+                    params: hir_params,
+                    defaults: hir_defaults,
+                    body: Box::new(body_expr),
+                    ty,
+                    span: expr.span,
+                })
             }
             ast::Expr::Slice { start, stop, step } => {
-                let s = start.as_ref().and_then(|e| self.lower_expr(e)).map(Box::new);
+                let s = start
+                    .as_ref()
+                    .and_then(|e| self.lower_expr(e))
+                    .map(Box::new);
                 let e = stop.as_ref().and_then(|e| self.lower_expr(e)).map(Box::new);
                 let st = step.as_ref().and_then(|e| self.lower_expr(e)).map(Box::new);
                 let ty = self.checker.tcx.any();
-                Some(HirExpr::Slice { start: s, stop: e, step: st, ty })
+                Some(HirExpr::Slice {
+                    start: s,
+                    stop: e,
+                    step: st,
+                    ty,
+                })
             }
             ast::Expr::Yield(value) => {
-                let v = value.as_ref().and_then(|e| self.lower_expr(e)).map(Box::new);
+                let v = value
+                    .as_ref()
+                    .and_then(|e| self.lower_expr(e))
+                    .map(Box::new);
                 let ty = self.checker.tcx.any();
                 Some(HirExpr::Yield { value: v, ty })
             }
             ast::Expr::YieldFrom(iter) => {
                 let it = self.lower_expr(iter)?;
                 let ty = self.checker.tcx.any();
-                Some(HirExpr::YieldFrom { iter: Box::new(it), ty })
+                Some(HirExpr::YieldFrom {
+                    iter: Box::new(it),
+                    ty,
+                })
             }
             ast::Expr::Await(value) => {
                 let v = self.lower_expr(value)?;
                 let ty = self.checker.tcx.any();
-                Some(HirExpr::Await { value: Box::new(v), ty })
+                Some(HirExpr::Await {
+                    value: Box::new(v),
+                    ty,
+                })
             }
-            ast::Expr::ListComp { element, generators } => {
+            ast::Expr::ListComp {
+                element,
+                generators,
+            } => {
                 // P0-R5: Save outer names that comprehension variables will shadow.
                 // Comprehension loop variables must not leak into the enclosing scope.
                 let saved = self.save_comp_scope(generators);
@@ -3556,17 +5634,31 @@ impl<'a> AstLowerer<'a> {
                 let elem = self.lower_expr(element)?;
                 let ty = self.checker.tcx.any();
                 self.restore_comp_scope(saved);
-                Some(HirExpr::ListComp { element: Box::new(elem), generators: gens, ty })
+                Some(HirExpr::ListComp {
+                    element: Box::new(elem),
+                    generators: gens,
+                    ty,
+                })
             }
-            ast::Expr::SetComp { element, generators } => {
+            ast::Expr::SetComp {
+                element,
+                generators,
+            } => {
                 let saved = self.save_comp_scope(generators);
                 let gens = self.lower_comprehensions(generators);
                 let elem = self.lower_expr(element)?;
                 let ty = self.checker.tcx.any();
                 self.restore_comp_scope(saved);
-                Some(HirExpr::SetComp { element: Box::new(elem), generators: gens, ty })
+                Some(HirExpr::SetComp {
+                    element: Box::new(elem),
+                    generators: gens,
+                    ty,
+                })
             }
-            ast::Expr::GeneratorExpr { element, generators } => {
+            ast::Expr::GeneratorExpr {
+                element,
+                generators,
+            } => {
                 // Desugar generator expression to an ITERATOR over an eager list
                 // comprehension. A genexpr is a single-use iterator in CPython, so
                 // `next(genexpr)` must work and the value must not be reusable/
@@ -3578,14 +5670,22 @@ impl<'a> AstLowerer<'a> {
                 let elem = self.lower_expr(element)?;
                 let ty = self.checker.tcx.any();
                 self.restore_comp_scope(saved);
-                let list = HirExpr::ListComp { element: Box::new(elem), generators: gens, ty };
+                let list = HirExpr::ListComp {
+                    element: Box::new(elem),
+                    generators: gens,
+                    ty,
+                };
                 Some(HirExpr::Call {
                     func: Box::new(HirExpr::StrLit("mb_iter".to_string(), ty)),
                     args: vec![list],
                     ty,
                 })
             }
-            ast::Expr::DictComp { key, value, generators } => {
+            ast::Expr::DictComp {
+                key,
+                value,
+                generators,
+            } => {
                 let saved = self.save_comp_scope(generators);
                 let gens = self.lower_comprehensions(generators);
                 let k = self.lower_expr(key)?;
@@ -3593,26 +5693,34 @@ impl<'a> AstLowerer<'a> {
                 let ty = self.checker.tcx.any();
                 self.restore_comp_scope(saved);
                 Some(HirExpr::DictComp {
-                    key: Box::new(k), value: Box::new(v), generators: gens, ty,
+                    key: Box::new(k),
+                    value: Box::new(v),
+                    generators: gens,
+                    ty,
                 })
             }
             ast::Expr::FString(parts) => {
-                let hir_parts: Vec<HirFStringPart> = parts.iter().filter_map(|p| {
-                    match p {
-                        ast::FStringPart::Literal(s) => Some(HirFStringPart::Literal(s.clone())),
-                        ast::FStringPart::Expr(e, spec) => {
-                            self.lower_expr(e).map(|he| HirFStringPart::Expr(he, spec.clone()))
-                        }
-                    }
-                }).collect();
+                let hir_parts = self.lower_fstring_parts(parts);
                 let ty = self.checker.tcx.str();
-                Some(HirExpr::FString { parts: hir_parts, ty })
+                Some(HirExpr::FString {
+                    parts: hir_parts,
+                    ty,
+                })
             }
             ast::Expr::SetLit(elems) => {
-                let hir_elems: Vec<HirExpr> = elems.iter()
-                    .filter_map(|e| self.lower_expr(e)).collect();
+                if elems
+                    .iter()
+                    .any(|e| matches!(e.node, ast::Expr::Starred(_)))
+                {
+                    return self.lower_starred_display(elems, Some("mb_set_from_iterable"));
+                }
+                let hir_elems: Vec<HirExpr> =
+                    elems.iter().filter_map(|e| self.lower_expr(e)).collect();
                 let ty = self.checker.tcx.any();
-                Some(HirExpr::Set { elements: hir_elems, ty })
+                Some(HirExpr::Set {
+                    elements: hir_elems,
+                    ty,
+                })
             }
             ast::Expr::Walrus { target, value } => {
                 let val_expr = self.lower_expr(value)?;
@@ -3628,8 +5736,8 @@ impl<'a> AstLowerer<'a> {
                 // regular assignment.
                 let is_function_local_target =
                     self.local_assigned_names.iter().any(|n| n == target)
-                    && !self.local_declared_names.iter().any(|n| n == target)
-                    && !self.local_names.contains_key(target);
+                        && !self.local_declared_names.iter().any(|n| n == target)
+                        && !self.local_names.contains_key(target);
                 let sym = if is_function_local_target {
                     let id = SymbolId(self.next_local_sym);
                     self.next_local_sym += 1;
@@ -3647,7 +5755,11 @@ impl<'a> AstLowerer<'a> {
                     self.local_names.insert(target.to_string(), id);
                     id
                 };
-                Some(HirExpr::Walrus { target: sym, value: Box::new(val_expr), ty })
+                Some(HirExpr::Walrus {
+                    target: sym,
+                    value: Box::new(val_expr),
+                    ty,
+                })
             }
             ast::Expr::ChainedCompare { operands, ops } => {
                 // Desugar `a < b < c` into `(a < tmp_b) and (tmp_b < c)`.
@@ -3703,9 +5815,11 @@ impl<'a> AstLowerer<'a> {
                     // Determine result type for this comparison
                     let lt = self.checker.tcx.get(lhs_expr.ty());
                     let rt = self.checker.tcx.get(rhs_expr.ty());
-                    let needs_runtime = !matches!(lt,
+                    let needs_runtime = !matches!(
+                        lt,
                         crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
-                    ) || !matches!(rt,
+                    ) || !matches!(
+                        rt,
                         crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
                     );
                     let cmp_ty = if needs_runtime { any_ty } else { bool_ty };
@@ -3757,12 +5871,18 @@ impl<'a> AstLowerer<'a> {
             }
             ast::Expr::Attr { object, attr } => {
                 let obj = self.lower_expr(object)?;
-                Some(HirLValue::Attr { object: Box::new(obj), attr: attr.clone() })
+                Some(HirLValue::Attr {
+                    object: Box::new(obj),
+                    attr: attr.clone(),
+                })
             }
             ast::Expr::Index { object, index } => {
                 let obj = self.lower_expr(object)?;
                 let idx = self.lower_expr(index)?;
-                Some(HirLValue::Index { object: Box::new(obj), index: Box::new(idx) })
+                Some(HirLValue::Index {
+                    object: Box::new(obj),
+                    index: Box::new(idx),
+                })
             }
             // Tuple/unpack targets: `a, b = ...` or `a, *rest, b = ...`
             ast::Expr::TupleLit(elems) | ast::Expr::UnpackTarget(elems) => {
@@ -3789,25 +5909,94 @@ impl<'a> AstLowerer<'a> {
                         targets.push(self.lower_lvalue(elem)?);
                     }
                 }
-                Some(HirLValue::Unpack { targets, star_index })
+                Some(HirLValue::Unpack {
+                    targets,
+                    star_index,
+                })
             }
             _ => {
-                self.errors.push(MambaError::syntax(
-                    expr.span, "invalid assignment target",
-                ));
+                self.errors
+                    .push(MambaError::syntax(expr.span, "invalid assignment target"));
                 None
             }
         }
     }
 
+    /// Lower a sequence display that contains starred elements —
+    /// `[a, *b, c]`, `(a, *b)`, `{a, *b}`. Plain elements accumulate into
+    /// list segments; each segment and each unpacked iterable (materialized
+    /// via mb_list_from_iterable) concatenates with `+` (mb_add), preserving
+    /// order. `wrap` names the runtime conversion for tuple/set displays;
+    /// None keeps the flat list.
+    fn lower_starred_display(
+        &mut self,
+        elems: &[Spanned<ast::Expr>],
+        wrap: Option<&'static str>,
+    ) -> Option<HirExpr> {
+        let any_ty = self.checker.tcx.any();
+        let concat = |acc: Option<HirExpr>, rhs: HirExpr| -> HirExpr {
+            match acc {
+                None => rhs,
+                Some(lhs) => HirExpr::BinOp {
+                    op: HirBinOp::Add,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    ty: any_ty,
+                },
+            }
+        };
+        let mut acc: Option<HirExpr> = None;
+        let mut pending: Vec<HirExpr> = Vec::new();
+        for e in elems {
+            if let ast::Expr::Starred(inner) = &e.node {
+                if !pending.is_empty() {
+                    let seg = HirExpr::List {
+                        elements: std::mem::take(&mut pending),
+                        ty: any_ty,
+                    };
+                    acc = Some(concat(acc, seg));
+                }
+                let star = HirExpr::Call {
+                    func: Box::new(HirExpr::StrLit("mb_list_from_iterable".to_string(), any_ty)),
+                    args: vec![self.lower_expr(inner)?],
+                    ty: any_ty,
+                };
+                acc = Some(concat(acc, star));
+            } else {
+                pending.push(self.lower_expr(e)?);
+            }
+        }
+        if !pending.is_empty() {
+            let seg = HirExpr::List {
+                elements: pending,
+                ty: any_ty,
+            };
+            acc = Some(concat(acc, seg));
+        }
+        let flat = acc.unwrap_or(HirExpr::List {
+            elements: Vec::new(),
+            ty: any_ty,
+        });
+        Some(match wrap {
+            Some(extern_name) => HirExpr::Call {
+                func: Box::new(HirExpr::StrLit(extern_name.to_string(), any_ty)),
+                args: vec![flat],
+                ty: any_ty,
+            },
+            None => flat,
+        })
+    }
+
     /// P0-R5: Save outer `local_names` entries for comprehension variable names.
     /// Returns saved entries so `restore_comp_scope` can undo the shadowing.
     fn save_comp_scope(&self, gens: &[ast::Comprehension]) -> Vec<(String, Option<SymbolId>)> {
-        gens.iter().map(|g| {
-            let name = g.targets.first().cloned().unwrap_or_default();
-            let saved = self.local_names.get(&name).copied();
-            (name, saved)
-        }).collect()
+        gens.iter()
+            .map(|g| {
+                let name = g.targets.first().cloned().unwrap_or_default();
+                let saved = self.local_names.get(&name).copied();
+                (name, saved)
+            })
+            .collect()
     }
 
     /// P0-R5: Restore outer `local_names` after comprehension lowering so loop
@@ -3815,29 +6004,47 @@ impl<'a> AstLowerer<'a> {
     fn restore_comp_scope(&mut self, saved: Vec<(String, Option<SymbolId>)>) {
         for (name, old_sym) in saved {
             match old_sym {
-                Some(id) => { self.local_names.insert(name, id); }
-                None => { self.local_names.remove(&name); }
+                Some(id) => {
+                    self.local_names.insert(name, id);
+                }
+                None => {
+                    self.local_names.remove(&name);
+                }
             }
         }
     }
 
     fn lower_comprehensions(&mut self, gens: &[ast::Comprehension]) -> Vec<HirComprehension> {
-        gens.iter().filter_map(|g| {
-            // Define all loop variables. For tuple targets `for k, v in ...`,
-            // the first goes in `var` and the rest in `extra_vars` — the hir_to_mir
-            // lowering unpacks the iterator's next value into these via tuple indexing.
-            let var = self.define_local(
-                g.targets.first().map(String::as_str).unwrap_or("_"),
-                self.checker.tcx.any(),
-            );
-            let extra_vars: Vec<SymbolId> = g.targets.iter().skip(1).map(|name| {
-                self.define_local(name, self.checker.tcx.any())
-            }).collect();
-            let iter = self.lower_expr(&g.iter)?;
-            let conditions: Vec<HirExpr> = g.conditions.iter()
-                .filter_map(|c| self.lower_expr(c)).collect();
-            Some(HirComprehension { var, extra_vars, iter, conditions, is_async: g.is_async })
-        }).collect()
+        gens.iter()
+            .filter_map(|g| {
+                // Define all loop variables. For tuple targets `for k, v in ...`,
+                // the first goes in `var` and the rest in `extra_vars` — the hir_to_mir
+                // lowering unpacks the iterator's next value into these via tuple indexing.
+                let var = self.define_local(
+                    g.targets.first().map(String::as_str).unwrap_or("_"),
+                    self.checker.tcx.any(),
+                );
+                let extra_vars: Vec<SymbolId> = g
+                    .targets
+                    .iter()
+                    .skip(1)
+                    .map(|name| self.define_local(name, self.checker.tcx.any()))
+                    .collect();
+                let iter = self.lower_expr(&g.iter)?;
+                let conditions: Vec<HirExpr> = g
+                    .conditions
+                    .iter()
+                    .filter_map(|c| self.lower_expr(c))
+                    .collect();
+                Some(HirComprehension {
+                    var,
+                    extra_vars,
+                    iter,
+                    conditions,
+                    is_async: g.is_async,
+                })
+            })
+            .collect()
     }
 
     /// Lower an AST pattern to HIR pattern (#309).
@@ -3846,13 +6053,17 @@ impl<'a> AstLowerer<'a> {
             ast::Pattern::Wildcard => HirPattern::Wildcard,
             ast::Pattern::Binding(name) => {
                 // Use subject type for the capture binding so primitive ops are emitted (#827).
-                let ty = self.current_match_subject_ty
+                let ty = self
+                    .current_match_subject_ty
                     .unwrap_or_else(|| self.checker.tcx.any());
                 let sym = self.define_local(name, ty);
                 HirPattern::Capture(sym)
             }
             ast::Pattern::Literal(expr) => {
-                let spanned = Spanned { node: expr.clone(), span: pat.span };
+                let spanned = Spanned {
+                    node: expr.clone(),
+                    span: pat.span,
+                };
                 HirPattern::Literal(self.lower_expr(&spanned)?)
             }
             ast::Pattern::Or(pats) => {
@@ -3902,7 +6113,11 @@ impl<'a> AstLowerer<'a> {
                     let elem_ty = match &subj_ty_clone {
                         Some(crate::types::Ty::List(inner)) => *inner,
                         Some(crate::types::Ty::Tuple(ts)) => {
-                            if i < ts.len() { ts[i] } else { self.checker.tcx.any() }
+                            if i < ts.len() {
+                                ts[i]
+                            } else {
+                                self.checker.tcx.any()
+                            }
                         }
                         _ => self.checker.tcx.any(),
                     };
@@ -3916,27 +6131,62 @@ impl<'a> AstLowerer<'a> {
                 HirPattern::Sequence(hir_pats)
             }
             ast::Pattern::ClassPattern { cls, patterns } => {
-                let class_name_str = cls.last()?.clone();   // use last segment for dotted paths
+                let class_name_str = cls.last()?.clone(); // use last segment for dotted paths
                 let class_sym = self.resolve_name(&class_name_str, pat.span)?;
-                let args: Vec<(String, HirPattern)> = patterns.iter()
+                let args: Vec<(String, HirPattern)> = patterns
+                    .iter()
                     .enumerate()
                     .filter_map(|(i, (name, p))| {
                         let hp = self.lower_pattern(p)?;
                         let field = name.clone().unwrap_or_else(|| format!("_{i}"));
                         Some((field, hp))
-                    }).collect();
-                HirPattern::Class { class: class_sym, class_name: class_name_str, args }
+                    })
+                    .collect();
+                HirPattern::Class {
+                    class: class_sym,
+                    class_name: class_name_str,
+                    args,
+                }
             }
             ast::Pattern::Constructor { path, fields } => {
-                let class_name_str = path.last()?.clone();  // use last segment for dotted paths
+                // PEP 634: a dotted name WITHOUT parentheses is a VALUE
+                // pattern (`case Suit.HEARTS:` compares subject == Suit.HEARTS),
+                // never a class pattern. The parser emits these as Constructor
+                // with empty fields; rebuild the attribute chain and lower as
+                // a Literal equality test. Single-segment bare constructors
+                // (`case int:`) keep the legacy class-pattern shape.
+                if fields.is_empty() && path.len() >= 2 {
+                    let mut expr = ast::Expr::Ident(path[0].clone());
+                    for seg in &path[1..] {
+                        expr = ast::Expr::Attr {
+                            object: Box::new(Spanned {
+                                node: expr,
+                                span: pat.span,
+                            }),
+                            attr: seg.clone(),
+                        };
+                    }
+                    let spanned = Spanned {
+                        node: expr,
+                        span: pat.span,
+                    };
+                    return Some(HirPattern::Literal(self.lower_expr(&spanned)?));
+                }
+                let class_name_str = path.last()?.clone(); // use last segment for dotted paths
                 let class_sym = self.resolve_name(&class_name_str, pat.span)?;
-                let args: Vec<(String, HirPattern)> = fields.iter()
+                let args: Vec<(String, HirPattern)> = fields
+                    .iter()
                     .enumerate()
                     .map(|(i, f)| {
                         let sym = self.define_local(f, self.checker.tcx.any());
                         (format!("_{i}"), HirPattern::Capture(sym))
-                    }).collect();
-                HirPattern::Class { class: class_sym, class_name: class_name_str, args }
+                    })
+                    .collect();
+                HirPattern::Class {
+                    class: class_sym,
+                    class_name: class_name_str,
+                    args,
+                }
             }
             ast::Pattern::Star(name) => {
                 if let Some(n) = name {
@@ -3976,20 +6226,28 @@ impl<'a> AstLowerer<'a> {
                 }
                 // Lower optional rest capture: `**rest` binds remaining entries (#827)
                 let hir_rest = rest.as_ref().map(|n| {
-                    let rest_ty = self.current_match_subject_ty
+                    let rest_ty = self
+                        .current_match_subject_ty
                         .unwrap_or_else(|| self.checker.tcx.any());
                     self.define_local(n, rest_ty)
                 });
-                HirPattern::Mapping { pairs: hir_pairs, rest: hir_rest }
+                HirPattern::Mapping {
+                    pairs: hir_pairs,
+                    rest: hir_rest,
+                }
             }
             ast::Pattern::As { pattern, name } => {
                 // Lower the inner pattern, then bind the whole match to `name` (#827).
                 // Use subject type for non-class AS bindings so primitive ops work.
                 let inner = self.lower_pattern(pattern)?;
-                let ty = self.current_match_subject_ty
+                let ty = self
+                    .current_match_subject_ty
                     .unwrap_or_else(|| self.checker.tcx.any());
                 let sym = self.define_local(name, ty);
-                HirPattern::As { pattern: Box::new(inner), name: sym }
+                HirPattern::As {
+                    pattern: Box::new(inner),
+                    name: sym,
+                }
             }
         })
     }
@@ -4084,7 +6342,10 @@ mod tests {
         let hir = lower_module(&module, &checker).unwrap();
         assert_eq!(hir.top_level.len(), 1);
         match &hir.top_level[0] {
-            HirStmt::Expr { expr: HirExpr::IntLit(42, _), .. } => {}
+            HirStmt::Expr {
+                expr: HirExpr::IntLit(42, _),
+                ..
+            } => {}
             other => panic!("expected IntLit(42), got {other:?}"),
         }
     }
@@ -4112,7 +6373,10 @@ mod tests {
         let hir = lower_module(&module, &checker).unwrap();
         assert_eq!(hir.top_level.len(), 1);
         match &hir.top_level[0] {
-            HirStmt::Expr { expr: HirExpr::FloatLit(f, _), .. } => {
+            HirStmt::Expr {
+                expr: HirExpr::FloatLit(f, _),
+                ..
+            } => {
                 assert!((f - 3.14).abs() < 1e-10);
             }
             other => panic!("expected FloatLit, got {other:?}"),
@@ -4127,7 +6391,10 @@ mod tests {
         };
         let hir = lower_module(&module, &checker).unwrap();
         match &hir.top_level[0] {
-            HirStmt::Expr { expr: HirExpr::BoolLit(true, _), .. } => {}
+            HirStmt::Expr {
+                expr: HirExpr::BoolLit(true, _),
+                ..
+            } => {}
             other => panic!("expected BoolLit(true), got {other:?}"),
         }
     }
@@ -4140,7 +6407,10 @@ mod tests {
         };
         let hir = lower_module(&module, &checker).unwrap();
         match &hir.top_level[0] {
-            HirStmt::Expr { expr: HirExpr::NoneLit(_), .. } => {}
+            HirStmt::Expr {
+                expr: HirExpr::NoneLit(_),
+                ..
+            } => {}
             other => panic!("expected NoneLit, got {other:?}"),
         }
     }
@@ -4153,7 +6423,10 @@ mod tests {
         };
         let hir = lower_module(&module, &checker).unwrap();
         match &hir.top_level[0] {
-            HirStmt::Expr { expr: HirExpr::StrLit(s, _), .. } => {
+            HirStmt::Expr {
+                expr: HirExpr::StrLit(s, _),
+                ..
+            } => {
                 assert_eq!(s, "hello");
             }
             other => panic!("expected StrLit, got {other:?}"),
@@ -4171,7 +6444,10 @@ mod tests {
         };
         let hir = lower_module(&module, &checker).unwrap();
         match &hir.top_level[0] {
-            HirStmt::Expr { expr: HirExpr::UnaryOp { op, .. }, .. } => {
+            HirStmt::Expr {
+                expr: HirExpr::UnaryOp { op, .. },
+                ..
+            } => {
                 assert_eq!(*op, crate::hir::HirUnaryOp::Neg);
             }
             other => panic!("expected UnaryOp, got {other:?}"),
@@ -4186,7 +6462,10 @@ mod tests {
         };
         let hir = lower_module(&module, &checker).unwrap();
         match &hir.top_level[0] {
-            HirStmt::Return { value: Some(HirExpr::IntLit(42, _)), .. } => {}
+            HirStmt::Return {
+                value: Some(HirExpr::IntLit(42, _)),
+                ..
+            } => {}
             other => panic!("expected Return(42), got {other:?}"),
         }
     }
@@ -4227,14 +6506,22 @@ mod tests {
     fn test_lower_bin_op_mapping() {
         // Test all BinOp to HirBinOp mappings
         let mappings = [
-            (BinOp::Add, HirBinOp::Add), (BinOp::Sub, HirBinOp::Sub),
-            (BinOp::Mul, HirBinOp::Mul), (BinOp::Div, HirBinOp::Div),
-            (BinOp::Mod, HirBinOp::Mod), (BinOp::Pow, HirBinOp::Pow),
-            (BinOp::Eq, HirBinOp::Eq), (BinOp::NotEq, HirBinOp::NotEq),
-            (BinOp::Lt, HirBinOp::Lt), (BinOp::Gt, HirBinOp::Gt),
-            (BinOp::And, HirBinOp::And), (BinOp::Or, HirBinOp::Or),
-            (BinOp::Is, HirBinOp::Is), (BinOp::IsNot, HirBinOp::IsNot),
-            (BinOp::In, HirBinOp::In), (BinOp::NotIn, HirBinOp::NotIn),
+            (BinOp::Add, HirBinOp::Add),
+            (BinOp::Sub, HirBinOp::Sub),
+            (BinOp::Mul, HirBinOp::Mul),
+            (BinOp::Div, HirBinOp::Div),
+            (BinOp::Mod, HirBinOp::Mod),
+            (BinOp::Pow, HirBinOp::Pow),
+            (BinOp::Eq, HirBinOp::Eq),
+            (BinOp::NotEq, HirBinOp::NotEq),
+            (BinOp::Lt, HirBinOp::Lt),
+            (BinOp::Gt, HirBinOp::Gt),
+            (BinOp::And, HirBinOp::And),
+            (BinOp::Or, HirBinOp::Or),
+            (BinOp::Is, HirBinOp::Is),
+            (BinOp::IsNot, HirBinOp::IsNot),
+            (BinOp::In, HirBinOp::In),
+            (BinOp::NotIn, HirBinOp::NotIn),
         ];
         for (ast_op, expected) in mappings {
             assert_eq!(lower_bin_op(ast_op), Some(expected), "{ast_op:?}");
@@ -4286,7 +6573,9 @@ mod tests {
     fn helper_lower_with_fns(stmts: Vec<Spanned<Stmt>>, fn_names: &[&str]) -> HirModule {
         let mut checker = TypeChecker::new();
         for &name in fn_names {
-            checker.symbols.define(name.to_string(), crate::resolve::SymbolKind::Function);
+            checker
+                .symbols
+                .define(name.to_string(), crate::resolve::SymbolKind::Function);
         }
         let module = Module { stmts };
         lower_module(&module, &checker).expect("lower failed")
@@ -4296,7 +6585,9 @@ mod tests {
     fn helper_lower_with_classes(stmts: Vec<Spanned<Stmt>>, class_names: &[&str]) -> HirModule {
         let mut checker = TypeChecker::new();
         for &name in class_names {
-            checker.symbols.define(name.to_string(), crate::resolve::SymbolKind::Class);
+            checker
+                .symbols
+                .define(name.to_string(), crate::resolve::SymbolKind::Class);
         }
         let module = Module { stmts };
         lower_module(&module, &checker).expect("lower failed")
@@ -4308,6 +6599,8 @@ mod tests {
             ty: sp(TypeExpr::Named("Any".to_string())),
             default: None,
             kind: ParamKind::Regular,
+            pos_only: false,
+            kw_only: false,
             span: Span::dummy(),
         }
     }
@@ -4391,7 +6684,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::FloorDiv, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::FloorDiv,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4404,7 +6703,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::BitAnd, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::BitAnd,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4417,7 +6722,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::BitOr, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::BitOr,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4430,7 +6741,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::BitXor, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::BitXor,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4447,7 +6764,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::LtEq, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::LtEq,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4460,7 +6783,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::GtEq, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::GtEq,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4473,7 +6802,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::Is, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::Is,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4486,7 +6821,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::IsNot, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::IsNot,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4502,7 +6843,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::UnaryOp { op: HirUnaryOp::Pos, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::UnaryOp {
+                    op: HirUnaryOp::Pos,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4514,7 +6861,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::UnaryOp { op: HirUnaryOp::Not, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::UnaryOp {
+                    op: HirUnaryOp::Not,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4551,7 +6904,13 @@ mod tests {
             }),
         ]);
         assert_eq!(hir.top_level.len(), 2);
-        assert!(matches!(&hir.top_level[1], HirStmt::Assign { target: HirLValue::Index { .. }, .. }));
+        assert!(matches!(
+            &hir.top_level[1],
+            HirStmt::Assign {
+                target: HirLValue::Index { .. },
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -4573,7 +6932,13 @@ mod tests {
         // AugAssign desugars to Assign with BinOp::Add
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Assign { value: HirExpr::BinOp { op: HirBinOp::Add, .. }, .. }
+            HirStmt::Assign {
+                value: HirExpr::BinOp {
+                    op: HirBinOp::Add,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4593,7 +6958,13 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Assign { value: HirExpr::BinOp { op: HirBinOp::Sub, .. }, .. }
+            HirStmt::Assign {
+                value: HirExpr::BinOp {
+                    op: HirBinOp::Sub,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -4661,7 +7032,9 @@ mod tests {
     #[test]
     fn test_lower_fn_with_return_type() {
         let mut checker = TypeChecker::new();
-        checker.symbols.define("get_int".to_string(), crate::resolve::SymbolKind::Function);
+        checker
+            .symbols
+            .define("get_int".to_string(), crate::resolve::SymbolKind::Function);
         let module = Module {
             stmts: vec![sp(Stmt::FnDef {
                 decorators: vec![],
@@ -4683,7 +7056,9 @@ mod tests {
     fn test_lower_fn_nested_def() {
         // Nested function should appear in hir.functions as well as outer
         let mut checker = TypeChecker::new();
-        checker.symbols.define("outer".to_string(), crate::resolve::SymbolKind::Function);
+        checker
+            .symbols
+            .define("outer".to_string(), crate::resolve::SymbolKind::Function);
         let inner_body = vec![sp(Stmt::Return(None))];
         let outer_body = vec![
             sp(Stmt::FnDef {
@@ -4742,7 +7117,9 @@ mod tests {
                 params: vec![make_param("coro")],
                 return_ty: None,
                 body: vec![
-                    sp(Stmt::ExprStmt(sp(Expr::Await(Box::new(sp(Expr::Ident("coro".to_string()))))))),
+                    sp(Stmt::ExprStmt(sp(Expr::Await(Box::new(sp(Expr::Ident(
+                        "coro".to_string(),
+                    ))))))),
                     sp(Stmt::Return(None)),
                 ],
             })],
@@ -4782,7 +7159,9 @@ mod tests {
                 type_params: vec![],
                 params: vec![],
                 return_ty: None,
-                body: vec![sp(Stmt::ExprStmt(sp(Expr::Yield(Some(Box::new(sp(Expr::IntLit(1))))))))],
+                body: vec![sp(Stmt::ExprStmt(sp(Expr::Yield(Some(Box::new(sp(
+                    Expr::IntLit(1),
+                )))))))],
             })],
             &["gen"],
         );
@@ -4798,7 +7177,9 @@ mod tests {
                 type_params: vec![],
                 params: vec![make_param("it")],
                 return_ty: None,
-                body: vec![sp(Stmt::ExprStmt(sp(Expr::YieldFrom(Box::new(sp(Expr::Ident("it".to_string())))))))],
+                body: vec![sp(Stmt::ExprStmt(sp(Expr::YieldFrom(Box::new(sp(
+                    Expr::Ident("it".to_string()),
+                ))))))],
             })],
             &["gen_from"],
         );
@@ -4811,7 +7192,10 @@ mod tests {
         let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Yield(None))))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::Yield { value: None, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::Yield { value: None, .. },
+                ..
+            }
         ));
     }
 
@@ -4865,8 +7249,12 @@ mod tests {
     fn test_lower_class_with_field() {
         // Field name "myfield" must also be pre-registered so resolve_name can find it.
         let mut checker = TypeChecker::new();
-        checker.symbols.define("Point".to_string(), crate::resolve::SymbolKind::Class);
-        checker.symbols.define("myfield".to_string(), crate::resolve::SymbolKind::Variable);
+        checker
+            .symbols
+            .define("Point".to_string(), crate::resolve::SymbolKind::Class);
+        checker
+            .symbols
+            .define("myfield".to_string(), crate::resolve::SymbolKind::Variable);
         let module = Module {
             stmts: vec![sp(Stmt::ClassDef {
                 decorators: vec![],
@@ -5208,7 +7596,13 @@ mod tests {
             else_body: None,
             finally_body: Some(vec![sp(Stmt::Break)]),
         })]);
-        if let HirStmt::Try { body, handlers, finally_body, .. } = &hir.top_level[0] {
+        if let HirStmt::Try {
+            body,
+            handlers,
+            finally_body,
+            ..
+        } = &hir.top_level[0]
+        {
             assert_eq!(body.len(), 1);
             assert_eq!(handlers.len(), 1);
             assert_eq!(finally_body.len(), 1);
@@ -5219,10 +7613,17 @@ mod tests {
 
     #[test]
     fn test_lower_raise_plain() {
-        let hir = helper_lower(vec![sp(Stmt::Raise { value: None, from: None })]);
+        let hir = helper_lower(vec![sp(Stmt::Raise {
+            value: None,
+            from: None,
+        })]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Raise { value: None, from: None, .. }
+            HirStmt::Raise {
+                value: None,
+                from: None,
+                ..
+            }
         ));
     }
 
@@ -5362,7 +7763,10 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::DictComp { .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::DictComp { .. },
+                ..
+            }
         ));
     }
 
@@ -5380,13 +7784,18 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::SetComp { .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::SetComp { .. },
+                ..
+            }
         ));
     }
 
     #[test]
     fn test_lower_generator_expr_desugared_to_list_comp() {
-        // GeneratorExpr is desugared to ListComp in HIR
+        // GeneratorExpr is desugared to mb_iter(<ListComp>): the eager list
+        // comprehension is wrapped in an iterator so the genexpr keeps
+        // single-use iterator identity (next() works, no len()/indexing).
         let gen = Comprehension {
             targets: vec!["g".to_string()],
             iter: sp(Expr::ListLit(vec![])),
@@ -5397,17 +7806,29 @@ mod tests {
             element: Box::new(sp(Expr::IntLit(0))),
             generators: vec![gen],
         })))]);
-        assert!(matches!(
-            &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::ListComp { .. }, .. }
-        ));
+        match &hir.top_level[0] {
+            HirStmt::Expr {
+                expr: HirExpr::Call { func, args, .. },
+                ..
+            } => {
+                assert!(
+                    matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"),
+                    "genexpr must lower to an mb_iter call"
+                );
+                assert!(matches!(args.first(), Some(HirExpr::ListComp { .. })));
+            }
+            other => panic!("expected mb_iter(ListComp) call, got {other:?}"),
+        }
     }
 
     #[test]
     fn test_lower_list_comp_with_filter() {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
-            iter: sp(Expr::ListLit(vec![sp(Expr::IntLit(1)), sp(Expr::IntLit(2))])),
+            iter: sp(Expr::ListLit(vec![
+                sp(Expr::IntLit(1)),
+                sp(Expr::IntLit(2)),
+            ])),
             conditions: vec![sp(Expr::BoolLit(true))],
             is_async: false,
         };
@@ -5415,7 +7836,11 @@ mod tests {
             element: Box::new(sp(Expr::Ident("x".to_string()))),
             generators: vec![gen],
         })))]);
-        if let HirStmt::Expr { expr: HirExpr::ListComp { generators, .. }, .. } = &hir.top_level[0] {
+        if let HirStmt::Expr {
+            expr: HirExpr::ListComp { generators, .. },
+            ..
+        } = &hir.top_level[0]
+        {
             assert_eq!(generators[0].conditions.len(), 1);
         } else {
             panic!("expected ListComp");
@@ -5434,7 +7859,11 @@ mod tests {
             element: Box::new(sp(Expr::IntLit(0))),
             generators: vec![gen],
         })))]);
-        if let HirStmt::Expr { expr: HirExpr::ListComp { generators, .. }, .. } = &hir.top_level[0] {
+        if let HirStmt::Expr {
+            expr: HirExpr::ListComp { generators, .. },
+            ..
+        } = &hir.top_level[0]
+        {
             assert!(generators[0].is_async);
         } else {
             panic!("expected ListComp");
@@ -5539,7 +7968,13 @@ mod tests {
             sp(Stmt::Del(sp(Expr::Ident("d".to_string())))),
         ]);
         assert_eq!(hir.top_level.len(), 2);
-        assert!(matches!(&hir.top_level[1], HirStmt::Del { target: HirLValue::Var(_), .. }));
+        assert!(matches!(
+            &hir.top_level[1],
+            HirStmt::Del {
+                target: HirLValue::Var(_),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -5557,7 +7992,10 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Del { target: HirLValue::Index { .. }, .. }
+            HirStmt::Del {
+                target: HirLValue::Index { .. },
+                ..
+            }
         ));
     }
 
@@ -5585,7 +8023,11 @@ mod tests {
         })]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Assert { test: HirExpr::BoolLit(true, _), msg: None, .. }
+            HirStmt::Assert {
+                test: HirExpr::BoolLit(true, _),
+                msg: None,
+                ..
+            }
         ));
     }
 
@@ -5860,7 +8302,10 @@ mod tests {
         let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::BoolLit(false))))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BoolLit(false, _), .. }
+            HirStmt::Expr {
+                expr: HirExpr::BoolLit(false, _),
+                ..
+            }
         ));
     }
 
@@ -5873,7 +8318,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::LShift, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::LShift,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -5886,7 +8337,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::RShift, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::RShift,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -5898,7 +8355,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::UnaryOp { op: HirUnaryOp::BitNot, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::UnaryOp {
+                    op: HirUnaryOp::BitNot,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -5936,40 +8399,52 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Expr { expr: HirExpr::Index { .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::Index { .. },
+                ..
+            }
         ));
     }
 
     #[test]
     fn test_lower_yield_with_value() {
-        let hir = helper_lower(vec![
-            sp(Stmt::ExprStmt(sp(Expr::Yield(Some(Box::new(sp(Expr::IntLit(42)))))))),
-        ]);
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Yield(Some(Box::new(
+            sp(Expr::IntLit(42)),
+        ))))))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::Yield { value: Some(_), .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::Yield { value: Some(_), .. },
+                ..
+            }
         ));
     }
 
     #[test]
     fn test_lower_yield_from_expr() {
-        let hir = helper_lower(vec![
-            sp(Stmt::ExprStmt(sp(Expr::YieldFrom(Box::new(sp(Expr::ListLit(vec![]))))))),
-        ]);
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::YieldFrom(Box::new(sp(
+            Expr::ListLit(vec![]),
+        ))))))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::YieldFrom { .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::YieldFrom { .. },
+                ..
+            }
         ));
     }
 
     #[test]
     fn test_lower_await_expr() {
-        let hir = helper_lower(vec![
-            sp(Stmt::ExprStmt(sp(Expr::Await(Box::new(sp(Expr::IntLit(1))))))),
-        ]);
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Await(Box::new(sp(
+            Expr::IntLit(1),
+        ))))))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::Await { .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::Await { .. },
+                ..
+            }
         ));
     }
 
@@ -6005,7 +8480,13 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Assign { value: HirExpr::BinOp { op: HirBinOp::Mul, .. }, .. }
+            HirStmt::Assign {
+                value: HirExpr::BinOp {
+                    op: HirBinOp::Mul,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -6023,7 +8504,12 @@ mod tests {
             else_body: Some(vec![sp(Stmt::Pass)]),
             finally_body: None,
         })]);
-        if let HirStmt::Try { handlers, else_body, .. } = &hir.top_level[0] {
+        if let HirStmt::Try {
+            handlers,
+            else_body,
+            ..
+        } = &hir.top_level[0]
+        {
             assert_eq!(handlers.len(), 1);
             // else body: Pass produces no HIR
             assert!(else_body.is_empty());
@@ -6041,7 +8527,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::In, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::In,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -6054,7 +8546,13 @@ mod tests {
         })))]);
         assert!(matches!(
             &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::BinOp { op: HirBinOp::NotIn, .. }, .. }
+            HirStmt::Expr {
+                expr: HirExpr::BinOp {
+                    op: HirBinOp::NotIn,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -6076,7 +8574,10 @@ mod tests {
         assert_eq!(hir.functions.len(), 1);
         // Decorator is resolved → placeholder IS emitted in top_level
         assert_eq!(hir.top_level.len(), 1);
-        assert!(matches!(&hir.top_level[0], HirStmt::FuncDefPlaceholder { .. }));
+        assert!(matches!(
+            &hir.top_level[0],
+            HirStmt::FuncDefPlaceholder { .. }
+        ));
     }
 
     #[test]
@@ -6085,14 +8586,21 @@ mod tests {
             name: "x".to_string(),
             ty: sp(TypeExpr::Named("int".to_string())),
         })]);
-        assert!(hir.top_level.is_empty(), "BareAnnotation should emit no HIR");
+        assert!(
+            hir.top_level.is_empty(),
+            "BareAnnotation should emit no HIR"
+        );
     }
 
     #[test]
     fn test_lower_fstring_only_literal() {
         let parts = vec![FStringPart::Literal("hello".to_string())];
         let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::FString(parts))))]);
-        if let HirStmt::Expr { expr: HirExpr::FString { parts, .. }, .. } = &hir.top_level[0] {
+        if let HirStmt::Expr {
+            expr: HirExpr::FString { parts, .. },
+            ..
+        } = &hir.top_level[0]
+        {
             assert_eq!(parts.len(), 1);
             assert!(matches!(&parts[0], HirFStringPart::Literal(s) if s == "hello"));
         } else {
@@ -6142,7 +8650,10 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Assign { target: HirLValue::Attr { .. }, .. }
+            HirStmt::Assign {
+                target: HirLValue::Attr { .. },
+                ..
+            }
         ));
     }
 
@@ -6162,7 +8673,13 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Assign { value: HirExpr::BinOp { op: HirBinOp::FloorDiv, .. }, .. }
+            HirStmt::Assign {
+                value: HirExpr::BinOp {
+                    op: HirBinOp::FloorDiv,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -6182,7 +8699,13 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Assign { value: HirExpr::BinOp { op: HirBinOp::Pow, .. }, .. }
+            HirStmt::Assign {
+                value: HirExpr::BinOp {
+                    op: HirBinOp::Pow,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -6202,7 +8725,13 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Assign { value: HirExpr::BinOp { op: HirBinOp::BitXor, .. }, .. }
+            HirStmt::Assign {
+                value: HirExpr::BinOp {
+                    op: HirBinOp::BitXor,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -6222,7 +8751,13 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Assign { value: HirExpr::BinOp { op: HirBinOp::BitOr, .. }, .. }
+            HirStmt::Assign {
+                value: HirExpr::BinOp {
+                    op: HirBinOp::BitOr,
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -6242,8 +8777,13 @@ mod tests {
         ]);
         assert!(matches!(
             &hir.top_level[1],
-            HirStmt::Assign { value: HirExpr::BinOp { op: HirBinOp::BitAnd, .. }, .. }
+            HirStmt::Assign {
+                value: HirExpr::BinOp {
+                    op: HirBinOp::BitAnd,
+                    ..
+                },
+                ..
+            }
         ));
     }
-
 }

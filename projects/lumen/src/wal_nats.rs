@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_nats-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! NATS JetStream backend for [`WalLog`].
 //!
@@ -41,7 +41,7 @@ const APPLY_PULL_EXPIRES: Duration = Duration::from_micros(500);
 const LOCAL_PUBLISH_WINDOW: u64 = 16_384;
 const LOCAL_PUBLISH_RETAIN_AFTER: usize = LOCAL_PUBLISH_WINDOW as usize * 2;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_nats-rs.md#source
 pub struct NatsWal {
     js: jetstream::Context,
     config: NatsWalConfig,
@@ -56,14 +56,14 @@ pub struct NatsWal {
 /// The default is the historical single stream (`lumen_wal` / `lumen.wal`).
 /// Sharded write apply uses one config per shard so each shard has its own
 /// ordered log and apply loop instead of every write contending on one stream.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_nats-rs.md#source
 pub struct NatsWalConfig {
     pub stream_name: String,
     pub subject: String,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_nats-rs.md#source
 impl Default for NatsWalConfig {
     fn default() -> Self {
         Self {
@@ -73,7 +73,7 @@ impl Default for NatsWalConfig {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_nats-rs.md#source
 impl NatsWalConfig {
     pub fn new(stream_name: impl Into<String>, subject: impl Into<String>) -> Result<Self> {
         let stream_name = stream_name.into();
@@ -98,7 +98,7 @@ impl NatsWalConfig {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_nats-rs.md#source
 impl NatsWal {
     /// Connect to NATS at `url` (e.g. `nats://localhost:4222`) and
     /// ensure the WAL stream exists.
@@ -131,8 +131,8 @@ impl NatsWal {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_nats-rs.md#source
 impl WalLog for NatsWal {
     async fn publish(&self, record: WalRecord) -> Result<u64> {
         let payload = record.encode()?;

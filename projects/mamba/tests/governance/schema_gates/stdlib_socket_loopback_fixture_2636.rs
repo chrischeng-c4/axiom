@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("governance")
         .join("gates")
         .join("stdlib")
         .join("socket_loopback_behavioral")
@@ -40,12 +40,24 @@ fn manifest_path() -> PathBuf {
 #[test]
 fn header_is_well_formed() {
     let doc = crate::common::load_toml(&manifest_path());
-    assert_eq!(doc.get("fixture").and_then(|v| v.as_str()), Some("stdlib_socket_loopback_behavioral"));
+    assert_eq!(
+        doc.get("fixture").and_then(|v| v.as_str()),
+        Some("stdlib_socket_loopback_behavioral")
+    );
     assert_eq!(doc.get("issue").and_then(|v| v.as_integer()), Some(2636));
-    assert_eq!(doc.get("parent_issue").and_then(|v| v.as_integer()), Some(2529));
+    assert_eq!(
+        doc.get("parent_issue").and_then(|v| v.as_integer()),
+        Some(2529)
+    );
     assert_eq!(doc.get("profile").and_then(|v| v.as_str()), Some("stdlib"));
-    assert_eq!(doc.get("family").and_then(|v| v.as_str()), Some("stdlib_socket_loopback_behavioral"));
-    assert_eq!(doc.get("network").and_then(|v| v.as_str()), Some("loopback_only"));
+    assert_eq!(
+        doc.get("family").and_then(|v| v.as_str()),
+        Some("stdlib_socket_loopback_behavioral")
+    );
+    assert_eq!(
+        doc.get("network").and_then(|v| v.as_str()),
+        Some("loopback_only")
+    );
 }
 
 #[test]
@@ -65,19 +77,34 @@ fn isolation_pins_no_global_state() {
 #[test]
 fn python_target_is_pinned_to_3_12() {
     let doc = crate::common::load_toml(&manifest_path());
-    let p = doc.get("python_target").and_then(|v| v.as_table()).expect("[python_target] missing");
+    let p = doc
+        .get("python_target")
+        .and_then(|v| v.as_table())
+        .expect("[python_target] missing");
     assert_eq!(p.get("python_major").and_then(|v| v.as_integer()), Some(3));
     assert_eq!(p.get("python_minor").and_then(|v| v.as_integer()), Some(12));
-    assert_eq!(p.get("must_be_python_3_12").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        p.get("must_be_python_3_12").and_then(|v| v.as_bool()),
+        Some(true)
+    );
 }
 
 #[test]
 fn surface_registers_socket() {
     let doc = crate::common::load_toml(&manifest_path());
-    let s = doc.get("surface").and_then(|v| v.as_table()).expect("[surface] missing");
-    let modules: Vec<&str> = s.get("covered_modules").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
-    assert!(modules.contains(&"socket"), "covered_modules must include socket");
+    let s = doc
+        .get("surface")
+        .and_then(|v| v.as_table())
+        .expect("[surface] missing");
+    let modules: Vec<&str> = s
+        .get("covered_modules")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        modules.contains(&"socket"),
+        "covered_modules must include socket"
+    );
     for f in &[
         "must_be_importable_via_import_statement",
         "must_register_socket_in_stdlib_manifest",
@@ -90,35 +117,77 @@ fn surface_registers_socket() {
         "must_use_af_inet",
         "must_use_sock_stream",
     ] {
-        assert_eq!(s.get(*f).and_then(|v| v.as_bool()), Some(true), "{f} must be true");
+        assert_eq!(
+            s.get(*f).and_then(|v| v.as_bool()),
+            Some(true),
+            "{f} must be true"
+        );
     }
 }
 
 #[test]
 fn deterministic_sample_pins_loopback_roundtrip() {
     let doc = crate::common::load_toml(&manifest_path());
-    let d = doc.get("deterministic_sample").and_then(|v| v.as_table()).expect("[deterministic_sample] missing");
-    assert_eq!(d.get("must_be_deterministic").and_then(|v| v.as_bool()), Some(true));
-    let max = d.get("sample_max_records").and_then(|v| v.as_integer()).unwrap();
-    let min = d.get("sample_min_records").and_then(|v| v.as_integer()).unwrap();
-    assert!(min >= 1 && max >= min && max <= 64, "sample bounds must be sane");
+    let d = doc
+        .get("deterministic_sample")
+        .and_then(|v| v.as_table())
+        .expect("[deterministic_sample] missing");
+    assert_eq!(
+        d.get("must_be_deterministic").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    let max = d
+        .get("sample_max_records")
+        .and_then(|v| v.as_integer())
+        .unwrap();
+    let min = d
+        .get("sample_min_records")
+        .and_then(|v| v.as_integer())
+        .unwrap();
+    assert!(
+        min >= 1 && max >= min && max <= 64,
+        "sample bounds must be sane"
+    );
 
-    let arr = doc.get("loopback_roundtrip_cases").and_then(|v| v.as_array())
+    let arr = doc
+        .get("loopback_roundtrip_cases")
+        .and_then(|v| v.as_array())
         .expect("[[loopback_roundtrip_cases]] missing");
-    assert!(!arr.is_empty(), "loopback_roundtrip_cases must not be empty");
+    assert!(
+        !arr.is_empty(),
+        "loopback_roundtrip_cases must not be empty"
+    );
     for c in arr {
         let t = c.as_table().expect("case must be a table");
         for f in &[
-            "bind_host", "bind_port", "address_family", "socket_type",
-            "payload_bytes_python_repr", "expected_received_bytes_python_repr",
-            "recv_buffer_size", "must_send_and_recv_exact_payload",
+            "bind_host",
+            "bind_port",
+            "address_family",
+            "socket_type",
+            "payload_bytes_python_repr",
+            "expected_received_bytes_python_repr",
+            "recv_buffer_size",
+            "must_send_and_recv_exact_payload",
         ] {
             assert!(t.get(*f).is_some(), "loopback_roundtrip_cases.{f} missing");
         }
-        assert_eq!(t.get("bind_host").and_then(|v| v.as_str()), Some("127.0.0.1"));
-        assert_eq!(t.get("address_family").and_then(|v| v.as_str()), Some("AF_INET"));
-        assert_eq!(t.get("socket_type").and_then(|v| v.as_str()), Some("SOCK_STREAM"));
-        assert_eq!(t.get("must_send_and_recv_exact_payload").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            t.get("bind_host").and_then(|v| v.as_str()),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            t.get("address_family").and_then(|v| v.as_str()),
+            Some("AF_INET")
+        );
+        assert_eq!(
+            t.get("socket_type").and_then(|v| v.as_str()),
+            Some("SOCK_STREAM")
+        );
+        assert_eq!(
+            t.get("must_send_and_recv_exact_payload")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 }
 
@@ -126,10 +195,13 @@ fn deterministic_sample_pins_loopback_roundtrip() {
 #[test]
 fn fixture_never_reaches_external_network() {
     let doc = crate::common::load_toml(&manifest_path());
-    let n = doc.get("no_external_network_contract").and_then(|v| v.as_table()).expect(
-        "[no_external_network_contract] missing — acceptance: \
+    let n = doc
+        .get("no_external_network_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "[no_external_network_contract] missing — acceptance: \
          \"Fixture never reaches external network.\"",
-    );
+        );
     for k in &[
         "must_bind_only_to_loopback",
         "forbid_bind_to_0_0_0_0",
@@ -139,29 +211,54 @@ fn fixture_never_reaches_external_network() {
         "must_not_use_external_proxy_env_vars",
         "must_distinguish_external_network_from_dns",
     ] {
-        assert_eq!(n.get(*k).and_then(|v| v.as_bool()), Some(true), "{k} must be true");
+        assert_eq!(
+            n.get(*k).and_then(|v| v.as_bool()),
+            Some(true),
+            "{k} must be true"
+        );
     }
-    let allowed: Vec<&str> = n.get("allowed_bind_hosts").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let allowed: Vec<&str> = n
+        .get("allowed_bind_hosts")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for h in &["127.0.0.1", "::1"] {
         assert!(allowed.contains(h), "allowed_bind_hosts must include {h}");
     }
-    let forbidden: Vec<&str> = n.get("forbidden_env_vars").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
-    for v in &["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] {
+    let forbidden: Vec<&str> = n
+        .get("forbidden_env_vars")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    for v in &[
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
         assert!(forbidden.contains(v), "forbidden_env_vars must include {v}");
     }
-    let ext = n.get("external_network_use_exit_code").and_then(|v| v.as_integer()).unwrap();
-    let dns = n.get("dns_resolution_exit_code").and_then(|v| v.as_integer()).unwrap();
+    let ext = n
+        .get("external_network_use_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
+    let dns = n
+        .get("dns_resolution_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(ext, 112);
     assert_eq!(dns, 113);
     assert_ne!(ext, dns, "external-network and dns exit codes must differ");
     assert_eq!(
-        n.get("external_network_use_failure_kind").and_then(|v| v.as_str()),
+        n.get("external_network_use_failure_kind")
+            .and_then(|v| v.as_str()),
         Some("socket_external_network_used"),
     );
     assert_eq!(
-        n.get("dns_resolution_failure_kind").and_then(|v| v.as_str()),
+        n.get("dns_resolution_failure_kind")
+            .and_then(|v| v.as_str()),
         Some("socket_dns_resolution_used"),
     );
 }
@@ -171,39 +268,65 @@ fn fixture_never_reaches_external_network() {
 #[test]
 fn unsupported_socket_behavior_is_blocker_with_issue_reference() {
     let doc = crate::common::load_toml(&manifest_path());
-    let u = doc.get("unsupported_behavior_blocker_contract").and_then(|v| v.as_table()).expect(
-        "[unsupported_behavior_blocker_contract] missing — acceptance: \
+    let u = doc
+        .get("unsupported_behavior_blocker_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "[unsupported_behavior_blocker_contract] missing — acceptance: \
          \"Unsupported socket behavior is a blocker with issue reference.\"",
-    );
+        );
     for k in &[
         "must_mark_unsupported_socket_path_with_blocker",
         "must_link_blocker_to_issue",
         "forbid_silently_skipping_unsupported_socket_behavior",
         "forbid_falsely_passing_unsupported_socket_behavior",
     ] {
-        assert_eq!(u.get(*k).and_then(|v| v.as_bool()), Some(true), "{k} must be true");
+        assert_eq!(
+            u.get(*k).and_then(|v| v.as_bool()),
+            Some(true),
+            "{k} must be true"
+        );
     }
-    assert_eq!(u.get("blocker_outcome_value").and_then(|v| v.as_str()), Some("blocker"));
-    assert_eq!(u.get("blocker_link_field_name").and_then(|v| v.as_str()), Some("blocker_issue"));
-    let exit = u.get("missing_blocker_link_exit_code").and_then(|v| v.as_integer()).unwrap();
+    assert_eq!(
+        u.get("blocker_outcome_value").and_then(|v| v.as_str()),
+        Some("blocker")
+    );
+    assert_eq!(
+        u.get("blocker_link_field_name").and_then(|v| v.as_str()),
+        Some("blocker_issue")
+    );
+    let exit = u
+        .get("missing_blocker_link_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(exit, 114);
     assert_eq!(
-        u.get("missing_blocker_link_failure_kind").and_then(|v| v.as_str()),
+        u.get("missing_blocker_link_failure_kind")
+            .and_then(|v| v.as_str()),
         Some("socket_unsupported_missing_blocker_link"),
     );
-    let allowed: Vec<&str> = u.get("allowed_unsupported_socket_paths").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
-    assert!(!allowed.is_empty(), "allowed_unsupported_socket_paths must list at least one entry");
+    let allowed: Vec<&str> = u
+        .get("allowed_unsupported_socket_paths")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        !allowed.is_empty(),
+        "allowed_unsupported_socket_paths must list at least one entry"
+    );
 }
 
 // Acceptance: "Passing fixture closes sockets deterministically."
 #[test]
 fn passing_fixture_closes_sockets_deterministically() {
     let doc = crate::common::load_toml(&manifest_path());
-    let c = doc.get("deterministic_close_contract").and_then(|v| v.as_table()).expect(
-        "[deterministic_close_contract] missing — acceptance: \
+    let c = doc
+        .get("deterministic_close_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "[deterministic_close_contract] missing — acceptance: \
          \"Passing fixture closes sockets deterministically.\"",
-    );
+        );
     for k in &[
         "must_close_listening_socket_on_pass",
         "must_close_accepted_socket_on_pass",
@@ -212,16 +335,26 @@ fn passing_fixture_closes_sockets_deterministically() {
         "must_use_with_statement_or_explicit_close",
         "forbid_relying_on_gc_to_close_sockets",
     ] {
-        assert_eq!(c.get(*k).and_then(|v| v.as_bool()), Some(true), "{k} must be true");
+        assert_eq!(
+            c.get(*k).and_then(|v| v.as_bool()),
+            Some(true),
+            "{k} must be true"
+        );
     }
-    let exit = c.get("leaked_socket_exit_code").and_then(|v| v.as_integer()).unwrap();
+    let exit = c
+        .get("leaked_socket_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(exit, 115);
     assert_eq!(
         c.get("leaked_socket_failure_kind").and_then(|v| v.as_str()),
         Some("socket_not_closed_after_run"),
     );
-    let order: Vec<&str> = c.get("close_order_after_pass").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let order: Vec<&str> = c
+        .get("close_order_after_pass")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for v in &["accepted_socket", "client_socket", "listening_socket"] {
         assert!(order.contains(v), "close_order_after_pass must include {v}");
     }
@@ -230,30 +363,59 @@ fn passing_fixture_closes_sockets_deterministically() {
 #[test]
 fn runner_contract_declares_keys_and_cases() {
     let doc = crate::common::load_toml(&manifest_path());
-    let c = doc.get("runner_contract").and_then(|v| v.as_table()).unwrap();
-    let keys: Vec<&str> = c.get("keys").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let c = doc
+        .get("runner_contract")
+        .and_then(|v| v.as_table())
+        .unwrap();
+    let keys: Vec<&str> = c
+        .get("keys")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for required in &[
-        "outcome", "case", "module_name",
-        "bind_host", "bind_port", "address_family", "socket_type",
-        "payload_bytes_python_repr", "received_bytes_python_repr",
-        "blocker_issue", "failure_kind", "exit_code",
+        "outcome",
+        "case",
+        "module_name",
+        "bind_host",
+        "bind_port",
+        "address_family",
+        "socket_type",
+        "payload_bytes_python_repr",
+        "received_bytes_python_repr",
+        "blocker_issue",
+        "failure_kind",
+        "exit_code",
     ] {
-        assert!(keys.contains(required), "runner_contract.keys must include {required}");
+        assert!(
+            keys.contains(required),
+            "runner_contract.keys must include {required}"
+        );
     }
-    let outcomes: Vec<&str> = c.get("outcome_values").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let outcomes: Vec<&str> = c
+        .get("outcome_values")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for v in &["pass", "fail", "blocker", "missing", "skip"] {
-        assert!(outcomes.contains(v), "runner_contract.outcome_values must include {v}");
+        assert!(
+            outcomes.contains(v),
+            "runner_contract.outcome_values must include {v}"
+        );
     }
-    let cases: Vec<&str> = c.get("case_values").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let cases: Vec<&str> = c
+        .get("case_values")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for required in &[
         "fixture_never_reaches_external_network",
         "unsupported_socket_behavior_is_blocker_with_issue_reference",
         "passing_fixture_closes_sockets_deterministically",
     ] {
-        assert!(cases.contains(required), "runner_contract.case_values must include {required}");
+        assert!(
+            cases.contains(required),
+            "runner_contract.case_values must include {required}"
+        );
     }
 }
 
@@ -262,5 +424,8 @@ fn pins_out_of_scope_per_issue() {
     let doc = crate::common::load_toml(&manifest_path());
     let o = doc.get("out_of_scope").and_then(|v| v.as_table()).unwrap();
     assert_eq!(o.get("tls").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(o.get("async_networking").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        o.get("async_networking").and_then(|v| v.as_bool()),
+        Some(true)
+    );
 }

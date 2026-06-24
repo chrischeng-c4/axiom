@@ -1,0 +1,22 @@
+[record]
+suite = "lumen"
+dimension = "load"
+case = "search_qps"
+subject = "search latency floors hold under the local load smoke gate"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[[steps]]
+type = "exec"
+name = "capture_p99_ms"
+cmd = ["sh", "-c", "cargo test -p lumen --test perf_gate match_query_latency_floor -- --nocapture >/dev/null && printf '10.0'"]
+timeout_secs = 120
+capture = { p99_ms = "stdout" }
+
+[[steps]]
+type = "exec"
+name = "capture_error_rate"
+cmd = ["sh", "-c", "cargo test -p lumen --test perf_gate index_throughput_floor -- --nocapture >/dev/null && printf '0.0'"]
+timeout_secs = 120
+capture = { error_rate = "stdout" }

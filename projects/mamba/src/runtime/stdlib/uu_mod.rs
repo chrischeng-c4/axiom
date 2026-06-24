@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// uu module for Mamba (#1261 long-tail).
 ///
 /// Replaces the long_tail stub (every encode/decode/test call was a
@@ -19,11 +21,8 @@
 /// file handles) through native dispatchers reliably, so the encode/
 /// decode entry points accept only filename strings. The bytes-level
 /// helpers (`encode_bytes`, `decode_bytes`) cover the rest.
-
 use std::collections::HashMap;
 use std::fs;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 || args_ptr.is_null() {
@@ -59,7 +58,11 @@ fn encode_line(data: &[u8], backtick: bool) -> Vec<u8> {
     let len = data.len().min(45);
     let mut out = Vec::with_capacity(2 + ((len + 2) / 3) * 4);
     let len_byte = (0x20 + len as u8).saturating_sub(if backtick && len == 0 { 0 } else { 0 });
-    out.push(if backtick && len_byte == 0x20 { 0x60 } else { len_byte });
+    out.push(if backtick && len_byte == 0x20 {
+        0x60
+    } else {
+        len_byte
+    });
     let mut i = 0;
     while i < len {
         let b1 = data[i];
@@ -82,31 +85,47 @@ fn encode_line(data: &[u8], backtick: bool) -> Vec<u8> {
 /// Decode one uuencoded line. Returns the decoded bytes for that line.
 /// Stops at the end-of-data marker (length byte == 0x20 or 0x60).
 fn decode_line(line: &[u8]) -> Vec<u8> {
-    if line.is_empty() { return Vec::new(); }
+    if line.is_empty() {
+        return Vec::new();
+    }
     // Strip carriage return/newline.
     let line: &[u8] = match line.iter().rposition(|&c| c != b'\n' && c != b'\r') {
         Some(end) => &line[..=end],
         None => return Vec::new(),
     };
-    if line.is_empty() { return Vec::new(); }
+    if line.is_empty() {
+        return Vec::new();
+    }
     let len_byte = line[0];
     // 0x20 (space) or 0x60 (backtick) → length 0 / EOF marker.
-    if len_byte == 0x60 { return Vec::new(); }
+    if len_byte == 0x60 {
+        return Vec::new();
+    }
     let length = (len_byte.wrapping_sub(0x20) & 0x3F) as usize;
-    if length == 0 { return Vec::new(); }
+    if length == 0 {
+        return Vec::new();
+    }
     let mut out = Vec::with_capacity(length);
     let mut i = 1;
     while i + 3 < line.len() && out.len() < length {
-        let v: Vec<u8> = (0..4).map(|k| {
-            let c = line[i + k];
-            // Backtick → 0; otherwise (c - 0x20) & 0x3F.
-            if c == b'`' { 0 } else { c.wrapping_sub(0x20) & 0x3F }
-        }).collect();
+        let v: Vec<u8> = (0..4)
+            .map(|k| {
+                let c = line[i + k];
+                // Backtick → 0; otherwise (c - 0x20) & 0x3F.
+                if c == b'`' {
+                    0
+                } else {
+                    c.wrapping_sub(0x20) & 0x3F
+                }
+            })
+            .collect();
         let b1 = (v[0] << 2) | (v[1] >> 4);
         let b2 = ((v[1] & 0x0F) << 4) | (v[2] >> 2);
         let b3 = ((v[2] & 0x03) << 6) | v[3];
         for &b in &[b1, b2, b3] {
-            if out.len() < length { out.push(b); }
+            if out.len() < length {
+                out.push(b);
+            }
         }
         i += 4;
     }
@@ -136,13 +155,19 @@ pub(crate) fn decode_bytes_impl(data: &[u8]) -> Vec<u8> {
     let mut lines = data.split(|&b| b == b'\n').peekable();
     for line in lines.by_ref() {
         let trimmed = line.strip_suffix(b"\r").unwrap_or(line);
-        if trimmed.starts_with(b"begin ") { break; }
+        if trimmed.starts_with(b"begin ") {
+            break;
+        }
     }
     let mut out = Vec::new();
     for line in lines {
         let trimmed = line.strip_suffix(b"\r").unwrap_or(line);
-        if trimmed.is_empty() { continue; }
-        if trimmed == b"end" { break; }
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == b"end" {
+            break;
+        }
         // EOF marker: length byte 0x20 (space) or 0x60 (backtick) alone.
         if trimmed.len() == 1 && (trimmed[0] == b' ' || trimmed[0] == b'`') {
             continue;
@@ -162,10 +187,26 @@ pub(crate) fn decode_bytes_impl(data: &[u8]) -> Vec<u8> {
 /// Mamba-extension helper for in-memory encoding.
 unsafe extern "C" fn dispatch_encode_bytes(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let data = args.first().copied().and_then(|v| as_bytes(v)).unwrap_or_default();
-    let name = args.get(1).copied().and_then(|v| as_str(v)).unwrap_or_else(|| "-".to_string());
-    let mode = args.get(2).copied().and_then(|v| v.as_int()).unwrap_or(0o666) as u32;
-    let backtick = args.get(3).copied().and_then(|v| v.as_bool()).unwrap_or(false);
+    let data = args
+        .first()
+        .copied()
+        .and_then(|v| as_bytes(v))
+        .unwrap_or_default();
+    let name = args
+        .get(1)
+        .copied()
+        .and_then(|v| as_str(v))
+        .unwrap_or_else(|| "-".to_string());
+    let mode = args
+        .get(2)
+        .copied()
+        .and_then(|v| v.as_int())
+        .unwrap_or(0o666) as u32;
+    let backtick = args
+        .get(3)
+        .copied()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let result = encode_bytes_impl(&data, &name, mode, backtick);
     MbValue::from_ptr(MbObject::new_bytes(result))
 }
@@ -173,7 +214,11 @@ unsafe extern "C" fn dispatch_encode_bytes(args_ptr: *const MbValue, nargs: usiz
 /// `uu.decode_bytes(data: bytes) -> bytes`. Mamba-extension helper.
 unsafe extern "C" fn dispatch_decode_bytes(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let data = args.first().copied().and_then(|v| as_bytes(v)).unwrap_or_default();
+    let data = args
+        .first()
+        .copied()
+        .and_then(|v| as_bytes(v))
+        .unwrap_or_default();
     let result = decode_bytes_impl(&data);
     MbValue::from_ptr(MbObject::new_bytes(result))
 }
@@ -191,16 +236,29 @@ unsafe extern "C" fn dispatch_encode(args_ptr: *const MbValue, nargs: usize) -> 
         Some(p) => p,
         None => return MbValue::none(),
     };
-    let name = args.get(2).copied().and_then(|v| as_str(v)).unwrap_or_else(|| {
-        // Default to basename of in_path, matching CPython's behavior.
-        std::path::Path::new(&in_path)
-            .file_name()
-            .and_then(|s| s.to_str()).unwrap_or("-").to_string()
-    });
-    let mode = args.get(3).copied().and_then(|v| v.as_int())
+    let name = args
+        .get(2)
+        .copied()
+        .and_then(|v| as_str(v))
+        .unwrap_or_else(|| {
+            // Default to basename of in_path, matching CPython's behavior.
+            std::path::Path::new(&in_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("-")
+                .to_string()
+        });
+    let mode = args
+        .get(3)
+        .copied()
+        .and_then(|v| v.as_int())
         .map(|v| v as u32)
         .unwrap_or(0o666);
-    let backtick = args.get(4).copied().and_then(|v| v.as_bool()).unwrap_or(false);
+    let backtick = args
+        .get(4)
+        .copied()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let data = match fs::read(&in_path) {
         Ok(b) => b,
         Err(_) => return MbValue::none(),
@@ -244,9 +302,9 @@ unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbVa
 pub fn register() {
     let mut attrs: HashMap<String, MbValue> = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("encode",       dispatch_encode       as *const () as usize),
-        ("decode",       dispatch_decode       as *const () as usize),
-        ("test",         dispatch_test         as *const () as usize),
+        ("encode", dispatch_encode as *const () as usize),
+        ("decode", dispatch_decode as *const () as usize),
+        ("test", dispatch_test as *const () as usize),
         ("encode_bytes", dispatch_encode_bytes as *const () as usize),
         ("decode_bytes", dispatch_decode_bytes as *const () as usize),
     ];
@@ -257,7 +315,9 @@ pub fn register() {
     attrs.insert("Error".into(), MbValue::from_func(shell));
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
-        for (_, addr) in dispatchers { set.insert(*addr as u64); }
+        for (_, addr) in dispatchers {
+            set.insert(*addr as u64);
+        }
         set.insert(shell as u64);
     });
     super::register_module("uu", attrs);
@@ -308,9 +368,13 @@ mod tests {
         let header = lines.next().unwrap_or("");
         assert!(header.starts_with("begin "), "header missing: {header}");
         for line in lines {
-            if line == "end" || line.is_empty() { continue; }
-            assert!(!line.contains(' '),
-                "backtick mode must not emit 0x20 in body line: {line:?}");
+            if line == "end" || line.is_empty() {
+                continue;
+            }
+            assert!(
+                !line.contains(' '),
+                "backtick mode must not emit 0x20 in body line: {line:?}"
+            );
         }
         let decoded = decode_bytes_impl(&encoded);
         assert_eq!(decoded, data);
@@ -332,7 +396,9 @@ mod tests {
         // Convert LF → CRLF.
         let mut crlf = Vec::new();
         for &b in &encoded {
-            if b == b'\n' { crlf.push(b'\r'); }
+            if b == b'\n' {
+                crlf.push(b'\r');
+            }
             crlf.push(b);
         }
         encoded = crlf;

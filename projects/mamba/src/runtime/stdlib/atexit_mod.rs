@@ -1,3 +1,7 @@
+#[cfg(test)]
+use super::super::rc::MbObject;
+use super::super::rc::ObjData;
+use super::super::value::MbValue;
 /// atexit module for Mamba (#652).
 ///
 /// Implements Python-compatible exit handler registration.
@@ -6,10 +10,6 @@
 /// when `_run_exitfuncs()` runs (at interpreter exit, or explicitly).
 use std::cell::RefCell;
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::ObjData;
-#[cfg(test)]
-use super::super::rc::MbObject;
 
 macro_rules! dispatch_variadic {
     ($name:ident, $fn:ident) => {
@@ -101,6 +101,21 @@ fn same_callable(a: MbValue, b: MbValue) -> bool {
 /// can be used as a decorator (CPython contract).
 pub fn mb_atexit_register(args: &[MbValue]) -> MbValue {
     let func = args.first().copied().unwrap_or_else(MbValue::none);
+    // CPython 3.12: atexit.register raises TypeError for a non-callable.
+    // Strings stay accepted — the registry's named-callable convention
+    // resolves them through call_named_callable at exit time.
+    let is_named = func
+        .as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, super::super::rc::ObjData::Str(_)) });
+    if !is_named && super::super::builtins::mb_callable(func).as_bool() != Some(true) {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(super::super::rc::MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(super::super::rc::MbObject::new_str(
+                "the first argument must be callable".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     let (pos, kwargs) = split_kwargs(&args[1.min(args.len())..]);
 
     // Keep the callable and its forwarded arguments alive for as long as the
@@ -166,30 +181,26 @@ fn call_handler(h: &Handler) {
         let has_star = super::super::module::is_variadic_func(addr as u64);
         let has_kwargs = super::super::module::is_kwargs_func(addr as u64);
         if !is_native && (has_star || has_kwargs) {
-            let kwargs_dict = h.kwargs.unwrap_or_else(|| {
-                MbValue::from_ptr(super::super::rc::MbObject::new_dict())
-            });
+            let kwargs_dict = h
+                .kwargs
+                .unwrap_or_else(|| MbValue::from_ptr(super::super::rc::MbObject::new_dict()));
             unsafe {
                 match (has_star, has_kwargs) {
                     (true, true) => {
-                        let args_tuple = MbValue::from_ptr(
-                            super::super::rc::MbObject::new_tuple(h.pos.clone()),
-                        );
+                        let args_tuple =
+                            MbValue::from_ptr(super::super::rc::MbObject::new_tuple(h.pos.clone()));
                         let f: extern "C" fn(MbValue, MbValue) -> MbValue =
                             std::mem::transmute(addr);
                         f(args_tuple, kwargs_dict);
                     }
                     (true, false) => {
-                        let args_tuple = MbValue::from_ptr(
-                            super::super::rc::MbObject::new_tuple(h.pos.clone()),
-                        );
-                        let f: extern "C" fn(MbValue) -> MbValue =
-                            std::mem::transmute(addr);
+                        let args_tuple =
+                            MbValue::from_ptr(super::super::rc::MbObject::new_tuple(h.pos.clone()));
+                        let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr);
                         f(args_tuple);
                     }
                     (false, true) => {
-                        let f: extern "C" fn(MbValue) -> MbValue =
-                            std::mem::transmute(addr);
+                        let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr);
                         f(kwargs_dict);
                     }
                     (false, false) => unreachable!(),
@@ -224,11 +235,26 @@ pub fn mb_atexit_run_exitfuncs() -> MbValue {
     for handler in handlers.iter().rev() {
         call_handler(handler);
         // Isolate a raising callback: report it, clear the pending exception,
-        // and keep running the remaining handlers.
+        // and keep running the remaining handlers. The report goes through
+        // the redirect-aware stderr writer so `contextlib.redirect_stderr`
+        // captures it (raw eprintln! bypasses sys.stderr redirection).
         if super::super::exception::mb_has_exception().as_bool() == Some(true) {
-            if let Some(tb) = super::super::exception::mb_take_uncaught_traceback() {
-                eprintln!("Error in atexit._run_exitfuncs:");
-                eprintln!("{}", tb);
+            let detail =
+                super::super::exception::mb_take_uncaught_traceback().unwrap_or_else(|| {
+                    let exc = super::super::exception::mb_catch_exception();
+                    let ty = super::super::exception::get_exception_type_pub(exc)
+                        .unwrap_or_else(|| "Exception".to_string());
+                    let msg =
+                        super::super::exception::get_exception_message_pub(exc).unwrap_or_default();
+                    if msg.is_empty() {
+                        ty
+                    } else {
+                        format!("{ty}: {msg}")
+                    }
+                });
+            let report = format!("Error in atexit._run_exitfuncs:\n{detail}\n");
+            if !super::super::output::try_write_stderr_redirect(&report) {
+                eprint!("{report}");
             }
             super::super::exception::mb_clear_exception();
         }

@@ -2,7 +2,7 @@
 id: semantic-lumen-runtime-image
 summary: Semantic coverage for "projects/lumen/runtime-image"
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
@@ -38,6 +38,8 @@ runtime_image:
     - path: "projects/lumen/Dockerfile"
       kind: "dockerfile"
       content: |
+        # SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-runtime-image.md#runtime-image
+        # CODEGEN-BEGIN
         # syntax=docker/dockerfile:1
         # From-source build for dev / CI. For production prefer `Dockerfile.release`,
         # which downloads a published binary (far faster, no Rust toolchain, no big build
@@ -63,20 +65,20 @@ runtime_image:
         RUN --mount=type=cache,target=/usr/local/cargo/registry \
             --mount=type=cache,target=/usr/local/cargo/git \
             --mount=type=cache,target=/src/target \
-            cargo build --release -p lumen --bin lumen --features otel \
-         && cargo build --release -p lumen --features operator --bin lumen-operator \
-         && cp target/release/lumen target/release/lumen-operator /usr/local/bin/
+            cargo build --release -p lumen --bin lumen --features "otel operator relay-wal" \
+         && cp target/release/lumen /usr/local/bin/
         
         # distroless runtime: glibc + libgcc + CA certs + nonroot (uid 65532, matching
         # the k8s securityContext). No openssl, no shell, no init shim — a single tokio
         # binary handles SIGTERM (graceful drain) and spawns no children.
         FROM gcr.io/distroless/cc-debian12:nonroot
-        COPY --from=builder /usr/local/bin/lumen          /usr/local/bin/lumen
-        COPY --from=builder /usr/local/bin/lumen-operator /usr/local/bin/lumen-operator
-        # 7373 = client API. The write log lives in NATS, not in this container.
+        COPY --from=builder /usr/local/bin/lumen /usr/local/bin/lumen
+        # 7373 = client API. The write log lives in the broker, not in this container.
         EXPOSE 7373
         ENTRYPOINT ["/usr/local/bin/lumen"]
         CMD ["serve"]
+        # CODEGEN-END
+
 ```
 
 ## Changes

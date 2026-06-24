@@ -403,7 +403,10 @@ fn runner_contract_declares_keys_and_cases() {
             "exit_code",
         ]
     );
-    assert_eq!(strs(r, "outcome_values"), vec!["pass", "fail", "missing", "skip"]);
+    assert_eq!(
+        strs(r, "outcome_values"),
+        vec!["pass", "fail", "missing", "skip"]
+    );
     assert_eq!(
         strs(r, "case_values"),
         vec![

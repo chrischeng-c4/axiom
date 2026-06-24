@@ -22,7 +22,9 @@ fn baseline_path() -> PathBuf {
 }
 
 fn validator_script() -> PathBuf {
-    crate::common::project_root().join("scripts").join("baseline_validator.py")
+    crate::common::project_root()
+        .join("scripts")
+        .join("baseline_validator.py")
 }
 
 fn unique_dir(tag: &str) -> PathBuf {
@@ -60,10 +62,7 @@ fn shipped_baseline_declares_tier_for_every_entry() {
     assert!(!benches.is_empty(), "shipped baseline must not be empty");
     for (idx, e) in benches.iter().enumerate() {
         let tier = e.get("tier").and_then(|t| t.as_str());
-        assert!(
-            tier.is_some(),
-            "entry [{idx}] missing 'tier': {e}",
-        );
+        assert!(tier.is_some(), "entry [{idx}] missing 'tier': {e}",);
         let tier = tier.unwrap();
         assert!(
             matches!(tier, "required" | "optional" | "xfail" | "blocker"),
@@ -80,7 +79,8 @@ fn shipped_baseline_has_at_least_one_required_entry() {
     let raw = std::fs::read_to_string(baseline_path()).unwrap();
     let v: Value = serde_json::from_str(&raw).unwrap();
     let count_required = v["benchmarks"]
-        .as_array().unwrap()
+        .as_array()
+        .unwrap()
         .iter()
         .filter(|e| e["tier"].as_str() == Some("required"))
         .count();
@@ -93,7 +93,10 @@ fn shipped_baseline_has_at_least_one_required_entry() {
 #[test]
 fn shipped_baseline_passes_validator() {
     let (code, _, stderr) = run_validator(&["--format", "text"]);
-    assert_eq!(code, 0, "shipped baseline must validate cleanly (stderr={stderr})");
+    assert_eq!(
+        code, 0,
+        "shipped baseline must validate cleanly (stderr={stderr})"
+    );
 }
 
 // ─── Acceptance 1: missing tier fails validation ────────────────────
@@ -109,13 +112,17 @@ fn missing_tier_is_a_validation_error() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, stderr) = run_validator(&[
-        "--baseline", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
+    let (code, _, stderr) =
+        run_validator(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
     assert_eq!(code, 1, "missing tier must fail (stderr={stderr})");
-    assert!(stderr.contains("tier"), "stderr must name the missing field");
-    assert!(stderr.contains("no_tier"), "stderr must name the offending entry");
+    assert!(
+        stderr.contains("tier"),
+        "stderr must name the missing field"
+    );
+    assert!(
+        stderr.contains("no_tier"),
+        "stderr must name the offending entry"
+    );
 }
 
 #[test]
@@ -129,10 +136,8 @@ fn unknown_tier_value_is_a_validation_error() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, stderr) = run_validator(&[
-        "--baseline", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
+    let (code, _, stderr) =
+        run_validator(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
     assert_eq!(code, 1, "non-enum tier value must fail (stderr={stderr})");
     assert!(stderr.contains("exploratory"));
 }
@@ -150,10 +155,8 @@ fn required_entry_missing_speedup_is_an_error() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, stderr) = run_validator(&[
-        "--baseline", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
+    let (code, _, stderr) =
+        run_validator(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
     assert_eq!(code, 1);
     assert!(stderr.contains("speedup_vs_cpython"));
 }
@@ -168,10 +171,8 @@ fn required_entry_missing_timing_is_an_error() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, stderr) = run_validator(&[
-        "--baseline", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
+    let (code, _, stderr) =
+        run_validator(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
     assert_eq!(code, 1);
     assert!(stderr.contains("mamba_ns") || stderr.contains("cpython_ns"));
 }
@@ -191,12 +192,18 @@ fn select_tier_required_lists_names_one_per_line() {
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
     let (code, stdout, _) = run_validator(&[
-        "--baseline", path.to_str().unwrap(),
-        "--select-tier", "required",
+        "--baseline",
+        path.to_str().unwrap(),
+        "--select-tier",
+        "required",
     ]);
     assert_eq!(code, 0);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines, vec!["a", "z"], "must list required names alphabetically, exclude blocker");
+    assert_eq!(
+        lines,
+        vec!["a", "z"],
+        "must list required names alphabetically, exclude blocker"
+    );
 }
 
 #[test]
@@ -208,8 +215,14 @@ fn select_tier_blocker_picks_known_blockers_in_shipped_baseline() {
     let (code, stdout, _) = run_validator(&["--select-tier", "blocker"]);
     assert_eq!(code, 0);
     let names: Vec<&str> = stdout.lines().collect();
-    assert!(names.contains(&"string_concat"), "blocker tier must include string_concat: {names:?}");
-    assert!(names.contains(&"list_sort_builtin"), "blocker tier must include list_sort_builtin: {names:?}");
+    assert!(
+        names.contains(&"string_concat"),
+        "blocker tier must include string_concat: {names:?}"
+    );
+    assert!(
+        names.contains(&"list_sort_builtin"),
+        "blocker tier must include list_sort_builtin: {names:?}"
+    );
 }
 
 #[test]
@@ -235,14 +248,22 @@ fn legacy_v1_baseline_loads_under_legacy_compat() {
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
     let (code, stdout, _) = run_validator(&[
-        "--baseline", path.to_str().unwrap(),
-        "--format", "json",
+        "--baseline",
+        path.to_str().unwrap(),
+        "--format",
+        "json",
         "--legacy-compat",
     ]);
-    assert_eq!(code, 0, "legacy v1 baseline must validate under --legacy-compat");
+    assert_eq!(
+        code, 0,
+        "legacy v1 baseline must validate under --legacy-compat"
+    );
     let v: Value = serde_json::from_str(&stdout).unwrap();
     let drift = v["drift"].as_array().expect("drift array");
-    assert!(!drift.is_empty(), "missing-tier entries must surface as drift, not silently disappear");
+    assert!(
+        !drift.is_empty(),
+        "missing-tier entries must surface as drift, not silently disappear"
+    );
 }
 
 #[test]
@@ -259,10 +280,7 @@ fn legacy_v1_baseline_fails_without_legacy_compat() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, _) = run_validator(&[
-        "--baseline", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
+    let (code, _, _) = run_validator(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
     assert_eq!(code, 1, "v1 baseline must fail without --legacy-compat");
 }
 
@@ -283,7 +301,11 @@ fn perf_floor_check_reads_tier_from_migrated_baseline() {
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
     let output = Command::new("python3")
-        .arg(crate::common::project_root().join("scripts").join("perf_floor_check.py"))
+        .arg(
+            crate::common::project_root()
+                .join("scripts")
+                .join("perf_floor_check.py"),
+        )
         .args(["--baseline", path.to_str().unwrap(), "--format", "json"])
         .current_dir(crate::common::project_root())
         .output()
@@ -304,9 +326,13 @@ fn perf_floor_check_reads_tier_from_migrated_baseline() {
 fn baseline_version_bumped_to_2_for_tier_migration() {
     let raw = std::fs::read_to_string(baseline_path()).unwrap();
     let v: Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(
-        v["version"].as_i64(), Some(2),
-        "tier migration is a schema-additive change — bump version to 2",
+    // The tier migration bumped the schema to 2; the v3 memory axis
+    // (`schema_notes_v3`) bumped it again. Both changes are additive, so
+    // this gate pins a version floor rather than an exact value.
+    assert!(
+        v["version"].as_i64() >= Some(2),
+        "tier migration is a schema-additive change — version must be >= 2, got {:?}",
+        v["version"],
     );
 }
 
@@ -315,8 +341,10 @@ fn baseline_version_bumped_to_2_for_tier_migration() {
 #[test]
 fn validator_exits_101_when_baseline_missing() {
     let (code, _, _) = run_validator(&[
-        "--baseline", "/nonexistent/path/missing.json",
-        "--format", "json",
+        "--baseline",
+        "/nonexistent/path/missing.json",
+        "--format",
+        "json",
     ]);
     assert_eq!(code, 101);
 }

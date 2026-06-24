@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! lumen — standalone search and duplicate-detection index.
 //!
@@ -7,15 +7,17 @@
 //! `Collection / Field` primitive over `external_id` — lumen never owns
 //! the source of truth and has no document concept of its own.
 //!
-//! - Durable via Raft (per-shard group), rebuildable from the caller.
-//! - HTTP/2 transport, server self-routing to the Raft leader (no proxy).
+//! - Durable via the configured write log; multi-pod Lumen is moving to
+//!   Lumen-owned primary/replica replication, while Relay remains an explicit
+//!   external broker mode. Rebuildable from the caller.
+//! - HTTP/2 transport, client-side collection-shard routing.
 //!
 //! Full surface and v1 scope: `projects/lumen/README.md`.
 
 /// Local append-only log (Stage 2 Phase 2f-3): the binary's "AOF" — a framed,
 /// crash-safe record of every APPLIED `(seq, WalRecord)`. Recovery is RDB (the
-/// segment checkpoint, up to seq S) → AOF replay (S+1..A) → NATS tail (A+1..),
-/// so NATS retention can be TRIMMED instead of kept from seq 0. Compiled by
+/// segment checkpoint, up to seq S) → AOF replay (S+1..A) → broker tail (A+1..),
+/// so broker retention can be TRIMMED instead of kept from seq 0. Compiled by
 /// default; only the runtime segment-persistence path (`--persistence=segment`)
 /// drives the apply loop + cold-start through it.
 pub mod aof;
@@ -32,13 +34,12 @@ pub mod metrics;
 /// over a lower fixed-cost transport than HTTP/JSON.
 pub mod native_wire;
 /// K8s Operator: the `Lumen` CRD plus the reconcile loop that renders + applies
-/// the serving fleet and NATS broker. Behind the `operator` feature so the
+/// the serving fleet and Relay broker. Behind the `operator` feature so the
 /// serving binary never pulls in kube-rs.
 #[cfg(feature = "operator")]
 pub mod operator;
-/// Cluster-state view types backing the read/admin API. lumen has no
-/// application consensus layer — durability + replication is the NATS
-/// JetStream write-log, and serving nodes are full replicas that tail it.
+/// Cluster-state view types backing the read/admin API. This surface is the
+/// compatibility bridge for Lumen-owned primary/replica replication.
 pub mod raft;
 pub mod rdb;
 pub mod routing;
@@ -65,4 +66,6 @@ pub mod types;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
+#[cfg(feature = "relay-wal")]
+pub mod wal_relay;
 // CODEGEN-END

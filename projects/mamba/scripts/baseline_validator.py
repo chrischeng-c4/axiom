@@ -145,13 +145,27 @@ def _validate(
         # Timings: required entries must carry numeric mamba_ns,
         # cpython_ns, and speedup_vs_cpython so downstream gates have
         # ground truth. Non-required entries may omit speedup.
-        for fld in ("mamba_ns", "cpython_ns"):
-            v = e.get(fld)
-            if not isinstance(v, (int, float)):
-                errors.append(EntryError(
-                    idx, name,
-                    f"missing numeric {fld!r} (tier={tier!r})",
-                ))
+        #
+        # Baseline v3 (see schema_notes_v3) adds memory-only seam
+        # entries: a non-required entry that carries `mem_status` but no
+        # timing fields records a peak-RSS sample without a perf gate,
+        # so the ns requirement does not apply to it.
+        baseline_version = int(data.get("version", 1))
+        memory_only_seam = (
+            baseline_version >= 3
+            and tier != REQUIRED_TIER
+            and "mem_status" in e
+            and "mamba_ns" not in e
+            and "cpython_ns" not in e
+        )
+        if not memory_only_seam:
+            for fld in ("mamba_ns", "cpython_ns"):
+                v = e.get(fld)
+                if not isinstance(v, (int, float)):
+                    errors.append(EntryError(
+                        idx, name,
+                        f"missing numeric {fld!r} (tier={tier!r})",
+                    ))
         if tier == REQUIRED_TIER:
             v = e.get("speedup_vs_cpython")
             if not isinstance(v, (int, float)):

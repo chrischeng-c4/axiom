@@ -1,3 +1,7 @@
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 /// statistics module for Mamba (#1265 Task #82, Wave-9).
 ///
 /// Covers CPython 3.12 `statistics` 46-entry surface: numeric module
@@ -62,13 +66,8 @@
 ///   - `sumprod(p, q)`: dot product of two iterables; CPython 3.12+.
 ///   - `fsum`: precise summation via Neumaier's compensated summation.
 ///   - `hypot`: sqrt(sum(x**2 for x in args)).
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 // ── Dispatch wrappers: flat-args ABI ──
 
@@ -144,9 +143,8 @@ fn raise_value_error(msg: &str) -> MbValue {
 }
 
 fn is_sequence(val: MbValue) -> bool {
-    val.as_ptr().is_some_and(|ptr| unsafe {
-        matches!((*ptr).data, ObjData::List(_) | ObjData::Tuple(_))
-    })
+    val.as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::List(_) | ObjData::Tuple(_)) })
 }
 
 /// Python type name for a non-iterable scalar argument, used in the
@@ -156,11 +154,21 @@ fn is_sequence(val: MbValue) -> bool {
 fn scalar_type_name(val: MbValue) -> Option<&'static str> {
     // `iter([])` / generators are registry-backed int handles; they are
     // iterable, so never reject them as a non-iterable int.
-    if super::super::iter::is_iter_handle(val) { return None; }
-    if val.is_none() { return Some("NoneType"); }
-    if val.is_bool() { return Some("bool"); }
-    if val.as_int().is_some() { return Some("int"); }
-    if val.as_float().is_some() { return Some("float"); }
+    if super::super::iter::is_iter_handle(val) {
+        return None;
+    }
+    if val.is_none() {
+        return Some("NoneType");
+    }
+    if val.is_bool() {
+        return Some("bool");
+    }
+    if val.as_int().is_some() {
+        return Some("int");
+    }
+    if val.as_float().is_some() {
+        return Some("float");
+    }
     None
 }
 
@@ -195,6 +203,31 @@ fn materialize_iterable(val: MbValue) -> MbValue {
             return MbValue::from_ptr(MbObject::new_list(items));
         }
     }
+    // Dict-like and instance iterables (Counter, dict, set, namedtuple, any
+    // class with __iter__) — route through the generic iterator protocol so
+    // `mode(Counter(...))` sees the keys rather than an empty sequence. A
+    // non-iterable instance makes mb_iter raise TypeError, matching CPython's
+    // `iter(data)` contract; we pass the original value through unchanged in
+    // that case so the caller's own error path still runs.
+    if let Some(ptr) = val.as_ptr() {
+        let drainable = unsafe {
+            matches!(
+                (*ptr).data,
+                ObjData::Dict(_)
+                    | ObjData::Set(_)
+                    | ObjData::FrozenSet(_)
+                    | ObjData::Instance { .. }
+            )
+        };
+        if drainable {
+            let handle = super::super::iter::mb_iter(val);
+            if super::super::iter::is_iter_handle(handle) {
+                if let Some(items) = super::super::iter::drain_iter_to_vec(handle) {
+                    return MbValue::from_ptr(MbObject::new_list(items));
+                }
+            }
+        }
+    }
     val
 }
 
@@ -220,7 +253,9 @@ unsafe extern "C" fn dispatch_geometric_mean(args_ptr: *const MbValue, nargs: us
             a.len()
         ));
     }
-    if reject_non_iterable(a[0]) { return MbValue::none(); }
+    if reject_non_iterable(a[0]) {
+        return MbValue::none();
+    }
     mb_statistics_geometric_mean(materialize_iterable(a[0]))
 }
 
@@ -230,14 +265,18 @@ unsafe extern "C" fn dispatch_fmean(args_ptr: *const MbValue, nargs: usize) -> M
     if a.is_empty() {
         return raise_type_error("fmean() missing required argument 'data'");
     }
-    if reject_non_iterable(a[0]) { return MbValue::none(); }
+    if reject_non_iterable(a[0]) {
+        return MbValue::none();
+    }
     let data = materialize_iterable(a.get(0).copied().unwrap_or_else(MbValue::none));
     // A non-None weights arg must itself be iterable; `fmean(data, 70)` is a
     // TypeError ('int' object is not iterable) in CPython (`list(weights)`).
     let weights = match a.get(1).copied().filter(|w| !w.is_none()) {
         None => None,
         Some(w) => {
-            if reject_non_iterable(w) { return MbValue::none(); }
+            if reject_non_iterable(w) {
+                return MbValue::none();
+            }
             Some(materialize_iterable(w))
         }
     };
@@ -250,9 +289,15 @@ unsafe extern "C" fn dispatch_harmonic_mean(args_ptr: *const MbValue, nargs: usi
     if a.is_empty() {
         return raise_type_error("harmonic_mean() missing required argument 'data'");
     }
-    if reject_non_iterable(a[0]) { return MbValue::none(); }
+    if reject_non_iterable(a[0]) {
+        return MbValue::none();
+    }
     let data = materialize_iterable(a.get(0).copied().unwrap_or_else(MbValue::none));
-    let weights = a.get(1).copied().filter(|w| !w.is_none()).map(materialize_iterable);
+    let weights = a
+        .get(1)
+        .copied()
+        .filter(|w| !w.is_none())
+        .map(materialize_iterable);
     mb_statistics_harmonic_mean_weighted(data, weights)
 }
 dispatch_unary!(dispatch_median, mb_statistics_median);
@@ -272,7 +317,9 @@ unsafe extern "C" fn dispatch_median_grouped(args_ptr: *const MbValue, nargs: us
     if a.is_empty() {
         return raise_type_error("median_grouped() missing required argument 'data'");
     }
-    if reject_non_iterable(a[0]) { return MbValue::none(); }
+    if reject_non_iterable(a[0]) {
+        return MbValue::none();
+    }
     let data = materialize_iterable(a.get(0).copied().unwrap_or_else(MbValue::none));
     // The interval arg defaults to 1.0; a non-numeric interval (`''`, `b''`,
     // …) is a TypeError, not a silent fallthrough to 1.0.
@@ -324,7 +371,9 @@ unsafe extern "C" fn dispatch_quantiles(args_ptr: *const MbValue, nargs: usize) 
                             if d.as_float().is_some() && d.as_int().is_none() && !d.is_bool() {
                                 return raise_type_error("n must be an integer");
                             }
-                            if let Some(i) = d.as_int() { n = i; }
+                            if let Some(i) = d.as_int() {
+                                n = i;
+                            }
                         }
                         let k_m = super::super::dict_ops::DictKey::Str("method".to_string());
                         if let Some(mv) = g.get(&k_m) {
@@ -339,13 +388,16 @@ unsafe extern "C" fn dispatch_quantiles(args_ptr: *const MbValue, nargs: usize) 
                 }
             }
         }
-        // Numeric `n`. bool is an int subtype; a real float is a TypeError.
-        if arg.is_bool() {
-            n = if arg.as_bool().unwrap_or(false) { 1 } else { 0 };
-        } else if let Some(i) = arg.as_int() {
-            n = i;
-        } else if arg.as_float().is_some() {
-            return raise_type_error("n must be an integer");
+        // A bare numeric trailing arg is a genuinely-positional cut count:
+        // CPython's signature is `quantiles(data, *, n=4, method=...)` (n is
+        // keyword-only), so `quantiles(data, 4)` is a TypeError. Keyword
+        // call sites reach us as a packed kwargs dict (the lowering tracks
+        // `quantiles` in the kwargs-dict allowlist), handled above.
+        if arg.is_bool() || arg.as_int().is_some() || arg.as_float().is_some() {
+            return raise_type_error(&format!(
+                "quantiles() takes 1 positional argument but {} were given",
+                nargs
+            ));
         }
     }
     mb_statistics_quantiles(data, n, method_inclusive)
@@ -388,7 +440,9 @@ unsafe extern "C" fn dispatch_correlation(args_ptr: *const MbValue, nargs: usize
                 let g = lock.read().unwrap();
                 let k = super::super::dict_ops::DictKey::Str("method".to_string());
                 g.get(&k).copied()
-            } else { None }
+            } else {
+                None
+            }
         });
         let method_val = from_dict.unwrap_or(mv);
         if let Some(ptr) = method_val.as_ptr() {
@@ -438,19 +492,25 @@ unsafe extern "C" fn dispatch_linear_regression(args_ptr: *const MbValue, nargs:
 /// Python truthiness for the values we expect as a proportional flag
 /// (bool / int / float). Non-zero numbers and True are truthy.
 fn truthy(v: MbValue) -> bool {
-    if let Some(b) = v.as_bool() { return b; }
-    if let Some(i) = v.as_int() { return i != 0; }
-    if let Some(f) = v.as_float() { return f != 0.0; }
+    if let Some(b) = v.as_bool() {
+        return b;
+    }
+    if let Some(i) = v.as_int() {
+        return i != 0;
+    }
+    if let Some(f) = v.as_float() {
+        return f != 0.0;
+    }
     !v.is_none()
 }
 
 // ── Wave-9 extra dispatchers ──
 
-dispatch_unary!(dispatch_fabs,  mb_statistics_fabs);
-dispatch_unary!(dispatch_exp,   mb_statistics_exp);
-dispatch_unary!(dispatch_sqrt,  mb_statistics_sqrt);
-dispatch_unary!(dispatch_erf,   mb_statistics_erf);
-dispatch_unary!(dispatch_fsum,  mb_statistics_fsum);
+dispatch_unary!(dispatch_fabs, mb_statistics_fabs);
+dispatch_unary!(dispatch_exp, mb_statistics_exp);
+dispatch_unary!(dispatch_sqrt, mb_statistics_sqrt);
+dispatch_unary!(dispatch_erf, mb_statistics_erf);
+dispatch_unary!(dispatch_fsum, mb_statistics_fsum);
 
 /// log(x[, base]) — natural log if base omitted.
 unsafe extern "C" fn dispatch_log(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -497,7 +557,9 @@ unsafe extern "C" fn dispatch_repeat(args_ptr: *const MbValue, nargs: usize) -> 
     let val = a.get(0).copied().unwrap_or_else(MbValue::none);
     let times = a.get(1).and_then(|v| v.as_int()).unwrap_or(1) as usize;
     let mut out = Vec::with_capacity(times);
-    for _ in 0..times { out.push(val); }
+    for _ in 0..times {
+        out.push(val);
+    }
     MbValue::from_ptr(MbObject::new_list(out))
 }
 
@@ -524,7 +586,9 @@ unsafe extern "C" fn dispatch_reduce(args_ptr: *const MbValue, nargs: usize) -> 
 /// (`f = itemgetter(0)` then `f(seq)` later) is deferred.
 unsafe extern "C" fn dispatch_itemgetter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    if nargs < 2 { return MbValue::none(); }
+    if nargs < 2 {
+        return MbValue::none();
+    }
     let key = a[0];
     let seq = a[1];
     mb_statistics_itemgetter(key, seq)
@@ -534,10 +598,14 @@ unsafe extern "C" fn dispatch_itemgetter(args_ptr: *const MbValue, nargs: usize)
 /// matching CPython (`sigma must be non-negative`).
 unsafe extern "C" fn dispatch_normaldist(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    let mu = a.get(0).copied()
+    let mu = a
+        .get(0)
+        .copied()
         .and_then(|v| v.as_float().or_else(|| v.as_int().map(|i| i as f64)))
         .unwrap_or(0.0);
-    let sigma = a.get(1).copied()
+    let sigma = a
+        .get(1)
+        .copied()
         .and_then(|v| v.as_float().or_else(|| v.as_int().map(|i| i as f64)))
         .unwrap_or(1.0);
     if sigma < 0.0 {
@@ -559,7 +627,10 @@ fn class_token(name: &str, module: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(module.to_string())),
     );
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: name.to_string(),
             fields: RwLock::new(fields),
@@ -580,7 +651,10 @@ unsafe extern "C" fn dispatch_statistics_error(args_ptr: *const MbValue, nargs: 
     let msg = a.first().copied().unwrap_or_else(MbValue::none);
     let mut fields = FxHashMap::default();
     fields.insert("message".to_string(), msg);
-    fields.insert("args".to_string(), MbValue::from_ptr(MbObject::new_tuple(vec![msg])));
+    fields.insert(
+        "args".to_string(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![msg])),
+    );
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: AtomicU32::new(1),
@@ -601,12 +675,21 @@ pub fn register() {
         // Existing 18 numeric fns
         ("fmean", dispatch_fmean as *const () as usize),
         ("mean", dispatch_mean as *const () as usize),
-        ("geometric_mean", dispatch_geometric_mean as *const () as usize),
-        ("harmonic_mean", dispatch_harmonic_mean as *const () as usize),
+        (
+            "geometric_mean",
+            dispatch_geometric_mean as *const () as usize,
+        ),
+        (
+            "harmonic_mean",
+            dispatch_harmonic_mean as *const () as usize,
+        ),
         ("median", dispatch_median as *const () as usize),
         ("median_low", dispatch_median_low as *const () as usize),
         ("median_high", dispatch_median_high as *const () as usize),
-        ("median_grouped", dispatch_median_grouped as *const () as usize),
+        (
+            "median_grouped",
+            dispatch_median_grouped as *const () as usize,
+        ),
         ("mode", dispatch_mode as *const () as usize),
         ("multimode", dispatch_multimode as *const () as usize),
         ("pstdev", dispatch_pstdev as *const () as usize),
@@ -616,21 +699,24 @@ pub fn register() {
         ("quantiles", dispatch_quantiles as *const () as usize),
         ("covariance", dispatch_covariance as *const () as usize),
         ("correlation", dispatch_correlation as *const () as usize),
-        ("linear_regression", dispatch_linear_regression as *const () as usize),
+        (
+            "linear_regression",
+            dispatch_linear_regression as *const () as usize,
+        ),
         // Wave-9 additions: math re-exports
-        ("fabs",   dispatch_fabs   as *const () as usize),
-        ("exp",    dispatch_exp    as *const () as usize),
-        ("sqrt",   dispatch_sqrt   as *const () as usize),
-        ("erf",    dispatch_erf    as *const () as usize),
-        ("log",    dispatch_log    as *const () as usize),
-        ("hypot",  dispatch_hypot  as *const () as usize),
-        ("fsum",   dispatch_fsum   as *const () as usize),
+        ("fabs", dispatch_fabs as *const () as usize),
+        ("exp", dispatch_exp as *const () as usize),
+        ("sqrt", dispatch_sqrt as *const () as usize),
+        ("erf", dispatch_erf as *const () as usize),
+        ("log", dispatch_log as *const () as usize),
+        ("hypot", dispatch_hypot as *const () as usize),
+        ("fsum", dispatch_fsum as *const () as usize),
         ("sumprod", dispatch_sumprod as *const () as usize),
         // bisect re-exports
-        ("bisect_left",  dispatch_bisect_left  as *const () as usize),
+        ("bisect_left", dispatch_bisect_left as *const () as usize),
         ("bisect_right", dispatch_bisect_right as *const () as usize),
         // itertools re-exports
-        ("count",  dispatch_count  as *const () as usize),
+        ("count", dispatch_count as *const () as usize),
         ("repeat", dispatch_repeat as *const () as usize),
         ("groupby", dispatch_groupby as *const () as usize),
         // functools re-export
@@ -647,6 +733,16 @@ pub fn register() {
         });
     }
 
+    // NormalDist doubles as a class object: resolve_class_name must map the
+    // constructor dispatcher to "NormalDist" so classmethod dispatch
+    // (`NormalDist.from_samples(...)`) and isinstance checks see the class.
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(
+            dispatch_normaldist as *const () as u64,
+            "NormalDist".to_string(),
+        );
+    });
+
     // StatisticsError: a real exception class (re.error pattern). The name is a
     // callable constructor whose addr resolves to "StatisticsError" via
     // NATIVE_TYPE_NAMES (so `except`/`isinstance` match the raised instance,
@@ -654,12 +750,16 @@ pub fn register() {
     // seeds the BaseException chaining slots so `hasattr(StatisticsError,
     // "__cause__")` is True.
     let stat_err_addr = dispatch_statistics_error as *const () as usize;
-    attrs.insert("StatisticsError".to_string(), MbValue::from_func(stat_err_addr));
+    attrs.insert(
+        "StatisticsError".to_string(),
+        MbValue::from_func(stat_err_addr),
+    );
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(stat_err_addr as u64);
     });
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(stat_err_addr as u64, "StatisticsError".to_string());
+        m.borrow_mut()
+            .insert(stat_err_addr as u64, "StatisticsError".to_string());
     });
     {
         let mut slots: HashMap<String, MbValue> = HashMap::new();
@@ -668,18 +768,33 @@ pub fn register() {
         slots.insert("__context__".to_string(), slot);
         slots.insert("__suppress_context__".to_string(), slot);
         super::super::class::mb_class_register(
-            "StatisticsError", vec!["Exception".to_string()], slots);
+            "StatisticsError",
+            vec!["Exception".to_string()],
+            slots,
+        );
     }
     // Class tokens (Instance sentinels — see carve-outs).
-    attrs.insert("LinearRegression".to_string(), class_token("LinearRegression", "statistics"));
+    attrs.insert(
+        "LinearRegression".to_string(),
+        class_token("LinearRegression", "statistics"),
+    );
     attrs.insert("Fraction".to_string(), class_token("Fraction", "fractions"));
     attrs.insert("Decimal".to_string(), class_token("Decimal", "decimal"));
     attrs.insert("Counter".to_string(), class_token("Counter", "collections"));
-    attrs.insert("defaultdict".to_string(), class_token("defaultdict", "collections"));
-    attrs.insert("namedtuple".to_string(), class_token("namedtuple", "collections"));
+    attrs.insert(
+        "defaultdict".to_string(),
+        class_token("defaultdict", "collections"),
+    );
+    attrs.insert(
+        "namedtuple".to_string(),
+        class_token("namedtuple", "collections"),
+    );
 
     // Constants — math.tau re-export.
-    attrs.insert("tau".to_string(), MbValue::from_float(std::f64::consts::TAU));
+    attrs.insert(
+        "tau".to_string(),
+        MbValue::from_float(std::f64::consts::TAU),
+    );
 
     // Module re-export placeholders (None — surface parity for dir()).
     for sub in ["math", "numbers", "random", "sys"] {
@@ -691,22 +806,39 @@ pub fn register() {
     // each (GlobalsTest::test_check_all). `__doc__` is the module summary line
     // (GlobalsTest::test_meta only checks presence).
     let all_names = [
-        "NormalDist", "StatisticsError", "correlation", "covariance", "fmean",
-        "geometric_mean", "harmonic_mean", "linear_regression", "mean",
-        "median", "median_grouped", "median_high", "median_low", "mode",
-        "multimode", "pstdev", "pvariance", "quantiles", "stdev", "variance",
+        "NormalDist",
+        "StatisticsError",
+        "correlation",
+        "covariance",
+        "fmean",
+        "geometric_mean",
+        "harmonic_mean",
+        "linear_regression",
+        "mean",
+        "median",
+        "median_grouped",
+        "median_high",
+        "median_low",
+        "mode",
+        "multimode",
+        "pstdev",
+        "pvariance",
+        "quantiles",
+        "stdev",
+        "variance",
     ];
     attrs.insert(
         "__all__".to_string(),
         MbValue::from_ptr(MbObject::new_list(
-            all_names.iter().map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string()))).collect(),
+            all_names
+                .iter()
+                .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
+                .collect(),
         )),
     );
     attrs.insert(
         "__doc__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(
-            "Basic statistics module.".to_string(),
-        )),
+        MbValue::from_ptr(MbObject::new_str("Basic statistics module.".to_string())),
     );
 
     super::register_module("statistics", attrs);
@@ -748,7 +880,10 @@ pub fn mb_statistics_erf(x: MbValue) -> MbValue {
 
 /// log(x[, base]) — math.log re-export.
 pub fn mb_statistics_log(x: MbValue, base: Option<MbValue>) -> MbValue {
-    let f = match as_f64(x) { Some(v) if v > 0.0 => v, _ => return MbValue::none() };
+    let f = match as_f64(x) {
+        Some(v) if v > 0.0 => v,
+        _ => return MbValue::none(),
+    };
     match base.and_then(as_f64) {
         Some(b) if b > 0.0 && b != 1.0 => MbValue::from_float(f.ln() / b.ln()),
         Some(_) => MbValue::none(),
@@ -760,7 +895,9 @@ pub fn mb_statistics_log(x: MbValue, base: Option<MbValue>) -> MbValue {
 pub fn mb_statistics_hypot(args: &[MbValue]) -> MbValue {
     let mut s = 0.0f64;
     for v in args {
-        if let Some(f) = as_f64(*v) { s += f * f; }
+        if let Some(f) = as_f64(*v) {
+            s += f * f;
+        }
     }
     MbValue::from_float(s.sqrt())
 }
@@ -796,18 +933,29 @@ fn fsum_checked(v: &[f64]) -> Result<f64, ()> {
     let mut seen_pos_inf = false;
     let mut seen_neg_inf = false;
     for &x in v {
-        if x.is_nan() { seen_nan = true; }
-        else if x.is_infinite() {
-            if x > 0.0 { seen_pos_inf = true; } else { seen_neg_inf = true; }
+        if x.is_nan() {
+            seen_nan = true;
+        } else if x.is_infinite() {
+            if x > 0.0 {
+                seen_pos_inf = true;
+            } else {
+                seen_neg_inf = true;
+            }
         }
     }
     if seen_pos_inf && seen_neg_inf {
         raise_value_error("-inf + inf in fsum");
         return Err(());
     }
-    if seen_nan { return Ok(f64::NAN); }
-    if seen_pos_inf { return Ok(f64::INFINITY); }
-    if seen_neg_inf { return Ok(f64::NEG_INFINITY); }
+    if seen_nan {
+        return Ok(f64::NAN);
+    }
+    if seen_pos_inf {
+        return Ok(f64::INFINITY);
+    }
+    if seen_neg_inf {
+        return Ok(f64::NEG_INFINITY);
+    }
     // All finite — compensated (Neumaier) summation for precision.
     let mut sum = 0.0f64;
     let mut c = 0.0f64;
@@ -829,7 +977,9 @@ pub fn mb_statistics_sumprod(p: MbValue, q: MbValue) -> MbValue {
     let vq = extract_floats(q);
     let n = vp.len().min(vq.len());
     let mut s = 0.0f64;
-    for i in 0..n { s += vp[i] * vq[i]; }
+    for i in 0..n {
+        s += vp[i] * vq[i];
+    }
     // Preserve int if every input is int.
     if all_ints(p) && all_ints(q) && s.fract() == 0.0 {
         MbValue::from_int(s as i64)
@@ -841,12 +991,19 @@ pub fn mb_statistics_sumprod(p: MbValue, q: MbValue) -> MbValue {
 /// bisect_left(a, x) — index of first element >= x in a sorted sequence.
 pub fn mb_statistics_bisect_left(seq: MbValue, x: MbValue) -> MbValue {
     let v = extract_floats(seq);
-    let key = match as_f64(x) { Some(k) => k, None => return MbValue::from_int(0) };
+    let key = match as_f64(x) {
+        Some(k) => k,
+        None => return MbValue::from_int(0),
+    };
     let mut lo = 0usize;
     let mut hi = v.len();
     while lo < hi {
         let mid = (lo + hi) / 2;
-        if v[mid] < key { lo = mid + 1; } else { hi = mid; }
+        if v[mid] < key {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
     }
     MbValue::from_int(lo as i64)
 }
@@ -854,12 +1011,19 @@ pub fn mb_statistics_bisect_left(seq: MbValue, x: MbValue) -> MbValue {
 /// bisect_right(a, x) — index of first element > x in a sorted sequence.
 pub fn mb_statistics_bisect_right(seq: MbValue, x: MbValue) -> MbValue {
     let v = extract_floats(seq);
-    let key = match as_f64(x) { Some(k) => k, None => return MbValue::from_int(0) };
+    let key = match as_f64(x) {
+        Some(k) => k,
+        None => return MbValue::from_int(0),
+    };
     let mut lo = 0usize;
     let mut hi = v.len();
     while lo < hi {
         let mid = (lo + hi) / 2;
-        if key < v[mid] { hi = mid; } else { lo = mid + 1; }
+        if key < v[mid] {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
     }
     MbValue::from_int(lo as i64)
 }
@@ -873,10 +1037,14 @@ pub fn mb_statistics_reduce(seq: MbValue, initial: Option<MbValue>) -> MbValue {
             match &(*ptr).data {
                 ObjData::List(ref lock) => {
                     let g = lock.read().unwrap();
-                    if let Some(last) = g.last() { return *last; }
+                    if let Some(last) = g.last() {
+                        return *last;
+                    }
                 }
                 ObjData::Tuple(items) => {
-                    if let Some(last) = items.last() { return *last; }
+                    if let Some(last) = items.last() {
+                        return *last;
+                    }
                 }
                 _ => {}
             }
@@ -912,7 +1080,9 @@ pub fn mb_statistics_itemgetter(key: MbValue, seq: MbValue) -> MbValue {
                     if let Some(s_ptr) = key.as_ptr() {
                         if let ObjData::Str(ref s) = (*s_ptr).data {
                             let k = super::super::dict_ops::DictKey::Str(s.clone());
-                            if let Some(v) = g.get(&k) { return *v; }
+                            if let Some(v) = g.get(&k) {
+                                return *v;
+                            }
                         }
                     }
                 }
@@ -934,7 +1104,10 @@ pub fn mb_statistics_normaldist(mu: f64, sigma: f64) -> MbValue {
     fields.insert("stdev".to_string(), MbValue::from_float(sigma));
     fields.insert("variance".to_string(), MbValue::from_float(sigma * sigma));
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: "NormalDist".to_string(),
             fields: RwLock::new(fields),
@@ -945,12 +1118,145 @@ pub fn mb_statistics_normaldist(mu: f64, sigma: f64) -> MbValue {
 
 const SQRT2: f64 = std::f64::consts::SQRT_2;
 
+/// NormalDist arithmetic (CPython `__add__`/`__radd__`/`__sub__`/`__rsub__`/
+/// `__mul__`/`__rmul__`/`__truediv__`/`__neg__`): a constant translates or
+/// scales the distribution; adding/subtracting two NormalDists combines
+/// variances (sigma = hypot(s1, s2)). Returns None when neither operand is a
+/// NormalDist (caller falls through to its regular paths) or the shape is
+/// unsupported (e.g. `number / NormalDist`, which CPython leaves as TypeError).
+pub fn normaldist_binop(op: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
+    let pa = normaldist_params(a);
+    let pb = normaldist_params(b);
+    match (pa, pb) {
+        (None, None) => None,
+        (Some((m1, s1)), Some((m2, s2))) => match op {
+            "+" => Some(mb_statistics_normaldist(m1 + m2, s1.hypot(s2))),
+            "-" => Some(mb_statistics_normaldist(m1 - m2, s1.hypot(s2))),
+            _ => None,
+        },
+        (Some((m, s)), None) => {
+            let x = as_f64(b)?;
+            match op {
+                "+" => Some(mb_statistics_normaldist(m + x, s)),
+                "-" => Some(mb_statistics_normaldist(m - x, s)),
+                "*" => Some(mb_statistics_normaldist(m * x, s * x.abs())),
+                "/" => Some(mb_statistics_normaldist(m / x, s / x.abs())),
+                _ => None,
+            }
+        }
+        (None, Some((m, s))) => {
+            let x = as_f64(a)?;
+            match op {
+                // __radd__ / __rmul__ are symmetric; __rsub__ is -(self - x).
+                "+" => Some(mb_statistics_normaldist(x + m, s)),
+                "-" => Some(mb_statistics_normaldist(x - m, s)),
+                "*" => Some(mb_statistics_normaldist(x * m, s * x.abs())),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// -NormalDist — flipped mean, same sigma, fresh object. None for non-NormalDist.
+pub fn normaldist_neg(a: MbValue) -> Option<MbValue> {
+    let (m, s) = normaldist_params(a)?;
+    Some(mb_statistics_normaldist(-m, s))
+}
+
+/// CPython repr: `NormalDist(mu=100.0, sigma=15.0)`. None for non-NormalDist.
+pub fn normaldist_repr(recv: MbValue) -> Option<String> {
+    let (m, s) = normaldist_params(recv)?;
+    Some(format!(
+        "NormalDist(mu={}, sigma={})",
+        super::super::string_ops::python_float_repr(m),
+        super::super::string_ops::python_float_repr(s),
+    ))
+}
+
+/// NormalDist.from_samples(data) — fit (mean, sample stdev) from the data.
+pub fn mb_statistics_normaldist_from_samples(data: MbValue) -> MbValue {
+    let data = materialize_iterable(data);
+    let v = match extract_floats_checked(data) {
+        Ok(v) => v,
+        Err(()) => return MbValue::none(),
+    };
+    if v.len() < 2 {
+        return raise_stat_error("stdev requires at least two data points");
+    }
+    let (mean, m2) = welford_m_m2(&v);
+    let sigma = (m2 / (v.len() - 1) as f64).sqrt();
+    mb_statistics_normaldist(mean, sigma)
+}
+
+/// splitmix64 step — the deterministic PRNG behind NormalDist.samples().
+/// Not CPython's Mersenne Twister: the samples() contract under test is
+/// "same seed → identical sequence, different seed → different sequence,
+/// values are N(mu, sigma) floats", not bit-parity with CPython's stream.
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E3779B97F4A7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+    z ^ (z >> 31)
+}
+
+/// Uniform f64 in (0, 1) from one splitmix64 step (never exactly 0).
+fn prng_unit(state: &mut u64) -> f64 {
+    ((splitmix64(state) >> 11) as f64 + 1.0) / ((1u64 << 53) as f64 + 1.0)
+}
+
+thread_local! {
+    /// Entropy counter for seed=None — each unseeded samples() call gets a
+    /// fresh stream without consulting wall-clock time.
+    static SAMPLES_NONCE: std::cell::Cell<u64> = const { std::cell::Cell::new(0x5EED) };
+}
+
+/// Map a samples(seed=...) value to a PRNG state: int seeds use their value,
+/// strings hash via FNV-1a (so "alpha" != "beta"), None draws a fresh nonce.
+fn seed_to_state(seed: Option<MbValue>) -> u64 {
+    match seed {
+        None => SAMPLES_NONCE.with(|c| {
+            let v = c.get().wrapping_add(0x9E3779B97F4A7C15);
+            c.set(v);
+            v
+        }),
+        Some(v) if v.is_none() => seed_to_state(None),
+        Some(v) => {
+            if let Some(i) = v.as_int() {
+                return i as u64;
+            }
+            if let Some(f) = v.as_float() {
+                return f.to_bits();
+            }
+            if let Some(ptr) = v.as_ptr() {
+                unsafe {
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        let mut h: u64 = 0xcbf29ce484222325;
+                        for b in s.as_bytes() {
+                            h ^= *b as u64;
+                            h = h.wrapping_mul(0x100000001b3);
+                        }
+                        return h;
+                    }
+                }
+            }
+            0xDEFA017
+        }
+    }
+}
+
 /// Read the (mu, sigma) pair off a NormalDist Instance.
 fn normaldist_params(recv: MbValue) -> Option<(f64, f64)> {
     let ptr = recv.as_ptr()?;
     unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
-            if class_name != "NormalDist" { return None; }
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if class_name != "NormalDist" {
+                return None;
+            }
             let f = fields.read().unwrap();
             let mu = f.get("mu").and_then(|v| as_f64(*v)).unwrap_or(0.0);
             let sigma = f.get("sigma").and_then(|v| as_f64(*v)).unwrap_or(1.0);
@@ -966,21 +1272,30 @@ fn normal_dist_inv_cdf(p: f64, mu: f64, sigma: f64) -> f64 {
     let q = p - 0.5;
     if q.abs() <= 0.425 {
         let r = 0.180625 - q * q;
-        let num = (((((((2.5090809287301226727e+3 * r
-            + 3.3430575583581281105e+4) * r
-            + 6.7265770927008700853e+4) * r
-            + 4.5921953931549871457e+4) * r
-            + 1.3731693765509461125e+4) * r
-            + 1.9715909503065514427e+3) * r
-            + 1.3314166789178437745e+2) * r
-            + 3.3871328727963666080e+0) * q;
-        let den = (((((((5.2264952788528545610e+3 * r
-            + 2.8729085735721942674e+4) * r
-            + 3.9307895800092710610e+4) * r
-            + 2.1213794301586595867e+4) * r
-            + 5.3941960214247511077e+3) * r
-            + 6.8718700749205790830e+2) * r
-            + 4.2313330701600911252e+1) * r
+        let num = (((((((2.5090809287301226727e+3 * r + 3.3430575583581281105e+4) * r
+            + 6.7265770927008700853e+4)
+            * r
+            + 4.5921953931549871457e+4)
+            * r
+            + 1.3731693765509461125e+4)
+            * r
+            + 1.9715909503065514427e+3)
+            * r
+            + 1.3314166789178437745e+2)
+            * r
+            + 3.3871328727963666080e+0)
+            * q;
+        let den = (((((((5.2264952788528545610e+3 * r + 2.8729085735721942674e+4) * r
+            + 3.9307895800092710610e+4)
+            * r
+            + 2.1213794301586595867e+4)
+            * r
+            + 5.3941960214247511077e+3)
+            * r
+            + 6.8718700749205790830e+2)
+            * r
+            + 4.2313330701600911252e+1)
+            * r
             + 1.0);
         return mu + (num / den) * sigma;
     }
@@ -989,40 +1304,56 @@ fn normal_dist_inv_cdf(p: f64, mu: f64, sigma: f64) -> f64 {
     let x;
     if r <= 5.0 {
         r -= 1.6;
-        let num = (((((((7.7454501427834140764e-4 * r
-            + 2.2723844989269184583e-2) * r
-            + 2.4178072517745061177e-1) * r
-            + 1.2704582524523682585e+0) * r
-            + 3.6478483247632046050e+0) * r
-            + 5.7694972214606914055e+0) * r
-            + 4.6303378461565452959e+0) * r
+        let num = (((((((7.7454501427834140764e-4 * r + 2.2723844989269184583e-2) * r
+            + 2.4178072517745061177e-1)
+            * r
+            + 1.2704582524523682585e+0)
+            * r
+            + 3.6478483247632046050e+0)
+            * r
+            + 5.7694972214606914055e+0)
+            * r
+            + 4.6303378461565452959e+0)
+            * r
             + 1.4234371107496835773e+0);
-        let den = (((((((1.0507500716444168432e-9 * r
-            + 5.4759380849953449460e-4) * r
-            + 1.5198666563616457196e-2) * r
-            + 1.4810397642748007459e-1) * r
-            + 6.8976733498510000455e-1) * r
-            + 1.6763848301838038494e+0) * r
-            + 2.0531916266377588219e+0) * r
+        let den = (((((((1.0507500716444168432e-9 * r + 5.4759380849953449460e-4) * r
+            + 1.5198666563616457196e-2)
+            * r
+            + 1.4810397642748007459e-1)
+            * r
+            + 6.8976733498510000455e-1)
+            * r
+            + 1.6763848301838038494e+0)
+            * r
+            + 2.0531916266377588219e+0)
+            * r
             + 1.0);
         x = num / den;
     } else {
         r -= 5.0;
-        let num = (((((((2.0103343992922881326e-7 * r
-            + 2.7115555687434875782e-5) * r
-            + 1.2426609473880784386e-3) * r
-            + 2.6532189526576123093e-2) * r
-            + 2.9656057182850489123e-1) * r
-            + 1.7848265399172913358e+0) * r
-            + 5.4637849111641143699e+0) * r
+        let num = (((((((2.0103343992922881326e-7 * r + 2.7115555687434875782e-5) * r
+            + 1.2426609473880784386e-3)
+            * r
+            + 2.6532189526576123093e-2)
+            * r
+            + 2.9656057182850489123e-1)
+            * r
+            + 1.7848265399172913358e+0)
+            * r
+            + 5.4637849111641143699e+0)
+            * r
             + 6.6579046435011037772e+0);
-        let den = (((((((2.0442631033899397856e-15 * r
-            + 1.4215117583164458887e-7) * r
-            + 1.8463183175100546818e-5) * r
-            + 7.8686913114561325910e-4) * r
-            + 1.4875361290850614852e-2) * r
-            + 1.3692988092273580531e-1) * r
-            + 5.9983220655588793769e-1) * r
+        let den = (((((((2.0442631033899397856e-15 * r + 1.4215117583164458887e-7) * r
+            + 1.8463183175100546818e-5)
+            * r
+            + 7.8686913114561325910e-4)
+            * r
+            + 1.4875361290850614852e-2)
+            * r
+            + 1.3692988092273580531e-1)
+            * r
+            + 5.9983220655588793769e-1)
+            * r
             + 1.0);
         x = num / den;
     }
@@ -1068,8 +1399,8 @@ pub fn mb_statistics_normaldist_method(
                 return Some(raise_stat_error("pdf() not defined when sigma is zero"));
             }
             let diff = x - mu;
-            let val = (diff * diff / (-2.0 * variance)).exp()
-                / (std::f64::consts::TAU * variance).sqrt();
+            let val =
+                (diff * diff / (-2.0 * variance)).exp() / (std::f64::consts::TAU * variance).sqrt();
             Some(MbValue::from_float(val))
         }
         "inv_cdf" => {
@@ -1087,9 +1418,7 @@ pub fn mb_statistics_normaldist_method(
         }
         "zscore" => {
             if args.len() != 1 {
-                return Some(raise_type_error(
-                    "zscore() takes exactly one argument",
-                ));
+                return Some(raise_type_error("zscore() takes exactly one argument"));
             }
             let x = match as_f64(args[0]) {
                 Some(v) => v,
@@ -1113,6 +1442,47 @@ pub fn mb_statistics_normaldist_method(
             }
             Some(MbValue::from_ptr(MbObject::new_list(out)))
         }
+        "samples" => {
+            // samples(n, *, seed=None) — n gaussian draws. The seed kwarg
+            // arrives either as a trailing kwargs dict ({"seed": v}, the
+            // method-call convention) or as a flattened positional value.
+            let n = match args.first().and_then(|v| v.as_int()) {
+                Some(n) if n >= 0 => n as usize,
+                _ => {
+                    return Some(raise_type_error(
+                        "samples() requires a non-negative integer n",
+                    ))
+                }
+            };
+            let mut seed: Option<MbValue> = None;
+            for &arg in &args[1..] {
+                if let Some(ptr) = arg.as_ptr() {
+                    unsafe {
+                        if let ObjData::Dict(ref lock) = (*ptr).data {
+                            let g = lock.read().unwrap();
+                            let k = super::super::dict_ops::DictKey::Str("seed".to_string());
+                            if let Some(s) = g.get(&k) {
+                                seed = Some(*s);
+                            }
+                            continue;
+                        }
+                    }
+                }
+                seed = Some(arg);
+            }
+            let mut state = seed_to_state(seed);
+            // Box-Muller: two uniforms → one gaussian (cos branch only, so
+            // each draw consumes a fixed two PRNG steps — keeps same-seed
+            // streams aligned regardless of n).
+            let mut out = Vec::with_capacity(n);
+            for _ in 0..n {
+                let u1 = prng_unit(&mut state);
+                let u2 = prng_unit(&mut state);
+                let z = (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos();
+                out.push(MbValue::from_float(mu + sigma * z));
+            }
+            Some(MbValue::from_ptr(MbObject::new_list(out)))
+        }
         "overlap" => {
             // overlap(other) — overlapping coefficient. Out of scope for the
             // active fixtures; fall through.
@@ -1128,13 +1498,19 @@ pub fn mb_statistics_normaldist_method(
 /// `NormalDist().cdf(0.0)` rounds to exactly 0.5 and `inv_cdf(cdf(x))` round
 /// trips within 1e-9.
 fn erf_f64(x: f64) -> f64 {
-    if x.is_nan() { return x; }
+    if x.is_nan() {
+        return x;
+    }
     let absx = x.abs();
     if absx < 1.5 {
         m_erf_series(x)
     } else {
         let cf = m_erfc_contfrac(absx);
-        if x > 0.0 { 1.0 - cf } else { cf - 1.0 }
+        if x > 0.0 {
+            1.0 - cf
+        } else {
+            cf - 1.0
+        }
     }
 }
 
@@ -1143,13 +1519,19 @@ fn erf_f64(x: f64) -> f64 {
 /// dispatcher.
 #[allow(dead_code)]
 fn erfc_f64(x: f64) -> f64 {
-    if x.is_nan() { return x; }
+    if x.is_nan() {
+        return x;
+    }
     let absx = x.abs();
     if absx < 1.5 {
         1.0 - m_erf_series(x)
     } else {
         let cf = m_erfc_contfrac(absx);
-        if x > 0.0 { cf } else { 2.0 - cf }
+        if x > 0.0 {
+            cf
+        } else {
+            2.0 - cf
+        }
     }
 }
 
@@ -1188,8 +1570,12 @@ fn m_erfc_contfrac(x: f64) -> f64 {
         a += da;
         da += 2.0;
         let b = da + x2;
-        let temp = p; p = b * p - a * p_last; p_last = temp;
-        let temp = q; q = b * q - a * q_last; q_last = temp;
+        let temp = p;
+        p = b * p - a * p_last;
+        p_last = temp;
+        let temp = q;
+        q = b * q - a * q_last;
+        q_last = temp;
     }
     p / q * x * (-x2).exp() * TWOOPI / 2.0
 }
@@ -1197,36 +1583,86 @@ fn m_erfc_contfrac(x: f64) -> f64 {
 // ── Helpers ──
 
 fn as_f64(val: MbValue) -> Option<f64> {
-    if let Some(f) = val.as_float() { Some(f) }
-    else if let Some(i) = val.as_int() { Some(i as f64) }
-    else { None }
+    if let Some(f) = val.as_float() {
+        return Some(f);
+    }
+    // Decimal/Fraction are NaN-boxed int HANDLES (ids ≥ 2^40) — intercept
+    // them before the int readback or the handle id leaks as the value
+    // (`fmean([Decimal("3.5")])` returned ~7e13). See #2129 carve-out.
+    if super::super::builtins::is_decimal_handle_value(val) {
+        return super::decimal_mod::mb_decimal_float(val).as_float();
+    }
+    if super::super::builtins::is_fraction_handle_value(val) {
+        return super::fractions_mod::mb_fraction_float(val).as_float();
+    }
+    if let Some(i) = val.as_int() {
+        return Some(i as f64);
+    }
+    if let Some(b) = val.as_bool() {
+        return Some(if b { 1.0 } else { 0.0 });
+    }
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            // Instances supporting __float__ (user numeric types).
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let method = super::super::class::lookup_method(class_name, "__float__");
+                if !method.is_none() {
+                    let name = MbValue::from_ptr(MbObject::new_str("__float__".to_string()));
+                    let args = MbValue::from_ptr(MbObject::new_list(vec![]));
+                    return super::super::class::mb_call_method(val, name, args).as_float();
+                }
+                return None;
+            }
+            // BigInt → f64 (may saturate to inf, matching float() semantics).
+            if let Some(big) = super::super::bigint_ops::extract_bigint(val) {
+                use num_traits::ToPrimitive;
+                return big.to_f64();
+            }
+        }
+    }
+    None
 }
 
 /// Extract floats from list/tuple. Non-numeric items are skipped.
 fn extract_floats(seq: MbValue) -> Vec<f64> {
-    seq.as_ptr().map(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::List(ref lock) => lock.read().unwrap().iter().filter_map(|v| as_f64(*v)).collect(),
-            ObjData::Tuple(items) => items.iter().filter_map(|v| as_f64(*v)).collect(),
-            _ => Vec::new(),
-        }
-    }).unwrap_or_default()
+    seq.as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => lock
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|v| as_f64(*v))
+                    .collect(),
+                ObjData::Tuple(items) => items.iter().filter_map(|v| as_f64(*v)).collect(),
+                _ => Vec::new(),
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// Extract the raw MbValue elements of a list/tuple (no float coercion).
 /// Strings iterate per character (each char becomes a 1-char Str value),
 /// matching CPython's treatment of `mode("abc")` / `multimode("abc")`.
 fn extract_values(seq: MbValue) -> Vec<MbValue> {
-    seq.as_ptr().map(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::List(ref lock) => lock.read().unwrap().iter().copied().collect::<Vec<MbValue>>(),
-            ObjData::Tuple(items) => items.iter().copied().collect::<Vec<MbValue>>(),
-            ObjData::Str(ref s) => s.chars()
-                .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
-                .collect::<Vec<MbValue>>(),
-            _ => Vec::new(),
-        }
-    }).unwrap_or_default()
+    seq.as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => lock
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect::<Vec<MbValue>>(),
+                ObjData::Tuple(items) => items.iter().copied().collect::<Vec<MbValue>>(),
+                ObjData::Str(ref s) => s
+                    .chars()
+                    .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
+                    .collect::<Vec<MbValue>>(),
+                _ => Vec::new(),
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// Extract floats, raising TypeError on the first non-numeric element.
@@ -1250,24 +1686,35 @@ fn extract_floats_checked(seq: MbValue) -> Result<Vec<f64>, ()> {
 
 /// bool→f64 (True=1.0, False=0.0). Returns None for non-bool values.
 fn bool_as_f64(v: MbValue) -> Option<f64> {
-    if v.is_bool() { v.as_bool().map(|b| if b { 1.0 } else { 0.0 }) } else { None }
+    if v.is_bool() {
+        v.as_bool().map(|b| if b { 1.0 } else { 0.0 })
+    } else {
+        None
+    }
 }
 
 /// True if every element of the sequence is an int (no float) — used so
 /// odd-length median() preserves int return type.
 fn all_ints(seq: MbValue) -> bool {
-    seq.as_ptr().map(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::List(ref lock) => {
-                let g = lock.read().unwrap();
-                !g.is_empty() && g.iter().all(|v| v.as_int().is_some() && v.as_float().is_none())
+    seq.as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => {
+                    let g = lock.read().unwrap();
+                    !g.is_empty()
+                        && g.iter()
+                            .all(|v| v.as_int().is_some() && v.as_float().is_none())
+                }
+                ObjData::Tuple(items) => {
+                    !items.is_empty()
+                        && items
+                            .iter()
+                            .all(|v| v.as_int().is_some() && v.as_float().is_none())
+                }
+                _ => false,
             }
-            ObjData::Tuple(items) => {
-                !items.is_empty() && items.iter().all(|v| v.as_int().is_some() && v.as_float().is_none())
-            }
-            _ => false,
-        }
-    }).unwrap_or(false)
+        })
+        .unwrap_or(false)
 }
 
 /// Sort ascending; NaN treated as greater (stable behavior for sequences).
@@ -1309,8 +1756,13 @@ pub fn mb_statistics_fmean(data: MbValue) -> MbValue {
 /// weights this is the plain arithmetic mean. Uniform weights reproduce the
 /// unweighted mean (weights act as repetition counts).
 pub fn mb_statistics_fmean_weighted(data: MbValue, weights: Option<MbValue>) -> MbValue {
-    let v = match extract_floats_checked(data) { Ok(v) => v, Err(()) => return MbValue::none() };
-    if v.is_empty() { return raise_stat_error("fmean requires at least one data point"); }
+    let v = match extract_floats_checked(data) {
+        Ok(v) => v,
+        Err(()) => return MbValue::none(),
+    };
+    if v.is_empty() {
+        return raise_stat_error("fmean requires at least one data point");
+    }
     match weights {
         None => {
             // CPython: `total = fsum(data); return total / n`. fsum raises
@@ -1322,14 +1774,22 @@ pub fn mb_statistics_fmean_weighted(data: MbValue, weights: Option<MbValue>) -> 
             }
         }
         Some(w) => {
-            let wv = match extract_floats_checked(w) { Ok(wv) => wv, Err(()) => return MbValue::none() };
+            let wv = match extract_floats_checked(w) {
+                Ok(wv) => wv,
+                Err(()) => return MbValue::none(),
+            };
             if wv.len() != v.len() {
                 return raise_stat_error("data and weights must be the same length");
             }
             let mut num = 0.0f64;
             let mut den = 0.0f64;
-            for i in 0..v.len() { num += wv[i] * v[i]; den += wv[i]; }
-            if den == 0.0 { return raise_stat_error("sum of weights must be non-zero"); }
+            for i in 0..v.len() {
+                num += wv[i] * v[i];
+                den += wv[i];
+            }
+            if den == 0.0 {
+                return raise_stat_error("sum of weights must be non-zero");
+            }
             MbValue::from_float(num / den)
         }
     }
@@ -1337,8 +1797,13 @@ pub fn mb_statistics_fmean_weighted(data: MbValue, weights: Option<MbValue>) -> 
 
 /// mean(data) — float fast path; type-preserving variants deferred.
 pub fn mb_statistics_mean(data: MbValue) -> MbValue {
-    let v = match extract_floats_checked(data) { Ok(v) => v, Err(()) => return MbValue::none() };
-    if v.is_empty() { return raise_stat_error("mean requires at least one data point"); }
+    let v = match extract_floats_checked(data) {
+        Ok(v) => v,
+        Err(()) => return MbValue::none(),
+    };
+    if v.is_empty() {
+        return raise_stat_error("mean requires at least one data point");
+    }
     MbValue::from_float(welford_mean(&v))
 }
 
@@ -1355,8 +1820,13 @@ pub fn mb_statistics_mean(data: MbValue) -> MbValue {
 pub fn mb_statistics_geometric_mean(data: MbValue) -> MbValue {
     const MSG: &str = "geometric mean requires a non-empty dataset \
                        containing positive numbers";
-    let v = match extract_floats_checked(data) { Ok(v) => v, Err(()) => return MbValue::none() };
-    if v.is_empty() { return raise_stat_error(MSG); }
+    let v = match extract_floats_checked(data) {
+        Ok(v) => v,
+        Err(()) => return MbValue::none(),
+    };
+    if v.is_empty() {
+        return raise_stat_error(MSG);
+    }
     // `log(x)` raises a domain ValueError for x <= 0 (and for -inf, which is
     // < 0). NaN is *not* a domain error — it propagates. Detect any such
     // element and surface the wrapped StatisticsError.
@@ -1378,20 +1848,30 @@ pub fn mb_statistics_harmonic_mean(data: MbValue) -> MbValue {
 /// Unweighted (weights=None) is n/sum(1/x). Any zero data point makes the
 /// result 0.0; a negative value raises StatisticsError.
 pub fn mb_statistics_harmonic_mean_weighted(data: MbValue, weights: Option<MbValue>) -> MbValue {
-    let v = match extract_floats_checked(data) { Ok(v) => v, Err(()) => return MbValue::none() };
-    if v.is_empty() { return raise_stat_error("harmonic_mean requires at least one data point"); }
+    let v = match extract_floats_checked(data) {
+        Ok(v) => v,
+        Err(()) => return MbValue::none(),
+    };
+    if v.is_empty() {
+        return raise_stat_error("harmonic_mean requires at least one data point");
+    }
     if v.iter().any(|&x| x < 0.0) {
         return raise_stat_error("harmonic mean does not support negative values");
     }
     // CPython: any zero in the data -> harmonic mean is 0.
-    if v.iter().any(|&x| x == 0.0) { return MbValue::from_float(0.0); }
+    if v.iter().any(|&x| x == 0.0) {
+        return MbValue::from_float(0.0);
+    }
     match weights {
         None => {
             let inv_sum: f64 = v.iter().map(|x| 1.0 / x).sum();
             MbValue::from_float(v.len() as f64 / inv_sum)
         }
         Some(w) => {
-            let wv = match extract_floats_checked(w) { Ok(wv) => wv, Err(()) => return MbValue::none() };
+            let wv = match extract_floats_checked(w) {
+                Ok(wv) => wv,
+                Err(()) => return MbValue::none(),
+            };
             if wv.len() != v.len() {
                 return raise_stat_error("Number of weights does not match data size");
             }
@@ -1399,7 +1879,9 @@ pub fn mb_statistics_harmonic_mean_weighted(data: MbValue, weights: Option<MbVal
                 return raise_stat_error("harmonic mean does not support negative values");
             }
             let sum_w: f64 = wv.iter().sum();
-            if sum_w == 0.0 { return raise_stat_error("Weights sum to zero"); }
+            if sum_w == 0.0 {
+                return raise_stat_error("Weights sum to zero");
+            }
             let denom: f64 = (0..v.len()).map(|i| wv[i] / v[i]).sum();
             MbValue::from_float(sum_w / denom)
         }
@@ -1409,7 +1891,9 @@ pub fn mb_statistics_harmonic_mean_weighted(data: MbValue, weights: Option<MbVal
 /// median(data) — sort + middle. Type-preserves int for all-int odd-length input.
 pub fn mb_statistics_median(data: MbValue) -> MbValue {
     let v = sorted_floats(extract_floats(data));
-    if v.is_empty() { return raise_stat_error("no median for empty data"); }
+    if v.is_empty() {
+        return raise_stat_error("no median for empty data");
+    }
     let n = v.len();
     if n % 2 == 0 {
         MbValue::from_float((v[n / 2 - 1] + v[n / 2]) / 2.0)
@@ -1423,7 +1907,9 @@ pub fn mb_statistics_median(data: MbValue) -> MbValue {
 /// median_low(data) — lower-middle for even-length; same as median for odd.
 pub fn mb_statistics_median_low(data: MbValue) -> MbValue {
     let v = sorted_floats(extract_floats(data));
-    if v.is_empty() { return raise_stat_error("no median for empty data"); }
+    if v.is_empty() {
+        return raise_stat_error("no median for empty data");
+    }
     let n = v.len();
     let idx = if n % 2 == 0 { n / 2 - 1 } else { n / 2 };
     if all_ints(data) {
@@ -1436,7 +1922,9 @@ pub fn mb_statistics_median_low(data: MbValue) -> MbValue {
 /// median_high(data) — upper-middle for even-length; same as median for odd.
 pub fn mb_statistics_median_high(data: MbValue) -> MbValue {
     let v = sorted_floats(extract_floats(data));
-    if v.is_empty() { return raise_stat_error("no median for empty data"); }
+    if v.is_empty() {
+        return raise_stat_error("no median for empty data");
+    }
     let n = v.len();
     let idx = n / 2;
     if all_ints(data) {
@@ -1461,7 +1949,9 @@ pub fn mb_statistics_median_grouped(data: MbValue, interval: f64) -> MbValue {
     // Extract elements without float coercion so a non-numeric element can
     // surface the CPython TypeError rather than being silently dropped.
     let raw = extract_values(data);
-    if raw.is_empty() { return raise_stat_error("no median for empty data"); }
+    if raw.is_empty() {
+        return raise_stat_error("no median for empty data");
+    }
     // Coerce every element; a non-numeric one is a TypeError (CPython's
     // `float(x)` failure). bool counts as numeric.
     let mut v: Vec<f64> = Vec::with_capacity(raw.len());
@@ -1493,7 +1983,9 @@ pub fn mb_statistics_median_grouped(data: MbValue, interval: f64) -> MbValue {
 pub fn mb_statistics_mode(data: MbValue) -> MbValue {
     use super::super::dict_ops::to_dict_key;
     let vals = extract_values(data);
-    if vals.is_empty() { return raise_stat_error("no mode for empty data"); }
+    if vals.is_empty() {
+        return raise_stat_error("no mode for empty data");
+    }
     // Group by hash-key, tracking first-seen order, count, and a
     // representative value to return.
     let mut counts: HashMap<super::super::dict_ops::DictKey, usize> = HashMap::new();
@@ -1539,7 +2031,8 @@ pub fn mb_statistics_multimode(data: MbValue) -> MbValue {
         *e += 1;
     }
     let max_c = *counts.values().max().unwrap();
-    let result: Vec<MbValue> = order.iter()
+    let result: Vec<MbValue> = order
+        .iter()
         .filter(|k| counts[*k] == max_c)
         .map(|k| repr_val[k])
         .collect();
@@ -1549,7 +2042,9 @@ pub fn mb_statistics_multimode(data: MbValue) -> MbValue {
 /// pvariance(data) — population variance (divide by n).
 pub fn mb_statistics_pvariance(data: MbValue) -> MbValue {
     let v = extract_floats(data);
-    if v.is_empty() { return raise_stat_error("pvariance requires at least one data point"); }
+    if v.is_empty() {
+        return raise_stat_error("pvariance requires at least one data point");
+    }
     let (_, m2) = welford_m_m2(&v);
     MbValue::from_float(m2 / v.len() as f64)
 }
@@ -1557,7 +2052,9 @@ pub fn mb_statistics_pvariance(data: MbValue) -> MbValue {
 /// pstdev(data) — population standard deviation.
 pub fn mb_statistics_pstdev(data: MbValue) -> MbValue {
     let v = extract_floats(data);
-    if v.is_empty() { return raise_stat_error("pstdev requires at least one data point"); }
+    if v.is_empty() {
+        return raise_stat_error("pstdev requires at least one data point");
+    }
     let (_, m2) = welford_m_m2(&v);
     MbValue::from_float((m2 / v.len() as f64).sqrt())
 }
@@ -1565,7 +2062,9 @@ pub fn mb_statistics_pstdev(data: MbValue) -> MbValue {
 /// variance(data) — sample variance (divide by n-1; Bessel correction).
 pub fn mb_statistics_variance(data: MbValue) -> MbValue {
     let v = extract_floats(data);
-    if v.len() < 2 { return raise_stat_error("variance requires at least two data points"); }
+    if v.len() < 2 {
+        return raise_stat_error("variance requires at least two data points");
+    }
     let (_, m2) = welford_m_m2(&v);
     MbValue::from_float(m2 / (v.len() - 1) as f64)
 }
@@ -1573,17 +2072,23 @@ pub fn mb_statistics_variance(data: MbValue) -> MbValue {
 /// stdev(data) — sample standard deviation.
 pub fn mb_statistics_stdev(data: MbValue) -> MbValue {
     let v = extract_floats(data);
-    if v.len() < 2 { return raise_stat_error("stdev requires at least two data points"); }
+    if v.len() < 2 {
+        return raise_stat_error("stdev requires at least two data points");
+    }
     let (_, m2) = welford_m_m2(&v);
     MbValue::from_float((m2 / (v.len() - 1) as f64).sqrt())
 }
 
 /// quantiles(data, n=4, method="exclusive") — cut points dividing data into n bins.
 pub fn mb_statistics_quantiles(data: MbValue, n: i64, inclusive: bool) -> MbValue {
-    if n < 1 { return raise_stat_error("n must be at least 1"); }
+    if n < 1 {
+        return raise_stat_error("n must be at least 1");
+    }
     let v = sorted_floats(extract_floats(data));
     let ld = v.len();
-    if ld < 2 { return raise_stat_error("must have at least two data points"); }
+    if ld < 2 {
+        return raise_stat_error("must have at least two data points");
+    }
     let n_u = n as usize;
     let mut result: Vec<MbValue> = Vec::with_capacity(n_u - 1);
     if inclusive {
@@ -1602,7 +2107,13 @@ pub fn mb_statistics_quantiles(data: MbValue, n: i64, inclusive: bool) -> MbValu
             let j = j_full.floor() as usize;
             let delta = j_full - j as f64;
             // Exclusive uses 1-based indexing; floor down by 1 then interpolate.
-            let lo = if j == 0 { v[0] } else if j - 1 < ld { v[j - 1] } else { v[ld - 1] };
+            let lo = if j == 0 {
+                v[0]
+            } else if j - 1 < ld {
+                v[j - 1]
+            } else {
+                v[ld - 1]
+            };
             let hi = if j < ld { v[j] } else { v[ld - 1] };
             let interp = lo * (1.0 - delta) + hi * delta;
             result.push(MbValue::from_float(interp));
@@ -1616,10 +2127,14 @@ pub fn mb_statistics_covariance(x: MbValue, y: MbValue) -> MbValue {
     let vx = extract_floats(x);
     let vy = extract_floats(y);
     if vx.len() != vy.len() {
-        return raise_stat_error("covariance requires that both inputs have same number of data points");
+        return raise_stat_error(
+            "covariance requires that both inputs have same number of data points",
+        );
     }
     let n = vx.len();
-    if n < 2 { return raise_stat_error("covariance requires at least two data points"); }
+    if n < 2 {
+        return raise_stat_error("covariance requires at least two data points");
+    }
     let mx = welford_mean(&vx);
     let my = welford_mean(&vy);
     let mut s = 0.0f64;
@@ -1635,10 +2150,14 @@ pub fn mb_statistics_correlation(x: MbValue, y: MbValue, ranked: bool) -> MbValu
     let mut vx = extract_floats(x);
     let mut vy = extract_floats(y);
     if vx.len() != vy.len() {
-        return raise_stat_error("correlation requires that both inputs have same number of data points");
+        return raise_stat_error(
+            "correlation requires that both inputs have same number of data points",
+        );
     }
     let n = vx.len();
-    if n < 2 { return raise_stat_error("correlation requires at least two data points"); }
+    if n < 2 {
+        return raise_stat_error("correlation requires at least two data points");
+    }
     if ranked {
         vx = average_ranks(&vx);
         vy = average_ranks(&vy);
@@ -1668,15 +2187,23 @@ pub fn mb_statistics_correlation(x: MbValue, y: MbValue, ranked: bool) -> MbValu
 fn average_ranks(data: &[f64]) -> Vec<f64> {
     let n = data.len();
     let mut idx: Vec<usize> = (0..n).collect();
-    idx.sort_by(|&a, &b| data[a].partial_cmp(&data[b]).unwrap_or(std::cmp::Ordering::Equal));
+    idx.sort_by(|&a, &b| {
+        data[a]
+            .partial_cmp(&data[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut ranks = vec![0.0f64; n];
     let mut i = 0usize;
     while i < n {
         let mut j = i + 1;
-        while j < n && data[idx[j]] == data[idx[i]] { j += 1; }
+        while j < n && data[idx[j]] == data[idx[i]] {
+            j += 1;
+        }
         // Positions i..j (0-based) share rank = mean of (i+1 .. j) 1-based.
         let avg_rank = ((i + 1 + j) as f64) / 2.0;
-        for k in i..j { ranks[idx[k]] = avg_rank; }
+        for k in i..j {
+            ranks[idx[k]] = avg_rank;
+        }
         i = j;
     }
     ranks
@@ -1687,10 +2214,14 @@ pub fn mb_statistics_linear_regression(x: MbValue, y: MbValue, proportional: boo
     let vx = extract_floats(x);
     let vy = extract_floats(y);
     if vx.len() != vy.len() {
-        return raise_stat_error("linear regression requires that both inputs have same number of data points");
+        return raise_stat_error(
+            "linear regression requires that both inputs have same number of data points",
+        );
     }
     let n = vx.len();
-    if n < 2 { return raise_stat_error("linear regression requires at least two data points"); }
+    if n < 2 {
+        return raise_stat_error("linear regression requires at least two data points");
+    }
     let (slope, intercept) = if proportional {
         let mut num = 0.0f64;
         let mut den = 0.0f64;
@@ -1698,7 +2229,9 @@ pub fn mb_statistics_linear_regression(x: MbValue, y: MbValue, proportional: boo
             num += vx[i] * vy[i];
             den += vx[i] * vx[i];
         }
-        if den == 0.0 { return raise_stat_error("x is constant"); }
+        if den == 0.0 {
+            return raise_stat_error("x is constant");
+        }
         (num / den, 0.0)
     } else {
         let mx = welford_mean(&vx);
@@ -1710,7 +2243,9 @@ pub fn mb_statistics_linear_regression(x: MbValue, y: MbValue, proportional: boo
             sxx += dx * dx;
             sxy += dx * (vy[i] - my);
         }
-        if sxx == 0.0 { return raise_stat_error("x is constant"); }
+        if sxx == 0.0 {
+            return raise_stat_error("x is constant");
+        }
         let s = sxy / sxx;
         (s, my - s * mx)
     };
@@ -1722,9 +2257,9 @@ pub fn mb_statistics_linear_regression(x: MbValue, y: MbValue, proportional: boo
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::super::value::MbValue;
     use super::super::super::rc::MbObject;
+    use super::super::super::value::MbValue;
+    use super::*;
 
     fn make_int_list(items: &[i64]) -> MbValue {
         let vals: Vec<MbValue> = items.iter().map(|&i| MbValue::from_int(i)).collect();
@@ -1742,7 +2277,10 @@ mod tests {
 
     #[test]
     fn test_mean_basic() {
-        assert_eq!(mb_statistics_mean(make_int_list(&[1, 2, 3, 4, 5])).as_float(), Some(3.0));
+        assert_eq!(
+            mb_statistics_mean(make_int_list(&[1, 2, 3, 4, 5])).as_float(),
+            Some(3.0)
+        );
     }
 
     #[test]
@@ -1752,46 +2290,68 @@ mod tests {
 
     #[test]
     fn test_fmean_basic() {
-        assert_eq!(mb_statistics_fmean(make_float_list(&[1.5, 2.5, 3.5])).as_float(), Some(2.5));
+        assert_eq!(
+            mb_statistics_fmean(make_float_list(&[1.5, 2.5, 3.5])).as_float(),
+            Some(2.5)
+        );
     }
 
     #[test]
     fn test_median_odd_int_preserves_int() {
-        assert_eq!(mb_statistics_median(make_int_list(&[1, 3, 2])).as_int(), Some(2));
+        assert_eq!(
+            mb_statistics_median(make_int_list(&[1, 3, 2])).as_int(),
+            Some(2)
+        );
     }
 
     #[test]
     fn test_median_even() {
-        assert_eq!(mb_statistics_median(make_int_list(&[1, 2, 3, 4])).as_float(), Some(2.5));
+        assert_eq!(
+            mb_statistics_median(make_int_list(&[1, 2, 3, 4])).as_float(),
+            Some(2.5)
+        );
     }
 
     #[test]
     fn test_median_low_even() {
-        assert_eq!(mb_statistics_median_low(make_int_list(&[1, 2, 3, 4])).as_int(), Some(2));
+        assert_eq!(
+            mb_statistics_median_low(make_int_list(&[1, 2, 3, 4])).as_int(),
+            Some(2)
+        );
     }
 
     #[test]
     fn test_median_high_even() {
-        assert_eq!(mb_statistics_median_high(make_int_list(&[1, 2, 3, 4])).as_int(), Some(3));
+        assert_eq!(
+            mb_statistics_median_high(make_int_list(&[1, 2, 3, 4])).as_int(),
+            Some(3)
+        );
     }
 
     #[test]
     fn test_median_grouped_basic() {
         // CPython: statistics.median_grouped([1,2,2,3,4,4,4,4,4,5]) -> 3.7
-        let result = mb_statistics_median_grouped(make_int_list(&[1, 2, 2, 3, 4, 4, 4, 4, 4, 5]), 1.0);
+        let result =
+            mb_statistics_median_grouped(make_int_list(&[1, 2, 2, 3, 4, 4, 4, 4, 4, 5]), 1.0);
         let v = result.as_float().unwrap();
         assert!((v - 3.7).abs() < 1e-9, "got {}", v);
     }
 
     #[test]
     fn test_mode_basic() {
-        assert_eq!(mb_statistics_mode(make_int_list(&[1, 2, 2, 3])).as_int(), Some(2));
+        assert_eq!(
+            mb_statistics_mode(make_int_list(&[1, 2, 2, 3])).as_int(),
+            Some(2)
+        );
     }
 
     #[test]
     fn test_mode_first_occurrence_tiebreak() {
         // 1 and 2 both appear once first; tie → first-occurrence wins → 1.
-        assert_eq!(mb_statistics_mode(make_int_list(&[1, 2, 3, 2, 1])).as_int(), Some(1));
+        assert_eq!(
+            mb_statistics_mode(make_int_list(&[1, 2, 3, 2, 1])).as_int(),
+            Some(1)
+        );
     }
 
     #[test]
@@ -1804,7 +2364,9 @@ mod tests {
                 assert_eq!(g.len(), 2);
                 assert_eq!(g[0].as_int(), Some(1));
                 assert_eq!(g[1].as_int(), Some(2));
-            } else { panic!("expected list"); }
+            } else {
+                panic!("expected list");
+            }
         }
     }
 
@@ -1827,12 +2389,17 @@ mod tests {
     #[test]
     fn test_variance_basic() {
         // variance([2.0, 4.0]) = 2.0
-        assert_eq!(mb_statistics_variance(make_float_list(&[2.0, 4.0])).as_float(), Some(2.0));
+        assert_eq!(
+            mb_statistics_variance(make_float_list(&[2.0, 4.0])).as_float(),
+            Some(2.0)
+        );
     }
 
     #[test]
     fn test_stdev_basic() {
-        let v = mb_statistics_stdev(make_float_list(&[2.0, 4.0])).as_float().unwrap();
+        let v = mb_statistics_stdev(make_float_list(&[2.0, 4.0]))
+            .as_float()
+            .unwrap();
         assert!((v - 1.4142135623730951).abs() < 1e-9);
     }
 
@@ -1843,14 +2410,18 @@ mod tests {
 
     #[test]
     fn test_geometric_mean_basic() {
-        let v = mb_statistics_geometric_mean(make_float_list(&[1.0, 4.0])).as_float().unwrap();
+        let v = mb_statistics_geometric_mean(make_float_list(&[1.0, 4.0]))
+            .as_float()
+            .unwrap();
         assert!((v - 2.0).abs() < 1e-9);
     }
 
     #[test]
     fn test_harmonic_mean_basic() {
         // harmonic_mean([1, 2, 4]) = 12/7
-        let v = mb_statistics_harmonic_mean(make_float_list(&[1.0, 2.0, 4.0])).as_float().unwrap();
+        let v = mb_statistics_harmonic_mean(make_float_list(&[1.0, 2.0, 4.0]))
+            .as_float()
+            .unwrap();
         assert!((v - 12.0 / 7.0).abs() < 1e-9);
     }
 
@@ -1860,7 +2431,9 @@ mod tests {
         let v = mb_statistics_covariance(
             make_int_list(&[1, 2, 3, 4, 5]),
             make_int_list(&[2, 4, 6, 8, 10]),
-        ).as_float().unwrap();
+        )
+        .as_float()
+        .unwrap();
         assert!((v - 5.0).abs() < 1e-9);
     }
 
@@ -1870,7 +2443,9 @@ mod tests {
             make_int_list(&[1, 2, 3, 4, 5]),
             make_int_list(&[2, 4, 6, 8, 10]),
             false,
-        ).as_float().unwrap();
+        )
+        .as_float()
+        .unwrap();
         assert!((v - 1.0).abs() < 1e-9);
     }
 
@@ -1880,7 +2455,9 @@ mod tests {
             make_int_list(&[1, 2, 3, 4, 5]),
             make_int_list(&[10, 8, 6, 4, 2]),
             false,
-        ).as_float().unwrap();
+        )
+        .as_float()
+        .unwrap();
         assert!((v - (-1.0)).abs() < 1e-9);
     }
 
@@ -1898,7 +2475,9 @@ mod tests {
                 let intercept = t[1].as_float().unwrap();
                 assert!((slope - 2.0).abs() < 1e-9);
                 assert!(intercept.abs() < 1e-9);
-            } else { panic!("expected tuple"); }
+            } else {
+                panic!("expected tuple");
+            }
         }
     }
 
@@ -1915,7 +2494,9 @@ mod tests {
                 let intercept = t[1].as_float().unwrap();
                 assert!((slope - 2.0).abs() < 1e-9);
                 assert!(intercept.abs() < 1e-9);
-            } else { panic!("expected tuple"); }
+            } else {
+                panic!("expected tuple");
+            }
         }
     }
 
@@ -1930,7 +2511,9 @@ mod tests {
                 assert!((g[0].as_float().unwrap() - 2.5).abs() < 1e-9);
                 assert!((g[1].as_float().unwrap() - 5.0).abs() < 1e-9);
                 assert!((g[2].as_float().unwrap() - 7.5).abs() < 1e-9);
-            } else { panic!("expected list"); }
+            } else {
+                panic!("expected list");
+            }
         }
     }
 
@@ -1941,7 +2524,9 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     let f = fields.read().unwrap();
-                    if let Some(v) = f.get(field) { return *v; }
+                    if let Some(v) = f.get(field) {
+                        return *v;
+                    }
                 }
             }
         }
@@ -1952,44 +2537,65 @@ mod tests {
         instance.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 Some(class_name.clone())
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
     #[test]
     fn test_fabs_basic() {
-        assert_eq!(mb_statistics_fabs(MbValue::from_float(-3.5)).as_float(), Some(3.5));
-        assert_eq!(mb_statistics_fabs(MbValue::from_int(-7)).as_float(), Some(7.0));
+        assert_eq!(
+            mb_statistics_fabs(MbValue::from_float(-3.5)).as_float(),
+            Some(3.5)
+        );
+        assert_eq!(
+            mb_statistics_fabs(MbValue::from_int(-7)).as_float(),
+            Some(7.0)
+        );
     }
 
     #[test]
     fn test_exp_basic() {
         let v = mb_statistics_exp(MbValue::from_int(0)).as_float().unwrap();
         assert!((v - 1.0).abs() < 1e-9);
-        let v2 = mb_statistics_exp(MbValue::from_float(1.0)).as_float().unwrap();
+        let v2 = mb_statistics_exp(MbValue::from_float(1.0))
+            .as_float()
+            .unwrap();
         assert!((v2 - std::f64::consts::E).abs() < 1e-9);
     }
 
     #[test]
     fn test_sqrt_basic() {
-        assert_eq!(mb_statistics_sqrt(MbValue::from_int(16)).as_float(), Some(4.0));
+        assert_eq!(
+            mb_statistics_sqrt(MbValue::from_int(16)).as_float(),
+            Some(4.0)
+        );
         assert!(mb_statistics_sqrt(MbValue::from_float(-1.0)).is_none());
     }
 
     #[test]
     fn test_erf_basic() {
         // erf(0) == 0; erf(1) ~ 0.8427
-        let z = mb_statistics_erf(MbValue::from_float(0.0)).as_float().unwrap();
+        let z = mb_statistics_erf(MbValue::from_float(0.0))
+            .as_float()
+            .unwrap();
         assert!(z.abs() < 1e-6);
-        let one = mb_statistics_erf(MbValue::from_float(1.0)).as_float().unwrap();
+        let one = mb_statistics_erf(MbValue::from_float(1.0))
+            .as_float()
+            .unwrap();
         assert!((one - 0.8427007).abs() < 1e-4);
     }
 
     #[test]
     fn test_log_natural_and_base() {
-        let ln_e = mb_statistics_log(MbValue::from_float(std::f64::consts::E), None).as_float().unwrap();
+        let ln_e = mb_statistics_log(MbValue::from_float(std::f64::consts::E), None)
+            .as_float()
+            .unwrap();
         assert!((ln_e - 1.0).abs() < 1e-9);
-        let log2_8 = mb_statistics_log(MbValue::from_int(8), Some(MbValue::from_int(2))).as_float().unwrap();
+        let log2_8 = mb_statistics_log(MbValue::from_int(8), Some(MbValue::from_int(2)))
+            .as_float()
+            .unwrap();
         assert!((log2_8 - 3.0).abs() < 1e-9);
         assert!(mb_statistics_log(MbValue::from_int(0), None).is_none());
     }
@@ -1999,7 +2605,11 @@ mod tests {
         let args = vec![MbValue::from_int(3), MbValue::from_int(4)];
         let v = mb_statistics_hypot(&args).as_float().unwrap();
         assert!((v - 5.0).abs() < 1e-9);
-        let args3 = vec![MbValue::from_int(2), MbValue::from_int(3), MbValue::from_int(6)];
+        let args3 = vec![
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+            MbValue::from_int(6),
+        ];
         let v3 = mb_statistics_hypot(&args3).as_float().unwrap();
         assert!((v3 - 7.0).abs() < 1e-9);
     }
@@ -2007,43 +2617,59 @@ mod tests {
     #[test]
     fn test_fsum_precision() {
         // Classic compensated-sum test: [0.1; 10] sums to 1.0 cleanly.
-        let v = mb_statistics_fsum(make_float_list(&[0.1; 10])).as_float().unwrap();
+        let v = mb_statistics_fsum(make_float_list(&[0.1; 10]))
+            .as_float()
+            .unwrap();
         assert!((v - 1.0).abs() < 1e-15);
     }
 
     #[test]
     fn test_sumprod_basic() {
-        let v = mb_statistics_sumprod(
-            make_int_list(&[1, 2, 3]),
-            make_int_list(&[4, 5, 6]),
-        );
+        let v = mb_statistics_sumprod(make_int_list(&[1, 2, 3]), make_int_list(&[4, 5, 6]));
         // 1*4 + 2*5 + 3*6 = 32; int inputs → int result.
         assert_eq!(v.as_int(), Some(32));
     }
 
     #[test]
     fn test_sumprod_float() {
-        let v = mb_statistics_sumprod(
-            make_float_list(&[1.5, 2.5]),
-            make_float_list(&[2.0, 4.0]),
-        ).as_float().unwrap();
+        let v = mb_statistics_sumprod(make_float_list(&[1.5, 2.5]), make_float_list(&[2.0, 4.0]))
+            .as_float()
+            .unwrap();
         assert!((v - 13.0).abs() < 1e-9);
     }
 
     #[test]
     fn test_bisect_left_basic() {
         let seq = make_int_list(&[1, 3, 5, 7, 9]);
-        assert_eq!(mb_statistics_bisect_left(seq, MbValue::from_int(5)).as_int(), Some(2));
-        assert_eq!(mb_statistics_bisect_left(seq, MbValue::from_int(0)).as_int(), Some(0));
-        assert_eq!(mb_statistics_bisect_left(seq, MbValue::from_int(10)).as_int(), Some(5));
+        assert_eq!(
+            mb_statistics_bisect_left(seq, MbValue::from_int(5)).as_int(),
+            Some(2)
+        );
+        assert_eq!(
+            mb_statistics_bisect_left(seq, MbValue::from_int(0)).as_int(),
+            Some(0)
+        );
+        assert_eq!(
+            mb_statistics_bisect_left(seq, MbValue::from_int(10)).as_int(),
+            Some(5)
+        );
     }
 
     #[test]
     fn test_bisect_right_basic() {
         let seq = make_int_list(&[1, 3, 5, 7, 9]);
-        assert_eq!(mb_statistics_bisect_right(seq, MbValue::from_int(5)).as_int(), Some(3));
-        assert_eq!(mb_statistics_bisect_right(seq, MbValue::from_int(0)).as_int(), Some(0));
-        assert_eq!(mb_statistics_bisect_right(seq, MbValue::from_int(10)).as_int(), Some(5));
+        assert_eq!(
+            mb_statistics_bisect_right(seq, MbValue::from_int(5)).as_int(),
+            Some(3)
+        );
+        assert_eq!(
+            mb_statistics_bisect_right(seq, MbValue::from_int(0)).as_int(),
+            Some(0)
+        );
+        assert_eq!(
+            mb_statistics_bisect_right(seq, MbValue::from_int(10)).as_int(),
+            Some(5)
+        );
     }
 
     #[test]
@@ -2084,7 +2710,9 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref s) = (*name_ptr).data {
                 assert_eq!(s, "StatisticsError");
-            } else { panic!("expected Str"); }
+            } else {
+                panic!("expected Str");
+            }
         }
     }
 

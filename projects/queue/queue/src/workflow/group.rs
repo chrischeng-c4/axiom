@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::{Broker, ResultBackend, TaskError, TaskId, TaskMessage, TaskState};
 use super::{TaskOptions, TaskSignature};
+use crate::{Broker, ResultBackend, TaskError, TaskId, TaskMessage, TaskState};
 
 /// A group of tasks executed in parallel
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,10 +34,7 @@ impl Group {
     }
 
     /// Execute all tasks in parallel by publishing them to the broker
-    pub async fn apply_async<B: Broker>(
-        &self,
-        broker: &B,
-    ) -> Result<GroupResult, TaskError> {
+    pub async fn apply_async<B: Broker>(&self, broker: &B) -> Result<GroupResult, TaskError> {
         if self.tasks.is_empty() {
             return Err(TaskError::InvalidWorkflow(
                 "Group must have at least one task".to_string(),
@@ -110,17 +107,12 @@ impl GroupResult {
             match result_opt {
                 Some(result) => match result.state {
                     TaskState::Success => {
-                        final_results.push(
-                            result
-                                .result
-                                .clone()
-                                .ok_or_else(|| {
-                                    TaskError::Internal(format!(
-                                        "Task {} succeeded but has no result",
-                                        self.task_ids[i]
-                                    ))
-                                })?,
-                        );
+                        final_results.push(result.result.clone().ok_or_else(|| {
+                            TaskError::Internal(format!(
+                                "Task {} succeeded but has no result",
+                                self.task_ids[i]
+                            ))
+                        })?);
                     }
                     TaskState::Failure => {
                         return Err(TaskError::Internal(
@@ -139,21 +131,17 @@ impl GroupResult {
 
                         match task_result.state {
                             TaskState::Success => {
-                                final_results.push(
-                                    task_result.result.ok_or_else(|| {
-                                        TaskError::Internal(format!(
-                                            "Task {} succeeded but has no result",
-                                            self.task_ids[i]
-                                        ))
-                                    })?,
-                                );
+                                final_results.push(task_result.result.ok_or_else(|| {
+                                    TaskError::Internal(format!(
+                                        "Task {} succeeded but has no result",
+                                        self.task_ids[i]
+                                    ))
+                                })?);
                             }
                             TaskState::Failure => {
-                                return Err(TaskError::Internal(
-                                    task_result.error.unwrap_or_else(|| {
-                                        format!("Task {} failed", self.task_ids[i])
-                                    }),
-                                ));
+                                return Err(TaskError::Internal(task_result.error.unwrap_or_else(
+                                    || format!("Task {} failed", self.task_ids[i]),
+                                )));
                             }
                             _ => {
                                 return Err(TaskError::Internal(format!(
@@ -173,16 +161,12 @@ impl GroupResult {
 
                     match task_result.state {
                         TaskState::Success => {
-                            final_results.push(
-                                task_result
-                                    .result
-                                    .ok_or_else(|| {
-                                        TaskError::Internal(format!(
-                                            "Task {} succeeded but has no result",
-                                            self.task_ids[i]
-                                        ))
-                                    })?,
-                            );
+                            final_results.push(task_result.result.ok_or_else(|| {
+                                TaskError::Internal(format!(
+                                    "Task {} succeeded but has no result",
+                                    self.task_ids[i]
+                                ))
+                            })?);
                         }
                         TaskState::Failure => {
                             return Err(TaskError::Internal(
@@ -330,9 +314,10 @@ mod tests {
 
     #[test]
     fn test_single_task_group() {
-        let group = Group::new(vec![
-            TaskSignature::new("only_task", serde_json::json!(["data"])),
-        ]);
+        let group = Group::new(vec![TaskSignature::new(
+            "only_task",
+            serde_json::json!(["data"]),
+        )]);
         assert_eq!(group.tasks.len(), 1);
         assert_eq!(group.tasks[0].task_name, "only_task");
         assert_eq!(group.tasks[0].args, serde_json::json!(["data"]));
@@ -365,10 +350,10 @@ mod tests {
 
     #[test]
     fn test_group_tasks_with_individual_options() {
-        let sig = TaskSignature::new("task1", serde_json::json!([]))
-            .set_queue("task-specific-queue");
-        let group = Group::new(vec![sig])
-            .with_options(TaskOptions::new().with_queue("group-queue"));
+        let sig =
+            TaskSignature::new("task1", serde_json::json!([])).set_queue("task-specific-queue");
+        let group =
+            Group::new(vec![sig]).with_options(TaskOptions::new().with_queue("group-queue"));
         // Task-level and group-level queues are independent
         assert_eq!(
             group.tasks[0].options.queue,
@@ -537,14 +522,15 @@ mod tests {
 
     #[test]
     fn test_group_serde_with_complex_args() {
-        let tasks = vec![
-            TaskSignature::new("process", serde_json::json!([
+        let tasks = vec![TaskSignature::new(
+            "process",
+            serde_json::json!([
                 {"nested": {"deep": [1, 2, 3]}},
                 null,
                 "string_arg",
                 42.5
-            ])),
-        ];
+            ]),
+        )];
         let group = Group::new(tasks);
 
         let json = serde_json::to_string(&group).expect("serialize");

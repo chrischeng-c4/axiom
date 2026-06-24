@@ -75,7 +75,7 @@ definitions:
         x-rust-type: "BTreeMap<String, EcBinding>"
         x-serde-default: true
         x-serde-skip-if: "BTreeMap::is_empty"
-        description: "EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the EC manifest command. Declared before `workspaces`: contract before implementation."
+        description: "EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the generated EC case command in the aw.toml inventory. Declared before `workspaces`: contract before implementation."
       workspaces:
         type: array
         items:

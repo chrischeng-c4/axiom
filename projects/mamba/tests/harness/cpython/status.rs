@@ -238,7 +238,7 @@ rows = conn.execute(
 print(json.dumps([dict(row) for row in rows], sort_keys=True))
 "#;
     let db_arg = db.to_string_lossy().to_string();
-    let output = Command::new("python3")
+    let output = Command::new(common::python3_bin())
         .args(["-c", script, &db_arg])
         .output()
         .map_err(|err| format!("failed to run python sqlite query: {err}"))?;
@@ -381,11 +381,7 @@ fn first_import_module(text: &str) -> Option<String> {
             }
         }
         if let Some(rest) = line.strip_prefix("from ") {
-            let module = rest
-                .split(" import ")
-                .next()
-                .unwrap_or(rest)
-                .trim();
+            let module = rest.split(" import ").next().unwrap_or(rest).trim();
             if !module.is_empty() && !module.starts_with('.') {
                 return Some(module.to_string());
             }
@@ -409,7 +405,7 @@ for module in sys.argv[1:]:
     except Exception:
         print(module)
 "#;
-    let output = Command::new("python3")
+    let output = Command::new(common::python3_bin())
         .arg("-c")
         .arg(script)
         .args(modules.iter())
@@ -577,7 +573,10 @@ fn main() {
     println!("  invalid metadata: {}", fixtures.invalid_metadata);
     println!("  xfail empty/pass-intended: {}", fixtures.xfail_empty);
     println!("  xfail nonempty/mamba-gap: {}", fixtures.xfail_nonempty);
-    println!("  stale CPython subjects: {}", fixtures.stale_cpython_subjects);
+    println!(
+        "  stale CPython subjects: {}",
+        fixtures.stale_cpython_subjects
+    );
     println!("  by bucket: {:?}", fixtures.by_bucket);
     println!("  by dimension: {:?}", fixtures.by_dimension);
     println!("  perf pins: {}", perf.pins);

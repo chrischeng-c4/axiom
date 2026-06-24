@@ -1,11 +1,9 @@
 // Test to verify RevocationStore integration with Worker
 
-use cclab_queue::{
-    WorkerConfig, RevocationStore, TaskId, TaskError,
-};
-use std::sync::Arc;
 use async_trait::async_trait;
+use cclab_queue::{RevocationStore, TaskError, TaskId, WorkerConfig};
 use std::collections::HashSet;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 // Simple in-memory revocation store for testing

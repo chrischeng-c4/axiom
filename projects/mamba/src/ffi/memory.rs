@@ -2,7 +2,6 @@
 ///
 /// Tracks heap allocations crossing the FFI boundary and generates
 /// corresponding free/cleanup calls to prevent leaks.
-
 use super::c_types::CType;
 
 /// An allocation that crosses the FFI boundary and needs cleanup.

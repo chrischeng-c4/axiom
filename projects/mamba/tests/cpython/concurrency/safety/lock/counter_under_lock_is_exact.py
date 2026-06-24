@@ -9,6 +9,7 @@
 # case = "counter_under_lock_is_exact"
 # subject = "threading.Lock"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "concurrency_matrix.py (caller-locked compound op)"
 # status = "filled"

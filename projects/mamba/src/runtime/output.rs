@@ -6,7 +6,6 @@
 ///
 /// Generator threads use a shared capture buffer (from generator.rs) since
 /// they run on separate OS threads and don't share the caller's thread-local.
-
 use std::cell::RefCell;
 use std::io::Write;
 
@@ -92,9 +91,8 @@ pub fn end_capture(prev: Option<Vec<u8>>) -> String {
         *b = prev;
         result
     });
-    String::from_utf8(captured).unwrap_or_else(|e| {
-        String::from_utf8_lossy(&e.into_bytes()).into_owned()
-    })
+    String::from_utf8(captured)
+        .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned())
 }
 
 /// Write a string to the capture buffer if active, otherwise to stdout.
@@ -117,7 +115,9 @@ pub fn write_captured(s: &str) -> bool {
             false
         }
     });
-    if local { return true; }
+    if local {
+        return true;
+    }
     // Fallback: try generator shared capture buffer
     super::generator::write_shared_capture(s)
 }
@@ -140,7 +140,9 @@ pub fn writeln_captured(s: &str) -> bool {
             false
         }
     });
-    if local { return true; }
+    if local {
+        return true;
+    }
     // Fallback: try generator shared capture buffer
     let line = format!("{s}\n");
     super::generator::write_shared_capture(&line)

@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+# Production image for keep — downloads a PUBLISHED release binary (no source
+# tree, no Rust toolchain) into a distroless runtime. Tiny + minimal attack
+# surface (no shell/apt/curl in the final image). The sibling `Dockerfile` is
+# the from-source build for dev / CI.
+#
+#   docker build -f projects/keep/Dockerfile.release -t keep:0.4.0 \
+#     --build-arg KEEP_VERSION=keep@0.4.0 .
+#
+# The image arch (BuildKit TARGETARCH) selects the matching linux tarball:
+#   --platform linux/amd64 → x86_64-unknown-linux-gnu
+#   --platform linux/arm64 → aarch64-unknown-linux-gnu
+
+# ---- stage 1: fetch + verify the release binary (needs shell + curl) --------
+FROM debian:bookworm-slim AS fetch
+ARG KEEP_VERSION=keep@0.4.0
+ARG KEEP_REPO=chrischeng-c4/axiom
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) t=x86_64-unknown-linux-gnu ;; \
+      arm64) t=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    base="https://github.com/${KEEP_REPO}/releases/download/${KEEP_VERSION}"; \
+    curl -fsSL "${base}/keep-${t}.tar.gz"        -o /tmp/keep.tgz; \
+    curl -fsSL "${base}/keep-${t}.tar.gz.sha256" -o /tmp/keep.sha256; \
+    echo "$(cat /tmp/keep.sha256)  /tmp/keep.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/keep.tgz -C /tmp --strip-components=1 "keep-${t}/keep"; \
+    /tmp/keep --version
+
+# ---- stage 2: distroless runtime — only the binary + CA certs, nonroot -------
+FROM gcr.io/distroless/cc-debian12:nonroot
+COPY --chown=65532:65532 --from=fetch /tmp/keep /usr/local/bin/keep
+EXPOSE 7117
+ENTRYPOINT ["/usr/local/bin/keep"]

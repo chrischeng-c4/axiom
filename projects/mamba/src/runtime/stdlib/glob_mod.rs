@@ -80,9 +80,9 @@
 //!     that does `import glob; glob.os` is rare enough to defer to a
 //!     proper module-aliasing pass.
 
-use std::collections::HashMap;
-use super::super::value::MbValue;
 use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use std::collections::HashMap;
 
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
@@ -150,12 +150,12 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("glob",       dispatch_glob       as *const () as usize),
-        ("iglob",      dispatch_iglob      as *const () as usize),
-        ("has_magic",  dispatch_has_magic  as *const () as usize),
-        ("escape",     dispatch_escape     as *const () as usize),
-        ("glob0",      dispatch_glob0      as *const () as usize),
-        ("glob1",      dispatch_glob1      as *const () as usize),
+        ("glob", dispatch_glob as *const () as usize),
+        ("iglob", dispatch_iglob as *const () as usize),
+        ("has_magic", dispatch_has_magic as *const () as usize),
+        ("escape", dispatch_escape as *const () as usize),
+        ("glob0", dispatch_glob0 as *const () as usize),
+        ("glob1", dispatch_glob1 as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -173,7 +173,15 @@ pub fn register() {
         MbValue::from_ptr(MbObject::new_bytes(MAGIC_CHECK_PATTERN.as_bytes().to_vec())),
     );
 
-    for sub in ["contextlib", "fnmatch", "itertools", "os", "re", "stat", "sys"] {
+    for sub in [
+        "contextlib",
+        "fnmatch",
+        "itertools",
+        "os",
+        "re",
+        "stat",
+        "sys",
+    ] {
         attrs.insert(sub.to_string(), MbValue::none());
     }
 
@@ -184,7 +192,11 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -228,7 +240,7 @@ fn match_char_class(pat: &[char], pi: usize, ch: char) -> Option<(bool, usize)> 
         return None;
     }
     let class_end = j; // index of closing ']'
-    // Evaluate membership over pat[class_start..class_end].
+                       // Evaluate membership over pat[class_start..class_end].
     let mut matched = false;
     let members = &pat[class_start..class_end];
     let mut k = 0;
@@ -355,7 +367,11 @@ fn posix_join(a: &str, b: &str) -> String {
 /// glob's `_join`: if either side is empty, return the other untouched.
 fn glob_join(dirname: &str, basename: &str) -> String {
     if dirname.is_empty() || basename.is_empty() {
-        if dirname.is_empty() { basename.to_string() } else { dirname.to_string() }
+        if dirname.is_empty() {
+            basename.to_string()
+        } else {
+            dirname.to_string()
+        }
     } else {
         posix_join(dirname, basename)
     }
@@ -382,13 +398,19 @@ fn lexists(path: &str) -> bool {
 fn is_dir(path: &str) -> bool {
     // os.path.isdir: follows symlinks. Empty path means the current directory.
     let probe = if path.is_empty() { "." } else { path };
-    std::fs::metadata(probe).map(|m| m.is_dir()).unwrap_or(false)
+    std::fs::metadata(probe)
+        .map(|m| m.is_dir())
+        .unwrap_or(false)
 }
 
 /// `_listdir`: filenames inside `dirname`. `dironly` keeps directories only.
 /// Empty `dirname` means the current directory.
 fn list_dir(dirname: &str, dironly: bool) -> Vec<String> {
-    let probe = if dirname.is_empty() { ".".to_string() } else { dirname.to_string() };
+    let probe = if dirname.is_empty() {
+        ".".to_string()
+    } else {
+        dirname.to_string()
+    };
     let rd = match std::fs::read_dir(&probe) {
         Ok(rd) => rd,
         Err(_) => return Vec::new(),
@@ -403,9 +425,9 @@ fn list_dir(dirname: &str, dironly: bool) -> Vec<String> {
             // entry.is_dir() follows symlinks via file_type fallback to metadata.
             let is_d = match entry.file_type() {
                 Ok(ft) if ft.is_dir() => true,
-                Ok(ft) if ft.is_symlink() => {
-                    std::fs::metadata(entry.path()).map(|m| m.is_dir()).unwrap_or(false)
-                }
+                Ok(ft) if ft.is_symlink() => std::fs::metadata(entry.path())
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false),
                 _ => false,
             };
             if !is_d {
@@ -460,7 +482,11 @@ fn rlistdir(root_dir: &str, dirname: &str, dironly: bool, out: &mut Vec<String>)
             continue;
         }
         out.push(x.clone());
-        let path = if dirname.is_empty() { x.clone() } else { glob_join(dirname, &x) };
+        let path = if dirname.is_empty() {
+            x.clone()
+        } else {
+            glob_join(dirname, &x)
+        };
         let mut sub = Vec::new();
         rlistdir(root_dir, &path, dironly, &mut sub);
         for y in sub {
@@ -560,10 +586,14 @@ fn kwargs_from_args(args: &[MbValue]) -> (bool, Option<String>) {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(rv) = map.get(&super::super::dict_ops::DictKey::Str("recursive".to_string())) {
+                    if let Some(rv) = map.get(&super::super::dict_ops::DictKey::Str(
+                        "recursive".to_string(),
+                    )) {
                         recursive = mb_truthy(*rv);
                     }
-                    if let Some(rd) = map.get(&super::super::dict_ops::DictKey::Str("root_dir".to_string())) {
+                    if let Some(rd) = map.get(&super::super::dict_ops::DictKey::Str(
+                        "root_dir".to_string(),
+                    )) {
                         if let Some(s) = extract_str(*rd) {
                             root_dir = Some(s);
                         }
@@ -587,9 +617,27 @@ fn mb_truthy(v: MbValue) -> bool {
 }
 
 fn glob_list(args: &[MbValue]) -> MbValue {
-    let pat_str = match args.first().copied().and_then(extract_str) {
+    let pat = args.first().copied().unwrap_or_else(MbValue::none);
+    let pat_str = match extract_str(pat) {
         Some(s) => s,
-        None => return MbValue::from_ptr(MbObject::new_list(vec![])),
+        None => {
+            // A bytes pattern is valid in CPython (mamba doesn't model byte
+            // paths yet → empty result, no raise). Any other non-str pattern
+            // (int / None / float) is a TypeError, not a silent empty match.
+            let is_bytes = pat.as_ptr().map_or(false, |p| {
+                matches!(
+                    unsafe { &(*p).data },
+                    ObjData::Bytes(_) | ObjData::ByteArray(_)
+                )
+            });
+            if is_bytes {
+                return MbValue::from_ptr(MbObject::new_list(vec![]));
+            }
+            return raise_type_error(&format!(
+                "glob() argument must be str, bytes, or os.PathLike, not {}",
+                super::super::builtins::value_type_name(pat)
+            ));
+        }
     };
     let (recursive, root_dir) = kwargs_from_args(args);
     let root = root_dir.unwrap_or_default();
@@ -755,9 +803,15 @@ mod tests {
     fn test_posix_split() {
         // Mirrors os.path.split: rightmost '/', head keeps a trailing slash
         // only when it is all slashes (the root).
-        assert_eq!(posix_split("/home/user/*.txt"), ("/home/user".into(), "*.txt".into()));
+        assert_eq!(
+            posix_split("/home/user/*.txt"),
+            ("/home/user".into(), "*.txt".into())
+        );
         assert_eq!(posix_split("*.rs"), ("".into(), "*.rs".into()));
-        assert_eq!(posix_split("gtree/**/*.txt"), ("gtree/**".into(), "*.txt".into()));
+        assert_eq!(
+            posix_split("gtree/**/*.txt"),
+            ("gtree/**".into(), "*.txt".into())
+        );
         assert_eq!(posix_split("gtree//sub"), ("gtree".into(), "sub".into()));
         assert_eq!(posix_split("gtree/sub/"), ("gtree/sub".into(), "".into()));
         assert_eq!(posix_split("/"), ("/".into(), "".into()));
@@ -784,14 +838,14 @@ mod tests {
     #[test]
     fn test_has_magic_truth_table() {
         let cases: &[(&str, bool)] = &[
-            ("",            false),
-            ("plain.txt",   false),
-            ("a*",          true),
-            ("a?b",         true),
-            ("[abc]",       true),
-            ("path/to/x",   false),
-            ("path/to/*",   true),
-            ("trailing[",   true),
+            ("", false),
+            ("plain.txt", false),
+            ("a*", true),
+            ("a?b", true),
+            ("[abc]", true),
+            ("path/to/x", false),
+            ("path/to/*", true),
+            ("trailing[", true),
         ];
         for (input, want) in cases {
             let got = mb_glob_has_magic(s(input)).as_bool();
@@ -801,7 +855,10 @@ mod tests {
 
     #[test]
     fn test_has_magic_non_str_is_false() {
-        assert_eq!(mb_glob_has_magic(MbValue::from_int(7)).as_bool(), Some(false));
+        assert_eq!(
+            mb_glob_has_magic(MbValue::from_int(7)).as_bool(),
+            Some(false)
+        );
         assert_eq!(mb_glob_has_magic(MbValue::none()).as_bool(), Some(false));
     }
 
@@ -809,11 +866,17 @@ mod tests {
 
     #[test]
     fn test_escape_wraps_magic_chars() {
-        assert_eq!(get_str(mb_glob_escape(s("plain"))), Some("plain".to_string()));
+        assert_eq!(
+            get_str(mb_glob_escape(s("plain"))),
+            Some("plain".to_string())
+        );
         assert_eq!(get_str(mb_glob_escape(s("a*"))), Some("a[*]".to_string()));
         assert_eq!(get_str(mb_glob_escape(s("a?b"))), Some("a[?]b".to_string()));
         assert_eq!(get_str(mb_glob_escape(s("["))), Some("[[]".to_string()));
-        assert_eq!(get_str(mb_glob_escape(s("*?["))), Some("[*][?][[]".to_string()));
+        assert_eq!(
+            get_str(mb_glob_escape(s("*?["))),
+            Some("[*][?][[]".to_string())
+        );
     }
 
     #[test]
@@ -902,11 +965,13 @@ mod tests {
     #[test]
     fn test_register_wires_full_surface() {
         register();
-        let snap = super::super::super::module::NATIVE_FUNC_ADDRS
-            .with(|s| s.borrow().len());
+        let snap = super::super::super::module::NATIVE_FUNC_ADDRS.with(|s| s.borrow().len());
         // 6 dispatchers should each be registered; snapshot is monotonic
         // across the test process so we only assert presence is non-zero.
-        assert!(snap >= 6, "expected at least 6 native func addrs registered");
+        assert!(
+            snap >= 6,
+            "expected at least 6 native func addrs registered"
+        );
     }
 
     #[test]

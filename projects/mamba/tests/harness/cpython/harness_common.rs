@@ -42,6 +42,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 // ── mamba binary location ─────────────────────────────────────────
@@ -55,7 +56,9 @@ use std::time::{Duration, Instant};
 pub fn mamba_bin() -> PathBuf {
     option_env!("CARGO_BIN_EXE_mamba")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/mamba"))
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/mamba")
+        })
 }
 
 // ── recursive fixture collection ──────────────────────────────────
@@ -72,7 +75,17 @@ pub fn collect_files(root: &Path, suffix: &str) -> Vec<PathBuf> {
         for entry in entries {
             let path = entry.expect("read_dir entry").path();
             if path.is_dir() {
-                walk(out, &path, suffix);
+                // Hidden directories are never fixture trees — `.cache/`
+                // holds machine-local artifacts (results stores, the
+                // materialized oracle-env venv with thousands of .py files)
+                // that must not be collected.
+                let hidden = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().starts_with('.'))
+                    .unwrap_or(false);
+                if !hidden {
+                    walk(out, &path, suffix);
+                }
             } else if path.to_string_lossy().ends_with(suffix) {
                 out.push(path);
             }
@@ -115,20 +128,69 @@ pub fn fixture_sha256_opt(path: &Path) -> Option<String> {
     fixture_sha256(path).ok()
 }
 
+// ── oracle interpreter location ───────────────────────────────────
+//
+// `Command::new("python3")` re-resolves through $PATH on every spawn; on
+// pyenv machines that lands on the bash shim, which costs ~470ms/exec vs
+// ~25ms for the real binary (measured ~65% of a full conformance run).
+// Resolve the interpreter ONCE per harness process, in preference order:
+//
+//   1. `MAMBA_ORACLE_PYTHON` — explicit override, always wins.
+//   2. `tests/cpython/.cache/oracle-env/bin/python3` — the uv-materialized
+//      oracle environment (CPython 3.12 + the pinned 3p packages from
+//      tests/harness/cpython/config/oracle-env/requirements.txt), so
+//      3rd-libs fixtures can satisfy the "exits 0 under CPython" contract.
+//   3. The PATH-resolved `python3`'s own `sys.executable` (asked from the
+//      temp dir, matching the sandboxed fixture spawn context), falling
+//      back to plain "python3" (original PATH semantics) on any failure.
+pub fn python3_bin() -> &'static Path {
+    static PYTHON3: OnceLock<PathBuf> = OnceLock::new();
+    PYTHON3
+        .get_or_init(|| {
+            if let Ok(overridden) = std::env::var("MAMBA_ORACLE_PYTHON") {
+                let overridden = overridden.trim();
+                if !overridden.is_empty() {
+                    return PathBuf::from(overridden);
+                }
+            }
+            let oracle_env = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/cpython/.cache/oracle-env/bin/python3");
+            if oracle_env.is_file() {
+                return oracle_env;
+            }
+            let resolved = Command::new("python3")
+                .args(["-c", "import sys; print(sys.executable)"])
+                .current_dir(std::env::temp_dir())
+                .output();
+            match resolved {
+                Ok(out) if out.status.success() => {
+                    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if path.is_empty() {
+                        PathBuf::from("python3")
+                    } else {
+                        PathBuf::from(path)
+                    }
+                }
+                _ => PathBuf::from("python3"),
+            }
+        })
+        .as_path()
+}
+
 // ── python3 availability probes ───────────────────────────────────
 
-/// True iff `python3 --version` runs and exits 0.
+/// True iff the resolved oracle interpreter runs `--version` with exit 0.
 pub fn python3_available() -> bool {
-    Command::new("python3")
+    Command::new(python3_bin())
         .arg("--version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
-/// True iff `python3 -c "import <module>"` exits 0.
+/// True iff `<oracle python3> -c "import <module>"` exits 0.
 pub fn python3_can_import(module: &str) -> bool {
-    Command::new("python3")
+    Command::new(python3_bin())
         .args(["-c", &format!("import {module}")])
         .output()
         .map(|o| o.status.success())
@@ -156,8 +218,9 @@ pub enum WaitOutcome {
 /// that are non-numeric or `0` fall back to the supplied default. Callers
 /// with a fixed budget (e.g. lib_test.rs's 60s seed budget) use
 /// `TimeoutPolicy::fixed` and never read the env. The poll interval is
-/// per-policy so the runner's 20ms cadence and the seed runner's 50ms cadence
-/// are both preserved exactly.
+/// per-policy and acts as the CAP of an exponential backoff that starts at
+/// 1ms (see [`wait_with_timeout`]), so the runner's 20ms and the seed
+/// runner's 50ms remain each caller's worst-case cadence.
 #[derive(Clone, Copy)]
 pub struct TimeoutPolicy {
     timeout: Duration,
@@ -167,8 +230,9 @@ pub struct TimeoutPolicy {
 impl TimeoutPolicy {
     /// The single env-var lookup. Reads `var_name` as a positive `u64`
     /// seconds value, falling back to `default_secs` when unset, unparseable,
-    /// or `0`. The poll interval defaults to 20ms (the conformance runner's
-    /// cadence) and can be overridden with [`Self::with_poll_interval`].
+    /// or `0`. The poll-interval cap defaults to 20ms (the conformance
+    /// runner's historical cadence) and can be overridden with
+    /// [`Self::with_poll_interval`].
     pub fn from_env(var_name: &str, default_secs: u64) -> Self {
         let secs = std::env::var(var_name)
             .ok()
@@ -190,8 +254,8 @@ impl TimeoutPolicy {
         }
     }
 
-    /// Set the spawn-loop poll interval. Lets each caller preserve its
-    /// historical cadence (runner.rs = 20ms, lib_test.rs = 50ms).
+    /// Set the spawn-loop poll-interval cap. Lets each caller preserve its
+    /// historical worst-case cadence (runner.rs = 20ms, lib_test.rs = 50ms).
     pub fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
         self.poll_interval = poll_interval;
         self
@@ -202,7 +266,7 @@ impl TimeoutPolicy {
         self.timeout
     }
 
-    /// The poll interval between `try_wait` checks.
+    /// The cap on the backoff interval between `try_wait` checks.
     pub fn poll_interval(&self) -> Duration {
         self.poll_interval
     }
@@ -218,21 +282,40 @@ impl TimeoutPolicy {
 /// `wait_with_output` fails — i.e. the same `Err` cases the old loops
 /// surfaced. A normal exit yields `WaitOutcome::Finished`; an elapsed budget
 /// yields `WaitOutcome::TimedOut`.
-pub fn wait_with_timeout(
-    mut child: Child,
-    policy: TimeoutPolicy,
-) -> std::io::Result<WaitOutcome> {
+pub fn wait_with_timeout(mut child: Child, policy: TimeoutPolicy) -> std::io::Result<WaitOutcome> {
     let start = Instant::now();
+    // Exponential backoff from 1ms up to the policy's poll interval (the
+    // cap). A fixed 20ms cadence only observes exits on poll ticks, wasting
+    // ~10ms per child on average (most conformance children finish within a
+    // few tens of ms; two children per fixture ≈ 40-70s across a full run).
+    // Brief fast polling costs negligible harness CPU next to the children's
+    // own work, and the cap preserves each caller's historical worst-case
+    // cadence for long-running children.
+    let mut backoff = Duration::from_millis(1).min(policy.poll_interval);
     loop {
         match child.try_wait()? {
             Some(_status) => {
                 return Ok(WaitOutcome::Finished(child.wait_with_output()?));
             }
             None if start.elapsed() > policy.timeout => {
+                // Kill the child's whole process GROUP first (spawn sites
+                // place children in their own group via setpgid in pre_exec):
+                // a grandchild inheriting the stdout/stderr pipes would
+                // otherwise survive the child's kill and wait_with_output
+                // would block forever on pipes that never reach EOF. For
+                // children that are not group leaders the group kill fails
+                // harmlessly and the plain kill below still applies.
+                #[cfg(unix)]
+                unsafe {
+                    let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                }
                 let _ = child.kill();
                 return Ok(WaitOutcome::TimedOut(child.wait_with_output()?));
             }
-            None => std::thread::sleep(policy.poll_interval),
+            None => {
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(policy.poll_interval);
+            }
         }
     }
 }

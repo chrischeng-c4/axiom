@@ -1,10 +1,10 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// importlib module for Mamba (#655).
 ///
 /// Exposes Mamba's module import machinery as a Python-compatible API.
 /// Wraps the runtime/module.rs functions: import_module, reload, find_spec.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -67,6 +67,29 @@ pub fn register() {
 /// importlib.import_module(name, package=None) -> module
 /// Imports the named module, returning its namespace dict.
 pub fn mb_importlib_import_module(name: MbValue) -> MbValue {
+    // An empty module name is a ValueError (CPython: "Empty module name").
+    if let Some(ptr) = name.as_ptr() {
+        if let super::super::rc::ObjData::Str(ref s) = unsafe { &(*ptr).data } {
+            if s.is_empty() {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("Empty module name".to_string())),
+                );
+                return MbValue::none();
+            }
+            // A relative name ('.mod') needs the `package` argument, which this
+            // 1-arg form doesn't supply (CPython raises TypeError).
+            if s.starts_with('.') {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "the 'package' argument is required to perform a relative import for '{s}'"
+                    ))),
+                );
+                return MbValue::none();
+            }
+        }
+    }
     // Delegate to the runtime's mb_import
     super::super::module::mb_import(name)
 }
@@ -74,6 +97,17 @@ pub fn mb_importlib_import_module(name: MbValue) -> MbValue {
 /// importlib.reload(module) -> module
 /// Reloads the module from disk. For now, returns the existing module.
 pub fn mb_importlib_reload(module: MbValue) -> MbValue {
+    // reload() requires a module object (mamba models modules as dicts —
+    // ptr-backed). A primitive like reload(42) is a TypeError.
+    if module.as_ptr().is_none() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "reload() argument must be a module".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     module // Stub: return the module unchanged
 }
 
@@ -81,14 +115,19 @@ pub fn mb_importlib_reload(module: MbValue) -> MbValue {
 /// Returns a ModuleSpec if the module can be found, None otherwise.
 pub fn mb_importlib_find_spec(name: MbValue) -> MbValue {
     use super::super::rc::ObjData;
-    let module_name = name.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
-    }).unwrap_or_default();
+    let module_name = name
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
 
     // Check if module is registered
-    let found = super::super::module::MODULES.with(|mods| {
-        mods.borrow().contains_key(&module_name)
-    });
+    let found = super::super::module::MODULES.with(|mods| mods.borrow().contains_key(&module_name));
 
     if found {
         // Return a ModuleSpec-like dict
@@ -183,8 +222,12 @@ mod tests {
         let m = MbValue::from_ptr(MbObject::new_str("anything".to_string()));
         assert!(mb_importlib_reload(m).is_ptr());
         assert!(mb_importlib_find_loader(m).is_none());
-        for submod in [mb_importlib_util(), mb_importlib_abc(),
-                       mb_importlib_machinery(), mb_importlib_resources()] {
+        for submod in [
+            mb_importlib_util(),
+            mb_importlib_abc(),
+            mb_importlib_machinery(),
+            mb_importlib_resources(),
+        ] {
             assert!(submod.is_ptr(), "submodule stub should return a Dict ptr");
         }
     }

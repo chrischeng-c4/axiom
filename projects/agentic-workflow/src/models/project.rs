@@ -42,18 +42,18 @@ pub struct CodegenProfile {
 /// Binds one EC category to an external measurement/security tool (wi-13).
 /// The deterministic verify command is built by `EcBinding::command()`.
 /// A non-empty `command` overrides the tool default; otherwise project-health
-/// uses arena -> `arena run --spec <spec>`,
-/// rig -> `rig run --dir <dir>`, meter -> `meter run --target <meter>`,
-/// vat -> `vat run [runner]`, guard -> `guard scan <dir>`.
+/// uses rig -> `rig test --dir <dir>`, meter -> `meter run --target <meter>`,
+/// vat -> `vat run [runner]`, guard -> `guard scan <dir>`, and legacy arena
+/// bindings -> `arena run --spec <spec>`.
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/models/project.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EcBinding {
-    /// Which external tool verifies this category: `arena`, `rig`, `meter`, `vat`, or `guard`. Validated by the command builder, not serde — an unknown tool is a Failed EC command, not a parse error.
+    /// Which external tool verifies this category: `rig`, `meter`, `vat`, `guard`, or legacy `arena`. Validated by the command builder, not serde — an unknown tool is a Failed EC command, not a parse error.
     pub tool: String,
     /// Optional exact command override for local/repo-built tool paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
-    /// arena: comparison spec path -> `arena run --spec <spec>`.
+    /// legacy arena: comparison spec path -> `arena run --spec <spec>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec: Option<String>,
     /// rig: scenario directory -> `rig run --dir <dir>`; vat: optional runner id -> `vat run <dir>`; guard: scan target -> `guard scan <dir>`.
@@ -76,7 +76,7 @@ pub struct Project {
     /// Override for `.aw/tech-design` sub-path. Defaults to the discovered path when absent.
     #[serde(default, alias = "td_path", skip_serializing_if = "Option::is_none")]
     pub tech_design_dir: Option<String>,
-    /// EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the EC manifest command. Declared before `workspaces`: contract before implementation.
+    /// EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the generated EC case command in the aw.toml inventory. Declared before `workspaces`: contract before implementation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ec: BTreeMap<String, EcBinding>,
     /// Non-empty list of workspaces contained in this project.

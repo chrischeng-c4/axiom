@@ -6,7 +6,7 @@ user-invocable: true
 
 # /aw:cb-claim
 
-Adopt existing source code into the Agentic Workflow lifecycle. `aw cb claim`
+Adopt existing source code into the Agentic Workflow lifecycle. `aw td code-claim`
 runs the fillback pipeline on the supplied path, writes the generated
 TD spec to the configured `td_path` (`projects/agentic-workflow/tech-design/` for this project), and (when invoked inside an
 initialized git checkout) commits a `Lifecycle-Stage: Cb-Claim` trailer.
@@ -16,7 +16,7 @@ This is the canonical Phase 2 recovery verb for adopting existing source.
 ## Invocation
 
 ```bash
-aw cb claim <code-path> [--init] [--issue-stub] [--group <name>]
+aw td code-claim <code-path> [--init] [--issue-stub] [--group <name>]
 ```
 
 | Flag | Effect |
@@ -29,7 +29,7 @@ aw cb claim <code-path> [--init] [--issue-stub] [--group <name>]
 
 ```mermaid
 flowchart TB
-    Start[aw cb claim CODE_PATH] --> AW{.aw/ exists?}
+    Start[aw td code-claim CODE_PATH] --> AW{.aw/ exists?}
     AW -- no --> Init{--init?}
     Init -- yes --> CreateAw[Create .aw/]
     Init -- no --> Err1([exit 1: .aw/ missing])

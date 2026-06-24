@@ -5,13 +5,19 @@ use thiserror::Error;
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum ArrayError {
     #[error("Shape mismatch: expected {expected:?}, got {got:?}")]
-    ShapeMismatch { expected: Vec<usize>, got: Vec<usize> },
+    ShapeMismatch {
+        expected: Vec<usize>,
+        got: Vec<usize>,
+    },
 
     #[error("Cannot broadcast shapes {left:?} and {right:?}")]
     BroadcastError { left: Vec<usize>, right: Vec<usize> },
 
     #[error("Index {index:?} out of bounds for shape {shape:?}")]
-    IndexOutOfBounds { index: Vec<usize>, shape: Vec<usize> },
+    IndexOutOfBounds {
+        index: Vec<usize>,
+        shape: Vec<usize>,
+    },
 
     #[error("Invalid axis {axis} for array with {ndim} dimensions")]
     InvalidAxis { axis: usize, ndim: usize },

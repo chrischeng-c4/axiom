@@ -33,18 +33,18 @@
 //!   call (#2096 subset A); fine at small fixture sizes, bench
 //!   tier:compute hot loops should avoid bytes-return paths.
 
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // HANDWRITE-BEGIN
 
-use rand::RngCore;
-use sha1::{Sha1, Digest as Sha1Digest};
 use md5::Md5;
 use num_bigint::{BigInt, Sign};
 use num_traits::Signed;
+use rand::RngCore;
+use sha1::{Digest as Sha1Digest, Sha1};
 
 /// Handle IDs use a high range so they cannot collide with small
 /// literal ints (e.g. `0`, `1` returned from `UUID.version`). 48-bit
@@ -67,10 +67,15 @@ impl UuidState {
     fn variant_str(&self) -> &'static str {
         // CPython's `Variant` enum collapses to four strings.
         let b8 = self.bytes[8];
-        if b8 & 0x80 == 0 { "reserved for NCS compatibility" }
-        else if b8 & 0xC0 == 0x80 { "specified in RFC 4122" }
-        else if b8 & 0xE0 == 0xC0 { "reserved for Microsoft compatibility" }
-        else { "reserved for future definition" }
+        if b8 & 0x80 == 0 {
+            "reserved for NCS compatibility"
+        } else if b8 & 0xC0 == 0x80 {
+            "specified in RFC 4122"
+        } else if b8 & 0xE0 == 0xC0 {
+            "reserved for Microsoft compatibility"
+        } else {
+            "reserved for future definition"
+        }
     }
 
     fn to_hex(&self) -> String {
@@ -136,7 +141,10 @@ impl UuidState {
             t = rest;
         }
         let t = t.trim();
-        let t = t.strip_prefix('{').and_then(|x| x.strip_suffix('}')).unwrap_or(t);
+        let t = t
+            .strip_prefix('{')
+            .and_then(|x| x.strip_suffix('}'))
+            .unwrap_or(t);
         let cleaned: String = t.chars().filter(|c| *c != '-').collect();
         if cleaned.len() != 32 || !cleaned.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
@@ -215,9 +223,15 @@ pub fn is_uuid_handle(id: u64) -> bool {
 
 fn drop_uuid_handle(id: u64) {
     let bytes = UUIDS.with(|m| m.borrow().get(&id).map(|s| s.bytes));
-    UUIDS.with(|m| { m.borrow_mut().remove(&id); });
-    UUID_IDS.with(|s| { s.borrow_mut().remove(&id); });
-    UUID_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
+    UUIDS.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
+    UUID_IDS.with(|s| {
+        s.borrow_mut().remove(&id);
+    });
+    UUID_REFCOUNTS.with(|r| {
+        r.borrow_mut().remove(&id);
+    });
     if let Some(b) = bytes {
         UUID_INTERN.with(|m| {
             let mut map = m.borrow_mut();
@@ -268,9 +282,15 @@ fn make_handle(state: UuidState) -> MbValue {
         return MbValue::from_int(existing as i64);
     }
     let id = alloc_uuid_id();
-    UUIDS.with(|m| { m.borrow_mut().insert(id, state); });
-    UUID_IDS.with(|s| { s.borrow_mut().insert(id); });
-    UUID_INTERN.with(|m| { m.borrow_mut().insert(state.bytes, id); });
+    UUIDS.with(|m| {
+        m.borrow_mut().insert(id, state);
+    });
+    UUID_IDS.with(|s| {
+        s.borrow_mut().insert(id);
+    });
+    UUID_INTERN.with(|m| {
+        m.borrow_mut().insert(state.bytes, id);
+    });
     MbValue::from_int(id as i64)
 }
 
@@ -282,6 +302,50 @@ fn load(handle: MbValue) -> UuidState {
         }
     }
     UuidState { bytes: [0u8; 16] }
+}
+
+/// Mutate a live UUID handle's state in place (e.g. version override).
+fn with_state_mut(id: u64, f: impl FnOnce(&mut UuidState)) {
+    UUIDS.with(|m| {
+        if let Some(s) = m.borrow_mut().get_mut(&id) {
+            f(s);
+        }
+    });
+}
+
+/// uuid3/uuid5 namespace contract: CPython reads `namespace.bytes`, so a
+/// non-UUID namespace is an AttributeError. Returns false (after raising)
+/// when `namespace` is not a live UUID handle.
+fn require_uuid_namespace(namespace: MbValue) -> bool {
+    let ok = namespace
+        .as_int()
+        .is_some_and(|id| UUIDS.with(|m| m.borrow().contains_key(&(id as u64))));
+    if !ok {
+        let tn = if namespace.is_none() {
+            "NoneType"
+        } else if namespace.as_int().is_some() {
+            "int"
+        } else if namespace.is_float() {
+            "float"
+        } else if let Some(ptr) = namespace.as_ptr() {
+            unsafe {
+                match (*ptr).data {
+                    ObjData::Str(_) => "str",
+                    ObjData::Bytes(_) => "bytes",
+                    _ => "object",
+                }
+            }
+        } else {
+            "object"
+        };
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "'{tn}' object has no attribute 'bytes'"
+            ))),
+        );
+    }
+    ok
 }
 
 // ── Public surface — free fns used by both dispatchers and class.rs.
@@ -306,9 +370,10 @@ fn build_uuid1(node: u64, clock_seq: u16) -> MbValue {
     // 100-ns intervals between the Gregorian epoch (1582-10-15) and the
     // Unix epoch (1970-01-01): 0x01b21dd213814000.
     const GREGORIAN_OFFSET_100NS: u128 = 0x01b2_1dd2_1381_4000;
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    let unix_100ns = (now.as_secs() as u128) * 10_000_000
-        + (now.subsec_nanos() as u128) / 100;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let unix_100ns = (now.as_secs() as u128) * 10_000_000 + (now.subsec_nanos() as u128) / 100;
     // 60-bit timestamp.
     let ts = (unix_100ns + GREGORIAN_OFFSET_100NS) & ((1u128 << 60) - 1);
 
@@ -378,8 +443,7 @@ pub fn mb_uuid_uuid1_args(args: &[MbValue]) -> MbValue {
     }
 
     let node = node.unwrap_or_else(current_node);
-    let clock_seq = clock_seq
-        .unwrap_or_else(|| (rand::thread_rng().next_u32() & 0x3fff) as u16);
+    let clock_seq = clock_seq.unwrap_or_else(|| (rand::thread_rng().next_u32() & 0x3fff) as u16);
     build_uuid1(node, clock_seq)
 }
 
@@ -389,7 +453,9 @@ fn uuid1_kwargs(arg: MbValue) -> Option<(Option<u128>, Option<u128>)> {
     use num_traits::ToPrimitive;
     let ptr = arg.as_ptr()?;
     unsafe {
-        let ObjData::Dict(ref lock) = (*ptr).data else { return None; };
+        let ObjData::Dict(ref lock) = (*ptr).data else {
+            return None;
+        };
         let map = lock.read().unwrap();
         let read = |k: &str| -> Option<u128> {
             map.get(&DictKey::Str(k.to_string()))
@@ -403,6 +469,9 @@ fn uuid1_kwargs(arg: MbValue) -> Option<(Option<u128>, Option<u128>)> {
 
 /// `uuid.uuid3(namespace, name)` — MD5 hash of namespace.bytes + name.
 pub fn mb_uuid_uuid3(namespace: MbValue, name: MbValue) -> MbValue {
+    if !require_uuid_namespace(namespace) {
+        return MbValue::none();
+    }
     let ns = load(namespace);
     let mut hasher = Md5::new();
     hasher.update(ns.bytes);
@@ -416,6 +485,9 @@ pub fn mb_uuid_uuid3(namespace: MbValue, name: MbValue) -> MbValue {
 
 /// `uuid.uuid5(namespace, name)` — SHA-1 hash truncated to 16 bytes.
 pub fn mb_uuid_uuid5(namespace: MbValue, name: MbValue) -> MbValue {
+    if !require_uuid_namespace(namespace) {
+        return MbValue::none();
+    }
     let ns = load(namespace);
     let mut hasher = Sha1::new();
     hasher.update(ns.bytes);
@@ -516,36 +588,61 @@ fn uuid_from_kwargs_dict(arg: MbValue) -> Option<MbValue> {
     use super::super::dict_ops::DictKey;
     let ptr = arg.as_ptr()?;
     unsafe {
-        let ObjData::Dict(ref lock) = (*ptr).data else { return None; };
-        let map = lock.read().unwrap();
-        let get = |k: &str| -> Option<MbValue> {
-            map.get(&DictKey::Str(k.to_string())).copied()
+        let ObjData::Dict(ref lock) = (*ptr).data else {
+            return None;
         };
+        let map = lock.read().unwrap();
+        let get = |k: &str| -> Option<MbValue> { map.get(&DictKey::Str(k.to_string())).copied() };
+        // CPython: exactly ONE of hex/bytes/bytes_le/fields/int may be given.
+        let given = ["hex", "bytes", "bytes_le", "fields", "int"]
+            .iter()
+            .filter(|k| get(k).is_some())
+            .count();
+        if given > 1 {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "one of the hex, bytes, bytes_le, fields, or int arguments must be given"
+                        .to_string(),
+                )),
+            );
+            return Some(MbValue::none());
+        }
         if let Some(v) = get("hex") {
             return Some(construct_uuid_from_value(v));
         }
         if let Some(v) = get("bytes") {
             return Some(match bytes_arg(v) {
                 Some(state) => make_handle(state),
-                None => { raise_value_error("bytes is not a 16-char string"); MbValue::none() }
+                None => {
+                    raise_value_error("bytes is not a 16-char string");
+                    MbValue::none()
+                }
             });
         }
         if let Some(v) = get("bytes_le") {
             return Some(match bytes_arg(v) {
                 Some(mut state) => {
                     // bytes_le → canonical: undo the little-endian permutation.
-                    state.bytes.swap(0, 3); state.bytes.swap(1, 2);
+                    state.bytes.swap(0, 3);
+                    state.bytes.swap(1, 2);
                     state.bytes.swap(4, 5);
                     state.bytes.swap(6, 7);
                     make_handle(state)
                 }
-                None => { raise_value_error("bytes_le is not a 16-char string"); MbValue::none() }
+                None => {
+                    raise_value_error("bytes_le is not a 16-char string");
+                    MbValue::none()
+                }
             });
         }
         if let Some(v) = get("int") {
             return Some(match int_arg_bigint(v) {
                 Some(big) => uuid_from_int_value(&big),
-                None => { raise_value_error("int is not an integer"); MbValue::none() }
+                None => {
+                    raise_value_error("int is not an integer");
+                    MbValue::none()
+                }
             });
         }
         if let Some(v) = get("fields") {
@@ -567,17 +664,22 @@ fn uuid_from_fields(v: MbValue) -> MbValue {
         let items: Vec<MbValue> = match &(*ptr).data {
             ObjData::Tuple(t) => t.to_vec(),
             ObjData::List(l) => l.read().unwrap().to_vec(),
-            _ => { raise_value_error("fields is not a 6-tuple"); return MbValue::none(); }
+            _ => {
+                raise_value_error("fields is not a 6-tuple");
+                return MbValue::none();
+            }
         };
         if items.len() != 6 {
             raise_value_error("fields is not a 6-tuple");
             return MbValue::none();
         }
         let f = |i: usize| -> u128 {
-            int_arg_bigint(items[i]).and_then(|b| {
-                use num_traits::ToPrimitive;
-                b.to_u128()
-            }).unwrap_or(0)
+            int_arg_bigint(items[i])
+                .and_then(|b| {
+                    use num_traits::ToPrimitive;
+                    b.to_u128()
+                })
+                .unwrap_or(0)
         };
         let time_low = f(0) as u32;
         let time_mid = f(1) as u16;
@@ -627,14 +729,18 @@ fn bytes_arg(arg: MbValue) -> Option<UuidState> {
     unsafe {
         let slice: &[u8] = match &(*ptr).data {
             ObjData::Bytes(b) => b.as_slice(),
-            ObjData::ByteArray(b) => return {
-                let g = b.read().unwrap();
-                if g.len() == 16 {
-                    let mut bytes = [0u8; 16];
-                    bytes.copy_from_slice(&g);
-                    Some(UuidState { bytes })
-                } else { None }
-            },
+            ObjData::ByteArray(b) => {
+                return {
+                    let g = b.read().unwrap();
+                    if g.len() == 16 {
+                        let mut bytes = [0u8; 16];
+                        bytes.copy_from_slice(&g);
+                        Some(UuidState { bytes })
+                    } else {
+                        None
+                    }
+                }
+            }
             _ => return None,
         };
         if slice.len() == 16 {
@@ -686,9 +792,10 @@ pub fn mb_uuid_str(handle: MbValue) -> MbValue {
 }
 
 pub fn mb_uuid_urn(handle: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str(
-        format!("urn:uuid:{}", load(handle).to_canonical()),
-    ))
+    MbValue::from_ptr(MbObject::new_str(format!(
+        "urn:uuid:{}",
+        load(handle).to_canonical()
+    )))
 }
 
 pub fn mb_uuid_int_attr(handle: MbValue) -> MbValue {
@@ -713,8 +820,9 @@ fn field_int(value: u128) -> MbValue {
 
 pub fn mb_uuid_time_low(handle: MbValue) -> MbValue {
     let b = load(handle).bytes;
-    field_int(((b[0] as u128) << 24) | ((b[1] as u128) << 16)
-        | ((b[2] as u128) << 8) | (b[3] as u128))
+    field_int(
+        ((b[0] as u128) << 24) | ((b[1] as u128) << 16) | ((b[2] as u128) << 8) | (b[3] as u128),
+    )
 }
 
 pub fn mb_uuid_time_mid(handle: MbValue) -> MbValue {
@@ -737,9 +845,14 @@ pub fn mb_uuid_clock_seq_low(handle: MbValue) -> MbValue {
 
 pub fn mb_uuid_node(handle: MbValue) -> MbValue {
     let b = load(handle).bytes;
-    field_int(((b[10] as u128) << 40) | ((b[11] as u128) << 32)
-        | ((b[12] as u128) << 24) | ((b[13] as u128) << 16)
-        | ((b[14] as u128) << 8) | (b[15] as u128))
+    field_int(
+        ((b[10] as u128) << 40)
+            | ((b[11] as u128) << 32)
+            | ((b[12] as u128) << 24)
+            | ((b[13] as u128) << 16)
+            | ((b[14] as u128) << 8)
+            | (b[15] as u128),
+    )
 }
 
 /// `.clock_seq` — 14-bit clock sequence: low 6 bits of byte 8 (after
@@ -754,8 +867,8 @@ pub fn mb_uuid_clock_seq(handle: MbValue) -> MbValue {
 /// time_mid <<32 | time_low.
 pub fn mb_uuid_time(handle: MbValue) -> MbValue {
     let b = load(handle).bytes;
-    let time_low = ((b[0] as u128) << 24) | ((b[1] as u128) << 16)
-        | ((b[2] as u128) << 8) | (b[3] as u128);
+    let time_low =
+        ((b[0] as u128) << 24) | ((b[1] as u128) << 16) | ((b[2] as u128) << 8) | (b[3] as u128);
     let time_mid = ((b[4] as u128) << 8) | (b[5] as u128);
     let time_hi = (((b[6] as u128) & 0x0F) << 8) | (b[7] as u128);
     field_int((time_hi << 48) | (time_mid << 32) | time_low)
@@ -787,7 +900,8 @@ pub fn mb_uuid_bytes_attr(handle: MbValue) -> MbValue {
 pub fn mb_uuid_bytes_le_attr(handle: MbValue) -> MbValue {
     let s = load(handle);
     let mut out = s.bytes;
-    out.swap(0, 3); out.swap(1, 2);
+    out.swap(0, 3);
+    out.swap(1, 2);
     out.swap(4, 5);
     out.swap(6, 7);
     MbValue::from_ptr(MbObject::new_bytes(out.to_vec()))
@@ -825,7 +939,9 @@ fn with_str<R>(val: MbValue, f: impl FnOnce(&str) -> R) -> R {
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
-        unsafe extern "C" fn $name(_a: *const MbValue, _n: usize) -> MbValue { $fn() }
+        unsafe extern "C" fn $name(_a: *const MbValue, _n: usize) -> MbValue {
+            $fn()
+        }
     };
 }
 
@@ -868,9 +984,55 @@ dispatch_binary!(dispatch_uuid5, mb_uuid_uuid5);
 /// the type-dispatching constructor.
 unsafe extern "C" fn dispatch_UUID(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let arg = a.iter().copied().find(|v| !v.is_none())
-        .unwrap_or_else(MbValue::none);
-    mb_uuid_UUID(arg)
+    // `UUID(hexstr, version=N)`: a positional value plus a kwargs dict.
+    // Validate the version range BEFORE constructing (CPython raises
+    // ValueError('illegal version number') for version ∉ 1..=5).
+    let mut version: Option<i64> = None;
+    let mut positional: Option<MbValue> = None;
+    let mut kwargs_dict: Option<MbValue> = None;
+    for v in a.iter().copied() {
+        if v.is_none() {
+            continue;
+        }
+        let is_dict = v
+            .as_ptr()
+            .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) });
+        if is_dict {
+            kwargs_dict = Some(v);
+        } else if positional.is_none() {
+            positional = Some(v);
+        }
+    }
+    if let Some(kw) = kwargs_dict {
+        if let Some(ptr) = kw.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let map = lock.read().unwrap();
+                    if let Some(v) = map.get("version") {
+                        version = v.as_int();
+                    }
+                }
+            }
+        }
+    }
+    if let Some(ver) = version {
+        if !(1..=5).contains(&ver) {
+            raise_value_error("illegal version number");
+            return MbValue::none();
+        }
+    }
+    // Prefer the positional form; otherwise dispatch on the kwargs dict.
+    let arg = positional.or(kwargs_dict).unwrap_or_else(MbValue::none);
+    let result = mb_uuid_UUID(arg);
+    // Apply the requested version bits to the constructed UUID.
+    if let (Some(ver), Some(id)) = (version, result.as_int()) {
+        if is_uuid_handle(id as u64) {
+            with_state_mut(id as u64, |state| {
+                apply_version(&mut state.bytes, ver as u8)
+            });
+        }
+    }
+    result
 }
 dispatch_unary!(dispatch_from_int, mb_uuid_from_int);
 // Attribute-getter dispatchers, also exposed as module-level helpers
@@ -939,29 +1101,48 @@ pub fn register() {
     // type name to "UUID" (the class.rs isinstance arm then matches it
     // against uuid int handles), mirroring the hmac.HMAC pattern.
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(dispatch_UUID as usize as u64, "UUID".to_string());
+        m.borrow_mut()
+            .insert(dispatch_UUID as usize as u64, "UUID".to_string());
     });
 
     // Well-known namespace UUIDs (RFC 4122 Appendix C). These are
     // handle-bound — callers pass them to `uuid3` / `uuid5`.
-    attrs.insert("NAMESPACE_DNS".into(),
-        make_namespace("6ba7b8109dad11d180b400c04fd430c8"));
-    attrs.insert("NAMESPACE_URL".into(),
-        make_namespace("6ba7b8119dad11d180b400c04fd430c8"));
-    attrs.insert("NAMESPACE_OID".into(),
-        make_namespace("6ba7b8129dad11d180b400c04fd430c8"));
-    attrs.insert("NAMESPACE_X500".into(),
-        make_namespace("6ba7b8149dad11d180b400c04fd430c8"));
+    attrs.insert(
+        "NAMESPACE_DNS".into(),
+        make_namespace("6ba7b8109dad11d180b400c04fd430c8"),
+    );
+    attrs.insert(
+        "NAMESPACE_URL".into(),
+        make_namespace("6ba7b8119dad11d180b400c04fd430c8"),
+    );
+    attrs.insert(
+        "NAMESPACE_OID".into(),
+        make_namespace("6ba7b8129dad11d180b400c04fd430c8"),
+    );
+    attrs.insert(
+        "NAMESPACE_X500".into(),
+        make_namespace("6ba7b8149dad11d180b400c04fd430c8"),
+    );
 
     // Variant constants (CPython exposes as strings).
-    attrs.insert("RESERVED_NCS".into(),
-        MbValue::from_ptr(MbObject::new_str("reserved for NCS compatibility".into())));
-    attrs.insert("RFC_4122".into(),
-        MbValue::from_ptr(MbObject::new_str("specified in RFC 4122".into())));
-    attrs.insert("RESERVED_MICROSOFT".into(),
-        MbValue::from_ptr(MbObject::new_str("reserved for Microsoft compatibility".into())));
-    attrs.insert("RESERVED_FUTURE".into(),
-        MbValue::from_ptr(MbObject::new_str("reserved for future definition".into())));
+    attrs.insert(
+        "RESERVED_NCS".into(),
+        MbValue::from_ptr(MbObject::new_str("reserved for NCS compatibility".into())),
+    );
+    attrs.insert(
+        "RFC_4122".into(),
+        MbValue::from_ptr(MbObject::new_str("specified in RFC 4122".into())),
+    );
+    attrs.insert(
+        "RESERVED_MICROSOFT".into(),
+        MbValue::from_ptr(MbObject::new_str(
+            "reserved for Microsoft compatibility".into(),
+        )),
+    );
+    attrs.insert(
+        "RESERVED_FUTURE".into(),
+        MbValue::from_ptr(MbObject::new_str("reserved for future definition".into())),
+    );
 
     // SafeUUID emulation — CPython exposes an `enum.Enum` subclass with
     // three members (`safe = 0`, `unsafe = -1`, `unknown = None`). The
@@ -990,12 +1171,18 @@ pub fn register() {
             );
         }
     }
-    attrs.insert("SAFE_SAFE".into(),
-        MbValue::from_ptr(MbObject::new_str("safe".into())));
-    attrs.insert("SAFE_UNSAFE".into(),
-        MbValue::from_ptr(MbObject::new_str("unsafe".into())));
-    attrs.insert("SAFE_UNKNOWN".into(),
-        MbValue::from_ptr(MbObject::new_str("unknown".into())));
+    attrs.insert(
+        "SAFE_SAFE".into(),
+        MbValue::from_ptr(MbObject::new_str("safe".into())),
+    );
+    attrs.insert(
+        "SAFE_UNSAFE".into(),
+        MbValue::from_ptr(MbObject::new_str("unsafe".into())),
+    );
+    attrs.insert(
+        "SAFE_UNKNOWN".into(),
+        MbValue::from_ptr(MbObject::new_str("unknown".into())),
+    );
     attrs.insert("SafeUUID".into(), MbValue::from_ptr(safe_uuid));
 
     super::register_module("uuid", attrs);
@@ -1055,7 +1242,8 @@ mod tests {
     #[test]
     fn test_uuid3_deterministic() {
         let ns = mb_uuid_UUID(MbValue::from_ptr(MbObject::new_str(
-            "6ba7b8109dad11d180b400c04fd430c8".to_string())));
+            "6ba7b8109dad11d180b400c04fd430c8".to_string(),
+        )));
         let name = MbValue::from_ptr(MbObject::new_str("python.org".to_string()));
         let a = mb_uuid_uuid3(ns, name);
         let b = mb_uuid_uuid3(ns, name);
@@ -1066,35 +1254,44 @@ mod tests {
     #[test]
     fn test_uuid5_deterministic_and_known_vector() {
         let ns = mb_uuid_UUID(MbValue::from_ptr(MbObject::new_str(
-            "6ba7b8109dad11d180b400c04fd430c8".to_string())));
+            "6ba7b8109dad11d180b400c04fd430c8".to_string(),
+        )));
         let name = MbValue::from_ptr(MbObject::new_str("python.org".to_string()));
         let u = mb_uuid_uuid5(ns, name);
         // Known CPython vector verified against
         // `python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_DNS, 'python.org'))"`.
-        assert_eq!(str_of(mb_uuid_str(u)),
-            "886313e1-3b8a-5372-9b90-0c9aee199e5d");
+        assert_eq!(
+            str_of(mb_uuid_str(u)),
+            "886313e1-3b8a-5372-9b90-0c9aee199e5d"
+        );
         assert_eq!(mb_uuid_version_attr(u).as_int(), Some(5));
     }
 
     #[test]
     fn test_uuid_urn_format() {
         let u = mb_uuid_UUID(MbValue::from_ptr(MbObject::new_str(
-            "550e8400e29b41d4a716446655440000".to_string())));
-        assert_eq!(str_of(mb_uuid_urn(u)),
-            "urn:uuid:550e8400-e29b-41d4-a716-446655440000");
+            "550e8400e29b41d4a716446655440000".to_string(),
+        )));
+        assert_eq!(
+            str_of(mb_uuid_urn(u)),
+            "urn:uuid:550e8400-e29b-41d4-a716-446655440000"
+        );
     }
 
     #[test]
     fn test_uuid_bytes_attr() {
         let u = mb_uuid_UUID(MbValue::from_ptr(MbObject::new_str(
-            "00112233445566778899aabbccddeeff".to_string())));
+            "00112233445566778899aabbccddeeff".to_string(),
+        )));
         let b = mb_uuid_bytes_attr(u);
         unsafe {
             if let ObjData::Bytes(ref bv) = (*b.as_ptr().unwrap()).data {
                 assert_eq!(bv.len(), 16);
                 assert_eq!(bv[0], 0x00);
                 assert_eq!(bv[15], 0xff);
-            } else { panic!("expected Bytes"); }
+            } else {
+                panic!("expected Bytes");
+            }
         }
     }
 
@@ -1109,14 +1306,15 @@ mod tests {
     #[test]
     fn test_getnode_multicast_bit() {
         // CPython convention: synthetic node has multicast bit set.
-        let n = mb_uuid_getnode().as_int().unwrap();
-        assert_ne!(n & (1i64 << 40), 0);
+        // getnode() returns a BigInt when the 48-bit node exceeds the
+        // 47-bit inline range, so extract through the BigInt-aware path.
+        let n = int_arg_bigint(mb_uuid_getnode()).expect("getnode yields an int");
+        assert_ne!(n & BigInt::from(1u64 << 40), BigInt::from(0));
     }
 
     #[test]
     fn test_variant_rfc_4122() {
         let u = mb_uuid_uuid4();
-        assert_eq!(str_of(mb_uuid_variant_attr(u)),
-            "specified in RFC 4122");
+        assert_eq!(str_of(mb_uuid_variant_attr(u)), "specified in RFC 4122");
     }
 }

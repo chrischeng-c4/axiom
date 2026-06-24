@@ -2,7 +2,8 @@
 #
 # Defines the **required** real-world fixture set the MVP ecosystem gate
 # walks. Each entry must point at a `.py` file that already exists under
-# `tests/cpython/{category}/{module}/real_world/`. A
+# `tests/cpython/real_world/std-libs/{module}/` (stdlib) or
+# `tests/cpython/_regression/3rd-libs/{module}/real_world/` (3p). A
 # missing file = test failure (smoke gate enforces this).
 #
 # This file is the source of truth for "which real-world fixtures
@@ -24,7 +25,7 @@
 #   command                  = "mamba run <relpath>"             required, command worker should run
 #
 # - `fixture_id` is the TOML table key. Must be unique. The convention
-#   is `{category}-{module}-{file-stem}` (e.g. `stdlib-re-regex_logs`).
+#   is `{category}-{module}-{file-stem}` (e.g. `stdlib-re-apache_log_parsing`).
 # - `expected_outcome` (#2555) is one of:
 #     `pass`  — fixture must exit 0 on both interpreters; counts toward
 #               required pass tally.
@@ -54,156 +55,156 @@
 
 # ---------- stdlib required fixtures (already on disk) ----------
 
-[fixtures.stdlib-re-regex_logs]
+[fixtures.stdlib-re-apache_log_parsing]
 category = "stdlib"
 module = "re"
-relpath = "stdlib/re/real_world/regex_logs.py"
+relpath = "real_world/std-libs/re/apache_log_parsing.py"
 required_modules = ["re"]
 required_stdlib_modules = ["re"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/re/real_world/regex_logs.py"
+command = "mamba run tests/cpython/real_world/std-libs/re/apache_log_parsing.py"
 
-[fixtures.stdlib-re-re_behavioral]
+[fixtures.stdlib-re-api_surface_walkthrough]
 category = "stdlib"
 module = "re"
-relpath = "stdlib/re/real_world/re_behavioral.py"
+relpath = "real_world/std-libs/re/api_surface_walkthrough.py"
 required_modules = ["re"]
 required_stdlib_modules = ["re"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/re/real_world/re_behavioral.py"
+command = "mamba run tests/cpython/real_world/std-libs/re/api_surface_walkthrough.py"
 
-[fixtures.stdlib-base64-encode_payload]
+[fixtures.stdlib-base64-ascii_transport_round_trip]
 category = "stdlib"
 module = "base64"
-relpath = "stdlib/base64/real_world/encode_payload.py"
+relpath = "real_world/std-libs/base64/ascii_transport_round_trip.py"
 required_modules = ["base64"]
 required_stdlib_modules = ["base64"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/base64/real_world/encode_payload.py"
+command = "mamba run tests/cpython/real_world/std-libs/base64/ascii_transport_round_trip.py"
 
 [fixtures.stdlib-hashlib-sha256_artifact]
 category = "stdlib"
 module = "hashlib"
-relpath = "stdlib/hashlib/real_world/sha256_artifact.py"
+relpath = "real_world/std-libs/hashlib/sha256_artifact.py"
 required_modules = ["hashlib"]
 required_stdlib_modules = ["hashlib"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/hashlib/real_world/sha256_artifact.py"
+command = "mamba run tests/cpython/real_world/std-libs/hashlib/sha256_artifact.py"
 
 [fixtures.stdlib-hmac-api_request_signature]
 category = "stdlib"
 module = "hmac"
-relpath = "stdlib/hmac/real_world/api_request_signature.py"
+relpath = "real_world/std-libs/hmac/api_request_signature.py"
 required_modules = ["hashlib", "hmac"]
 required_stdlib_modules = ["hashlib", "hmac"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/hmac/real_world/api_request_signature.py"
+command = "mamba run tests/cpython/real_world/std-libs/hmac/api_request_signature.py"
 
 [fixtures.stdlib-secrets-session_token_signing]
 category = "stdlib"
 module = "secrets"
-relpath = "stdlib/secrets/real_world/session_token_signing.py"
+relpath = "real_world/std-libs/secrets/session_token_signing.py"
 required_modules = ["hashlib", "hmac", "secrets"]
 required_stdlib_modules = ["hashlib", "hmac", "secrets"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/secrets/real_world/session_token_signing.py"
+command = "mamba run tests/cpython/real_world/std-libs/secrets/session_token_signing.py"
 
 [fixtures.stdlib-struct-parse_wire_header]
 category = "stdlib"
 module = "struct"
-relpath = "stdlib/struct/real_world/parse_wire_header.py"
+relpath = "real_world/std-libs/struct/parse_wire_header.py"
 required_modules = ["struct"]
 required_stdlib_modules = ["struct"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/struct/real_world/parse_wire_header.py"
+command = "mamba run tests/cpython/real_world/std-libs/struct/parse_wire_header.py"
 
-[fixtures.stdlib-decimal-financial_calc]
+[fixtures.stdlib-decimal-financial_tax_running_total]
 category = "stdlib"
 module = "decimal"
-relpath = "stdlib/decimal/real_world/financial_calc.py"
+relpath = "real_world/std-libs/decimal/financial_tax_running_total.py"
 required_modules = ["decimal"]
 required_stdlib_modules = ["decimal"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/decimal/real_world/financial_calc.py"
+command = "mamba run tests/cpython/real_world/std-libs/decimal/financial_tax_running_total.py"
 
 [fixtures.stdlib-bisect-sorted_schedule]
 category = "stdlib"
 module = "bisect"
-relpath = "stdlib/bisect/real_world/sorted_schedule.py"
+relpath = "real_world/std-libs/bisect/sorted_schedule.py"
 required_modules = ["bisect"]
 required_stdlib_modules = ["bisect"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/bisect/real_world/sorted_schedule.py"
+command = "mamba run tests/cpython/real_world/std-libs/bisect/sorted_schedule.py"
 
 [fixtures.stdlib-heapq-top_k_stream]
 category = "stdlib"
 module = "heapq"
-relpath = "stdlib/heapq/real_world/top_k_stream.py"
+relpath = "real_world/std-libs/heapq/top_k_stream.py"
 required_modules = ["heapq"]
 required_stdlib_modules = ["heapq"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/heapq/real_world/top_k_stream.py"
+command = "mamba run tests/cpython/real_world/std-libs/heapq/top_k_stream.py"
 
 [fixtures.stdlib-array-typed_buffer_pipeline]
 category = "stdlib"
 module = "array"
-relpath = "stdlib/array/real_world/typed_buffer_pipeline.py"
+relpath = "real_world/std-libs/array/typed_buffer_pipeline.py"
 required_modules = ["array"]
 required_stdlib_modules = ["array"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/array/real_world/typed_buffer_pipeline.py"
+command = "mamba run tests/cpython/real_world/std-libs/array/typed_buffer_pipeline.py"
 
 [fixtures.stdlib-gzip-log_shipper_roundtrip]
 category = "stdlib"
 module = "gzip"
-relpath = "stdlib/gzip/real_world/log_shipper_roundtrip.py"
+relpath = "real_world/std-libs/gzip/log_shipper_roundtrip.py"
 required_modules = ["gzip"]
 required_stdlib_modules = ["gzip"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/gzip/real_world/log_shipper_roundtrip.py"
+command = "mamba run tests/cpython/real_world/std-libs/gzip/log_shipper_roundtrip.py"
 
 [fixtures.stdlib-bz2-archive_roundtrip]
 category = "stdlib"
 module = "bz2"
-relpath = "stdlib/bz2/real_world/archive_roundtrip.py"
+relpath = "real_world/std-libs/bz2/archive_roundtrip.py"
 required_modules = ["bz2"]
 required_stdlib_modules = ["bz2"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/bz2/real_world/archive_roundtrip.py"
+command = "mamba run tests/cpython/real_world/std-libs/bz2/archive_roundtrip.py"
 
 [fixtures.stdlib-lzma-archive_roundtrip]
 category = "stdlib"
 module = "lzma"
-relpath = "stdlib/lzma/real_world/archive_roundtrip.py"
+relpath = "real_world/std-libs/lzma/archive_roundtrip.py"
 required_modules = ["lzma"]
 required_stdlib_modules = ["lzma"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/lzma/real_world/archive_roundtrip.py"
+command = "mamba run tests/cpython/real_world/std-libs/lzma/archive_roundtrip.py"
 
 [fixtures.stdlib-keyword-lex_check]
 category = "stdlib"
 module = "keyword"
-relpath = "stdlib/keyword/real_world/lex_check.py"
+relpath = "real_world/std-libs/keyword/lex_check.py"
 required_modules = ["keyword"]
 required_stdlib_modules = ["keyword"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/keyword/real_world/lex_check.py"
+command = "mamba run tests/cpython/real_world/std-libs/keyword/lex_check.py"
 
 [fixtures.stdlib-keyword-lint_reserved_names]
 category = "stdlib"
 module = "keyword"
-relpath = "stdlib/keyword/real_world/lint_reserved_names.py"
+relpath = "real_world/std-libs/keyword/lint_reserved_names.py"
 required_modules = ["keyword"]
 required_stdlib_modules = ["keyword"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/stdlib/keyword/real_world/lint_reserved_names.py"
+command = "mamba run tests/cpython/real_world/std-libs/keyword/lint_reserved_names.py"
 
 # ---------- 3p required fixtures (already on disk) ----------
 
 [fixtures.3p-pytest-hello_assert]
 category = "3p"
 module = "pytest"
-relpath = "3p/pytest/real_world/hello_assert.py"
+relpath = "_regression/3rd-libs/pytest/real_world/hello_assert.py"
 required_modules = ["pytest"]
 # pytest's collector loads test files from a real on-disk path, so the
 # fixture writes one to a TemporaryDirectory. The load-bearing stdlib
@@ -214,12 +215,12 @@ required_modules = ["pytest"]
 # (pytest installs the hooks unconditionally).
 required_stdlib_modules = ["os", "tempfile", "importlib", "inspect", "pathlib", "traceback"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/pytest/real_world/hello_assert.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/pytest/real_world/hello_assert.py"
 
 [fixtures.3p-requests-local_adapter_roundtrip]
 category = "3p"
 module = "requests"
-relpath = "3p/requests/real_world/local_adapter_roundtrip.py"
+relpath = "_regression/3rd-libs/requests/real_world/local_adapter_roundtrip.py"
 required_modules = ["requests"]
 # requests mounts a custom transport adapter that intercepts the
 # send path before any urllib3 / network code runs. The load-bearing
@@ -229,12 +230,12 @@ required_modules = ["requests"]
 # parsing — requests still uses email.utils for date headers).
 required_stdlib_modules = ["io", "json", "urllib.parse", "http", "email"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/requests/real_world/local_adapter_roundtrip.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/requests/real_world/local_adapter_roundtrip.py"
 
 [fixtures.3p-click-greet_cli]
 category = "3p"
 module = "click"
-relpath = "3p/click/real_world/greet_cli.py"
+relpath = "_regression/3rd-libs/click/real_world/greet_cli.py"
 required_modules = ["click"]
 # click's CliRunner runs the parser and callback in-process and
 # captures stdout. The load-bearing stdlib deps for that path are
@@ -244,24 +245,24 @@ required_modules = ["click"]
 # help formatter at import time).
 required_stdlib_modules = ["io", "contextlib", "os", "sys", "shutil"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/click/real_world/greet_cli.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/click/real_world/greet_cli.py"
 
 [fixtures.3p-idna-encode_idn]
 category = "3p"
 module = "idna"
-relpath = "3p/idna/real_world/encode_idn.py"
+relpath = "_regression/3rd-libs/idna/real_world/encode_idn.py"
 required_modules = ["idna"]
 # idna 3.x in pure Python pulls in `unicodedata` + `re` + `bisect`
 # transitively. `unicodedata` is the load-bearing stdlib dep — without
 # it the package's IDNAError import path raises at import time.
 required_stdlib_modules = ["unicodedata", "re", "bisect"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/idna/real_world/encode_idn.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/idna/real_world/encode_idn.py"
 
 [fixtures.3p-flask-wsgi_hello]
 category = "3p"
 module = "flask"
-relpath = "3p/flask/real_world/wsgi_hello.py"
+relpath = "_regression/3rd-libs/flask/real_world/wsgi_hello.py"
 required_modules = ["flask"]
 # Flask 3.x's request/response machinery touches a wide stdlib surface
 # at import time. The load-bearing pieces for a single test-client
@@ -271,12 +272,12 @@ required_modules = ["flask"]
 # these the `app.test_client()` call cannot construct a response.
 required_stdlib_modules = ["io", "urllib.parse", "json", "typing", "datetime"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/flask/real_world/wsgi_hello.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/flask/real_world/wsgi_hello.py"
 
 [fixtures.3p-werkzeug-routing_map_dispatch]
 category = "3p"
 module = "werkzeug"
-relpath = "3p/werkzeug/real_world/routing_map_dispatch.py"
+relpath = "_regression/3rd-libs/werkzeug/real_world/routing_map_dispatch.py"
 required_modules = ["werkzeug"]
 # werkzeug.routing parses URL converter expressions via `re`, builds
 # rule tables out of `collections` containers, and raises HTTP errors
@@ -285,24 +286,24 @@ required_modules = ["werkzeug"]
 # evaluates.
 required_stdlib_modules = ["re", "collections", "http", "typing"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/werkzeug/real_world/routing_map_dispatch.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/werkzeug/real_world/routing_map_dispatch.py"
 
 [fixtures.3p-packaging-version_compare]
 category = "3p"
 module = "packaging"
-relpath = "3p/packaging/real_world/version_compare.py"
+relpath = "_regression/3rd-libs/packaging/real_world/version_compare.py"
 required_modules = ["packaging"]
 # packaging.version + packaging.specifiers are pure-Python and pull
 # in `re` (PEP 440 grammar), `itertools` (component normalization),
 # and `typing` at import time. No filesystem or network reach.
 required_stdlib_modules = ["re", "itertools", "typing"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/packaging/real_world/version_compare.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/packaging/real_world/version_compare.py"
 
 [fixtures.3p-pydantic-model_validate]
 category = "3p"
 module = "pydantic"
-relpath = "3p/pydantic/real_world/model_validate.py"
+relpath = "_regression/3rd-libs/pydantic/real_world/model_validate.py"
 required_modules = ["pydantic"]
 # pydantic 2.x's validator core is the Rust `pydantic-core` extension,
 # but the Python surface still touches `typing` (annotation parsing),
@@ -312,12 +313,12 @@ required_modules = ["pydantic"]
 # even loaded.
 required_stdlib_modules = ["typing", "dataclasses", "json", "enum", "decimal"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/pydantic/real_world/model_validate.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/pydantic/real_world/model_validate.py"
 
 [fixtures.3p-rich-render_record]
 category = "3p"
 module = "rich"
-relpath = "3p/rich/real_world/render_record.py"
+relpath = "_regression/3rd-libs/rich/real_world/render_record.py"
 required_modules = ["rich"]
 # rich's Console with record=True captures rendered output and strips
 # markup via export_text. The load-bearing stdlib surface is `io`
@@ -326,12 +327,12 @@ required_modules = ["rich"]
 # `dataclasses` (rich's Style + Segment internal records).
 required_stdlib_modules = ["io", "re", "os", "typing", "dataclasses"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/rich/real_world/render_record.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/rich/real_world/render_record.py"
 
 [fixtures.3p-jinja2-render_template]
 category = "3p"
 module = "jinja2"
-relpath = "3p/jinja2/real_world/render_template.py"
+relpath = "_regression/3rd-libs/jinja2/real_world/render_template.py"
 required_modules = ["jinja2"]
 # Jinja2's Environment + from_string path compiles the template
 # source to bytecode at runtime. The load-bearing stdlib surface is
@@ -341,12 +342,12 @@ required_modules = ["jinja2"]
 # stdlib reach is `html` (escape table) and `string` (Formatter).
 required_stdlib_modules = ["re", "ast", "inspect", "html", "string"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/jinja2/real_world/render_template.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/jinja2/real_world/render_template.py"
 
 [fixtures.3p-markupsafe-escape_concat]
 category = "3p"
 module = "markupsafe"
-relpath = "3p/markupsafe/real_world/escape_concat.py"
+relpath = "_regression/3rd-libs/markupsafe/real_world/escape_concat.py"
 required_modules = ["markupsafe"]
 # markupsafe has a pure-python fast-path and an optional C accelerator
 # (`markupsafe._speedups`). The pure-python escape table is built off
@@ -356,12 +357,12 @@ required_modules = ["markupsafe"]
 # (pure-python path is functionally identical).
 required_stdlib_modules = ["html", "string", "typing"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/markupsafe/real_world/escape_concat.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/markupsafe/real_world/escape_concat.py"
 
 [fixtures.3p-numpy-array_smoke]
 category = "3p"
 module = "numpy"
-relpath = "3p/numpy/real_world/array_smoke.py"
+relpath = "_regression/3rd-libs/numpy/real_world/array_smoke.py"
 required_modules = ["numpy"]
 # numpy is a C-extension package; the load-bearing stdlib reach is
 # small relative to its C core (`importlib` for the import machinery
@@ -373,12 +374,12 @@ required_modules = ["numpy"]
 required_stdlib_modules = ["importlib", "os", "sys", "warnings"]
 expected_outcome = "xfail"
 blocker = "#2526 mamba native-extension loader not ready for numpy C core"
-command = "mamba run tests/cpython/3p/numpy/real_world/array_smoke.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/numpy/real_world/array_smoke.py"
 
 [fixtures.3p-pandas-dataframe_smoke]
 category = "3p"
 module = "pandas"
-relpath = "3p/pandas/real_world/dataframe_smoke.py"
+relpath = "_regression/3rd-libs/pandas/real_world/dataframe_smoke.py"
 required_modules = ["pandas"]
 # pandas transitively requires the numpy C core plus its own C
 # extensions; xfail is gated on the same native-extension loader
@@ -389,12 +390,12 @@ required_modules = ["pandas"]
 required_stdlib_modules = ["importlib", "datetime", "decimal", "os", "sys", "warnings"]
 expected_outcome = "xfail"
 blocker = "#2526 mamba native-extension loader not ready for pandas C extensions (transitively requires numpy C core)"
-command = "mamba run tests/cpython/3p/pandas/real_world/dataframe_smoke.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/pandas/real_world/dataframe_smoke.py"
 
 [fixtures.3p-anyio-task_group_collect]
 category = "3p"
 module = "anyio"
-relpath = "3p/anyio/real_world/task_group_collect.py"
+relpath = "_regression/3rd-libs/anyio/real_world/task_group_collect.py"
 required_modules = ["anyio"]
 # anyio shims asyncio (or trio) under a backend-agnostic API. The
 # load-bearing stdlib reach for the asyncio backend + task-group
@@ -404,12 +405,12 @@ required_modules = ["anyio"]
 # `sniffio` (3p dep, not stdlib — covered via required_modules).
 required_stdlib_modules = ["asyncio", "contextvars", "inspect", "typing"]
 expected_outcome = "pass"
-command = "mamba run tests/cpython/3p/anyio/real_world/task_group_collect.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/anyio/real_world/task_group_collect.py"
 
 [fixtures.3p-cryptography-hash_smoke]
 category = "3p"
 module = "cryptography"
-relpath = "3p/cryptography/real_world/hash_smoke.py"
+relpath = "_regression/3rd-libs/cryptography/real_world/hash_smoke.py"
 required_modules = ["cryptography"]
 # cryptography ships a Rust-backed C extension (`cryptography._rust`
 # via PyO3) plus a pure-python `hazmat` shim layer. The load-bearing
@@ -420,4 +421,4 @@ required_modules = ["cryptography"]
 required_stdlib_modules = ["importlib", "os", "sys", "warnings"]
 expected_outcome = "xfail"
 blocker = "#2526 mamba native-extension loader not ready for cryptography Rust _rust extension"
-command = "mamba run tests/cpython/3p/cryptography/real_world/hash_smoke.py"
+command = "mamba run tests/cpython/_regression/3rd-libs/cryptography/real_world/hash_smoke.py"

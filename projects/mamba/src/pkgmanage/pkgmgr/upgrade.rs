@@ -219,9 +219,7 @@ pub struct PinConflict {
 /// resolver — catches the common case where two selective upgrades pull
 /// transitively-conflicting requirements (e.g. `foo` wants `shared==1.0` and
 /// `bar` wants `shared==2.0`) and produces a helpful error.
-pub fn detect_pin_conflicts(
-    proposals: &[(&str, &str, &str)],
-) -> Result<(), PinConflict> {
+pub fn detect_pin_conflicts(proposals: &[(&str, &str, &str)]) -> Result<(), PinConflict> {
     let mut chosen: std::collections::BTreeMap<&str, (&str, &str)> =
         std::collections::BTreeMap::new();
     for (requester, package, version) in proposals {
@@ -285,7 +283,11 @@ mod tests {
 
     #[test]
     fn pick_candidate_reuses_locked_when_compatible() {
-        let avail = vec!["1.0.0".to_string(), "1.1.0".to_string(), "2.0.0".to_string()];
+        let avail = vec![
+            "1.0.0".to_string(),
+            "1.1.0".to_string(),
+            "2.0.0".to_string(),
+        ];
         let compat = avail.clone();
         let c = ctx("foo", &avail, &compat, Some("1.1.0"), true);
         let pick = pick_candidate(&c, ResolutionStrategy::Highest, &UpgradeScope::None).unwrap();
@@ -294,7 +296,11 @@ mod tests {
 
     #[test]
     fn pick_candidate_upgrades_when_scope_demands() {
-        let avail = vec!["1.0.0".to_string(), "1.1.0".to_string(), "2.0.0".to_string()];
+        let avail = vec![
+            "1.0.0".to_string(),
+            "1.1.0".to_string(),
+            "2.0.0".to_string(),
+        ];
         let compat = avail.clone();
         let c = ctx("foo", &avail, &compat, Some("1.1.0"), true);
         let pick = pick_candidate(&c, ResolutionStrategy::Highest, &UpgradeScope::All).unwrap();
@@ -329,7 +335,11 @@ mod tests {
 
     #[test]
     fn pick_candidate_drops_stale_pin_when_no_longer_compatible() {
-        let avail = vec!["1.0.0".to_string(), "1.1.0".to_string(), "2.0.0".to_string()];
+        let avail = vec![
+            "1.0.0".to_string(),
+            "1.1.0".to_string(),
+            "2.0.0".to_string(),
+        ];
         // Requirement tightened — only >=2 compatible.
         let compat = vec!["2.0.0".to_string()];
         let c = ctx("foo", &avail, &compat, Some("1.1.0"), true);
@@ -339,7 +349,11 @@ mod tests {
 
     #[test]
     fn pick_candidate_lowest_strategy_picks_min() {
-        let avail = vec!["1.0.0".to_string(), "1.1.0".to_string(), "2.0.0".to_string()];
+        let avail = vec![
+            "1.0.0".to_string(),
+            "1.1.0".to_string(),
+            "2.0.0".to_string(),
+        ];
         let compat = avail.clone();
         let c = ctx("foo", &avail, &compat, None, true);
         let pick = pick_candidate(&c, ResolutionStrategy::Lowest, &UpgradeScope::None).unwrap();

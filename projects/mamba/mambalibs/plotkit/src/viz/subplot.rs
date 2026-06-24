@@ -39,8 +39,18 @@ impl SubplotGrid {
     ///
     /// Panics if row or col is out of bounds.
     pub fn set(&mut self, row: usize, col: usize, chart: Chart) {
-        assert!(row < self.rows, "row {} out of bounds (max {})", row, self.rows - 1);
-        assert!(col < self.cols, "col {} out of bounds (max {})", col, self.cols - 1);
+        assert!(
+            row < self.rows,
+            "row {} out of bounds (max {})",
+            row,
+            self.rows - 1
+        );
+        assert!(
+            col < self.cols,
+            "col {} out of bounds (max {})",
+            col,
+            self.cols - 1
+        );
         self.charts[row * self.cols + col] = Some(chart);
     }
 
@@ -84,11 +94,8 @@ impl SubplotGrid {
                     };
 
                     let mut renderer = SvgRenderer::new(inner_w, inner_h);
-                    let inner_svg = renderer.render(
-                        &sub_chart.title,
-                        &sub_chart.series,
-                        &sub_chart.style,
-                    );
+                    let inner_svg =
+                        renderer.render(&sub_chart.title, &sub_chart.series, &sub_chart.style);
 
                     // Strip outer <svg> and </svg> tags to embed as a group
                     let inner_content = strip_svg_wrapper(&inner_svg);
@@ -135,16 +142,15 @@ mod tests {
     fn test_subplot_set_and_render() {
         let mut grid = SubplotGrid::new(1, 2).size(800.0, 400.0);
 
-        let chart_a = Chart::new()
-            .title("Chart A")
-            .add_series(DataSeries::line(vec![1.0, 2.0, 3.0], vec![10.0, 20.0, 30.0]));
+        let chart_a = Chart::new().title("Chart A").add_series(DataSeries::line(
+            vec![1.0, 2.0, 3.0],
+            vec![10.0, 20.0, 30.0],
+        ));
 
-        let chart_b = Chart::new()
-            .title("Chart B")
-            .add_series(DataSeries::bar(
-                vec!["X".into(), "Y".into()],
-                vec![15.0, 25.0],
-            ));
+        let chart_b = Chart::new().title("Chart B").add_series(DataSeries::bar(
+            vec!["X".into(), "Y".into()],
+            vec![15.0, 25.0],
+        ));
 
         grid.set(0, 0, chart_a);
         grid.set(0, 1, chart_b);
@@ -162,8 +168,11 @@ mod tests {
         let mut grid = SubplotGrid::new(2, 2).size(600.0, 600.0);
 
         // Only fill one cell
-        grid.set(0, 0, Chart::new()
-            .add_series(DataSeries::line(vec![1.0, 2.0], vec![3.0, 4.0])));
+        grid.set(
+            0,
+            0,
+            Chart::new().add_series(DataSeries::line(vec![1.0, 2.0], vec![3.0, 4.0])),
+        );
 
         let svg = grid.to_svg();
         assert!(svg.contains("<svg"));

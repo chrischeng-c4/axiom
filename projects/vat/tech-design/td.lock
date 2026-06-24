@@ -1,20 +1,52 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-13T02:45:55.165289+00:00"
-digest = "sha256:8196f0a7003146d128ed3f4d26f278f0cbdd72493f52998fc58fc9d20e82c937"
+generated_at = "2026-06-21T08:34:07.327396+00:00"
+digest = "sha256:1e6818eb660280ec79cc22398cdf89ffd3a6093aaa8f7c757be2ab1dc0586d50"
+
+[[files]]
+path = "interfaces/rest/openapi-driven-mock-http-service.md"
+digest = "sha256:cdab86df29caf5314c40eaa98261e9a69a8db4ff3012b777f88627516100b63f"
+
+[[files]]
+path = "logic/built-in-cloud-storage-gcs-emulator.md"
+digest = "sha256:160f67cfc8d55e5aec09d6571c20da95231562aa906bd8f8e614c396e4ff904e"
+
+[[files]]
+path = "logic/built-in-cloud-tasks-cloud-scheduler-emulators.md"
+digest = "sha256:055d5c2ea5799f4b2716bb74761023eec7419c92cde506d2299d35c4ab7b608d"
+
+[[files]]
+path = "logic/built-in-cloud-workflows-emulator.md"
+digest = "sha256:3f3caa05912d14cfcff47813a3c24ba24dc94fcf56a92a2bb8a761dddeee5169"
+
+[[files]]
+path = "logic/built-in-http-mock-record-replay-proxy.md"
+digest = "sha256:86f36e74f5a72125be860826a5a9e06425836bbed231d418322879781c8a9ffa"
+
+[[files]]
+path = "logic/built-in-rust-emulators-pub-sub-firebase-auth.md"
+digest = "sha256:96217e70d16e2f193d27ac310e2fc6cbe6bbecb4846c9a3aa310b123d7f2d28d"
 
 [[files]]
 path = "logic/external-contracts.md"
-digest = "sha256:9202db074fde90cb75a0140a122c8a60f66e05c59ab7a82ae9fb2a3a656f15bc"
+digest = "sha256:49a0f8a0b52801a77450b0cb63d50b44a474deaee590454eb2587fa40a3b7127"
+
+[[files]]
+path = "logic/gcp-firebase-emulator-service-presets.md"
+digest = "sha256:22ef930f9156cafb45c04d54c364612b85f7081b90b97b0fe48460e1caee5f4f"
+
+[[files]]
+path = "logic/kind-like-local-kubernetes-clusters.md"
+digest = "sha256:d901f9f5ee0e8827e030cada744dc7d46ff7f4aaba07d08e3456d065197af367"
 
 [[files]]
 path = "logic/llm-agent-usage-guide.md"
-digest = "sha256:64e3e06d6a885c3dd967d3c784594c1fc4fed7e1be91fb5b1377308a0473d0ee"
+digest = "sha256:03f5e44c52b7fd23ce6a32d547cc5237ec9597cb4c4e60bf59f7a863682b20fe"
 
 [[files]]
 path = "logic/local-agent-test-runner-protocol.md"
-digest = "sha256:fc9d96d2f0ca6a7ac51fc318ac39975f0b6c4581e44e387cdc4875373d9eb715"
+digest = "sha256:6e75ee6e7b66af7a71ce54249890db1a99e2f16ebde081c773991ee6b7f7084e"
 
 [[files]]
 path = "semantic/source/projects-vat-src-cli-rs.md"
@@ -118,7 +150,7 @@ digest = "sha256:c6bc7648f48b193100feb3af2e359d31b4c63619b06062705949d6b658638cc
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_concurrent_runners-rs.md"
-digest = "sha256:b7e8096cec1114f1c403a66b872a9f8762e44d114bf8a62eb500e0769e8817a9"
+digest = "sha256:60f733551ba4cd20ce9ec49aef5f170c19ad7b55f26a14ba5aae8a49259b0e7e"
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_toml_runner-rs.md"
@@ -130,7 +162,7 @@ digest = "sha256:63bd3560ae5b3837a11dad7d911604b7866f2e4e045b54bf3a77d162e94f6fd
 
 [[files]]
 path = "semantic/vat-commands.md"
-digest = "sha256:dbd88937cf530e063dfde05ed1ad01a17996ee000d8fcd677c3bc121e56090d7"
+digest = "sha256:85d661d6e060595aa47739aaa1bc006652c41991e9076a1fa3efb6bcf48b7307"
 
 [[files]]
 path = "semantic/vat-install-script.md"
@@ -146,8 +178,8 @@ digest = "sha256:1cb7d290f685bce33af5a11210a84be1e9aea62dd50fe68ea0f4c802247f035
 
 [[files]]
 path = "semantic/vat-src.md"
-digest = "sha256:a5035827d68a1603b77b2f466182a62dfc1cac54466cc7579a3c21add8ff0939"
+digest = "sha256:1b5526631845075632b3d3e02dd85038883f855fba8d54e4ba7d4cf29343c518"
 
 [[files]]
 path = "semantic/vat-tests.md"
-digest = "sha256:c5ccf817c09c8af7aba56ce8b3c05e3aa5a139ce418d8a096bd12fa64d9e8a57"
+digest = "sha256:cfbe55a62e834a097f34afe28f37b206c3de13f8715464988cda9537a36a6947"

@@ -91,10 +91,22 @@ async fn test_inspector_table_exists() -> Result<(), AssertionError> {
         .unwrap();
 
     // Verify table exists
-    expect(inspector.table_exists("test_schema_exists", None).await.unwrap()).to_be_true()?;
+    expect(
+        inspector
+            .table_exists("test_schema_exists", None)
+            .await
+            .unwrap(),
+    )
+    .to_be_true()?;
 
     // Verify non-existent table
-    expect(inspector.table_exists("test_schema_does_not_exist", None).await.unwrap()).to_be_false()?;
+    expect(
+        inspector
+            .table_exists("test_schema_does_not_exist", None)
+            .await
+            .unwrap(),
+    )
+    .to_be_false()?;
 
     // Clean up
     cleanup_table(&conn, "test_schema_exists").await;
@@ -123,23 +135,38 @@ async fn test_inspector_get_columns_with_complex_types() -> Result<(), Assertion
             metadata JSONB,
             status test_schema_status,
             name TEXT NOT NULL
-        )"
+        )",
     )
     .execute(pool)
     .await
     .unwrap();
 
     // Get columns
-    let columns = inspector.get_columns("test_schema_complex_types", None).await.unwrap();
+    let columns = inspector
+        .get_columns("test_schema_complex_types", None)
+        .await
+        .unwrap();
 
     // Verify we have all columns
     expect(columns.len()).to_equal(&5)?;
 
     // Find and verify each column type
-    let _tags_col = columns.iter().find(|c| c.name == "tags").expect("tags column not found");
-    let metadata_col = columns.iter().find(|c| c.name == "metadata").expect("metadata column not found");
-    let status_col = columns.iter().find(|c| c.name == "status").expect("status column not found");
-    let name_col = columns.iter().find(|c| c.name == "name").expect("name column not found");
+    let _tags_col = columns
+        .iter()
+        .find(|c| c.name == "tags")
+        .expect("tags column not found");
+    let metadata_col = columns
+        .iter()
+        .find(|c| c.name == "metadata")
+        .expect("metadata column not found");
+    let status_col = columns
+        .iter()
+        .find(|c| c.name == "status")
+        .expect("status column not found");
+    let name_col = columns
+        .iter()
+        .find(|c| c.name == "name")
+        .expect("name column not found");
 
     // Verify JSONB type
     expect(metadata_col.data_type == ColumnType::Jsonb).to_be_true()?;
@@ -149,7 +176,12 @@ async fn test_inspector_get_columns_with_complex_types() -> Result<(), Assertion
         ColumnType::Custom(type_name) => {
             expect(type_name.contains("test_schema_status")).to_be_true()?;
         }
-        _ => return Err(AssertionError::new("Expected Custom type for enum", "column_type_check")),
+        _ => {
+            return Err(AssertionError::new(
+                "Expected Custom type for enum",
+                "column_type_check",
+            ))
+        }
     }
 
     // Verify TEXT type and NOT NULL constraint
@@ -176,7 +208,7 @@ async fn test_inspector_get_foreign_keys_with_cascade() -> Result<(), AssertionE
         "CREATE TABLE test_schema_fk_parent (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL
-        )"
+        )",
     )
     .execute(pool)
     .await
@@ -193,14 +225,17 @@ async fn test_inspector_get_foreign_keys_with_cascade() -> Result<(), AssertionE
                 REFERENCES test_schema_fk_parent(id)
                 ON DELETE CASCADE
                 ON UPDATE RESTRICT
-        )"
+        )",
     )
     .execute(pool)
     .await
     .unwrap();
 
     // Get foreign keys
-    let foreign_keys = inspector.get_foreign_keys("test_schema_fk_child", None).await.unwrap();
+    let foreign_keys = inspector
+        .get_foreign_keys("test_schema_fk_child", None)
+        .await
+        .unwrap();
 
     // Verify we have one foreign key
     expect(foreign_keys.len()).to_equal(&1)?;
@@ -241,36 +276,37 @@ async fn test_inspector_get_indexes() -> Result<(), AssertionError> {
             email TEXT NOT NULL,
             username TEXT NOT NULL,
             age INTEGER
-        )"
+        )",
     )
     .execute(pool)
     .await
     .unwrap();
 
     // Create a unique index
-    sqlx::query(
-        "CREATE UNIQUE INDEX test_schema_idx_email ON test_schema_indexes(email)"
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query("CREATE UNIQUE INDEX test_schema_idx_email ON test_schema_indexes(email)")
+        .execute(pool)
+        .await
+        .unwrap();
 
     // Create a regular btree index
-    sqlx::query(
-        "CREATE INDEX test_schema_idx_username ON test_schema_indexes(username)"
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query("CREATE INDEX test_schema_idx_username ON test_schema_indexes(username)")
+        .execute(pool)
+        .await
+        .unwrap();
 
     // Get indexes
-    let indexes = inspector.get_indexes("test_schema_indexes", None).await.unwrap();
+    let indexes = inspector
+        .get_indexes("test_schema_indexes", None)
+        .await
+        .unwrap();
 
     // Find our test indexes (there will also be a primary key index)
-    let email_idx = indexes.iter()
+    let email_idx = indexes
+        .iter()
         .find(|i| i.name == "test_schema_idx_email")
         .expect("email index not found");
-    let username_idx = indexes.iter()
+    let username_idx = indexes
+        .iter()
         .find(|i| i.name == "test_schema_idx_username")
         .expect("username index not found");
 
@@ -307,22 +343,23 @@ async fn test_inspector_inspect_table_full() -> Result<(), AssertionError> {
             email TEXT NOT NULL UNIQUE,
             data JSONB,
             created_at TIMESTAMP DEFAULT NOW()
-        )"
+        )",
     )
     .execute(pool)
     .await
     .unwrap();
 
     // Create an index
-    sqlx::query(
-        "CREATE INDEX test_schema_full_idx_email ON test_schema_full(email)"
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query("CREATE INDEX test_schema_full_idx_email ON test_schema_full(email)")
+        .execute(pool)
+        .await
+        .unwrap();
 
     // Inspect the full table
-    let table_info = inspector.inspect_table("test_schema_full", None).await.unwrap();
+    let table_info = inspector
+        .inspect_table("test_schema_full", None)
+        .await
+        .unwrap();
 
     // Verify table info
     expect(table_info.name.as_str()).to_equal(&"test_schema_full")?;
@@ -331,22 +368,40 @@ async fn test_inspector_inspect_table_full() -> Result<(), AssertionError> {
     // Verify columns
     expect(table_info.columns.len()).to_equal(&4)?;
 
-    let id_col = table_info.columns.iter().find(|c| c.name == "id").expect("id column not found");
+    let id_col = table_info
+        .columns
+        .iter()
+        .find(|c| c.name == "id")
+        .expect("id column not found");
     expect(id_col.is_primary_key).to_be_true()?;
 
-    let email_col = table_info.columns.iter().find(|c| c.name == "email").expect("email column not found");
+    let email_col = table_info
+        .columns
+        .iter()
+        .find(|c| c.name == "email")
+        .expect("email column not found");
     expect(email_col.is_unique).to_be_true()?;
     expect(email_col.nullable).to_be_false()?;
 
-    let data_col = table_info.columns.iter().find(|c| c.name == "data").expect("data column not found");
+    let data_col = table_info
+        .columns
+        .iter()
+        .find(|c| c.name == "data")
+        .expect("data column not found");
     expect(data_col.data_type == ColumnType::Jsonb).to_be_true()?;
     expect(data_col.nullable).to_be_true()?;
 
-    let created_col = table_info.columns.iter().find(|c| c.name == "created_at").expect("created_at column not found");
+    let created_col = table_info
+        .columns
+        .iter()
+        .find(|c| c.name == "created_at")
+        .expect("created_at column not found");
     expect(created_col.default.is_some()).to_be_true()?;
 
     // Verify indexes exist (at least the one we created)
-    let has_our_index = table_info.indexes.iter()
+    let has_our_index = table_info
+        .indexes
+        .iter()
         .any(|i| i.name == "test_schema_full_idx_email");
     expect(has_our_index).to_be_true()?;
 
@@ -366,7 +421,9 @@ async fn test_inspector_inspect_nonexistent_table() -> Result<(), AssertionError
     let inspector = SchemaInspector::new(conn);
 
     // Try to inspect a table that doesn't exist
-    let result = inspector.inspect_table("test_schema_does_not_exist", None).await;
+    let result = inspector
+        .inspect_table("test_schema_does_not_exist", None)
+        .await;
 
     // Should return an error
     expect(result.is_err()).to_be_true()?;

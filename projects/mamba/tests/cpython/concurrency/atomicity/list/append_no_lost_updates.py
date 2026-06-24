@@ -9,6 +9,7 @@
 # case = "append_no_lost_updates"
 # subject = "list.append"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "concurrency_matrix.py (single-mutation atomicity contract)"
 # status = "filled"

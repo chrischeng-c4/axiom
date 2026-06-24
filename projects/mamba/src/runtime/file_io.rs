@@ -1,14 +1,13 @@
+use super::rc::MbObject;
+use super::value::MbValue;
 /// File I/O runtime support (#379).
 ///
 /// Implements Python-compatible file operations: open, read, write, close.
 /// Files are stored as a thread-local handle table (not heap objects) to avoid
 /// complicating ObjData with non-Send types.
-
 use std::collections::HashMap;
-use std::io::{Read, Write, BufRead, BufReader};
 use std::fs;
-use super::value::MbValue;
-use super::rc::MbObject;
+use std::io::{BufRead, BufReader, Read, Write};
 
 /// File handle state.
 #[allow(dead_code)]
@@ -33,10 +32,10 @@ struct ParsedMode {
     read: bool,
     write: bool,
     append: bool,
-    create: bool,    // 'x'
-    plus: bool,      // '+'
-    binary: bool,    // 'b'
-    text: bool,      // 't'
+    create: bool, // 'x'
+    plus: bool,   // '+'
+    binary: bool, // 'b'
+    text: bool,   // 't'
 }
 
 /// Validate and parse a CPython open() mode string. Mirrors CPython's checks:
@@ -75,7 +74,15 @@ fn parse_mode(mode: &str) -> Option<ParsedMode> {
     if binary && text {
         return None;
     }
-    Some(ParsedMode { read, write, append, create, plus, binary, text })
+    Some(ParsedMode {
+        read,
+        write,
+        append,
+        create,
+        plus,
+        binary,
+        text,
+    })
 }
 
 thread_local! {
@@ -137,13 +144,21 @@ pub fn mb_file_name(handle: MbValue) -> MbValue {
 
 /// open(path, mode) → file handle (as MbValue int)
 pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
-    let file_path = match extract_str(path) {
-        Some(p) => p,
-        None => {
-            raise_type_error("open() argument must be a string");
-            return MbValue::none();
-        }
-    };
+    // str/bytes/bytearray directly; otherwise os.fspath coercion (pathlib
+    // instances and any `__fspath__` provider) — CPython accepts str, bytes,
+    // or os.PathLike here.
+    let file_path =
+        match extract_str(path).or_else(|| super::stdlib::pathlib_mod::coerce_fspath(path)) {
+            Some(p) => p,
+            None => {
+                // A failing user `__fspath__` already left its own exception
+                // pending — propagate that instead of masking it.
+                if super::exception::mb_has_exception().as_bool() != Some(true) {
+                    raise_type_error("open() argument must be a string");
+                }
+                return MbValue::none();
+            }
+        };
     // Embedded NUL byte in path is a ValueError (CPython).
     if file_path.contains('\0') {
         raise_value_error("embedded null byte");
@@ -279,12 +294,16 @@ pub fn mb_file_read_n(handle: MbValue, size: MbValue) -> MbValue {
                             let mut limited = reader.take(n as u64);
                             let _ = limited.read_to_end(&mut bytes);
                         }
-                        _ => { let _ = reader.read_to_end(&mut bytes); }
+                        _ => {
+                            let _ = reader.read_to_end(&mut bytes);
+                        }
                     }
                     if binary {
                         return new_bytes(bytes);
                     }
-                    return MbValue::from_ptr(MbObject::new_str(String::from_utf8_lossy(&bytes).into_owned()));
+                    return MbValue::from_ptr(MbObject::new_str(
+                        String::from_utf8_lossy(&bytes).into_owned(),
+                    ));
                 }
             }
             MbValue::none()
@@ -315,19 +334,26 @@ pub fn mb_file_readline_n(handle: MbValue, size: MbValue) -> MbValue {
                     return MbValue::none();
                 }
                 let binary = mf.binary;
-                let cap = match size.as_int() { Some(n) if n >= 0 => Some(n as usize), _ => None };
+                let cap = match size.as_int() {
+                    Some(n) if n >= 0 => Some(n as usize),
+                    _ => None,
+                };
                 if let Some(ref mut reader) = mf.reader {
                     let mut line: Vec<u8> = Vec::new();
                     loop {
                         if let Some(c) = cap {
-                            if line.len() >= c { break; }
+                            if line.len() >= c {
+                                break;
+                            }
                         }
                         let mut byte = [0u8; 1];
                         match reader.read(&mut byte) {
                             Ok(0) => break,
                             Ok(_) => {
                                 line.push(byte[0]);
-                                if byte[0] == b'\n' { break; }
+                                if byte[0] == b'\n' {
+                                    break;
+                                }
                             }
                             Err(_) => break,
                         }
@@ -335,7 +361,9 @@ pub fn mb_file_readline_n(handle: MbValue, size: MbValue) -> MbValue {
                     if binary {
                         return new_bytes(line);
                     }
-                    return MbValue::from_ptr(MbObject::new_str(String::from_utf8_lossy(&line).into_owned()));
+                    return MbValue::from_ptr(MbObject::new_str(
+                        String::from_utf8_lossy(&line).into_owned(),
+                    ));
                 }
             }
             MbValue::none()
@@ -365,15 +393,25 @@ pub fn mb_file_readlines(handle: MbValue) -> MbValue {
                             let mut byte = [0u8; 1];
                             match reader.read(&mut byte) {
                                 Ok(0) => break,
-                                Ok(_) => { got = true; raw.push(byte[0]); if byte[0] == b'\n' { break; } }
+                                Ok(_) => {
+                                    got = true;
+                                    raw.push(byte[0]);
+                                    if byte[0] == b'\n' {
+                                        break;
+                                    }
+                                }
                                 Err(_) => break,
                             }
                         }
-                        if !got { break; }
+                        if !got {
+                            break;
+                        }
                         if binary {
                             lines.push(new_bytes(raw));
                         } else {
-                            lines.push(MbValue::from_ptr(MbObject::new_str(String::from_utf8_lossy(&raw).into_owned())));
+                            lines.push(MbValue::from_ptr(MbObject::new_str(
+                                String::from_utf8_lossy(&raw).into_owned(),
+                            )));
                         }
                     }
                     return MbValue::from_ptr(MbObject::new_list(lines));
@@ -463,7 +501,9 @@ fn raise_value_error(msg: &str) {
 fn raise_file_not_found(path: &str) {
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(format!("No such file or directory: '{path}'"))),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "No such file or directory: '{path}'"
+        ))),
     );
 }
 
@@ -497,7 +537,11 @@ fn new_bytes(b: Vec<u8>) -> MbValue {
 pub fn is_file_closed(handle: MbValue) -> bool {
     if let Some(id) = handle.as_int() {
         return FILES.with(|files| {
-            files.borrow().get(&(id as u64)).map(|f| f.closed).unwrap_or(false)
+            files
+                .borrow()
+                .get(&(id as u64))
+                .map(|f| f.closed)
+                .unwrap_or(false)
         });
     }
     false
@@ -534,15 +578,25 @@ pub fn mb_file_tell(handle: MbValue) -> MbValue {
 pub fn mb_file_seek(handle: MbValue, offset: MbValue, whence: MbValue) -> MbValue {
     use std::io::{Seek, SeekFrom};
     let off = offset.as_int().unwrap_or(0);
-    let w = if whence.is_none() { 0 } else { whence.as_int().unwrap_or(0) };
+    let w = if whence.is_none() {
+        0
+    } else {
+        whence.as_int().unwrap_or(0)
+    };
     let from = match w {
         0 => {
-            if off < 0 { raise_value_error("negative seek value"); return MbValue::none(); }
+            if off < 0 {
+                raise_value_error("negative seek value");
+                return MbValue::none();
+            }
             SeekFrom::Start(off as u64)
         }
         1 => SeekFrom::Current(off),
         2 => SeekFrom::End(off),
-        _ => { raise_value_error(&format!("invalid whence ({w}, should be 0, 1 or 2)")); return MbValue::none(); }
+        _ => {
+            raise_value_error(&format!("invalid whence ({w}, should be 0, 1 or 2)"));
+            return MbValue::none();
+        }
     };
     if let Some(id) = handle.as_int() {
         return FILES.with(|files| {
@@ -608,7 +662,9 @@ pub fn mb_file_truncate(handle: MbValue, size: MbValue) -> MbValue {
                             w.seek(SeekFrom::Current(0)).unwrap_or(0)
                         } else if let Some(ref mut r) = mf.reader {
                             r.stream_position().unwrap_or(0)
-                        } else { 0 }
+                        } else {
+                            0
+                        }
                     }
                 };
                 if let Some(ref mut w) = mf.writer {
@@ -706,12 +762,17 @@ mod tests {
         assert!(fh.as_int().is_some(), "should get a valid file handle");
 
         let fh_id = fh.as_int().unwrap() as u64;
-        assert!(is_file_handle(fh_id), "file should be in FILES before cleanup");
+        assert!(
+            is_file_handle(fh_id),
+            "file should be in FILES before cleanup"
+        );
 
         cleanup_all_files();
 
-        assert!(!is_file_handle(fh_id),
-            "FILES should be empty after cleanup — file handles dropped");
+        assert!(
+            !is_file_handle(fh_id),
+            "FILES should be empty after cleanup — file handles dropped"
+        );
 
         // Cleanup temp file
         let _ = std::fs::remove_file(&path_str);
@@ -733,8 +794,11 @@ mod tests {
         let path2 = MbValue::from_ptr(MbObject::new_str(path_str.clone()));
         let mode2 = MbValue::from_ptr(MbObject::new_str("w".to_string()));
         let fh2 = mb_open(path2, mode2);
-        assert_eq!(fh1.as_int(), fh2.as_int(),
-            "file ID counter should reset after cleanup");
+        assert_eq!(
+            fh1.as_int(),
+            fh2.as_int(),
+            "file ID counter should reset after cleanup"
+        );
         mb_file_close(fh2);
 
         let _ = std::fs::remove_file(&path_str);
@@ -783,7 +847,10 @@ mod tests {
         // Write two lines
         let p = MbValue::from_ptr(MbObject::new_str(path_str.clone()));
         let fh = mb_open(p, MbValue::from_ptr(MbObject::new_str("w".into())));
-        mb_file_write(fh, MbValue::from_ptr(MbObject::new_str("aaa\nbbb\n".into())));
+        mb_file_write(
+            fh,
+            MbValue::from_ptr(MbObject::new_str("aaa\nbbb\n".into())),
+        );
         mb_file_close(fh);
 
         // readline returns first line
@@ -818,13 +885,19 @@ mod tests {
             MbValue::from_ptr(MbObject::new_str(path_str.clone())),
             MbValue::from_ptr(MbObject::new_str("w".into())),
         );
-        assert!(fh_w.as_int().is_some(), "open('w') should return an int handle");
+        assert!(
+            fh_w.as_int().is_some(),
+            "open('w') should return an int handle"
+        );
 
         let method_write = MbValue::from_ptr(MbObject::new_str("write".into()));
         let text_val = MbValue::from_ptr(MbObject::new_str("dispatch test\n".into()));
         let args_list = MbValue::from_ptr(MbObject::new_list(vec![text_val]));
         let written = super::super::class::mb_call_method(fh_w, method_write, args_list);
-        assert!(written.as_int().is_some(), "write via dispatch should return byte count");
+        assert!(
+            written.as_int().is_some(),
+            "write via dispatch should return byte count"
+        );
 
         let method_close = MbValue::from_ptr(MbObject::new_str("close".into()));
         super::super::class::mb_call_method(fh_w, method_close, MbValue::none());
@@ -865,8 +938,14 @@ mod tests {
 
         // Verify the file contents
         let contents = std::fs::read_to_string(&path_str).unwrap_or_default();
-        assert!(contents.contains("line one"), "writelines should write first line");
-        assert!(contents.contains("line two"), "writelines should write second line");
+        assert!(
+            contents.contains("line one"),
+            "writelines should write first line"
+        );
+        assert!(
+            contents.contains("line two"),
+            "writelines should write second line"
+        );
 
         let _ = std::fs::remove_file(&path_str);
     }
@@ -892,7 +971,10 @@ mod tests {
         );
         let method_rl = MbValue::from_ptr(MbObject::new_str("readline".into()));
         let line = super::super::class::mb_call_method(fh_r, method_rl, MbValue::none());
-        assert!(line.is_ptr(), "readline via dispatch should return a string");
+        assert!(
+            line.is_ptr(),
+            "readline via dispatch should return a string"
+        );
         mb_file_close(fh_r);
 
         // readlines via dispatch
@@ -902,7 +984,10 @@ mod tests {
         );
         let method_rls = MbValue::from_ptr(MbObject::new_str("readlines".into()));
         let lines = super::super::class::mb_call_method(fh_r2, method_rls, MbValue::none());
-        assert!(lines.is_ptr(), "readlines via dispatch should return a list");
+        assert!(
+            lines.is_ptr(),
+            "readlines via dispatch should return a list"
+        );
         mb_file_close(fh_r2);
 
         let _ = std::fs::remove_file(&path_str);

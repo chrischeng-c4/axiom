@@ -28,21 +28,26 @@ Public API manifest for `projects/agentic-workflow/src/cli/remote_push.rs` gener
 
 <!-- source-snapshot: path=projects/agentic-workflow/src/cli/remote_push.rs -->
 ```rust
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/remote_push.md#source
+// CODEGEN-BEGIN
 
 //! Shared `push_through` adapter for the `score` CLI.
 //!
-//! All work-item-mutating verbs (`aw wi`, `aw td`, `aw cb`)
+//! All work-item-mutating verbs (`aw wi`, `aw td`)
 //! call `maybe_push_remote` immediately before their `commit_lifecycle`
 //! (or equivalent raw `git commit`) so that the remote tracker stays in
 //! lock-step with the lifecycle working copy. The helper is a no-op for the local
 //! backend and for repos with no `.aw/config.toml`.
 
+use crate::issues::{
+    make_backend, push_through, resolve_default_backend, IssueBackend, LocalBackend,
+};
 use anyhow::Result;
-use agentic_workflow::issues::{make_backend, push_through, resolve_default_backend};
 use std::path::Path;
 
-// Push the merged Issue working-copy file at `issue_path` through the
-// configured remote backend (if any).
+// Push the merged Issue working-copy file through the configured remote
+// backend (if any). Legacy callers may still pass `.aw/issues/...`; when that
+// path no longer exists, resolve the active temp-backed local issue store.
 ///
 // Behaviour:
 // - No `.aw/config.toml` → no-op (used by test fixtures).
@@ -58,9 +63,20 @@ pub async fn maybe_push_remote(project_root: &Path, issue_path: &Path, slug: &st
         return Ok(());
     }
     let backend = make_backend(&kind, project_root, repo, host)?;
-    push_through(issue_path, backend.as_ref(), slug).await?;
+    let resolved_issue_path = if issue_path.exists() {
+        issue_path.to_path_buf()
+    } else {
+        let local = LocalBackend::from_project_root(project_root);
+        match local.get(slug).await? {
+            Some(issue) => local.issue_path(&issue),
+            None => issue_path.to_path_buf(),
+        }
+    };
+    push_through(&resolved_issue_path, backend.as_ref(), slug).await?;
     Ok(())
 }
+
+// CODEGEN-END
 ```
 
 ## Changes

@@ -289,7 +289,7 @@ fn load_cpython_baseline(toml_path: &Path) -> Option<CpythonPerfBaseline> {
         return None;
     }
 
-    let output = Command::new("python3")
+    let output = Command::new(common::python3_bin())
         .arg(baseline_tool())
         .arg("--db")
         .arg(&db)
@@ -490,4 +490,8 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-harness!(run_pin, "tests/harness/cpython/config/perf/pins", r"^.*\.toml$");
+harness!(
+    run_pin,
+    "tests/harness/cpython/config/perf/pins",
+    r"^.*\.toml$"
+);

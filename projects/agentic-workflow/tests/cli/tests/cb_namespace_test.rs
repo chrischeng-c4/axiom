@@ -1,10 +1,10 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/validate/tests/cb_namespace_test.md#source
 // CODEGEN-BEGIN
-//! Integration tests for the `aw cb` namespace.
+//! Integration tests for code-artifact verbs inherited by `aw td`.
 //!
 //! Phase 1 contract: registration, phase advance to `cb_genned`, trailer
 //! `Cb-Gen`, dispatch envelope on stdout, and `--group-by` flag for
-//! `cb check`.
+//! `td code-check`.
 //!
 //! @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#test-plan
 
@@ -18,23 +18,24 @@ struct Cli {
     command: Commands,
 }
 
-/// R1: `aw cb` is registered as a top-level subcommand with `gen` and
-/// `check` children.
+/// R1: the retired top-level `aw cb` namespace is gone and TD inherits codegen.
 #[test]
 fn test_cb_gen_registered() {
     let cmd = Cli::command();
-    let cb = cmd.find_subcommand("cb").expect("cb namespace registered");
-    cb.find_subcommand("gen").expect("cb gen registered");
+    assert!(cmd.find_subcommand("cb").is_none());
+    let td = cmd.find_subcommand("td").expect("td namespace registered");
+    td.find_subcommand("gen").expect("td gen registered");
 }
 
 #[test]
 fn test_cb_check_registered() {
     let cmd = Cli::command();
-    let cb = cmd.find_subcommand("cb").expect("cb namespace registered");
-    cb.find_subcommand("check").expect("cb check registered");
+    let td = cmd.find_subcommand("td").expect("td namespace registered");
+    td.find_subcommand("code-check")
+        .expect("td code-check registered");
 }
 
-/// R2: phase-advance verification at the *string* level — `aw cb gen`
+/// R2: phase-advance verification at the *string* level — `aw td gen`
 /// must write canonical `cb_genned`, not the legacy `td_gen_coded`.
 #[test]
 fn test_cb_gen_phase_advance() {
@@ -56,33 +57,33 @@ fn test_cb_gen_trailer() {
 }
 
 /// R2: dispatch envelope shape is preserved by virtue of `cb::run_gen`
-/// delegating to `td::run_gen_code`. Verify the `cb gen` arg shape.
+/// delegating to `td::run_gen_code`. Verify the `td gen` arg shape.
 #[test]
 fn test_cb_gen_envelope() {
     let cmd = Cli::command();
     let cb_gen = cmd
-        .find_subcommand("cb")
+        .find_subcommand("td")
         .and_then(|c| c.find_subcommand("gen"))
-        .expect("cb gen present");
+        .expect("td gen present");
     let positionals: Vec<String> = cb_gen
         .get_positionals()
         .map(|p: &clap::Arg| p.get_id().as_str().to_string())
         .collect();
     assert!(
         positionals.iter().any(|p| p == "slug"),
-        "cb gen has slug arg, got {:?}",
+        "td gen has slug arg, got {:?}",
         positionals
     );
 }
 
-/// R3: `cb check --group-by` accepts gap | file | status.
+/// R3: `td code-check --group-by` accepts gap | file | status.
 #[test]
 fn test_cb_check_group_by() {
     let cmd = Cli::command();
     let cb_check = cmd
-        .find_subcommand("cb")
-        .and_then(|c| c.find_subcommand("check"))
-        .expect("cb check present");
+        .find_subcommand("td")
+        .and_then(|c| c.find_subcommand("code-check"))
+        .expect("td code-check present");
     let gb = cb_check
         .get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "group_by")

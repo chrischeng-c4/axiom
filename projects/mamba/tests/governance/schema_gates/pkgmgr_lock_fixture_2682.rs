@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("governance")
         .join("gates")
         .join("pkgmgr")
         .join("lock")
@@ -113,7 +113,9 @@ fn pkgmgr_lock_setup_carries_direct_and_transitive_deps() {
         "`[setup].lockfile_present` must be false — lock creates the lockfile"
     );
     assert_eq!(
-        setup.get("site_packages_populated").and_then(|v| v.as_bool()),
+        setup
+            .get("site_packages_populated")
+            .and_then(|v| v.as_bool()),
         Some(false),
         "`[setup].site_packages_populated` must be false — lock does NOT install"
     );
@@ -139,7 +141,9 @@ fn pkgmgr_lock_action_invokes_lock() {
     );
 
     assert_eq!(
-        action.get("expected_exit_code").and_then(|v| v.as_integer()),
+        action
+            .get("expected_exit_code")
+            .and_then(|v| v.as_integer()),
         Some(0),
         "`[action].expected_exit_code` must be 0 — happy path succeeds"
     );
@@ -202,7 +206,8 @@ fn pkgmgr_lock_lockfile_assertion_lists_both_dep_kinds() {
         "`[lockfile_assertion].deterministic` must be true"
     );
     assert_eq!(
-        lock.get("byte_identical_on_replay").and_then(|v| v.as_bool()),
+        lock.get("byte_identical_on_replay")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_assertion].byte_identical_on_replay` must be true"
     );
@@ -211,10 +216,13 @@ fn pkgmgr_lock_lockfile_assertion_lists_both_dep_kinds() {
 #[test]
 fn pkgmgr_lock_install_assertion_keeps_env_untouched() {
     let doc = crate::common::load_toml(&manifest_path());
-    let install = doc.get("install_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[install_assertion]` block \
+    let install = doc
+        .get("install_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[install_assertion]` block \
          (acceptance: \"No package files are installed during lock-only run.\")",
-    );
+        );
 
     for flag in &[
         "site_packages_must_remain_untouched",
@@ -259,7 +267,8 @@ fn pkgmgr_lock_failure_case_diagnostic_is_deterministic() {
     assert!(!diag.is_empty(), "diagnostic substring must be non-empty");
 
     assert_eq!(
-        fail.get("diagnostic_is_deterministic").and_then(|v| v.as_bool()),
+        fail.get("diagnostic_is_deterministic")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[failure_case].diagnostic_is_deterministic` must be true (acceptance text)"
     );
@@ -270,7 +279,8 @@ fn pkgmgr_lock_failure_case_diagnostic_is_deterministic() {
         "`[failure_case].diagnostic_must_name_failing_dependency` must be true"
     );
     assert_eq!(
-        fail.get("must_not_write_partial_lockfile").and_then(|v| v.as_bool()),
+        fail.get("must_not_write_partial_lockfile")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[failure_case].must_not_write_partial_lockfile` must be true — \
          a failed lock must not leave half-baked state"
@@ -347,7 +357,8 @@ fn pkgmgr_lock_pins_out_of_scope_per_issue_2682() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("resolver_algorithm_improvements").and_then(|v| v.as_bool()),
+        oos.get("resolver_algorithm_improvements")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].resolver_algorithm_improvements` must be true \
          (issue text: \"Out of scope: resolver algorithm improvements.\")"

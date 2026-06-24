@@ -102,6 +102,48 @@ pub struct ServiceConfig {
     pub cmd: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<ServicePreset>,
+    /// Docker image backing this service. Mutually exclusive with `cmd` and
+    /// `preset`. vat starts it via `docker run` as a managed foreground child;
+    /// the runner itself is never containerized, so the host GPU story holds.
+    /// vat is not an image builder/registry — it pulls and runs, nothing more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// Port the service listens on *inside* the image. Mapped to the
+    /// auto-allocated (or fixed `port`) host port. Required for image services.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_port: Option<u16>,
+    /// Environment variables passed *into* the container (e.g.
+    /// `POSTGRES_PASSWORD`). Image services only.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub image_env: BTreeMap<String, String>,
+    /// How a `preset` service is provided. `auto` (default) prefers the native
+    /// host binary (Homebrew) and falls back to the preset's official Docker
+    /// image when the binary is missing; `native` forces the binary; `docker`
+    /// forces the image. Only meaningful with `preset` — `image` services are
+    /// always Docker and `cmd` services are always native.
+    #[serde(default)]
+    pub runtime: ServiceRuntime,
+    /// Declares this service as an ephemeral local Kubernetes cluster (kind /
+    /// k3d / minikube). Mutually exclusive with cmd/preset/image. vat creates
+    /// the cluster before the runner, exports KUBECONFIG into the runner, and
+    /// deletes it at teardown subject to the workspace `keep` policy. `auto`
+    /// resolves to the first installed backend whose Docker daemon is reachable.
+    /// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<ClusterBackend>,
+    /// Optional Kubernetes version for the cluster node image (e.g. "1.30").
+    /// Only meaningful with `cluster`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub k8s_version: Option<String>,
+    /// Cluster node count (default 1). Only meaningful with `cluster`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nodes: Option<u32>,
+    /// Path (relative to vat.toml) to an OpenAPI document. Required for the
+    /// `openapi` preset, which serves spec-derived mock responses; rejected for
+    /// every other backing.
+    /// @spec projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default)]
@@ -112,12 +154,24 @@ pub struct ServiceConfig {
     pub export: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_http: Option<String>,
+    /// Corpus-aware readiness command. "Ready" means this command exits 0
+    /// (e.g. a SQL row-count `>= N` check), not merely that the server
+    /// process accepts connections. Overrides a preset's default probe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ready_cmd: Vec<String>,
     #[serde(default = "default_service_timeout")]
     pub timeout_s: u64,
 }
 
 /// Built-in local service presets.
+///
+/// The datastore/broker presets (postgres … mongo) prefer a native Homebrew
+/// binary with a Docker image fallback. The emulator presets
+/// (firestore … spanner) wrap the GCP `gcloud beta emulators` family — native
+/// when the gcloud component is installed, Docker otherwise — and `firebase` is
+/// the Firebase Emulator Suite bundle driven by a workspace `firebase.json`.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ServicePreset {
@@ -127,6 +181,113 @@ pub enum ServicePreset {
     Rabbitmq,
     Mysql,
     Mongo,
+    Opensearch,
+    Firestore,
+    Pubsub,
+    Datastore,
+    Bigtable,
+    Spanner,
+    Firebase,
+    FirebaseAuth,
+    CloudTasks,
+    CloudScheduler,
+    CloudWorkflows,
+    CloudStorage,
+    HttpMock,
+    Openapi,
+}
+
+impl ServicePreset {
+    /// Whether this preset is a GCP/Firebase emulator (vs a datastore/broker).
+    /// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
+    pub fn is_emulator(self) -> bool {
+        matches!(
+            self,
+            ServicePreset::Firestore
+                | ServicePreset::Pubsub
+                | ServicePreset::Datastore
+                | ServicePreset::Bigtable
+                | ServicePreset::Spanner
+                | ServicePreset::Firebase
+                | ServicePreset::FirebaseAuth
+                | ServicePreset::CloudTasks
+                | ServicePreset::CloudScheduler
+                | ServicePreset::CloudWorkflows
+                | ServicePreset::CloudStorage
+                | ServicePreset::HttpMock
+                | ServicePreset::Openapi
+        )
+    }
+
+    /// Whether vat ships a built-in Rust emulator for this preset. Built-in
+    /// presets run vat's own in-process server under `runtime = auto`.
+    /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
+    pub fn is_builtin(self) -> bool {
+        matches!(
+            self,
+            ServicePreset::Pubsub
+                | ServicePreset::FirebaseAuth
+                | ServicePreset::CloudTasks
+                | ServicePreset::CloudScheduler
+                | ServicePreset::CloudWorkflows
+                | ServicePreset::CloudStorage
+                | ServicePreset::HttpMock
+                | ServicePreset::Openapi
+        )
+    }
+
+    /// Built-in presets that have *only* the built-in path (no gcloud/Docker
+    /// equivalent), so `runtime` must stay `auto`.
+    /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
+    pub fn is_builtin_only(self) -> bool {
+        matches!(
+            self,
+            ServicePreset::FirebaseAuth
+                | ServicePreset::CloudTasks
+                | ServicePreset::CloudScheduler
+                | ServicePreset::CloudWorkflows
+                | ServicePreset::CloudStorage
+                | ServicePreset::HttpMock
+                | ServicePreset::Openapi
+        )
+    }
+}
+
+/// How a `preset` service is provided. The default prefers the native binary
+/// (Homebrew) so the host GPU and zero-friction model hold, and only reaches
+/// for Docker when the binary is absent — or when the preset has no native
+/// equivalent on this host.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceRuntime {
+    /// Prefer the native binary; fall back to the preset's Docker image when it
+    /// is missing. The sensible default.
+    #[default]
+    Auto,
+    /// Require the native host binary; fail if it is not installed.
+    Native,
+    /// Always run the preset's official Docker image.
+    Docker,
+}
+
+/// Local Kubernetes cluster backend for a `cluster` service. `auto` (the
+/// default when the field is present) prefers the first installed of kind,
+/// then k3d, then minikube whose Docker daemon is reachable. All require Docker
+/// on Apple Silicon.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterBackend {
+    /// Prefer the first installed backend whose Docker daemon is reachable.
+    #[default]
+    Auto,
+    /// kind — Kubernetes in Docker.
+    Kind,
+    /// k3d — k3s in Docker.
+    K3d,
+    /// minikube with the docker driver.
+    Minikube,
 }
 
 /// Port policy for a service. Presets default to `auto` to avoid conflicts.
@@ -228,14 +389,59 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
     let mut service_ids = BTreeSet::new();
     for service in &cfg.services {
         validate_id("service", &service.id)?;
-        match (&service.preset, service.cmd.is_empty()) {
-            (None, true) => bail!("service `{}` must define cmd or preset", service.id),
-            (Some(_), false) => bail!(
-                "service `{}` must not define both cmd and preset",
+        let has_cmd = !service.cmd.is_empty();
+        let has_preset = service.preset.is_some();
+        let has_image = service.image.is_some();
+        let has_cluster = service.cluster.is_some();
+        let backing = [has_cmd, has_preset, has_image, has_cluster]
+            .into_iter()
+            .filter(|b| *b)
+            .count();
+        match backing {
+            0 => bail!(
+                "service `{}` must define exactly one of cmd, preset, image, or cluster",
                 service.id
             ),
-            (None, false) => validate_cmd("service", &service.id, &service.cmd)?,
-            (Some(_), true) => {}
+            1 => {
+                if has_cmd {
+                    validate_cmd("service", &service.id, &service.cmd)?;
+                } else if has_image {
+                    validate_image_service(service)?;
+                } else if has_cluster {
+                    validate_cluster_service(service)?;
+                } else if service.preset == Some(ServicePreset::Firebase) {
+                    validate_firebase_service(cfg, service)?;
+                } else if service.preset == Some(ServicePreset::Openapi) {
+                    validate_openapi_service(service)?;
+                }
+                // other presets: no extra checks here.
+            }
+            _ => bail!(
+                "service `{}` must define only one of cmd, preset, image, or cluster",
+                service.id
+            ),
+        }
+        if service.runtime != ServiceRuntime::Auto && !has_preset {
+            bail!(
+                "service `{}` sets `runtime` but only preset services accept it; \
+                 image services are always Docker and cmd services are always native",
+                service.id
+            );
+        }
+        if let Some(preset) = service.preset {
+            if preset.is_builtin_only() && service.runtime != ServiceRuntime::Auto {
+                bail!(
+                    "service `{}` preset `{preset:?}` only has vat's built-in emulator; \
+                     leave `runtime` at the default `auto`",
+                    service.id
+                );
+            }
+        }
+        if service.spec.is_some() && service.preset != Some(ServicePreset::Openapi) {
+            bail!(
+                "service `{}` sets `spec` but only the `openapi` preset accepts it",
+                service.id
+            );
         }
         if let PortSpec::Auto(value) = &service.port {
             if value != "auto" {
@@ -315,6 +521,83 @@ fn validate_service_dependency_cycle(
 fn validate_id(kind: &str, id: &str) -> Result<()> {
     if id.trim().is_empty() {
         bail!("{kind} id must not be empty");
+    }
+    Ok(())
+}
+
+/// An `image`-backed service runs a Docker container, so it needs a non-empty
+/// image reference and a container port to map onto the host.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+fn validate_image_service(service: &ServiceConfig) -> Result<()> {
+    if service
+        .image
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        bail!("service `{}` image must not be empty", service.id);
+    }
+    if service.container_port.is_none() {
+        bail!(
+            "service `{}` image requires `container_port` (the port the service listens on inside the image)",
+            service.id
+        );
+    }
+    Ok(())
+}
+
+/// A `cluster` service spins up an ephemeral local Kubernetes cluster, so it
+/// rejects the container/preset-only knobs and bounds the node count.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
+fn validate_cluster_service(service: &ServiceConfig) -> Result<()> {
+    if service.container_port.is_some() || !service.image_env.is_empty() || !service.seed.is_empty()
+    {
+        bail!(
+            "service `{}` cluster does not accept container_port, image_env, or seed",
+            service.id
+        );
+    }
+    if let Some(nodes) = service.nodes {
+        if !(1..=9).contains(&nodes) {
+            bail!(
+                "service `{}` cluster nodes must be between 1 and 9",
+                service.id
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The `openapi` preset serves spec-derived mock responses, so it requires a
+/// `spec` pointing at an OpenAPI document.
+/// @spec projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config
+fn validate_openapi_service(service: &ServiceConfig) -> Result<()> {
+    if service
+        .spec
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        bail!(
+            "service `{}` preset `openapi` must set `spec` to an OpenAPI document path",
+            service.id
+        );
+    }
+    Ok(())
+}
+
+/// The `firebase` preset is a bundle driven by the Firebase Emulator Suite, so
+/// it requires a `firebase.json` in the workspace to know which emulators and
+/// ports to start.
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
+fn validate_firebase_service(cfg: &VatConfig, service: &ServiceConfig) -> Result<()> {
+    if !cfg.root.join("firebase.json").exists() {
+        bail!(
+            "service `{}` preset `firebase` requires a firebase.json in the workspace",
+            service.id
+        );
     }
     Ok(())
 }
@@ -404,6 +687,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_preset_service_with_seed_and_ready_cmd() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        std::fs::write(
+            &path,
+            r#"
+version = 1
+
+[[services]]
+id = "pg"
+preset = "postgres"
+seed = ["schema.sql", "data.sql"]
+ready_cmd = ["sh", "-c", "psql -tAc 'select count(*) from docs' | grep -qE '^[0-9]+$'"]
+
+[[services]]
+id = "search"
+preset = "opensearch"
+
+[[runners]]
+id = "ec"
+requires = ["pg", "search"]
+cmd = ["true"]
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_file(&path).unwrap();
+        let pg = cfg.service("pg").unwrap();
+        assert_eq!(pg.preset, Some(ServicePreset::Postgres));
+        assert_eq!(
+            pg.seed,
+            vec![PathBuf::from("schema.sql"), PathBuf::from("data.sql")]
+        );
+        assert_eq!(pg.ready_cmd.len(), 3);
+        assert_eq!(
+            cfg.service("search").unwrap().preset,
+            Some(ServicePreset::Opensearch)
+        );
+    }
+
+    #[test]
     fn parses_valid_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
@@ -490,11 +814,20 @@ artifacts = ["out.txt"]
                 requires: vec!["db".into()],
                 cmd: vec!["true".into()],
                 preset: None,
+                image: None,
+                container_port: None,
+                image_env: BTreeMap::new(),
+                runtime: ServiceRuntime::default(),
+                cluster: None,
+                k8s_version: None,
+                nodes: None,
+                spec: None,
                 version: None,
                 port: PortSpec::default(),
                 seed: Vec::new(),
                 export: BTreeMap::new(),
                 ready_http: None,
+                ready_cmd: Vec::new(),
                 timeout_s: default_service_timeout(),
             }],
             runners: vec![RunnerConfig {
@@ -526,11 +859,20 @@ artifacts = ["out.txt"]
                     requires: vec!["api".into()],
                     cmd: vec!["true".into()],
                     preset: None,
+                    image: None,
+                    container_port: None,
+                    image_env: BTreeMap::new(),
+                    runtime: ServiceRuntime::default(),
+                    cluster: None,
+                    k8s_version: None,
+                    nodes: None,
+                    spec: None,
                     version: None,
                     port: PortSpec::default(),
                     seed: Vec::new(),
                     export: BTreeMap::new(),
                     ready_http: None,
+                    ready_cmd: Vec::new(),
                     timeout_s: default_service_timeout(),
                 },
                 ServiceConfig {
@@ -538,11 +880,20 @@ artifacts = ["out.txt"]
                     requires: vec!["web".into()],
                     cmd: vec!["true".into()],
                     preset: None,
+                    image: None,
+                    container_port: None,
+                    image_env: BTreeMap::new(),
+                    runtime: ServiceRuntime::default(),
+                    cluster: None,
+                    k8s_version: None,
+                    nodes: None,
+                    spec: None,
                     version: None,
                     port: PortSpec::default(),
                     seed: Vec::new(),
                     export: BTreeMap::new(),
                     ready_http: None,
+                    ready_cmd: Vec::new(),
                     timeout_s: default_service_timeout(),
                 },
             ],
@@ -558,6 +909,324 @@ artifacts = ["out.txt"]
             digest: String::new(),
         };
         assert!(validate(&cfg).is_err());
+    }
+
+    fn cfg_with_service(service: ServiceConfig) -> VatConfig {
+        VatConfig {
+            version: 1,
+            name: None,
+            default_runner: None,
+            workspace: WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: vec![service],
+            runners: vec![RunnerConfig {
+                id: "e2e".into(),
+                requires: vec!["svc".into()],
+                cmd: vec!["true".into()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            path: PathBuf::from("vat.toml"),
+            root: PathBuf::from("."),
+            digest: String::new(),
+        }
+    }
+
+    fn bare_service(id: &str) -> ServiceConfig {
+        ServiceConfig {
+            id: id.into(),
+            requires: Vec::new(),
+            cmd: Vec::new(),
+            preset: None,
+            image: None,
+            container_port: None,
+            image_env: BTreeMap::new(),
+            runtime: ServiceRuntime::default(),
+            cluster: None,
+            k8s_version: None,
+            nodes: None,
+            spec: None,
+            version: None,
+            port: PortSpec::default(),
+            seed: Vec::new(),
+            export: BTreeMap::new(),
+            ready_http: None,
+            ready_cmd: Vec::new(),
+            timeout_s: default_service_timeout(),
+        }
+    }
+
+    #[test]
+    fn accepts_image_backed_service() {
+        let mut svc = bare_service("svc");
+        svc.image = Some("postgres:16".into());
+        svc.container_port = Some(5432);
+        assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn rejects_service_with_no_backing() {
+        // Neither cmd, preset, nor image.
+        assert!(validate(&cfg_with_service(bare_service("svc"))).is_err());
+    }
+
+    #[test]
+    fn rejects_image_and_cmd_together() {
+        let mut svc = bare_service("svc");
+        svc.cmd = vec!["true".into()];
+        svc.image = Some("redis:7".into());
+        svc.container_port = Some(6379);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_image_and_preset_together() {
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::Postgres);
+        svc.image = Some("postgres:16".into());
+        svc.container_port = Some(5432);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_image_without_container_port() {
+        let mut svc = bare_service("svc");
+        svc.image = Some("postgres:16".into());
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_runtime_on_non_preset_service() {
+        // `runtime` only applies to preset services.
+        let mut svc = bare_service("svc");
+        svc.image = Some("postgres:16".into());
+        svc.container_port = Some(5432);
+        svc.runtime = ServiceRuntime::Docker;
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn accepts_preset_with_runtime() {
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::Postgres);
+        svc.runtime = ServiceRuntime::Docker;
+        assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn accepts_cluster_service() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn rejects_cluster_and_cmd_together() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Kind);
+        svc.cmd = vec!["true".into()];
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_and_preset_together() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Kind);
+        svc.preset = Some(ServicePreset::Postgres);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_and_image_together() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Kind);
+        svc.image = Some("postgres:16".into());
+        svc.container_port = Some(5432);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_with_container_port() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        svc.container_port = Some(6443);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_with_seed() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        svc.seed = vec![PathBuf::from("schema.sql")];
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_nodes_zero() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        svc.nodes = Some(0);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_nodes_too_many() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        svc.nodes = Some(10);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn cluster_backend_parses_k3d_kebab() {
+        // serde round-trips the backend tokens used in vat.toml / --backend.
+        for (token, backend) in [
+            ("auto", ClusterBackend::Auto),
+            ("kind", ClusterBackend::Kind),
+            ("k3d", ClusterBackend::K3d),
+            ("minikube", ClusterBackend::Minikube),
+        ] {
+            let parsed: ClusterBackend =
+                serde_json::from_value(serde_json::Value::String(token.into())).unwrap();
+            assert_eq!(parsed, backend);
+            let dumped = serde_json::to_value(backend).unwrap();
+            assert_eq!(dumped, serde_json::Value::String(token.into()));
+        }
+    }
+
+    #[test]
+    fn accepts_gcp_emulator_presets() {
+        for preset in [
+            ServicePreset::Firestore,
+            ServicePreset::Pubsub,
+            ServicePreset::Datastore,
+            ServicePreset::Bigtable,
+            ServicePreset::Spanner,
+        ] {
+            let mut svc = bare_service("svc");
+            svc.preset = Some(preset);
+            assert!(validate(&cfg_with_service(svc)).is_ok(), "{preset:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_firebase_without_firebase_json() {
+        // cfg_with_service roots at "." (the crate dir), which has no firebase.json.
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::Firebase);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn emulator_presets_round_trip() {
+        for (token, preset) in [
+            ("firestore", ServicePreset::Firestore),
+            ("pubsub", ServicePreset::Pubsub),
+            ("datastore", ServicePreset::Datastore),
+            ("bigtable", ServicePreset::Bigtable),
+            ("spanner", ServicePreset::Spanner),
+            ("firebase", ServicePreset::Firebase),
+        ] {
+            let parsed: ServicePreset =
+                serde_json::from_value(serde_json::Value::String(token.into())).unwrap();
+            assert_eq!(parsed, preset);
+            assert_eq!(
+                serde_json::to_value(preset).unwrap(),
+                serde_json::Value::String(token.into())
+            );
+            assert!(preset.is_emulator());
+        }
+    }
+
+    #[test]
+    fn accepts_firebase_auth_preset_and_classifies_builtin() {
+        let parsed: ServicePreset =
+            serde_json::from_value(serde_json::Value::String("firebase-auth".into())).unwrap();
+        assert_eq!(parsed, ServicePreset::FirebaseAuth);
+        assert!(ServicePreset::FirebaseAuth.is_builtin());
+        assert!(ServicePreset::FirebaseAuth.is_builtin_only());
+        assert!(ServicePreset::Pubsub.is_builtin());
+        assert!(!ServicePreset::Pubsub.is_builtin_only());
+        assert!(!ServicePreset::Firestore.is_builtin());
+
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::FirebaseAuth);
+        assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn rejects_firebase_auth_with_explicit_runtime() {
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::FirebaseAuth);
+        svc.runtime = ServiceRuntime::Docker;
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn accepts_cloud_tasks_and_scheduler_builtin_presets() {
+        for (token, preset) in [
+            ("cloud-tasks", ServicePreset::CloudTasks),
+            ("cloud-scheduler", ServicePreset::CloudScheduler),
+            ("cloud-workflows", ServicePreset::CloudWorkflows),
+            ("cloud-storage", ServicePreset::CloudStorage),
+            ("http-mock", ServicePreset::HttpMock),
+        ] {
+            let parsed: ServicePreset =
+                serde_json::from_value(serde_json::Value::String(token.into())).unwrap();
+            assert_eq!(parsed, preset);
+            assert!(preset.is_builtin());
+            assert!(preset.is_builtin_only());
+            let mut svc = bare_service("svc");
+            svc.preset = Some(preset);
+            assert!(validate(&cfg_with_service(svc)).is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_cloud_preset_with_explicit_runtime() {
+        for preset in [
+            ServicePreset::CloudTasks,
+            ServicePreset::CloudScheduler,
+            ServicePreset::CloudWorkflows,
+            ServicePreset::CloudStorage,
+            ServicePreset::HttpMock,
+        ] {
+            let mut svc = bare_service("svc");
+            svc.preset = Some(preset);
+            svc.runtime = ServiceRuntime::Docker;
+            assert!(validate(&cfg_with_service(svc)).is_err());
+        }
+    }
+
+    #[test]
+    fn openapi_preset_classifies_builtin_and_requires_spec() {
+        let parsed: ServicePreset =
+            serde_json::from_value(serde_json::Value::String("openapi".into())).unwrap();
+        assert_eq!(parsed, ServicePreset::Openapi);
+        assert!(ServicePreset::Openapi.is_emulator());
+        assert!(ServicePreset::Openapi.is_builtin());
+        assert!(ServicePreset::Openapi.is_builtin_only());
+
+        // openapi without a `spec` → rejected.
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::Openapi);
+        assert!(validate(&cfg_with_service(svc.clone())).is_err());
+
+        // openapi with a `spec` → ok.
+        svc.spec = Some("api.yaml".into());
+        assert!(validate(&cfg_with_service(svc.clone())).is_ok());
+
+        // a built-in-only preset must keep runtime = auto, even with a spec.
+        let mut docker = svc.clone();
+        docker.runtime = ServiceRuntime::Docker;
+        assert!(validate(&cfg_with_service(docker)).is_err());
+
+        // `spec` on a non-openapi preset → rejected.
+        let mut other = bare_service("svc");
+        other.preset = Some(ServicePreset::Pubsub);
+        other.spec = Some("api.yaml".into());
+        assert!(validate(&cfg_with_service(other)).is_err());
     }
 }
 // CODEGEN-END

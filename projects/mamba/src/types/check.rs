@@ -1,16 +1,19 @@
-use std::collections::HashMap;
+use super::generic::{GenericParams, Substitution};
+use super::protocol::ProtocolRegistry;
+use super::ty::TypeVarId;
+use super::{Ty, TypeContext, TypeId};
 use crate::error::MambaError;
 use crate::parser::ast::*;
 use crate::resolve::{SymbolKind, SymbolTable};
 use crate::source::span::{Span, Spanned};
-use super::{Ty, TypeContext, TypeId};
-use super::ty::TypeVarId;
-use super::generic::{GenericParams, Substitution};
-use super::protocol::ProtocolRegistry;
+use std::collections::HashMap;
 
 /// Diagnostic severity for warnings vs errors (#244).
 #[derive(Debug, Clone, PartialEq)]
-pub enum DiagLevel { Warning, Error }
+pub enum DiagLevel {
+    Warning,
+    Error,
+}
 
 /// A diagnostic produced during type checking.
 #[derive(Debug, Clone)]
@@ -22,24 +25,61 @@ pub struct Diagnostic {
 
 /// Check if a class name belongs to the built-in exception hierarchy.
 fn is_exception_class_name(name: &str) -> bool {
-    matches!(name,
-        "BaseException" | "SystemExit" | "KeyboardInterrupt" | "GeneratorExit"
-        | "Exception" | "StopIteration" | "StopAsyncIteration"
-        | "ArithmeticError" | "ZeroDivisionError" | "OverflowError" | "FloatingPointError"
-        | "LookupError" | "IndexError" | "KeyError"
-        | "OSError" | "IOError" | "FileNotFoundError" | "PermissionError" | "FileExistsError"
-        | "TypeError" | "ValueError" | "AttributeError" | "NameError"
-        | "RuntimeError" | "RecursionError" | "NotImplementedError"
-        | "ImportError" | "ModuleNotFoundError"
-        | "SyntaxError" | "IndentationError"
-        | "UnicodeError" | "UnicodeDecodeError" | "UnicodeEncodeError"
-        | "AssertionError" | "BufferError" | "EOFError" | "MemoryError"
-        | "ConnectionError" | "TimeoutError"
-        | "ExceptionGroup" | "BaseExceptionGroup"
-        | "Warning" | "UserWarning" | "DeprecationWarning" | "PendingDeprecationWarning"
-        | "SyntaxWarning" | "RuntimeWarning" | "FutureWarning"
-        | "ImportWarning" | "UnicodeWarning" | "BytesWarning"
-        | "ResourceWarning" | "EncodingWarning"
+    matches!(
+        name,
+        "BaseException"
+            | "SystemExit"
+            | "KeyboardInterrupt"
+            | "GeneratorExit"
+            | "Exception"
+            | "StopIteration"
+            | "StopAsyncIteration"
+            | "ArithmeticError"
+            | "ZeroDivisionError"
+            | "OverflowError"
+            | "FloatingPointError"
+            | "LookupError"
+            | "IndexError"
+            | "KeyError"
+            | "OSError"
+            | "IOError"
+            | "FileNotFoundError"
+            | "PermissionError"
+            | "FileExistsError"
+            | "TypeError"
+            | "ValueError"
+            | "AttributeError"
+            | "NameError"
+            | "RuntimeError"
+            | "RecursionError"
+            | "NotImplementedError"
+            | "ImportError"
+            | "ModuleNotFoundError"
+            | "SyntaxError"
+            | "IndentationError"
+            | "UnicodeError"
+            | "UnicodeDecodeError"
+            | "UnicodeEncodeError"
+            | "AssertionError"
+            | "BufferError"
+            | "EOFError"
+            | "MemoryError"
+            | "ConnectionError"
+            | "TimeoutError"
+            | "ExceptionGroup"
+            | "BaseExceptionGroup"
+            | "Warning"
+            | "UserWarning"
+            | "DeprecationWarning"
+            | "PendingDeprecationWarning"
+            | "SyntaxWarning"
+            | "RuntimeWarning"
+            | "FutureWarning"
+            | "ImportWarning"
+            | "UnicodeWarning"
+            | "BytesWarning"
+            | "ResourceWarning"
+            | "EncodingWarning"
     )
 }
 
@@ -149,10 +189,24 @@ impl TypeChecker {
         self.errors.push(MambaError::type_err(span, msg));
     }
 
+    /// Current error count — pair with `truncate_errors` to speculatively
+    /// check an expression for its binding side effects (walrus targets in
+    /// f-string fields) without surfacing new type errors.
+    pub(crate) fn errors_mark(&self) -> usize {
+        self.errors.len()
+    }
+
+    /// Drop errors recorded after `mark` (see `errors_mark`).
+    pub(crate) fn truncate_errors(&mut self, mark: usize) {
+        self.errors.truncate(mark);
+    }
+
     /// Emit an Any-inference warning (#244). If strict mode, emits error instead.
     #[allow(dead_code)]
     pub(crate) fn warn_any(&mut self, span: Span, msg: impl Into<String>) {
-        if self.no_warn_any { return; }
+        if self.no_warn_any {
+            return;
+        }
         let message = msg.into();
         if self.strict {
             self.errors.push(MambaError::type_err(span, message));
@@ -166,9 +220,13 @@ impl TypeChecker {
     }
 
     /// Register type parameters as TypeVars and return GenericParams.
-    pub(crate) fn register_type_params(&mut self, type_params: &[String]) -> GenericParams {
+    pub(crate) fn register_type_params(
+        &mut self,
+        type_params: &[crate::parser::ast::TypeParam],
+    ) -> GenericParams {
         let mut gp = GenericParams::new();
-        for name in type_params {
+        for param in type_params {
+            let name = &param.name;
             let var_id = TypeVarId(self.next_type_var_id);
             self.next_type_var_id += 1;
             self.tcx.new_type_var(name.clone(), None, Vec::new());
@@ -182,9 +240,9 @@ impl TypeChecker {
     }
 
     /// Remove type parameter aliases to prevent leaking outside scope.
-    pub(crate) fn unregister_type_params(&mut self, type_params: &[String]) {
-        for name in type_params {
-            self.tcx.unregister_alias(name);
+    pub(crate) fn unregister_type_params(&mut self, type_params: &[crate::parser::ast::TypeParam]) {
+        for param in type_params {
+            self.tcx.unregister_alias(&param.name);
         }
     }
 
@@ -194,29 +252,54 @@ impl TypeChecker {
     }
 
     /// Check a module. Returns accumulated errors.
-    pub fn check_module(&mut self, module: &Module) -> Vec<MambaError> {
-        // First pass: register all top-level function/class/enum/alias names
-        for stmt in &module.stmts {
+    /// First-pass def/class/enum/alias pre-registration, descending into
+    /// compound-statement bodies (try/if/while/for/with): a class defined in
+    /// a module-level `try:` is still a module-scope binding.
+    fn preregister_defs(&mut self, stmts: &[Spanned<Stmt>]) {
+        for stmt in stmts {
             match &stmt.node {
-                Stmt::FnDef { name, type_params, params, return_ty, .. }
-                | Stmt::AsyncFnDef { name, type_params, params, return_ty, .. } => {
+                Stmt::FnDef {
+                    name,
+                    type_params,
+                    params,
+                    return_ty,
+                    ..
+                }
+                | Stmt::AsyncFnDef {
+                    name,
+                    type_params,
+                    params,
+                    return_ty,
+                    ..
+                } => {
                     // Register generic type params before resolving param/ret types
                     let gp = self.register_type_params(type_params);
 
                     let sym = self.symbols.define(name.clone(), SymbolKind::Function);
                     // Detect *args variadic parameter and exclude it from param_types.
                     // Only positional params before the *args are required at call sites.
-                    let star_pos = params.iter().position(|p| p.kind == crate::parser::ast::ParamKind::Star);
-                    let is_variadic = star_pos.is_some() || params.iter().any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
+                    let star_pos = params
+                        .iter()
+                        .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
+                    let is_variadic = star_pos.is_some()
+                        || params
+                            .iter()
+                            .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
                     let effective_params = star_pos.map_or(params.as_slice(), |pos| &params[..pos]);
-                    let param_types: Vec<TypeId> = effective_params.iter()
+                    let param_types: Vec<TypeId> = effective_params
+                        .iter()
                         .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
                         .map(|p| self.resolve_type_expr(&p.ty))
                         .collect();
-                    let ret = return_ty.as_ref()
+                    let ret = return_ty
+                        .as_ref()
                         .map(|t| self.resolve_type_expr(t))
                         .unwrap_or(self.tcx.any());
-                    let fn_ty = self.tcx.intern(Ty::Fn { params: param_types, ret, variadic: is_variadic });
+                    let fn_ty = self.tcx.intern(Ty::Fn {
+                        params: param_types,
+                        ret,
+                        variadic: is_variadic,
+                    });
                     self.set_sym_type(sym.0, fn_ty);
 
                     if !gp.is_empty() {
@@ -225,7 +308,13 @@ impl TypeChecker {
                     // Clean up type parameter aliases to prevent leaking
                     self.unregister_type_params(type_params);
                 }
-                Stmt::ClassDef { name, type_params, bases, body, .. } => {
+                Stmt::ClassDef {
+                    name,
+                    type_params,
+                    bases,
+                    body,
+                    ..
+                } => {
                     // Register generic type params for the class
                     let gp = self.register_type_params(type_params);
 
@@ -250,20 +339,20 @@ impl TypeChecker {
                     // methods): such an instance can satisfy neither a protocol
                     // nor a nominal type, so the ① hook may reject it against a
                     // `CoreTy::Typed` param. Any base or any method disqualifies.
-                    let only_object_base = bases.iter().all(|b| {
-                        matches!(&b.node, Expr::Ident(n) if n == "object")
-                    });
-                    let has_method = body.iter().any(|s| {
-                        matches!(&s.node, Stmt::FnDef { .. } | Stmt::AsyncFnDef { .. })
-                    });
+                    let only_object_base = bases
+                        .iter()
+                        .all(|b| matches!(&b.node, Expr::Ident(n) if n == "object"));
+                    let has_method = body
+                        .iter()
+                        .any(|s| matches!(&s.node, Stmt::FnDef { .. } | Stmt::AsyncFnDef { .. }));
                     if only_object_base && !has_method {
                         self.user_bare_classes.insert(name.clone());
                     }
 
                     // Detect Protocol base class and register
-                    let is_protocol = bases.iter().any(|b| {
-                        matches!(&b.node, Expr::Ident(n) if n == "Protocol")
-                    });
+                    let is_protocol = bases
+                        .iter()
+                        .any(|b| matches!(&b.node, Expr::Ident(n) if n == "Protocol"));
                     if is_protocol {
                         self.register_protocol(name, body);
                     }
@@ -272,12 +361,17 @@ impl TypeChecker {
                     self.unregister_type_params(type_params);
                 }
                 Stmt::EnumDef { name, variants, .. } => {
-                    let v: Vec<(String, Vec<TypeId>)> = variants.iter().map(|v| {
-                        let ftypes = v.fields.iter()
-                            .map(|f| self.resolve_type_expr(&f.ty))
-                            .collect();
-                        (v.name.clone(), ftypes)
-                    }).collect();
+                    let v: Vec<(String, Vec<TypeId>)> = variants
+                        .iter()
+                        .map(|v| {
+                            let ftypes = v
+                                .fields
+                                .iter()
+                                .map(|f| self.resolve_type_expr(&f.ty))
+                                .collect();
+                            (v.name.clone(), ftypes)
+                        })
+                        .collect();
                     let enum_ty = self.tcx.intern(Ty::Enum {
                         name: name.clone(),
                         variants: v,
@@ -285,14 +379,37 @@ impl TypeChecker {
                     let sym = self.symbols.define(name.clone(), SymbolKind::Enum);
                     self.set_sym_type(sym.0, enum_ty);
                 }
-                Stmt::TypeAlias { name, value, .. } => {
-                    let resolved = self.resolve_type_expr(value);
-                    self.tcx.register_alias(name.clone(), resolved);
+                Stmt::TypeAlias {
+                    name,
+                    type_params,
+                    value,
+                } => {
+                    // The alias value is a general expression (PEP 695). For
+                    // compile-time annotation use (`x: Alias`), convert the
+                    // type-shaped subset back into a TypeExpr; non-type-shaped
+                    // values (e.g. lambdas) only exist as runtime
+                    // TypeAliasType objects and are skipped here.
+                    if let Some(te) = expr_to_type_expr(value) {
+                        // Pre-register the alias as Any so a recursive alias
+                        // (`type R = R | None`) resolves instead of erroring.
+                        let any = self.tcx.any();
+                        self.tcx.register_alias(name.clone(), any);
+                        // The alias's own params (`type Pair[T] = list[T]`)
+                        // resolve as TypeVars within the value.
+                        let _gp = self.register_type_params(type_params);
+                        let resolved = self.resolve_type_expr(&te);
+                        self.unregister_type_params(type_params);
+                        self.tcx.register_alias(name.clone(), resolved);
+                    }
                 }
                 // Register imported names as Any in the first pass so that
                 // collect_class_methods / collect_class_fields can resolve
                 // types from third-party or relative imports in class signatures.
-                Stmt::Import { names, module_alias, module } => {
+                Stmt::Import {
+                    names,
+                    module_alias,
+                    module,
+                } => {
                     let any_ty = self.tcx.any();
                     // ① Type-wall PoC: record import provenance. The dotted
                     // module path is the source-of-truth key into stdlib_sigs.
@@ -301,7 +418,8 @@ impl TypeChecker {
                         for (name, alias) in import_names {
                             let effective = alias.as_ref().unwrap_or(name);
                             if self.symbols.lookup(effective).is_none() {
-                                let sym = self.symbols.define(effective.clone(), SymbolKind::Variable);
+                                let sym =
+                                    self.symbols.define(effective.clone(), SymbolKind::Variable);
                                 self.set_sym_type(sym.0, any_ty);
                             }
                             // Provenance: `from MOD import N [as B]`. If `N`
@@ -314,9 +432,8 @@ impl TypeChecker {
                             } else {
                                 String::new()
                             };
-                            self.import_origins.insert(
-                                effective.clone(), (dotted.clone(), qualifier),
-                            );
+                            self.import_origins
+                                .insert(effective.clone(), (dotted.clone(), qualifier));
                         }
                     } else if let Some(alias) = module_alias {
                         if self.symbols.lookup(alias).is_none() {
@@ -324,9 +441,8 @@ impl TypeChecker {
                             self.set_sym_type(sym.0, any_ty);
                         }
                         // `import MOD as A` -> A is the module.
-                        self.import_origins.insert(
-                            alias.clone(), (dotted.clone(), String::new()),
-                        );
+                        self.import_origins
+                            .insert(alias.clone(), (dotted.clone(), String::new()));
                     } else if let Some(root) = module.first() {
                         if self.symbols.lookup(root).is_none() {
                             let sym = self.symbols.define(root.clone(), SymbolKind::Variable);
@@ -336,14 +452,66 @@ impl TypeChecker {
                         // to the *root* module. Dotted submodule access through
                         // the root is a separate runtime quirk; for the PoC we
                         // only key the directly-bound root module.
-                        self.import_origins.insert(
-                            root.clone(), (root.clone(), String::new()),
-                        );
+                        self.import_origins
+                            .insert(root.clone(), (root.clone(), String::new()));
                     }
                 }
                 _ => {}
             }
+            match &stmt.node {
+                Stmt::Try {
+                    body,
+                    handlers,
+                    else_body,
+                    finally_body,
+                } => {
+                    self.preregister_defs(body);
+                    for h in handlers {
+                        self.preregister_defs(&h.body);
+                    }
+                    if let Some(eb) = else_body {
+                        self.preregister_defs(eb);
+                    }
+                    if let Some(fb) = finally_body {
+                        self.preregister_defs(fb);
+                    }
+                }
+                Stmt::If {
+                    body,
+                    elif_clauses,
+                    else_body,
+                    ..
+                } => {
+                    self.preregister_defs(body);
+                    for (_, eb) in elif_clauses {
+                        self.preregister_defs(eb);
+                    }
+                    if let Some(eb) = else_body {
+                        self.preregister_defs(eb);
+                    }
+                }
+                Stmt::While {
+                    body, else_body, ..
+                }
+                | Stmt::For {
+                    body, else_body, ..
+                } => {
+                    self.preregister_defs(body);
+                    if let Some(eb) = else_body {
+                        self.preregister_defs(eb);
+                    }
+                }
+                Stmt::With { body, .. } => {
+                    self.preregister_defs(body);
+                }
+                _ => {}
+            }
         }
+    }
+
+    pub fn check_module(&mut self, module: &Module) -> Vec<MambaError> {
+        // First pass: register all top-level function/class/enum/alias names
+        self.preregister_defs(&module.stmts);
 
         // Second pass: check bodies
         for stmt in &module.stmts {
@@ -365,8 +533,14 @@ impl TypeChecker {
                 // Bare collection type names: resolve to concrete Ty so that
                 // annotations like `-> dict` or `list[dict]` don't accidentally
                 // pick up the symbol-table entry for the builtin callable.
-                "dict" => { let a = self.tcx.any(); self.tcx.intern(Ty::Dict(a, a)) }
-                "list" => { let a = self.tcx.any(); self.tcx.intern(Ty::List(a)) }
+                "dict" => {
+                    let a = self.tcx.any();
+                    self.tcx.intern(Ty::Dict(a, a))
+                }
+                "list" => {
+                    let a = self.tcx.any();
+                    self.tcx.intern(Ty::List(a))
+                }
                 "tuple" => self.tcx.intern(Ty::Tuple(vec![])),
                 "set" | "frozenset" => self.tcx.any(),
                 // `type` as a type expression (e.g. `type[BaseModel]` bare name):
@@ -403,6 +577,12 @@ impl TypeChecker {
                         // CPython does not evaluate these strings, so treat as
                         // Any rather than emitting an error.
                         self.tcx.any()
+                    } else if name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                        // Numeric-literal annotation (`-> 42`, PEP 3107
+                        // arbitrary expression preserved textually by the
+                        // parser for introspection): annotations are never
+                        // validated as types in CPython — treat as Any.
+                        self.tcx.any()
                     } else {
                         self.error(ty.span, format!("unknown type: `{name}`"));
                         self.tcx.error()
@@ -410,9 +590,7 @@ impl TypeChecker {
                 }
             },
             TypeExpr::Generic { name, args } => {
-                let inner: Vec<TypeId> = args.iter()
-                    .map(|a| self.resolve_type_expr(a))
-                    .collect();
+                let inner: Vec<TypeId> = args.iter().map(|a| self.resolve_type_expr(a)).collect();
                 match name.as_str() {
                     "list" if inner.len() == 1 => self.tcx.intern(Ty::List(inner[0])),
                     "dict" if inner.len() == 2 => self.tcx.intern(Ty::Dict(inner[0], inner[1])),
@@ -430,7 +608,11 @@ impl TypeChecker {
                         // #243: Callable[[params...], ret] → Fn type
                         let ret = inner[inner.len() - 1];
                         let params = inner[..inner.len() - 1].to_vec();
-                        self.tcx.intern(Ty::Fn { params, ret, variadic: false })
+                        self.tcx.intern(Ty::Fn {
+                            params,
+                            ret,
+                            variadic: false,
+                        })
                     }
                     _ => {
                         // Support user-defined generic types like Box[int]
@@ -438,23 +620,29 @@ impl TypeChecker {
                             let base_ty = self.get_sym_type(sym.0);
                             // Create a parameterized version with args
                             if let Ty::Class { fields, .. } = self.tcx.get(base_ty).clone() {
-                                let arg_names: Vec<String> = inner.iter()
-                                    .map(|a| self.ty_name(*a))
-                                    .collect();
+                                let arg_names: Vec<String> =
+                                    inner.iter().map(|a| self.ty_name(*a)).collect();
                                 let param_name = format!("{}[{}]", name, arg_names.join(", "));
                                 // Substitute type params in fields so Box[int].value = int
-                                let new_fields = if let Some(gp) = self.generic_defs.get(name).cloned() {
+                                let new_fields = if let Some(gp) =
+                                    self.generic_defs.get(name).cloned()
+                                {
                                     let mut subst = Substitution::new();
                                     for (tv, concrete) in gp.params.iter().zip(inner.iter()) {
                                         subst.insert(tv.id, *concrete);
                                     }
-                                    fields.iter()
+                                    fields
+                                        .iter()
                                         .map(|(n, t)| (n.clone(), subst.apply(*t, &mut self.tcx)))
                                         .collect()
                                 } else {
                                     fields
                                 };
-                                self.tcx.intern(Ty::Class { name: param_name, fields: new_fields, match_args: None })
+                                self.tcx.intern(Ty::Class {
+                                    name: param_name,
+                                    fields: new_fields,
+                                    match_args: None,
+                                })
                             } else {
                                 base_ty
                             }
@@ -479,22 +667,21 @@ impl TypeChecker {
                 self.tcx.intern(Ty::Union(vec![inner_ty, none_ty]))
             }
             TypeExpr::Union(types) => {
-                let inner: Vec<TypeId> = types.iter()
-                    .map(|t| self.resolve_type_expr(t))
-                    .collect();
+                let inner: Vec<TypeId> = types.iter().map(|t| self.resolve_type_expr(t)).collect();
                 self.tcx.intern(Ty::Union(inner))
             }
             TypeExpr::Fn { params, ret } => {
-                let param_types: Vec<TypeId> = params.iter()
-                    .map(|p| self.resolve_type_expr(p))
-                    .collect();
+                let param_types: Vec<TypeId> =
+                    params.iter().map(|p| self.resolve_type_expr(p)).collect();
                 let ret_ty = self.resolve_type_expr(ret);
-                self.tcx.intern(Ty::Fn { params: param_types, ret: ret_ty, variadic: false })
+                self.tcx.intern(Ty::Fn {
+                    params: param_types,
+                    ret: ret_ty,
+                    variadic: false,
+                })
             }
             TypeExpr::Tuple(types) => {
-                let inner: Vec<TypeId> = types.iter()
-                    .map(|t| self.resolve_type_expr(t))
-                    .collect();
+                let inner: Vec<TypeId> = types.iter().map(|t| self.resolve_type_expr(t)).collect();
                 self.tcx.intern(Ty::Tuple(inner))
             }
         }
@@ -540,18 +727,28 @@ impl TypeChecker {
     }
 
     pub(crate) fn types_compatible(&self, expected: TypeId, actual: TypeId) -> bool {
-        if expected == actual { return true; }
+        if expected == actual {
+            return true;
+        }
         let e = self.tcx.get(expected);
         let a = self.tcx.get(actual);
         // Error types are always compatible (to avoid cascading errors)
-        if e.is_error() || a.is_error() { return true; }
+        if e.is_error() || a.is_error() {
+            return true;
+        }
         // #240: Any is compatible with everything (both directions)
-        if e.is_any() || a.is_any() { return true; }
+        if e.is_any() || a.is_any() {
+            return true;
+        }
         // #314: TypeVar is compatible with any type (unified during inference)
-        if matches!(e, Ty::TypeVar(_)) || matches!(a, Ty::TypeVar(_)) { return true; }
+        if matches!(e, Ty::TypeVar(_)) || matches!(a, Ty::TypeVar(_)) {
+            return true;
+        }
         // SelfType (the `self` parameter's type) is compatible with any Class type.
         // `return self` in a method whose return type is the class name is always valid.
-        if matches!(e, Ty::SelfType) || matches!(a, Ty::SelfType) { return true; }
+        if matches!(e, Ty::SelfType) || matches!(a, Ty::SelfType) {
+            return true;
+        }
         // #314: Parameterized class compatible with bare base class
         // (e.g., Box[T] ≈ Box, Container[int] ≈ Container)
         // but NOT differently parameterized (Box[int] ≠ Box[str])
@@ -561,7 +758,9 @@ impl TypeChecker {
             if base1 == base2 {
                 let has1 = n1.contains('[');
                 let has2 = n2.contains('[');
-                if !has1 || !has2 || n1 == n2 { return true; }
+                if !has1 || !has2 || n1 == n2 {
+                    return true;
+                }
             }
             // Exception class hierarchy: all exception types are compatible
             // with each other (they all derive from BaseException).
@@ -571,18 +770,30 @@ impl TypeChecker {
         }
         // #314: Protocol structural subtyping — if expected is a protocol class,
         // check if actual class structurally satisfies it
-        if let Ty::Class { name: proto_name, .. } = e {
+        if let Ty::Class {
+            name: proto_name, ..
+        } = e
+        {
             if self.protocol_registry.get(proto_name).is_some() {
-                if let Ty::Class { name: class_name, .. } = a {
-                    let class_methods = self.class_methods
+                if let Ty::Class {
+                    name: class_name, ..
+                } = a
+                {
+                    let class_methods = self
+                        .class_methods
                         .get(class_name)
                         .cloned()
                         .unwrap_or_default();
                     let class_attrs: HashMap<String, TypeId> = if let Ty::Class { fields, .. } = a {
                         fields.iter().cloned().collect()
-                    } else { HashMap::new() };
+                    } else {
+                        HashMap::new()
+                    };
                     return self.protocol_registry.satisfies(
-                        proto_name, &class_methods, &class_attrs, &self.tcx,
+                        proto_name,
+                        &class_methods,
+                        &class_attrs,
+                        &self.tcx,
                     );
                 }
             }
@@ -627,7 +838,9 @@ impl TypeChecker {
             // `tuple[T, ...]` (each a 2-element `[T, Any]`), since `Any`
             // elements are universally compatible.
             if es.len() == as_.len() {
-                return es.iter().zip(as_.iter())
+                return es
+                    .iter()
+                    .zip(as_.iter())
                     .all(|(&elem_e, &elem_a)| self.types_compatible(elem_e, elem_a));
             }
             // Differing arity: the only compatible shape is a homogeneous
@@ -637,14 +850,45 @@ impl TypeChecker {
             // compatible with `T`.
             if es.len() == 2 && self.tcx.get(es[1]).is_any() {
                 let elem_e = es[0];
-                return as_.iter().all(|&elem_a| self.types_compatible(elem_e, elem_a));
+                return as_
+                    .iter()
+                    .all(|&elem_a| self.types_compatible(elem_e, elem_a));
             }
             if as_.len() == 2 && self.tcx.get(as_[1]).is_any() {
                 let elem_a = as_[0];
-                return es.iter().all(|&elem_e| self.types_compatible(elem_e, elem_a));
+                return es
+                    .iter()
+                    .all(|&elem_e| self.types_compatible(elem_e, elem_a));
             }
             // Differing arity, neither homogeneous: genuine length mismatch.
             return false;
+        }
+        // Callable compatibility is structural: equal arity, parameters
+        // contravariant (checked reversed), return covariant. `Any` on either
+        // side of any position dominates, so an `(Any) -> Any` lambda
+        // satisfies an `(Any) -> int` parameter (the mypy-accepted shape).
+        if let (
+            Ty::Fn {
+                params: pe,
+                ret: re,
+                ..
+            },
+            Ty::Fn {
+                params: pa,
+                ret: ra,
+                ..
+            },
+        ) = (e, a)
+        {
+            let (pe, pa, re, ra) = (pe.clone(), pa.clone(), *re, *ra);
+            if pe.len() != pa.len() {
+                return false;
+            }
+            return pe
+                .iter()
+                .zip(pa.iter())
+                .all(|(&te, &ta)| self.types_compatible(ta, te))
+                && self.types_compatible(re, ra);
         }
         // Bool is a subclass of int in Python (#1680) — `isinstance(True, int) is True`.
         // Accept bool wherever int or float is expected, and int wherever float is
@@ -687,11 +931,14 @@ impl TypeChecker {
                 info.name.clone()
             }
             Ty::Literal(vals) => {
-                let parts: Vec<String> = vals.iter().map(|v| match v {
-                    super::ty::LiteralValue::Int(i) => i.to_string(),
-                    super::ty::LiteralValue::Str(s) => format!("\"{s}\""),
-                    super::ty::LiteralValue::Bool(b) => b.to_string(),
-                }).collect();
+                let parts: Vec<String> = vals
+                    .iter()
+                    .map(|v| match v {
+                        super::ty::LiteralValue::Int(i) => i.to_string(),
+                        super::ty::LiteralValue::Str(s) => format!("\"{s}\""),
+                        super::ty::LiteralValue::Bool(b) => b.to_string(),
+                    })
+                    .collect();
                 format!("Literal[{}]", parts.join(", "))
             }
             Ty::SelfType => "Self".into(),
@@ -701,33 +948,43 @@ impl TypeChecker {
     }
 
     /// Register a Protocol class in the protocol registry.
-    pub(crate) fn register_protocol(
-        &mut self,
-        name: &str,
-        body: &[Spanned<Stmt>],
-    ) {
-        use super::protocol::{Protocol, MethodSig};
+    pub(crate) fn register_protocol(&mut self, name: &str, body: &[Spanned<Stmt>]) {
+        use super::protocol::{MethodSig, Protocol};
 
         let mut methods = HashMap::new();
         let mut attrs = HashMap::new();
 
         for stmt in body {
             match &stmt.node {
-                Stmt::FnDef { name: method_name, params, return_ty, .. } => {
+                Stmt::FnDef {
+                    name: method_name,
+                    params,
+                    return_ty,
+                    ..
+                } => {
                     // Skip self parameter for protocol methods
-                    let param_types: Vec<TypeId> = params.iter()
+                    let param_types: Vec<TypeId> = params
+                        .iter()
                         .filter(|p| p.name != "self")
                         .map(|p| self.resolve_type_expr(&p.ty))
                         .collect();
-                    let ret = return_ty.as_ref()
+                    let ret = return_ty
+                        .as_ref()
                         .map(|t| self.resolve_type_expr(t))
                         .unwrap_or(self.tcx.any());
-                    methods.insert(method_name.clone(), MethodSig {
-                        params: param_types,
-                        return_type: ret,
-                    });
+                    methods.insert(
+                        method_name.clone(),
+                        MethodSig {
+                            params: param_types,
+                            return_type: ret,
+                        },
+                    );
                 }
-                Stmt::VarDecl { name: attr_name, ty, .. } => {
+                Stmt::VarDecl {
+                    name: attr_name,
+                    ty,
+                    ..
+                } => {
                     let ty_id = self.resolve_type_expr(ty);
                     attrs.insert(attr_name.clone(), ty_id);
                 }
@@ -744,27 +1001,39 @@ impl TypeChecker {
     }
 
     /// Collect method signatures from a class body for protocol conformance.
-    pub(crate) fn collect_class_methods(
-        &mut self,
-        class_name: &str,
-        body: &[Spanned<Stmt>],
-    ) {
+    pub(crate) fn collect_class_methods(&mut self, class_name: &str, body: &[Spanned<Stmt>]) {
         use super::protocol::MethodSig;
 
         let mut methods = HashMap::new();
         for stmt in body {
-            if let Stmt::FnDef { name, params, return_ty, .. } = &stmt.node {
-                let param_types: Vec<TypeId> = params.iter()
+            if let Stmt::FnDef {
+                name,
+                type_params,
+                params,
+                return_ty,
+                ..
+            } = &stmt.node
+            {
+                // Generic methods (`def meth[U](...)`) resolve their own
+                // type params within the signature (PEP 695).
+                let _gp = self.register_type_params(type_params);
+                let param_types: Vec<TypeId> = params
+                    .iter()
                     .filter(|p| p.name != "self")
                     .map(|p| self.resolve_type_expr(&p.ty))
                     .collect();
-                let ret = return_ty.as_ref()
+                let ret = return_ty
+                    .as_ref()
                     .map(|t| self.resolve_type_expr(t))
                     .unwrap_or(self.tcx.any());
-                methods.insert(name.clone(), MethodSig {
-                    params: param_types,
-                    return_type: ret,
-                });
+                self.unregister_type_params(type_params);
+                methods.insert(
+                    name.clone(),
+                    MethodSig {
+                        params: param_types,
+                        return_type: ret,
+                    },
+                );
             }
         }
         if !methods.is_empty() {
@@ -777,6 +1046,60 @@ impl Default for TypeChecker {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Best-effort conversion of a PEP 695 type-alias *value expression* back
+/// into a `TypeExpr` for compile-time annotation resolution (`x: Alias`).
+///
+/// Only the type-shaped subset converts (`int`, `int | str`, `list[T]`,
+/// `(A, B)`, dotted names). Anything else — lambdas, calls, literals —
+/// returns `None` and the alias exists purely as a runtime TypeAliasType.
+pub(crate) fn expr_to_type_expr(expr: &Spanned<Expr>) -> Option<Spanned<TypeExpr>> {
+    fn dotted_name(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(n) => Some(n.clone()),
+            Expr::Attr { object, attr } => Some(format!("{}.{}", dotted_name(&object.node)?, attr)),
+            _ => None,
+        }
+    }
+    let node = match &expr.node {
+        Expr::Ident(n) => TypeExpr::Named(n.clone()),
+        Expr::NoneLit => TypeExpr::Named("None".to_string()),
+        Expr::StrLit(s) => TypeExpr::Named(s.clone()),
+        Expr::Attr { .. } => TypeExpr::Named(dotted_name(&expr.node)?),
+        Expr::BinOp {
+            op: BinOp::BitOr,
+            lhs,
+            rhs,
+        } => {
+            let mut variants = Vec::new();
+            match expr_to_type_expr(lhs)?.node {
+                TypeExpr::Union(vs) => variants.extend(vs),
+                other => variants.push(Spanned::new(other, lhs.span)),
+            }
+            variants.push(expr_to_type_expr(rhs)?);
+            TypeExpr::Union(variants)
+        }
+        Expr::Index { object, index } => {
+            let name = dotted_name(&object.node)?;
+            let args = match &index.node {
+                Expr::TupleLit(items) => items
+                    .iter()
+                    .map(expr_to_type_expr)
+                    .collect::<Option<Vec<_>>>()?,
+                _ => vec![expr_to_type_expr(index)?],
+            };
+            TypeExpr::Generic { name, args }
+        }
+        Expr::TupleLit(items) => TypeExpr::Tuple(
+            items
+                .iter()
+                .map(expr_to_type_expr)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        _ => return None,
+    };
+    Some(Spanned::new(node, expr.span))
 }
 
 #[cfg(test)]
@@ -1043,7 +1366,10 @@ mod tests {
     #[test]
     fn test_register_type_params() {
         let mut tc = TypeChecker::new();
-        let gp = tc.register_type_params(&["T".to_string(), "U".to_string()]);
+        let gp = tc.register_type_params(&[
+            crate::parser::ast::TypeParam::plain("T"),
+            crate::parser::ast::TypeParam::plain("U"),
+        ]);
         assert_eq!(gp.len(), 2);
         assert_eq!(gp.params[0].name, "T");
         assert_eq!(gp.params[1].name, "U");
@@ -1055,9 +1381,9 @@ mod tests {
     #[test]
     fn test_unregister_type_params() {
         let mut tc = TypeChecker::new();
-        tc.register_type_params(&["T".to_string()]);
+        tc.register_type_params(&[crate::parser::ast::TypeParam::plain("T")]);
         assert!(tc.tcx.resolve_alias("T").is_some());
-        tc.unregister_type_params(&["T".to_string()]);
+        tc.unregister_type_params(&[crate::parser::ast::TypeParam::plain("T")]);
         assert!(tc.tcx.resolve_alias("T").is_none());
     }
 

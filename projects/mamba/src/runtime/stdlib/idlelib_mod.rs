@@ -1,3 +1,5 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// idlelib module for Mamba (mamba-stdlib).
 ///
 /// Stub implementation of Python's `idlelib` package. Registers the
@@ -10,8 +12,6 @@
 /// runtime `NotImplementedError` rather than a "string is not callable"
 /// type error.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 macro_rules! dispatch_variadic_stub {
     ($name:ident, $label:literal) => {
@@ -39,10 +39,22 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     // Standard module attributes
-    attrs.insert("__name__".to_string(), MbValue::from_ptr(MbObject::new_str("idlelib".to_string())));
-    attrs.insert("__file__".to_string(), MbValue::from_ptr(MbObject::new_str("idlelib/__init__.py".to_string())));
-    attrs.insert("__package__".to_string(), MbValue::from_ptr(MbObject::new_str("idlelib".to_string())));
-    attrs.insert("__path__".to_string(), MbValue::from_ptr(MbObject::new_list(vec![])));
+    attrs.insert(
+        "__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("idlelib".to_string())),
+    );
+    attrs.insert(
+        "__file__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("idlelib/__init__.py".to_string())),
+    );
+    attrs.insert(
+        "__package__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("idlelib".to_string())),
+    );
+    attrs.insert(
+        "__path__".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
 
     // Stub submodule/function attributes — registered as callable dispatchers.
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -67,7 +79,7 @@ pub fn register() {
         });
     }
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("testing".into(), MbValue::from_int(0));
     super::register_module("idlelib", attrs);
 }
@@ -77,9 +89,9 @@ pub fn register() {
 fn raise_not_implemented(name: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("NotImplementedError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(
-            format!("idlelib.{name} is not implemented in Mamba"),
-        )),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "idlelib.{name} is not implemented in Mamba"
+        ))),
     );
     MbValue::none()
 }
@@ -89,19 +101,45 @@ fn raise_not_implemented(name: &str) -> MbValue {
 // These wrappers keep the historical pub-fn surface (used by direct
 // Rust callers/tests) while the module-level attribute is a dispatcher.
 
-pub fn mb_idlelib_idle() -> MbValue { raise_not_implemented("idle") }
-pub fn mb_idlelib_run() -> MbValue { raise_not_implemented("run") }
-pub fn mb_idlelib_idle_test() -> MbValue { raise_not_implemented("idle_test") }
-pub fn mb_idlelib_pyshell() -> MbValue { raise_not_implemented("PyShell") }
-pub fn mb_idlelib_config() -> MbValue { raise_not_implemented("config") }
-pub fn mb_idlelib_colorizer() -> MbValue { raise_not_implemented("colorizer") }
-pub fn mb_idlelib_autocomplete() -> MbValue { raise_not_implemented("autocomplete") }
-pub fn mb_idlelib_calltip() -> MbValue { raise_not_implemented("calltip") }
-pub fn mb_idlelib_debugger() -> MbValue { raise_not_implemented("debugger") }
-pub fn mb_idlelib_editor() -> MbValue { raise_not_implemented("editor") }
-pub fn mb_idlelib_filelist() -> MbValue { raise_not_implemented("filelist") }
-pub fn mb_idlelib_outwin() -> MbValue { raise_not_implemented("outwin") }
-pub fn mb_idlelib_rpc() -> MbValue { raise_not_implemented("rpc") }
+pub fn mb_idlelib_idle() -> MbValue {
+    raise_not_implemented("idle")
+}
+pub fn mb_idlelib_run() -> MbValue {
+    raise_not_implemented("run")
+}
+pub fn mb_idlelib_idle_test() -> MbValue {
+    raise_not_implemented("idle_test")
+}
+pub fn mb_idlelib_pyshell() -> MbValue {
+    raise_not_implemented("PyShell")
+}
+pub fn mb_idlelib_config() -> MbValue {
+    raise_not_implemented("config")
+}
+pub fn mb_idlelib_colorizer() -> MbValue {
+    raise_not_implemented("colorizer")
+}
+pub fn mb_idlelib_autocomplete() -> MbValue {
+    raise_not_implemented("autocomplete")
+}
+pub fn mb_idlelib_calltip() -> MbValue {
+    raise_not_implemented("calltip")
+}
+pub fn mb_idlelib_debugger() -> MbValue {
+    raise_not_implemented("debugger")
+}
+pub fn mb_idlelib_editor() -> MbValue {
+    raise_not_implemented("editor")
+}
+pub fn mb_idlelib_filelist() -> MbValue {
+    raise_not_implemented("filelist")
+}
+pub fn mb_idlelib_outwin() -> MbValue {
+    raise_not_implemented("outwin")
+}
+pub fn mb_idlelib_rpc() -> MbValue {
+    raise_not_implemented("rpc")
+}
 
 #[cfg(test)]
 mod tests {
@@ -145,13 +183,19 @@ mod tests {
             MbValue::from_ptr(MbObject::new_str("idlelib".to_string())),
             MbValue::from_ptr(MbObject::new_str("idle".to_string())),
         );
-        assert!(idle_sym.as_func().is_some(), "idle should be a callable dispatcher, not a string");
+        assert!(
+            idle_sym.as_func().is_some(),
+            "idle should be a callable dispatcher, not a string"
+        );
 
         let pyshell_sym = crate::runtime::module::mb_module_getattr(
             MbValue::from_ptr(MbObject::new_str("idlelib".to_string())),
             MbValue::from_ptr(MbObject::new_str("PyShell".to_string())),
         );
-        assert!(pyshell_sym.as_func().is_some(), "PyShell should be a callable dispatcher");
+        assert!(
+            pyshell_sym.as_func().is_some(),
+            "PyShell should be a callable dispatcher"
+        );
     }
 
     #[test]

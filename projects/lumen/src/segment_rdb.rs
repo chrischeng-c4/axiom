@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-segment_rdb-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Segment-checkpoint persistence store (Stage 2 Phase 2f-2) — the disk engine
 //! wired in as the running binary's "RDB".
@@ -36,13 +36,13 @@ use crate::storage::Engine;
 /// Filesystem-backed segment-checkpoint store: `<root>/gen-<seq>/`. The newest
 /// `gen-*` (by sequence) is the latest. Parallels [`crate::rdb::LocalFsRdbStore`]
 /// but persists the columnar segment tree instead of a CBOR blob.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment_rdb-rs.md#source
 pub struct SegmentRdbStore {
     root: PathBuf,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment_rdb-rs.md#source
 impl SegmentRdbStore {
     /// Open (creating) the checkpoint root directory.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
@@ -64,7 +64,11 @@ impl SegmentRdbStore {
 
     /// Parse the sequence out of a committed `gen-<seq>` directory name.
     fn seq_of(path: &Path) -> Option<u64> {
-        path.file_name()?.to_str()?.strip_prefix("gen-")?.parse().ok()
+        path.file_name()?
+            .to_str()?
+            .strip_prefix("gen-")?
+            .parse()
+            .ok()
     }
 
     /// Every committed generation, ascending by sequence. Staging dirs
@@ -127,7 +131,11 @@ impl SegmentRdbStore {
         // does not fail on platforms that reject it.
         let _ = std::fs::remove_dir_all(&committed);
         std::fs::rename(&staging, &committed).with_context(|| {
-            format!("commit checkpoint {} -> {}", staging.display(), committed.display())
+            format!(
+                "commit checkpoint {} -> {}",
+                staging.display(),
+                committed.display()
+            )
         })?;
         Ok(())
     }
@@ -180,7 +188,11 @@ impl SegmentRdbStore {
 
     /// The committed generation sequences, ascending (observability / tests).
     pub fn generation_seqs(&self) -> Result<Vec<u64>> {
-        Ok(self.generations()?.into_iter().map(|(seq, _)| seq).collect())
+        Ok(self
+            .generations()?
+            .into_iter()
+            .map(|(seq, _)| seq)
+            .collect())
     }
 }
 

@@ -35,13 +35,13 @@
 
 //! @codegen-skip: handwrite-pre-standardize
 
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use bzip2::Compression;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use bzip2::read::BzDecoder;
 use bzip2::write::BzEncoder;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
+use bzip2::Compression;
+use std::collections::HashMap;
+use std::io::{Read, Write};
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -85,6 +85,20 @@ fn kwargs_index(args: &[MbValue], name: &str) -> Option<i64> {
 }
 
 /// True iff the trailing kwargs dict contains `name` (any value).
+/// String-valued kwarg from the trailing kwargs dict, if present.
+fn kwargs_str(args: &[MbValue], name: &str) -> Option<String> {
+    args.last()
+        .and_then(|v| v.as_ptr())
+        .and_then(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                lock.read().unwrap().get(name).copied()
+            } else {
+                None
+            }
+        })
+        .and_then(as_str)
+}
+
 fn kwargs_has(args: &[MbValue], name: &str) -> bool {
     args.last()
         .and_then(|v| v.as_ptr())
@@ -117,6 +131,14 @@ fn as_str(v: MbValue) -> Option<String> {
 fn raise_value_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
         MbValue::from_ptr(MbObject::new_str(msg.to_string())),
     );
     MbValue::none()
@@ -175,13 +197,18 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
     if !is_text {
         for p in ["encoding", "errors", "newline"] {
             if kwargs_has(args, p) {
-                return raise_value_error(&format!(
-                    "Argument '{p}' not supported in binary mode"
-                ));
+                return raise_value_error(&format!("Argument '{p}' not supported in binary mode"));
             }
         }
     }
-    mb_bz2_open(args.first().copied().unwrap_or_else(MbValue::none))
+    super::compressed_file::make_file_opts(
+        "BZ2File",
+        super::compressed_file::Codec::Bz2,
+        args.first().copied().unwrap_or_else(MbValue::none),
+        &mode,
+        kwargs_str(args, "encoding"),
+        kwargs_str(args, "errors"),
+    )
 }
 
 /// bz2.BZ2File(filename, mode="r", *, compresslevel=9) constructor.
@@ -193,6 +220,18 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
 /// valid construction).
 unsafe extern "C" fn dispatch_bz2file(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    // filename must be a str/bytes path or an open file object; a number / None
+    // (BZ2File(123.456)) is a TypeError, like CPython.
+    let filename = args.first().copied().unwrap_or_else(MbValue::none);
+    let filename_ok = filename.as_ptr().map_or(false, |p| {
+        matches!(
+            unsafe { &(*p).data },
+            ObjData::Str(_) | ObjData::Bytes(_) | ObjData::ByteArray(_) | ObjData::Instance { .. }
+        )
+    });
+    if !filename_ok {
+        return raise_type_error("filename must be a str, bytes, file or os.PathLike object");
+    }
     let mode = positional(args, 1)
         .and_then(as_str)
         .unwrap_or_else(|| "r".to_string());
@@ -208,18 +247,32 @@ unsafe extern "C" fn dispatch_bz2file(args_ptr: *const MbValue, nargs: usize) ->
     if !(1..=9).contains(&level) {
         return raise_value_error("compresslevel must be between 1 and 9");
     }
-    class_shell("BZ2File", &["read", "write", "close", "peek", "readline"])
+    super::compressed_file::make_file(
+        "BZ2File",
+        super::compressed_file::Codec::Bz2,
+        args.first().copied().unwrap_or_else(MbValue::none),
+        &mode,
+    )
 }
 
 /// bz2.BZ2Decompressor() constructor — returns a stateful Instance whose
 /// `decompress` consumes one bz2 stream and then raises EOFError on any
 /// further call (mirrors zlib._ZlibDecompressor's single-use contract).
-unsafe extern "C" fn dispatch_bz2decompressor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_bz2decompressor(_args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    // BZ2Decompressor() takes no positional arguments; BZ2Decompressor(42) is
+    // a TypeError in CPython.
+    if nargs > 0 {
+        return raise_type_error("BZ2Decompressor() takes no arguments");
+    }
     let obj = MbObject::new_instance("bz2.BZ2Decompressor".to_string());
     let val = MbValue::from_ptr(obj);
     set_field(val, "eof", MbValue::from_bool(false));
     set_field(val, "needs_input", MbValue::from_bool(true));
-    set_field(val, "unused_data", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+    set_field(
+        val,
+        "unused_data",
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+    );
     val
 }
 
@@ -269,11 +322,10 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
         return raise_eof_error("End of stream already reached");
     }
     let items = method_args(args);
-    let data = items
-        .iter()
-        .copied()
-        .find(|v| !is_kwargs_dict(*v))
-        .unwrap_or_else(MbValue::none);
+    // decompress() requires the `data` argument; a bare call is a TypeError.
+    let Some(data) = items.iter().copied().find(|v| !is_kwargs_dict(*v)) else {
+        return raise_type_error("decompress() missing required argument 'data' (pos 1)");
+    };
     let out = with_bytes(data, |b| {
         let mut dec = BzDecoder::new(b);
         let mut buf = Vec::with_capacity(b.len().saturating_mul(4));
@@ -337,9 +389,9 @@ pub fn register() {
     // entry is the correct callable shape — `mb_bz2_open` returns a benign
     // sentinel until streaming file plumbing lands behind it).
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("compress",   dispatch_compress   as usize),
+        ("compress", dispatch_compress as usize),
         ("decompress", dispatch_decompress as usize),
-        ("open",       dispatch_open       as usize),
+        ("open", dispatch_open as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -350,8 +402,10 @@ pub fn register() {
 
     // BZ2Compressor stays an attribute-presence shell (no constructor
     // fixture exercises it for the errors dimension).
-    attrs.insert("BZ2Compressor".to_string(),
-        class_shell("BZ2Compressor", &["compress", "flush"]));
+    attrs.insert(
+        "BZ2Compressor".to_string(),
+        class_shell("BZ2Compressor", &["compress", "flush"]),
+    );
 
     // BZ2File / BZ2Decompressor are real callable constructors that validate
     // their arguments eagerly (mode / compresslevel / EOF) and raise the
@@ -365,24 +419,23 @@ pub fn register() {
         s.borrow_mut().insert(bz2file_addr as u64);
     });
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(bz2file_addr as u64, "BZ2File".to_string());
+        m.borrow_mut()
+            .insert(bz2file_addr as u64, "BZ2File".to_string());
     });
-    {
-        let stub = MbValue::from_func(bz2file_addr);
-        let mut methods: HashMap<String, MbValue> = HashMap::new();
-        for name in ["read", "write", "close", "peek", "readline"] {
-            methods.insert(name.to_string(), stub);
-        }
-        super::super::class::mb_class_register("BZ2File", vec![], methods);
-    }
+    // Streaming method table shared with lzma.LZMAFile / gzip.GzipFile.
+    super::compressed_file::register_class("BZ2File");
 
     let bz2dec_addr = dispatch_bz2decompressor as usize;
-    attrs.insert("BZ2Decompressor".to_string(), MbValue::from_func(bz2dec_addr));
+    attrs.insert(
+        "BZ2Decompressor".to_string(),
+        MbValue::from_func(bz2dec_addr),
+    );
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(bz2dec_addr as u64);
     });
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(bz2dec_addr as u64, "BZ2Decompressor".to_string());
+        m.borrow_mut()
+            .insert(bz2dec_addr as u64, "BZ2Decompressor".to_string());
     });
     {
         let decompress_addr = mb_bz2decompressor_decompress as usize;
@@ -467,7 +520,9 @@ pub fn mb_bz2_decompress(data: MbValue) -> MbValue {
         if b.is_empty() {
             return Ok(Vec::new());
         }
-        let mut dec = BzDecoder::new(b);
+        // CPython decodes concatenated streams (multi-stream payloads
+        // decompress to the joined plaintext).
+        let mut dec = bzip2::read::MultiBzDecoder::new(b);
         let mut buf = Vec::with_capacity(b.len() * 4);
         dec.read_to_end(&mut buf).map(|_| buf)
     });
@@ -483,14 +538,21 @@ mod tests {
 
     fn get_bytes_val(val: MbValue) -> Option<Vec<u8>> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
+            if let ObjData::Bytes(ref b) = (*ptr).data {
+                Some(b.clone())
+            } else {
+                None
+            }
         })
     }
 
     #[test]
     fn test_with_bytes_variants() {
         let bytes_val = MbValue::from_ptr(MbObject::new_bytes(vec![1u8, 2, 3]));
-        assert_eq!(super::with_bytes(bytes_val, |b| b.to_vec()), vec![1u8, 2, 3]);
+        assert_eq!(
+            super::with_bytes(bytes_val, |b| b.to_vec()),
+            vec![1u8, 2, 3]
+        );
 
         let ba = MbValue::from_ptr(MbObject::new_bytearray(vec![4u8, 5, 6]));
         assert_eq!(super::with_bytes(ba, |b| b.to_vec()), vec![4u8, 5, 6]);
@@ -498,7 +560,10 @@ mod tests {
         let s = MbValue::from_ptr(MbObject::new_str("abc".to_string()));
         assert_eq!(super::with_bytes(s, |b| b.to_vec()), vec![97u8, 98, 99]);
 
-        assert_eq!(super::with_bytes(MbValue::none(), |b| b.to_vec()), Vec::<u8>::new());
+        assert_eq!(
+            super::with_bytes(MbValue::none(), |b| b.to_vec()),
+            Vec::<u8>::new()
+        );
     }
 
     #[test]
@@ -508,10 +573,17 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec()));
         let result = mb_bz2_compress(input);
         let b = get_bytes_val(result).expect("compressed bytes");
-        assert!(b.len() >= 4, "bz2 output too short for stream header: {} bytes", b.len());
+        assert!(
+            b.len() >= 4,
+            "bz2 output too short for stream header: {} bytes",
+            b.len()
+        );
         assert_eq!(&b[0..3], b"BZh", "bz2 magic mismatch: {:?}", &b[0..3]);
-        assert!(b[3] >= b'1' && b[3] <= b'9',
-            "block-size digit out of range: {:#x}", b[3]);
+        assert!(
+            b[3] >= b'1' && b[3] <= b'9',
+            "block-size digit out of range: {:#x}",
+            b[3]
+        );
     }
 
     #[test]
@@ -532,8 +604,12 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(payload.clone()));
         let compressed = mb_bz2_compress(input);
         let cb = get_bytes_val(compressed).expect("compressed bytes");
-        assert!(cb.len() < payload.len(),
-            "compressed >= payload: {} >= {}", cb.len(), payload.len());
+        assert!(
+            cb.len() < payload.len(),
+            "compressed >= payload: {} >= {}",
+            cb.len(),
+            payload.len()
+        );
         let dec = mb_bz2_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
         assert_eq!(get_bytes_val(dec), Some(payload));
     }

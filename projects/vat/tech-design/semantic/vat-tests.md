@@ -122,6 +122,230 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_cluster.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "any_cluster_backend"
+            kind: "function"
+            public: false
+          - name: "delete_cluster"
+            kind: "function"
+            public: false
+          - name: "cluster_backend_unavailable_reports_jsonl_error"
+            kind: "function"
+            public: false
+          - name: "llm_guide_mentions_cluster"
+            kind: "function"
+            public: false
+          - name: "vat_cluster_create_exports_kubeconfig"
+            kind: "function"
+            public: false
+          - name: "vat_cluster_standalone_lifecycle"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulators.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "on_path"
+            kind: "function"
+            public: false
+          - name: "gcloud_component_installed"
+            kind: "function"
+            public: false
+          - name: "firestore_native_available"
+            kind: "function"
+            public: false
+          - name: "gcloud_emulator_unavailable_reports_jsonl_error"
+            kind: "function"
+            public: false
+          - name: "firebase_without_firebase_json_is_rejected"
+            kind: "function"
+            public: false
+          - name: "firestore_emulator_exports_host"
+            kind: "function"
+            public: false
+          - name: "firebase_bundle_exports_hosts"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_auth.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "post"
+            kind: "function"
+            public: false
+          - name: "firebase_auth_emulator_signup_signin_lookup"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_pubsub.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "pubsub_emulator_publish_pull_ack_and_stream"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_tasks.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "spawn_sink"
+            kind: "function"
+            public: false
+          - name: "cloud_tasks_emulator_dispatches_task"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_scheduler.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "spawn_sink"
+            kind: "function"
+            public: false
+          - name: "cloud_scheduler_emulator_fires_job_on_run"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_workflows.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "spawn_sink"
+            kind: "function"
+            public: false
+          - name: "cloud_workflows_emulator_runs_and_dispatches"
+            kind: "function"
+            public: false
+          - name: "cloud_workflows_try_except_recovers"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_storage.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "enc"
+            kind: "function"
+            public: false
+          - name: "cloud_storage_emulator_roundtrips"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_httpmock.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "spawn_oneshot_upstream"
+            kind: "function"
+            public: false
+          - name: "http_mock_stub_mitm_and_record_replay"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_openapi.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "openapi_standalone_and_http_mock_source"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
 ```
 
 ## Unit Test
@@ -140,6 +364,16 @@ evidence:
     - path: "projects/vat/tests/behavior_vat_resource_isolation_boundary.rs"
     - path: "projects/vat/tests/behavior_vat_toml_runner_local_service_smoke.rs"
     - path: "projects/vat/tests/behavior_vat_host_process_gpu_visibility.rs"
+    - path: "projects/vat/tests/vat_cluster.rs"
+    - path: "projects/vat/tests/vat_emulators.rs"
+    - path: "projects/vat/tests/vat_emulator_auth.rs"
+    - path: "projects/vat/tests/vat_emulator_pubsub.rs"
+    - path: "projects/vat/tests/vat_emulator_tasks.rs"
+    - path: "projects/vat/tests/vat_emulator_scheduler.rs"
+    - path: "projects/vat/tests/vat_emulator_workflows.rs"
+    - path: "projects/vat/tests/vat_emulator_storage.rs"
+    - path: "projects/vat/tests/vat_emulator_httpmock.rs"
+    - path: "projects/vat/tests/vat_emulator_openapi.rs"
 ---
 requirementDiagram
 

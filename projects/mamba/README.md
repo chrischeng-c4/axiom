@@ -1,93 +1,89 @@
 # Mamba
 
+## Brief
+
 Force-typed Python compiler. Lexes Python source with `logos`, lowers through HIR/MIR, and emits native machine code via Cranelift JIT/AOT. Not a transpiler, not an interpreter — produces real binaries.
 
 For implementation map, see [llms.txt](llms.txt).
 
 ## Capabilities
 
-Mamba promises four capabilities. Completion of all four = mamba is done. Proxy metrics (issue close count, fixture count, etc.) do not count.
+### Capability Index
 
-### C1. Py3.12 functional parity — Axis 1 ([#3331](https://github.com/chrischeng-c4/cclab/issues/3331))
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| C1. Py3.12 functional parity — Axis 1 | #3331 | partial | planned | conformance | not_ready | confirmed README promise; CPython oracle gate remains open |
+| C2. Less CPU time AND less memory than CPython — Axis 2 | #3880 | planned | planned | conformance | not_ready | confirmed README promise; CPU/RSS ratio gates remain open |
+| C3. mambalibs end-to-end — Axis 3 | #3457 | partial | planned | conformance | not_ready | confirmed README promise; native module coverage remains open |
+| C4. Package manager — uv-like | #3881 | partial | planned | conformance | not_ready | confirmed README promise; uv-like workflow coverage remains open |
 
-Run real Python 3.12 programs without semantic divergence. Covers four layers:
+### C1. Py3.12 functional parity — Axis 1
 
-- **Language core**: control flow, scopes, closures, comprehensions, descriptor protocol, full dunder set, decorators, async/await, generators.
-- **PEPs**: 654 (exception groups), 695 (type aliases + generic syntax), 701 (f-string improvements), match statement.
-- **Builtins**: numeric / comparison / container / reflected dunders, `print`/`len`/`type`/`isinstance`, etc.
-- **Stdlib**: `os`, `json`, `re`, `itertools`, `math`, … per typeshed surface coverage.
-- **3rd-party libs**: attrs, click, jinja2, pydantic, flask, fastapi, httpx, requests, pytest, sqlalchemy, and friends.
+ID: c1-py3-12-functional-parity-axis-1
+Type: RuntimeTool
+Surfaces: CLI: `mamba build` + `mamba check` + `mamba run` + `mamba test` + `mamba test-batch` + `mamba pytest` + `mamba surface-report` - compile, type-check, run, batch, pytest, and surface-conformance entrypoints
+EC Dimensions: behavior: `cargo test -p mamba --test conformance_cpython_lib_test --release` - CPython 3.12 Lib/test oracle; stability: `cargo test -p mamba --test conformance_runtime_shutdown` - runtime shutdown and crash-boundary checks
+Root WI: #3331
+Status: confirmed
+Required Verification: conformance, corpus, negative
+Promise:
+Run real Python 3.12 programs without semantic divergence across language core, PEP syntax/semantics, builtins and stdlib, plus selected 3rd-party libraries. CPython `Lib/test` and typeshed are the authoritative denominators; declared force-typing divergences must be explicit rather than hidden as ordinary behavior failures.
+Gate Inventory: `cargo test -p mamba --test conformance_cpython_lib_test --release`; `cargo test -p mamba --test conformance_contract`; `cargo test -p mamba --test conformance_real_world`; `cargo test -p mamba --test conformance_runtime_shutdown`; projects/mamba/tests/PRODUCTION-GATE.md
 
-**Gate**: `cargo test -p mamba --test cpython_lib_test_runner --release`. Red = Axis 1 not met. Tracked under epic [#3331](https://github.com/chrischeng-c4/cclab/issues/3331); CPython `Lib/test/test_*.py` is the canonical denominator ([#1396](https://github.com/chrischeng-c4/cclab/issues/1396)), supplemented by typeshed surface coverage ([#1397](https://github.com/chrischeng-c4/cclab/issues/1397)).
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Python 3.12 parity gate | epic | #3331 | partial | planned | conformance | `cargo test -p mamba --test conformance_cpython_lib_test --release`; `cargo test -p mamba --test conformance_contract`; `cargo test -p mamba --test conformance_real_world`; `cargo test -p mamba --test conformance_runtime_shutdown`; projects/mamba/tests/PRODUCTION-GATE.md |
 
-### C2. Less CPU time AND less memory than CPython — Axis 2 ([#3880](https://github.com/chrischeng-c4/cclab/issues/3880))
+### C2. Less CPU time AND less memory than CPython — Axis 2
 
-Performance is a **committed capability, not a nice-to-have** — force typing is the
-product, and its payoff is two metrics: for the **same program**, mamba targets
-strictly **less CPU time** *and* strictly **less peak RSS** than CPython 3.12. The
-ultimate bar is to win **both** on every workload class — winning one while losing
-the other is not the finish line.
+ID: c2-less-cpu-time-and-less-memory-than-cpython-axis-2
+Type: RuntimeTool
+Surfaces: CLI: `mamba bench --compare cpython` + `mamba bench --fixtures` + `mamba bench --check` - benchmark and regression gate entrypoints
+EC Dimensions: efficiency: `cargo test -p mamba --release --test perf_pin -- perf_pin` - CPU/RSS ratio pins against CPython; behavior: `mamba bench` - benchmark report generation contract
+Root WI: #3880
+Status: confirmed
+Required Verification: conformance
+Promise:
+Performance is a committed capability: for the same program, mamba targets strictly less CPU time and strictly less peak RSS than CPython 3.12. The v1 bar is staged, not one-shot: at least 1.5x where force typing pays, no worse than roughly 0.8x on CPython-tuned C hot paths, and both CPU/RSS measured externally before claiming progress.
+Gate Inventory: `cargo test -p mamba --release --test perf_pin -- perf_pin`; `cargo bench -p mamba --bench mamba_bench`; projects/mamba/benches/3p/cross_runtime.rs; projects/mamba/tests/harness/cpython/config/perf/pins
 
-Performance is delivered in **stages, each measured before the next** — not a
-one-shot win. The **v1 standard is a 0.8×–1.5× band**: **≥ 1.5×** where force typing
-pays (typed compute, a composite app's own Python code), down to **≥ 0.8× — at most
-~20% behind** — on CPython's decades-tuned C hot paths (`re`, `json`, `hashlib`) and
-object-heavy memory, which take a long time to tune and rise toward parity-and-beyond
-over later stages. The hard floor is **no worse than ~0.8× anywhere**.
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| CPython CPU/RSS ratio gate | epic | #3880 | planned | planned | conformance | `cargo test -p mamba --release --test perf_pin -- perf_pin`; `cargo bench -p mamba --bench mamba_bench`; projects/mamba/benches/3p/cross_runtime.rs; projects/mamba/tests/harness/cpython/config/perf/pins |
 
-Measured on **composite real workloads** — a real app (e.g. a FastAPI service), not
-micro-benches alone. A real app's CPU is dominated by the framework's and handlers'
-own Python code going native; CPU time excludes I/O wait, so the composite win
-shows cleanly even for I/O-bound services.
+### C3. mambalibs end-to-end — Axis 3
 
-The two metrics differ in difficulty:
-- **CPU time** is largely there for typed code — native execution, no interpreter
-  loop, no per-op type dispatch. Widened by inferring more types.
-- **Peak RSS** is the harder half. Typed/unboxed data wins outright (an unboxed
-  `i64` vs CPython's 28-byte `PyLong`); but object-heavy code must beat CPython's
-  decades-tuned `pymalloc` / small-int cache / key-sharing dicts, which today it
-  does *not* (per-object header + field-map cost). The runtime value-model work
-  (smaller object layout, unboxed fields, fewer allocations) is what closes it.
+ID: c3-mambalibs-end-to-end-axis-3
+Type: RuntimeTool
+Surfaces: Python: import `mambalibs.*` through `mamba run` - Rust-native modules exposed inside the mamba runtime; CLI: `mamba run` + `mamba <file>.py` - execute programs that import native kits
+EC Dimensions: behavior: `cargo test -p mamba --test mambalibs` - native module registration, import, and callable coverage
+Root WI: #3457
+Status: confirmed
+Required Verification: conformance
+Promise:
+A statically linked set of Rust-native libraries exposed as importable Python modules inside mamba. Each kit registers via `MambaModule` plus the `linkme` distributed slice and is force-linked into the final mamba binary, with import/callable coverage for native kits instead of a separate ABI or dynamic plugin layer.
+Gate Inventory: `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs; projects/mamba/src/pkgmanage/builder/force_link.rs
 
-Trajectory — **each target applies to BOTH CPU time and peak RSS**; v1 holds the
-0.8×–1.5× band, the mature ceiling is the long-tail goal:
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Native mambalibs import/callable surface | epic | #3457 | partial | planned | conformance | `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs; projects/mamba/src/pkgmanage/builder/force_link.rs |
 
-| Class                                | v1 band  | Mature ceiling | Status                |
-|--------------------------------------|----------|----------------|-----------------------|
-| typed / compute                      | ≥ 1.5×   | ≥ 10×          | `fib_recursive ≈ 17×` |
-| composite app                        | ≥ 1.5×   | ≥ 2–3×         | not yet measured      |
-| dynamic                              | ≈ 1.0×   | ≥ 1.5×         | not yet measured      |
-| pure-C-bound (`re`/`json`/`hashlib`) | ≥ 0.8×   | ≥ 1.0×         | not yet measured      |
-| floor | **≥ 0.8× — at most ~20% behind anywhere; tuned up over later stages** | | |
+### C4. Package manager — uv-like
 
-Harness: `criterion` micro-benches (`benches/mamba_bench.rs`) + cross-runtime ratio
-runner (`benches/3p/cross_runtime.rs`) + a `getrusage` CPU-time / peak-RSS gate.
-Numbers are quoted only from composite workloads measured both ways — never from
-stubs or startup-dominated micro-calls.
+ID: c4-package-manager-uv-like
+Type: DeveloperTool
+Surfaces: CLI: `mamba init` + `mamba add` + `mamba remove` + `mamba lock` + `mamba sync` + `mamba install` + `mamba cache` + `mamba hash` + `mamba pkgmgr-validate` - project scaffold, dependency, lockfile, install, cache, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
+EC Dimensions: behavior: `cargo test -p mamba --test pkgmgr` - uv-like workflow fixtures; stability: `cargo test -p mamba --test schema_gates pkgmgr` - schema, pin, and idempotence contracts
+Root WI: #3881
+Status: confirmed
+Required Verification: conformance, negative
+Promise:
+A built-in package manager surface for project scaffold, dependency add/remove, lockfile generation, sync/install, cache, and validation workflows. The product promise is `uv`-style ergonomics over the mamba runtime with `mamba.toml` and `mamba.lock` as the agent-readable project contract.
+Gate Inventory: `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage
 
-**Ultimate target — match Golang.** The CPython-relative tiers above are milestones;
-the destination is **Go-class performance** — the practical ceiling for a language
-this ergonomic. The end state is *write Python, get Go speed*. mamba closes the gap
-the same way Go earns its speed: from **static types** (here, force-typing +
-inference) come **monomorphized flat-struct layouts, static dispatch, escape
-analysis, and true no-GIL parallelism** — the four structural levers. Several
-fine-tune passes away, and an honest one: the Rust runtime is a strong *floor*, but
-a compiled program's *ceiling* is mamba's own codegen + value model (Cranelift
-today, LLVM AOT when the ceiling demands it) — not the runtime's host language.
-
-### C3. mambalibs end-to-end — Axis 3 ([#3457](https://github.com/chrischeng-c4/cclab/issues/3457))
-
-A statically linked set of Rust-native libraries exposed as importable Python modules inside mamba. Each kit registers via `MambaModule` + `linkme` distributed slice and is force-linked into the final mamba binary — no separate ABI, no dynamic plugin layer.
-
-Current kits in [mambalibs/](mambalibs/): `agentkit`, `httpkit`, `arraykit`, `cryptokit`, `mediakit`, `mongokit`, `pgkit`, `plotkit`, `queuekit`, `scikit`.
-
-**Gate (per #3331 spot-check)**: every kit's top-level imports must resolve to a real callable, not `NoneType`. FFI binding readiness for numpy / pandas / scipy / pillow / cryptography is tracked under epic [#3457](https://github.com/chrischeng-c4/cclab/issues/3457).
-
-### C4. Package manager — uv-like ([#3881](https://github.com/chrischeng-c4/cclab/issues/3881))
-
-A built-in package manager: resolver, lockfile, PyPI client, project manifest (`mamba.toml`), all in one binary. Lives under [src/pkgmanage/](src/pkgmanage/). Goal is parity with `uv`'s ergonomics over the mamba runtime.
-
-Current state: skeleton (`builder/`, `lockfile/`, `manifest/`, `pkgmgr/`, `source/`). Resolver, installer, and PyPI fetch are not yet wired.
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Uv-like package manager workflow | epic | #3881 | partial | planned | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
 
 ## Test Completeness — what we tested, against what authority
 

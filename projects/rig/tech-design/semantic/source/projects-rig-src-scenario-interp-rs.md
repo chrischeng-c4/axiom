@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-scenario-interp-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,19 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/scenario/interp.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/scenario/interp.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `VarStore` | projects/rig/src/scenario/interp.rs | struct | pub | 16 |  |
+| `get` | projects/rig/src/scenario/interp.rs | function | pub | 45 | get(&self, name: &str) -> Option<&Value> |
+| `get_f64` | projects/rig/src/scenario/interp.rs | function | pub | 50 | get_f64(&self, name: &str) -> Option<f64> |
+| `interpolate` | projects/rig/src/scenario/interp.rs | function | pub | 61 | interpolate(&self, template: &str) -> Result<String, String> |
+| `new` | projects/rig/src/scenario/interp.rs | function | pub | 22 | new() -> Self |
+| `seed` | projects/rig/src/scenario/interp.rs | function | pub | 28 | seed(env: &BTreeMap<String, String>) -> Self |
+| `set` | projects/rig/src/scenario/interp.rs | function | pub | 41 | set(&mut self, name: impl Into<String>, value: Value) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

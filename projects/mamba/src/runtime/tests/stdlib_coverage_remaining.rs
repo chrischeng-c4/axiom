@@ -1,24 +1,31 @@
 #![cfg(test)]
 
+use crate::runtime::rc::{MbObject, ObjData};
 /// Integration tests for remaining coverage stdlib modules.
 ///
 /// Covers cross-module interactions for: argparse, platform, unittest,
 /// socket, array, errno, traceback, codecs, logging, pickle, threading, sqlite3.
-
 use crate::runtime::value::MbValue;
-use crate::runtime::rc::{MbObject, ObjData};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn str_val(v: MbValue) -> Option<String> {
     v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
 fn bytes_val(v: MbValue) -> Option<Vec<u8>> {
     v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
+        if let ObjData::Bytes(ref b) = (*ptr).data {
+            Some(b.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -28,13 +35,19 @@ fn bytes_val(v: MbValue) -> Option<Vec<u8>> {
 fn dict_str(v: MbValue, key: &str) -> Option<String> {
     let str_of = |val: &MbValue| -> Option<String> {
         val.as_ptr().and_then(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*p).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
     };
     v.as_ptr().and_then(|ptr| unsafe {
         match (*ptr).data {
             ObjData::Dict(ref lock) => lock.read().unwrap().get(key).and_then(&str_of),
-            ObjData::Instance { ref fields, .. } => fields.read().unwrap().get(key).and_then(&str_of),
+            ObjData::Instance { ref fields, .. } => {
+                fields.read().unwrap().get(key).and_then(&str_of)
+            }
             _ => None,
         }
     })
@@ -44,18 +57,26 @@ fn dict_bool(v: MbValue, key: &str) -> Option<bool> {
     v.as_ptr().and_then(|ptr| unsafe {
         match (*ptr).data {
             ObjData::Dict(ref lock) => lock.read().unwrap().get(key).and_then(|val| val.as_bool()),
-            ObjData::Instance { ref fields, .. } => fields.read().unwrap().get(key).and_then(|val| val.as_bool()),
+            ObjData::Instance { ref fields, .. } => fields
+                .read()
+                .unwrap()
+                .get(key)
+                .and_then(|val| val.as_bool()),
             _ => None,
         }
     })
 }
 
 fn list_len(v: MbValue) -> usize {
-    v.as_ptr().map(|ptr| unsafe {
-        if let ObjData::List(ref lock) = (*ptr).data {
-            lock.read().unwrap().len()
-        } else { 0 }
-    }).unwrap_or(0)
+    v.as_ptr()
+        .map(|ptr| unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                lock.read().unwrap().len()
+            } else {
+                0
+            }
+        })
+        .unwrap_or(0)
 }
 
 fn s(text: &str) -> MbValue {
@@ -67,7 +88,7 @@ fn s(text: &str) -> MbValue {
 #[test]
 fn test_argparse_full_lifecycle() {
     use crate::runtime::stdlib::argparse_mod::{
-        mb_argparse_new, mb_argparse_add_argument, mb_argparse_parse_args,
+        mb_argparse_add_argument, mb_argparse_new, mb_argparse_parse_args,
     };
 
     let parser = mb_argparse_new(s("CLI tool"));
@@ -103,11 +124,22 @@ fn test_argparse_non_str_description() {
 fn test_platform_all_functions_return_strings() {
     use crate::runtime::stdlib::platform_mod::*;
 
-    assert!(str_val(mb_platform_system()).map(|s| !s.is_empty()).unwrap_or(false));
-    assert!(str_val(mb_platform_release()).map(|s| s == "0.0.0").unwrap_or(false));
-    assert!(str_val(mb_platform_machine()).map(|s| !s.is_empty()).unwrap_or(false));
-    assert!(str_val(mb_platform_processor()).map(|s| !s.is_empty()).unwrap_or(false));
-    assert!(str_val(mb_platform_python_version()).map(|s| s == "3.12.0").unwrap_or(false));
+    assert!(str_val(mb_platform_system())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false));
+    // release() now reports the real kernel release (uname -r).
+    assert!(str_val(mb_platform_release())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false));
+    assert!(str_val(mb_platform_machine())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false));
+    assert!(str_val(mb_platform_processor())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false));
+    assert!(str_val(mb_platform_python_version())
+        .map(|s| s == "3.12.0")
+        .unwrap_or(false));
     let plat = str_val(mb_platform_platform()).unwrap_or_default();
     assert!(plat.contains('-'), "platform should be OS-ARCH format");
 }
@@ -179,9 +211,13 @@ fn test_socket_host_env_fallback() {
     let result = str_val(mb_socket_gethostname()).unwrap_or_default();
 
     // Restore
-    if let Some(h) = orig_hostname { std::env::set_var("HOSTNAME", h); }
+    if let Some(h) = orig_hostname {
+        std::env::set_var("HOSTNAME", h);
+    }
     std::env::remove_var("HOST");
-    if let Some(h) = orig_host { std::env::set_var("HOST", h); }
+    if let Some(h) = orig_host {
+        std::env::set_var("HOST", h);
+    }
 
     assert_eq!(result, "my-host-test");
 }
@@ -232,8 +268,8 @@ fn test_array_non_list_init_is_empty() {
 
 #[test]
 fn test_errno_errorcode_and_strerror_integration() {
-    use crate::runtime::stdlib::errno_mod::{mb_errno_errorcode, mb_errno_strerror};
     use crate::runtime::dict_ops::DictKey;
+    use crate::runtime::stdlib::errno_mod::{mb_errno_errorcode, mb_errno_strerror};
 
     // errorcode dict: 2 → "ENOENT". CPython parity: keys are ints, so
     // the lookup must use `DictKey::Int(2)` rather than the string "2".
@@ -249,49 +285,50 @@ fn test_errno_errorcode_and_strerror_integration() {
     }
 
     // strerror: verify several codes
-    assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(1))).as_deref(), Some("Operation not permitted"));
-    assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(22))).as_deref(), Some("Invalid argument"));
-    assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(111))).as_deref(), Some("Connection refused"));
-    assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(0))).as_deref(), Some("Unknown error"));
+    assert_eq!(
+        str_val(mb_errno_strerror(MbValue::from_int(1))).as_deref(),
+        Some("Operation not permitted")
+    );
+    assert_eq!(
+        str_val(mb_errno_strerror(MbValue::from_int(22))).as_deref(),
+        Some("Invalid argument")
+    );
+    assert_eq!(
+        str_val(mb_errno_strerror(MbValue::from_int(111))).as_deref(),
+        Some("Connection refused")
+    );
+    assert_eq!(
+        str_val(mb_errno_strerror(MbValue::from_int(0))).as_deref(),
+        Some("Unknown error")
+    );
 }
 
 // ── traceback ────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_traceback_format_multiple_exception_types() {
+fn test_traceback_format_exception_non_exception_raises_type_error() {
+    use crate::runtime::exception;
     use crate::runtime::stdlib::traceback_mod::mb_traceback_format_exception;
 
-    // None
-    let r = mb_traceback_format_exception(MbValue::none());
-    assert_eq!(str_val(r).as_deref(), Some("NoneType: None"));
-
-    // Str
-    let r = mb_traceback_format_exception(s("connection error"));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: connection error"));
-
-    // Int
-    let r = mb_traceback_format_exception(MbValue::from_int(42));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: 42"));
-
-    // Bool true
-    let r = mb_traceback_format_exception(MbValue::from_bool(true));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: True"));
-
-    // Bool false
-    let r = mb_traceback_format_exception(MbValue::from_bool(false));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: False"));
+    // CPython: format_exception(42) raises TypeError.
+    exception::mb_clear_exception();
+    let r = mb_traceback_format_exception(&[MbValue::from_int(42)]);
+    assert!(r.is_none());
+    assert_eq!(exception::mb_has_exception().as_bool(), Some(true));
+    exception::mb_clear_exception();
 }
 
 #[test]
-fn test_traceback_format_exception_dict_no_type() {
+fn test_traceback_format_exception_two_args_raises_value_error() {
+    use crate::runtime::exception;
     use crate::runtime::stdlib::traceback_mod::mb_traceback_format_exception;
 
-    // Dict without _type key → default "Exception"
-    let dict = MbValue::from_ptr(MbObject::new_dict());
-    let r = mb_traceback_format_exception(dict);
-    // When no _type, falls back to "Exception" with empty msg → "Exception"
-    let result = str_val(r).unwrap_or_default();
-    assert!(result.contains("Exception"));
+    // CPython: passing value without tb raises ValueError.
+    exception::mb_clear_exception();
+    let r = mb_traceback_format_exception(&[s("Exception"), s("x")]);
+    assert!(r.is_none());
+    assert_eq!(exception::mb_has_exception().as_bool(), Some(true));
+    exception::mb_clear_exception();
 }
 
 // ── codecs ────────────────────────────────────────────────────────────────────
@@ -397,10 +434,12 @@ fn test_pickle_nested_list() {
 
     // [[1, 2], [3, 4]]
     let inner1 = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(1), MbValue::from_int(2),
+        MbValue::from_int(1),
+        MbValue::from_int(2),
     ]));
     let inner2 = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(3), MbValue::from_int(4),
+        MbValue::from_int(3),
+        MbValue::from_int(4),
     ]));
     let outer = MbValue::from_ptr(MbObject::new_list(vec![inner1, inner2]));
 
@@ -461,7 +500,10 @@ fn test_threading_deterministic_sync_with_barrier() {
     let b2 = Arc::clone(&barrier);
 
     let thread_dict = mb_threading_thread(MbValue::none(), s("sync_worker"));
-    assert_eq!(dict_str(thread_dict, "name").as_deref(), Some("sync_worker"));
+    assert_eq!(
+        dict_str(thread_dict, "name").as_deref(),
+        Some("sync_worker")
+    );
 
     let counter = Arc::new(std::sync::atomic::AtomicI64::new(0));
     let counter2 = Arc::clone(&counter);
@@ -508,12 +550,24 @@ fn test_threading_event_lifecycle() {
 
 // ── sqlite3 ───────────────────────────────────────────────────────────────────
 
+// Class name of an `ObjData::Instance` value (sqlite3 returns real class
+// instances since the isinstance-dispatch rework, not dict-backed shims).
+fn instance_class(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })
+}
+
 #[test]
 fn test_sqlite3_full_workflow() {
     use crate::runtime::stdlib::sqlite3_mod::*;
 
     let conn = mb_sqlite3_connect(s(":memory:"));
-    assert_eq!(dict_str(conn, "__class__").as_deref(), Some("Connection"));
+    assert_eq!(instance_class(conn).as_deref(), Some("Connection"));
 
     // Create table
     mb_sqlite3_execute(conn, s("CREATE TABLE users (id INT, name TEXT)"));
@@ -536,18 +590,25 @@ fn test_sqlite3_create_table_if_not_exists_integration() {
     use crate::runtime::stdlib::sqlite3_mod::{mb_sqlite3_connect, mb_sqlite3_execute};
 
     let conn = mb_sqlite3_connect(s(":memory:"));
-    mb_sqlite3_execute(conn, s("CREATE TABLE IF NOT EXISTS metrics (ts INT, val FLOAT)"));
+    mb_sqlite3_execute(
+        conn,
+        s("CREATE TABLE IF NOT EXISTS metrics (ts INT, val FLOAT)"),
+    );
     // Just verify no panic and conn is still valid
     assert!(conn.as_ptr().is_some());
 }
 
 #[test]
-fn test_sqlite3_cursor_returns_same_conn() {
+fn test_sqlite3_cursor_returns_distinct_cursor_instance() {
     use crate::runtime::stdlib::sqlite3_mod::{mb_sqlite3_connect, mb_sqlite3_cursor};
 
+    // CPython 3.12: conn.cursor() returns a Cursor object, not the
+    // connection itself; mamba mirrors that with a `Cursor` instance
+    // sharing the connection's in-memory state.
     let conn = mb_sqlite3_connect(s(":memory:"));
     let cursor = mb_sqlite3_cursor(conn);
-    assert_eq!(conn, cursor);
+    assert_ne!(conn, cursor);
+    assert_eq!(instance_class(cursor).as_deref(), Some("Cursor"));
 }
 
 // ── unittest ──────────────────────────────────────────────────────────────────
@@ -576,7 +637,8 @@ fn test_unittest_testcase_and_asserts() {
 
     // assertIn list
     let list = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(1), MbValue::from_int(2),
+        MbValue::from_int(1),
+        MbValue::from_int(2),
     ]));
     mb_unittest_assert_in(MbValue::from_int(2), list);
 

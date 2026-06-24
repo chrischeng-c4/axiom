@@ -1,7 +1,7 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// difflib module for Mamba (mamba-stdlib).
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_binary {
     ($name:ident, $fn:ident) => {
@@ -31,7 +31,10 @@ macro_rules! dispatch_quaternary {
 
 dispatch_binary!(dispatch_ratio, mb_difflib_ratio);
 dispatch_quaternary!(dispatch_get_close_matches, mb_difflib_get_close_matches);
-dispatch_binary!(dispatch_format_range_context, mb_difflib_format_range_context);
+dispatch_binary!(
+    dispatch_format_range_context,
+    mb_difflib_format_range_context
+);
 
 // `difflib.unified_diff(a, b, fromfile='', tofile='', fromfiledate='',
 // tofiledate='', n=3, lineterm='\n')` is a generator in CPython taking many
@@ -64,16 +67,16 @@ unsafe extern "C" fn dispatch_IS_CHARACTER_JUNK(args_ptr: *const MbValue, nargs:
 // whitespace. Implemented directly (no regex) to avoid the CPython ReDoS path.
 unsafe extern "C" fn dispatch_IS_LINE_JUNK(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let line = a
-        .first()
-        .and_then(|v| extract_str(*v))
-        .unwrap_or_default();
+    let line = a.first().and_then(|v| extract_str(*v)).unwrap_or_default();
     MbValue::from_bool(is_line_junk(&line))
 }
 
 // `difflib._format_range_unified(start, stop)`: convert a [start, stop) opcode
 // range to unified-diff range notation.
-unsafe extern "C" fn dispatch_format_range_unified(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_format_range_unified(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let start = a.first().and_then(|v| v.as_int()).unwrap_or(0);
     let stop = a.get(1).and_then(|v| v.as_int()).unwrap_or(0);
@@ -257,14 +260,23 @@ pub fn register() {
 
     // Register the Differ helper class with its single `compare` method.
     let mut differ_methods: HashMap<String, MbValue> = HashMap::new();
-    differ_methods.insert("compare".to_string(), MbValue::from_func(method_compare as usize));
+    differ_methods.insert(
+        "compare".to_string(),
+        MbValue::from_func(method_compare as usize),
+    );
     super::super::module::register_variadic_func(method_compare as usize as u64);
     super::super::class::mb_class_register(DIFFER_CLASS, vec![], differ_methods);
 
     // Register the HtmlDiff helper class with make_file / make_table.
     let mut html_methods: HashMap<String, MbValue> = HashMap::new();
-    html_methods.insert("make_file".to_string(), MbValue::from_func(method_make_file as usize));
-    html_methods.insert("make_table".to_string(), MbValue::from_func(method_make_table as usize));
+    html_methods.insert(
+        "make_file".to_string(),
+        MbValue::from_func(method_make_file as usize),
+    );
+    html_methods.insert(
+        "make_table".to_string(),
+        MbValue::from_func(method_make_table as usize),
+    );
     super::super::module::register_variadic_func(method_make_file as usize as u64);
     super::super::module::register_variadic_func(method_make_table as usize as u64);
     super::super::class::mb_class_register(HTMLDIFF_CLASS, vec![], html_methods);
@@ -299,8 +311,14 @@ pub fn register() {
         ("diff_bytes", dispatch_diff_bytes as usize),
         ("_mdiff", dispatch_mdiff as usize),
         ("HtmlDiff", dispatch_HtmlDiff as usize),
-        ("_format_range_context", dispatch_format_range_context as usize),
-        ("_format_range_unified", dispatch_format_range_unified as usize),
+        (
+            "_format_range_context",
+            dispatch_format_range_context as usize,
+        ),
+        (
+            "_format_range_unified",
+            dispatch_format_range_unified as usize,
+        ),
         ("IS_CHARACTER_JUNK", dispatch_IS_CHARACTER_JUNK as usize),
         ("IS_LINE_JUNK", dispatch_IS_LINE_JUNK as usize),
     ];
@@ -358,7 +376,20 @@ fn seq_tokens(val: MbValue) -> Vec<String> {
                         .read()
                         .unwrap()
                         .iter()
-                        .map(|v| extract_str(*v).unwrap_or_else(|| super::super::builtins::mb_str(*v).as_ptr().and_then(|p| if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }).unwrap_or_default()))
+                        .map(|v| {
+                            extract_str(*v).unwrap_or_else(|| {
+                                super::super::builtins::mb_str(*v)
+                                    .as_ptr()
+                                    .and_then(|p| {
+                                        if let ObjData::Str(ref s) = (*p).data {
+                                            Some(s.clone())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_default()
+                            })
+                        })
                         .collect();
                 }
                 ObjData::Tuple(ref items) => {
@@ -446,7 +477,11 @@ fn recompute_b_junk(inst: MbValue, b_val: MbValue) {
         .iter()
         .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
         .collect();
-    set_field(inst, "bjunk", MbValue::from_ptr(MbObject::new_set(bjunk_vals)));
+    set_field(
+        inst,
+        "bjunk",
+        MbValue::from_ptr(MbObject::new_set(bjunk_vals)),
+    );
 
     // bpopular: autojunk "popular" set on b (distinct from junk).
     let popular = popular_set(&b_tokens, &bjunk, autojunk);
@@ -454,7 +489,11 @@ fn recompute_b_junk(inst: MbValue, b_val: MbValue) {
         .iter()
         .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
         .collect();
-    set_field(inst, "bpopular", MbValue::from_ptr(MbObject::new_set(popular_vals)));
+    set_field(
+        inst,
+        "bpopular",
+        MbValue::from_ptr(MbObject::new_set(popular_vals)),
+    );
 }
 
 /// CPython __chain_b: bjunk = { elt for elt in distinct(b) if isjunk(elt) }.
@@ -703,7 +742,13 @@ fn grouped_opcodes(
     if let Some(first) = codes.first_mut() {
         if first.0 == "equal" {
             let (tag, i1, i2, j1, j2) = *first;
-            *first = (tag, i1.max(i2.saturating_sub(n)), i2, j1.max(j2.saturating_sub(n)), j2);
+            *first = (
+                tag,
+                i1.max(i2.saturating_sub(n)),
+                i2,
+                j1.max(j2.saturating_sub(n)),
+                j2,
+            );
         }
     }
     if let Some(last) = codes.last_mut() {
@@ -866,13 +911,18 @@ fn mb_sm_get_matching_blocks(self_v: MbValue) -> MbValue {
     // `sm.get_matching_blocks() == sm.get_matching_blocks()` True.
     if let Some(cached) = get_field(self_v, "_mb") {
         if cached.as_ptr().is_some() {
-            unsafe { super::super::rc::retain_if_ptr(cached); }
+            unsafe {
+                super::super::rc::retain_if_ptr(cached);
+            }
             return cached;
         }
     }
     let (a, b, junk) = sm_state(self_v);
     let blocks = matching_blocks(&a, &b, &junk);
-    let out: Vec<MbValue> = blocks.into_iter().map(|(i, j, k)| make_match(i, j, k)).collect();
+    let out: Vec<MbValue> = blocks
+        .into_iter()
+        .map(|(i, j, k)| make_match(i, j, k))
+        .collect();
     let list = MbValue::from_ptr(MbObject::new_list(out));
     // new_list gives rc=1; set_field retains for the cached field (rc=2). The
     // returned reference is the caller's own (the second ref), so no extra
@@ -1057,9 +1107,7 @@ fn ndiff_fancy_replace(
             let ai: Vec<String> = a[i].chars().map(|c| c.to_string()).collect();
             // Use the quick upper bounds before the full ratio, matching
             // CPython's ordering (cheap rejection first).
-            if real_quick_ratio_of(&ai, &bj) > best_ratio
-                && quick_ratio_of(&ai, &bj) > best_ratio
-            {
+            if real_quick_ratio_of(&ai, &bj) > best_ratio && quick_ratio_of(&ai, &bj) > best_ratio {
                 let r = ratio_of(&ai, &bj, &bjunk);
                 if r > best_ratio {
                     best_ratio = r;
@@ -1216,19 +1264,41 @@ fn mb_difflib_context_diff(args: &[MbValue]) -> MbValue {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(v) = map.get("fromfile") { fromfile_v = *v; }
-                    if let Some(v) = map.get("tofile") { tofile_v = *v; }
-                    if let Some(v) = map.get("fromfiledate") { fromfiledate_v = *v; }
-                    if let Some(v) = map.get("tofiledate") { tofiledate_v = *v; }
-                    if let Some(v) = map.get("n") { n = v.as_int().unwrap_or(3); }
-                    if let Some(v) = map.get("lineterm") { lineterm_v = *v; }
+                    if let Some(v) = map.get("fromfile") {
+                        fromfile_v = *v;
+                    }
+                    if let Some(v) = map.get("tofile") {
+                        tofile_v = *v;
+                    }
+                    if let Some(v) = map.get("fromfiledate") {
+                        fromfiledate_v = *v;
+                    }
+                    if let Some(v) = map.get("tofiledate") {
+                        tofiledate_v = *v;
+                    }
+                    if let Some(v) = map.get("n") {
+                        n = v.as_int().unwrap_or(3);
+                    }
+                    if let Some(v) = map.get("lineterm") {
+                        lineterm_v = *v;
+                    }
                 }
             }
         }
     }
     // CPython _check_types(a, b, fromfile, tofile, fromfiledate, tofiledate,
     // lineterm) — raise TypeError on mixed bytes/str before producing output.
-    if check_types(a, b, &[fromfile_v, tofile_v, fromfiledate_v, tofiledate_v, lineterm_v]) {
+    if check_types(
+        a,
+        b,
+        &[
+            fromfile_v,
+            tofile_v,
+            fromfiledate_v,
+            tofiledate_v,
+            lineterm_v,
+        ],
+    ) {
         return MbValue::none();
     }
     let fromfile = extract_str(fromfile_v).unwrap_or_default();
@@ -1247,24 +1317,45 @@ fn mb_difflib_context_diff(args: &[MbValue]) -> MbValue {
         }
         if !started {
             started = true;
-            let fromdate = if !fromfiledate.is_empty() { format!("\t{fromfiledate}") } else { String::new() };
-            let todate = if !tofiledate.is_empty() { format!("\t{tofiledate}") } else { String::new() };
-            out.push(MbValue::from_ptr(MbObject::new_str(format!("*** {fromfile}{fromdate}{lineterm}"))));
-            out.push(MbValue::from_ptr(MbObject::new_str(format!("--- {tofile}{todate}{lineterm}"))));
+            let fromdate = if !fromfiledate.is_empty() {
+                format!("\t{fromfiledate}")
+            } else {
+                String::new()
+            };
+            let todate = if !tofiledate.is_empty() {
+                format!("\t{tofiledate}")
+            } else {
+                String::new()
+            };
+            out.push(MbValue::from_ptr(MbObject::new_str(format!(
+                "*** {fromfile}{fromdate}{lineterm}"
+            ))));
+            out.push(MbValue::from_ptr(MbObject::new_str(format!(
+                "--- {tofile}{todate}{lineterm}"
+            ))));
         }
         let first = group[0];
         let last = group[group.len() - 1];
-        out.push(MbValue::from_ptr(MbObject::new_str(format!("***************{lineterm}"))));
+        out.push(MbValue::from_ptr(MbObject::new_str(format!(
+            "***************{lineterm}"
+        ))));
 
         // a-side: '*** start,end ****' from first[1]..last[2].
         let file1_range = format_range_context(first.1, last.2);
-        out.push(MbValue::from_ptr(MbObject::new_str(format!("*** {file1_range} ****{lineterm}"))));
-        if group.iter().any(|(t, ..)| *t == "replace" || *t == "delete") {
+        out.push(MbValue::from_ptr(MbObject::new_str(format!(
+            "*** {file1_range} ****{lineterm}"
+        ))));
+        if group
+            .iter()
+            .any(|(t, ..)| *t == "replace" || *t == "delete")
+        {
             for &(tag, i1, i2, _j1, _j2) in group {
                 if tag != "insert" {
                     let prefix = context_prefix(tag);
                     for line in la.iter().take(i2).skip(i1) {
-                        out.push(MbValue::from_ptr(MbObject::new_str(format!("{prefix}{line}"))));
+                        out.push(MbValue::from_ptr(MbObject::new_str(format!(
+                            "{prefix}{line}"
+                        ))));
                     }
                 }
             }
@@ -1272,13 +1363,20 @@ fn mb_difflib_context_diff(args: &[MbValue]) -> MbValue {
 
         // b-side: '--- start,end ----' from first[3]..last[4].
         let file2_range = format_range_context(first.3, last.4);
-        out.push(MbValue::from_ptr(MbObject::new_str(format!("--- {file2_range} ----{lineterm}"))));
-        if group.iter().any(|(t, ..)| *t == "replace" || *t == "insert") {
+        out.push(MbValue::from_ptr(MbObject::new_str(format!(
+            "--- {file2_range} ----{lineterm}"
+        ))));
+        if group
+            .iter()
+            .any(|(t, ..)| *t == "replace" || *t == "insert")
+        {
             for &(tag, _i1, _i2, j1, j2) in group {
                 if tag != "delete" {
                     let prefix = context_prefix(tag);
                     for line in lb.iter().take(j2).skip(j1) {
-                        out.push(MbValue::from_ptr(MbObject::new_str(format!("{prefix}{line}"))));
+                        out.push(MbValue::from_ptr(MbObject::new_str(format!(
+                            "{prefix}{line}"
+                        ))));
                     }
                 }
             }
@@ -1337,7 +1435,11 @@ fn mb_difflib_restore(delta: MbValue, which: MbValue) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -1360,21 +1462,31 @@ fn value_type_name(val: MbValue) -> String {
             }
         }
     }
-    if val.as_bool().is_some() { return "bool".to_string(); }
-    if val.as_int().is_some() { return "int".to_string(); }
-    if val.as_float().is_some() { return "float".to_string(); }
-    if val.is_none() { return "NoneType".to_string(); }
+    if val.as_bool().is_some() {
+        return "bool".to_string();
+    }
+    if val.as_int().is_some() {
+        return "int".to_string();
+    }
+    if val.as_float().is_some() {
+        return "float".to_string();
+    }
+    if val.is_none() {
+        return "NoneType".to_string();
+    }
     "object".to_string()
 }
 
 fn is_str_value(val: MbValue) -> bool {
-    val.as_ptr().map(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) }).unwrap_or(false)
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) })
+        .unwrap_or(false)
 }
 
 fn is_bytes_value(val: MbValue) -> bool {
-    val.as_ptr().map(|ptr| unsafe {
-        matches!((*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
-    }).unwrap_or(false)
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+        .unwrap_or(false)
 }
 
 fn raise_type_error(msg: String) {
@@ -1390,16 +1502,35 @@ fn raise_type_error(msg: String) {
 /// raised (caller should stop).
 fn check_types(a: MbValue, b: MbValue, args: &[MbValue]) -> bool {
     for seq in [a, b] {
-        if let Some(items) = extract_list(seq) {
-            if let Some(first) = items.first() {
-                if !is_str_value(*first) {
-                    raise_type_error(format!(
-                        "lines to compare must be str, not {} ({})",
-                        value_type_name(*first),
-                        value_repr(*first)
-                    ));
-                    return true;
-                }
+        // A non-iterable side is the iteration TypeError (CPython does
+        // `len(a)` over the sequence before comparing).
+        let iterable = seq.as_ptr().is_some_and(|ptr| unsafe {
+            matches!(
+                (*ptr).data,
+                ObjData::Str(_) | ObjData::List(_) | ObjData::Tuple(_)
+            )
+        }) || super::super::iter::is_iter_handle(seq);
+        if !iterable {
+            raise_not_iterable(seq);
+            return true;
+        }
+        // First-element str check on concrete sequences only — extracting
+        // from an iterator handle would drain it before the diff runs.
+        let first = seq.as_ptr().and_then(|ptr| unsafe {
+            match (*ptr).data {
+                ObjData::List(ref lock) => lock.read().unwrap().first().copied(),
+                ObjData::Tuple(ref t) => t.first().copied(),
+                _ => None,
+            }
+        });
+        if let Some(first) = first {
+            if !is_str_value(first) {
+                raise_type_error(format!(
+                    "lines to compare must be str, not {} ({})",
+                    value_type_name(first),
+                    value_repr(first)
+                ));
+                return true;
             }
         }
     }
@@ -1416,11 +1547,44 @@ fn check_types(a: MbValue, b: MbValue, args: &[MbValue]) -> bool {
 }
 
 fn extract_list(val: MbValue) -> Option<Vec<MbValue>> {
-    val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::List(ref lock) = (*ptr).data {
-            Some(lock.read().unwrap().to_vec())
-        } else { None }
-    })
+    if let Some(items) = val.as_ptr().and_then(|ptr| unsafe {
+        match (*ptr).data {
+            ObjData::List(ref lock) => Some(lock.read().unwrap().to_vec()),
+            ObjData::Tuple(ref t) => Some(t.clone()),
+            _ => None,
+        }
+    }) {
+        return Some(items);
+    }
+    if super::super::iter::is_iter_handle(val) {
+        return super::super::iter::drain_iter_to_vec(val);
+    }
+    None
+}
+
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// CPython iteration TypeError for a non-iterable argument.
+fn raise_not_iterable(val: MbValue) -> MbValue {
+    let tn = if val.is_none() {
+        "NoneType"
+    } else if val.as_bool().is_some() {
+        "bool"
+    } else if val.as_int().is_some() {
+        "int"
+    } else if val.is_float() {
+        "float"
+    } else {
+        "object"
+    };
+    raise_type_error(format!("'{tn}' object is not iterable"));
+    MbValue::none()
 }
 
 pub fn mb_difflib_SequenceMatcher(a: MbValue, b: MbValue) -> MbValue {
@@ -1436,15 +1600,23 @@ pub fn mb_difflib_ratio(a: MbValue, b: MbValue) -> MbValue {
 }
 
 fn sequence_ratio(a: &str, b: &str) -> f64 {
-    if a.is_empty() && b.is_empty() { return 1.0; }
-    if a.is_empty() || b.is_empty() { return 0.0; }
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
     let ac: Vec<char> = a.chars().collect();
     let bc: Vec<char> = b.chars().collect();
     let mut matches = 0usize;
     let mut used = vec![false; bc.len()];
     for ca in &ac {
         for (j, cb) in bc.iter().enumerate() {
-            if !used[j] && ca == cb { matches += 1; used[j] = true; break; }
+            if !used[j] && ca == cb {
+                matches += 1;
+                used[j] = true;
+                break;
+            }
         }
     }
     2.0 * matches as f64 / (ac.len() + bc.len()) as f64
@@ -1489,19 +1661,41 @@ fn mb_difflib_unified_diff_full(args: &[MbValue]) -> MbValue {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(v) = map.get("fromfile") { fromfile_v = *v; }
-                    if let Some(v) = map.get("tofile") { tofile_v = *v; }
-                    if let Some(v) = map.get("fromfiledate") { fromfiledate_v = *v; }
-                    if let Some(v) = map.get("tofiledate") { tofiledate_v = *v; }
-                    if let Some(v) = map.get("n") { n = v.as_int().unwrap_or(3); }
-                    if let Some(v) = map.get("lineterm") { lineterm_v = *v; }
+                    if let Some(v) = map.get("fromfile") {
+                        fromfile_v = *v;
+                    }
+                    if let Some(v) = map.get("tofile") {
+                        tofile_v = *v;
+                    }
+                    if let Some(v) = map.get("fromfiledate") {
+                        fromfiledate_v = *v;
+                    }
+                    if let Some(v) = map.get("tofiledate") {
+                        tofiledate_v = *v;
+                    }
+                    if let Some(v) = map.get("n") {
+                        n = v.as_int().unwrap_or(3);
+                    }
+                    if let Some(v) = map.get("lineterm") {
+                        lineterm_v = *v;
+                    }
                 }
             }
         }
     }
     // CPython _check_types(a, b, fromfile, tofile, fromfiledate, tofiledate,
     // lineterm) — raise TypeError on mixed bytes/str before producing output.
-    if check_types(a, b, &[fromfile_v, tofile_v, fromfiledate_v, tofiledate_v, lineterm_v]) {
+    if check_types(
+        a,
+        b,
+        &[
+            fromfile_v,
+            tofile_v,
+            fromfiledate_v,
+            tofiledate_v,
+            lineterm_v,
+        ],
+    ) {
         return MbValue::none();
     }
     let fromfile = extract_str(fromfile_v).unwrap_or_default();
@@ -1521,16 +1715,30 @@ fn mb_difflib_unified_diff_full(args: &[MbValue]) -> MbValue {
         }
         if !started {
             started = true;
-            let fromdate = if !fromfiledate.is_empty() { format!("\t{fromfiledate}") } else { String::new() };
-            let todate = if !tofiledate.is_empty() { format!("\t{tofiledate}") } else { String::new() };
-            out.push(MbValue::from_ptr(MbObject::new_str(format!("--- {fromfile}{fromdate}{lineterm}"))));
-            out.push(MbValue::from_ptr(MbObject::new_str(format!("+++ {tofile}{todate}{lineterm}"))));
+            let fromdate = if !fromfiledate.is_empty() {
+                format!("\t{fromfiledate}")
+            } else {
+                String::new()
+            };
+            let todate = if !tofiledate.is_empty() {
+                format!("\t{tofiledate}")
+            } else {
+                String::new()
+            };
+            out.push(MbValue::from_ptr(MbObject::new_str(format!(
+                "--- {fromfile}{fromdate}{lineterm}"
+            ))));
+            out.push(MbValue::from_ptr(MbObject::new_str(format!(
+                "+++ {tofile}{todate}{lineterm}"
+            ))));
         }
         let first = group[0];
         let last = group[group.len() - 1];
         let file1_range = format_range_unified(first.1 as i64, last.2 as i64);
         let file2_range = format_range_unified(first.3 as i64, last.4 as i64);
-        out.push(MbValue::from_ptr(MbObject::new_str(format!("@@ -{file1_range} +{file2_range} @@{lineterm}"))));
+        out.push(MbValue::from_ptr(MbObject::new_str(format!(
+            "@@ -{file1_range} +{file2_range} @@{lineterm}"
+        ))));
         for &(tag, i1, i2, j1, j2) in group {
             if tag == "equal" {
                 for line in la.iter().take(i2).skip(i1) {
@@ -1553,14 +1761,62 @@ fn mb_difflib_unified_diff_full(args: &[MbValue]) -> MbValue {
     super::super::iter::mb_iter(MbValue::from_ptr(MbObject::new_list(out)))
 }
 
-pub fn mb_difflib_get_close_matches(word: MbValue, possibilities: MbValue, n: MbValue, cutoff: MbValue) -> MbValue {
+pub fn mb_difflib_get_close_matches(
+    word: MbValue,
+    possibilities: MbValue,
+    n: MbValue,
+    cutoff: MbValue,
+) -> MbValue {
     let sw = extract_str(word).unwrap_or_default();
-    let cut = cutoff.as_float().unwrap_or(0.6);
-    let count = n.as_int().unwrap_or(3) as usize;
-    let items = extract_list(possibilities).unwrap_or_default();
-    let mut scored: Vec<(f64, MbValue)> = items.into_iter().filter_map(|v| {
-        extract_str(v).map(|s| (sequence_ratio(&sw, &s), v))
-    }).filter(|(r, _)| *r >= cut).collect();
+    // Keyword calls pack a dict into the first free positional slot; unfold
+    // n/cutoff from it.
+    let mut n = n;
+    let mut cutoff = cutoff;
+    for slot in [n, cutoff] {
+        if let Some(ptr) = slot.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let map = lock.read().unwrap();
+                    if slot.to_bits() == n.to_bits() {
+                        n = MbValue::none();
+                    }
+                    if slot.to_bits() == cutoff.to_bits() {
+                        cutoff = MbValue::none();
+                    }
+                    if let Some(v) = map.get("n") {
+                        n = *v;
+                    }
+                    if let Some(v) = map.get("cutoff") {
+                        cutoff = *v;
+                    }
+                }
+            }
+        }
+    }
+    let cut = cutoff
+        .as_float()
+        .or_else(|| cutoff.as_int().map(|i| i as f64))
+        .unwrap_or(0.6);
+    let count_raw = n.as_int().unwrap_or(3);
+    // CPython argument contract.
+    if count_raw <= 0 {
+        return raise_value_error(&format!("n must be > 0: {count_raw}"));
+    }
+    if !(0.0..=1.0).contains(&cut) {
+        return raise_value_error(&format!("cutoff must be in [0.0, 1.0]: {cut}"));
+    }
+    let count = count_raw as usize;
+    let items = match extract_list(possibilities) {
+        Some(v) => v,
+        None => {
+            return raise_not_iterable(possibilities);
+        }
+    };
+    let mut scored: Vec<(f64, MbValue)> = items
+        .into_iter()
+        .filter_map(|v| extract_str(v).map(|s| (sequence_ratio(&sw, &s), v)))
+        .filter(|(r, _)| *r >= cut)
+        .collect();
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(count);
     let out: Vec<MbValue> = scored.into_iter().map(|(_, v)| v).collect();
@@ -1664,12 +1920,24 @@ fn mb_difflib_diff_bytes(args: &[MbValue]) -> MbValue {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(v) = map.get("fromfile") { fromfile_v = *v; }
-                    if let Some(v) = map.get("tofile") { tofile_v = *v; }
-                    if let Some(v) = map.get("fromfiledate") { fromfiledate_v = *v; }
-                    if let Some(v) = map.get("tofiledate") { tofiledate_v = *v; }
-                    if let Some(v) = map.get("n") { n = v.as_int().unwrap_or(3); }
-                    if let Some(v) = map.get("lineterm") { lineterm_v = *v; }
+                    if let Some(v) = map.get("fromfile") {
+                        fromfile_v = *v;
+                    }
+                    if let Some(v) = map.get("tofile") {
+                        tofile_v = *v;
+                    }
+                    if let Some(v) = map.get("fromfiledate") {
+                        fromfiledate_v = *v;
+                    }
+                    if let Some(v) = map.get("tofiledate") {
+                        tofiledate_v = *v;
+                    }
+                    if let Some(v) = map.get("n") {
+                        n = v.as_int().unwrap_or(3);
+                    }
+                    if let Some(v) = map.get("lineterm") {
+                        lineterm_v = *v;
+                    }
                 }
             }
         }
@@ -1687,17 +1955,41 @@ fn mb_difflib_diff_bytes(args: &[MbValue]) -> MbValue {
         Ok(out)
     };
     let report = |e: (String, String)| {
-        raise_type_error(format!("all arguments must be bytes, not {} ({})", e.0, e.1));
+        raise_type_error(format!(
+            "all arguments must be bytes, not {} ({})",
+            e.0, e.1
+        ));
         MbValue::none()
     };
 
-    let a_lines = match decode_seq(a_seq) { Ok(v) => v, Err(e) => return report(e) };
-    let b_lines = match decode_seq(b_seq) { Ok(v) => v, Err(e) => return report(e) };
-    let fromfile = match diff_bytes_decode(fromfile_v) { Ok(s) => s, Err(e) => return report(e) };
-    let tofile = match diff_bytes_decode(tofile_v) { Ok(s) => s, Err(e) => return report(e) };
-    let fromfiledate = match diff_bytes_decode(fromfiledate_v) { Ok(s) => s, Err(e) => return report(e) };
-    let tofiledate = match diff_bytes_decode(tofiledate_v) { Ok(s) => s, Err(e) => return report(e) };
-    let lineterm = match diff_bytes_decode(lineterm_v) { Ok(s) => s, Err(e) => return report(e) };
+    let a_lines = match decode_seq(a_seq) {
+        Ok(v) => v,
+        Err(e) => return report(e),
+    };
+    let b_lines = match decode_seq(b_seq) {
+        Ok(v) => v,
+        Err(e) => return report(e),
+    };
+    let fromfile = match diff_bytes_decode(fromfile_v) {
+        Ok(s) => s,
+        Err(e) => return report(e),
+    };
+    let tofile = match diff_bytes_decode(tofile_v) {
+        Ok(s) => s,
+        Err(e) => return report(e),
+    };
+    let fromfiledate = match diff_bytes_decode(fromfiledate_v) {
+        Ok(s) => s,
+        Err(e) => return report(e),
+    };
+    let tofiledate = match diff_bytes_decode(tofiledate_v) {
+        Ok(s) => s,
+        Err(e) => return report(e),
+    };
+    let lineterm = match diff_bytes_decode(lineterm_v) {
+        Ok(s) => s,
+        Err(e) => return report(e),
+    };
 
     // Call dfunc(a, b, fromfile, tofile, fromfiledate, tofiledate, n, lineterm).
     let str_v = |s: String| MbValue::from_ptr(MbObject::new_str(s));
@@ -1757,7 +2049,9 @@ fn mb_difflib_mdiff(args: &[MbValue]) -> MbValue {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(v) = map.get("context") { context = v.as_int(); }
+                    if let Some(v) = map.get("context") {
+                        context = v.as_int();
+                    }
                 }
             }
         }
@@ -1770,7 +2064,9 @@ fn mb_difflib_mdiff(args: &[MbValue]) -> MbValue {
     let ops = opcodes(&from_lines, &to_lines, &std::collections::HashSet::new());
     for (tag, i1, i2, j1, j2) in ops {
         match tag {
-            "replace" => ndiff_fancy_replace(&mut diff_lines, &from_lines, i1, i2, &to_lines, j1, j2),
+            "replace" => {
+                ndiff_fancy_replace(&mut diff_lines, &from_lines, i1, i2, &to_lines, j1, j2)
+            }
             "delete" => ndiff_dump(&mut diff_lines, '-', &from_lines, i1, i2),
             "insert" => ndiff_dump(&mut diff_lines, '+', &to_lines, j1, j2),
             "equal" => ndiff_dump(&mut diff_lines, ' ', &from_lines, i1, i2),
@@ -1822,7 +2118,11 @@ fn mdiff_format_plain(line: &str, format_key: Option<char>) -> String {
     match format_key {
         None => text,
         Some(k) => {
-            let text = if text.is_empty() { " ".to_string() } else { text };
+            let text = if text.is_empty() {
+                " ".to_string()
+            } else {
+                text
+            };
             format!("\0{k}{text}\u{1}")
         }
     }
@@ -2061,8 +2361,12 @@ fn mb_difflib_htmldiff_new(args: &[MbValue]) -> MbValue {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(v) = map.get("tabsize") { tabsize = v.as_int().unwrap_or(8); }
-                    if let Some(v) = map.get("wrapcolumn") { wrapcolumn = v.as_int(); }
+                    if let Some(v) = map.get("tabsize") {
+                        tabsize = v.as_int().unwrap_or(8);
+                    }
+                    if let Some(v) = map.get("wrapcolumn") {
+                        wrapcolumn = v.as_int();
+                    }
                 }
             }
         }
@@ -2091,11 +2395,21 @@ fn htmldiff_make_file(self_v: MbValue, args: MbValue) -> MbValue {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(v) = map.get("charset") { charset = extract_str(*v).unwrap_or(charset); }
-                    if let Some(v) = map.get("context") { context = v.as_bool().unwrap_or(false); }
-                    if let Some(v) = map.get("numlines") { numlines = v.as_int().unwrap_or(5); }
-                    if let Some(v) = map.get("fromdesc") { kw_fromdesc = extract_str(*v); }
-                    if let Some(v) = map.get("todesc") { kw_todesc = extract_str(*v); }
+                    if let Some(v) = map.get("charset") {
+                        charset = extract_str(*v).unwrap_or(charset);
+                    }
+                    if let Some(v) = map.get("context") {
+                        context = v.as_bool().unwrap_or(false);
+                    }
+                    if let Some(v) = map.get("numlines") {
+                        numlines = v.as_int().unwrap_or(5);
+                    }
+                    if let Some(v) = map.get("fromdesc") {
+                        kw_fromdesc = extract_str(*v);
+                    }
+                    if let Some(v) = map.get("todesc") {
+                        kw_todesc = extract_str(*v);
+                    }
                     drop(map);
                     items.pop();
                 }
@@ -2111,14 +2425,31 @@ fn htmldiff_make_file(self_v: MbValue, args: MbValue) -> MbValue {
         .or_else(|| items.get(3).and_then(|v| extract_str(*v)))
         .unwrap_or_default();
     // context/numlines may also be positional (5th/6th).
-    if let Some(v) = items.get(4) { if let Some(b) = v.as_bool() { context = b; } }
-    if let Some(v) = items.get(5) { if let Some(nn) = v.as_int() { numlines = nn; } }
+    if let Some(v) = items.get(4) {
+        if let Some(b) = v.as_bool() {
+            context = b;
+        }
+    }
+    if let Some(v) = items.get(5) {
+        if let Some(nn) = v.as_int() {
+            numlines = nn;
+        }
+    }
 
-    let tabsize = get_field(self_v, "_tabsize").and_then(|v| v.as_int()).unwrap_or(8);
+    let tabsize = get_field(self_v, "_tabsize")
+        .and_then(|v| v.as_int())
+        .unwrap_or(8);
     let wrapcolumn = get_field(self_v, "_wrapcolumn").and_then(|v| v.as_int());
     let table = htmldiff_build_table(
-        &seq_tokens(fromlines), &seq_tokens(tolines), &fromdesc, &todesc,
-        context, numlines, tabsize, wrapcolumn, &charset,
+        &seq_tokens(fromlines),
+        &seq_tokens(tolines),
+        &fromdesc,
+        &todesc,
+        context,
+        numlines,
+        tabsize,
+        wrapcolumn,
+        &charset,
     );
     let html = htmldiff_file_template(&table, &charset);
     MbValue::from_ptr(MbObject::new_str(html))
@@ -2135,10 +2466,18 @@ fn htmldiff_make_table(self_v: MbValue, args: MbValue) -> MbValue {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(v) = map.get("context") { context = v.as_bool().unwrap_or(false); }
-                    if let Some(v) = map.get("numlines") { numlines = v.as_int().unwrap_or(5); }
-                    if let Some(v) = map.get("fromdesc") { kw_fromdesc = extract_str(*v); }
-                    if let Some(v) = map.get("todesc") { kw_todesc = extract_str(*v); }
+                    if let Some(v) = map.get("context") {
+                        context = v.as_bool().unwrap_or(false);
+                    }
+                    if let Some(v) = map.get("numlines") {
+                        numlines = v.as_int().unwrap_or(5);
+                    }
+                    if let Some(v) = map.get("fromdesc") {
+                        kw_fromdesc = extract_str(*v);
+                    }
+                    if let Some(v) = map.get("todesc") {
+                        kw_todesc = extract_str(*v);
+                    }
                     drop(map);
                     items.pop();
                 }
@@ -2153,14 +2492,31 @@ fn htmldiff_make_table(self_v: MbValue, args: MbValue) -> MbValue {
     let todesc = kw_todesc
         .or_else(|| items.get(3).and_then(|v| extract_str(*v)))
         .unwrap_or_default();
-    if let Some(v) = items.get(4) { if let Some(b) = v.as_bool() { context = b; } }
-    if let Some(v) = items.get(5) { if let Some(nn) = v.as_int() { numlines = nn; } }
+    if let Some(v) = items.get(4) {
+        if let Some(b) = v.as_bool() {
+            context = b;
+        }
+    }
+    if let Some(v) = items.get(5) {
+        if let Some(nn) = v.as_int() {
+            numlines = nn;
+        }
+    }
 
-    let tabsize = get_field(self_v, "_tabsize").and_then(|v| v.as_int()).unwrap_or(8);
+    let tabsize = get_field(self_v, "_tabsize")
+        .and_then(|v| v.as_int())
+        .unwrap_or(8);
     let wrapcolumn = get_field(self_v, "_wrapcolumn").and_then(|v| v.as_int());
     let table = htmldiff_build_table(
-        &seq_tokens(fromlines), &seq_tokens(tolines), &fromdesc, &todesc,
-        context, numlines, tabsize, wrapcolumn, "utf-8",
+        &seq_tokens(fromlines),
+        &seq_tokens(tolines),
+        &fromdesc,
+        &todesc,
+        context,
+        numlines,
+        tabsize,
+        wrapcolumn,
+        "utf-8",
     );
     MbValue::from_ptr(MbObject::new_str(table))
 }
@@ -2176,7 +2532,10 @@ fn htmldiff_escape(text: &str, tabsize: i64, ascii_only: bool) -> String {
     for c in text.chars() {
         if c == '\t' {
             let spaces = ts - (col % ts);
-            for _ in 0..spaces { expanded.push(' '); col += 1; }
+            for _ in 0..spaces {
+                expanded.push(' ');
+                col += 1;
+            }
         } else {
             expanded.push(c);
             col += 1;
@@ -2213,15 +2572,24 @@ fn htmldiff_build_table(
     _wrapcolumn: Option<i64>,
     charset: &str,
 ) -> String {
-    let ascii_only = charset.eq_ignore_ascii_case("us-ascii") || charset.eq_ignore_ascii_case("ascii");
+    let ascii_only =
+        charset.eq_ignore_ascii_case("us-ascii") || charset.eq_ignore_ascii_case("ascii");
     let ops = opcodes(fromlines, tolines, &std::collections::HashSet::new());
     let mut body = String::new();
     let row = |lhs: &str, rhs: &str, cls: &str| -> String {
         format!(
             "            <tr><td class=\"diff_header\">&nbsp;</td><td nowrap=\"nowrap\">{lhs}</td>\
              <td class=\"diff_header\">&nbsp;</td><td nowrap=\"nowrap\">{rhs}</td></tr>\n",
-            lhs = if lhs.is_empty() { String::new() } else { format!("<span class=\"{cls}\">{lhs}</span>") },
-            rhs = if rhs.is_empty() { String::new() } else { format!("<span class=\"{cls}\">{rhs}</span>") },
+            lhs = if lhs.is_empty() {
+                String::new()
+            } else {
+                format!("<span class=\"{cls}\">{lhs}</span>")
+            },
+            rhs = if rhs.is_empty() {
+                String::new()
+            } else {
+                format!("<span class=\"{cls}\">{rhs}</span>")
+            },
         )
     };
     for (tag, i1, i2, j1, j2) in ops {
@@ -2238,8 +2606,16 @@ fn htmldiff_build_table(
                 let lb = j2 - j1;
                 let maxn = la.max(lb);
                 for k in 0..maxn {
-                    let l = if k < la { htmldiff_escape(&fromlines[i1 + k], tabsize, ascii_only) } else { String::new() };
-                    let r = if k < lb { htmldiff_escape(&tolines[j1 + k], tabsize, ascii_only) } else { String::new() };
+                    let l = if k < la {
+                        htmldiff_escape(&fromlines[i1 + k], tabsize, ascii_only)
+                    } else {
+                        String::new()
+                    };
+                    let r = if k < lb {
+                        htmldiff_escape(&tolines[j1 + k], tabsize, ascii_only)
+                    } else {
+                        String::new()
+                    };
                     body.push_str(&row(&l, &r, "diff_chg"));
                 }
             }
@@ -2291,12 +2667,16 @@ pub fn mb_difflib_unified_diff(a: MbValue, b: MbValue) -> MbValue {
     let la: Vec<&str> = sa.lines().collect();
     let lb: Vec<&str> = sb.lines().collect();
     let mut out: Vec<MbValue> = Vec::new();
-    for line in &la { if !lb.contains(line) {
-        out.push(MbValue::from_ptr(MbObject::new_str("-".to_string() + line)));
-    }}
-    for line in &lb { if !la.contains(line) {
-        out.push(MbValue::from_ptr(MbObject::new_str("+".to_string() + line)));
-    }}
+    for line in &la {
+        if !lb.contains(line) {
+            out.push(MbValue::from_ptr(MbObject::new_str("-".to_string() + line)));
+        }
+    }
+    for line in &lb {
+        if !la.contains(line) {
+            out.push(MbValue::from_ptr(MbObject::new_str("+".to_string() + line)));
+        }
+    }
     MbValue::from_ptr(MbObject::new_list(out))
 }
 
@@ -2309,11 +2689,19 @@ mod tests {
     }
 
     fn list_strs(val: MbValue) -> Vec<String> {
-        val.as_ptr().map(|ptr| unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().iter().filter_map(|v| extract_str(*v)).collect()
-            } else { vec![] }
-        }).unwrap_or_default()
+        val.as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    lock.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|v| extract_str(*v))
+                        .collect()
+                } else {
+                    vec![]
+                }
+            })
+            .unwrap_or_default()
     }
 
     // -- sequence_ratio tests --
@@ -2405,11 +2793,13 @@ mod tests {
 
     #[test]
     fn test_close_matches_exact() {
-        let possibilities = MbValue::from_ptr(MbObject::new_list(vec![
-            s("apple"), s("ape"), s("peach"),
-        ]));
+        let possibilities =
+            MbValue::from_ptr(MbObject::new_list(vec![s("apple"), s("ape"), s("peach")]));
         let r = mb_difflib_get_close_matches(
-            s("apple"), possibilities, MbValue::from_int(3), MbValue::from_float(0.6),
+            s("apple"),
+            possibilities,
+            MbValue::from_int(3),
+            MbValue::from_float(0.6),
         );
         let matches = list_strs(r);
         assert!(!matches.is_empty());
@@ -2418,11 +2808,12 @@ mod tests {
 
     #[test]
     fn test_close_matches_no_match() {
-        let possibilities = MbValue::from_ptr(MbObject::new_list(vec![
-            s("xyz"), s("zzz"),
-        ]));
+        let possibilities = MbValue::from_ptr(MbObject::new_list(vec![s("xyz"), s("zzz")]));
         let r = mb_difflib_get_close_matches(
-            s("apple"), possibilities, MbValue::from_int(3), MbValue::from_float(0.8),
+            s("apple"),
+            possibilities,
+            MbValue::from_int(3),
+            MbValue::from_float(0.8),
         );
         let matches = list_strs(r);
         assert!(matches.is_empty());
@@ -2430,11 +2821,13 @@ mod tests {
 
     #[test]
     fn test_close_matches_limit_n() {
-        let possibilities = MbValue::from_ptr(MbObject::new_list(vec![
-            s("ab"), s("ac"), s("ad"), s("ae"),
-        ]));
+        let possibilities =
+            MbValue::from_ptr(MbObject::new_list(vec![s("ab"), s("ac"), s("ad"), s("ae")]));
         let r = mb_difflib_get_close_matches(
-            s("ab"), possibilities, MbValue::from_int(2), MbValue::from_float(0.1),
+            s("ab"),
+            possibilities,
+            MbValue::from_int(2),
+            MbValue::from_float(0.1),
         );
         let matches = list_strs(r);
         assert!(matches.len() <= 2);
@@ -2445,7 +2838,10 @@ mod tests {
         // cutoff defaults to 0.6
         let possibilities = MbValue::from_ptr(MbObject::new_list(vec![s("abc")]));
         let r = mb_difflib_get_close_matches(
-            s("abc"), possibilities, MbValue::from_int(3), MbValue::none(),
+            s("abc"),
+            possibilities,
+            MbValue::from_int(3),
+            MbValue::none(),
         );
         let matches = list_strs(r);
         assert!(matches.contains(&"abc".to_string()));

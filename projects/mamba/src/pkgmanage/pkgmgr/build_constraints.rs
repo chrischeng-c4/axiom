@@ -114,7 +114,8 @@ pub fn parse_build_constraints(src: &str) -> Result<BuildConstraints, IndexError
                     detail: format!("line {lineno}: --requirement without a path"),
                 });
             }
-            out.lines.push(BuildConstraintLine::Include(path.to_string()));
+            out.lines
+                .push(BuildConstraintLine::Include(path.to_string()));
             continue;
         }
 

@@ -1,12 +1,11 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 /// collections module for Mamba (#391).
 ///
 /// Provides: Counter, counter.most_common, deque operations, OrderedDict.
 /// Backed by existing MbValue list/dict primitives.
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 /// Extract a String from an MbValue that wraps a heap Str.
 fn extract_str(val: MbValue) -> Option<String> {
@@ -55,7 +54,10 @@ unsafe extern "C" fn dispatch_counter_new(args_ptr: *const MbValue, nargs: usize
     mb_counter_new(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
-unsafe extern "C" fn dispatch_counter_most_common(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_counter_most_common(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_counter_most_common(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -63,10 +65,41 @@ unsafe extern "C" fn dispatch_counter_most_common(args_ptr: *const MbValue, narg
     )
 }
 
+/// Read a string-keyed entry out of a dict MbValue (kwargs-dict probing).
+fn dict_get_str_key(v: MbValue, key: &str) -> Option<MbValue> {
+    use crate::runtime::dict_ops::DictKey;
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .unwrap()
+                .get(&DictKey::Str(key.to_string()))
+                .copied()
+        } else {
+            None
+        }
+    }
+}
+
 unsafe extern "C" fn dispatch_deque_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
+    // The lowerer packs keyword args (`deque(maxlen=3)`,
+    // `deque(xs, maxlen=3)`) into a trailing dict positional; recover
+    // `maxlen` from it by convention. A trailing dict without a "maxlen"
+    // key is left in place untouched.
+    let mut a = a;
+    let mut maxlen: Option<i64> = None;
+    if let Some(last) = a.last() {
+        if let Some(ml) = dict_get_str_key(*last, "maxlen") {
+            // `deque(maxlen=None)` carries the None MbValue → stays unbounded.
+            maxlen = ml.as_int();
+            a = &a[..a.len() - 1];
+        }
+    }
     let initial = a.get(0).copied().unwrap_or_else(MbValue::none);
-    let maxlen = a.get(1).and_then(|v| v.as_int());
+    if maxlen.is_none() {
+        maxlen = a.get(1).and_then(|v| v.as_int());
+    }
     // Collect initial data
     let mut data: Vec<MbValue> = Vec::new();
     if let Some(ptr) = initial.as_ptr() {
@@ -87,7 +120,10 @@ unsafe extern "C" fn dispatch_deque_new(args_ptr: *const MbValue, nargs: usize) 
     let items_list = MbValue::from_ptr(MbObject::new_list(data));
     let mut fields = FxHashMap::default();
     fields.insert("_items".into(), items_list);
-    fields.insert("_maxlen".into(), maxlen.map(MbValue::from_int).unwrap_or(MbValue::none()));
+    fields.insert(
+        "_maxlen".into(),
+        maxlen.map(MbValue::from_int).unwrap_or(MbValue::none()),
+    );
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -142,20 +178,44 @@ unsafe extern "C" fn dispatch_ordereddict_new(args_ptr: *const MbValue, nargs: u
 
 unsafe extern "C" fn dispatch_defaultdict_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
-    mb_defaultdict_new(a.get(0).copied().unwrap_or_else(MbValue::none))
+    let inst = mb_defaultdict_new(a.get(0).copied().unwrap_or_else(MbValue::none));
+    // `defaultdict(int, a=1)` — the lowerer packs kwargs into a trailing
+    // dict positional — and CPython's positional-mapping form
+    // `defaultdict(int, {'a': 1})` both seed the backing dict.
+    if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let data = fields.read().unwrap().get("_data").copied();
+                if let Some(data) = data {
+                    for extra in a.iter().skip(1) {
+                        if let Some(ep) = extra.as_ptr() {
+                            if matches!((*ep).data, ObjData::Dict(_)) {
+                                super::super::dict_ops::mb_dict_update(data, *extra);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    inst
 }
 
 unsafe extern "C" fn dispatch_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
+    // Keyword args (`rename=True`, `defaults=(...)`, `module=...`) arrive as
+    // a trailing dict positional under the lowering convention.
+    let kwargs = a.get(2).copied().unwrap_or_else(MbValue::none);
     mb_namedtuple(
         a.get(0).copied().unwrap_or_else(MbValue::none),
         a.get(1).copied().unwrap_or_else(MbValue::none),
+        kwargs,
     )
 }
 
 unsafe extern "C" fn dispatch_userdict_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
-    mb_userdict_new(a.get(0).copied().unwrap_or_else(MbValue::none))
+    mb_userdict_new(a)
 }
 
 unsafe extern "C" fn dispatch_userlist_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -176,20 +236,59 @@ unsafe extern "C" fn dispatch_chainmap_new(args_ptr: *const MbValue, nargs: usiz
 }
 
 /// Register the collections module.
+/// `collections._count_elements(mapping, iterable)` — the C accelerator behind
+/// Counter: increment `mapping[elem]` by one for each element of `iterable`,
+/// starting missing keys at zero. Mutates `mapping` in place, returns None.
+unsafe extern "C" fn dispatch_count_elements(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { args_as_slice(args_ptr, nargs) };
+    let mapping = a.first().copied().unwrap_or_else(MbValue::none);
+    let iterable = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let handle = super::super::iter::mb_iter(iterable);
+    if super::super::iter::is_iter_handle(handle) {
+        if let Some(items) = super::super::iter::drain_iter_to_vec(handle) {
+            for elem in items {
+                let cur = super::super::dict_ops::mb_dict_get(mapping, elem, MbValue::from_int(0));
+                let next = MbValue::from_int(cur.as_int().unwrap_or(0) + 1);
+                super::super::dict_ops::mb_dict_setitem(mapping, elem, next);
+            }
+        }
+    }
+    MbValue::none()
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
 
-    let dispatchers: [(&str, usize); 15] = [
+    let dispatchers: [(&str, usize); 16] = [
+        (
+            "_count_elements",
+            dispatch_count_elements as *const () as usize,
+        ),
         ("Counter", dispatch_counter_new as *const () as usize),
-        ("counter_most_common", dispatch_counter_most_common as *const () as usize),
+        (
+            "counter_most_common",
+            dispatch_counter_most_common as *const () as usize,
+        ),
         ("deque", dispatch_deque_new as *const () as usize),
-        ("deque_appendleft", dispatch_deque_appendleft as *const () as usize),
-        ("deque_popleft", dispatch_deque_popleft as *const () as usize),
+        (
+            "deque_appendleft",
+            dispatch_deque_appendleft as *const () as usize,
+        ),
+        (
+            "deque_popleft",
+            dispatch_deque_popleft as *const () as usize,
+        ),
         ("deque_append", dispatch_deque_append as *const () as usize),
         ("deque_pop", dispatch_deque_pop as *const () as usize),
         ("deque_rotate", dispatch_deque_rotate as *const () as usize),
-        ("OrderedDict", dispatch_ordereddict_new as *const () as usize),
-        ("defaultdict", dispatch_defaultdict_new as *const () as usize),
+        (
+            "OrderedDict",
+            dispatch_ordereddict_new as *const () as usize,
+        ),
+        (
+            "defaultdict",
+            dispatch_defaultdict_new as *const () as usize,
+        ),
         ("namedtuple", dispatch_namedtuple as *const () as usize),
         ("ChainMap", dispatch_chainmap_new as *const () as usize),
         ("UserDict", dispatch_userdict_new as *const () as usize),
@@ -197,8 +296,14 @@ pub fn register() {
         ("UserString", dispatch_userstring_new as *const () as usize),
     ];
     const COLLECTIONS_TYPES: &[&str] = &[
-        "Counter", "deque", "OrderedDict", "defaultdict",
-        "ChainMap", "UserDict", "UserList", "UserString",
+        "Counter",
+        "deque",
+        "OrderedDict",
+        "defaultdict",
+        "ChainMap",
+        "UserDict",
+        "UserList",
+        "UserString",
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -216,6 +321,9 @@ pub fn register() {
             });
         }
     }
+
+    register_chainmap_class();
+    register_userdict_class();
 
     super::register_module("collections", attrs);
 }
@@ -245,9 +353,50 @@ fn value_to_key(val: MbValue) -> String {
 /// Counts elements of an iterable (list or string) and stores the result
 /// as a `collections.Counter` Instance. Method dispatch (`.most_common(n)`)
 /// is handled in `runtime::class::mb_call_method`.
+/// Raise a TypeError and return None (native raise convention).
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Raise a ValueError and return None (native raise convention).
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 pub fn mb_counter_new(iterable: MbValue) -> MbValue {
     use crate::runtime::dict_ops::DictKey;
     let mut counts: indexmap::IndexMap<DictKey, i64> = indexmap::IndexMap::new();
+
+    // CPython: Counter(non-iterable scalar) raises TypeError.
+    if iterable.as_int().is_some() || iterable.as_float().is_some() || iterable.is_bool() {
+        return raise_type_error("'int' object is not iterable");
+    }
+    // CPython: unhashable elements (lists/dicts/sets) raise TypeError.
+    if let Some(ptr) = iterable.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                for item in lock.read().unwrap().iter() {
+                    if let Some(ip) = item.as_ptr() {
+                        let unhashable = matches!(
+                            (*ip).data,
+                            ObjData::List(_) | ObjData::Dict(_) | ObjData::Set(_)
+                        );
+                        if unhashable {
+                            return raise_type_error("unhashable type: 'list'");
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if let Some(ptr) = iterable.as_ptr() {
         unsafe {
@@ -277,6 +426,17 @@ pub fn mb_counter_new(iterable: MbValue) -> MbValue {
                 ObjData::Str(ref s) => {
                     for ch in s.chars() {
                         *counts.entry(DictKey::Str(ch.to_string())).or_insert(0) += 1;
+                    }
+                }
+                // Counter(mapping) — counts come straight from the mapping's
+                // values (CPython semantics, including zero and negative
+                // counts). This is also the path `Counter(a=3)` takes: the
+                // lowerer packs kwargs into a trailing dict positional.
+                ObjData::Dict(ref lock) => {
+                    for (k, v) in lock.read().unwrap().iter() {
+                        if let Some(i) = v.as_int() {
+                            counts.insert(k.clone(), i);
+                        }
                     }
                 }
                 _ => {}
@@ -312,7 +472,9 @@ pub fn mb_counter_new(iterable: MbValue) -> MbValue {
 }
 
 /// Extract the internal IndexMap from a Counter (Instance or dict).
-fn counter_data(counter: MbValue) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
+fn counter_data(
+    counter: MbValue,
+) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
     if let Some(ptr) = counter.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -337,13 +499,17 @@ fn counter_data(counter: MbValue) -> indexmap::IndexMap<crate::runtime::dict_ops
 /// collections.Counter.most_common(n) -> list of (key, count) tuples
 ///
 /// Returns the n most common elements as a list of tuples (Python semantics).
-pub fn mb_counter_most_common(
-    counter: MbValue,
-    n: MbValue,
-) -> MbValue {
+pub fn mb_counter_most_common(counter: MbValue, n: MbValue) -> MbValue {
     use crate::runtime::dict_ops::DictKey;
     let map = counter_data(counter);
-    let limit = n.as_int().unwrap_or(map.len() as i64) as usize;
+    // CPython: most_common(None) returns all; most_common(n) is nlargest(n),
+    // so n <= 0 returns an empty list (a negative n must NOT wrap to a huge
+    // `usize` and return everything).
+    let limit = match n.as_int() {
+        Some(i) if i < 0 => 0,
+        Some(i) => i as usize,
+        None => map.len(),
+    };
 
     let mut entries: Vec<(DictKey, i64)> = map
         .iter()
@@ -356,10 +522,7 @@ pub fn mb_counter_most_common(
         .take(limit)
         .map(|(key, count)| {
             let key_val = super::super::dict_ops::dict_key_to_mbvalue(&key);
-            MbValue::from_ptr(MbObject::new_tuple(vec![
-                key_val,
-                MbValue::from_int(count),
-            ]))
+            MbValue::from_ptr(MbObject::new_tuple(vec![key_val, MbValue::from_int(count)]))
         })
         .collect();
 
@@ -408,6 +571,141 @@ fn counter_int_counts(
         .into_iter()
         .map(|(k, v)| (k, v.as_int().unwrap_or(0)))
         .collect()
+}
+
+/// The writable `_data` backing dict of a Counter Instance.
+fn counter_backing(counter: MbValue) -> Option<MbValue> {
+    let ptr = counter.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            return fields.read().unwrap().get("_data").copied();
+        }
+    }
+    None
+}
+
+/// Accumulate `sign * count(arg)` into the Counter's backing dict.
+/// `arg` may be a mapping (dict / Counter / dict-like Instance) whose values
+/// are added per key, or an iterable (str / list / tuple / iterator) whose
+/// elements each contribute `sign`. CPython `Counter.update` / `.subtract`
+/// semantics: counts ACCUMULATE (zero and negative results are kept).
+fn counter_merge(counter: MbValue, arg: MbValue, sign: i64) {
+    use crate::runtime::dict_ops::DictKey;
+    if arg.is_none() {
+        return;
+    }
+    let Some(data) = counter_backing(counter) else {
+        return;
+    };
+    // Collect (key, delta) pairs from the argument first so we never hold
+    // two locks at once (arg may share the backing dict).
+    let mut deltas: Vec<(DictKey, i64)> = Vec::new();
+    let mut is_mapping = false;
+    if let Some(ptr) = arg.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Dict(ref lock) => {
+                    is_mapping = true;
+                    for (k, v) in lock.read().unwrap().iter() {
+                        deltas.push((k.clone(), v.as_int().unwrap_or(0)));
+                    }
+                }
+                ObjData::Instance { .. } => {
+                    if super::super::class::unwrap_dictlike_data(arg).is_some() {
+                        is_mapping = true;
+                        for (k, v) in counter_int_counts(arg) {
+                            deltas.push((k, v));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if !is_mapping {
+        // Iterable of elements: each occurrence contributes one count.
+        for item in super::super::builtins::extract_items(arg) {
+            deltas.push((super::super::dict_ops::to_dict_key(item), 1));
+        }
+    }
+    if let Some(dp) = data.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*dp).data {
+                let mut map = lock.write().unwrap();
+                for (k, v) in deltas {
+                    let cur = map.get(&k).and_then(|x| x.as_int()).unwrap_or(0);
+                    map.insert(k, MbValue::from_int(cur + sign * v));
+                }
+            }
+        }
+    }
+}
+
+/// Counter.update(*args) / Counter.subtract(*args) — accumulate each
+/// positional argument's counts with the given sign (+1 update, -1 subtract).
+/// Kwargs arrive as a trailing dict positional under mamba's call convention
+/// and merge exactly like a mapping argument.
+pub fn mb_counter_update_args(counter: MbValue, args: &[MbValue], sign: i64) -> MbValue {
+    for arg in args {
+        counter_merge(counter, *arg, sign);
+    }
+    MbValue::none()
+}
+
+/// Counter.total() — sum of all counts (zero and negative included).
+pub fn mb_counter_total(counter: MbValue) -> MbValue {
+    let total: i64 = counter_int_counts(counter).values().sum();
+    MbValue::from_int(total)
+}
+
+/// Counter.elements() — each element repeated by its count, insertion order,
+/// elements with count <= 0 skipped (CPython semantics).
+pub fn mb_counter_elements(counter: MbValue) -> MbValue {
+    let mut out: Vec<MbValue> = Vec::new();
+    for (k, v) in counter_int_counts(counter) {
+        // One fresh MbValue per repetition: pushing the same heap pointer
+        // multiple times without retaining would over-release on list drop.
+        for _ in 0..v.max(0) {
+            out.push(super::super::dict_ops::dict_key_to_mbvalue(&k));
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(out))
+}
+
+/// Unary +Counter / -Counter — keep only counts that are strictly positive
+/// after applying the sign (CPython: `+c` drops non-positive counts, `-c`
+/// flips signs then drops non-positive).
+pub fn mb_counter_unary(counter: MbValue, negate: bool) -> MbValue {
+    let mut counts = counter_int_counts(counter);
+    if negate {
+        for v in counts.values_mut() {
+            *v = -*v;
+        }
+    }
+    build_counter_from_counts(counts)
+}
+
+/// Counter == Counter — multiset equality: a missing key counts as zero.
+pub fn counter_eq(a: MbValue, b: MbValue) -> bool {
+    let ca = counter_int_counts(a);
+    let cb = counter_int_counts(b);
+    ca.iter()
+        .all(|(k, v)| cb.get(k).copied().unwrap_or(0) == *v)
+        && cb
+            .iter()
+            .all(|(k, v)| ca.get(k).copied().unwrap_or(0) == *v)
+}
+
+/// Counter <= Counter — multiset inclusion: every count in `a` is <= the
+/// matching count in `b` (missing keys count as zero on either side).
+pub fn counter_le_multiset(a: MbValue, b: MbValue) -> bool {
+    let ca = counter_int_counts(a);
+    let cb = counter_int_counts(b);
+    ca.iter()
+        .all(|(k, v)| *v <= cb.get(k).copied().unwrap_or(0))
+        && cb
+            .iter()
+            .all(|(k, v)| ca.get(k).copied().unwrap_or(0) <= *v)
 }
 
 /// Counter + Counter — CPython multiset semantics: per-key sum, drop <= 0.
@@ -507,7 +805,11 @@ pub fn defaultdict_repr(dd: MbValue) -> String {
                             let r = super::super::builtins::mb_repr(factory);
                             r.as_ptr()
                                 .and_then(|p| {
-                                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                                    if let ObjData::Str(ref s) = (*p).data {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
                                 })
                                 .unwrap_or_else(|| "None".to_string())
                         }
@@ -517,7 +819,11 @@ pub fn defaultdict_repr(dd: MbValue) -> String {
                         let r = super::super::builtins::mb_repr(factory);
                         r.as_ptr()
                             .and_then(|p| {
-                                if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
                             })
                             .unwrap_or_else(|| "None".to_string())
                     };
@@ -564,29 +870,64 @@ pub fn deque_repr(dq: MbValue) -> String {
 pub fn namedtuple_repr(v: MbValue) -> Option<String> {
     let ptr = v.as_ptr()?;
     unsafe {
-        let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data else {
+        let ObjData::Instance {
+            ref class_name,
+            ref fields,
+            ..
+        } = (*ptr).data
+        else {
             return None;
         };
         let f = fields.read().ok()?;
         let nt_fields = f.get("_namedtuple_fields")?;
-        let nt_name = f.get("_namedtuple_name")
+        let nt_name = f
+            .get("_namedtuple_name")
             .and_then(|v| v.as_ptr())
-            .and_then(|p| if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None })
+            .and_then(|p| {
+                if let ObjData::Str(ref s) = (*p).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
             .unwrap_or_else(|| class_name.clone());
-        let field_names: Vec<String> = nt_fields.as_ptr()
-            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
-                Some(lk.read().unwrap().iter()
-                    .filter_map(|fv| fv.as_ptr().and_then(|pp| {
-                        if let ObjData::Str(ref s) = (*pp).data { Some(s.clone()) } else { None }
-                    })).collect())
-            } else { None })
+        let field_names: Vec<String> = nt_fields
+            .as_ptr()
+            .and_then(|p| {
+                if let ObjData::List(ref lk) = (*p).data {
+                    Some(
+                        lk.read()
+                            .unwrap()
+                            .iter()
+                            .filter_map(|fv| {
+                                fv.as_ptr().and_then(|pp| {
+                                    if let ObjData::Str(ref s) = (*pp).data {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                }
+            })
             .unwrap_or_default();
         let mut parts = Vec::with_capacity(field_names.len());
         for fname in &field_names {
             let val = f.get(fname).copied().unwrap_or(MbValue::none());
             let r = super::super::builtins::mb_repr(val);
-            let rs = r.as_ptr()
-                .and_then(|p| if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None })
+            let rs = r
+                .as_ptr()
+                .and_then(|p| {
+                    if let ObjData::Str(ref s) = (*p).data {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_else(|| "None".to_string());
             parts.push(format!("{fname}={rs}"));
         }
@@ -606,17 +947,56 @@ pub fn namedtuple_values(v: MbValue) -> Option<Vec<MbValue>> {
         };
         let f = fields.read().ok()?;
         let nt_fields = f.get("_namedtuple_fields")?;
-        let names: Vec<String> = nt_fields.as_ptr()
-            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
-                Some(lk.read().unwrap().iter()
-                    .filter_map(|fv| fv.as_ptr().and_then(|pp| {
-                        if let ObjData::Str(ref s) = (*pp).data { Some(s.clone()) } else { None }
-                    })).collect())
-            } else { None })?;
-        Some(names.iter()
-            .map(|n| f.get(n).copied().unwrap_or(MbValue::none()))
-            .collect())
+        let names: Vec<String> = nt_fields.as_ptr().and_then(|p| {
+            if let ObjData::List(ref lk) = (*p).data {
+                Some(
+                    lk.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|fv| {
+                            fv.as_ptr().and_then(|pp| {
+                                if let ObjData::Str(ref s) = (*pp).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })?;
+        Some(
+            names
+                .iter()
+                .map(|n| f.get(n).copied().unwrap_or(MbValue::none()))
+                .collect(),
+        )
     }
+}
+
+/// True iff `v` is a namedtuple instance and `attr` is one of its declared
+/// fields — used by mb_setattr to make namedtuple fields read-only
+/// (`p.x = 5` raises AttributeError, matching CPython's __slots__ = ()).
+pub fn namedtuple_is_field(v: MbValue, attr: &str) -> bool {
+    v.as_ptr().is_some_and(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            if let Ok(f) = fields.read() {
+                if let Some(nt) = f.get("_namedtuple_fields").and_then(|x| x.as_ptr()) {
+                    if let ObjData::List(ref lk) = (*nt).data {
+                        return lk.read().unwrap().iter().any(|fv| {
+                            fv.as_ptr().is_some_and(
+                                |pp| matches!(&(*pp).data, ObjData::Str(s) if s == attr),
+                            )
+                        });
+                    }
+                }
+            }
+        }
+        false
+    })
 }
 
 /// True iff `v` is a `collections.Counter` Instance.
@@ -636,71 +1016,181 @@ pub fn mb_deque_new() -> MbValue {
     MbValue::from_ptr(MbObject::new_list(vec![]))
 }
 
-// ── UserDict / UserList / UserString stubs (#1265 Task #76, Wave-7 ship #3) ──
+// ── UserDict / UserList / UserString wrapper classes ──
 //
-// **Carve-out**: CPython's `UserDict` / `UserList` / `UserString` are
-// thin Python-level wrapper classes that expose a `.data` attribute and
-// let users override methods (the original use-case from before dict /
-// list could be subclassed directly). Modern code typically subclasses
-// `collections.abc.MutableMapping` or uses `__missing__` on dict, so
-// the wrapper-class subclassing surface is rarely needed in practice.
-//
-// These stubs collapse the wrapper-class surface to its underlying
-// primitive — UserDict()→dict, UserList()→list, UserString(s)→str. The
-// `.data` attribute and method-override surface are NOT yet wired
-// (they require attribute-on-builtin-subclass plumbing that the rest
-// of mamba doesn't yet need). Code that *constructs* these types will
-// work; code that *subclasses* and *overrides* won't.
-//
-// Tracked under #1449 conformance.
+// Real wrapper Instances: the payload lives in a `_data` field exposed as
+// the public `.data` attribute (CPython semantics). Mapping/sequence/string
+// operations are forwarded to the backing value at the dispatch sites
+// (mb_obj_getitem / mb_obj_setitem / mb_len / mb_call_method / mb_add /
+// iteration). `class Sub(UserDict)` works through the registered native
+// `__init__` (same pattern as ChainMap subclasses), including the
+// `__missing__` hook on subscript misses.
 
-/// collections.UserDict(initialdata=None) -> dict
-pub fn mb_userdict_new(initialdata: MbValue) -> MbValue {
-    let dict = MbObject::new_dict();
-    if let Some(ptr) = initialdata.as_ptr() {
+/// Build a user-wrapper Instance with class `name` and backing `data`.
+fn user_wrapper_make(name: &str, data: MbValue) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert("_data".into(), data);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: name.to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// "dict" | "list" | "str" when `class_name` is (a registered subclass of)
+/// UserDict / UserList / UserString.
+pub fn user_wrapper_kind(class_name: &str) -> Option<&'static str> {
+    let matches_base = |short: &str, dotted: &str| {
+        class_name == dotted
+            || super::super::class::class_mro_list(class_name)
+                .iter()
+                .any(|b| b == short || b == dotted)
+    };
+    if matches_base("UserDict", "collections.UserDict") {
+        return Some("dict");
+    }
+    if matches_base("UserList", "collections.UserList") {
+        return Some("list");
+    }
+    if matches_base("UserString", "collections.UserString") {
+        return Some("str");
+    }
+    None
+}
+
+/// If `v` is a user-wrapper Instance, return its kind and backing `_data`.
+pub fn user_wrapper_data(v: MbValue) -> Option<(&'static str, MbValue)> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            let kind = user_wrapper_kind(class_name)?;
+            let data = fields.read().unwrap().get("_data").copied()?;
+            return Some((kind, data));
+        }
+    }
+    None
+}
+
+/// Wrap `raw` in a fresh user-wrapper Instance of the SAME class as
+/// `template` (CPython: `UserString + str` returns a UserString).
+pub fn user_wrapper_rewrap_like(template: MbValue, raw: MbValue) -> MbValue {
+    if let Some(ptr) = template.as_ptr() {
         unsafe {
-            if let ObjData::Dict(ref src_lock) = (*ptr).data {
-                if let ObjData::Dict(ref dst_lock) = (*dict).data {
-                    let src = src_lock.read().unwrap();
-                    let mut dst = dst_lock.write().unwrap();
-                    for (k, v) in src.iter() {
-                        dst.insert(k.clone(), *v);
-                    }
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if user_wrapper_kind(class_name).is_some() {
+                    return user_wrapper_make(class_name, raw);
                 }
             }
         }
     }
-    MbValue::from_ptr(dict)
+    raw
 }
 
-/// collections.UserList(initlist=None) -> list
-pub fn mb_userlist_new(initlist: MbValue) -> MbValue {
-    let mut data: Vec<MbValue> = Vec::new();
-    if let Some(ptr) = initlist.as_ptr() {
-        unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                data = lock.read().unwrap().to_vec();
+/// Seed a fresh backing dict from every mapping positional (covers both
+/// `UserDict({'a': 1})` and kwargs lowered into a trailing dict).
+fn userdict_backing_from_args(args: &[MbValue]) -> MbValue {
+    let backing = super::super::dict_ops::mb_dict_new();
+    for arg in args {
+        if arg.is_none() {
+            continue;
+        }
+        if let Some(ptr) = arg.as_ptr() {
+            unsafe {
+                if matches!((*ptr).data, ObjData::Dict(_) | ObjData::Instance { .. }) {
+                    super::super::dict_ops::mb_dict_update(backing, *arg);
+                }
             }
         }
     }
-    MbValue::from_ptr(MbObject::new_list(data))
+    backing
 }
 
-/// collections.UserString(seq) -> str(seq)
+/// collections.UserDict(initialdata=None, **kwargs) -> UserDict Instance
+pub fn mb_userdict_new(args: &[MbValue]) -> MbValue {
+    user_wrapper_make("collections.UserDict", userdict_backing_from_args(args))
+}
+
+/// `UserDict.__init__` for registered subclasses (`class Sub(UserDict)`).
+unsafe extern "C" fn userdict_init(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_list(args);
+    let backing = userdict_backing_from_args(&items);
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let old = fields.write().unwrap().insert("_data".to_string(), backing);
+                if let Some(prev) = old {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+/// Register UserDict as a class (dotted + short alias) so user subclasses
+/// inherit the native `__init__` that creates the backing dict.
+fn register_userdict_class() {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let mut m: Map<String, MbValue> = Map::new();
+    m.insert(
+        "__init__".to_string(),
+        var(userdict_init as *const () as usize),
+    );
+    super::super::class::mb_class_register("collections.UserDict", vec![], m.clone());
+    super::super::class::mb_class_register("UserDict", vec![], m);
+}
+
+/// collections.UserList(initlist=None) -> UserList Instance
+pub fn mb_userlist_new(initlist: MbValue) -> MbValue {
+    let data: Vec<MbValue> = if initlist.is_none() {
+        Vec::new()
+    } else {
+        super::super::builtins::extract_items(initlist)
+            .into_iter()
+            .map(|v| {
+                unsafe { super::super::rc::retain_if_ptr(v) };
+                v
+            })
+            .collect()
+    };
+    user_wrapper_make(
+        "collections.UserList",
+        MbValue::from_ptr(MbObject::new_list(data)),
+    )
+}
+
+/// collections.UserString(seq) -> UserString Instance
 ///
-/// Accepts a str directly (returns a clone) or an int (returns its
-/// decimal string form, matching CPython's `str(int)` coercion). For
-/// any other type, returns an empty string — code reaching the
-/// non-str / non-int path on UserString construction is rare enough
-/// that a stub is acceptable until full str() coercion ships.
+/// Accepts a str (clone) or an int (decimal form, matching `str(int)`);
+/// other types stringify through mb_str.
 pub fn mb_userstring_new(seq: MbValue) -> MbValue {
-    if let Some(s) = extract_str(seq) {
-        return MbValue::from_ptr(MbObject::new_str(s));
-    }
-    if let Some(n) = seq.as_int() {
-        return MbValue::from_ptr(MbObject::new_str(n.to_string()));
-    }
-    MbValue::from_ptr(MbObject::new_str(String::new()))
+    let s = if let Some(s) = extract_str(seq) {
+        s
+    } else if let Some(n) = seq.as_int() {
+        n.to_string()
+    } else if seq.is_none() {
+        String::new()
+    } else {
+        extract_str(super::super::builtins::mb_str(seq)).unwrap_or_default()
+    };
+    user_wrapper_make(
+        "collections.UserString",
+        MbValue::from_ptr(MbObject::new_str(s)),
+    )
 }
 
 /// collections.deque_appendleft(deque, val) -> None
@@ -820,7 +1310,9 @@ pub fn mb_ordereddict_new(args: &[MbValue]) -> MbValue {
     // convention.
     let backing = super::super::dict_ops::mb_dict_new();
     for arg in args {
-        if arg.is_none() { continue; }
+        if arg.is_none() {
+            continue;
+        }
         if let Some(ptr) = arg.as_ptr() {
             unsafe {
                 match &(*ptr).data {
@@ -873,8 +1365,9 @@ pub fn mb_ordereddict_move_to_end(data: MbValue, key: MbValue, last: bool) -> Mb
                 drop(guard);
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        super::super::dict_ops::dict_key_raw_str(&dk))),
+                    MbValue::from_ptr(MbObject::new_str(super::super::dict_ops::dict_key_raw_str(
+                        &dk,
+                    ))),
                 );
                 return MbValue::none();
             }
@@ -934,6 +1427,11 @@ pub fn ordereddict_repr(od: MbValue) -> String {
 /// and a `_factory` callable. `mb_obj_getitem` in `class.rs` handles
 /// auto-vivification by calling the factory when a key is missing.
 pub fn mb_defaultdict_new(factory: MbValue) -> MbValue {
+    // CPython: the first argument must be callable or None.
+    if !factory.is_none() && crate::runtime::builtins::mb_callable(factory).as_bool() != Some(true)
+    {
+        return raise_type_error("first argument must be callable or None");
+    }
     let dict = MbValue::from_ptr(MbObject::new_dict());
     let mut fields = FxHashMap::default();
     fields.insert("_data".into(), dict);
@@ -956,31 +1454,113 @@ pub fn mb_defaultdict_new(factory: MbValue) -> MbValue {
 /// Returns a `collections.namedtuple_factory` Instance that, when called
 /// with positional args, creates a namedtuple Instance with the declared
 /// field names. Dispatch is handled in `mb_call_spread` (builtins.rs).
-pub fn mb_namedtuple(name: MbValue, fields: MbValue) -> MbValue {
-    // Extract field names from a list of strings
+pub fn mb_namedtuple(name: MbValue, fields: MbValue, kwargs: MbValue) -> MbValue {
+    // Extract field names from a space/comma string or a sequence of strings.
     let field_names: Vec<String> = if let Some(ptr) = fields.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::List(ref lock) => lock.read().unwrap().iter()
+                ObjData::List(ref lock) => lock
+                    .read()
+                    .unwrap()
+                    .iter()
                     .filter_map(|v| extract_str(*v))
                     .collect(),
-                ObjData::Str(ref s) => s.replace(',', " ").split_whitespace()
-                    .map(|f| f.to_string()).collect(),
+                ObjData::Tuple(ref items) => items.iter().filter_map(|v| extract_str(*v)).collect(),
+                ObjData::Str(ref s) => s
+                    .replace(',', " ")
+                    .split_whitespace()
+                    .map(|f| f.to_string())
+                    .collect(),
                 _ => vec![],
             }
         }
     } else {
         vec![]
     };
+    // Keyword options: rename / defaults / module.
+    let rename = dict_get_str_key(kwargs, "rename")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let defaults: Vec<MbValue> = dict_get_str_key(kwargs, "defaults")
+        .filter(|v| !v.is_none())
+        .map(super::super::builtins::extract_items)
+        .unwrap_or_default();
+    // CPython: field names must be valid non-keyword identifiers without
+    // leading underscores or duplicates; violations raise ValueError —
+    // unless rename=True, which replaces each offender with `_<index>`.
+    const PY_KEYWORDS: &[&str] = &[
+        "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class",
+        "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
+        "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return",
+        "try", "while", "with", "yield",
+    ];
+    let mut seen = std::collections::HashSet::new();
+    let mut field_names_fixed: Vec<String> = Vec::with_capacity(field_names.len());
+    for (i, f) in field_names.iter().enumerate() {
+        let valid_ident = !f.is_empty()
+            && f.chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+            && f.chars().all(|c| c.is_alphanumeric() || c == '_');
+        let offending = if !valid_ident {
+            Some(format!(
+                "Type names and field names must be valid identifiers: {f:?}"
+            ))
+        } else if PY_KEYWORDS.contains(&f.as_str()) {
+            Some(format!(
+                "Type names and field names cannot be a keyword: {f:?}"
+            ))
+        } else if f.starts_with('_') {
+            Some(format!(
+                "Field names cannot start with an underscore: {f:?}"
+            ))
+        } else if seen.contains(f.as_str()) {
+            Some(format!("Encountered duplicate field name: {f:?}"))
+        } else {
+            None
+        };
+        if let Some(msg) = offending {
+            if !rename {
+                return raise_value_error(&msg);
+            }
+            let nf = format!("_{i}");
+            seen.insert(nf.clone());
+            field_names_fixed.push(nf);
+            continue;
+        }
+        seen.insert(f.clone());
+        field_names_fixed.push(f.clone());
+    }
+    let field_names = field_names_fixed;
+    if defaults.len() > field_names.len() {
+        return raise_type_error("Got more default values than field names");
+    }
     let tuple_name = extract_str(name).unwrap_or_else(|| "namedtuple".to_string());
     let mut factory_fields = FxHashMap::default();
-    factory_fields.insert("_tuple_name".into(),
-        MbValue::from_ptr(MbObject::new_str(tuple_name)));
-    let field_vals: Vec<MbValue> = field_names.iter()
+    factory_fields.insert(
+        "_tuple_name".into(),
+        MbValue::from_ptr(MbObject::new_str(tuple_name)),
+    );
+    let field_vals: Vec<MbValue> = field_names
+        .iter()
         .map(|f| MbValue::from_ptr(MbObject::new_str(f.clone())))
         .collect();
-    factory_fields.insert("_field_names".into(),
-        MbValue::from_ptr(MbObject::new_list(field_vals)));
+    factory_fields.insert(
+        "_field_names".into(),
+        MbValue::from_ptr(MbObject::new_list(field_vals)),
+    );
+    // Defaults align RIGHTMOST: defaults[j] belongs to field n-d+j.
+    let default_vals: Vec<MbValue> = defaults
+        .iter()
+        .map(|v| {
+            unsafe { super::super::rc::retain_if_ptr(*v) };
+            *v
+        })
+        .collect();
+    factory_fields.insert(
+        "_defaults".into(),
+        MbValue::from_ptr(MbObject::new_list(default_vals)),
+    );
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -994,22 +1574,138 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue) -> MbValue {
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+/// Field names of a namedtuple factory Instance, or None for other values.
+pub(crate) fn namedtuple_factory_fields(factory: MbValue) -> Option<Vec<String>> {
+    let ptr = factory.as_ptr()?;
+    unsafe {
+        let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        else {
+            return None;
+        };
+        if class_name != "collections.namedtuple_factory" {
+            return None;
+        }
+        let f = fields.read().ok()?;
+        let names = f.get("_field_names").and_then(|v| v.as_ptr()).map(|p| {
+            if let ObjData::List(ref lock) = (*p).data {
+                lock.read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|v| extract_str(*v))
+                    .collect()
+            } else {
+                vec![]
+            }
+        })?;
+        Some(names)
+    }
+}
+
+/// Class-level attributes of a namedtuple factory: `_fields`,
+/// `__match_args__`, `__name__`, `__slots__`, `_field_defaults`.
+/// Returns None for unsupported attribute names.
+pub fn namedtuple_factory_getattr(factory: MbValue, attr: &str) -> Option<MbValue> {
+    let names = namedtuple_factory_fields(factory)?;
+    match attr {
+        "_fields" | "__match_args__" => {
+            let vals: Vec<MbValue> = names
+                .iter()
+                .map(|n| MbValue::from_ptr(MbObject::new_str(n.clone())))
+                .collect();
+            Some(MbValue::from_ptr(MbObject::new_tuple(vals)))
+        }
+        "__slots__" => Some(MbValue::from_ptr(MbObject::new_tuple(vec![]))),
+        "__name__" => {
+            let ptr = factory.as_ptr()?;
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    let tn = fields
+                        .read()
+                        .ok()?
+                        .get("_tuple_name")
+                        .and_then(|v| extract_str(*v))?;
+                    return Some(MbValue::from_ptr(MbObject::new_str(tn)));
+                }
+            }
+            None
+        }
+        "_field_defaults" => {
+            let defaults = namedtuple_factory_defaults(factory);
+            let out = super::super::dict_ops::mb_dict_new();
+            let start = names.len() - defaults.len().min(names.len());
+            for (j, d) in defaults.iter().enumerate() {
+                if start + j < names.len() {
+                    let key = MbValue::from_ptr(MbObject::new_str(names[start + j].clone()));
+                    super::super::dict_ops::mb_dict_setitem(out, key, *d);
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// Rightmost-aligned default values stored on a namedtuple factory.
+fn namedtuple_factory_defaults(factory: MbValue) -> Vec<MbValue> {
+    if let Some(ptr) = factory.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(d) = fields.read().unwrap().get("_defaults") {
+                    if let Some(dp) = d.as_ptr() {
+                        if let ObjData::List(ref lock) = (*dp).data {
+                            return lock.read().unwrap().to_vec();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    vec![]
+}
+
+/// Factory._make(iterable) — build an instance from an iterable of exactly
+/// the declared field count; CPython raises TypeError on length mismatch.
+pub fn mb_namedtuple_make(factory: MbValue, iterable: MbValue) -> MbValue {
+    let Some(names) = namedtuple_factory_fields(factory) else {
+        return MbValue::none();
+    };
+    let items = super::super::builtins::extract_items(iterable);
+    if items.len() != names.len() {
+        return raise_type_error(&format!(
+            "Expected {} arguments, got {}",
+            names.len(),
+            items.len()
+        ));
+    }
+    mb_namedtuple_create(factory, &items)
+}
+
 /// Create a namedtuple instance from the factory and positional args.
 pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
     let (tuple_name, field_names) = if let Some(ptr) = factory.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                let tn = f.get("_tuple_name").and_then(|v| extract_str(*v))
+                let tn = f
+                    .get("_tuple_name")
+                    .and_then(|v| extract_str(*v))
                     .unwrap_or_else(|| "namedtuple".to_string());
-                let fns: Vec<String> = f.get("_field_names")
+                let fns: Vec<String> = f
+                    .get("_field_names")
                     .and_then(|v| v.as_ptr())
                     .map(|p| {
                         if let ObjData::List(ref lock) = (*p).data {
-                            lock.read().unwrap().iter()
+                            lock.read()
+                                .unwrap()
+                                .iter()
                                 .filter_map(|v| extract_str(*v))
                                 .collect()
-                        } else { vec![] }
+                        } else {
+                            vec![]
+                        }
                     })
                     .unwrap_or_default();
                 (tn, fns)
@@ -1020,16 +1716,46 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
     } else {
         return MbValue::none();
     };
+    // Arity: missing trailing args fill from the factory's rightmost-aligned
+    // defaults; out-of-range arg counts raise TypeError (CPython).
+    let defaults = namedtuple_factory_defaults(factory);
+    let n = field_names.len();
+    let min_required = n.saturating_sub(defaults.len());
+    if args.len() < min_required || args.len() > n {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{}() takes {} positional arguments but {} were given",
+                tuple_name,
+                field_names.len(),
+                args.len(),
+            ))),
+        );
+        return MbValue::none();
+    }
     let mut inst_fields = FxHashMap::default();
-    inst_fields.insert("_namedtuple_name".into(),
-        MbValue::from_ptr(MbObject::new_str(tuple_name.clone())));
-    let ordered: Vec<MbValue> = field_names.iter()
+    inst_fields.insert(
+        "_namedtuple_name".into(),
+        MbValue::from_ptr(MbObject::new_str(tuple_name.clone())),
+    );
+    let ordered: Vec<MbValue> = field_names
+        .iter()
         .map(|f| MbValue::from_ptr(MbObject::new_str(f.clone())))
         .collect();
-    inst_fields.insert("_namedtuple_fields".into(),
-        MbValue::from_ptr(MbObject::new_list(ordered)));
+    inst_fields.insert(
+        "_namedtuple_fields".into(),
+        MbValue::from_ptr(MbObject::new_list(ordered)),
+    );
     for (i, fname) in field_names.iter().enumerate() {
-        let val = args.get(i).copied().unwrap_or(MbValue::none());
+        let val = if i < args.len() {
+            args[i]
+        } else {
+            // Defaults are owned by the factory; the instance takes its own
+            // reference.
+            let d = defaults[i - (n - defaults.len())];
+            unsafe { super::super::rc::retain_if_ptr(d) };
+            d
+        };
         inst_fields.insert(fname.clone(), val);
     }
     let obj = Box::new(super::super::rc::MbObject {
@@ -1045,30 +1771,694 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
-/// collections.ChainMap(*maps) -> dict that chains multiple dicts
-///
-/// Creates a dict by merging the input dicts in reverse order
-/// (first dict has highest priority).
-pub fn mb_chainmap_new(args: MbValue) -> MbValue {
-    let maps = extract_list(args);
-    let result = MbObject::new_dict();
+/// Field names of a namedtuple INSTANCE (declared order), or None.
+fn namedtuple_instance_fields(inst: MbValue) -> Option<Vec<String>> {
+    let ptr = inst.as_ptr()?;
     unsafe {
-        if let ObjData::Dict(ref lock) = (*result).data {
-            let mut out = lock.write().unwrap();
-            // Iterate in reverse: last map is lowest priority
-            for map_val in maps.iter().rev() {
-                if let Some(ptr) = map_val.as_ptr() {
-                    if let ObjData::Dict(ref map_lock) = (*ptr).data {
-                        let m = map_lock.read().unwrap();
-                        for (k, v) in m.iter() {
-                            out.insert(k.clone(), *v);
+        let ObjData::Instance { ref fields, .. } = (*ptr).data else {
+            return None;
+        };
+        let f = fields.read().ok()?;
+        let nt_fields = f.get("_namedtuple_fields")?;
+        nt_fields.as_ptr().and_then(|p| {
+            if let ObjData::List(ref lock) = (*p).data {
+                Some(
+                    lock.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|v| extract_str(*v))
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })
+    }
+}
+
+/// instance._asdict() — a fresh dict mapping field names to values in
+/// declared order.
+pub fn mb_namedtuple_asdict(inst: MbValue) -> MbValue {
+    let Some(names) = namedtuple_instance_fields(inst) else {
+        return MbValue::none();
+    };
+    let out = super::super::dict_ops::mb_dict_new();
+    if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let f = fields.read().unwrap();
+                for n in &names {
+                    let key = MbValue::from_ptr(MbObject::new_str(n.clone()));
+                    let val = f.get(n).copied().unwrap_or(MbValue::none());
+                    super::super::dict_ops::mb_dict_setitem(out, key, val);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// instance._replace(**kwargs) — a modified copy; the original is untouched.
+/// Unknown field names raise ValueError (CPython).
+pub fn mb_namedtuple_replace(inst: MbValue, kwargs: MbValue) -> MbValue {
+    use crate::runtime::dict_ops::DictKey;
+    let Some(names) = namedtuple_instance_fields(inst) else {
+        return MbValue::none();
+    };
+    // Collect replacement values keyed by field name.
+    let mut replacements: Vec<(String, MbValue)> = Vec::new();
+    if let Some(kp) = kwargs.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*kp).data {
+                for (k, v) in lock.read().unwrap().iter() {
+                    if let DictKey::Str(name) = k {
+                        if !names.iter().any(|n| n == name) {
+                            return raise_value_error(&format!(
+                                "Got unexpected field names: ['{name}']"
+                            ));
                         }
+                        replacements.push((name.clone(), *v));
                     }
                 }
             }
         }
     }
-    MbValue::from_ptr(result)
+    let (class_name, tuple_name) = if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
+                let tn = fields
+                    .read()
+                    .unwrap()
+                    .get("_namedtuple_name")
+                    .and_then(|v| extract_str(*v))
+                    .unwrap_or_else(|| class_name.clone());
+                (class_name.clone(), tn)
+            } else {
+                return MbValue::none();
+            }
+        }
+    } else {
+        return MbValue::none();
+    };
+    let mut inst_fields = FxHashMap::default();
+    inst_fields.insert(
+        "_namedtuple_name".into(),
+        MbValue::from_ptr(MbObject::new_str(tuple_name)),
+    );
+    let ordered: Vec<MbValue> = names
+        .iter()
+        .map(|f| MbValue::from_ptr(MbObject::new_str(f.clone())))
+        .collect();
+    inst_fields.insert(
+        "_namedtuple_fields".into(),
+        MbValue::from_ptr(MbObject::new_list(ordered)),
+    );
+    if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let f = fields.read().unwrap();
+                for n in &names {
+                    let val = replacements
+                        .iter()
+                        .find(|(rn, _)| rn == n)
+                        .map(|(_, v)| *v)
+                        .unwrap_or_else(|| f.get(n).copied().unwrap_or(MbValue::none()));
+                    super::super::rc::retain_if_ptr(val);
+                    inst_fields.insert(n.clone(), val);
+                }
+            }
+        }
+    }
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name,
+            fields: crate::runtime::rc::MbRwLock::new(inst_fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+// ── ChainMap ─────────────────────────────────────────────────────────────────
+//
+// Real `collections.ChainMap` Instances: the `maps` field holds the SHARED
+// underlying mapping objects (front map first), so writes through one view
+// are visible through every other view, matching CPython. Lookups walk
+// front-to-back; writes/deletes/pop touch only the front map.
+
+fn cm_raise(kind: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(kind.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Build a ChainMap Instance over `maps` (front map first). The map objects
+/// are retained — they are shared with the caller, not copied.
+fn chainmap_make(maps: Vec<MbValue>) -> MbValue {
+    chainmap_make_with_class(maps, "collections.ChainMap")
+}
+
+/// `chainmap_make` with an explicit class name so binary operators can
+/// follow CPython's result-type-follows-left-operand rule for subclasses.
+fn chainmap_make_with_class(maps: Vec<MbValue>, class_name: &str) -> MbValue {
+    for m in &maps {
+        unsafe { super::super::rc::retain_if_ptr(*m) };
+    }
+    let maps_list = MbValue::from_ptr(MbObject::new_list(maps));
+    let mut fields = FxHashMap::default();
+    fields.insert("maps".to_string(), maps_list);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: class_name.to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// True for `collections.ChainMap` itself and registered user subclasses
+/// (their MRO contains the ChainMap class through either name form).
+fn is_chainmap_class(class_name: &str) -> bool {
+    class_name == "collections.ChainMap"
+        || super::super::class::class_mro_list(class_name)
+            .iter()
+            .any(|b| b == "collections.ChainMap" || b == "ChainMap")
+}
+
+/// The runtime class name of a ChainMap-like Instance, or None.
+fn chainmap_class_of(cm: MbValue) -> Option<String> {
+    let ptr = cm.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            if is_chainmap_class(class_name) {
+                return Some(class_name.clone());
+            }
+        }
+    }
+    None
+}
+
+/// The `maps` list of a ChainMap Instance (or subclass), or None.
+fn chainmap_maps(cm: MbValue) -> Option<Vec<MbValue>> {
+    let ptr = cm.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if is_chainmap_class(class_name) {
+                let maps = fields.read().unwrap().get("maps").copied()?;
+                if let Some(mp) = maps.as_ptr() {
+                    if let ObjData::List(ref lock) = (*mp).data {
+                        return Some(lock.read().unwrap().to_vec());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// True when `v` can serve as the right-hand mapping of `|` / `|=` / `==`:
+/// a plain dict, a ChainMap, or a dict-like collections Instance.
+fn cm_is_mapping(v: MbValue) -> bool {
+    if chainmap_maps(v).is_some() {
+        return true;
+    }
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            if matches!((*ptr).data, ObjData::Dict(_)) {
+                return true;
+            }
+            if matches!((*ptr).data, ObjData::Instance { .. }) {
+                return super::super::class::unwrap_dictlike_data(v).is_some();
+            }
+        }
+    }
+    false
+}
+
+/// Flatten a ChainMap into a fresh dict: reverse-merge so the front map wins
+/// and key order matches CPython's reversed-merge iteration order.
+pub(crate) fn chainmap_flatten(cm: MbValue) -> Option<MbValue> {
+    let maps = chainmap_maps(cm)?;
+    let out = super::super::dict_ops::mb_dict_new();
+    for m in maps.iter().rev() {
+        super::super::dict_ops::mb_dict_update(out, *m);
+    }
+    Some(out)
+}
+
+/// `cm.parents` — a ChainMap over everything but the front map.
+pub(crate) fn chainmap_parents(cm: MbValue) -> Option<MbValue> {
+    let maps = chainmap_maps(cm)?;
+    let rest: Vec<MbValue> = if maps.len() > 1 {
+        maps[1..].to_vec()
+    } else {
+        vec![MbValue::from_ptr(MbObject::new_dict())]
+    };
+    Some(chainmap_make(rest))
+}
+
+/// The writable backing dict of the front map (unwraps dict-like Instances).
+fn cm_front_backing(cm: MbValue) -> Option<MbValue> {
+    let maps = chainmap_maps(cm)?;
+    let front = *maps.first()?;
+    if let Some(ptr) = front.as_ptr() {
+        unsafe {
+            if matches!((*ptr).data, ObjData::Dict(_)) {
+                return Some(front);
+            }
+        }
+    }
+    super::super::class::unwrap_dictlike_data(front)
+}
+
+/// First positional arg under the mb_call_method convention (args is a list).
+fn cm_first_arg(args: MbValue) -> MbValue {
+    if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                return lock
+                    .read()
+                    .unwrap()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(MbValue::none);
+            }
+        }
+    }
+    args
+}
+
+/// Dual-convention binop operand: mb_dispatch_binop passes the operand
+/// directly; mb_call_method wraps positionals in a list. Unwrap ONLY a
+/// 1-element list whose element is itself a mapping, so a genuine list
+/// operand (`cm | [...]` → TypeError) survives intact.
+fn cm_binop_operand(raw: MbValue) -> MbValue {
+    if let Some(ptr) = raw.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let guard = lock.read().unwrap();
+                if guard.len() == 1 && cm_is_mapping(guard[0]) {
+                    return guard[0];
+                }
+            }
+        }
+    }
+    raw
+}
+
+fn cm_key_repr(key: MbValue) -> String {
+    // CPython's ChainMap KeyError message repr's the missing key, so a string
+    // key is quoted ("...: 'b'", not "...: b").
+    let r = super::super::builtins::mb_repr(key);
+    extract_str(r).unwrap_or_else(|| "key".to_string())
+}
+
+unsafe extern "C" fn cm_getitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = cm_first_arg(args);
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
+    if super::super::dict_ops::mb_dict_contains(flat, key).as_bool() == Some(true) {
+        return super::super::dict_ops::mb_dict_getitem(flat, key);
+    }
+    cm_raise("KeyError", &cm_key_repr(key))
+}
+
+unsafe extern "C" fn cm_get(self_v: MbValue, args: MbValue) -> MbValue {
+    let (key, default) = if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let g = lock.read().unwrap();
+                (
+                    g.first().copied().unwrap_or_else(MbValue::none),
+                    g.get(1).copied().unwrap_or_else(MbValue::none),
+                )
+            } else {
+                (args, MbValue::none())
+            }
+        }
+    } else {
+        (args, MbValue::none())
+    };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
+    if super::super::dict_ops::mb_dict_contains(flat, key).as_bool() == Some(true) {
+        return super::super::dict_ops::mb_dict_getitem(flat, key);
+    }
+    default
+}
+
+unsafe extern "C" fn cm_setitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let (key, value) = if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let g = lock.read().unwrap();
+                (
+                    g.first().copied().unwrap_or_else(MbValue::none),
+                    g.get(1).copied().unwrap_or_else(MbValue::none),
+                )
+            } else {
+                return MbValue::none();
+            }
+        }
+    } else {
+        return MbValue::none();
+    };
+    if let Some(front) = cm_front_backing(self_v) {
+        super::super::dict_ops::mb_dict_setitem(front, key, value);
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn cm_delitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = cm_first_arg(args);
+    if let Some(front) = cm_front_backing(self_v) {
+        if super::super::dict_ops::mb_dict_contains(front, key).as_bool() == Some(true) {
+            super::super::dict_ops::mb_dict_delitem(front, key);
+            return MbValue::none();
+        }
+    }
+    cm_raise(
+        "KeyError",
+        &format!("Key not found in the first mapping: {}", cm_key_repr(key)),
+    )
+}
+
+unsafe extern "C" fn cm_contains(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = cm_first_arg(args);
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::from_bool(false);
+    };
+    super::super::dict_ops::mb_dict_contains(flat, key)
+}
+
+unsafe extern "C" fn cm_len(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::from_int(0);
+    };
+    super::super::dict_ops::mb_dict_len(flat)
+}
+
+unsafe extern "C" fn cm_bool(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::from_bool(false);
+    };
+    MbValue::from_bool(
+        super::super::dict_ops::mb_dict_len(flat)
+            .as_int()
+            .unwrap_or(0)
+            > 0,
+    )
+}
+
+unsafe extern "C" fn cm_iter(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
+    let keys = super::super::dict_ops::mb_dict_keys(flat);
+    super::super::iter::mb_iter(keys)
+}
+
+unsafe extern "C" fn cm_eq(self_v: MbValue, raw: MbValue) -> MbValue {
+    let other = cm_binop_operand(raw);
+    let Some(flat_self) = chainmap_flatten(self_v) else {
+        return MbValue::from_bool(false);
+    };
+    let flat_other = if let Some(f) = chainmap_flatten(other) {
+        f
+    } else if let Some(ptr) = other.as_ptr() {
+        unsafe {
+            if matches!((*ptr).data, ObjData::Dict(_)) {
+                other
+            } else if let Some(backing) = super::super::class::unwrap_dictlike_data(other) {
+                backing
+            } else {
+                return MbValue::from_bool(false);
+            }
+        }
+    } else {
+        return MbValue::from_bool(false);
+    };
+    super::super::builtins::mb_eq(flat_self, flat_other)
+}
+
+/// `ChainMap.__init__(self, *maps)` — registered in the class method table so
+/// user subclasses (`class Sub(ChainMap)`) construct a working `maps` field
+/// through normal class instantiation.
+unsafe extern "C" fn cm_init(self_v: MbValue, args: MbValue) -> MbValue {
+    let mut maps = extract_list(args);
+    if maps.is_empty() {
+        maps.push(MbValue::from_ptr(MbObject::new_dict()));
+    }
+    for m in &maps {
+        unsafe { super::super::rc::retain_if_ptr(*m) };
+    }
+    let maps_list = MbValue::from_ptr(MbObject::new_list(maps));
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let old = fields
+                    .write()
+                    .unwrap()
+                    .insert("maps".to_string(), maps_list);
+                if let Some(prev) = old {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn cm_or(self_v: MbValue, raw: MbValue) -> MbValue {
+    let other = cm_binop_operand(raw);
+    if !cm_is_mapping(other) {
+        return cm_raise(
+            "TypeError",
+            "unsupported operand type(s) for |: 'ChainMap' and non-mapping",
+        );
+    }
+    let maps = match chainmap_maps(self_v) {
+        Some(m) => m,
+        None => return MbValue::none(),
+    };
+    // copy(): fresh front map, shared tail.
+    let new_front = super::super::dict_ops::mb_dict_new();
+    if let Some(front) = maps.first() {
+        super::super::dict_ops::mb_dict_update(new_front, *front);
+    }
+    // Fold the other mapping into the copy's front map. ChainMap operands
+    // flatten first so their own front-map precedence is preserved.
+    let other_src = chainmap_flatten(other).unwrap_or(other);
+    super::super::dict_ops::mb_dict_update(new_front, other_src);
+    let mut new_maps = vec![new_front];
+    new_maps.extend_from_slice(&maps[1.min(maps.len())..]);
+    // Result type follows the LEFT operand (CPython: Sub() | cm -> Sub).
+    let cls = chainmap_class_of(self_v).unwrap_or_else(|| "collections.ChainMap".to_string());
+    chainmap_make_with_class(new_maps, &cls)
+}
+
+unsafe extern "C" fn cm_ror(self_v: MbValue, raw: MbValue) -> MbValue {
+    let other = cm_binop_operand(raw);
+    if !cm_is_mapping(other) {
+        return cm_raise(
+            "TypeError",
+            "unsupported operand type(s) for |: non-mapping and 'ChainMap'",
+        );
+    }
+    // dict(other) then overlay self back-to-front: a single-map ChainMap.
+    let out = super::super::dict_ops::mb_dict_new();
+    let other_src = chainmap_flatten(other).unwrap_or(other);
+    super::super::dict_ops::mb_dict_update(out, other_src);
+    if let Some(maps) = chainmap_maps(self_v) {
+        for m in maps.iter().rev() {
+            super::super::dict_ops::mb_dict_update(out, *m);
+        }
+    }
+    chainmap_make(vec![out])
+}
+
+unsafe extern "C" fn cm_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
+    super::super::dict_ops::mb_dict_items(flat)
+}
+
+unsafe extern "C" fn cm_keys(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
+    super::super::dict_ops::mb_dict_keys(flat)
+}
+
+unsafe extern "C" fn cm_values(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
+    super::super::dict_ops::mb_dict_values(flat)
+}
+
+unsafe extern "C" fn cm_new_child(self_v: MbValue, args: MbValue) -> MbValue {
+    // A receiver built via `object.__new__(ChainMap)` has no `maps` field;
+    // CPython's new_child touches `self.maps` and raises AttributeError.
+    let parent_maps = match chainmap_maps(self_v) {
+        Some(maps) => maps,
+        None => {
+            return cm_raise(
+                "AttributeError",
+                "'ChainMap' object has no attribute 'maps'",
+            )
+        }
+    };
+    let m = cm_first_arg(args);
+    let front = if m.is_none() {
+        MbValue::from_ptr(MbObject::new_dict())
+    } else if cm_is_mapping(m) {
+        m
+    } else {
+        // mamba force-typed wall: typeshed declares `m` as a mapping, so a
+        // wrong-typed argument is rejected (CPython accepts it silently).
+        return cm_raise("TypeError", "new_child() argument 'm' must be a mapping");
+    };
+    let mut maps = vec![front];
+    maps.extend(parent_maps);
+    chainmap_make(maps)
+}
+
+unsafe extern "C" fn cm_copy(self_v: MbValue, _args: MbValue) -> MbValue {
+    let maps = match chainmap_maps(self_v) {
+        Some(m) => m,
+        None => return MbValue::none(),
+    };
+    let new_front = super::super::dict_ops::mb_dict_new();
+    if let Some(front) = maps.first() {
+        super::super::dict_ops::mb_dict_update(new_front, *front);
+    }
+    let mut new_maps = vec![new_front];
+    new_maps.extend_from_slice(&maps[1.min(maps.len())..]);
+    chainmap_make(new_maps)
+}
+
+unsafe extern "C" fn cm_pop(self_v: MbValue, args: MbValue) -> MbValue {
+    let (key, default, has_default) = if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let g = lock.read().unwrap();
+                (
+                    g.first().copied().unwrap_or_else(MbValue::none),
+                    g.get(1).copied().unwrap_or_else(MbValue::none),
+                    g.len() >= 2,
+                )
+            } else {
+                (args, MbValue::none(), false)
+            }
+        }
+    } else {
+        (args, MbValue::none(), false)
+    };
+    if let Some(front) = cm_front_backing(self_v) {
+        if super::super::dict_ops::mb_dict_contains(front, key).as_bool() == Some(true) {
+            let v = super::super::dict_ops::mb_dict_getitem(front, key);
+            super::super::dict_ops::mb_dict_delitem(front, key);
+            return v;
+        }
+    }
+    if has_default {
+        return default;
+    }
+    cm_raise(
+        "KeyError",
+        &format!("Key not found in the first mapping: {}", cm_key_repr(key)),
+    )
+}
+
+unsafe extern "C" fn cm_popitem(self_v: MbValue, _args: MbValue) -> MbValue {
+    if let Some(front) = cm_front_backing(self_v) {
+        let keys = super::super::dict_ops::mb_dict_keys(front);
+        let last_key = keys.as_ptr().and_then(|kp| unsafe {
+            if let ObjData::List(ref lock) = (*kp).data {
+                lock.read().unwrap().last().copied()
+            } else {
+                None
+            }
+        });
+        if let Some(k) = last_key {
+            let v = super::super::dict_ops::mb_dict_getitem(front, k);
+            super::super::dict_ops::mb_dict_delitem(front, k);
+            return MbValue::from_ptr(MbObject::new_tuple(vec![k, v]));
+        }
+    }
+    cm_raise("KeyError", "No keys found in the first mapping.")
+}
+
+/// Register the `collections.ChainMap` class — one mb_class_register call so
+/// every method (dunders included) lands in CALLABLE_REGISTRY.
+fn register_chainmap_class() {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let mut m: Map<String, MbValue> = Map::new();
+    for (name, addr) in [
+        ("__init__", cm_init as *const () as usize),
+        ("__getitem__", cm_getitem as *const () as usize),
+        ("__setitem__", cm_setitem as *const () as usize),
+        ("__delitem__", cm_delitem as *const () as usize),
+        ("__contains__", cm_contains as *const () as usize),
+        ("__len__", cm_len as *const () as usize),
+        ("__bool__", cm_bool as *const () as usize),
+        ("__iter__", cm_iter as *const () as usize),
+        ("__eq__", cm_eq as *const () as usize),
+        ("__or__", cm_or as *const () as usize),
+        ("__ior__", cm_or as *const () as usize),
+        ("__ror__", cm_ror as *const () as usize),
+        ("get", cm_get as *const () as usize),
+        ("items", cm_items as *const () as usize),
+        ("keys", cm_keys as *const () as usize),
+        ("values", cm_values as *const () as usize),
+        ("new_child", cm_new_child as *const () as usize),
+        ("copy", cm_copy as *const () as usize),
+        ("pop", cm_pop as *const () as usize),
+        ("popitem", cm_popitem as *const () as usize),
+    ] {
+        m.insert(name.to_string(), var(addr));
+    }
+    super::super::class::mb_class_register("collections.ChainMap", vec![], m.clone());
+    // Alias under the short import name: `class Sub(ChainMap)` records the
+    // base as "ChainMap" in its MRO, and method lookup walks registry keys.
+    super::super::class::mb_class_register("ChainMap", vec![], m);
+}
+
+/// collections.ChainMap(*maps) -> ChainMap Instance over the SHARED maps
+/// (front map first; no-arg form starts with one empty dict).
+pub fn mb_chainmap_new(args: MbValue) -> MbValue {
+    let maps = extract_list(args);
+    let maps = if maps.is_empty() {
+        vec![MbValue::from_ptr(MbObject::new_dict())]
+    } else {
+        maps
+    };
+    chainmap_make(maps)
 }
 
 #[cfg(test)]
@@ -1080,7 +2470,9 @@ mod tests {
     }
 
     /// Helper: extract the _data dict from a Counter Instance.
-    fn counter_get_data(counter: MbValue) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
+    fn counter_get_data(
+        counter: MbValue,
+    ) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
         super::counter_data(counter)
     }
 
@@ -1196,9 +2588,7 @@ mod tests {
 
     #[test]
     fn test_counter_most_common_all() {
-        let items = MbValue::from_ptr(MbObject::new_list(vec![
-            s("x"), s("y"), s("x"),
-        ]));
+        let items = MbValue::from_ptr(MbObject::new_list(vec![s("x"), s("y"), s("x")]));
         let counter = mb_counter_new(items);
         // Pass no limit (use None to get all)
         let top = mb_counter_most_common(counter, MbValue::none());
@@ -1241,7 +2631,11 @@ mod tests {
     #[test]
     fn test_py312_counter_counts_correctly() {
         let items = MbValue::from_ptr(MbObject::new_list(vec![
-            s("a"), s("b"), s("a"), s("c"), s("a"),
+            s("a"),
+            s("b"),
+            s("a"),
+            s("c"),
+            s("a"),
         ]));
         let counter = mb_counter_new(items);
         assert!(counter.is_ptr());
@@ -1254,7 +2648,11 @@ mod tests {
     #[test]
     fn test_py312_counter_most_common_limited() {
         let items = MbValue::from_ptr(MbObject::new_list(vec![
-            s("x"), s("x"), s("y"), s("z"), s("x"),
+            s("x"),
+            s("x"),
+            s("y"),
+            s("z"),
+            s("x"),
         ]));
         let counter = mb_counter_new(items);
         let top = mb_counter_most_common(counter, MbValue::from_int(1));
@@ -1383,17 +2781,23 @@ mod tests {
         }
     }
 
-    // -- UserDict / UserList / UserString tests (Wave-7 ship #3) --
+    // -- UserDict / UserList / UserString wrapper tests --
+
+    /// Backing `_data` of a user-wrapper Instance.
+    fn wrapper_backing(v: MbValue) -> MbValue {
+        user_wrapper_data(v).expect("expected user wrapper").1
+    }
 
     #[test]
     fn test_userdict_empty() {
-        let d = mb_userdict_new(MbValue::none());
+        let d = mb_userdict_new(&[]);
+        let backing = wrapper_backing(d);
         unsafe {
-            let ptr = d.as_ptr().expect("UserDict should be a ptr");
+            let ptr = backing.as_ptr().expect("backing should be a ptr");
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 assert_eq!(lock.read().unwrap().len(), 0);
             } else {
-                panic!("expected Dict");
+                panic!("expected Dict backing");
             }
         }
     }
@@ -1408,16 +2812,17 @@ mod tests {
                 m.insert("k2".into(), MbValue::from_int(8));
             }
         }
-        let d = mb_userdict_new(MbValue::from_ptr(src));
+        let d = mb_userdict_new(&[MbValue::from_ptr(src)]);
+        let backing = wrapper_backing(d);
         unsafe {
-            let ptr = d.as_ptr().unwrap();
+            let ptr = backing.as_ptr().unwrap();
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let m = lock.read().unwrap();
                 assert_eq!(m.len(), 2);
                 assert_eq!(m.get("k").and_then(|v| v.as_int()), Some(7));
                 assert_eq!(m.get("k2").and_then(|v| v.as_int()), Some(8));
             } else {
-                panic!("expected Dict");
+                panic!("expected Dict backing");
             }
         }
     }
@@ -1425,12 +2830,13 @@ mod tests {
     #[test]
     fn test_userlist_empty() {
         let l = mb_userlist_new(MbValue::none());
+        let backing = wrapper_backing(l);
         unsafe {
-            let ptr = l.as_ptr().unwrap();
+            let ptr = backing.as_ptr().unwrap();
             if let ObjData::List(ref lock) = (*ptr).data {
                 assert_eq!(lock.read().unwrap().len(), 0);
             } else {
-                panic!("expected List");
+                panic!("expected List backing");
             }
         }
     }
@@ -1438,18 +2844,21 @@ mod tests {
     #[test]
     fn test_userlist_copies_initial() {
         let src = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]));
         let l = mb_userlist_new(src);
+        let backing = wrapper_backing(l);
         unsafe {
-            let ptr = l.as_ptr().unwrap();
+            let ptr = backing.as_ptr().unwrap();
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 3);
                 assert_eq!(items[0].as_int(), Some(1));
                 assert_eq!(items[2].as_int(), Some(3));
             } else {
-                panic!("expected List");
+                panic!("expected List backing");
             }
         }
     }
@@ -1458,18 +2867,18 @@ mod tests {
     fn test_userstring_from_str() {
         let s = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
         let r = mb_userstring_new(s);
-        assert_eq!(extract_str(r), Some("hello".to_string()));
+        assert_eq!(extract_str(wrapper_backing(r)), Some("hello".to_string()));
     }
 
     #[test]
     fn test_userstring_from_int_coerces() {
         let r = mb_userstring_new(MbValue::from_int(42));
-        assert_eq!(extract_str(r), Some("42".to_string()));
+        assert_eq!(extract_str(wrapper_backing(r)), Some("42".to_string()));
     }
 
     #[test]
     fn test_userstring_from_none_empty() {
         let r = mb_userstring_new(MbValue::none());
-        assert_eq!(extract_str(r), Some(String::new()));
+        assert_eq!(extract_str(wrapper_backing(r)), Some(String::new()));
     }
 }

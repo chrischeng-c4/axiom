@@ -343,7 +343,10 @@ mod tests {
         // reaching integer parse — the failure is about value shape.
         let err = parse_cache_control("max-age=-5").unwrap_err();
         let s = err.to_string();
-        assert!(s.contains("expected value") || s.contains("not a valid"), "got {s}");
+        assert!(
+            s.contains("expected value") || s.contains("not a valid"),
+            "got {s}"
+        );
     }
 
     #[test]

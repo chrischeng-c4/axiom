@@ -36,12 +36,12 @@
 //! without bloating http_mod and (b) own the conformance fixture pair from
 //! a single module-named directory (`tests/cpython/std-libs/urllib_error/`).
 
-use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
-use std::sync::atomic::AtomicU32;
-use super::super::value::MbValue;
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU32;
 
 /// Build an `Instance { class_name }` carrying the given (name, value) fields.
 fn make_instance(class_name: &str, fields: Vec<(&str, MbValue)>) -> MbValue {
@@ -50,7 +50,10 @@ fn make_instance(class_name: &str, fields: Vec<(&str, MbValue)>) -> MbValue {
         map.insert(k.to_string(), v);
     }
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: RwLock::new(map),
@@ -76,11 +79,14 @@ fn tuple_of(vals: Vec<MbValue>) -> MbValue {
 pub fn mb_urllib_error_URLError(a: &[MbValue]) -> MbValue {
     let reason = a.first().copied().unwrap_or_else(MbValue::none);
     let filename = a.get(1).copied().unwrap_or_else(MbValue::none);
-    make_instance("URLError", vec![
-        ("reason", reason),
-        ("args", tuple_of(vec![reason])),
-        ("filename", filename),
-    ])
+    make_instance(
+        "URLError",
+        vec![
+            ("reason", reason),
+            ("args", tuple_of(vec![reason])),
+            ("filename", filename),
+        ],
+    )
 }
 
 /// `HTTPError(url, code, msg, hdrs, fp)` — HTTP-level error; subclass of
@@ -98,17 +104,20 @@ pub fn mb_urllib_error_HTTPError(a: &[MbValue]) -> MbValue {
     let msg = a.get(2).copied().unwrap_or_else(MbValue::none);
     let hdrs = a.get(3).copied().unwrap_or_else(MbValue::none);
     let fp = a.get(4).copied().unwrap_or_else(MbValue::none);
-    make_instance("HTTPError", vec![
-        ("url", url),
-        ("code", code),
-        ("msg", msg),
-        ("hdrs", hdrs),
-        ("fp", fp),
-        ("reason", msg),
-        ("headers", hdrs),
-        ("filename", url),
-        ("args", tuple_of(vec![code, msg, hdrs])),
-    ])
+    make_instance(
+        "HTTPError",
+        vec![
+            ("url", url),
+            ("code", code),
+            ("msg", msg),
+            ("hdrs", hdrs),
+            ("fp", fp),
+            ("reason", msg),
+            ("headers", hdrs),
+            ("filename", url),
+            ("args", tuple_of(vec![code, msg, hdrs])),
+        ],
+    )
 }
 
 /// `ContentTooShortError(message, content)` — raised when a download
@@ -120,13 +129,16 @@ pub fn mb_urllib_error_HTTPError(a: &[MbValue]) -> MbValue {
 pub fn mb_urllib_error_ContentTooShortError(a: &[MbValue]) -> MbValue {
     let message = a.first().copied().unwrap_or_else(MbValue::none);
     let content = a.get(1).copied().unwrap_or_else(MbValue::none);
-    make_instance("ContentTooShortError", vec![
-        ("reason", message),
-        ("message", message),
-        ("content", content),
-        ("filename", MbValue::none()),
-        ("args", tuple_of(vec![message, content])),
-    ])
+    make_instance(
+        "ContentTooShortError",
+        vec![
+            ("reason", message),
+            ("message", message),
+            ("content", content),
+            ("filename", MbValue::none()),
+            ("args", tuple_of(vec![message, content])),
+        ],
+    )
 }
 
 // ── Dispatch shims (variadic stdlib ABI) ─────────────────────────────────────
@@ -180,7 +192,10 @@ pub fn register() {
     let class_dispatchers: [(&str, usize); 3] = [
         ("URLError", dispatch_URLError as *const () as usize),
         ("HTTPError", dispatch_HTTPError as *const () as usize),
-        ("ContentTooShortError", dispatch_ContentTooShortError as *const () as usize),
+        (
+            "ContentTooShortError",
+            dispatch_ContentTooShortError as *const () as usize,
+        ),
     ];
     for (name, addr) in class_dispatchers {
         add_dispatch(&mut attrs, name, addr);
@@ -245,14 +260,16 @@ mod tests {
     }
 
     fn field(val: MbValue, name: &str) -> MbValue {
-        val.as_ptr().map(|ptr| unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let f = fields.read().unwrap();
-                f.get(name).copied().unwrap_or_else(MbValue::none)
-            } else {
-                MbValue::none()
-            }
-        }).unwrap_or_else(MbValue::none)
+        val.as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    let f = fields.read().unwrap();
+                    f.get(name).copied().unwrap_or_else(MbValue::none)
+                } else {
+                    MbValue::none()
+                }
+            })
+            .unwrap_or_else(MbValue::none)
     }
 
     fn str_field(val: MbValue, name: &str) -> Option<String> {
@@ -270,7 +287,10 @@ mod tests {
     fn test_urlerror_basic() {
         let e = mb_urllib_error_URLError(&[s("connection refused")]);
         assert_eq!(class_name_of(e).as_deref(), Some("URLError"));
-        assert_eq!(str_field(e, "reason").as_deref(), Some("connection refused"));
+        assert_eq!(
+            str_field(e, "reason").as_deref(),
+            Some("connection refused")
+        );
     }
 
     #[test]
@@ -297,22 +317,29 @@ mod tests {
             MbValue::none(),
         ]);
         assert_eq!(class_name_of(e).as_deref(), Some("HTTPError"));
-        assert_eq!(str_field(e, "url").as_deref(), Some("http://example.com/missing"));
+        assert_eq!(
+            str_field(e, "url").as_deref(),
+            Some("http://example.com/missing")
+        );
         assert_eq!(field(e, "code").as_int(), Some(404));
         assert_eq!(str_field(e, "msg").as_deref(), Some("Not Found"));
         // Aliases
         assert_eq!(str_field(e, "reason").as_deref(), Some("Not Found"));
-        assert_eq!(str_field(e, "filename").as_deref(), Some("http://example.com/missing"));
+        assert_eq!(
+            str_field(e, "filename").as_deref(),
+            Some("http://example.com/missing")
+        );
     }
 
     #[test]
     fn test_content_too_short() {
-        let e = mb_urllib_error_ContentTooShortError(&[
-            s("retrieval incomplete"),
-            s("partial-bytes"),
-        ]);
+        let e =
+            mb_urllib_error_ContentTooShortError(&[s("retrieval incomplete"), s("partial-bytes")]);
         assert_eq!(class_name_of(e).as_deref(), Some("ContentTooShortError"));
-        assert_eq!(str_field(e, "reason").as_deref(), Some("retrieval incomplete"));
+        assert_eq!(
+            str_field(e, "reason").as_deref(),
+            Some("retrieval incomplete")
+        );
         assert_eq!(str_field(e, "content").as_deref(), Some("partial-bytes"));
     }
 

@@ -62,19 +62,20 @@ fn build_index() -> tempfile::TempDir {
 
 fn setup_locked_project(proj: &Path, index: &Path) {
     assert!(run(proj, &["init"]).status.success());
-    assert!(
-        run(
-            proj,
-            &["add", "frozen_demo_pkg==0.1.0", "--index", index.to_str().unwrap()]
-        )
+    assert!(run(
+        proj,
+        &[
+            "add",
+            "frozen_demo_pkg==0.1.0",
+            "--index",
+            index.to_str().unwrap()
+        ]
+    )
+    .status
+    .success());
+    assert!(run(proj, &["lock", "--index", index.to_str().unwrap()])
         .status
-        .success()
-    );
-    assert!(
-        run(proj, &["lock", "--index", index.to_str().unwrap()])
-            .status
-            .success()
-    );
+        .success());
 }
 
 fn write_trivial_script(proj: &Path) -> PathBuf {
