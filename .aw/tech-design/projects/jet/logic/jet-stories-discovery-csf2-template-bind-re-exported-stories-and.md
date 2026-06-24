@@ -50,10 +50,3 @@ flowchart TD
     resargs --> index
     index --> done([stories captured])
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability sound: classify each named export (CSF3 object existing / CSF2 Template.bind + .args / re-export from sibling), resolve args merging static spreads, add to StoryIndex. Extends B1 csf.rs; manager/controls unchanged.
