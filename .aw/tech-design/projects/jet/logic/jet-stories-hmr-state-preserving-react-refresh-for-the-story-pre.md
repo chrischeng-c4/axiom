@@ -51,10 +51,3 @@ flowchart TD
     patch --> done([preview updated, manager untouched])
     reload --> done
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability is correct: the stories server watches story/component files, computes the affected module set via dependents_of, invalidates the cache, pushes an HMR message to the preview frame over WS, and branches react-refresh-compatible (state-preserving patch) vs incompatible (full preview reload) — the manager shell is never reloaded. Reuses the existing HMR/react-refresh/module-graph substrate. Scoped to preview HMR; builds on B2's manager/server.
