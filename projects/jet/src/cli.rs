@@ -280,6 +280,21 @@ pub fn command() -> Command {
                         .long("host")
                         .default_value("127.0.0.1")
                         .help("Host to bind to"),
+                )
+                .subcommand(
+                    // B4 (#190) — jet stories build: static, server-less export
+                    // of the workbench (manager + one isolated preview per story
+                    // + transformed modules), all relative URLs so any static
+                    // host or file:// can serve it.
+                    Command::new("build")
+                        .about("Build a static, hostable export of the stories workbench")
+                        .arg(
+                            Arg::new("out-dir")
+                                .long("out-dir")
+                                .short('o')
+                                .default_value("dist-stories")
+                                .help("Output directory for the static site (default: dist-stories)"),
+                        ),
                 ),
         )
         .subcommand(serve_command())
@@ -2016,6 +2031,26 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
         Some(("serve", m)) => handle_serve_command(&root_dir, m).await,
 
         Some(("stories", m)) => {
+            // B4 (#190) — `jet stories build`: static export, no server.
+            if let Some(("build", bm)) = m.subcommand() {
+                let out_dir = bm
+                    .get_one::<String>("out-dir")
+                    .cloned()
+                    .unwrap_or_else(|| "dist-stories".to_string());
+                let out_path = root_dir.join(&out_dir);
+                let result = crate::stories::build_stories_static(&root_dir, &out_path)?;
+                println!(
+                    "jet stories build: wrote {} files for {} stories to {}",
+                    result.emitted.len(),
+                    result.story_count,
+                    result.out_dir.display(),
+                );
+                for diag in &result.diagnostics {
+                    eprintln!("jet stories build: {diag}");
+                }
+                return Ok(());
+            }
+
             // B2 (#174) — discover stories under the project root and serve the
             // native workbench. Default port 6006 mirrors Storybook's default.
             let port = m

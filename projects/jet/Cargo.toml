@@ -248,6 +248,9 @@ path = "tests/stories/preview_hmr.rs"
 [[test]]
 name = "controls"
 path = "tests/stories/controls.rs"
+[[test]]
+name = "stories_build"
+path = "tests/stories/stories_build.rs"
 
 # tests/task-runner/ — jet task running replaces Nx/Turbo-style workspace task execution
 [[test]]
