@@ -154,6 +154,95 @@ fn pip_check_reports_success_for_consistent_inventory() {
 }
 
 #[test]
+fn pip_compile_frozen_index_writes_pins_hashes_and_annotations() {
+    let wheel_dir = tempfile::tempdir().unwrap();
+    let app = build_wheel(
+        wheel_dir.path(),
+        "compile-app",
+        "1.0.0",
+        &["compile-dep==0.2.0"],
+    );
+    let dep = build_wheel(wheel_dir.path(), "compile-dep", "0.2.0", &[]);
+    let (index, index_out) = build_wheel_index(&[app, dep]);
+    assert!(
+        index_out.status.success(),
+        "index stderr: {}",
+        String::from_utf8_lossy(&index_out.stderr)
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let input = tmp.path().join("requirements.in");
+    let output = tmp.path().join("compiled.txt");
+    std::fs::write(&input, "compile-app>=1\n").unwrap();
+    let compile = run(
+        tmp.path(),
+        &[
+            "pip",
+            "compile",
+            input.to_str().unwrap(),
+            "--index",
+            index.path().to_str().unwrap(),
+            "--output-file",
+            output.to_str().unwrap(),
+            "--generate-hashes",
+            "--no-header",
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let body = std::fs::read_to_string(output).unwrap();
+    assert!(body.contains("compile-app==1.0.0"), "{body}");
+    assert!(body.contains("compile-dep==0.2.0"), "{body}");
+    assert!(body.contains("--hash=sha256:"), "{body}");
+    assert!(body.contains("# via compile-app"), "{body}");
+}
+
+#[test]
+fn pip_compile_no_deps_omits_transitive_requirements() {
+    let wheel_dir = tempfile::tempdir().unwrap();
+    let app = build_wheel(
+        wheel_dir.path(),
+        "nodeps-app",
+        "1.0.0",
+        &["nodeps-dep==0.2.0"],
+    );
+    let dep = build_wheel(wheel_dir.path(), "nodeps-dep", "0.2.0", &[]);
+    let (index, index_out) = build_wheel_index(&[app, dep]);
+    assert!(
+        index_out.status.success(),
+        "index stderr: {}",
+        String::from_utf8_lossy(&index_out.stderr)
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let input = tmp.path().join("requirements.in");
+    std::fs::write(&input, "nodeps-app==1.0.0\n").unwrap();
+    let compile = run(
+        tmp.path(),
+        &[
+            "pip",
+            "compile",
+            input.to_str().unwrap(),
+            "--index",
+            index.path().to_str().unwrap(),
+            "--no-header",
+            "--no-deps",
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let body = String::from_utf8_lossy(&compile.stdout);
+    assert!(body.contains("nodeps-app==1.0.0"), "{body}");
+    assert!(!body.contains("nodeps-dep"), "{body}");
+}
+
+#[test]
 fn pip_install_direct_wheel_and_uninstall_use_record() {
     let wheel_dir = tempfile::tempdir().unwrap();
     let wheel = build_wheel(wheel_dir.path(), "demo-pkg", "1.0.0", &[]);

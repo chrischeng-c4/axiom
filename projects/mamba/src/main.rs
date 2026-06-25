@@ -199,6 +199,19 @@ fn cli() -> Command {
                 .subcommand_required(true)
                 .arg_required_else_help(true)
                 .subcommand(
+                    Command::new("compile")
+                        .about("Compile requirements inputs into pinned requirements.txt or pylock.toml")
+                        .arg(Arg::new("src").value_name("SRC_FILE").required(true).action(ArgAction::Append).num_args(1..).help("requirements input file, or - for stdin"))
+                        .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory for package requirements"))
+                        .arg(Arg::new("output-file").long("output-file").short('o').value_name("FILE").help("Write compiled output to FILE; stdout when omitted"))
+                        .arg(Arg::new("format").long("format").value_name("FORMAT").help("requirements.txt | pylock.toml"))
+                        .arg(Arg::new("generate-hashes").long("generate-hashes").action(ArgAction::SetTrue).help("Include sha256 hashes in requirements.txt output"))
+                        .arg(Arg::new("no-header").long("no-header").action(ArgAction::SetTrue).help("Omit the generated requirements.txt header"))
+                        .arg(Arg::new("no-annotate").long("no-annotate").action(ArgAction::SetTrue).help("Omit # via dependency annotations"))
+                        .arg(Arg::new("no-deps").long("no-deps").action(ArgAction::SetTrue).help("Only emit root requirements"))
+                        .arg(Arg::new("no-emit-package").long("no-emit-package").value_name("NAME").action(ArgAction::Append).help("Omit a package from the compiled output")),
+                )
+                .subcommand(
                     Command::new("install")
                         .about("Install wheels or frozen-index package pins into an environment")
                         .arg(Arg::new("spec").value_name("REQ_OR_WHEEL").action(ArgAction::Append).num_args(0..).help("Package requirement or wheel path"))

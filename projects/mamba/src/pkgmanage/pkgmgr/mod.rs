@@ -22,7 +22,7 @@
 //     requirements_export, pylock_export, pylock_import.
 //   * Operational helpers: tree, freshness, upgrade, version_bump, publish,
 //     parity, benchmark, indexes, cache_prune, bytecode, init_scaffold,
-//     pip_check, pip_inventory, pip_install, pip_tree, pep723,
+//     pip_check, pip_compile, pip_inventory, pip_install, pip_tree, pep723,
 //     name_normalize, netrc.
 //   * HTTP transport details: retry_after (Tick 75), cache_control (76),
 //     etag (79), link_header (86), media_type (89),
@@ -297,6 +297,7 @@ pub mod pep723;
 pub mod pep723_typed;
 pub mod pep740;
 pub mod pip_check;
+pub mod pip_compile;
 pub mod pip_conf;
 pub mod pip_install;
 pub mod pip_inventory;
