@@ -10,7 +10,6 @@
 
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use axum::body::{Body, BodyDataStream, Bytes};
 use axum::extract::{Path, State};
@@ -113,6 +112,11 @@ async fn drive(
         _ => return, // first frame must be Subscribe
     };
     let mut inflight: u32 = 0;
+    // Wake-based push (#465): re-lease the instant a publish or release touches
+    // this subject, instead of polling the queue every 50ms while idle. The
+    // watch channel tracks the latest revision, so a wake signaled between our
+    // drain and the `.changed()` await is not lost.
+    let mut wake = relay.subscribe_wake(&subject);
     loop {
         while inflight < prefetch {
             match relay.lease(&subject, &consumer_id, Utc::now()).unwrap_or(None) {
@@ -139,15 +143,17 @@ async fn drive(
                     inflight = inflight.saturating_sub(1);
                 }
                 Some(ConsumeUp::Nack { lease_id }) => {
-                    // No engine release yet → not acking lets this lease expire and
-                    // redeliver via TTL. lease_id is carried for a future fast-release.
-                    let _ = lease_id;
+                    // Fast release (#465): reset this lease for immediate
+                    // redelivery rather than waiting out the lease TTL.
+                    let _ = relay.release(&subject, &lease_id);
                     inflight = inflight.saturating_sub(1);
                 }
                 Some(ConsumeUp::Subscribe { .. }) => {}
                 None => return, // disconnect → in-flight leases expire (TTL redelivery)
             },
-            _ = tokio::time::sleep(Duration::from_millis(50)) => {} // re-poll the queue
+            // A publish/release on this subject (or a reconciler reclaim) woke us;
+            // loop back and lease whatever is now ready.
+            _ = wake.changed() => {}
         }
     }
 }

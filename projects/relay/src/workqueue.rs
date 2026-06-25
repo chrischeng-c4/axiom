@@ -155,6 +155,22 @@ impl WorkQueue {
         true
     }
 
+    /// Release a held lease immediately (Nack): drop it and push its seq onto the
+    /// redeliver heap so the next `lease` re-offers it at once — no TTL wait.
+    /// Idempotent: returns `false` when `lease_id` is unknown. Unlike `ack` this
+    /// does NOT commit the entry; the attempt count is preserved for retry caps.
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn release(&mut self, lease_id: &str) -> bool {
+        let Some(&seq) = self.lease_index.get(lease_id) else {
+            return false;
+        };
+        self.lease_index.remove(lease_id);
+        self.leases.remove(&seq);
+        self.redeliver.push(Reverse(seq));
+        true
+    }
+
     /// Acknowledge many leases in one call; returns how many were accepted.
     ///
     /// @spec projects/relay/tech-design/logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md#logic
