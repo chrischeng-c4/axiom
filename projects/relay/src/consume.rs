@@ -85,7 +85,17 @@ async fn read_up(stream: &mut BodyDataStream, dec: &mut Frames) -> Option<Consum
     }
 }
 
-/// `POST /v1/{subject}/consume` — bidi streaming work-queue consume.
+/// `POST /v1/{subject}/consume` — bidi streaming work-queue consume: the consumer
+/// streams `Subscribe`/`Ack`/`Nack` frames up while relay streams leased entries
+/// down (length-prefixed JSON) within a `prefetch` credit window. The primary
+/// work-queue consume path (#447/#448), superseding the polling lease/ack/
+/// heartbeat routes.
+#[utoipa::path(
+    post,
+    path = "/v1/{subject}/consume",
+    params(("subject" = String, Path, description = "Target subject")),
+    responses((status = 200, description = "A length-prefixed JSON frame stream of leased entries; the request body streams Subscribe/Ack/Nack frames"))
+)]
 pub async fn consume(State(st): State<AppState>, Path(subject): Path<String>, req: Body) -> Response {
     let consumer_id = format!("consume-{}", CONSUMER_SEQ.fetch_add(1, Ordering::Relaxed));
     let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
