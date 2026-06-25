@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use mamba::bench::{BenchRunner, BenchSuite, print_report, run_suite};
 use mamba::conformance::{ConformanceOptions, run_suite as run_conformance_suite};
@@ -15,6 +15,7 @@ use mamba::pkgmanage::lock as pkg_lock;
 use mamba::pkgmanage::pip as pkg_pip;
 use mamba::pkgmanage::python as pkg_python;
 use mamba::pkgmanage::remove as pkg_remove;
+use mamba::pkgmanage::shell as pkg_shell;
 use mamba::pkgmanage::sync as pkg_sync;
 use mamba::pkgmanage::tree as pkg_tree;
 use mamba::pkgmanage::validate as pkg_validate;
@@ -259,6 +260,24 @@ fn cli() -> Command {
                 .subcommand(Command::new("dir").about("Print the managed Python install directory")),
         )
         .subcommand(
+            Command::new("shell")
+                .about("Print shell integration snippets for mamba-managed bin directories")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("path")
+                        .about("Print a shell-specific PATH prepend snippet")
+                        .arg(Arg::new("shell").long("shell").value_name("SHELL").help("bash | zsh | fish | powershell | cmd | nushell | elvish; defaults to $SHELL detection"))
+                        .arg(Arg::new("bin-dir").long("bin-dir").value_name("DIR").help("Directory to prepend; defaults to the mamba tool bin directory")),
+                )
+                .subcommand(
+                    Command::new("init")
+                        .about("Print an idempotent managed shell init block")
+                        .arg(Arg::new("shell").long("shell").value_name("SHELL").help("bash | zsh | fish | powershell | cmd | nushell | elvish; defaults to $SHELL detection"))
+                        .arg(Arg::new("bin-dir").long("bin-dir").value_name("DIR").help("Directory to prepend; defaults to the mamba tool bin directory")),
+                ),
+        )
+        .subcommand(
             Command::new("workspace")
                 .about("Inspect uv-compatible [tool.uv.workspace] membership and metadata")
                 .subcommand_required(true)
@@ -301,7 +320,7 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("pkgmgr-validate")
-                .about("Drive the 9 release-blocking pkgmgr workflow families and emit a summary")
+                .about("Drive the offline pkgmgr workflow families and emit a summary")
                 .arg(Arg::new("include-live-network").long("include-live-network").action(ArgAction::SetTrue).help("Also walk opt-in live-network workflows (never blocks)"))
                 .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit machine-readable JSON to stdout")),
         )
@@ -343,6 +362,16 @@ fn cli() -> Command {
                         .arg(Arg::new("max-size").long("max-size").value_name("BYTES").help("Evict oldest entries until the eligible cache fits this size"))
                         .arg(Arg::new("package").long("package").value_name("NAME").action(ArgAction::Append).help("Only prune metadata/artifacts for this package"))
                         .arg(Arg::new("all-unknown").long("all-unknown").action(ArgAction::SetTrue).help("Allow pruning unknown cache files")),
+                ),
+        )
+        .subcommand(
+            Command::new("generate-shell-completion")
+                .about("Generate a shell completion script")
+                .arg(
+                    Arg::new("shell")
+                        .required(true)
+                        .value_parser(["bash", "zsh", "fish", "powershell", "elvish"])
+                        .help("Shell to generate completion for"),
                 ),
         )
 }
@@ -401,6 +430,7 @@ fn main() -> Result<()> {
         Some(("pip", sub)) => pkg_pip::cmd_pip(sub),
         Some(("venv", sub)) => pkg_venv::cmd_venv(sub),
         Some(("python", sub)) => pkg_python::cmd_python(sub),
+        Some(("shell", sub)) => pkg_shell::cmd_shell(sub),
         Some(("workspace", sub)) => pkg_workspace::cmd_workspace(sub),
         Some(("index", sub)) => pkg_index::cmd_index(sub),
         Some(("sync", sub)) => pkg_sync::cmd_sync(sub),
@@ -408,11 +438,24 @@ fn main() -> Result<()> {
         Some(("hash", sub)) => pkg_hash::cmd_hash(sub),
         Some(("install", sub)) => pkg_install::cmd_install(sub),
         Some(("pkgmgr-validate", sub)) => pkg_validate::cmd_validate(sub),
+        Some(("generate-shell-completion", sub)) => cmd_generate_shell_completion(sub),
         _ => {
             cli().print_help().ok();
             Ok(())
         }
     }
+}
+
+fn cmd_generate_shell_completion(sub: &ArgMatches) -> Result<()> {
+    let raw = sub
+        .get_one::<String>("shell")
+        .context("missing required <shell>")?;
+    let Ok(generator) = raw.parse::<clap_complete::shells::Shell>() else {
+        bail!("unsupported completion shell `{raw}`");
+    };
+    let mut cmd = cli();
+    clap_complete::generate(generator, &mut cmd, "mamba", &mut std::io::stdout());
+    Ok(())
 }
 
 /// Run ONE fixture in the current (forked child) process and return an exit

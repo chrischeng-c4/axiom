@@ -26,6 +26,7 @@ pub mod pkgmgr;
 pub mod python;
 pub mod remove;
 pub mod run;
+pub mod shell;
 pub mod source;
 pub mod sync;
 pub mod tree;
