@@ -129,3 +129,11 @@ flowchart TD
     r4[R4 version select] --> v4{latest stable or --tag?}
     r5[R5 already current] --> v5{no-op without --force?}
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Dispatch flow covers the full upgrade path and every documented branch: `--check` short-circuit, already-current/`--force` no-op, missing per-target asset, sha256 verify gate, and the atomic-replace permission gate — each terminating safely with the binary intact on failure.
+- [unit-test] Requirements R1–R5 map onto the acceptance criteria (check no-op, target→asset resolution, sha-mismatch abort, latest-stable/`--tag` selection, already-current no-op) and are all `verify: test`, matching the code-artifact testability gate.
