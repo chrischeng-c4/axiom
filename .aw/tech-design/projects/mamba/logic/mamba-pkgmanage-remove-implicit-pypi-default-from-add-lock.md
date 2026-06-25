@@ -4,7 +4,7 @@ summary: |
   Remove the implicit public PyPI fallback from the mamba package-manager add
   and lock source policy while preserving frozen local indexes and explicit
   private/PyPI-compatible registry URLs.
-fill_sections: [logic, unit-test]
+fill_sections: [logic, unit-test, changes]
 ---
 
 ## Logic
@@ -101,3 +101,40 @@ requirementDiagram
 
 - [logic] Contract removes only the implicit public PyPI fallback while preserving frozen local index, explicit registry URL, and offline pinned add behavior.
 - [unit-test] Contract names the required negative tests plus the full `cargo test -p mamba --test pkgmgr` regression gate.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - file: projects/mamba/src/pkgmanage/add.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Change add source-policy resolution so public PyPI is never selected implicitly; local frozen index and explicit registry URL remain supported."
+  - file: projects/mamba/src/pkgmanage/lock.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Change lock source-policy resolution so public PyPI is never selected implicitly; local frozen index and explicit registry URL remain supported."
+  - file: projects/mamba/src/main.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Update CLI help text for add/lock to describe explicit local/private registry sources instead of default PyPI."
+  - file: projects/mamba/tests/pkgmgr/add.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Add regression coverage for no-source add fail-fast/no-mutation behavior while preserving frozen-index and explicit registry tests."
+  - file: projects/mamba/tests/pkgmgr/lock.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Add regression coverage for no-source lock fail-fast/no-partial-lockfile behavior while preserving frozen-index and explicit registry tests."
+  - file: projects/mamba/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Refresh C4 package-manager text so it reflects current pkgmanage implementation and the no-implicit-PyPI contract."
+```
