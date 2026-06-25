@@ -263,3 +263,63 @@ principle:
 
 See `FIXTURE-LAYOUT.md` for the six-dimension table, the file template, and the
 `fixture_gen` → fill → `fixture_lint` loop.
+
+## CLI convention: every CLI ships `llm`, `upgrade`, `report-issue`
+
+> Every binary a human or agent runs must answer three questions without prior
+> knowledge: *how do I drive this?* (`llm`), *am I current?* (`upgrade`), and
+> *this is broken — how do I file it?* (`report-issue`). These three subcommands
+> are **mandatory** on every CLI surface in the ecosystem (`mamba`, `jet`,
+> `lumen`, `vat`, `aw`/`cclab`, and any new tool). They are the agent-facing
+> contract: an agent that has never seen the tool can self-onboard, self-update,
+> and file a structured defect using only the binary.
+
+A new CLI is not "done" until all three are present and listed in `--help`.
+
+### `llm` — agent-facing self-documentation (offline)
+
+```
+<cli> llm [topic] [--format md|json]
+```
+
+Prints the docs that teach an LLM/agent to use the tool — **offline, no server,
+no network**. Default topic is `outline`: a topic map for context selection.
+Per-tool topics follow the tool's domain (e.g. `workflow`, `quickstart`,
+`recipes`, `integration`). Markdown by default (human/agent-readable); `--format
+json` for a machine-readable form.
+
+Keep the content in **one in-code source of truth** that also feeds any
+spec/help output, so docs cannot drift from behavior. Reference implementation:
+`projects/lumen/src/bin/lumen.rs` (`Llm`/`LlmTopic`/`LlmFormat`) backed by
+`projects/lumen/src/spec.rs`.
+
+### `upgrade` — self-update to the latest release
+
+```
+<cli> upgrade [--version <tag>] [--check]
+```
+
+Updates the running binary to the latest `<project>@*` GitHub release, reusing
+the per-project release pipeline (`.github/workflows/<project>-release.yml`
+tarballs + `sha256`). `--check` reports whether a newer release exists without
+installing; `--version <tag>` pins a specific release. The implementation is the
+in-binary form of `projects/<project>/install.sh`: detect target
+(`<arch>-<os>`), download the matching `*.tar.gz`, verify the `.sha256`, then
+atomically replace the binary on disk. Fail loudly on checksum mismatch; never
+leave a half-written binary.
+
+### `report-issue` — file an issue report
+
+```
+<cli> report-issue [--title <t>] [message...]
+```
+
+Files a structured bug/issue report against the project's tracker (GitHub issues
+on the axiom repo, routed through Agentic Workflow where configured — prefer
+`gh issue create`, else print a pre-filled issue URL). Auto-attach diagnostics:
+tool `--version`, OS/arch, and the failing command/context.
+
+The verb is deliberately `report-issue`, **not** `report`: several CLIs already
+use `report` for a domain concept (e.g. `jet report` manages HTML **test**
+reports), so the issue-reporter takes its own unambiguous name and leaves those
+existing `report` verbs untouched.
