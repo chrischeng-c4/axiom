@@ -5888,6 +5888,7 @@ fn is_descriptor(val: MbValue) -> bool {
                     || class_name == "__classmethod__"
                     || class_name == "__staticmethod__"
                     || class_name == "__cached_property__"
+                    || class_name == "functools.partialmethod"
                     || !lookup_method(class_name, "__get__").is_none();
             }
         }
@@ -5923,6 +5924,9 @@ fn invoke_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
                 if class_name == "__classmethod__" || class_name == "__staticmethod__" {
                     return mb_descriptor_unwrap(desc);
                 }
+                if class_name == "functools.partialmethod" {
+                    return partialmethod_get(desc, instance);
+                }
             }
         }
     }
@@ -5934,6 +5938,40 @@ fn invoke_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
         return super::builtins::mb_call_spread(method, args);
     }
     desc
+}
+
+/// `functools.partialmethod.__get__(instance, owner)`.
+///
+/// A partialmethod is a non-data descriptor: stored on a class body it carries
+/// an underlying callable (`func`) plus pre-bound positional args (`args`).
+/// When accessed through an *instance*, CPython binds `func` to that instance
+/// and returns `functools.partial(bound_method, *stored_args)` so that
+/// `inst.pm(extra)` calls `func(inst, *stored_args, extra)`. Class-level access
+/// (`Cls.pm`, instance is None) yields the underlying function unchanged.
+fn partialmethod_get(desc: MbValue, instance: MbValue) -> MbValue {
+    let (func, stored_args) = unsafe {
+        if let Some(ptr) = desc.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let f = fields.read().unwrap();
+                (
+                    f.get("func").copied().unwrap_or_else(MbValue::none),
+                    f.get("args").copied().unwrap_or_else(MbValue::none),
+                )
+            } else {
+                (MbValue::none(), MbValue::none())
+            }
+        } else {
+            (MbValue::none(), MbValue::none())
+        }
+    };
+    // Class-level access: hand back the underlying function (CPython returns the
+    // raw function object for `Cls.pm`).
+    if instance.is_none() {
+        return func;
+    }
+    // Bind `func` to the receiver and wrap in a partial carrying the stored args.
+    let bound = make_bound_method(func, instance);
+    super::stdlib::functools_mod::mb_functools_partial(bound, stored_args)
 }
 
 /// Extract the class name from an instance and return it as a string MbValue.
@@ -12193,6 +12231,45 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     _ => unreachable!(),
                 };
             }
+        }
+    }
+
+    // functools.partialmethod stored on a user class is a non-data descriptor:
+    // `inst.pm(extra)` must bind the underlying func to `inst` and forward the
+    // pre-bound args (CPython returns `partial(bound, *stored)` from __get__).
+    // The direct `recv.method(...)` lowering skips the attribute descriptor
+    // path, so intercept here before the generic Instance dispatch. Instance
+    // fields shadow class attributes, so only fire when no instance field of
+    // that name exists.
+    if let (Some(recv_ptr), Some(name_ptr)) = (receiver.as_ptr(), method_name.as_ptr()) {
+        let pm_desc = unsafe {
+            if let (
+                ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                },
+                ObjData::Str(ref name_s),
+            ) = (&(*recv_ptr).data, &(*name_ptr).data)
+            {
+                let shadowed = fields.read().unwrap().contains_key(name_s.as_str());
+                if shadowed {
+                    None
+                } else {
+                    class_attr_lookup(class_name, name_s.as_str()).filter(|attr| {
+                        attr.as_ptr().is_some_and(|ap| {
+                            matches!(&(*ap).data,
+                                ObjData::Instance { class_name: acn, .. }
+                                    if acn == "functools.partialmethod")
+                        })
+                    })
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(desc) = pm_desc {
+            let bound_partial = partialmethod_get(desc, receiver);
+            return super::builtins::mb_call_spread(bound_partial, args);
         }
     }
 
