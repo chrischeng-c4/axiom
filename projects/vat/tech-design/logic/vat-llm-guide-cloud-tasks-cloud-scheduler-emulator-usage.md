@@ -182,3 +182,23 @@ changes:
     impl_mode: hand-written
     reason: "The existing `vat llm` guide smoke test verifies the new client-wiring note is present."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** <verdict>
+
+- [<section-type>] (fill)
+
+# Applicability Review — #457
+
+**Verdict:** approved
+
+All seven sections (logic, schema, config, cli, unit-test, e2e-test, changes) apply to
+this work item. The change is a documentation extension of the `vat llm` guide and the
+README emulator section: it documents how to wire a Cloud Tasks / Cloud Scheduler client at
+vat's built-in REST emulator (SDKs do not auto-read the host var and default to gRPC, so a
+factory must force REST transport + http endpoint + anonymous credentials). The logic flow,
+the client-wiring schema, the cloud-tasks/cloud-scheduler service config, the `vat llm` CLI
+behavior, the guide-content unit/e2e assertions, and the llm.rs + README changes are all
+in scope and consistent with the capability `agent-native-gpu-native-dev-containers`.
