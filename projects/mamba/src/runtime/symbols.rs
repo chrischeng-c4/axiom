@@ -258,6 +258,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_breakpoint_call",
+            builtins::mb_breakpoint_call
+                as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_memoryview",
             builtins::mb_memoryview as fn(super::MbValue) -> super::MbValue,
             [I64],
