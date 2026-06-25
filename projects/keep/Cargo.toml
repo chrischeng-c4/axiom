@@ -51,6 +51,8 @@ hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio"] }
 # HTTP client for in-tree Rust consumers (behind the `client` feature).
 reqwest = { workspace = true, optional = true }
+# Shared h2c client construction + ln(concurrency) pool sizing (#467).
+cclab-h2c = { path = "../../libs/h2c", optional = true }
 # Error glue for the raft module (behind the `raft` feature).
 anyhow = { workspace = true, optional = true }
 # Shared Raft consensus engine (libs/raftcore, serde-only) — replaces openraft.
@@ -63,7 +65,7 @@ clap = { workspace = true, features = ["env"] }
 default = []
 # keep::client — a convenience HTTP/2 client for in-tree Rust callers migrating
 # off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
-client = ["dep:reqwest"]
+client = ["dep:reqwest", "dep:cclab-h2c"]
 # raft — raftcore-backed consensus (HA phase C; see HA.md).
 raft = ["dep:raftcore", "dep:anyhow"]
 
@@ -73,6 +75,8 @@ tempfile = "3.12"
 # Competitor perf comparison (examples/bench_compare.rs, issue #126).
 redis = { version = "0.27", features = ["tokio-comp"] }
 reqwest = { workspace = true }
+# Shared h2c pool for the bench example (#467) — always available to examples.
+cclab-h2c = { path = "../../libs/h2c" }
 # Engine perf-gate benchmark (meter bench, issue #126).
 criterion = "0.5"
 
