@@ -218,6 +218,16 @@ fn cli() -> Command {
                         .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages")),
                 )
                 .subcommand(
+                    Command::new("tree")
+                        .about("Display the dependency tree for an installed environment")
+                        .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages"))
+                        .arg(Arg::new("depth").long("depth").short('d').value_name("N").help("Maximum display depth"))
+                        .arg(Arg::new("package").long("package").value_name("NAME").help("Display only the specified package"))
+                        .arg(Arg::new("invert").long("invert").alias("reverse").action(ArgAction::SetTrue).help("Show reverse dependencies"))
+                        .arg(Arg::new("prune").long("prune").value_name("NAME").action(ArgAction::Append).help("Prune the given package from the display"))
+                        .arg(Arg::new("no-dedupe").long("no-dedupe").action(ArgAction::SetTrue).help("Repeat already-rendered dependency subtrees")),
+                )
+                .subcommand(
                     Command::new("check")
                         .about("Check installed distribution requirements")
                         .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages")),
