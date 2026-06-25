@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::spec::EgressPolicy;
+
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 pub const FILE_NAME: &str = "vat.toml";
 
@@ -52,6 +54,9 @@ pub struct VatConfig {
 pub struct NetworkConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub routes: Vec<RouteConfig>,
+    /// Outbound egress policy for the run (seatbelt-enforced). Default `open`.
+    #[serde(default)]
+    pub egress: EgressPolicy,
 }
 
 /// One host-routing rule: requests to `host` are served by `target` (a local base
