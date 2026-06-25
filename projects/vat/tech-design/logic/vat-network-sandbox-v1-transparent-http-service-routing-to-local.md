@@ -107,7 +107,6 @@ commands:
     behavior:
       - "When a run declares [network.routes] or GCP emulator presets, ensure an http-mock proxy is present, export HTTP(S)_PROXY + NO_PROXY(localhost) + the CA bundle, and POST the resolved routes (explicit + preset-auto-derived: real googleapis host -> local emulator host:port) to the proxy's /__admin/routes before the runner starts."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
