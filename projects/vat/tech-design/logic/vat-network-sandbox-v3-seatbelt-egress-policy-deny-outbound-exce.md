@@ -69,7 +69,6 @@ properties:
     description: "Reads stay open (toolchains resolve); only outbound network is filtered."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
