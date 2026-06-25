@@ -164,6 +164,9 @@ enum Cmd {
         /// OpenAPI spec path (openapi only).
         #[arg(long)]
         spec: Option<String>,
+        /// Seed a host route (http-mock only), repeatable: `--route host=base`.
+        #[arg(long)]
+        route: Vec<String>,
     },
 }
 
@@ -317,7 +320,8 @@ pub fn run() -> Result<ExitCode> {
             ca_path,
             cassette_dir,
             spec,
-        } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir, spec),
+            route,
+        } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir, spec, route),
     }
 }
 // CODEGEN-END

@@ -60,10 +60,12 @@ pub enum Kind {
     CloudScheduler,
     CloudWorkflows,
     CloudStorage,
-    /// The HTTP mock proxy needs a CA-pem path to write and a cassette dir.
+    /// The HTTP mock proxy needs a CA-pem path to write and a cassette dir, plus
+    /// an optional seed of `(host, local base URL)` host-routing rules.
     HttpMock {
         ca_path: String,
         cassette_dir: String,
+        routes: Vec<(String, String)>,
     },
     /// The OpenAPI mock serves responses from a spec document.
     Openapi {
@@ -84,7 +86,8 @@ pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
         Kind::HttpMock {
             ca_path,
             cassette_dir,
-        } => httpmock::serve(host_port, &ca_path, &cassette_dir).await,
+            routes,
+        } => httpmock::serve(host_port, &ca_path, &cassette_dir, &routes).await,
         Kind::Openapi { spec } => openapi::serve(host_port, &spec).await,
     }
 }

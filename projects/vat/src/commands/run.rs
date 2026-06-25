@@ -445,6 +445,14 @@ fn run_configured(
         service_plans.push(plan);
     }
 
+    // Transparent service routing (network sandbox): every declared GCP emulator
+    // preset's real googleapis host -> its resolved local endpoint, seeded onto
+    // the http-mock proxy so the runner reaches the local emulator with NO
+    // hand-written [network.routes]. Ports are resolved during the prepare loop
+    // above, so the proxy is spawned with the full (explicit + preset-derived)
+    // route set.
+    seed_preset_routes_into_proxy(&mut service_plans, cfg);
+
     for step in &cfg.setup {
         if !config::should_run_setup(&rootfs, step) {
             continue;
@@ -765,7 +773,9 @@ fn prepare_service(
         match resolve_preset_runtime(service, preset)? {
             ResolvedRuntime::Native => prepare_preset_service(vat, cfg, service, preset)?,
             ResolvedRuntime::Docker => prepare_preset_docker_service(vat, service, preset)?,
-            ResolvedRuntime::Builtin => prepare_builtin_service(service, preset, &cfg.root)?,
+            ResolvedRuntime::Builtin => {
+                prepare_builtin_service(service, preset, &cfg.root, &explicit_network_routes(cfg))?
+            }
         }
     } else {
         let env = export_command_service_env(service);
@@ -1292,10 +1302,82 @@ fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) 
 /// <kind> --host-port`) as the service process — a pure Rust in-process server
 /// with no external tooling. The runner reaches it via the exported host var.
 /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic
+/// The explicit `[network].routes` from vat.toml as `(host, target)` pairs. These
+/// seed the http-mock proxy's routing table at spawn (the targets are literal
+/// local base URLs); preset-derived routes are added by
+/// [`seed_preset_routes_into_proxy`].
+fn explicit_network_routes(cfg: &VatConfig) -> Vec<(String, String)> {
+    cfg.network
+        .as_ref()
+        .map(|n| {
+            n.routes
+                .iter()
+                .map(|r| (r.host.clone(), r.target.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Auto-derive transparent routes from declared GCP emulator presets: each
+/// preset with a stable public host (`ServicePreset::preset_gcp_host`) maps its
+/// real googleapis host to its resolved local endpoint. Pure over
+/// `(preset, port)` pairs so it is unit-testable without a `ServicePlan`.
+fn preset_auto_routes(services: &[(Option<ServicePreset>, Option<u16>)]) -> Vec<(String, String)> {
+    services
+        .iter()
+        .filter_map(|&(preset, port)| {
+            let host = preset?.preset_gcp_host()?;
+            let port = port?;
+            Some((host.to_string(), format!("http://127.0.0.1:{port}")))
+        })
+        .collect()
+}
+
+/// Append preset-derived `--route real_host=http://127.0.0.1:<port>` args to the
+/// http-mock proxy's spawn command (explicit `[network].routes` are already
+/// seeded by `prepare_builtin_service` and take precedence — preset routes for an
+/// already-explicit host are skipped). If routes exist but no `http-mock` service
+/// is declared, emit a one-line note (routing needs a proxy) rather than failing.
+fn seed_preset_routes_into_proxy(plans: &mut [ServicePlan], cfg: &VatConfig) {
+    let pairs: Vec<(Option<ServicePreset>, Option<u16>)> =
+        plans.iter().map(|p| (p.preset, p.port)).collect();
+    let explicit: Vec<String> = explicit_network_routes(cfg)
+        .into_iter()
+        .map(|(h, _)| h)
+        .collect();
+    let auto: Vec<(String, String)> = preset_auto_routes(&pairs)
+        .into_iter()
+        .filter(|(host, _)| !explicit.contains(host))
+        .collect();
+    if auto.is_empty() {
+        return;
+    }
+    match plans
+        .iter_mut()
+        .find(|p| p.preset == Some(ServicePreset::HttpMock))
+    {
+        Some(proxy) => {
+            for (host, target) in auto {
+                proxy.command.push("--route".to_string());
+                proxy.command.push(format!("{host}={target}"));
+            }
+        }
+        None => {
+            let hosts: Vec<&str> = auto.iter().map(|(h, _)| h.as_str()).collect();
+            eprintln!(
+                "vat: note: GCP emulator presets ({}) declared but no `http-mock` service — \
+                 transparent routing skipped; add a `preset = \"http-mock\"` service to route them.",
+                hosts.join(", ")
+            );
+        }
+    }
+}
+
 fn prepare_builtin_service(
     service: &ServiceConfig,
     preset: ServicePreset,
     root: &Path,
+    network_routes: &[(String, String)],
 ) -> Result<ServicePlan> {
     let port = resolve_service_port(&service.port)?;
     let exe =
@@ -1323,6 +1405,13 @@ fn prepare_builtin_service(
         command.push(ca_path.to_string_lossy().into_owned());
         command.push("--cassette-dir".to_string());
         command.push(cassette_dir.to_string_lossy().into_owned());
+        // Seed explicit `[network].routes` onto the proxy at spawn. Preset-derived
+        // routes are appended later by `seed_preset_routes_into_proxy` (once every
+        // sibling emulator's port is resolved).
+        for (host, target) in network_routes {
+            command.push("--route".to_string());
+            command.push(format!("{host}={target}"));
+        }
         http_mock_env(&host_port, &ca_path.to_string_lossy())
     } else {
         // The openapi preset resolves its spec (relative to vat.toml) to an
@@ -2591,6 +2680,7 @@ mod tests {
     fn ordered_required_services_expands_dependencies_first() {
         let cfg = VatConfig {
             version: 1,
+            network: None,
             name: None,
             default_runner: None,
             workspace: crate::config::WorkspaceConfig::default(),
@@ -2757,6 +2847,7 @@ mod tests {
         service.seed = vec![PathBuf::from("schema.sql")];
         let cfg = VatConfig {
             version: 1,
+            network: None,
             name: None,
             default_runner: None,
             workspace: crate::config::WorkspaceConfig::default(),
@@ -3017,10 +3108,34 @@ mod tests {
     }
 
     #[test]
+    fn preset_auto_routes_maps_gcp_hosts_to_local_endpoints() {
+        let routes = preset_auto_routes(&[
+            (Some(ServicePreset::CloudTasks), Some(8085)),
+            (Some(ServicePreset::CloudScheduler), Some(8086)),
+            (Some(ServicePreset::HttpMock), Some(9000)), // proxy itself → no route
+            (Some(ServicePreset::Postgres), Some(5432)), // not a GCP host → skipped
+            (Some(ServicePreset::Pubsub), None),         // unresolved port → skipped
+        ]);
+        assert_eq!(
+            routes,
+            vec![
+                (
+                    "cloudtasks.googleapis.com".to_string(),
+                    "http://127.0.0.1:8085".to_string()
+                ),
+                (
+                    "cloudscheduler.googleapis.com".to_string(),
+                    "http://127.0.0.1:8086".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn prepare_builtin_service_exports_host_and_self_command() {
         let svc = test_service("auth", &[]);
-        let plan =
-            prepare_builtin_service(&svc, ServicePreset::FirebaseAuth, Path::new(".")).unwrap();
+        let plan = prepare_builtin_service(&svc, ServicePreset::FirebaseAuth, Path::new("."), &[])
+            .unwrap();
         assert_eq!(plan.prepare_mode, "builtin_emulator");
         assert!(plan
             .exported_env
@@ -3034,6 +3149,7 @@ mod tests {
             &test_service("ps", &[]),
             ServicePreset::Pubsub,
             Path::new("."),
+            &[],
         )
         .unwrap();
         assert!(plan
@@ -3081,7 +3197,7 @@ mod tests {
                 resolve_preset_runtime(&svc, preset).unwrap(),
                 ResolvedRuntime::Builtin
             ));
-            let plan = prepare_builtin_service(&svc, preset, Path::new(".")).unwrap();
+            let plan = prepare_builtin_service(&svc, preset, Path::new("."), &[]).unwrap();
             assert_eq!(plan.command[2], kind);
             assert!(plan.exported_env.iter().any(|k| k == var));
         }
