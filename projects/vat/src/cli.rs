@@ -96,6 +96,46 @@ enum Cmd {
     Logs { id: String, source: Option<String> },
     /// Print the compact LLM/agent usage guide.
     Llm,
+    /// Self-update vat to the latest `vat@*` GitHub release.
+    Upgrade {
+        /// Report the current and latest version without changing the binary.
+        #[arg(long)]
+        check: bool,
+        /// Install this exact version (`0.3.62` or `vat@0.3.62`) instead of the latest.
+        #[arg(long)]
+        version: Option<String>,
+        /// Reinstall even when already on the selected version.
+        #[arg(long)]
+        force: bool,
+        /// Skip the confirmation prompt.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// File a diagnostics-rich GitHub issue against the axiom repo.
+    #[command(name = "report-issue")]
+    ReportIssue {
+        /// Issue title.
+        #[arg(short = 't', long)]
+        title: String,
+        /// Description placed above the auto-attached diagnostics block.
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+        /// Target repository (`owner/name`); defaults to vat's release repo.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Add a label (repeatable).
+        #[arg(long)]
+        label: Vec<String>,
+        /// Assemble and print the report without submitting anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the confirmation prompt.
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Free-text message (used as the description when `--message` is absent).
+        #[arg(trailing_var_arg = true)]
+        rest: Vec<String>,
+    },
     /// Report the GPU every vat on this host can reach.
     Gpu {
         #[arg(long)]
@@ -228,6 +268,36 @@ pub fn run() -> Result<ExitCode> {
         Cmd::Rm { id } => commands::rm::exec(id),
         Cmd::Logs { id, source } => commands::logs::exec(id, source),
         Cmd::Llm => commands::llm::exec(),
+        Cmd::Upgrade {
+            check,
+            version,
+            force,
+            yes,
+        } => commands::upgrade::exec(commands::upgrade::Options {
+            check,
+            tag: version,
+            force,
+            yes,
+        }),
+        Cmd::ReportIssue {
+            title,
+            message,
+            repo,
+            label,
+            dry_run,
+            yes,
+            rest,
+        } => {
+            let message = message.or_else(|| (!rest.is_empty()).then(|| rest.join(" ")));
+            commands::report_issue::exec(commands::report_issue::Options {
+                title,
+                message,
+                repo,
+                label,
+                dry_run,
+                yes,
+            })
+        }
         Cmd::Gpu { json } => commands::gpu::exec(json),
         Cmd::Cluster { cmd } => match cmd {
             ClusterCmd::Create {
