@@ -650,6 +650,32 @@ fn probe_pip(bin: &Path) -> FamilyResult {
 
     let req = tmp.path().join("requirements.txt");
     std::fs::write(&req, "pip-demo==1.0.0\n").unwrap();
+    let compile = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "compile",
+            req.to_str().unwrap(),
+            "--index",
+            index.to_str().unwrap(),
+            "--no-header",
+        ],
+    );
+    if !compile.status.success() {
+        return FamilyResult::fail(format!(
+            "pip compile failed: {}",
+            String::from_utf8_lossy(&compile.stderr)
+        ));
+    }
+    let compile_stdout = String::from_utf8_lossy(&compile.stdout);
+    if !compile_stdout.contains("pip-demo==1.0.0")
+        || !compile_stdout.contains("pip-demo-dep==0.2.0")
+    {
+        return FamilyResult::fail(format!(
+            "pip compile did not emit requirement graph: {compile_stdout}"
+        ));
+    }
     let install_site = tmp.path().join("install-site");
     let sync = invoke(
         bin,
@@ -706,7 +732,7 @@ fn probe_pip(bin: &Path) -> FamilyResult {
     }
 
     FamilyResult::pass(
-        "pip install/sync/uninstall/list/freeze/tree/check inspect and mutate site-packages",
+        "pip compile/install/sync/uninstall/list/freeze/tree/check inspect and mutate site-packages",
     )
     .with_paths(Some(tmp.path().to_path_buf()), None, Some(install_site))
 }

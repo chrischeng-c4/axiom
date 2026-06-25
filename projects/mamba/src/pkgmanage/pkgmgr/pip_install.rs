@@ -230,7 +230,7 @@ fn installed_satisfying(req: &PackageRequirement, site: &Path) -> Option<Install
     None
 }
 
-fn find_index_wheel(req: &PackageRequirement, index: &Path) -> Result<PathBuf> {
+pub(crate) fn find_index_wheel(req: &PackageRequirement, index: &Path) -> Result<PathBuf> {
     let pkg_dir = index.join(pep503_normalize(&req.name));
     if !pkg_dir.exists() {
         bail!(
@@ -292,7 +292,7 @@ fn compare_versions_desc(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-fn read_wheel_metadata(path: &Path) -> Result<InstalledDist> {
+pub(crate) fn read_wheel_metadata(path: &Path) -> Result<InstalledDist> {
     let file = fs::File::open(path).with_context(|| format!("open wheel {}", path.display()))?;
     let mut zip =
         zip::ZipArchive::new(file).with_context(|| format!("read wheel {}", path.display()))?;
@@ -328,7 +328,7 @@ fn looks_like_wheel_path(raw: &str) -> bool {
     raw.ends_with(".whl") || raw.contains('/') || (cfg!(windows) && raw.contains('\\'))
 }
 
-fn is_extra_marker(req: &str) -> bool {
+pub(crate) fn is_extra_marker(req: &str) -> bool {
     let Some((_, marker)) = req.split_once(';') else {
         return false;
     };
