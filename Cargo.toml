@@ -33,6 +33,7 @@ members = [
     "libs/raftcore",
     "libs/claimtoken",
     "libs/openapi-codegen",
+    "libs/h2c",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",

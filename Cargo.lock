@@ -1566,6 +1566,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cclab-h2c"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-util",
+ "reqwest 0.12.28",
+ "tokio",
+]
+
+[[package]]
 name = "cclab-learn"
 version = "0.4.3"
 dependencies = [
