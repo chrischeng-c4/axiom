@@ -276,12 +276,7 @@ pub fn run() -> Result<ExitCode> {
             version,
             force,
             yes,
-        } => commands::upgrade::exec(commands::upgrade::Options {
-            check,
-            tag: version,
-            force,
-            yes,
-        }),
+        } => upgrade_cmd(check, version, force, yes),
         Cmd::ReportIssue {
             title,
             message,
@@ -290,17 +285,7 @@ pub fn run() -> Result<ExitCode> {
             dry_run,
             yes,
             rest,
-        } => {
-            let message = message.or_else(|| (!rest.is_empty()).then(|| rest.join(" ")));
-            commands::report_issue::exec(commands::report_issue::Options {
-                title,
-                message,
-                repo,
-                label,
-                dry_run,
-                yes,
-            })
-        }
+        } => report_issue_cmd(title, message, repo, label, dry_run, yes, rest),
         Cmd::Gpu { json } => commands::gpu::exec(json),
         Cmd::Cluster { cmd } => match cmd {
             ClusterCmd::Create {
@@ -323,5 +308,106 @@ pub fn run() -> Result<ExitCode> {
             route,
         } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir, spec, route),
     }
+}
+
+/// vat's identity + build provenance for the shared CLI-convention verbs
+/// (`upgrade` / `report-issue`), per CONTRIBUTING.md. Stamps come from `build.rs`.
+/// @spec projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#cli
+// Used by the feature-gated upgrade/report-issue dispatch; unused in a lean build.
+#[cfg_attr(
+    not(any(feature = "self-update", feature = "report-issue")),
+    allow(dead_code)
+)]
+const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
+    project: "vat",
+    repo: "chrischeng-c4/axiom",
+    target: env!("VAT_TARGET"),
+    version: env!("CARGO_PKG_VERSION"),
+    git_sha: env!("VAT_GIT_SHA"),
+    built_at: env!("VAT_BUILT_AT"),
+};
+
+/// `vat upgrade` → `cli_std::upgrade::run` on a tokio runtime. Without the
+/// `self-update` feature the HTTP client + runtime are absent, so it bails
+/// cleanly (the shipped binary includes the feature).
+#[cfg(feature = "self-update")]
+fn upgrade_cmd(check: bool, version: Option<String>, force: bool, yes: bool) -> Result<ExitCode> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(cli_std::upgrade::run(
+        &TOOL,
+        cli_std::upgrade::Options {
+            check,
+            tag: version,
+            force,
+            yes,
+        },
+    ))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(not(feature = "self-update"))]
+fn upgrade_cmd(
+    _check: bool,
+    _version: Option<String>,
+    _force: bool,
+    _yes: bool,
+) -> Result<ExitCode> {
+    anyhow::bail!(
+        "this vat build was compiled without self-update support; rebuild with \
+         default features (the published binary includes it)"
+    )
+}
+
+/// `vat report-issue` → `cli_std::report_issue::run` on a tokio runtime, tagging
+/// the issue with `project:vat`. Without the `report-issue` feature it bails.
+#[cfg(feature = "report-issue")]
+#[allow(clippy::too_many_arguments)]
+fn report_issue_cmd(
+    title: String,
+    message: Option<String>,
+    repo: Option<String>,
+    label: Vec<String>,
+    dry_run: bool,
+    yes: bool,
+    rest: Vec<String>,
+) -> Result<ExitCode> {
+    let message = message.or_else(|| (!rest.is_empty()).then(|| rest.join(" ")));
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(cli_std::report_issue::run(
+        &TOOL,
+        cli_std::report_issue::Options {
+            title,
+            message,
+            url: None,
+            repo,
+            label: std::iter::once("project:vat".to_string())
+                .chain(label)
+                .collect(),
+            dry_run,
+            yes,
+        },
+    ))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(not(feature = "report-issue"))]
+#[allow(clippy::too_many_arguments)]
+fn report_issue_cmd(
+    _title: String,
+    _message: Option<String>,
+    _repo: Option<String>,
+    _label: Vec<String>,
+    _dry_run: bool,
+    _yes: bool,
+    _rest: Vec<String>,
+) -> Result<ExitCode> {
+    anyhow::bail!(
+        "this vat build was compiled without report-issue support; rebuild with \
+         default features (the published binary includes it)"
+    )
 }
 // CODEGEN-END

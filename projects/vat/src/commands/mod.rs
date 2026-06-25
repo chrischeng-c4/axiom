@@ -14,12 +14,10 @@ pub mod gpu;
 pub mod llm;
 pub mod logs;
 pub mod ls;
-pub mod report_issue;
 pub mod rm;
 pub mod run;
 pub mod snapshot;
 pub mod state;
-pub mod upgrade;
 
 use anyhow::Result;
 
