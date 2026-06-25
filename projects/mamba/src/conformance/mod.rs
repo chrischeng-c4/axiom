@@ -101,11 +101,70 @@ fn parse_xfail(src: &str) -> Option<String> {
 
 // ── JIT execution with output capture ────────────────────────────────────────
 
+/// RAII guard that chdirs into a fresh throwaway directory and restores the
+/// previous cwd (removing the scratch dir) on drop. Used to keep fixtures that
+/// create relative `test.support` / `os_helper` TESTFN files from leaking those
+/// artifacts into the repo working tree. Safe only because the in-process JIT
+/// runner holds `JIT_LOCK`, so cwd mutation is serialized across fixtures.
+struct ScratchCwd {
+    prev: Option<PathBuf>,
+    scratch: Option<PathBuf>,
+}
+
+impl ScratchCwd {
+    fn enter() -> Self {
+        let prev = std::env::current_dir().ok();
+        let scratch = std::env::temp_dir().join(format!(
+            "mamba_conf_{}_{}",
+            std::process::id(),
+            // Per-call uniqueness without pulling in a tempdir crate: nanos.
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        if std::fs::create_dir_all(&scratch).is_ok() && std::env::set_current_dir(&scratch).is_ok()
+        {
+            Self {
+                prev,
+                scratch: Some(scratch),
+            }
+        } else {
+            // Could not isolate — fall back to the current cwd (no-op guard).
+            Self {
+                prev: None,
+                scratch: None,
+            }
+        }
+    }
+}
+
+impl Drop for ScratchCwd {
+    fn drop(&mut self) {
+        if let Some(prev) = self.prev.take() {
+            let _ = std::env::set_current_dir(&prev);
+        }
+        if let Some(scratch) = self.scratch.take() {
+            let _ = std::fs::remove_dir_all(&scratch);
+        }
+    }
+}
+
 fn run_and_capture(src: &str, path: &Path, timeout_secs: u64) -> Result<String, String> {
     // Serialize entire JIT pipeline (init + compile + execute) across test
     // threads. Concurrent JITModule finalization causes SIGBUS on aarch64.
     // Guard is held until function exit (after execution thread completes).
     let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
+    // Run the fixture in a throwaway working directory (CPython regrtest-style
+    // isolation): relative test.support / os_helper TESTFN artifacts
+    // (`@mamba_test_<pid>`, `@test_<pid>_tmp`, and `.dir`/`.dat`/`.pag`
+    // companions) land in scratch instead of the repo tree. The JIT runs
+    // in-process under JIT_LOCK, so the whole pipeline is serialized — changing
+    // the process cwd here cannot race another fixture. The guard restores the
+    // original cwd and removes the scratch dir on every exit path (including the
+    // early `?` returns below).
+    let _cwd_guard = ScratchCwd::enter();
 
     let module = parser::parse(src, FileId(0))
         .map_err(|e| format!("{}: parse error: {e}", path.display()))?;
