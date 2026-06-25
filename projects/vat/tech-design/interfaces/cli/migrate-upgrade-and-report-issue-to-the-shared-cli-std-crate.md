@@ -91,7 +91,6 @@ commands:
     behavior:
       - "Still lists llm, upgrade, report-issue (all three mandatory verbs)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
