@@ -2,13 +2,19 @@
 //!
 //! Cloud-native: env-driven config, `/healthz` + `/readyz` probes, and
 //! SIGTERM-aware graceful drain so k8s can roll pods without dropping requests.
+//!
+//! Bare `keep` (no subcommand) runs the server with the flags below; the
+//! standard agent-facing commands — `keep llm`, `keep upgrade`, `keep
+//! report-issue` (the CONTRIBUTING.md CLI convention, via the shared `cli-std`
+//! lib) — sit alongside it. Agents start at `keep llm outline`.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::Parser;
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
@@ -25,9 +31,92 @@ use keep::{AppState, KvEngine};
 #[derive(Parser, Debug)]
 #[command(
     name = "keep",
+    version,
     about = "keep — cloud-native KV / claim-check store (HTTP/2 + OpenAPI)"
 )]
-struct Args {
+struct Cli {
+    /// Standard agent-facing command. Omit it to run the server (the default).
+    #[command(subcommand)]
+    cmd: Option<Command>,
+    /// Server flags — used when no subcommand is given (`keep <flags>`).
+    #[command(flatten)]
+    serve: ServeArgs,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Print agent-facing LLM topics — offline, no server. `outline` (default)
+    /// maps the topics; pass a topic id for detail (`--format json` for a
+    /// machine-readable form).
+    Llm(LlmArgs),
+    /// Self-update this binary from a published GitHub release. Resolves the
+    /// running target + version, downloads the matching `keep-<target>.tar.gz`,
+    /// verifies its sha256, and atomically replaces the executable. `--check`
+    /// reports the available version without changing anything.
+    Upgrade(UpgradeArgs),
+    /// File a diagnostics-rich GitHub issue. Bundles the build version, target,
+    /// git sha and OS/arch with your description, then opens an issue via
+    /// `GITHUB_TOKEN` — or prints a pre-filled `issues/new` URL when no token is
+    /// set. `--dry-run` previews without submitting.
+    ReportIssue(ReportIssueArgs),
+}
+
+/// `keep llm` flags.
+#[derive(clap::Args, Debug)]
+struct LlmArgs {
+    /// Topic id (`outline` lists them all).
+    #[arg(default_value = "outline")]
+    topic: String,
+    /// Output format: `md` (default) or `json`.
+    #[arg(long, default_value = "md")]
+    format: String,
+}
+
+/// `keep upgrade` flags.
+#[derive(clap::Args, Debug)]
+struct UpgradeArgs {
+    /// Report the current and latest version without modifying the binary.
+    #[arg(long)]
+    check: bool,
+    /// Install this exact version (`0.4.3` or `keep@0.4.3`) instead of the latest.
+    #[arg(long)]
+    tag: Option<String>,
+    /// Reinstall even when already on the selected version.
+    #[arg(long)]
+    force: bool,
+    /// Skip the confirmation prompt.
+    #[arg(short = 'y', long)]
+    yes: bool,
+}
+
+/// `keep report-issue` flags.
+#[derive(clap::Args, Debug)]
+struct ReportIssueArgs {
+    /// Issue title.
+    #[arg(short = 't', long)]
+    title: String,
+    /// Free-text description of the problem (placed above the diagnostics block).
+    #[arg(short = 'm', long)]
+    message: Option<String>,
+    /// Include a running node's `/version`+`/healthz` (e.g. http://localhost:7117).
+    #[arg(long)]
+    url: Option<String>,
+    /// Target repository (`owner/name`); defaults to keep's release repo.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Add a label (repeatable).
+    #[arg(long)]
+    label: Vec<String>,
+    /// Assemble and print the report without submitting anything.
+    #[arg(long)]
+    dry_run: bool,
+    /// Skip the confirmation prompt.
+    #[arg(short = 'y', long)]
+    yes: bool,
+}
+
+#[derive(clap::Args, Debug)]
+struct ServeArgs {
     /// Bind host. k8s passes 0.0.0.0.
     #[arg(long, env = "KEEP_HOST", default_value = "127.0.0.1")]
     host: String,
@@ -75,10 +164,121 @@ struct Args {
     peers: Vec<String>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+/// This binary's identity + build provenance for the standard CLI ops
+/// (`upgrade` / `report-issue`), per the CONTRIBUTING.md CLI convention.
+const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
+    project: "keep",
+    repo: "chrischeng-c4/axiom",
+    target: env!("KEEP_TARGET"),
+    version: env!("CARGO_PKG_VERSION"),
+    git_sha: env!("KEEP_GIT_SHA"),
+    built_at: env!("KEEP_BUILT_AT"),
+};
 
+/// keep's agent-facing `llm` topics — the single in-code source of truth.
+const TOPICS: &[cli_std::llm::Topic] = &[
+    cli_std::llm::Topic {
+        id: "http",
+        summary: "the HTTP/2 + OpenAPI surface (KV, batch, scan, locks, collections, probes)",
+        body: "# keep — HTTP/2 API surface\n\n\
+            One port speaks HTTP/1.1 and HTTP/2 cleartext (h2c, prior-knowledge). JSON \
+            values, or raw `application/octet-stream` blobs on the value path.\n\n\
+            - `GET|PUT|DELETE|HEAD /v1/kv/{key}` — scalar value (`?ttl_ms=` on PUT).\n\
+            - `POST /v1/kv/{key}/incr|cas|setnx` — atomic integer / compare-and-swap.\n\
+            - `POST /v1/kv:mset|kv:mget|kv:mdel` — batch.\n\
+            - `GET /v1/kv?prefix=&limit=` — prefix scan.\n\
+            - `POST|DELETE /v1/locks/{name}` — owner+TTL advisory locks.\n\
+            - `/v1/hashes /v1/sets /v1/zsets /v1/lists` — collections.\n\
+            - `/healthz /readyz /metrics /openapi.json /docs` — probes, metrics, OpenAPI.\n\n\
+            The full document: `GET /openapi.json` (served by the binary).\n",
+    },
+    cli_std::llm::Topic {
+        id: "claim-check",
+        summary: "the relay/loom worker data plane — inputs/results by id, namespaces, tokens",
+        body: "# keep — claim-check data plane\n\n\
+            keep is loom/relay's result store: a worker GETs its input and PUTs its result \
+            by message id; the producer mirrors it.\n\n\
+            - `GET|PUT /v1/inputs/{id}` — job input payload.\n\
+            - `GET|PUT /v1/results/{id}` — job result payload.\n\n\
+            Bytes-first (octet-stream), durable before the write is acked.\n\n\
+            **Scoped tokens** (#445/#446): set `KEEP_TOKEN_SECRET` to require an HMAC \
+            `Authorization: Bearer <token>` scoped to the bare input/result key on worker ops.\n\n\
+            **Namespaces** (#464): send `X-Keep-Namespace` (loom sends `LOOM_NAMESPACE`) and \
+            keep stores at `{ns}::{kind}:{id}` — applied after the token check, so token scope \
+            stays the bare key. Absent header ⇒ bare key (single-tenant back-compat).\n",
+    },
+    cli_std::llm::Topic {
+        id: "operate",
+        summary: "run / configure / deploy — flags, env vars, persistence, k8s probes",
+        body: "# keep — operating the server\n\n\
+            Bare `keep` runs the server (env-driven; flags override). Key knobs:\n\n\
+            - `--host/--port` (`KEEP_HOST` / `KEEP_PORT`, default `127.0.0.1:7117`).\n\
+            - `--shards` (`KEEP_SHARDS`) — engine shard count for multi-core scaling.\n\
+            - `--data-dir` (`KEEP_DATA_DIR`) — WAL + snapshot disk tier; cold start recovers it.\n\
+            - `--disable-persistence` — in-memory only.\n\
+            - `--node-id/--node-count/--shard-count/--peers` — cluster topology.\n\
+            - `KEEP_TOKEN_SECRET` — enable claim-check token enforcement.\n\n\
+            Cloud-native: `/healthz` + `/readyz` probes and a SIGTERM-aware graceful drain \
+            (`--grace-secs`) so k8s rolls pods without dropping requests.\n",
+    },
+];
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    match cli.cmd {
+        // Default (no subcommand): run the server.
+        None => serve_main(cli.serve).await,
+        Some(cmd) => dispatch(cmd).await,
+    }
+}
+
+async fn dispatch(cmd: Command) -> Result<()> {
+    match cmd {
+        Command::Llm(args) => {
+            // Offline: no engine, no server, no I/O beyond stdout.
+            let out = cli_std::llm::render(
+                TOOL.project,
+                TOOL.version,
+                TOPICS,
+                &args.topic,
+                cli_std::llm::Format::parse(&args.format),
+            )?;
+            println!("{out}");
+            Ok(())
+        }
+        Command::Upgrade(args) => {
+            cli_std::upgrade::run(
+                &TOOL,
+                cli_std::upgrade::Options {
+                    check: args.check,
+                    tag: args.tag,
+                    force: args.force,
+                    yes: args.yes,
+                },
+            )
+            .await
+        }
+        Command::ReportIssue(args) => {
+            cli_std::report_issue::run(
+                &TOOL,
+                cli_std::report_issue::Options {
+                    title: args.title,
+                    message: args.message,
+                    url: args.url,
+                    repo: args.repo,
+                    label: args.label,
+                    dry_run: args.dry_run,
+                    yes: args.yes,
+                },
+            )
+            .await
+        }
+    }
+}
+
+/// Run the keep server (the default, no-subcommand path).
+async fn serve_main(args: ServeArgs) -> Result<()> {
     // RUST_LOG wins; otherwise fall back to --log-level.
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&args.log_level));
@@ -123,7 +323,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         owned_shards = cluster.owned_shards().len(),
         "cluster topology"
     );
-    let mut state = AppState::new(engine).with_body_limit(args.body_limit).with_cluster(cluster);
+    let mut state = AppState::new(engine)
+        .with_body_limit(args.body_limit)
+        .with_cluster(cluster);
     // Scoped claim-check tokens (#446): enforce when KEEP_TOKEN_SECRET is set.
     if let Ok(secret) = std::env::var("KEEP_TOKEN_SECRET") {
         if !secret.is_empty() {
