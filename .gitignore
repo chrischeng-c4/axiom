@@ -76,6 +76,8 @@ Thumbs.db
 .env.*
 !.env.example
 target/
+# cross-build target dir (Linux), same regenerable build output as target/
+/target-linux/
 
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
