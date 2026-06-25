@@ -179,6 +179,9 @@ enum WalBackend {
     /// relay broadcast (#124). Explicit external broker mode.
     #[cfg(feature = "relay-wal")]
     Relay,
+    /// Lumen-owned raftcore replication (#515). HA without an external broker.
+    #[cfg(feature = "raft-wal")]
+    Raft,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -303,6 +306,18 @@ struct ServeArgs {
     #[cfg(feature = "relay-wal")]
     #[arg(long, env = "LUMEN_RELAY_SUBSCRIBER_ID")]
     relay_subscriber_id: Option<String>,
+    /// Data dir for raft hard state (used when `--wal raft`). A PVC in k8s.
+    #[cfg(feature = "raft-wal")]
+    #[arg(
+        long,
+        env = "LUMEN_RAFT_DATA_DIR",
+        default_value = "/var/lib/lumen/raft"
+    )]
+    raft_data_dir: String,
+    /// Peer port for raft RPCs (used when `--wal raft`; multi-pod, Slice 2).
+    #[cfg(feature = "raft-wal")]
+    #[arg(long, env = "LUMEN_RAFT_PORT", default_value_t = 7374)]
+    raft_port: u16,
     /// Shard count for client-side routing (`crc32(collection) % N`).
     /// Install-time topology constant.
     #[arg(long, env = "SHARD_COUNT", default_value_t = 1)]
@@ -560,6 +575,32 @@ async fn serve(args: ServeArgs) -> Result<()> {
             }
             .context("connect relay write log")?;
             Arc::new(relay)
+        }
+        #[cfg(feature = "raft-wal")]
+        WalBackend::Raft => {
+            tracing::info!(
+                data_dir = %args.raft_data_dir,
+                raft_port = args.raft_port,
+                "wal=raft (raftcore; single-node slice — multi-pod peers are Slice 2)"
+            );
+            let store = lumen::raft_store::RaftStore::open(
+                &args.raft_data_dir,
+                0,
+                lumen::raft_store::FsyncPolicy::Always,
+            )
+            .context("open raft store")?;
+            // Single-node group: node 0 is the sole voter (trivially leader).
+            let membership = lumen::raft_core::Membership {
+                voters: vec![0],
+                learners: vec![],
+            };
+            let driver = Arc::new(lumen::raft_driver::RaftDriver::spawn(
+                0,
+                membership,
+                std::collections::HashMap::new(),
+                store,
+            ));
+            Arc::new(lumen::wal_raft::RaftWal::new(driver))
         }
     };
 

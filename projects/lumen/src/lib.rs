@@ -41,6 +41,15 @@ pub mod operator;
 /// Cluster-state view types backing the read/admin API. This surface is the
 /// compatibility bridge for Lumen-owned primary/replica replication.
 pub mod raft;
+/// Lumen-owned HA via the shared `raftcore` engine (behind `raft-wal`):
+/// the consensus surface, durable hard state, and the driver that surfaces the
+/// committed log to the WAL seam.
+#[cfg(feature = "raft-wal")]
+pub mod raft_core;
+#[cfg(feature = "raft-wal")]
+pub mod raft_driver;
+#[cfg(feature = "raft-wal")]
+pub mod raft_store;
 pub mod rdb;
 pub mod routing;
 /// Columnar mmap disk segment (Stage 2 disk-tier): a single Number column
@@ -66,6 +75,9 @@ pub mod types;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
+/// `RaftWal` — a `WalLog` backed by lumen-owned raftcore replication.
+#[cfg(feature = "raft-wal")]
+pub mod wal_raft;
 #[cfg(feature = "relay-wal")]
 pub mod wal_relay;
 // CODEGEN-END

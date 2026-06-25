@@ -6316,6 +6316,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "proptest",
+ "raftcore",
  "rand 0.8.6",
  "rayon",
  "relay",
