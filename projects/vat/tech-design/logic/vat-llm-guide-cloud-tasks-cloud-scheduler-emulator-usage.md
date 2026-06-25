@@ -76,7 +76,6 @@ properties:
     description: "Skip the SDK and POST the v2 REST API directly (tests/vat_emulator_tasks.rs)."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
