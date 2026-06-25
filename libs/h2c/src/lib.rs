@@ -29,6 +29,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+// The frame-level connection manager — built on the low-level `h2` crate so it
+// can see GOAWAY / ping / flow-control and actively manage connections, where
+// `H2cPool` (below) is the simpler reqwest-level round-robin option.
+mod conn;
+mod error;
+mod manager;
+
+pub use error::{H2cError, Result};
+pub use manager::{H2cManager, ManagerConfig, ManagerStats};
+
 /// Recommended number of h2c connections for a target peak `concurrency`, using
 /// the available CPU parallelism as the upper cap.
 ///

@@ -4294,11 +4294,15 @@ name = "h2c"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "h2 0.4.14",
+ "http 1.4.0",
  "http-body-util",
  "hyper 1.9.0",
  "hyper-util",
  "reqwest 0.12.28",
+ "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
