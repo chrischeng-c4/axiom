@@ -28,6 +28,10 @@ type MethodEntry = (
     Option<SymbolId>,
     Option<SymbolId>,
     Vec<&'static str>,
+    // Generic runtime decorator to apply to the (already-wrapped) method
+    // value, e.g. a cross-class `@Base.prop.setter`. None for plain or
+    // descriptor-folded methods. (#82)
+    Option<HirExpr>,
 );
 
 type PendingClassRegistration = (
@@ -754,6 +758,11 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 setter_target: Option<String>,
                 deleter_target: Option<String>,
                 marker_attrs: Vec<&'static str>,
+                // A `@<expr>.setter/.deleter/.getter` whose `<expr>` is NOT a
+                // bare sibling-property name (e.g. cross-class `@Base.x.setter`).
+                // This is a generic runtime decorator, applied to the method
+                // value rather than folded into an in-class property. (#82)
+                generic_decorator: Option<HirExpr>,
             }
             impl Raw {
                 fn new(sym: SymbolId, marker_attrs: Vec<&'static str>) -> Self {
@@ -763,6 +772,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                         setter_target: None,
                         deleter_target: None,
                         marker_attrs,
+                        generic_decorator: None,
                     }
                 }
             }
@@ -829,6 +839,15 @@ pub fn lower_hir_to_mir_with_symbols_src(
                                         r.deleter_target = Some(prop_name);
                                     }
                                 }
+                            } else if matches!(attr.as_str(), "setter" | "deleter" | "getter") {
+                                // `@<expr>.setter/.deleter/.getter` where `<expr>`
+                                // is not a bare sibling-property Var — e.g. the
+                                // cross-class `@Base.x.setter` form. CPython
+                                // evaluates the bound descriptor method and calls
+                                // it on the function, yielding a NEW property
+                                // sharing the base's accessors. Apply it as a
+                                // generic runtime decorator. (#82)
+                                r.generic_decorator = Some(dec.clone());
                             }
                         }
                         _ => {}
@@ -839,13 +858,19 @@ pub fn lower_hir_to_mir_with_symbols_src(
             // Second pass: fold setters/deleters into their target property.
             let mut out: Vec<MethodEntry> = Vec::new();
             for (name, r) in &raw {
-                if r.setter_target.is_some() || r.deleter_target.is_some() {
+                if (r.setter_target.is_some() || r.deleter_target.is_some())
+                    && r.generic_decorator.is_none()
+                {
                     // Skip — the target property entry will reference this sym.
+                    // (A generic cross-class decorator is emitted on its own.)
                     continue;
                 }
                 let mut setter_sym = None;
                 let mut deleter_sym = None;
                 for (_, other) in &raw {
+                    if other.generic_decorator.is_some() {
+                        continue;
+                    }
                     if other.setter_target.as_deref() == Some(name.as_str()) {
                         setter_sym = Some(other.sym);
                     }
@@ -860,6 +885,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                     setter_sym,
                     deleter_sym,
                     r.marker_attrs.clone(),
+                    r.generic_decorator.clone(),
                 ));
             }
             out
@@ -882,6 +908,14 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 })
                 .unwrap_or_default()
         };
+        // #82: a class with a cross-class chained property decorator
+        // (`@Base.x.setter`) must register at its textual ClassDefPlaceholder
+        // (not eagerly), so the base class's property is already set when the
+        // decorator reads it. Mark it so the eager `None` registration pass
+        // skips it and the placeholder's `Some(sym)` pass handles it.
+        if methods.iter().any(|m| m.6.is_some()) {
+            lowerer.classes_needing_textual_registration.insert(cls.name.0);
+        }
         lowerer.pending_classes.push((
             class_name.clone(),
             cls.name,
@@ -1098,6 +1132,11 @@ struct HirToMir<'a> {
     /// Classes to register at the start of top-level code.
     /// (class_name, class_symbol_id, all_base_names, namedtuple_base, methods, match_args, metaclass, slots, class_kwargs)
     pending_classes: Vec<PendingClassRegistration>,
+    /// SymbolId.0 of classes whose registration must be emitted at their
+    /// textual ClassDefPlaceholder rather than eagerly, because a method
+    /// carries a cross-class chained property decorator (`@Base.x.setter`)
+    /// that reads a base property only set at the base's textual position. (#82)
+    classes_needing_textual_registration: HashSet<u32>,
     /// Class base expressions that must be evaluated at the class statement's
     /// textual runtime position, e.g. `class Derived(base):` inside a loop.
     pending_runtime_class_bases: Vec<(String, SymbolId, Vec<HirExpr>)>,
@@ -1266,6 +1305,7 @@ impl<'a> HirToMir<'a> {
             class_syms: HashMap::new(),
             active_except_vreg: None,
             pending_classes: Vec::new(),
+            classes_needing_textual_registration: HashSet::new(),
             pending_runtime_class_bases: Vec::new(),
             pending_class_attrs: Vec::new(),
             pending_abstract_methods: Vec::new(),
@@ -1328,6 +1368,7 @@ impl<'a> HirToMir<'a> {
             class_syms: HashMap::new(),
             active_except_vreg: None,
             pending_classes: Vec::new(),
+            classes_needing_textual_registration: HashSet::new(),
             pending_runtime_class_bases: Vec::new(),
             pending_class_attrs: Vec::new(),
             pending_abstract_methods: Vec::new(),
@@ -3992,7 +4033,12 @@ impl<'a> HirToMir<'a> {
         while i < self.pending_classes.len() {
             let should_emit = match cls_sym {
                 Some(sym) => self.pending_classes[i].1 == sym,
-                None => self.pending_classes[i].8.is_empty(),
+                // #82: skip classes that must register at their textual
+                // placeholder (cross-class chained property decorator).
+                None => self.pending_classes[i].8.is_empty()
+                    && !self
+                        .classes_needing_textual_registration
+                        .contains(&self.pending_classes[i].1.0),
             };
             if should_emit {
                 let registration = self.pending_classes.remove(i);
@@ -4039,7 +4085,7 @@ impl<'a> HirToMir<'a> {
         let any_ty = self.tcx.any();
         let mut name_vregs = Vec::new();
         let mut value_vregs = Vec::new();
-        for (method_name, method_sym, decor_kind, setter_sym, deleter_sym, marker_attrs) in methods {
+        for (method_name, method_sym, decor_kind, setter_sym, deleter_sym, marker_attrs, generic_decorator) in methods {
             let name_vreg = self.emit_str_const(method_name);
             name_vregs.push(name_vreg);
             let addr_vreg = self.fresh_vreg();
@@ -4067,12 +4113,14 @@ impl<'a> HirToMir<'a> {
             let wrapped = match decor_kind {
                 MethodDecorKind::None => addr_vreg,
                 MethodDecorKind::Property => {
-                    let w = self.fresh_vreg();
+                    let mut w = self.fresh_vreg();
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: Some(w), name: "mb_property_new".to_string(),
                         args: vec![addr_vreg], ty: any_ty,
                     });
-                    // Attach setter if present
+                    // Attach setter if present. mb_property_setter returns a NEW
+                    // property (sharing fget); capture it so the accessor is not
+                    // dropped (it no longer mutates in place). (#82)
                     if let Some(ssym) = setter_sym {
                         let setter_addr = self.fresh_vreg();
                         self.current_stmts.push(MirInst::LoadConst {
@@ -4080,12 +4128,14 @@ impl<'a> HirToMir<'a> {
                             value: MirConst::FuncRef(*ssym),
                             ty: self.tcx.int(),
                         });
+                        let next = self.fresh_vreg();
                         self.current_stmts.push(MirInst::CallExtern {
-                            dest: None, name: "mb_property_setter".to_string(),
+                            dest: Some(next), name: "mb_property_setter".to_string(),
                             args: vec![w, setter_addr], ty: any_ty,
                         });
+                        w = next;
                     }
-                    // Attach deleter if present
+                    // Attach deleter if present (same NEW-property semantics).
                     if let Some(dsym) = deleter_sym {
                         let del_addr = self.fresh_vreg();
                         self.current_stmts.push(MirInst::LoadConst {
@@ -4093,10 +4143,12 @@ impl<'a> HirToMir<'a> {
                             value: MirConst::FuncRef(*dsym),
                             ty: self.tcx.int(),
                         });
+                        let next = self.fresh_vreg();
                         self.current_stmts.push(MirInst::CallExtern {
-                            dest: None, name: "mb_property_deleter".to_string(),
+                            dest: Some(next), name: "mb_property_deleter".to_string(),
                             args: vec![w, del_addr], ty: any_ty,
                         });
+                        w = next;
                     }
                     w
                 }
@@ -4125,6 +4177,25 @@ impl<'a> HirToMir<'a> {
                     });
                     w
                 }
+            };
+            // Apply a generic cross-class chained decorator (`@Base.x.setter`):
+            // evaluate the descriptor-bound method (`Base.x.setter`) and call it
+            // on the wrapped method value; the result (a NEW property sharing the
+            // base's accessors) becomes this class's attribute. Applied inline so
+            // execution order matches CPython (the decorator runs at class-def
+            // time, before later statements use the property). (#82)
+            let wrapped = if let Some(dec_expr) = generic_decorator {
+                let dec_vreg = self.lower_expr(dec_expr);
+                let result_vreg = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(result_vreg),
+                    name: "mb_call1_val".to_string(),
+                    args: vec![dec_vreg, wrapped],
+                    ty: any_ty,
+                });
+                result_vreg
+            } else {
+                wrapped
             };
             value_vregs.push(wrapped);
         }

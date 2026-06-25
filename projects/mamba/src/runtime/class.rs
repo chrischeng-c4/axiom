@@ -4752,6 +4752,16 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     class_name,
                     ref fields,
                 } => {
+                    // property descriptor: `.setter` / `.deleter` / `.getter`
+                    // are bound callables that each return a NEW property
+                    // sharing the other accessors (e.g. cross-class
+                    // `@Base.x.setter`). fget/fset/fdel remain plain field
+                    // reads through the generic path below. (#82)
+                    if class_name == "__property__"
+                        && matches!(attr_name.as_str(), "setter" | "deleter" | "getter")
+                    {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
                     // unittest.mock: fields, return_value, and supported magic
                     // names resolve to (autovivified) child mocks before the
                     // class method table can shadow them.
@@ -9274,18 +9284,49 @@ pub fn mb_property_new(getter: MbValue) -> MbValue {
     ptr
 }
 
-/// property.setter(fn) → returns new property with setter set.
-pub fn mb_property_setter(prop: MbValue, setter: MbValue) -> MbValue {
-    let key = MbValue::from_ptr(MbObject::new_str("fset".to_string()));
-    mb_setattr(prop, key, setter);
+/// Read one accessor field (`fget`/`fset`/`fdel`) off a property instance,
+/// returning `None` when the field is absent or stored as `None`.
+fn property_accessor(prop: MbValue, field: &str) -> Option<MbValue> {
+    let key = MbValue::from_ptr(MbObject::new_str(field.to_string()));
+    let v = mb_getattr(prop, key);
+    if v.is_none() { None } else { Some(v) }
+}
+
+/// Build a NEW `__property__` instance that copies `fget`/`fset`/`fdel` from
+/// `src`, applying any overrides supplied. CPython's `property.setter` /
+/// `.deleter` return a fresh property sharing the other accessors rather than
+/// mutating the original in place. (#82)
+fn property_clone_with(
+    src: MbValue,
+    fget: Option<MbValue>,
+    fset: Option<MbValue>,
+    fdel: Option<MbValue>,
+) -> MbValue {
+    let prop = mb_property_new(fget.or_else(|| property_accessor(src, "fget")).unwrap_or_else(MbValue::none));
+    if let Some(fs) = fset.or_else(|| property_accessor(src, "fset")) {
+        let key = MbValue::from_ptr(MbObject::new_str("fset".to_string()));
+        mb_setattr(prop, key, fs);
+    }
+    if let Some(fd) = fdel.or_else(|| property_accessor(src, "fdel")) {
+        let key = MbValue::from_ptr(MbObject::new_str("fdel".to_string()));
+        mb_setattr(prop, key, fd);
+    }
     prop
 }
 
-/// property.deleter(fn) → returns new property with deleter set.
+/// property.setter(fn) → returns a NEW property sharing fget/fdel, with fset set.
+pub fn mb_property_setter(prop: MbValue, setter: MbValue) -> MbValue {
+    property_clone_with(prop, None, Some(setter), None)
+}
+
+/// property.deleter(fn) → returns a NEW property sharing fget/fset, with fdel set.
 pub fn mb_property_deleter(prop: MbValue, deleter: MbValue) -> MbValue {
-    let key = MbValue::from_ptr(MbObject::new_str("fdel".to_string()));
-    mb_setattr(prop, key, deleter);
-    prop
+    property_clone_with(prop, None, None, Some(deleter))
+}
+
+/// property.getter(fn) → returns a NEW property sharing fset/fdel, with fget set.
+pub fn mb_property_getter(prop: MbValue, getter: MbValue) -> MbValue {
+    property_clone_with(prop, Some(getter), None, None)
 }
 
 /// Construct a property from call args: positional (`fget`, `fset`, `fdel`,
@@ -9327,15 +9368,15 @@ pub fn mb_property_construct(items: &[MbValue]) -> MbValue {
             }
         }
     }
-    let prop = mb_property_new(fget.unwrap_or_else(MbValue::none));
+    let mut prop = mb_property_new(fget.unwrap_or_else(MbValue::none));
     if let Some(fs) = fset {
         if !fs.is_none() {
-            mb_property_setter(prop, fs);
+            prop = mb_property_setter(prop, fs);
         }
     }
     if let Some(fd) = fdel {
         if !fd.is_none() {
-            mb_property_deleter(prop, fd);
+            prop = mb_property_deleter(prop, fd);
         }
     }
     prop
@@ -12104,6 +12145,30 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 "__ne__" => return MbValue::from_bool(receiver.to_bits() != other_bits),
                 "__hash__" => return super::builtins::mb_hash(receiver),
                 _ => {}
+            }
+        }
+    }
+
+    // property descriptor methods: `prop.setter(fn)` / `.deleter(fn)` /
+    // `.getter(fn)` each build a NEW property sharing the other accessors.
+    // Reached via the `__bound_native_method__` shell from `Base.x.setter`
+    // (cross-class chained decorator). (#82)
+    if let Some(ptr) = receiver.as_ptr() {
+        let is_property = unsafe {
+            matches!(&(*ptr).data, ObjData::Instance { class_name, .. }
+                if class_name == "__property__")
+        };
+        if is_property {
+            let name = extract_str(method_name).unwrap_or_default();
+            if matches!(name.as_str(), "setter" | "deleter" | "getter") {
+                let items = super::builtins::extract_items(args);
+                let fn_arg = items.first().copied().unwrap_or_else(MbValue::none);
+                return match name.as_str() {
+                    "setter" => mb_property_setter(receiver, fn_arg),
+                    "deleter" => mb_property_deleter(receiver, fn_arg),
+                    "getter" => mb_property_getter(receiver, fn_arg),
+                    _ => unreachable!(),
+                };
             }
         }
     }
