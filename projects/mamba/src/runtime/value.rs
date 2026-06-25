@@ -46,6 +46,14 @@ const TAG_ELLIPSIS: u64 = 7;
 /// The NaN prefix: sign=1, exponent=0x7FF, quiet bit=1 → bits 63..51
 const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
 
+/// Negative canonical quiet NaN (sign=1) — the one sign-carrying NaN bit
+/// pattern we treat as a genuine float rather than a tagged value, so a
+/// negative NaN (e.g. `complex("-nan").real`, whose sign CPython preserves)
+/// survives boxing instead of collapsing to the positive canonical NaN.
+/// It is bit-identical to `from_ptr(null)` (TAG_PTR, payload 0), but no code
+/// ever boxes a null pointer, so reclaiming this slot for a float is safe.
+const NEG_CANON_NAN: u64 = NAN_PREFIX;
+
 /// Mask for the tag field (bits 48..50)
 const TAG_MASK: u64 = 0x0007_0000_0000_0000;
 const TAG_SHIFT: u32 = 48;
@@ -64,8 +72,15 @@ impl MbValue {
         let bits = f.to_bits();
         // Check if this is one of our tagged NaNs (has our prefix)
         if bits & NAN_PREFIX == NAN_PREFIX && bits != f64::NAN.to_bits() {
-            // Canonicalize to a standard quiet NaN
-            Self(f64::NAN.to_bits())
+            // A negative NaN canonicalizes to the one sign-carrying NaN slot
+            // we keep distinguishable (`NEG_CANON_NAN`), preserving its sign
+            // bit (e.g. `complex("-nan").real`); every other tagged-prefix NaN
+            // collapses to the standard positive quiet NaN.
+            if f.is_nan() && f.is_sign_negative() {
+                Self(NEG_CANON_NAN)
+            } else {
+                Self(f64::NAN.to_bits())
+            }
         } else {
             Self(bits)
         }
@@ -126,8 +141,12 @@ impl MbValue {
     // ── Type queries ──
 
     pub fn is_float(self) -> bool {
-        // A value is a float if it does NOT have our NaN prefix
-        (self.0 & NAN_PREFIX) != NAN_PREFIX || self.0 == f64::NAN.to_bits() // canonical NaN is a float
+        // A value is a float if it does NOT have our NaN prefix, or it is one
+        // of the two canonical-NaN slots (positive `f64::NAN`, or the
+        // sign-carrying `NEG_CANON_NAN`) we reserve as genuine floats.
+        (self.0 & NAN_PREFIX) != NAN_PREFIX
+            || self.0 == f64::NAN.to_bits()
+            || self.0 == NEG_CANON_NAN
     }
 
     pub fn is_int(self) -> bool {
@@ -155,7 +174,10 @@ impl MbValue {
     }
 
     fn tag(self) -> Option<u64> {
-        if (self.0 & NAN_PREFIX) == NAN_PREFIX && self.0 != f64::NAN.to_bits() {
+        if (self.0 & NAN_PREFIX) == NAN_PREFIX
+            && self.0 != f64::NAN.to_bits()
+            && self.0 != NEG_CANON_NAN
+        {
             Some((self.0 & TAG_MASK) >> TAG_SHIFT)
         } else {
             None
