@@ -152,7 +152,6 @@ e2e_tests:
     assertions:
       - "vat compiles with and without default features; hyper has the http2 feature explicitly."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
