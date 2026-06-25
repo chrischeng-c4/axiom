@@ -95,7 +95,6 @@ properties:
     required: [version, os, arch]
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
