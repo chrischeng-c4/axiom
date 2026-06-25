@@ -6,6 +6,7 @@ use std::process::Command;
 use mamba::pkgmanage::pkgmgr::wheel_build::{
     CoreMetadata, WheelBuilder, WheelMetadata, compose_filename,
 };
+use sha2::{Digest, Sha256};
 
 fn mamba_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mamba"))
@@ -49,6 +50,13 @@ fn build_wheel_index(wheels: &[PathBuf]) -> (tempfile::TempDir, std::process::Ou
     let tmp = tempfile::tempdir().unwrap();
     let out = run(tmp.path(), &args);
     (index, out)
+}
+
+fn sha256_file(path: &Path) -> String {
+    let bytes = std::fs::read(path).unwrap();
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 fn fixture_site() -> tempfile::TempDir {
@@ -243,6 +251,102 @@ fn pip_compile_no_deps_omits_transitive_requirements() {
 }
 
 #[test]
+fn pip_compile_index_url_resolves_transitive_requirements() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server_url = rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let root_meta = serde_json::json!({
+            "info": { "name": "live_app", "version": "1.0.0" },
+            "releases": {
+                "1.0.0": [{
+                    "filename": "live_app-1.0.0-py3-none-any.whl",
+                    "url": "https://example.invalid/live_app-1.0.0-py3-none-any.whl",
+                    "digests": { "sha256": &"a".repeat(64) },
+                    "yanked": false
+                }]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-app/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(root_meta))
+            .mount(&server)
+            .await;
+        let root_version = serde_json::json!({
+            "info": {
+                "name": "live_app",
+                "version": "1.0.0",
+                "requires_dist": ["live_dep==0.2.0"]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-app/1.0.0/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(root_version))
+            .mount(&server)
+            .await;
+        let dep_meta = serde_json::json!({
+            "info": { "name": "live_dep", "version": "0.2.0" },
+            "releases": {
+                "0.2.0": [{
+                    "filename": "live_dep-0.2.0-py3-none-any.whl",
+                    "url": "https://example.invalid/live_dep-0.2.0-py3-none-any.whl",
+                    "digests": { "sha256": &"b".repeat(64) },
+                    "yanked": false
+                }]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-dep/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(dep_meta))
+            .mount(&server)
+            .await;
+        let dep_version = serde_json::json!({
+            "info": {
+                "name": "live_dep",
+                "version": "0.2.0",
+                "requires_dist": []
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-dep/0.2.0/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(dep_version))
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        std::mem::forget(server);
+        url
+    });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let input = tmp.path().join("requirements.in");
+    std::fs::write(&input, "live_app>=1\n").unwrap();
+    let compile = run(
+        tmp.path(),
+        &[
+            "pip",
+            "compile",
+            input.to_str().unwrap(),
+            "--index-url",
+            &server_url,
+            "--generate-hashes",
+            "--no-header",
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let body = String::from_utf8_lossy(&compile.stdout);
+    assert!(body.contains("live-app==1.0.0"), "{body}");
+    assert!(body.contains("live-dep==0.2.0"), "{body}");
+    assert!(body.contains("--hash=sha256:"), "{body}");
+    assert!(body.contains("# via live-app"), "{body}");
+}
+
+#[test]
 fn pip_install_direct_wheel_and_uninstall_use_record() {
     let wheel_dir = tempfile::tempdir().unwrap();
     let wheel = build_wheel(wheel_dir.path(), "demo-pkg", "1.0.0", &[]);
@@ -361,6 +465,142 @@ fn pip_install_from_frozen_index_installs_dependencies() {
 }
 
 #[test]
+fn pip_install_index_url_downloads_and_installs_dependencies() {
+    let wheel_dir = tempfile::tempdir().unwrap();
+    let app = build_wheel(
+        wheel_dir.path(),
+        "live-install-app",
+        "1.0.0",
+        &["live-install-dep==0.2.0"],
+    );
+    let dep = build_wheel(wheel_dir.path(), "live-install-dep", "0.2.0", &[]);
+    let app_sha = sha256_file(&app);
+    let dep_sha = sha256_file(&dep);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server_url = rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let base = server.uri();
+        let app_name = app.file_name().unwrap().to_str().unwrap().to_string();
+        let dep_name = dep.file_name().unwrap().to_str().unwrap().to_string();
+        let app_meta = serde_json::json!({
+            "info": { "name": "live-install-app", "version": "1.0.0" },
+            "releases": {
+                "1.0.0": [{
+                    "filename": &app_name,
+                    "url": format!("{base}/files/{app_name}"),
+                    "digests": { "sha256": &app_sha },
+                    "yanked": false
+                }]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-install-app/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(app_meta))
+            .mount(&server)
+            .await;
+        let app_version = serde_json::json!({
+            "info": {
+                "name": "live-install-app",
+                "version": "1.0.0",
+                "requires_dist": ["live-install-dep==0.2.0"]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-install-app/1.0.0/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(app_version))
+            .mount(&server)
+            .await;
+        let dep_meta = serde_json::json!({
+            "info": { "name": "live-install-dep", "version": "0.2.0" },
+            "releases": {
+                "0.2.0": [{
+                    "filename": &dep_name,
+                    "url": format!("{base}/files/{dep_name}"),
+                    "digests": { "sha256": &dep_sha },
+                    "yanked": false
+                }]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-install-dep/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(dep_meta))
+            .mount(&server)
+            .await;
+        let dep_version = serde_json::json!({
+            "info": {
+                "name": "live-install-dep",
+                "version": "0.2.0",
+                "requires_dist": []
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-install-dep/0.2.0/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(dep_version))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/files/{app_name}")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(std::fs::read(&app).unwrap()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/files/{dep_name}")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(std::fs::read(&dep).unwrap()))
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        std::mem::forget(server);
+        url
+    });
+
+    let site = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let install = Command::new(mamba_bin())
+        .args([
+            "pip",
+            "install",
+            "live-install-app==1.0.0",
+            "--index-url",
+            &server_url,
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ])
+        .env("MAMBA_CACHE_DIR", &cache)
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba");
+    assert!(
+        install.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    let tree = run(
+        tmp.path(),
+        &[
+            "pip",
+            "tree",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--package",
+            "live-install-app",
+        ],
+    );
+    assert!(tree.status.success());
+    let stdout = String::from_utf8_lossy(&tree.stdout);
+    assert!(stdout.contains("live-install-app v1.0.0"), "{stdout}");
+    assert!(stdout.contains("live-install-dep v0.2.0"), "{stdout}");
+}
+
+#[test]
 fn pip_sync_installs_requirements_and_prunes_extras() {
     let wheel_dir = tempfile::tempdir().unwrap();
     let app = build_wheel(wheel_dir.path(), "sync-app", "1.0.0", &["sync-dep==0.2.0"]);
@@ -425,6 +665,158 @@ fn pip_sync_installs_requirements_and_prunes_extras() {
     assert!(stdout.contains("sync-app==1.0.0"), "{stdout}");
     assert!(stdout.contains("sync-dep==0.2.0"), "{stdout}");
     assert!(!stdout.contains("sync-extra"), "{stdout}");
+}
+
+#[test]
+fn pip_sync_index_url_downloads_and_prunes_extras() {
+    let wheel_dir = tempfile::tempdir().unwrap();
+    let app = build_wheel(
+        wheel_dir.path(),
+        "live-sync-app",
+        "1.0.0",
+        &["live-sync-dep==0.2.0"],
+    );
+    let dep = build_wheel(wheel_dir.path(), "live-sync-dep", "0.2.0", &[]);
+    let extra = build_wheel(wheel_dir.path(), "live-sync-extra", "9.9.9", &[]);
+    let app_sha = sha256_file(&app);
+    let dep_sha = sha256_file(&dep);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server_url = rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let base = server.uri();
+        let app_name = app.file_name().unwrap().to_str().unwrap().to_string();
+        let dep_name = dep.file_name().unwrap().to_str().unwrap().to_string();
+        let app_meta = serde_json::json!({
+            "info": { "name": "live-sync-app", "version": "1.0.0" },
+            "releases": {
+                "1.0.0": [{
+                    "filename": &app_name,
+                    "url": format!("{base}/files/{app_name}"),
+                    "digests": { "sha256": &app_sha },
+                    "yanked": false
+                }]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-sync-app/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(app_meta))
+            .mount(&server)
+            .await;
+        let app_version = serde_json::json!({
+            "info": {
+                "name": "live-sync-app",
+                "version": "1.0.0",
+                "requires_dist": ["live-sync-dep==0.2.0"]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-sync-app/1.0.0/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(app_version))
+            .mount(&server)
+            .await;
+        let dep_meta = serde_json::json!({
+            "info": { "name": "live-sync-dep", "version": "0.2.0" },
+            "releases": {
+                "0.2.0": [{
+                    "filename": &dep_name,
+                    "url": format!("{base}/files/{dep_name}"),
+                    "digests": { "sha256": &dep_sha },
+                    "yanked": false
+                }]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-sync-dep/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(dep_meta))
+            .mount(&server)
+            .await;
+        let dep_version = serde_json::json!({
+            "info": {
+                "name": "live-sync-dep",
+                "version": "0.2.0",
+                "requires_dist": []
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/live-sync-dep/0.2.0/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(dep_version))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/files/{app_name}")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(std::fs::read(&app).unwrap()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/files/{dep_name}")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(std::fs::read(&dep).unwrap()))
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        std::mem::forget(server);
+        url
+    });
+
+    let site = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let preinstall = run(
+        tmp.path(),
+        &[
+            "pip",
+            "install",
+            extra.to_str().unwrap(),
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    assert!(preinstall.status.success());
+
+    let requirements = tmp.path().join("requirements.txt");
+    std::fs::write(&requirements, "live-sync-app==1.0.0\n").unwrap();
+    let sync = Command::new(mamba_bin())
+        .args([
+            "pip",
+            "sync",
+            requirements.to_str().unwrap(),
+            "--index-url",
+            &server_url,
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ])
+        .env("MAMBA_CACHE_DIR", &cache)
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba");
+    assert!(
+        sync.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let freeze = run(
+        tmp.path(),
+        &[
+            "pip",
+            "freeze",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+        ],
+    );
+    assert!(freeze.status.success());
+    let stdout = String::from_utf8_lossy(&freeze.stdout);
+    assert!(stdout.contains("live-sync-app==1.0.0"), "{stdout}");
+    assert!(stdout.contains("live-sync-dep==0.2.0"), "{stdout}");
+    assert!(!stdout.contains("live-sync-extra"), "{stdout}");
 }
 
 #[test]

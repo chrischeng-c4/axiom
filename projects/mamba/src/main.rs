@@ -251,6 +251,7 @@ fn cli() -> Command {
                         .about("Compile requirements inputs into pinned requirements.txt or pylock.toml")
                         .arg(Arg::new("src").value_name("SRC_FILE").required(true).action(ArgAction::Append).num_args(1..).help("requirements input file, or - for stdin"))
                         .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory for package requirements"))
+                        .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                         .arg(Arg::new("output-file").long("output-file").short('o').value_name("FILE").help("Write compiled output to FILE; stdout when omitted"))
                         .arg(Arg::new("format").long("format").value_name("FORMAT").help("requirements.txt | pylock.toml"))
                         .arg(Arg::new("generate-hashes").long("generate-hashes").action(ArgAction::SetTrue).help("Include sha256 hashes in requirements.txt output"))
@@ -265,6 +266,7 @@ fn cli() -> Command {
                         .arg(Arg::new("spec").value_name("REQ_OR_WHEEL").action(ArgAction::Append).num_args(0..).help("Package requirement or wheel path"))
                         .arg(Arg::new("requirement").long("requirement").short('r').value_name("FILE").action(ArgAction::Append).help("Install requirements from a requirements.txt file"))
                         .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory for package requirements"))
+                        .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                         .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages"))
                         .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to python3")),
                 )
@@ -273,6 +275,7 @@ fn cli() -> Command {
                         .about("Sync an environment to requirements from frozen-index package pins")
                         .arg(Arg::new("src").value_name("SRC_FILE").required(true).action(ArgAction::Append).num_args(1..).help("requirements.txt file to sync"))
                         .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory for package requirements"))
+                        .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                         .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages"))
                         .arg(Arg::new("python").long("python").short('p').value_name("PYTHON").help("Python executable for console-script wrappers; defaults to python3")),
                 )
