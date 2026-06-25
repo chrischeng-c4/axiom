@@ -82,6 +82,13 @@ struct MbDecimal {
     value: Decimal,
     neg: bool,
     tuple_exp: Option<i64>,
+    /// Index into the `EXACT_VALUES` intern table when this finite payload
+    /// carries an exact coefficient/scale that exceeds rust_decimal's window
+    /// (e.g. `Decimal(0.1)` captures the full ~55-digit binary expansion).
+    /// `None` for ordinary payloads, which render from `value` directly.
+    /// A `Copy`-friendly index so every struct copy (arithmetic copy-through,
+    /// `__copy__`, `Decimal(Decimal(...))`) carries the exact value for free.
+    exact: Option<usize>,
 }
 
 impl MbDecimal {
@@ -91,6 +98,7 @@ impl MbDecimal {
             neg: value.is_sign_negative(),
             value,
             tuple_exp: None,
+            exact: None,
         }
     }
     fn inf(neg: bool) -> Self {
@@ -99,6 +107,7 @@ impl MbDecimal {
             value: Decimal::ZERO,
             neg,
             tuple_exp: None,
+            exact: None,
         }
     }
     fn qnan() -> Self {
@@ -107,6 +116,7 @@ impl MbDecimal {
             value: Decimal::ZERO,
             neg: false,
             tuple_exp: None,
+            exact: None,
         }
     }
     fn snan() -> Self {
@@ -115,6 +125,7 @@ impl MbDecimal {
             value: Decimal::ZERO,
             neg: false,
             tuple_exp: None,
+            exact: None,
         }
     }
     fn is_nan(&self) -> bool {
@@ -130,6 +141,11 @@ const DECIMAL_HANDLE_BASE: u64 = 1u64 << 46;
 thread_local! {
     static DECIMALS: RefCell<HashMap<u64, MbDecimal>> = RefCell::new(HashMap::new());
     static DECIMAL_IDS: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
+    /// Intern table for exact coefficient/scale pairs (signed coefficient,
+    /// scale ≥ 0) that exceed rust_decimal's window — see `MbDecimal::exact`.
+    /// Interned and never freed; entries are tiny and only float construction
+    /// (a cold path) ever appends.
+    static EXACT_VALUES: RefCell<Vec<(BigInt, i64)>> = const { RefCell::new(Vec::new()) };
     static NEXT_DECIMAL_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(DECIMAL_HANDLE_BASE) };
     /// Per-handle refcount (#2111).
     static DECIMAL_REFCOUNTS: RefCell<HashMap<u64, u32>> = RefCell::new(HashMap::new());
@@ -514,6 +530,59 @@ fn f64_to_rational(f: f64) -> (BigInt, BigInt) {
     (num, den)
 }
 
+/// Exact terminating-decimal expansion of a finite f64, returned as
+/// `(signed_coeff, scale)` so the value equals `signed_coeff * 10^-scale`.
+///
+/// The f64 is `mant * 2^e`; with `den = 2^k` (k ≥ 0) the value is
+/// `num / 2^k = num * 5^k / 10^k`, an exact terminating decimal with
+/// coefficient `num * 5^k` and scale `k`. Trailing zeros are stripped while
+/// the scale stays ≥ 0, matching CPython's canonical `Decimal(float)` form
+/// (so `Decimal(10.0)` is `10` with scale 0, while `Decimal(0.1)` keeps its
+/// full 55-digit expansion).
+fn f64_to_exact_decimal(f: f64) -> (BigInt, i64) {
+    let (num, den) = f64_to_rational(f);
+    // `den` is exactly a power of two: 2^k.
+    let k = (den.bits() as i64) - 1; // bits() of 2^k is k+1; for den==1, k==0.
+    let mut coeff = num;
+    let mut scale = 0i64;
+    if k > 0 {
+        coeff *= pow5(k as u32);
+        scale = k;
+    }
+    // Strip trailing zeros while keeping the scale non-negative.
+    let ten = BigInt::from(10u32);
+    while scale > 0 && (&coeff % &ten).is_zero() {
+        coeff /= &ten;
+        scale -= 1;
+    }
+    (coeff, scale)
+}
+
+/// `5^n` as BigInt.
+fn pow5(n: u32) -> BigInt {
+    let mut p = BigInt::from(1u32);
+    let five = BigInt::from(5u32);
+    for _ in 0..n {
+        p *= &five;
+    }
+    p
+}
+
+/// Intern an exact `(signed_coeff, scale)` pair and return its index for
+/// `MbDecimal::exact`.
+fn intern_exact(coeff: BigInt, scale: i64) -> usize {
+    EXACT_VALUES.with(|v| {
+        let mut v = v.borrow_mut();
+        v.push((coeff, scale));
+        v.len() - 1
+    })
+}
+
+/// Read back an interned exact `(signed_coeff, scale)` pair.
+fn exact_value(idx: usize) -> (BigInt, i64) {
+    EXACT_VALUES.with(|v| v.borrow()[idx].clone())
+}
+
 /// Classify an MbValue as a numeric operand for exact comparison.
 /// Handles Decimal handles, Fraction handles, bool/int/BigInt, float.
 /// Complex with zero imaginary part participates via its real float.
@@ -521,7 +590,13 @@ fn classify_numeric(v: MbValue) -> Option<NumOperand> {
     if let Some(st) = get_state(v) {
         return Some(match st.class {
             DecClass::Finite => {
-                let (c, s) = coeff_scale(&st.value);
+                // Exact float payloads compare on their full expansion so
+                // `Decimal(0.1) != Decimal('0.1')` and equals the exact string.
+                let (c, s) = if let Some(idx) = st.exact {
+                    exact_value(idx)
+                } else {
+                    coeff_scale(&st.value)
+                };
                 NumOperand::Rational(c, pow10(s as u32))
             }
             DecClass::Inf => NumOperand::Inf(st.neg),
@@ -1237,6 +1312,15 @@ fn state_to_string(st: &MbDecimal) -> String {
         }
         DecClass::Finite => {
             let d = &st.value;
+            // Exact float-expansion payload: render from the interned
+            // coefficient/scale, which carries digits beyond rust_decimal's
+            // window (e.g. `Decimal(0.1)`'s full 55-digit expansion).
+            if let Some(idx) = st.exact {
+                let (coeff, scale) = exact_value(idx);
+                let neg = st.neg || coeff.is_negative();
+                let digits = coeff.magnitude().to_string();
+                return to_sci_string(neg, &digits, -scale);
+            }
             let neg = d.is_sign_negative();
             let digits = d.mantissa().unsigned_abs().to_string();
             to_sci_string(neg, &digits, -(d.scale() as i64))
@@ -1578,8 +1662,11 @@ pub fn mb_decimal_new_argc(val: MbValue, provided: bool) -> MbValue {
         return make_handle(Decimal::from(i));
     }
 
-    // Float — shortest-repr conversion (exact binary expansion is a
-    // documented carve-out); specials map to their Decimal classes.
+    // Float — captures the EXACT binary expansion (CPython: `Decimal(0.1)` is
+    // the full ~55-digit `0.1000...625`). The rust_decimal payload holds a
+    // best-effort approximation for fast paths, but the exact coefficient/scale
+    // is interned and used for str/repr and comparison. Specials map to their
+    // Decimal classes; signed zero is preserved.
     if let Some(f) = val.as_float() {
         if f.is_nan() {
             return make_state_handle(MbDecimal::qnan());
@@ -1591,7 +1678,15 @@ pub fn mb_decimal_new_argc(val: MbValue, provided: bool) -> MbValue {
         if f == 0.0 && f.is_sign_negative() {
             d.set_sign_negative(true);
         }
-        return make_handle(d);
+        let mut st = MbDecimal::finite(d);
+        // Exact expansion: zero stays a plain zero (no oversized coefficient),
+        // non-zero captures the full terminating-decimal expansion.
+        if f != 0.0 {
+            let (coeff, scale) = f64_to_exact_decimal(f);
+            st.neg = f < 0.0;
+            st.exact = Some(intern_exact(coeff, scale));
+        }
+        return make_state_handle(st);
     }
 
     if let Some(ptr) = val.as_ptr() {
