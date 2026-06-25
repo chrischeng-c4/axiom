@@ -15,7 +15,7 @@ For implementation map, see [llms.txt](llms.txt).
 | C1. Py3.12 functional parity — Axis 1 | #3331 | partial | planned | conformance | not_ready | confirmed README promise; CPython oracle gate remains open |
 | C2. Less CPU time AND less memory than CPython — Axis 2 | #3880 | planned | planned | conformance | not_ready | confirmed README promise; CPU/RSS ratio gates remain open |
 | C3. mambalibs end-to-end — Axis 3 | #3457 | partial | planned | conformance | not_ready | confirmed README promise; native module coverage remains open |
-| C4. Package manager — uv-like | #3881 | partial | planned | conformance | not_ready | confirmed README promise; uv-like workflow coverage remains open |
+| C4. Package manager — uv-like | #459 | implemented | verified | conformance | ready | uv-like offline workflow coverage is green across init/index/add/remove/lock/sync/run/install/hash/cache |
 
 ### C1. Py3.12 functional parity — Axis 1
 
@@ -74,8 +74,8 @@ ID: c4-package-manager-uv-like
 Type: DeveloperTool
 Surfaces: CLI: `mamba init` + `mamba index` + `mamba add` + `mamba remove` + `mamba lock` + `mamba sync` + `mamba install` + `mamba cache` + `mamba hash` + `mamba pkgmgr-validate` - project scaffold, frozen index, dependency, lockfile, install, cache, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
 EC Dimensions: behavior: `cargo test -p mamba --test pkgmgr` - uv-like workflow fixtures; stability: `cargo test -p mamba --test schema_gates pkgmgr` - schema, pin, and idempotence contracts
-Root WI: #3881
-Status: confirmed
+Root WI: #459
+Status: verified
 Required Verification: conformance, negative
 Promise:
 A built-in package manager surface for project scaffold, dependency add/remove, lockfile generation, sync/install, cache, and validation workflows. The product promise is `uv`-style ergonomics over the mamba runtime with `mamba.toml` and `mamba.lock` as the agent-readable project contract.
@@ -83,16 +83,17 @@ Gate Inventory: `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Uv-like package manager workflow | epic | #3881 | partial | planned | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
+| Uv-like package manager workflow | epic | #459 | implemented | verified | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
 
 Current state: `mamba init/index/add/remove/lock/sync/run/install/hash/cache`
 plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
 local wheel paths, and explicit registry URL tests. `mamba index build` can
 materialize a frozen local index from wheel files or directories for
-`mamba add --index` / `mamba lock --index`. `mamba add` / `mamba lock` do not
-treat public PyPI as an implicit default source; callers must provide a frozen
-local index, direct local wheel file, or explicit registry URL when resolving
-dependencies.
+`mamba add --index` / `mamba lock --index`. The package-manager validation
+profile requires all nine offline workflow families and keeps live network
+coverage opt-in/report-only. `mamba add` / `mamba lock` do not treat public
+PyPI as an implicit default source; callers must provide a frozen local index,
+direct local wheel file, or explicit registry URL when resolving dependencies.
 
 ## Test Completeness — what we tested, against what authority
 
@@ -856,7 +857,7 @@ Measured numbers per axis are in **[Capability status — the four axes](#capabi
 | Capability      | C1 Py3.12 parity            | No — ① type **74.1%** enforced (auto-measured) + **100%** sound · ② ~18% run-correct |
 | Capability      | C2 Perf > CPython           | No — compute median ~13× faster, but object/float slower **and** memory regresses; the boxed value model is the keystone |
 | Capability      | C3 mambalibs end-to-end     | No — most kits stub-only |
-| Capability      | C4 Package manager (uv-like)| No — skeleton only |
+| Capability      | C4 Package manager (uv-like)| Yes — offline uv-like workflow gates cover init/index/add/remove/lock/sync/run/install/hash/cache |
 | Runtime         | core substrate stability    | **99.1%** — sound; only edge crashes (deep recursion, gen-nesting cap, MRO, async-gen hang) |
 | Ceiling         | match Golang (`mamba/go`)   | ~4× behind Go on compute today (Go ~50× vs CPython, mamba ~13×); gap = value model + codegen, not JIT-vs-AOT |
 | Standardization | managed                     | No — 5.1%; epic [#3882](https://github.com/chrischeng-c4/cclab/issues/3882) |
