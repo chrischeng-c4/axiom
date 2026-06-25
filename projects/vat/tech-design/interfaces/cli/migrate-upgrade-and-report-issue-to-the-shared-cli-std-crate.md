@@ -56,7 +56,6 @@ properties:
 description: "Fields cli-std needs to drive upgrade (release discovery/asset) + report-issue (diagnostics). Exact field names follow cli_std::ToolInfo."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
