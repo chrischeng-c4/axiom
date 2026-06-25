@@ -2868,9 +2868,36 @@ thread_local! {
         std::cell::Cell::new(MbValue::none().to_bits());
 }
 
-/// The exception value most recently bound by an except handler.
+/// The exception value most recently bound by an except handler — what
+/// `sys.exception()` returns. Returns an OWNED reference (retained): the
+/// LAST_CAUGHT_VALUE slot is borrowed, so without a retain the caller's
+/// eventual release could free the object out from under the slot (or a later
+/// save/restore reinstating the same pointer), which surfaced as an intermittent
+/// double-free in nested try/except. Retaining here matches the rc.rs accessor
+/// convention (return owned).
 pub(crate) fn last_caught_exception_value() -> MbValue {
-    LAST_CAUGHT_VALUE.with(|c| MbValue::from_bits(c.get()))
+    LAST_CAUGHT_VALUE.with(|c| {
+        let val = MbValue::from_bits(c.get());
+        unsafe {
+            super::rc::retain_if_ptr(val);
+        }
+        val
+    })
+}
+
+/// Read the raw bits of `LAST_CAUGHT_VALUE` (what `sys.exception()` reports).
+/// Used by exception.rs's save/restore stack to snapshot the currently-handled
+/// exception across a try/except region boundary.
+pub fn last_caught_value_bits() -> u64 {
+    LAST_CAUGHT_VALUE.with(|c| c.get())
+}
+
+/// Overwrite the raw bits of `LAST_CAUGHT_VALUE`. Used by exception.rs to
+/// restore the previously-handled exception (or None) when an except handler
+/// region exits, matching CPython's per-frame save/restore of the currently
+/// handled exception.
+pub fn set_last_caught_value_bits(bits: u64) {
+    LAST_CAUGHT_VALUE.with(|c| c.set(bits));
 }
 
 /// Retrieve the last raised instance (preserves custom fields).

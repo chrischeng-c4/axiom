@@ -1467,6 +1467,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_save_handled_exc",
+            exception::mb_save_handled_exc as fn() -> i64,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_restore_handled_exc",
+            exception::mb_restore_handled_exc as fn(i64),
+            [I64],
+            Void
+        ),
+        rt_sym!(
             "mb_exception_matches",
             exception::mb_exception_matches as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],

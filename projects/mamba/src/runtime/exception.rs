@@ -56,6 +56,74 @@ thread_local! {
     /// it around so `format_exc()` can stringify the latest handled exception
     /// even after the except-block has exited.
     static LAST_HANDLED_EXCEPTION: std::cell::RefCell<Option<MbException>> = std::cell::RefCell::new(None);
+    /// Save/restore stack for the "currently handled exception" (CPython
+    /// clears it when an except-handler region unwinds). Each entry snapshots
+    /// BOTH `LAST_HANDLED_EXCEPTION` (here) and `class.rs`'s `LAST_CAUGHT_VALUE`
+    /// (read via the bits getter). `mb_save_handled_exc` pushes a snapshot at
+    /// try-entry and returns its index; `mb_restore_handled_exc` pops back to
+    /// that index and reinstates the snapshot when the region exits.
+    static HANDLED_EXC_SAVE_STACK: std::cell::RefCell<Vec<(Option<MbException>, u64)>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+/// Snapshot the currently-handled-exception state (both thread-locals) at
+/// try-entry, push it on the save stack, and return a token (the slot index).
+/// The snapshot is taken BEFORE any `except` handler runs `mb_catch_exception*`,
+/// so it captures the *enclosing* frame's handled exception (which CPython
+/// restores once this handler region unwinds).
+pub fn mb_save_handled_exc() -> i64 {
+    let last_handled = LAST_HANDLED_EXCEPTION.with(|h| h.borrow().clone());
+    let last_caught_bits = super::class::last_caught_value_bits();
+    // Park an owned reference to the caught value while it sits on the save
+    // stack so it can't be freed before we restore it (LAST_CAUGHT_VALUE itself
+    // is a borrowed slot — its owner is the live except handler's binding, which
+    // may be dropped before the region we are nested in exits).
+    unsafe {
+        super::rc::retain_if_ptr(MbValue::from_bits(last_caught_bits));
+    }
+    HANDLED_EXC_SAVE_STACK.with(|s| {
+        let mut stack = s.borrow_mut();
+        let token = stack.len() as i64;
+        stack.push((last_handled, last_caught_bits));
+        token
+    })
+}
+
+/// Restore the handled-exception state captured by `mb_save_handled_exc` for
+/// `token`, then drop that slot (and any deeper ones). Restoring at the
+/// region-exit edges (handler fall-through / return-from-handler) reinstates
+/// the enclosing frame's handled exception, so `sys.exception()` /
+/// `sys.exc_info()` / `traceback.format_exc()` no longer leak the just-handled
+/// exception. Idempotent: a token at/above the current depth is a no-op.
+pub fn mb_restore_handled_exc(token: i64) {
+    if token < 0 {
+        return;
+    }
+    let token = token as usize;
+    // Pop this slot and every deeper one. The slot at `token` is reinstated;
+    // the deeper ones (whose own regions were exited abnormally without a
+    // matching restore — e.g. a raise that propagated past them) are discarded.
+    // Each carried a parked retain (see mb_save_handled_exc) that must be
+    // released exactly once now.
+    let popped = HANDLED_EXC_SAVE_STACK.with(|s| {
+        let mut stack = s.borrow_mut();
+        if token >= stack.len() {
+            return Vec::new();
+        }
+        stack.split_off(token)
+    });
+    if let Some((last_handled, last_caught_bits)) = popped.first().cloned() {
+        LAST_HANDLED_EXCEPTION.with(|h| {
+            *h.borrow_mut() = last_handled;
+        });
+        super::class::set_last_caught_value_bits(last_caught_bits);
+    }
+    // Release every parked retain we just removed from the stack.
+    for (_, bits) in &popped {
+        unsafe {
+            super::rc::release_if_ptr(MbValue::from_bits(*bits));
+        }
+    }
 }
 
 /// Public read accessor for the most-recently caught exception.
