@@ -1,0 +1,25 @@
+[package]
+name = "cclab-h2c"
+version = "0.1.0"
+edition = "2021"
+description = "Shared HTTP/2 cleartext (h2c) client helpers: a single-connection client, a round-robin connection pool, and the ln(concurrency) connection-count heuristic."
+
+[lib]
+name = "cclab_h2c"
+path = "src/lib.rs"
+
+[dependencies]
+# Inherit the workspace reqwest (rustls, http2) so the lockfile stays
+# single-versioned; h2c uses prior-knowledge over cleartext.
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio", "http1", "http2"] }
+http-body-util = "0.1"
+bytes = "1"
+
+[[example]]
+name = "conn_sweep"
+path = "examples/conn_sweep.rs"
