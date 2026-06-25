@@ -1262,9 +1262,21 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
 
     // #188 E1: when the WI carries an `<!-- aw:loop-state -->` block, the loop
     // engine drives the next act from the verifier result (decide_next_action),
-    // not the CRRR phase machine. Absent the block, fall through to the
-    // phase-driven path below (fully backward-compatible).
-    if let Some(loop_state) = crate::cli::loop_state::parse_loop_state(&issue.body) {
+    // not the CRRR phase machine. The block is authored on the LOCAL lifecycle
+    // copy (by `aw ec record`), which may not be synced to the resolved
+    // (configured-backend) issue — so prefer the local copy's body, falling back
+    // to the resolved body. Absent any block, fall through to the phase-driven
+    // path below (fully backward-compatible).
+    let loop_body = {
+        use crate::issues::IssueBackend;
+        match crate::issues::local_backend(&project_root).get(wi).await {
+            Ok(Some(local)) if crate::cli::loop_state::parse_loop_state(&local.body).is_some() => {
+                local.body
+            }
+            _ => issue.body.clone(),
+        }
+    };
+    if let Some(loop_state) = crate::cli::loop_state::parse_loop_state(&loop_body) {
         return loop_state_envelope(root, &issue, &loop_state);
     }
 
