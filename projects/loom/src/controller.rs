@@ -159,6 +159,10 @@ pub struct CompleteRequest {
     /// keep ref to the result payload, if any.
     #[serde(default)]
     pub result_ref: Option<String>,
+    /// The attempt this completion is for (#437 dedup). Omit to target the node's
+    /// current in-flight attempt (manual completes don't need to track it).
+    #[serde(default)]
+    pub attempt: Option<u32>,
     /// Set when the attempt failed (triggers retry-or-fail).
     #[serde(default)]
     pub failed: bool,
@@ -173,14 +177,21 @@ async fn apply_node_completion(
     run: &mut WorkflowRun,
     dispatcher: &dyn Dispatcher,
     node: &NodeId,
+    attempt: u32,
     result_ref: Option<KeepRef>,
+    result_inline: Option<Vec<u8>>,
     failed: bool,
     fan_out: &[FanOutSpec],
 ) -> anyhow::Result<()> {
+    // #437 idempotent fold: drop duplicate/stale completions (at-least-once
+    // redelivery) so fan-out is never re-spliced and children never re-run.
+    if !run.completion_is_current(node, attempt) {
+        return Ok(());
+    }
     if failed {
         run.mark_failed(node);
     } else {
-        run.mark_done(node, result_ref);
+        run.mark_done_inline(node, result_ref, result_inline);
         if !fan_out.is_empty() {
             let children: Vec<Node> = fan_out
                 .iter()
@@ -219,11 +230,16 @@ async fn complete_node(
         }
     };
     let result_ref = if req.failed { None } else { req.result_ref.clone().map(KeepRef) };
+    let node_id = NodeId::new(&node);
+    // Manual completes may omit attempt → target the node's current in-flight one.
+    let attempt = req.attempt.unwrap_or_else(|| run.nodes.get(&node_id).map_or(0, |n| n.attempt));
     if let Err(e) = apply_node_completion(
         &mut run,
         state.dispatcher.as_ref(),
-        &NodeId::new(&node),
+        &node_id,
+        attempt,
         result_ref,
+        None,
         req.failed,
         &req.fan_out,
     )
@@ -421,11 +437,14 @@ async fn apply_completion_msg(store: &Arc<dyn RunStore>, dispatcher: &dyn Dispat
         return;
     };
     let result_ref = if cm.failed { None } else { cm.result_ref.map(KeepRef) };
+    let result_inline = if cm.failed { None } else { cm.result_inline };
     if apply_node_completion(
         &mut run,
         dispatcher,
         &NodeId::new(&cm.node_id),
+        cm.attempt,
         result_ref,
+        result_inline,
         cm.failed,
         &cm.fan_out,
     )
@@ -575,5 +594,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body_json(r).await["status"], "succeeded");
+    }
+
+    #[tokio::test]
+    async fn duplicate_completion_is_idempotent() {
+        // #437: a replayed completion (at-least-once redelivery) must be a no-op
+        // — no re-spliced fan-out, no reset/re-run of already-progressed children.
+        let app = test_router();
+        let cpost = |path: &str, body: &'static str| {
+            Request::post(path).header("content-type", "application/json").body(Body::from(body)).unwrap()
+        };
+        let fanout = r#"{"fan_out":[{"id":"c0","task_name":"t"},{"id":"c1","task_name":"t"}]}"#;
+
+        app.clone()
+            .oneshot(cpost("/runs", r#"{"run_id":"idem","nodes":[{"id":"a","task_name":"t"}]}"#))
+            .await
+            .unwrap();
+        // complete `a` → splices c0,c1
+        app.clone().oneshot(cpost("/runs/idem/nodes/a/complete", fanout)).await.unwrap();
+        // complete c0 → c0 Done
+        app.clone().oneshot(cpost("/runs/idem/nodes/c0/complete", "{}")).await.unwrap();
+        // DUPLICATE complete of `a` (same fan-out) — must be ignored by the guard
+        let dup = app.clone().oneshot(cpost("/runs/idem/nodes/a/complete", fanout)).await.unwrap();
+        assert_eq!(dup.status(), StatusCode::OK);
+
+        let g = app.oneshot(Request::get("/runs/idem").body(Body::empty()).unwrap()).await.unwrap();
+        let view = body_json(g).await;
+        let nodes = view["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 3, "duplicate must not add nodes");
+        let c0 = nodes.iter().find(|n| n["id"] == "c0").unwrap();
+        assert_eq!(c0["state"], "done", "duplicate completion must NOT reset/re-run c0");
     }
 }

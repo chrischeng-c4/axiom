@@ -104,8 +104,12 @@ pub struct Node {
     pub deps: BTreeSet<NodeId>,
     pub state: NodeState,
     pub attempt: u32,
-    /// keep ref to the result payload, set when the node completes.
+    /// keep ref to the result payload, set when the node completes (claim-check).
     pub result_ref: Option<KeepRef>,
+    /// Inline result bytes for small payloads (skips keep). Worker-local, never
+    /// serialized; lets a downstream node read this result without a keep hop.
+    #[serde(default, skip)]
+    pub result_inline: Option<Vec<u8>>,
 }
 
 impl Node {
@@ -115,7 +119,7 @@ impl Node {
         } else {
             NodeState::Pending
         };
-        Self { id, stage, task, deps, state, attempt: 0, result_ref: None }
+        Self { id, stage, task, deps, state, attempt: 0, result_ref: None, result_inline: None }
     }
 }
 
@@ -186,10 +190,33 @@ impl WorkflowRun {
 
     /// Record success, store the result ref, and promote any downstream node
     /// whose dependencies are now all `Done` to `Ready`.
+    /// Whether a completion for `id` at `attempt` should be applied now: the node
+    /// must be currently in flight (Dispatched/Running) for exactly this attempt.
+    /// Rejects duplicates (already terminal) and stale attempts (a redelivered
+    /// completion from a prior attempt) — the at-least-once idempotency guard
+    /// (#437), so a replayed completion never double-splices fan-out or re-runs.
+    pub fn completion_is_current(&self, id: &NodeId, attempt: u32) -> bool {
+        self.nodes.get(id).is_some_and(|n| {
+            matches!(n.state, NodeState::Dispatched | NodeState::Running) && n.attempt == attempt
+        })
+    }
+
     pub fn mark_done(&mut self, id: &NodeId, result_ref: Option<KeepRef>) {
+        self.mark_done_inline(id, result_ref, None);
+    }
+
+    /// Like [`mark_done`](Self::mark_done) but also records an inline result so a
+    /// downstream node can read it without a keep round-trip (#127 inline).
+    pub fn mark_done_inline(
+        &mut self,
+        id: &NodeId,
+        result_ref: Option<KeepRef>,
+        result_inline: Option<Vec<u8>>,
+    ) {
         if let Some(n) = self.nodes.get_mut(id) {
             n.state = NodeState::Done;
             n.result_ref = result_ref;
+            n.result_inline = result_inline;
         }
         self.recompute_ready();
         self.recompute_status();
