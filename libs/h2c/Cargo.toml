@@ -24,6 +24,19 @@ bytes = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 
+# Server side (behind the `server` feature): serve HTTP/1.1 + h2c on one port via
+# hyper-util's auto builder. Optional so client-only consumers (keep/relay/lumen
+# WAL) don't link the server stack.
+hyper = { version = "1", features = ["server", "http1", "http2"], optional = true }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio", "http1", "http2"], optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+axum = { workspace = true, optional = true }
+
+[features]
+# Server transport (`h2c::serve`): the auto-builder accept loop. Off by default
+# so the existing client helpers stay the lib's only required surface.
+server = ["dep:hyper", "dep:hyper-util", "dep:tower", "dep:axum"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }

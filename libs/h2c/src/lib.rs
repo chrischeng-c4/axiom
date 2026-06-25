@@ -39,6 +39,13 @@ mod manager;
 pub use error::{H2cError, Result};
 pub use manager::{H2cManager, ManagerConfig, ManagerStats};
 
+// Server transport (`h2c::serve`) — the other half of the h2c stack. Behind the
+// `server` feature so client-only consumers don't link the hyper server stack.
+#[cfg(feature = "server")]
+pub mod server;
+#[cfg(feature = "server")]
+pub use server::serve;
+
 /// Recommended number of h2c connections for a target peak `concurrency`, using
 /// the available CPU parallelism as the upper cap.
 ///

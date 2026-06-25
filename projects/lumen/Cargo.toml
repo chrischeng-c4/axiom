@@ -39,8 +39,11 @@ futures.workspace = true
 # uses rustls (no openssl) when enabled.
 relay = { path = "../relay", optional = true }
 reqwest = { workspace = true, optional = true }
-# Shared h2c client construction for the relay WAL transport (#469).
-h2c = { path = "../../libs/h2c", optional = true }
+# Shared h2c transport: `server` powers `serve` (HTTP/1.1 + h2c on one port via
+# hyper auto-builder, replacing the HTTP/1-only `axum::serve`); the default
+# client surface backs the relay-WAL client (#469). reqwest here is rustls (no
+# openssl), so the serving binary still cross-compiles cleanly.
+h2c = { path = "../../libs/h2c", features = ["server"] }
 # `lumen upgrade` / `lumen report-issue` — the standard agent-facing CLI ops,
 # shared across the ecosystem (CONTRIBUTING.md "CLI convention"). Offline paths
 # always build; the HTTPS paths are pulled in by lumen's `self-update` /
@@ -89,7 +92,7 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 default = []
 jieba = ["dep:jieba-rs"]
 # relay-wal — tail relay's broadcast as the WAL backend (#124), instead of NATS.
-relay-wal = ["dep:relay", "dep:reqwest", "dep:h2c"]
+relay-wal = ["dep:relay", "dep:reqwest"]
 # self-update / report-issue — enable the online (HTTPS) paths of the shared
 # CLI-ops lib. Offline builds still ship both commands (upgrade --check / the
 # report-issue dry-run + pre-filled-URL fallback). The published binary enables
