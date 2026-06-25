@@ -161,7 +161,6 @@ e2e_tests:
       - "`vat llm` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands."
       - "the guide mentions the cloud-tasks / cloud-scheduler client-wiring factory (REST transport + http endpoint + anonymous credentials) and the direct-REST alternative."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
