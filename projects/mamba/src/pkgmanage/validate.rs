@@ -57,6 +57,7 @@ const REQUIRED_FAMILIES: &[&str] = &[
     "index",
     "add",
     "lock",
+    "audit",
     "export",
     "tree",
     "version",
@@ -165,6 +166,7 @@ fn run_family(family: &str, bin: &Path) -> FamilyResult {
         "index" => probe_index(bin),
         "add" => probe_add(bin),
         "lock" => probe_lock(bin),
+        "audit" => probe_audit(bin),
         "export" => probe_export(bin),
         "tree" => probe_tree(bin),
         "version" => probe_version(bin),
@@ -491,6 +493,62 @@ fn probe_lock(bin: &Path) -> FamilyResult {
     }
     FamilyResult::pass("lock byte-identical on replay; records transitive; check mode clean")
         .with_paths(Some(proj), Some(lock_path), None)
+}
+
+fn probe_audit(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    let lock_path = proj.join("mamba.lock");
+    std::fs::write(
+        &lock_path,
+        "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"safe-pkg\"\nversion = \"1.0.0\"\nsha256 = \"\"\nurl = \"\"\nsource = \"pypi://safe-pkg/1.0.0\"\ndirect = true\ndependencies = []\n",
+    )
+    .unwrap();
+    let db_path = tmp.path().join("advisories.json");
+    std::fs::write(
+        &db_path,
+        r#"{"advisories":[{"id":"GHSA-demo","package":"demo-pkg","affected":["<2.0"],"severity":"high","summary":"demo advisory"}]}"#,
+    )
+    .unwrap();
+
+    let clean = Command::new(bin)
+        .args(["audit", "--advisory-db"])
+        .arg(&db_path)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba");
+    if !clean.status.success() {
+        return FamilyResult::fail(format!(
+            "clean audit failed: {}",
+            String::from_utf8_lossy(&clean.stderr)
+        ));
+    }
+
+    std::fs::write(
+        &lock_path,
+        "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"demo_pkg\"\nversion = \"1.2.0\"\nsha256 = \"\"\nurl = \"\"\nsource = \"pypi://demo_pkg/1.2.0\"\ndirect = true\ndependencies = []\n",
+    )
+    .unwrap();
+    let vulnerable = Command::new(bin)
+        .args(["audit", "--json", "--advisory-db"])
+        .arg(&db_path)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba");
+    if vulnerable.status.success() {
+        return FamilyResult::fail("vulnerable audit unexpectedly passed");
+    }
+    let stdout = String::from_utf8_lossy(&vulnerable.stdout);
+    if !stdout.contains("GHSA-demo") || !stdout.contains("demo_pkg") {
+        return FamilyResult::fail(format!("vulnerable audit JSON mismatch: {stdout}"));
+    }
+
+    FamilyResult::pass("audit checks mamba.lock against offline advisory DB").with_paths(
+        Some(proj),
+        Some(lock_path),
+        Some(db_path),
+    )
 }
 
 fn probe_export(bin: &Path) -> FamilyResult {
