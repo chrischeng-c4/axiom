@@ -469,5 +469,25 @@ pub struct B {
         assert!(parse(&out).is_ok(), "edited unit must still be clean Rust");
         assert!(out.contains("pub struct B {\n    y: u32,\n}"));
     }
+
+    #[test]
+    fn round_trips_real_repo_files_byte_identical() {
+        // AC1 (#40): byte-identical round-trip through the structured IR on real
+        // repo Rust files, not just synthetic snippets. Self-host on this module
+        // plus sibling generator files — all non-trivial (module docs, outer
+        // attrs, doc comments, impls, macros, string literals).
+        for (label, src) in [
+            ("rust_source_unit.rs", include_str!("rust_source_unit.rs")),
+            ("from_td_ast.rs", include_str!("from_td_ast.rs")),
+            ("types.rs", include_str!("types.rs")),
+        ] {
+            let unit = parse(src).unwrap_or_else(|e| panic!("{label} must parse: {e}"));
+            assert_eq!(
+                unit.emit(),
+                src,
+                "{label}: emit must be byte-identical to the original repo file"
+            );
+        }
+    }
 }
 // </HANDWRITE>
