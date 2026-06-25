@@ -5194,6 +5194,36 @@ impl<'a> AstLowerer<'a> {
                                 ty: any_ty,
                             });
                         }
+                        // breakpoint(*args, **kwds) → mb_breakpoint_call(pos_list,
+                        // kwargs_dict). PEP 553 forwards every positional and
+                        // keyword to the current `sys.breakpointhook`; the runtime
+                        // entry reads the live hook and spreads the args to it.
+                        // (#242)
+                        if name == "breakpoint" {
+                            let pos: Vec<HirExpr> = args.iter().filter_map(|a| {
+                                if let ast::CallArg::Positional(e) = a { self.lower_expr(e) } else { None }
+                            }).collect();
+                            let mut pos_list = HirExpr::List { elements: pos, ty: any_ty };
+                            // Honor `*seq` positional splats in source order.
+                            for a in args {
+                                if let ast::CallArg::StarArg(e) = a {
+                                    if let Some(he) = self.lower_expr(e) {
+                                        pos_list = HirExpr::Call {
+                                            func: Box::new(HirExpr::StrLit("mb_args_concat".to_string(), any_ty)),
+                                            args: vec![pos_list, he],
+                                            ty: any_ty,
+                                        };
+                                    }
+                                }
+                            }
+                            let kwargs_dict = self.build_kwargs_dict(args, any_ty)
+                                .unwrap_or(HirExpr::Dict { entries: vec![], ty: any_ty });
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit("mb_breakpoint_call".to_string(), any_ty)),
+                                args: vec![pos_list, kwargs_dict],
+                                ty: any_ty,
+                            });
+                        }
                         // sorted(iterable, key=None, reverse=False) → mb_sorted_kwargs
                         if name == "sorted" {
                             let pos: Vec<HirExpr> = args
