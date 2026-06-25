@@ -105,9 +105,9 @@ fn cli() -> Command {
         .subcommand(
             Command::new("add")
                 .about("Add a dependency to mamba.toml and update mamba.lock")
-                .arg(Arg::new("spec").required(true).help("Dependency spec, e.g. foo==1.2.3 (bare name resolves against PyPI/--index-url)"))
+                .arg(Arg::new("spec").required(true).help("Dependency spec, e.g. foo==1.2.3 (bare names require --index or explicit --index-url)"))
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
-                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("PyPI-compatible index base URL (overrides $MAMBA_INDEX_URL; default https://pypi.org)"))
+                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require pinned version or local index")),
         )
         .subcommand(
@@ -117,9 +117,9 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("lock")
-                .about("Regenerate mamba.lock from mamba.toml; resolves transitive deps via the frozen index or PyPI")
+                .about("Regenerate mamba.lock from mamba.toml; resolves transitive deps via a frozen index or explicit registry URL")
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
-                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("PyPI-compatible index base URL (overrides $MAMBA_INDEX_URL; default https://pypi.org)"))
+                .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require frozen index")),
         )
         .subcommand(
