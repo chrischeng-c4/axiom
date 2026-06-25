@@ -157,7 +157,6 @@ e2e_tests:
     assertions:
       - "vat compiles with and without default features; egress policy is independent of the emulator feature."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
