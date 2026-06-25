@@ -37,7 +37,6 @@ edges:
   - { from: up, to: done }
   - { from: rep, to: done }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
