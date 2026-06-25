@@ -174,19 +174,23 @@ Both steps in (3) are required — missing either will silently fail to register
 
 Every CLI surface (`mamba`, `jet`, `lumen`, `vat`, `aw`/`cclab`, and any new
 tool) MUST expose three agent-facing subcommands; a CLI is not done until all
-three appear in `--help`:
+three appear in `--help`. Positionals name **subcommands** only; structured
+parameters (topic/title/version/tag) are flags — the lone exception is
+`report-issue`'s free-text `[message...]`.
 
-- `llm [topic] [--format md|json]` — offline self-documentation that teaches an
-  agent to drive the tool (default topic `outline`). Keep content in one in-code
-  source of truth; reference: `projects/lumen/src/bin/lumen.rs` + `src/spec.rs`.
+- `llm [--topic <t>] [--format md|json]` — offline self-documentation that
+  teaches an agent to drive the tool (topic via the `--topic` flag, default
+  `outline`). Keep content in one in-code source of truth; reference:
+  `projects/lumen/src/bin/lumen.rs` + `src/spec.rs`.
 - `upgrade [--version <tag>] [--check]` — self-update to the latest
   `<project>@*` GitHub release; the in-binary form of
   `projects/<project>/install.sh` (detect target → download tarball → verify
   sha256 → atomic replace).
 - `report-issue [--title <t>] [message...]` — file a structured **issue** report
   (GitHub issues / Agentic Workflow), auto-attaching `--version` + OS/arch +
-  failing context. Named `report-issue`, not `report`, so it never collides with
-  domain `report` verbs (e.g. `jet report` = HTML test reports).
+  failing context and tagging it with the `project:<name>` label. Named
+  `report-issue`, not `report`, so it never collides with domain `report` verbs
+  (e.g. `jet report` = HTML test reports).
 
 Full spec: **`CONTRIBUTING.md` → "CLI convention: every CLI ships `llm`,
 `upgrade`, `report-issue`"**.

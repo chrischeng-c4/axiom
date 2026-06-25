@@ -277,11 +277,18 @@ hand-edit the `AW-EC-TOOL` block.
 
 A new CLI is not "done" until all three appear in `--help`.
 
+**Positionals are for subcommands, parameters are flags.** A positional argument
+names a *subcommand* (`jet build`, `jet llm`), never a structured parameter
+value — a topic, title, version, or tag is always a named flag (`--topic`,
+`--title`, `--version`), so the grammar stays unambiguous as the surface grows.
+The only positional payload allowed is free-form trailing prose, e.g.
+`report-issue`'s `[msg…]`.
+
 | Subcommand | Signature | Contract |
 |------------|-----------|----------|
-| `llm` | `<cli> llm [topic] [--format md\|json]` | Offline (no server/network) docs that teach an agent to drive the tool. Default topic `outline` (a topic map); per-tool topics follow its domain. Markdown default, `--format json` for machine-readable. |
+| `llm` | `<cli> llm [--topic <topic>] [--format md\|json]` | Offline (no server/network) docs that teach an agent to drive the tool. Topic via `--topic` (not positional); default `outline` (a topic map); per-tool topics follow its domain. Markdown default, `--format json` for machine-readable. |
 | `upgrade` | `<cli> upgrade [--version <tag>] [--check]` | Self-update to the latest `<project>@*` GitHub release. `--check` = report whether newer exists, no install; `--version` = pin a tag. |
-| `report-issue` | `<cli> report-issue [--title <t>] [msg…]` | File a structured issue on the tracker, auto-attaching `--version` + OS/arch + the failing command/context. |
+| `report-issue` | `<cli> report-issue [--title <t>] [msg…]` | File a structured issue on the tracker, auto-attaching `--version` + OS/arch + the failing command/context, tagged with the `project:<name>` label. |
 
 Implementation notes not obvious from the signature:
 
@@ -293,7 +300,9 @@ Implementation notes not obvious from the signature:
   **atomically** replace the binary. Fail loudly on checksum mismatch; never
   leave a half-written binary.
 - **`report-issue`** — prefer `gh issue create`, else print a pre-filled issue
-  URL (routed through Agentic Workflow where configured). Named `report-issue`,
-  **not** `report`, because several CLIs use `report` for a domain concept
-  (`jet report` = HTML **test** reports); the unambiguous name leaves those
-  verbs untouched.
+  URL (routed through Agentic Workflow where configured). Tag the issue with the
+  tracker's `project:<name>` label (`gh issue create --label project:<name>`, and
+  `&labels=project:<name>` on the URL fallback) so reports route automatically.
+  Named `report-issue`, **not** `report`, because several CLIs use `report` for a
+  domain concept (`jet report` = HTML **test** reports); the unambiguous name
+  leaves those verbs untouched.
