@@ -106,7 +106,6 @@ commands:
       - "Under --isolation none, a non-open egress policy is not enforceable — vat runs the command and prints a one-line warning that egress confinement requires seatbelt."
       - "Reads remain unrestricted; the GPU/host-process model is untouched."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
