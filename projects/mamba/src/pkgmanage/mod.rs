@@ -14,6 +14,7 @@ pub mod add;
 pub mod builder;
 pub mod cache;
 pub mod hash;
+pub mod index;
 pub mod init;
 pub mod install;
 pub mod lock;

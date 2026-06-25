@@ -3,7 +3,7 @@
 //!
 //! Closes Tick 10 of the uv-style package-management ramp:
 //! validation/profiles/package_manager.toml [families.*] is the
-//! contract; this test pins that all 8 required families pass
+//! contract; this test pins that all 9 required families pass
 //! against the in-repo CLI.
 
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ fn mamba_bin() -> PathBuf {
 }
 
 #[test]
-fn pkgmgr_validate_human_reports_all_eight_families_pass() {
+fn pkgmgr_validate_human_reports_all_nine_families_pass() {
     let out = Command::new(mamba_bin())
         .args(["pkgmgr-validate"])
         .output()
@@ -26,7 +26,7 @@ fn pkgmgr_validate_human_reports_all_eight_families_pass() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     for fam in [
-        "init", "add", "lock", "sync", "run", "install", "hash", "cache",
+        "init", "index", "add", "lock", "sync", "run", "install", "hash", "cache",
     ] {
         assert!(
             stderr.contains(&format!("[pass] {fam}")),
@@ -34,8 +34,8 @@ fn pkgmgr_validate_human_reports_all_eight_families_pass() {
         );
     }
     assert!(
-        stderr.contains("8 passed, 0 failed"),
-        "summary must report 8 passed: {stderr}"
+        stderr.contains("9 passed, 0 failed"),
+        "summary must report 9 passed: {stderr}"
     );
 }
 
@@ -71,7 +71,7 @@ fn pkgmgr_validate_json_has_runner_contract_shape() {
         assert!(stdout.contains(key), "json missing {key}: {stdout}");
     }
     for fam in [
-        "init", "add", "lock", "sync", "run", "install", "hash", "cache",
+        "init", "index", "add", "lock", "sync", "run", "install", "hash", "cache",
     ] {
         assert!(
             stdout.contains(&format!("\"{fam}\":")),

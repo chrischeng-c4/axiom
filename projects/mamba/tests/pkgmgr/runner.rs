@@ -1,4 +1,4 @@
-//! Consolidated umbrella binary for the 11 `mamba` package-manager CLI
+//! Consolidated umbrella binary for the 12 `mamba` package-manager CLI
 //! verbs (C4 of the four-capability MVP: uv-like package manager).
 //!
 //! Each former top-level `tests/cli_<verb>.rs` is registered below via
@@ -24,6 +24,9 @@ mod hash;
 
 #[path = "init.rs"]
 mod init;
+
+#[path = "index.rs"]
+mod index;
 
 #[path = "install.rs"]
 mod install;

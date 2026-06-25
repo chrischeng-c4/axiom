@@ -167,6 +167,9 @@ mod pkgmgr_hash_verification_fixture_2686;
 #[path = "schema_gates/pkgmgr_init_fixture_2679.rs"]
 mod pkgmgr_init_fixture_2679;
 
+#[path = "schema_gates/pkgmgr_index_fixture_507.rs"]
+mod pkgmgr_index_fixture_507;
+
 #[path = "schema_gates/pkgmgr_json_summary_fixture_2687.rs"]
 mod pkgmgr_json_summary_fixture_2687;
 

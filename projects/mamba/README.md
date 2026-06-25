@@ -72,7 +72,7 @@ Gate Inventory: `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs
 
 ID: c4-package-manager-uv-like
 Type: DeveloperTool
-Surfaces: CLI: `mamba init` + `mamba add` + `mamba remove` + `mamba lock` + `mamba sync` + `mamba install` + `mamba cache` + `mamba hash` + `mamba pkgmgr-validate` - project scaffold, dependency, lockfile, install, cache, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
+Surfaces: CLI: `mamba init` + `mamba index` + `mamba add` + `mamba remove` + `mamba lock` + `mamba sync` + `mamba install` + `mamba cache` + `mamba hash` + `mamba pkgmgr-validate` - project scaffold, frozen index, dependency, lockfile, install, cache, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
 EC Dimensions: behavior: `cargo test -p mamba --test pkgmgr` - uv-like workflow fixtures; stability: `cargo test -p mamba --test schema_gates pkgmgr` - schema, pin, and idempotence contracts
 Root WI: #3881
 Status: confirmed
@@ -85,9 +85,11 @@ Gate Inventory: `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test
 |---|---|---:|---|---|---|---|
 | Uv-like package manager workflow | epic | #3881 | partial | planned | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
 
-Current state: `mamba init/add/remove/lock/sync/run/install/hash/cache` plus
-`pkgmgr-validate` are wired through offline frozen-index gates, direct local
-wheel paths, and explicit registry URL tests. `mamba add` / `mamba lock` do not
+Current state: `mamba init/index/add/remove/lock/sync/run/install/hash/cache`
+plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
+local wheel paths, and explicit registry URL tests. `mamba index build` can
+materialize a frozen local index from wheel files or directories for
+`mamba add --index` / `mamba lock --index`. `mamba add` / `mamba lock` do not
 treat public PyPI as an implicit default source; callers must provide a frozen
 local index, direct local wheel file, or explicit registry URL when resolving
 dependencies.
