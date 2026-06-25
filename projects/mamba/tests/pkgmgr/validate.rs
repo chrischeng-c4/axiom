@@ -26,7 +26,7 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     for fam in [
-        "init", "index", "add", "lock", "export", "tree", "version", "pip", "sync", "run",
+        "init", "index", "add", "lock", "export", "tree", "version", "pip", "venv", "sync", "run",
         "install", "hash", "cache",
     ] {
         assert!(
@@ -35,8 +35,8 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
         );
     }
     assert!(
-        stderr.contains("13 passed, 0 failed"),
-        "summary must report 13 passed: {stderr}"
+        stderr.contains("14 passed, 0 failed"),
+        "summary must report 14 passed: {stderr}"
     );
 }
 
@@ -72,7 +72,7 @@ fn pkgmgr_validate_json_has_runner_contract_shape() {
         assert!(stdout.contains(key), "json missing {key}: {stdout}");
     }
     for fam in [
-        "init", "index", "add", "lock", "export", "tree", "version", "pip", "sync", "run",
+        "init", "index", "add", "lock", "export", "tree", "version", "pip", "venv", "sync", "run",
         "install", "hash", "cache",
     ] {
         assert!(

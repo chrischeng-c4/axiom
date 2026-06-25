@@ -17,6 +17,7 @@ use mamba::pkgmanage::remove as pkg_remove;
 use mamba::pkgmanage::sync as pkg_sync;
 use mamba::pkgmanage::tree as pkg_tree;
 use mamba::pkgmanage::validate as pkg_validate;
+use mamba::pkgmanage::venv as pkg_venv;
 use mamba::pkgmanage::version as pkg_version;
 
 // Force-link Mamba native binding crates so their #[distributed_slice(MAMBA_MODULES)]
@@ -187,6 +188,33 @@ fn cli() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("venv")
+                .about("Create or remove a PEP 405 virtual environment")
+                .arg(Arg::new("path").value_name("PATH").help("Environment path for bare `mamba venv`; defaults to .venv"))
+                .arg(Arg::new("python").long("python").value_name("PYTHON").help("Python interpreter to seed the venv; defaults to first python on PATH"))
+                .arg(Arg::new("system-site-packages").long("system-site-packages").action(ArgAction::SetTrue).help("Give the venv access to system site-packages"))
+                .arg(Arg::new("copies").long("copies").action(ArgAction::SetTrue).help("Copy the interpreter instead of symlinking when supported"))
+                .arg(Arg::new("seed").long("seed").action(ArgAction::SetTrue).help("Let Python seed pip into the venv"))
+                .arg(Arg::new("prompt").long("prompt").value_name("PROMPT").help("Prompt name passed to python -m venv"))
+                .arg(Arg::new("clear").long("clear").action(ArgAction::SetTrue).help("Replace an existing venv at the target path"))
+                .subcommand(
+                    Command::new("create")
+                        .about("Create a virtual environment")
+                        .arg(Arg::new("path").value_name("PATH").help("Environment path; defaults to .venv"))
+                        .arg(Arg::new("python").long("python").value_name("PYTHON").help("Python interpreter to seed the venv; defaults to first python on PATH"))
+                        .arg(Arg::new("system-site-packages").long("system-site-packages").action(ArgAction::SetTrue).help("Give the venv access to system site-packages"))
+                        .arg(Arg::new("copies").long("copies").action(ArgAction::SetTrue).help("Copy the interpreter instead of symlinking when supported"))
+                        .arg(Arg::new("seed").long("seed").action(ArgAction::SetTrue).help("Let Python seed pip into the venv"))
+                        .arg(Arg::new("prompt").long("prompt").value_name("PROMPT").help("Prompt name passed to python -m venv"))
+                        .arg(Arg::new("clear").long("clear").action(ArgAction::SetTrue).help("Replace an existing venv at the target path")),
+                )
+                .subcommand(
+                    Command::new("remove")
+                        .about("Remove a virtual environment only when pyvenv.cfg is present")
+                        .arg(Arg::new("path").value_name("PATH").help("Environment path; defaults to .venv")),
+                ),
+        )
+        .subcommand(
             Command::new("index")
                 .about("Build frozen local package indexes from wheel artifacts")
                 .subcommand_required(true)
@@ -228,8 +256,26 @@ fn cli() -> Command {
             Command::new("cache")
                 .about("Inspect and maintain the package cache root (respects $MAMBA_CACHE_DIR)")
                 .subcommand(Command::new("dir").about("Print the resolved cache root"))
+                .subcommand(
+                    Command::new("size")
+                        .about("Print the cache's total byte size")
+                        .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit JSON")),
+                )
+                .subcommand(
+                    Command::new("info")
+                        .about("Print cache entry counts and byte totals")
+                        .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit JSON")),
+                )
                 .subcommand(Command::new("clean").about("Remove every entry under the cache root"))
-                .subcommand(Command::new("prune").about("Remove stale cache entries (currently equivalent to clean)")),
+                .subcommand(
+                    Command::new("prune")
+                        .about("Remove cache entries by age, size, or package name")
+                        .arg(Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).help("Report selected entries without deleting them"))
+                        .arg(Arg::new("older-than-seconds").long("older-than-seconds").value_name("SECONDS").help("Remove entries older than this age"))
+                        .arg(Arg::new("max-size").long("max-size").value_name("BYTES").help("Evict oldest entries until the eligible cache fits this size"))
+                        .arg(Arg::new("package").long("package").value_name("NAME").action(ArgAction::Append).help("Only prune metadata/artifacts for this package"))
+                        .arg(Arg::new("all-unknown").long("all-unknown").action(ArgAction::SetTrue).help("Allow pruning unknown cache files")),
+                ),
         )
 }
 
@@ -285,6 +331,7 @@ fn main() -> Result<()> {
         Some(("tree", sub)) => pkg_tree::cmd_tree(sub),
         Some(("version", sub)) => pkg_version::cmd_version(sub),
         Some(("pip", sub)) => pkg_pip::cmd_pip(sub),
+        Some(("venv", sub)) => pkg_venv::cmd_venv(sub),
         Some(("index", sub)) => pkg_index::cmd_index(sub),
         Some(("sync", sub)) => pkg_sync::cmd_sync(sub),
         Some(("cache", sub)) => pkg_cache::cmd_cache(sub),
