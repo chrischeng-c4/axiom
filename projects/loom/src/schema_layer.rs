@@ -13,7 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::scheduler::TaskMessage;
+use crate::scheduler::{FanOutSpec, TaskMessage};
 
 /// Encode a value as a length-prefixed (4-byte big-endian length) JSON frame —
 /// the wire framing for both directions of the bidi stream.
@@ -64,6 +64,12 @@ pub enum UpFrame {
         id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result_inline: Option<Vec<u8>>,
+        /// Runtime fan-out children the handler emitted (#116/#462). Empty for
+        /// ordinary tasks. The worker has already written any inline child inputs
+        /// to keep and rewritten them to `input_refs`, so only refs cross — chunk
+        /// bytes never enter the control plane.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        fan_out: Vec<FanOutSpec>,
     },
     /// Task could not be handled — redeliver to another consumer.
     Nack { id: String },
@@ -151,8 +157,9 @@ pub trait TaskSource: Send + Sync {
     /// Long-poll: block until ≥1 task is available for `group`, return up to
     /// `max` ready envelopes. An empty return means the source is closed.
     async fn lease(&self, group: &str, max: u32) -> Vec<TaskEnvelope>;
-    /// A task finished OK — forward the completion + ack the source.
-    async fn done(&self, id: &str, result_inline: Option<Vec<u8>>);
+    /// A task finished OK — forward the completion (with any runtime fan-out
+    /// children #116/#462) + ack the source.
+    async fn done(&self, id: &str, result_inline: Option<Vec<u8>>, fan_out: Vec<FanOutSpec>);
     /// A task could not be handled — release it for redelivery.
     async fn nack(&self, id: &str);
 }
@@ -224,8 +231,8 @@ async fn drive_session(source: Arc<dyn TaskSource>, mut up: BodyDataStream, down
 /// Apply one up-frame; returns false when the session should end (disconnect).
 async fn handle_up(source: &Arc<dyn TaskSource>, frame: Option<UpFrame>, inflight: &mut u32) -> bool {
     match frame {
-        Some(UpFrame::Done { id, result_inline }) => {
-            source.done(&id, result_inline).await;
+        Some(UpFrame::Done { id, result_inline, fan_out }) => {
+            source.done(&id, result_inline, fan_out).await;
             *inflight = inflight.saturating_sub(1);
             true
         }
@@ -281,11 +288,15 @@ fn parse_id(id: &str) -> Option<(String, String, u32)> {
 /// Build the completion to forward to the controller for a finished task. Small
 /// results came back inline; large ones are at the conventional result key the
 /// envelope told the worker to PUT to.
-fn completion_for(id: &str, result_inline: Option<Vec<u8>>) -> Option<CompletionMsg> {
+fn completion_for(
+    id: &str,
+    result_inline: Option<Vec<u8>>,
+    fan_out: Vec<FanOutSpec>,
+) -> Option<CompletionMsg> {
     let (run_id, node_id, attempt) = parse_id(id)?;
     let result_ref =
         if result_inline.is_some() { None } else { Some(format!("{run_id}:{node_id}:result")) };
-    Some(CompletionMsg { run_id, node_id, attempt, result_ref, result_inline, failed: false, fan_out: vec![] })
+    Some(CompletionMsg { run_id, node_id, attempt, result_ref, result_inline, failed: false, fan_out })
 }
 
 /// Sign a scoped keep token for one task (readable input key `r` / writable result
@@ -422,9 +433,9 @@ impl TaskSource for RelayTaskSource {
         out
     }
 
-    async fn done(&self, id: &str, result_inline: Option<Vec<u8>>) {
+    async fn done(&self, id: &str, result_inline: Option<Vec<u8>>, fan_out: Vec<FanOutSpec>) {
         let Some((lease_id, epoch, group)) = self.inflight.lock().await.remove(id) else { return };
-        if let Some(cm) = completion_for(id, result_inline) {
+        if let Some(cm) = completion_for(id, result_inline, fan_out) {
             let subj = format!("loom.completions.{}", shard_of(&cm.run_id, self.shards));
             let _ = self
                 .client
@@ -516,8 +527,19 @@ mod tests {
     fn up_frames_round_trip_and_reject_malformed() {
         for f in [
             UpFrame::Subscribe { group: "w".into(), prefetch: 4 },
-            UpFrame::Done { id: "run1:nodeA:2".into(), result_inline: Some(b"r".to_vec()) },
-            UpFrame::Done { id: "x".into(), result_inline: None },
+            UpFrame::Done { id: "run1:nodeA:2".into(), result_inline: Some(b"r".to_vec()), fan_out: vec![] },
+            UpFrame::Done { id: "x".into(), result_inline: None, fan_out: vec![] },
+            // a Done that carries runtime fan-out children (#462) round-trips too.
+            UpFrame::Done {
+                id: "r:n:1".into(),
+                result_inline: None,
+                fan_out: vec![FanOutSpec {
+                    id: "c0".into(),
+                    task_name: "echo".into(),
+                    input_refs: vec![crate::model::KeepRef("r:c0:in".into())],
+                    input_data: None,
+                }],
+            },
             UpFrame::Nack { id: "x".into() },
         ] {
             let bytes = serde_json::to_vec(&f).unwrap();
@@ -560,9 +582,11 @@ mod tests {
 
     // ---- live bidi round-trip (#439) ----------------------------------------
 
+    #[derive(Default)]
     struct FakeSource {
         queue: tokio::sync::Mutex<Vec<TaskEnvelope>>,
         done: std::sync::Mutex<Vec<String>>,
+        fan_out: std::sync::Mutex<Vec<(String, Vec<FanOutSpec>)>>,
     }
     #[async_trait]
     impl TaskSource for FakeSource {
@@ -575,8 +599,9 @@ mod tests {
             }
             std::mem::take(&mut *q)
         }
-        async fn done(&self, id: &str, _r: Option<Vec<u8>>) {
+        async fn done(&self, id: &str, _r: Option<Vec<u8>>, fan_out: Vec<FanOutSpec>) {
             self.done.lock().unwrap().push(id.to_string());
+            self.fan_out.lock().unwrap().push((id.to_string(), fan_out));
         }
         async fn nack(&self, _id: &str) {}
     }
@@ -609,7 +634,7 @@ mod tests {
         let env = build_envelope(&task(vec![], None), "http://keep", "tok".into());
         let src = Arc::new(FakeSource {
             queue: tokio::sync::Mutex::new(vec![env.clone()]),
-            done: std::sync::Mutex::new(vec![]),
+            ..Default::default()
         });
         let addr = spawn(router(src.clone())).await;
 
@@ -649,6 +674,7 @@ mod tests {
             .send(Bytes::from(encode_frame(&UpFrame::Done {
                 id: got.id.clone(),
                 result_inline: None,
+                fan_out: vec![],
             })))
             .await
             .unwrap();
@@ -666,15 +692,117 @@ mod tests {
         drop(up_tx);
     }
 
+    // ---- worker-driven fan-out over the bidi path (#462) --------------------
+
+    /// A `csv-split` task driven through the **real** [`crate::worker::bidi_session`]
+    /// against the schema layer: the handler emits chunk children with inline
+    /// `input_data`; the worker must write each child's bytes to keep, rewrite it
+    /// to an `input_refs` ref, and carry the fan-out up in `Done` — which the layer
+    /// threads into the forwarded completion. Mirrors the direct-path fan-out test.
+    #[tokio::test]
+    async fn bidi_fan_out_writes_child_inputs_and_threads_completion() {
+        use axum::extract::Path as AxPath;
+        use axum::routing::put;
+
+        // fake keep: record child-input PUTs (h2c, like the worker's client).
+        let puts: Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>> =
+            Arc::new(std::sync::Mutex::new(vec![]));
+        let keep_app = {
+            let puts = puts.clone();
+            Router::new().route(
+                "/v1/inputs/{*id}",
+                put(move |AxPath(id): AxPath<String>, body: Bytes| {
+                    let puts = puts.clone();
+                    async move {
+                        puts.lock().unwrap().push((id, body.to_vec()));
+                        "ok"
+                    }
+                }),
+            )
+        };
+        let keep_addr = spawn(keep_app).await;
+        let keep_base = format!("http://{keep_addr}");
+
+        // schema layer fed one csv-split task; FakeSource captures the completion.
+        let mut env = build_envelope(
+            &task(vec![], Some(b"r1\nr2\nr3\nr4".to_vec())),
+            &keep_base,
+            String::new(),
+        );
+        env.task_name = "csv-split".into();
+        let src = Arc::new(FakeSource {
+            queue: tokio::sync::Mutex::new(vec![env]),
+            ..Default::default()
+        });
+        let layer_addr = spawn(router(src.clone())).await;
+
+        // run the real bidi worker against the layer + fake keep.
+        let registry = crate::worker::default_registry();
+        let handle = tokio::spawn(async move {
+            let _ = crate::worker::bidi_session(
+                &format!("http://{layer_addr}"),
+                &keep_base,
+                "w",
+                4,
+                &registry,
+            )
+            .await;
+        });
+
+        // wait for the layer to fold the fan-out completion.
+        let mut fan = None;
+        for _ in 0..200 {
+            if let Some((_, f)) = src.fan_out.lock().unwrap().first().cloned() {
+                fan = Some(f);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        handle.abort();
+
+        let fan = fan.expect("schema layer never received fan-out over the bidi path");
+        assert_eq!(fan.len(), 2, "csv-split (4 rows / 2 per chunk) → 2 children");
+        // inline child inputs were rewritten to refs (input_data never crosses)…
+        let mut refs: Vec<String> =
+            fan.iter().flat_map(|c| c.input_refs.iter().map(|r| r.0.clone())).collect();
+        refs.sort();
+        assert_eq!(refs, vec!["run1:rows-0:in".to_string(), "run1:rows-1:in".to_string()]);
+        assert!(fan.iter().all(|c| c.input_data.is_none()));
+        // …and the actual chunk bytes landed in keep at those keys.
+        let mut got: Vec<(String, Vec<u8>)> = puts.lock().unwrap().clone();
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            vec![
+                ("run1:rows-0:in".to_string(), b"r1\nr2".to_vec()),
+                ("run1:rows-1:in".to_string(), b"r3\nr4".to_vec()),
+            ]
+        );
+    }
+
     #[test]
     fn id_parse_and_completion() {
         assert_eq!(parse_id("run1:nodeA:2"), Some(("run1".into(), "nodeA".into(), 2)));
         assert_eq!(parse_id("a:b:node:5"), Some(("a:b".into(), "node".into(), 5))); // run keeps colons
         assert!(parse_id("bad").is_none());
         // small result → inline (no ref); large → ref at the conventional key
-        let c = completion_for("r:n:1", Some(b"x".to_vec())).unwrap();
+        let c = completion_for("r:n:1", Some(b"x".to_vec()), vec![]).unwrap();
         assert_eq!((c.result_ref, c.result_inline, c.failed), (None, Some(b"x".to_vec()), false));
-        assert_eq!(completion_for("r:n:1", None).unwrap().result_ref, Some("r:n:result".into()));
+        assert_eq!(completion_for("r:n:1", None, vec![]).unwrap().result_ref, Some("r:n:result".into()));
+        // runtime fan-out children are threaded into the forwarded completion (#462).
+        let fanned = completion_for(
+            "r:n:1",
+            None,
+            vec![FanOutSpec {
+                id: "c0".into(),
+                task_name: "echo".into(),
+                input_refs: vec![crate::model::KeepRef("r:c0:in".into())],
+                input_data: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(fanned.fan_out.len(), 1);
+        assert_eq!(fanned.fan_out[0].id, "c0");
     }
 
     #[test]

@@ -324,13 +324,13 @@ pub fn run() -> anyhow::Result<()> {
 /// being up yet, or restarts).
 async fn run_bidi(
     schema_url: &str,
-    _keep_base: &str,
+    keep_base: &str,
     group: &str,
     prefetch: u32,
     registry: &Registry,
 ) -> anyhow::Result<()> {
     loop {
-        if let Err(e) = bidi_session(schema_url, group, prefetch, registry).await {
+        if let Err(e) = bidi_session(schema_url, keep_base, group, prefetch, registry).await {
             eprintln!("loom worker: bidi session ended ({e}); reconnecting");
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -340,8 +340,9 @@ async fn run_bidi(
 /// One bidi session: subscribe, then for each self-describing Task — read input
 /// from the given keep URL (or inline), run the handler, write a large result to
 /// the given keep URL (or inline a small one), send Done. Owns no relay/keep schema.
-async fn bidi_session(
+pub(crate) async fn bidi_session(
     schema_url: &str,
+    keep_base: &str,
     group: &str,
     prefetch: u32,
     registry: &Registry,
@@ -397,16 +398,32 @@ async fn bidi_session(
         };
         let up = match registry.get(&env.task_name) {
             Some(handler) => match handler(input) {
-                Ok(out) => {
-                    if out.result.len() <= inline_max() {
-                        UpFrame::Done { id: env.id.clone(), result_inline: Some(out.result) }
+                Ok(mut out) => {
+                    // Runtime fan-out (#116/#462): persist any inline child inputs
+                    // to keep (claim-check) and rewrite them to an input ref — as
+                    // execute_task does — so chunk bytes never enter the control
+                    // plane and the spliced child can fetch its input by ref. Keep
+                    // keys mirror the direct path (`{run}:{child}:in`).
+                    for child in &mut out.fan_out {
+                        if let Some(data) = child.input_data.take() {
+                            let in_id = format!("{}:{}:in", env.run_id, child.id);
+                            with_auth(client.put(format!("{keep_base}/v1/inputs/{in_id}")))
+                                .body(data)
+                                .send()
+                                .await?;
+                            child.input_refs = vec![KeepRef(in_id)];
+                        }
+                    }
+                    let result_inline = if out.result.len() <= inline_max() {
+                        Some(std::mem::take(&mut out.result))
                     } else {
                         with_auth(client.put(&env.result_put_url))
-                            .body(out.result)
+                            .body(std::mem::take(&mut out.result))
                             .send()
                             .await?;
-                        UpFrame::Done { id: env.id.clone(), result_inline: None }
-                    }
+                        None
+                    };
+                    UpFrame::Done { id: env.id.clone(), result_inline, fan_out: out.fan_out }
                 }
                 Err(e) => {
                     eprintln!("loom worker: handler `{}` failed: {e}", env.task_name);
