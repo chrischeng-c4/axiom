@@ -34,6 +34,8 @@ pub struct VatConfig {
     pub services: Vec<ServiceConfig>,
     #[serde(default)]
     pub runners: Vec<RunnerConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkConfig>,
 
     #[serde(skip)]
     pub path: PathBuf,
@@ -41,6 +43,24 @@ pub struct VatConfig {
     pub root: PathBuf,
     #[serde(skip)]
     pub digest: String,
+}
+
+/// Transparent service routing for a run: known hosts the proxy should send to a
+/// local emulator/mock instead of the real upstream.
+/// @spec projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#config
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NetworkConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<RouteConfig>,
+}
+
+/// One host-routing rule: requests to `host` are served by `target` (a local base
+/// URL) instead of being forwarded upstream.
+/// @spec projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteConfig {
+    pub host: String,
+    pub target: String,
 }
 
 /// Workspace defaults for one test run.
@@ -250,6 +270,21 @@ impl ServicePreset {
                 | ServicePreset::HttpMock
                 | ServicePreset::Openapi
         )
+    }
+
+    /// The real GCP hostname this emulator preset stands in for, used to
+    /// auto-derive a transparent host route (`real host -> local emulator`).
+    /// `None` for presets that aren't a GCP service with a stable public host.
+    /// @spec projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#config
+    pub fn preset_gcp_host(self) -> Option<&'static str> {
+        match self {
+            ServicePreset::CloudTasks => Some("cloudtasks.googleapis.com"),
+            ServicePreset::CloudScheduler => Some("cloudscheduler.googleapis.com"),
+            ServicePreset::Pubsub => Some("pubsub.googleapis.com"),
+            ServicePreset::Firestore => Some("firestore.googleapis.com"),
+            ServicePreset::CloudStorage => Some("storage.googleapis.com"),
+            _ => None,
+        }
     }
 }
 
@@ -780,6 +815,7 @@ artifacts = ["out.txt"]
     fn rejects_unknown_required_service() {
         let cfg = VatConfig {
             version: 1,
+            network: None,
             name: None,
             default_runner: None,
             workspace: WorkspaceConfig::default(),
@@ -804,6 +840,7 @@ artifacts = ["out.txt"]
     fn rejects_unknown_required_service_dependency() {
         let cfg = VatConfig {
             version: 1,
+            network: None,
             name: None,
             default_runner: None,
             workspace: WorkspaceConfig::default(),
@@ -848,6 +885,7 @@ artifacts = ["out.txt"]
     fn rejects_service_dependency_cycle() {
         let cfg = VatConfig {
             version: 1,
+            network: None,
             name: None,
             default_runner: None,
             workspace: WorkspaceConfig::default(),
@@ -914,6 +952,7 @@ artifacts = ["out.txt"]
     fn cfg_with_service(service: ServiceConfig) -> VatConfig {
         VatConfig {
             version: 1,
+            network: None,
             name: None,
             default_runner: None,
             workspace: WorkspaceConfig::default(),
@@ -1227,6 +1266,25 @@ artifacts = ["out.txt"]
         other.preset = Some(ServicePreset::Pubsub);
         other.spec = Some("api.yaml".into());
         assert!(validate(&cfg_with_service(other)).is_err());
+    }
+
+    #[test]
+    fn preset_gcp_host_map() {
+        assert_eq!(
+            ServicePreset::CloudTasks.preset_gcp_host(),
+            Some("cloudtasks.googleapis.com")
+        );
+        assert_eq!(
+            ServicePreset::CloudScheduler.preset_gcp_host(),
+            Some("cloudscheduler.googleapis.com")
+        );
+        assert_eq!(
+            ServicePreset::Pubsub.preset_gcp_host(),
+            Some("pubsub.googleapis.com")
+        );
+        // Non-GCP / no stable public host → None.
+        assert_eq!(ServicePreset::Postgres.preset_gcp_host(), None);
+        assert_eq!(ServicePreset::HttpMock.preset_gcp_host(), None);
     }
 }
 // CODEGEN-END
