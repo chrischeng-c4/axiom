@@ -20,13 +20,12 @@ path = "src/main.rs"
 # for a lean build (the `vat emulator` verb then errors cleanly).
 default = ["emulator", "self-update", "report-issue"]
 emulator = ["dep:tokio", "dep:axum", "dep:jsonwebtoken", "dep:tonic", "dep:prost", "dep:prost-types", "dep:async-trait", "dep:tokio-stream", "dep:async-stream", "dep:reqwest", "dep:cron", "dep:base64", "dep:serde_yaml", "dep:percent-encoding", "dep:md-5", "dep:rcgen", "dep:rustls", "dep:tokio-rustls", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
-# self-update — `vat upgrade`'s HTTPS download path needs the otherwise-optional
-# HTTP client + tokio runtime. The pure version/checksum/extract helpers
-# (flate2/tar/sha2/semver) stay non-optional so they compile and test offline.
-self-update = ["dep:reqwest", "dep:tokio"]
-# report-issue — `vat report-issue`'s GitHub-API submit path needs the HTTP
-# client + tokio. The --dry-run preview and prefilled-URL fallback need neither.
-report-issue = ["dep:reqwest", "dep:tokio"]
+# self-update / report-issue — the network paths come from the shared cli-std
+# crate's `online` feature; `dep:tokio` provides the runtime vat's sync dispatch
+# uses to drive cli-std's async `run`. Lean build (neither feature) compiles and
+# the verbs bail cleanly.
+self-update = ["cli-std/online", "dep:tokio"]
+report-issue = ["cli-std/online", "dep:tokio"]
 
 [dependencies]
 clap = { workspace = true, features = ["derive", "color"] }
@@ -41,13 +40,9 @@ dirs = "5"
 toml = "0.8"
 libc = "0.2"
 
-# `vat upgrade` pure helpers (version select / checksum verify / tarball
-# extract). Non-optional so they compile and unit-test without the network
-# feature; only the HTTPS download path itself is gated behind `self-update`.
-sha2 = "0.10"
-tar = "0.4"
-flate2 = "1"
-semver = "1"
+# Shared agent-facing CLI commands (upgrade / report-issue); offline paths build
+# without features, the `online` HTTPS path is pulled by self-update/report-issue.
+cli-std = { path = "../../libs/cli-std", default-features = false }
 
 # Emulator stack (feature-gated).
 tokio = { workspace = true, optional = true }
