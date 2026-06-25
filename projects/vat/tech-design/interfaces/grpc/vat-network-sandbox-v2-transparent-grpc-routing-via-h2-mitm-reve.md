@@ -86,7 +86,6 @@ properties:
       hyper: { type: array, items: { type: string }, description: "server, client, http1, http2" }
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
