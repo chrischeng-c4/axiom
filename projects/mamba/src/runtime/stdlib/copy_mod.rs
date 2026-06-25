@@ -555,6 +555,16 @@ fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
             }
             ObjData::Instance { class_name, .. } => {
                 let cls = class_name.clone();
+                // A bound method (`__func__` + `__self__`) is rebound on
+                // deepcopy: CPython's _deepcopy_method builds
+                // `type(x)(x.__func__, deepcopy(x.__self__, memo))`, so the copy
+                // points at the deepcopied receiver (which resolves through the
+                // shared memo to the already-built copy when an instance stores
+                // one of its own bound methods). `__func__` is a function
+                // (atomic) and stays shared.
+                if cls == "method" {
+                    return deepcopy_bound_method(obj, key, memo);
+                }
                 deepcopy_instance(obj, &cls, key, memo)
             }
             _ => return_identity(obj),
@@ -647,6 +657,43 @@ unsafe fn deepcopy_instance(
             nl.write().unwrap().insert(k.clone(), dv);
         }
     }
+    result
+}
+
+/// Deep-copy a bound method: deepcopy its `__self__` (through the shared memo,
+/// so an instance that stores one of its own bound methods rebinds to the
+/// instance's copy rather than the original) and build a fresh `method` shell
+/// over the same `__func__`. Mirrors CPython's `_deepcopy_method`.
+unsafe fn deepcopy_bound_method(
+    obj: MbValue,
+    key: u64,
+    memo: &mut FxHashMap<u64, MbValue>,
+) -> MbValue {
+    let (func, recv, name) = {
+        let fields = read_fields(obj);
+        (
+            fields.get("__func__").copied().unwrap_or_else(MbValue::none),
+            fields.get("__self__").copied().unwrap_or_else(MbValue::none),
+            fields.get("__name__").copied(),
+        )
+    };
+    let new_recv = deepcopy_memo(recv, memo);
+    let new_inst = MbObject::new_instance("method".to_string());
+    if let ObjData::Instance { fields: ref nl, .. } = (*new_inst).data {
+        let mut g = nl.write().unwrap();
+        // `__func__` is a function (atomic): share it, retaining for storage.
+        super::super::rc::retain_if_ptr(func);
+        g.insert("__func__".to_string(), func);
+        // `new_recv` is already a deepcopy-owned handle: store it as-is.
+        g.insert("__self__".to_string(), new_recv);
+        if let Some(n) = name {
+            super::super::rc::retain_if_ptr(n);
+            g.insert("__name__".to_string(), n);
+        }
+    }
+    let result = MbValue::from_ptr(new_inst);
+    memo.insert(key, result);
+    record_memoized(obj, result);
     result
 }
 
