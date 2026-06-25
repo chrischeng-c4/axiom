@@ -112,16 +112,16 @@ managed PATH snippets for mamba tool bin directories, and
 `mamba generate-shell-completion` emits clap-derived bash/zsh/fish/powershell/elvish
 completion scripts from the live command tree. `mamba auth dir/login/token/logout`
 manages plaintext package-index credentials under an overrideable credentials
-directory. `mamba tool run/install/upgrade/list/uninstall/dir/update-shell` wraps the
+directory, and stored credentials now feed explicit-index metadata requests,
+resolver requests, and locked artifact downloads. `mamba tool run/install/upgrade/list/uninstall/dir/update-shell` wraps the
 tool-install workflow behind a uv-style `tool` command family. The package-manager validation
 profile requires twenty-one offline workflow families and keeps live network
 coverage opt-in/report-only. `mamba add` / `mamba lock` do not treat public
 PyPI as an implicit default source; callers must provide a frozen local index,
 direct local wheel file, or explicit registry URL when resolving dependencies.
 Full uv parity remains open under #519; remaining command families include live
-Python standalone downloads, real network publish uploads, stored credential use
-by index/resolver flows, live-index pip compile/install/sync parity, and related
-parity fixtures.
+Python standalone downloads, real network publish uploads, live-index pip
+compile/install/sync parity, and related parity fixtures.
 
 ## Test Completeness — what we tested, against what authority
 

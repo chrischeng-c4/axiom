@@ -81,6 +81,8 @@ pub struct IndexClient {
     pub timeout_secs: u64,
     /// Maximum retry attempts with exponential backoff.
     pub retry_max: u32,
+    /// Optional Authorization header value applied to registry and artifact GETs.
+    pub auth_header: Option<String>,
 }
 
 /// Errors produced by the index client.
