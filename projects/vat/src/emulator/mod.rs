@@ -12,6 +12,7 @@
 
 pub mod auth;
 pub mod dispatch;
+pub mod grpc_mux;
 pub mod httpmock;
 pub mod openapi;
 pub mod pubsub;
@@ -19,6 +20,35 @@ pub mod scheduler;
 pub mod storage;
 pub mod tasks;
 pub mod workflows;
+
+/// Generated googleapis gRPC types for the Cloud Tasks / Cloud Scheduler
+/// emulator front-ends. The vendored proto tree (`proto/google/...`) carries the
+/// shared `google.api` / `google.iam.v1` / `google.rpc` / `google.type` deps, so
+/// the packages must be mounted in this exact nesting (prost cross-package
+/// references climb `super::` to the `google` module). `google.protobuf.*` maps
+/// to `::prost_types`.
+#[allow(clippy::all)]
+#[rustfmt::skip]
+pub mod googleapis {
+    pub mod google {
+        pub mod api { tonic::include_proto!("google.api"); }
+        pub mod rpc { tonic::include_proto!("google.rpc"); }
+        // `type` is a keyword, so tonic-build wrote `google.r#type.rs`; include it
+        // by its real filename (`include_proto!` would look for `google.type.rs`).
+        pub mod r#type { include!(concat!(env!("OUT_DIR"), "/google.r#type.rs")); }
+        pub mod iam {
+            pub mod v1 { tonic::include_proto!("google.iam.v1"); }
+        }
+        pub mod cloud {
+            pub mod tasks {
+                pub mod v2 { tonic::include_proto!("google.cloud.tasks.v2"); }
+            }
+            pub mod scheduler {
+                pub mod v1 { tonic::include_proto!("google.cloud.scheduler.v1"); }
+            }
+        }
+    }
+}
 
 use anyhow::Result;
 
