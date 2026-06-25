@@ -1398,20 +1398,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cclab-cli-std"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "flate2",
- "reqwest 0.12.28",
- "semver",
- "serde_json",
- "sha2 0.10.9",
- "tar",
- "tokio",
-]
-
-[[package]]
 name = "cclab-compass"
 version = "0.4.3"
 dependencies = [
@@ -1577,18 +1563,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
-]
-
-[[package]]
-name = "cclab-h2c"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "http-body-util",
- "hyper 1.9.0",
- "hyper-util",
- "reqwest 0.12.28",
- "tokio",
 ]
 
 [[package]]
@@ -2048,6 +2022,20 @@ name = "clap_lex"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
+
+[[package]]
+name = "cli-std"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "reqwest 0.12.28",
+ "semver",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tokio",
+]
 
 [[package]]
 name = "clipboard-win"
@@ -4302,6 +4290,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "h2c"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-util",
+ "reqwest 0.12.28",
+ "tokio",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5748,13 +5748,13 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "bincode",
- "cclab-h2c",
  "claimtoken",
  "clap",
  "crc32fast",
  "criterion",
  "crossbeam-channel",
  "futures",
+ "h2c",
  "hyper 1.9.0",
  "hyper-util",
  "parking_lot",
@@ -6285,11 +6285,11 @@ dependencies = [
  "base64 0.22.1",
  "bytemuck",
  "byteorder",
- "cclab-cli-std",
  "cclab-openapi-codegen",
  "chrono",
  "ciborium",
  "clap",
+ "cli-std",
  "crc32fast",
  "criterion",
  "futures",
@@ -9608,12 +9608,12 @@ name = "relay"
 version = "0.4.3"
 dependencies = [
  "axum 0.8.9",
- "cclab-h2c",
  "chrono",
  "ciborium",
  "crc32fast",
  "criterion",
  "futures",
+ "h2c",
  "raftcore",
  "reqwest 0.12.28",
  "serde",

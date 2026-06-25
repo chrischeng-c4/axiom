@@ -1,4 +1,4 @@
-//! `cclab-cli-std` — the standard agent-facing CLI commands every axiom tool
+//! `cli-std` — the standard agent-facing CLI commands every axiom tool
 //! ships, per the convention in `CONTRIBUTING.md` ("every CLI ships `llm`,
 //! `upgrade`, `report-issue`"):
 //!
@@ -26,7 +26,7 @@ pub mod upgrade;
 /// are literals so the example compiles standalone:
 ///
 /// ```
-/// const TOOL: cclab_cli_std::ToolInfo = cclab_cli_std::ToolInfo {
+/// const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
 ///     project: "lumen",                      // env-free; the tool name
 ///     repo: "chrischeng-c4/axiom",
 ///     target: "aarch64-apple-darwin",        // env!("LUMEN_TARGET") in lumen

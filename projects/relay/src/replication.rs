@@ -65,7 +65,7 @@ pub fn spawn_follower(
         let local = Arc::clone(&local);
         let leader = leader.clone();
         tasks.push(tokio::spawn(async move {
-            let client = match cclab_h2c::h2c_client() {
+            let client = match h2c::h2c_client() {
                 Ok(c) => c,
                 Err(_) => return,
             };

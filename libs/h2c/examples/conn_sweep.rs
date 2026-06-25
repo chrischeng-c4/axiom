@@ -5,9 +5,9 @@
 //! The `recommended_h2c_connections` value is marked so you can see it land at
 //! the saturation knee.
 //!
-//! Run: `cargo run -p cclab-h2c --example conn_sweep --release`
+//! Run: `cargo run -p h2c --example conn_sweep --release`
 use bytes::Bytes;
-use cclab_h2c::{recommended_h2c_connections_for, H2cPool};
+use h2c::{recommended_h2c_connections_for, H2cPool};
 use http_body_util::Full;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
@@ -57,7 +57,7 @@ async fn main() {
         }
     });
     let base = format!("http://{addr}");
-    let cores = cclab_h2c::cpu_parallelism();
+    let cores = h2c::cpu_parallelism();
     let total = 200_000usize;
     println!("cores={cores}, {total} requests per cell\n");
 

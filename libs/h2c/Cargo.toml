@@ -1,11 +1,11 @@
 [package]
-name = "cclab-h2c"
+name = "h2c"
 version = "0.1.0"
 edition = "2021"
 description = "Shared HTTP/2 cleartext (h2c) client helpers: a single-connection client, a round-robin connection pool, and the ln(concurrency) connection-count heuristic."
 
 [lib]
-name = "cclab_h2c"
+name = "h2c"
 path = "src/lib.rs"
 
 [dependencies]
