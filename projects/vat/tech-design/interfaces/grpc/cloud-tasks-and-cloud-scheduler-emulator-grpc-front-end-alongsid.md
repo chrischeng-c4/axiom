@@ -118,7 +118,6 @@ commands:
       - "Serve google.cloud.scheduler.v1.CloudScheduler over gRPC AND the Cloud Scheduler v1 REST API on the same port, sharing the store + cron dispatcher."
       - "Implements CreateJob, GetJob, ListJobs, DeleteJob, RunJob, PauseJob, ResumeJob; UpdateJob and others return Unimplemented."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
