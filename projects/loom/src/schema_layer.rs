@@ -260,6 +260,144 @@ pub async fn serve(addr: &str, app: Router) -> anyhow::Result<()> {
     }
 }
 
+// ---- relay-backed task source (#440) ----------------------------------------
+
+use crate::relay_client::shard_of;
+use crate::scheduler::CompletionMsg;
+use std::collections::HashMap;
+
+/// Parse an envelope/Done id ("run:node:attempt") back to its parts (run may
+/// itself contain ':').
+fn parse_id(id: &str) -> Option<(String, String, u32)> {
+    let mut it = id.rsplitn(3, ':');
+    let attempt: u32 = it.next()?.parse().ok()?;
+    let node = it.next()?.to_string();
+    let run = it.next()?.to_string();
+    Some((run, node, attempt))
+}
+
+/// Build the completion to forward to the controller for a finished task. Small
+/// results came back inline; large ones are at the conventional result key the
+/// envelope told the worker to PUT to.
+fn completion_for(id: &str, result_inline: Option<Vec<u8>>) -> Option<CompletionMsg> {
+    let (run_id, node_id, attempt) = parse_id(id)?;
+    let result_ref =
+        if result_inline.is_some() { None } else { Some(format!("{run_id}:{node_id}:result")) };
+    Some(CompletionMsg { run_id, node_id, attempt, result_ref, result_inline, failed: false, fan_out: vec![] })
+}
+
+/// Decode a relay entry payload (a [`TaskMessage`]) into a self-describing envelope.
+fn envelope_from_entry(payload: serde_json::Value, keep_base: &str, token: &str) -> Option<TaskEnvelope> {
+    let task: TaskMessage = serde_json::from_value(payload).ok()?;
+    Some(build_envelope(&task, keep_base, token.to_string()))
+}
+
+/// A [`TaskSource`] over relay's work-queue (phase 1, relay UNCHANGED). lease-batch
+/// returns only leases (no #166 entry bodies), so this leases singly — the single
+/// lease returns the body — up to the credit window. Completions are forwarded to
+/// the controller via the `loom.completions` subject; ack releases the relay lease.
+pub struct RelayTaskSource {
+    client: reqwest::Client,
+    relay: String,
+    keep: String,
+    shards: u32,
+    inflight: tokio::sync::Mutex<HashMap<String, (String, u64, String)>>, // id -> (lease_id, epoch, subject)
+}
+
+impl RelayTaskSource {
+    pub fn new(relay: impl Into<String>, keep: impl Into<String>, shards: u32) -> anyhow::Result<Self> {
+        Ok(Self {
+            client: reqwest::Client::builder().http2_prior_knowledge().build()?,
+            relay: relay.into(),
+            keep: keep.into(),
+            shards: shards.max(1),
+            inflight: tokio::sync::Mutex::new(HashMap::new()),
+        })
+    }
+
+    async fn lease_one(&self, group: &str) -> Option<TaskEnvelope> {
+        let resp = self
+            .client
+            .post(format!("{}/v1/{group}/lease", self.relay))
+            .json(&serde_json::json!({ "consumer_id": "loom-schema-layer" }))
+            .send()
+            .await
+            .ok()?;
+        let body: serde_json::Value = resp.json().await.ok()?;
+        let lease = body.get("lease")?.as_object()?;
+        let lease_id = lease.get("lease_id")?.as_str()?.to_string();
+        let epoch = lease.get("epoch")?.as_u64()?;
+        let payload = body.get("entry")?.get("payload")?.clone();
+        let env = envelope_from_entry(payload, &self.keep, "")?;
+        self.inflight.lock().await.insert(env.id.clone(), (lease_id, epoch, group.to_string()));
+        Some(env)
+    }
+}
+
+#[async_trait]
+impl TaskSource for RelayTaskSource {
+    async fn lease(&self, group: &str, max: u32) -> Vec<TaskEnvelope> {
+        loop {
+            let mut out = Vec::new();
+            for _ in 0..max {
+                match self.lease_one(group).await {
+                    Some(e) => out.push(e),
+                    None => break,
+                }
+            }
+            if !out.is_empty() {
+                return out;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await; // long-poll
+        }
+    }
+
+    async fn done(&self, id: &str, result_inline: Option<Vec<u8>>) {
+        let Some((lease_id, epoch, subject)) = self.inflight.lock().await.remove(id) else { return };
+        if let Some(cm) = completion_for(id, result_inline) {
+            let subj = format!("loom.completions.{}", shard_of(&cm.run_id, self.shards));
+            let _ = self
+                .client
+                .post(format!("{}/v1/{subj}/publish", self.relay))
+                .json(&serde_json::json!({ "message_id": format!("{id}:done"), "payload": cm }))
+                .send()
+                .await;
+        }
+        let _ = self
+            .client
+            .post(format!("{}/v1/{subject}/ack", self.relay))
+            .json(&serde_json::json!({ "lease_id": lease_id, "epoch": epoch }))
+            .send()
+            .await;
+    }
+
+    async fn nack(&self, id: &str) {
+        // Drop tracking; the relay lease expires → redeliver (relay has no nack).
+        self.inflight.lock().await.remove(id);
+    }
+}
+
+/// Entry point for `loom schema-layer`: the worker bidi edge over a relay
+/// work-queue source. Needs LOOM_RELAY + LOOM_KEEP; LOOM_ADDR (default
+/// 0.0.0.0:7475); LOOM_COMPLETION_SHARDS (default 8, must match the controller).
+pub fn run() -> anyhow::Result<()> {
+    let relay = std::env::var("LOOM_RELAY")
+        .map_err(|_| anyhow::anyhow!("loom schema-layer requires LOOM_RELAY"))?;
+    let keep = std::env::var("LOOM_KEEP")
+        .map_err(|_| anyhow::anyhow!("loom schema-layer requires LOOM_KEEP"))?;
+    let addr = std::env::var("LOOM_ADDR").unwrap_or_else(|_| "0.0.0.0:7475".to_string());
+    let shards = std::env::var("LOOM_COMPLETION_SHARDS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(8);
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async move {
+        let source = Arc::new(RelayTaskSource::new(&relay, &keep, shards)?);
+        eprintln!("loom schema-layer: relay {relay}, keep {keep}, shards {shards}");
+        serve(&addr, router(source)).await
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,5 +587,24 @@ mod tests {
         }
         assert!(ok, "server did not receive Done over the bidi stream");
         drop(up_tx);
+    }
+
+    #[test]
+    fn id_parse_and_completion() {
+        assert_eq!(parse_id("run1:nodeA:2"), Some(("run1".into(), "nodeA".into(), 2)));
+        assert_eq!(parse_id("a:b:node:5"), Some(("a:b".into(), "node".into(), 5))); // run keeps colons
+        assert!(parse_id("bad").is_none());
+        // small result → inline (no ref); large → ref at the conventional key
+        let c = completion_for("r:n:1", Some(b"x".to_vec())).unwrap();
+        assert_eq!((c.result_ref, c.result_inline, c.failed), (None, Some(b"x".to_vec()), false));
+        assert_eq!(completion_for("r:n:1", None).unwrap().result_ref, Some("r:n:result".into()));
+    }
+
+    #[test]
+    fn envelope_from_entry_decodes_taskmessage() {
+        let payload = serde_json::to_value(task(vec![KeepRef("in:1".into())], None)).unwrap();
+        let e = envelope_from_entry(payload, "http://keep", "tok").unwrap();
+        assert_eq!(e.id, "run1:nodeA:2");
+        assert_eq!(e.result_put_url, "http://keep/v1/results/run1:nodeA:result");
     }
 }

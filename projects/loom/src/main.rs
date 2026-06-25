@@ -24,6 +24,8 @@ enum Command {
     RunTask,
     /// relay → k8s Job bridge: lease `runner=k8s-job` tasks and create Jobs.
     JobController,
+    /// Schema layer: worker-facing bidi edge over the relay work-queue (#432).
+    SchemaLayer,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -32,5 +34,6 @@ fn main() -> anyhow::Result<()> {
         Command::Worker => loom::worker::run(),
         Command::RunTask => loom::runtask::run(),
         Command::JobController => loom::jobcontroller::run(),
+        Command::SchemaLayer => loom::schema_layer::run(),
     }
 }
