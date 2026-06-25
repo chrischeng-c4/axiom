@@ -17,8 +17,9 @@ pub mod ca;
 pub mod cassette;
 pub mod stub;
 
+use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
 use http_body_util::{BodyExt, Full};
@@ -42,6 +43,11 @@ struct Proxy {
     openapi: SpecRegistry,
     cassettes: Cassettes,
     client: reqwest::Client,
+    /// Host-routing table (bare host -> local base URL). Resolved BEFORE
+    /// stub/openapi/cassette/forward: a matched host is proxied to the local
+    /// emulator and the response returned verbatim, never recorded. Seeded from
+    /// `serve`'s `routes` and mutated at runtime via `/__admin/routes`.
+    routes: RwLock<HashMap<String, String>>,
 }
 
 fn full(status: StatusCode, headers: Vec<(String, String)>, body: Bytes) -> Response<BoxBody> {
@@ -61,8 +67,14 @@ fn json_resp(status: StatusCode, v: serde_json::Value) -> Response<BoxBody> {
     )
 }
 
-/// Serve the HTTP mock proxy until the process is killed.
-pub async fn serve(host_port: &str, ca_path: &str, cassette_dir: &str) -> Result<()> {
+/// Serve the HTTP mock proxy until the process is killed. `routes` seeds the
+/// host-routing table (`(host, local base URL)` pairs).
+pub async fn serve(
+    host_port: &str,
+    ca_path: &str,
+    cassette_dir: &str,
+    routes: &[(String, String)],
+) -> Result<()> {
     let ca = CaStore::generate().context("mint CA")?;
     // Write the CA pem so vat can export it as the runner's trust bundle.
     std::fs::write(ca_path, ca.ca_pem()).with_context(|| format!("write CA pem {ca_path}"))?;
@@ -76,6 +88,7 @@ pub async fn serve(host_port: &str, ca_path: &str, cassette_dir: &str) -> Result
             .danger_accept_invalid_certs(true) // upstream TLS is recorded, not verified
             .build()
             .context("build upstream client")?,
+        routes: RwLock::new(routes.iter().cloned().collect()),
     });
 
     let listener = tokio::net::TcpListener::bind(host_port)
@@ -162,9 +175,9 @@ impl Proxy {
         Response::new(Full::new(Bytes::new()).boxed())
     }
 
-    /// Core handler: stub > cassette replay > forward-and-record. `authority` is
-    /// `host[:port]`; stub matching uses the bare hostname, while the upstream
-    /// URL and cassette key use the full authority.
+    /// Core handler: route > stub > openapi > cassette replay > forward-and-record.
+    /// `authority` is `host[:port]`; stub matching uses the bare hostname, while
+    /// the upstream URL and cassette key use the full authority.
     async fn handle(
         &self,
         scheme: &str,
@@ -190,6 +203,23 @@ impl Proxy {
             .await
             .map(|c| c.to_bytes())
             .unwrap_or_default();
+
+        // 0) Host route wins: proxy to the local target verbatim, never record.
+        let route = self.routes.read().ok().and_then(|r| r.get(host).cloned());
+        if let Some(base) = route {
+            let url = format!("{}{path_and_query}", base.trim_end_matches('/'));
+            return match self.send_upstream(&method, &url, &req_headers, &body).await {
+                Ok((status, headers, bytes)) => full(
+                    StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
+                    headers,
+                    bytes,
+                ),
+                Err(e) => json_resp(
+                    StatusCode::BAD_GATEWAY,
+                    json!({ "error": format!("route {host} -> {base}: {e}") }),
+                ),
+            };
+        }
 
         // 1) Stub wins (matched on bare hostname).
         if let Some(s) = self.stubs.find(&method, host, &path) {
@@ -222,10 +252,36 @@ impl Proxy {
 
         // 4) Forward to the real upstream and record (auto mode).
         let url = format!("{scheme}://{authority}{path_and_query}");
+        match self.send_upstream(&method, &url, &req_headers, &body).await {
+            Ok((status, headers, bytes)) => {
+                self.cassettes
+                    .put(&key, &Recording::new(status, headers.clone(), &bytes));
+                full(
+                    StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
+                    headers,
+                    bytes,
+                )
+            }
+            Err(e) => json_resp(
+                StatusCode::BAD_GATEWAY,
+                json!({ "error": format!("upstream {url}: {e}") }),
+            ),
+        }
+    }
+
+    /// Send `body` to `url` with `method` + caller headers (dropping hop-by-hop /
+    /// proxy headers) and return `(status, response headers, body)`. Shared by the
+    /// route path (verbatim, no recording) and the forward path (records).
+    async fn send_upstream(
+        &self,
+        method: &str,
+        url: &str,
+        req_headers: &[(String, String)],
+        body: &Bytes,
+    ) -> std::result::Result<(u16, Vec<(String, String)>, Bytes), String> {
         let m = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
-        let mut rb = self.client.request(m, &url);
-        for (k, v) in &req_headers {
-            // Drop hop-by-hop / proxy headers that would confuse the upstream.
+        let mut rb = self.client.request(m, url);
+        for (k, v) in req_headers {
             let lk = k.to_ascii_lowercase();
             if lk == "host" || lk == "proxy-connection" || lk == "connection" {
                 continue;
@@ -248,18 +304,9 @@ impl Proxy {
                     .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or_default().to_string()))
                     .collect();
                 let bytes = resp.bytes().await.unwrap_or_default();
-                self.cassettes
-                    .put(&key, &Recording::new(status, headers.clone(), &bytes));
-                full(
-                    StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-                    headers,
-                    bytes,
-                )
+                Ok((status, headers, bytes))
             }
-            Err(e) => json_resp(
-                StatusCode::BAD_GATEWAY,
-                json!({ "error": format!("upstream {url}: {e}") }),
-            ),
+            Err(e) => Err(e.to_string()),
         }
     }
 
@@ -301,6 +348,52 @@ impl Proxy {
             }
             (Method::DELETE, "/__admin/openapi") => {
                 self.openapi.clear();
+                json_resp(StatusCode::OK, json!({ "ok": true }))
+            }
+            (Method::POST, "/__admin/routes") => {
+                // Accept a single {host,target} object or an array of them.
+                let parsed: std::result::Result<Vec<(String, String)>, String> =
+                    match serde_json::from_slice::<serde_json::Value>(&body) {
+                        Ok(v) => {
+                            let items = if v.is_array() {
+                                v.as_array().cloned().unwrap_or_default()
+                            } else {
+                                vec![v]
+                            };
+                            items
+                                .into_iter()
+                                .map(|it| {
+                                    let host =
+                                        it.get("host").and_then(|h| h.as_str()).map(String::from);
+                                    let target =
+                                        it.get("target").and_then(|t| t.as_str()).map(String::from);
+                                    match (host, target) {
+                                        (Some(h), Some(t)) if !h.is_empty() && !t.is_empty() => {
+                                            Ok((h, t))
+                                        }
+                                        _ => Err("each route needs non-empty host + target".into()),
+                                    }
+                                })
+                                .collect()
+                        }
+                        Err(e) => Err(e.to_string()),
+                    };
+                match parsed {
+                    Ok(pairs) => {
+                        if let Ok(mut routes) = self.routes.write() {
+                            for (h, t) in pairs {
+                                routes.insert(h, t);
+                            }
+                        }
+                        json_resp(StatusCode::OK, json!({ "ok": true }))
+                    }
+                    Err(e) => json_resp(StatusCode::BAD_REQUEST, json!({ "error": e })),
+                }
+            }
+            (Method::DELETE, "/__admin/routes") => {
+                if let Ok(mut routes) = self.routes.write() {
+                    routes.clear();
+                }
                 json_resp(StatusCode::OK, json!({ "ok": true }))
             }
             (Method::GET, "/__admin/recordings") => {
