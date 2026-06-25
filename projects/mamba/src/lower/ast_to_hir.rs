@@ -2311,6 +2311,14 @@ struct AstLowerer<'a> {
     /// and no runtime binding. CPython records them in `__annotations__`, but
     /// reading them before a later assignment raises NameError.
     module_unbound_annotation_names: std::collections::HashSet<String>,
+    /// Top-level names previously bound by a DECORATED `def`. A later
+    /// non-decorated `def` that redefines such a name must re-store the global
+    /// (the impl wins the name); otherwise the name stays bound to the
+    /// decorator's wrapper/dummy. The bool flags whether the decoration was
+    /// `@typing.overload` — an overload-stub series is followed by a dynamic
+    /// impl, so that impl's unannotated params must lower as `any` (dynamic
+    /// dispatch), not the raw-int default convention.
+    decorated_top_level_names: std::collections::HashMap<String, (SymbolId, bool)>,
     /// True while lowering a function body. Module annotation-only fast
     /// NameError lowering must not be baked into function bodies because a
     /// later module assignment may bind the global before the function runs.
@@ -2362,6 +2370,7 @@ impl<'a> AstLowerer<'a> {
             func_ret_float_hint: HashMap::new(),
             module_float_globals: HashMap::new(),
             module_unbound_annotation_names: std::collections::HashSet::new(),
+            decorated_top_level_names: std::collections::HashMap::new(),
             in_function_body: false,
         }
     }
@@ -2715,11 +2724,21 @@ impl<'a> AstLowerer<'a> {
                     // PEP 695: make this def's type-param names visible to the
                     // param/return type lowering (TypeVar-annotated values are
                     // boxed `any`, never raw ints).
+                    // A non-decorated impl that follows an `@overload` stub
+                    // series is dynamic: its unannotated params must lower as
+                    // `any` (boxed dispatch), matching how the stubs erased
+                    // their annotations. Otherwise `def g(x): return x*2`
+                    // monomorphizes `x` to int and `g("a")` returns garbage.
+                    let redef_of_overload = !is_decorated
+                        && self.decorated_top_level_names
+                            .get(name)
+                            .map(|(_, was_overload)| *was_overload)
+                            .unwrap_or(false);
                     let saved_tps = std::mem::replace(
                         &mut self.active_type_params,
                         type_params.iter().map(|p| p.name.clone()).collect(),
                     );
-                    let lowered = if is_decorated {
+                    let lowered = if is_decorated || redef_of_overload {
                         self.lower_decorated_fn(name, params_for_lower, return_for_lower, body, stmt.span)
                     } else {
                         self.lower_fn(name, params, return_ty, body, stmt.span)
@@ -2755,6 +2774,23 @@ impl<'a> AstLowerer<'a> {
                             self.result.top_level.push(HirStmt::FuncDefPlaceholder {
                                 name: func.name,
                                 span: stmt.span,
+                                redef: false,
+                            });
+                            // Remember this name was bound by a decorated def so a
+                            // later non-decorated redefinition re-stores the global.
+                            // Record overload-ness so the impl can lower dynamically.
+                            self.decorated_top_level_names
+                                .insert(name.clone(), (func.name, overload_decorated));
+                        } else if self.decorated_top_level_names.remove(name).is_some() {
+                            // A non-decorated def redefining a name previously bound
+                            // by a DECORATED def: emit a placeholder flagged as a
+                            // redefinition so module init re-stores the global to
+                            // this impl's FuncRef (otherwise the name stays bound to
+                            // the earlier decorator's wrapper/dummy).
+                            self.result.top_level.push(HirStmt::FuncDefPlaceholder {
+                                name: func.name,
+                                span: stmt.span,
+                                redef: true,
                             });
                         }
                         self.result.functions.push(func);
@@ -2837,6 +2873,17 @@ impl<'a> AstLowerer<'a> {
                             self.result.top_level.push(HirStmt::FuncDefPlaceholder {
                                 name: func.name,
                                 span: stmt.span,
+                                redef: false,
+                            });
+                            self.decorated_top_level_names
+                                .insert(name.clone(), (func.name, overload_decorated));
+                        } else if self.decorated_top_level_names.remove(name).is_some() {
+                            // Non-decorated async def redefining a decorated name —
+                            // re-store the global (see sync FnDef arm).
+                            self.result.top_level.push(HirStmt::FuncDefPlaceholder {
+                                name: func.name,
+                                span: stmt.span,
+                                redef: true,
                             });
                         }
                         self.result.functions.push(func);
@@ -4633,10 +4680,26 @@ impl<'a> AstLowerer<'a> {
                 // now in result.functions). The local sym binding allows callers to emit
                 // a Call MirInst against fn_sym.
                 let _ = fn_sym;
-                Some(HirStmt::FuncDefPlaceholder {
+                let placeholder = HirStmt::FuncDefPlaceholder {
                     name: fn_sym,
                     span: stmt.span,
-                })
+                    redef: false,
+                };
+                if default_inits.is_empty() {
+                    Some(placeholder)
+                } else {
+                    // `lower_stmt` yields a single statement, so wrap the def-time
+                    // default-slot inits + placeholder in an always-taken `if True:`
+                    // block. The inits execute in order at this textual position.
+                    let mut then_body = default_inits;
+                    then_body.push(placeholder);
+                    Some(HirStmt::If {
+                        cond: HirExpr::BoolLit(true, self.checker.tcx.bool()),
+                        then_body,
+                        else_body: Vec::new(),
+                        span: stmt.span,
+                    })
+                }
             }
             ast::Stmt::AsyncFnDef {
                 name,
@@ -4684,6 +4747,7 @@ impl<'a> AstLowerer<'a> {
                 Some(HirStmt::FuncDefPlaceholder {
                     name: fn_sym,
                     span: stmt.span,
+                    redef: false,
                 })
             }
             _ => None,
