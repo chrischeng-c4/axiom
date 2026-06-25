@@ -57,7 +57,6 @@ requirement KEEP_NS_TOKEN_CHECKS_BARE_KEY {
   verifymethod: test
 }
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
