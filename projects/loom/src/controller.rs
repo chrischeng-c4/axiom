@@ -348,6 +348,19 @@ pub fn run() -> anyhow::Result<()> {
         if gc_retention > 0 {
             tokio::spawn(crate::gc::gc_loop(store.clone(), gc_retention));
         }
+        // Dispatch deadline (#438): re-dispatch acked-but-silent nodes. Opt-in —
+        // set above your longest task (no worker heartbeat yet). 0 = off.
+        let dispatch_deadline = std::env::var("LOOM_DISPATCH_DEADLINE_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+        if dispatch_deadline > 0 {
+            tokio::spawn(crate::deadline::deadline_loop(
+                store.clone(),
+                dispatcher.clone(),
+                dispatch_deadline,
+            ));
+        }
 
         // With a real relay, consume worker completions and advance the DAG.
         // Run one consumer per shard (#127): completions are published to
