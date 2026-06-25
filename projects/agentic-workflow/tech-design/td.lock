@@ -1,8 +1,8 @@
 version = 1
 project = "agentic-workflow"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-06-20T13:06:09.335920+00:00"
-digest = "sha256:a328eef9b095ba900bd250b94bc115c7beab4078eba3b33aa228b92fb635a067"
+generated_at = "2026-06-25T07:47:22.931603+00:00"
+digest = "sha256:d3e362a84baac2692d7ff22ba59bc0b35f496589309408ac1c53fc96f956c07d"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -3277,12 +3277,24 @@ path = "logic/aw-ec-add-vat-binding-command-support.md"
 digest = "sha256:fea318747a38ab43563280c5bb36c4c17eef06ff5cd24749cb81fa14f542b700"
 
 [[files]]
+path = "logic/aw-llm-offline-agent-orientation-command.md"
+digest = "sha256:68e43decf288dfe3aada4696f35c3469593e544cc4b1dee1c743637b147210b1"
+
+[[files]]
 path = "logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md"
 digest = "sha256:d619d2fc80b7d9e2c4d471da9a4e3538caf230609d6fb4df112256def8660fd1"
 
 [[files]]
 path = "logic/promote-generated-manuals-to-first-class-aw-evidence-artifacts.md"
 digest = "sha256:a53d0a3729aa6223c9cb3835ce6e27cc114c60e30e9a4170cb44bf377ea73b57"
+
+[[files]]
+path = "logic/remove-td-cb-crrr-collapse-to-linear-lifecycle.md"
+digest = "sha256:b481dc161e1a54f3af0ff6568cdb12f6ccdd3e5e02e2116570cb74b4d02a1293"
+
+[[files]]
+path = "logic/workitem-loop-state-model-additive-foundation.md"
+digest = "sha256:cc55b1db9790d7d13644ecaf384d1dd7f8aecaa3b2851fa07986036ebe44d512"
 
 [[files]]
 path = "semantic/agentic-workflow-cli.md"
@@ -3570,7 +3582,7 @@ digest = "sha256:2cdc9d93a110b8bf3503d7e70219c883a4a0666e77a9e9b9ab7a5b62fcabb71
 
 [[files]]
 path = "surface/interfaces/src/td.md"
-digest = "sha256:3284643831288ccba5b3a06ede6a908c54bc10692fa217806ec98575416c9172"
+digest = "sha256:111eedcc773e519f1330f80436829f7f206cc8785422665c14208668fd04319b"
 
 [[files]]
 path = "surface/interfaces/src/td_check_section_type.md"
@@ -3610,7 +3622,7 @@ digest = "sha256:97a3e38815f7343ef07520c1a66eb5cb96b869cd96a8c25829b0f22c53abc50
 
 [[files]]
 path = "surface/specs/aw-capability-alignment-wi-planning.md"
-digest = "sha256:6f9c95907bc132f2fd447ba1fc126294024354b355e6a0c6b529b78a58b8893f"
+digest = "sha256:5c2bf1aa8d19bfcead4909748ab1d87472be916310bf688a9fb8bdd7004de1ec"
 
 [[files]]
 path = "surface/specs/aw-cb-fill-crrr.md"
@@ -3839,14 +3851,6 @@ digest = "sha256:bbf0542ef16ef7acba34ca0a4b05f451f177a5cd4cded9a16c24a513d51b833
 [[files]]
 path = "surface/validate/tests/cb_namespace_test.md"
 digest = "sha256:51e932e6cf8387e01a7dd1aae47a2df2dd3b99911b8c7a815070427dac0af61a"
-
-[[files]]
-path = "surface/validate/tests/cb_review_revise_test.md"
-digest = "sha256:54f8cc399d8da6e96a82673e8ba0f8575a3ecefb4702b5372d72e179f2780030"
-
-[[files]]
-path = "surface/validate/tests/cb_review_to_merge_test.md"
-digest = "sha256:f9dff1664bfc1d6655f92b34e30d2d53927aa09bf4a5a8e9373d0e059588f651"
 
 [[files]]
 path = "surface/validate/tests/in_place_lifecycle_test.md"

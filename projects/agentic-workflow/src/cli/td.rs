@@ -1842,7 +1842,11 @@ fn derive_td_concern(labels: &[String], title: Option<&str>) -> &'static str {
                 return match raw.trim() {
                     "config" | "configuration" | "settings" => "config",
                     "interface" | "interfaces" | "api" | "cli" | "schema" | "protocol" => {
-                        "interfaces"
+                        interface_protocol_subdir(&format!(
+                            "{} {}",
+                            raw.trim(),
+                            title.unwrap_or("")
+                        ))
                     }
                     "test" | "tests" | "validate" | "validation" | "verification" => "validate",
                     "semantic" | "traceability" | "capability" => "semantic",
@@ -1872,7 +1876,7 @@ fn derive_td_concern(labels: &[String], title: Option<&str>) -> &'static str {
             "rpc",
         ],
     ) {
-        return "interfaces";
+        return interface_protocol_subdir(&haystack);
     }
     if contains_any(
         &haystack,
@@ -1896,6 +1900,26 @@ fn derive_td_concern(labels: &[String], title: Option<&str>) -> &'static str {
         return "semantic";
     }
     "logic"
+}
+
+/// Files placed directly under `interfaces/` are rejected by R6a
+/// (`structure:loose-root-file`); an interface TD must live in a protocol
+/// subdir. Pick the subdir from the strongest protocol signal in the issue's
+/// concern label / title, defaulting to `rest`, so the dispatcher never derives
+/// a spec path that fails its own `aw td create --apply` validation (#460).
+fn interface_protocol_subdir(haystack: &str) -> &'static str {
+    let h = haystack.to_ascii_lowercase();
+    if h.contains("mcp") {
+        "interfaces/mcp"
+    } else if h.contains("grpc") {
+        "interfaces/grpc"
+    } else if h.contains("openrpc") || h.contains("jsonrpc") || h.contains("rpc") {
+        "interfaces/rpc"
+    } else if h.contains("cli") || h.contains("command") {
+        "interfaces/cli"
+    } else {
+        "interfaces/rest"
+    }
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
@@ -4808,11 +4832,35 @@ label = "project:agentic-workflow"
         let issue = issue_with_title("enhancement(jet): browser cli protocol schema");
         assert_eq!(
             derive_spec_dir_for_issue(&issue),
-            "projects/jet/interfaces/"
+            "projects/jet/interfaces/cli/"
         );
 
         let issue = issue_with_title("test(jet): parity fixture conformance gate");
         assert_eq!(derive_spec_dir_for_issue(&issue), "projects/jet/validate/");
+    }
+
+    #[test]
+    fn interface_concern_never_derives_a_loose_interfaces_path() {
+        // #460: a loose `interfaces/<slug>.md` fails R6a (structure:loose-root-file),
+        // so `aw td create --apply` deadlocked on its own derived path. The derived
+        // dir must always carry a protocol subdir under interfaces/.
+        for (title, want_subdir) in [
+            ("browser cli protocol schema", "interfaces/cli"),
+            ("widget service api contract", "interfaces/rest"),
+            ("wire protocol for rpc bundles", "interfaces/rpc"),
+        ] {
+            let dir = derive_spec_dir_for_issue(&issue_with_title(title));
+            assert_eq!(
+                dir,
+                format!("projects/jet/{want_subdir}/"),
+                "interface concern for `{title}` must land under a protocol subdir"
+            );
+            assert_ne!(
+                dir.trim_end_matches('/').rsplit('/').next(),
+                Some("interfaces"),
+                "loose interfaces dir (no protocol subdir) for `{title}`: `{dir}`"
+            );
+        }
     }
 
     #[test]
