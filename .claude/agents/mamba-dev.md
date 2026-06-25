@@ -14,9 +14,12 @@ The dispatcher gives you an issue number and any known specifics. Read the full 
 - Other agents may be editing concurrently. If a build fails with an error in a file you did NOT edit (e.g. a non-exhaustive match from someone adding an IR variant), it's a transient concurrent-edit race — just rebuild; do NOT try to fix it.
 
 ## Build discipline (the #1 source of wasted time)
-- Build command: `cd /Users/chrischeng/axiom/project-mamba && PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" cargo build --release -p mamba`
+- Build command (FAST verify profile — overrides the slow ship profile via env, keeps opt-level=3 for codegen fidelity but disables LTO and parallelizes codegen across all cores so a small edit only recompiles the changed unit, not the whole crate):
+  `cd /Users/chrischeng/axiom/project-mamba && CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" cargo build --release -p mamba`
+  (The repo's committed `[profile.release]` is `lto=true, codegen-units=1` — tuned for ship-time runtime perf, terrible for iteration; the two env vars above only affect YOUR verify build, never the shipped binary. Do NOT edit Cargo.toml.)
 - Run it in the **FOREGROUND** with the Bash tool, `timeout: 600000`. **Never** arm a Monitor for the build and **never** run the build in the background — that makes you stall. If the harness tries to auto-background cargo and you see duplicate builds contending, kill the duplicates and run ONE clean foreground build to completion.
 - Concurrent agents share one `target/` dir, so cargo serializes on the build-directory lock — your build may sit "Blocking waiting for file lock on build directory" for many minutes before it even compiles. That is normal. Be patient; if a build times out purely from waiting, run it again.
+- DO NOT STALL ON THE BUILD: the harness may try to auto-background a long `cargo build`. If that happens, NEVER end your turn to wait for a Monitor/notification. Instead, in the SAME turn, block on it directly — re-run the exact same `cargo build` command (it blocks on the cargo lock and returns the moment the build is done, in seconds if already built) and proceed straight to verification. "Waiting for a build" is something you do by BLOCKING inside your turn, never by stopping and waiting to be resumed. Only finish your turn once you have the final report.
 - A clean incremental release build is ~3.5–5 min when uncontended; longer when queued.
 - The release binary is `target/release/mamba`. The default `mamba` backend is the Cranelift JIT (it backs `mamba run` and all conformance).
 
