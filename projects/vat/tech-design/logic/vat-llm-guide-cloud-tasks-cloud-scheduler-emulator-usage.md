@@ -117,7 +117,6 @@ commands:
       - "Distinguish the auto-host-reading SDKs (pubsub, firebase-auth, firestore, GCS) that need no override."
       - "Point agents at the direct-REST alternative in tests/vat_emulator_tasks.rs."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
