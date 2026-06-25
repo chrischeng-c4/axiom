@@ -149,9 +149,18 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
         }
     };
 
+    // Best-effort: a nearby vat.toml's `[network].egress` still applies to a
+    // direct `vat run -- cmd` (the path that actually sandbox-wraps the command).
+    let egress = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| config::load_nearest(&cwd).ok())
+        .and_then(|c| c.network)
+        .map(|n| n.egress)
+        .unwrap_or_default();
     let spec = EnvSpec {
         base: Some(spec_base),
         isolation: args.isolation,
+        egress,
         gpu: args.gpu,
         ..EnvSpec::default()
     };
@@ -307,6 +316,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         workdir: cfg.workspace.workdir.clone(),
         env,
         isolation: args.isolation,
+        egress: cfg.network.as_ref().map(|n| n.egress).unwrap_or_default(),
         gpu: args.gpu,
         ..EnvSpec::default()
     };
