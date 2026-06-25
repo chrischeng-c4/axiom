@@ -76,7 +76,6 @@ properties:
     description: "Mirror loom/lumen: the online HTTP path comes from cli-std/online, not vat's own reqwest gate. Drop vat-direct deps (sha2/tar/flate2/semver and the upgrade-only reqwest gating) if cli-std now provides them."
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
