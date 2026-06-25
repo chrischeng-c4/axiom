@@ -1260,6 +1260,14 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
         return closed_wi_envelope(&issue);
     }
 
+    // #188 E1: when the WI carries an `<!-- aw:loop-state -->` block, the loop
+    // engine drives the next act from the verifier result (decide_next_action),
+    // not the CRRR phase machine. Absent the block, fall through to the
+    // phase-driven path below (fully backward-compatible).
+    if let Some(loop_state) = crate::cli::loop_state::parse_loop_state(&issue.body) {
+        return loop_state_envelope(root, &issue, &loop_state);
+    }
+
     if issue.issue_type == IssueType::Epic {
         let project = project_from_labels(&issue).unwrap_or_else(|| "PROJECT".to_string());
         let command = format!("aw wi atomize --project {project}");
@@ -1324,6 +1332,68 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             hitl_question: None,
             persistence: None,
         }
+    }
+}
+
+/// #188 E1: build the run envelope from a WI's loop-state block. The loop's
+/// `next_action` (set by `decide_next_action` from the latest verifier result)
+/// is the authority: a command -> dispatch it (iterate or finalize); none ->
+/// the loop is blocked / awaiting the human (HITL).
+fn loop_state_envelope(
+    root: WorkflowNode,
+    issue: &Issue,
+    loop_state: &crate::cli::loop_state::LoopState,
+) -> WorkflowEnvelope {
+    let current = WorkflowNode {
+        kind: "change".to_string(),
+        id: issue_ref(issue),
+    };
+    match loop_state.next_action.as_deref() {
+        Some(command) => {
+            let command = command.to_string();
+            let converged = matches!(
+                loop_state.status,
+                crate::cli::loop_state::LoopStatus::Converged
+            );
+            let reason = if converged {
+                "loop converged: ec is green — run the finalize act".to_string()
+            } else {
+                "loop iterating: ec is not green — run the next act".to_string()
+            };
+            WorkflowEnvelope {
+                action: "dispatch".to_string(),
+                root,
+                current,
+                completed: None,
+                completion: wi_completion(
+                    false,
+                    false,
+                    vec!["loop not yet terminal; ec verifier drives the next act".to_string()],
+                ),
+                next: WorkflowNext {
+                    kind: "loop_act".to_string(),
+                    command: command.clone(),
+                    reason,
+                    payload_path: None,
+                },
+                invoke: WorkflowInvoke { command },
+                agent_prompt:
+                    "Loop engine: run next.command, then re-run `aw run --wi` to re-observe the loop state."
+                        .to_string(),
+                requires_hitl: false,
+                artifact_quality_profile: None,
+                hitl_question: None,
+                persistence: None,
+            }
+        }
+        None => blocked_envelope(
+            root,
+            current,
+            format!("aw wi show {}", issue_ref(issue).trim_start_matches('#')),
+            "loop has no next act: ec verifier is blocked or undefined — human input required"
+                .to_string(),
+            true,
+        ),
     }
 }
 
@@ -2718,6 +2788,39 @@ mod tests {
         let serialized = serde_json::to_string(envelope).unwrap();
         assert!(!serialized.contains("aw wi estimate"));
         assert!(!serialized.contains("aw wi sprintize"));
+    }
+
+    #[test]
+    fn loop_state_envelope_dispatches_or_blocks_on_next_action() {
+        use crate::cli::loop_state::{LoopState, LoopStatus};
+        let issue = open_issue(IssueType::Enhancement, 188);
+        let root = WorkflowNode {
+            kind: "change".to_string(),
+            id: issue_ref(&issue),
+        };
+
+        // Iterating with a command -> the loop engine dispatches the act.
+        let s = LoopState {
+            status: LoopStatus::Iterating,
+            next_action: Some("aw td gen".to_string()),
+            ..Default::default()
+        };
+        let e = loop_state_envelope(root.clone(), &issue, &s);
+        assert_eq!(e.action, "dispatch");
+        assert_eq!(e.next.command, "aw td gen");
+        assert_eq!(e.invoke.command, "aw td gen");
+        assert!(!e.completion.workflow_complete);
+        assert!(!e.requires_hitl);
+
+        // No next act -> blocked / HITL (the single human gate).
+        let s = LoopState {
+            status: LoopStatus::Blocked,
+            next_action: None,
+            ..Default::default()
+        };
+        let e = loop_state_envelope(root, &issue, &s);
+        assert_eq!(e.action, "blocked");
+        assert!(e.requires_hitl);
     }
 
     #[test]
