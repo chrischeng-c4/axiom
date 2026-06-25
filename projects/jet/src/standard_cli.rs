@@ -25,8 +25,10 @@ pub fn llm_command() -> Command {
         .about("Print agent-facing docs for driving jet — offline, no network")
         .arg(
             Arg::new("topic")
-                .help("Topic: outline (default), workflow, quickstart, recipes")
-                .default_value("outline"),
+                .long("topic")
+                .value_name("topic")
+                .default_value("outline")
+                .help("Topic to print: outline (default), workflow, quickstart, recipes"),
         )
         .arg(
             Arg::new("format")
@@ -146,6 +148,8 @@ Packages live in a global content-addressed store (`jet store`). The lockfile is
 
 /// `jet llm` — print the requested topic offline.
 pub fn run_llm(matches: &ArgMatches) -> Result<()> {
+    // Topic is a `--topic` flag, not positional — positional slots are
+    // reserved for subcommands. Defaults to the outline.
     let topic = matches
         .get_one::<String>("topic")
         .map(String::as_str)
@@ -201,7 +205,7 @@ fn outline_md() -> String {
         s.push_str(&format!("- `{}` — {}\n", t.id, t.summary));
     }
     s.push_str("\n## Standard agent commands\n\n");
-    s.push_str("- `jet llm [topic] [--format md|json]` — this self-documentation (offline)\n");
+    s.push_str("- `jet llm [--topic <t>] [--format md|json]` — this self-documentation (offline)\n");
     s.push_str("- `jet upgrade [--version <tag>] [--check]` — self-update from GitHub releases\n");
     s.push_str("- `jet report-issue [--title <t>] [message...]` — file a structured issue\n");
     s
@@ -405,15 +409,20 @@ pub fn run_report_issue(matches: &ArgMatches) -> Result<()> {
     let body = format!(
         "{described}\n\n---\n_Filed via `jet report-issue`._\n- jet: {version}\n- os/arch: {os}/{arch}\n"
     );
+    // Tag every report with the project label the axiom tracker uses
+    // (`project:<name>`), so issues route to the right project automatically.
+    let label = format!("project:{PROJECT}");
     let new_issue_url = format!(
-        "https://github.com/{REPO}/issues/new?title={}&body={}",
+        "https://github.com/{REPO}/issues/new?title={}&body={}&labels={}",
         percent_encode(&title),
         percent_encode(&body),
+        percent_encode(&label),
     );
 
     if dry {
         println!("repo:  {REPO}");
         println!("title: {title}");
+        println!("label: {label}");
         println!("---");
         println!("{body}");
         println!("url:   {new_issue_url}");
@@ -423,7 +432,7 @@ pub fn run_report_issue(matches: &ArgMatches) -> Result<()> {
     // Prefer `gh issue create`; fall back to a pre-filled URL when gh is
     // absent (NotFound) or the create fails (e.g. unauthenticated).
     match std::process::Command::new("gh")
-        .args(["issue", "create", "--repo", REPO, "--title", &title, "--body", &body])
+        .args(["issue", "create", "--repo", REPO, "--title", &title, "--body", &body, "--label", &label])
         .status()
     {
         Ok(s) if s.success() => return Ok(()),
