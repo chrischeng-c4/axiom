@@ -118,7 +118,6 @@ properties:
         description: "[dep:reqwest] — gates report-issue's GitHub API submit path (gh-cli / prefilled-URL fallback need no network dep)."
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
