@@ -260,13 +260,25 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("workspace")
-                .about("Inspect uv-compatible [tool.uv.workspace] membership")
+                .about("Inspect uv-compatible [tool.uv.workspace] membership and metadata")
                 .subcommand_required(true)
                 .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("metadata")
+                        .about("View metadata about the current workspace")
+                        .arg(Arg::new("root").long("root").value_name("DIR").help("Workspace root directory; defaults to current directory")),
+                )
+                .subcommand(
+                    Command::new("dir")
+                        .about("Display the path of the workspace root or one member")
+                        .arg(Arg::new("root").long("root").value_name("DIR").help("Workspace root directory; defaults to current directory"))
+                        .arg(Arg::new("package").long("package").value_name("NAME").help("Display the path to a specific workspace package")),
+                )
                 .subcommand(
                     Command::new("list")
                         .about("List workspace members from pyproject.toml")
                         .arg(Arg::new("root").long("root").value_name("DIR").help("Workspace root directory; defaults to current directory"))
+                        .arg(Arg::new("paths").long("paths").action(ArgAction::SetTrue).help("Show member paths instead of package names"))
                         .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit JSON")),
                 ),
         )
