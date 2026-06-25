@@ -37,13 +37,11 @@ futures.workspace = true
 # uses rustls (no openssl) when enabled.
 relay = { path = "../relay", optional = true }
 reqwest = { workspace = true, optional = true }
-# `lumen upgrade` — decode/verify release tarballs and compare versions. Pure
-# Rust (no openssl), so non-optional and always available for the unit-testable
-# core; only the HTTPS download path is gated behind the `self-update` feature.
-flate2 = "1"
-tar = "0.4"
-sha2 = "0.10"
-semver = "1"
+# `lumen upgrade` / `lumen report-issue` — the standard agent-facing CLI ops,
+# shared across the ecosystem (CONTRIBUTING.md "CLI convention"). Offline paths
+# always build; the HTTPS paths are pulled in by lumen's `self-update` /
+# `report-issue` features via `cclab-cli-std/online`.
+cclab-cli-std = { path = "../../libs/cli-std", default-features = false }
 # `lumen spec gen` — generate a typed client from lumen's own OpenAPI.
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 rayon = "1.10"
@@ -88,16 +86,12 @@ default = []
 jieba = ["dep:jieba-rs"]
 # relay-wal — tail relay's broadcast as the WAL backend (#124), instead of NATS.
 relay-wal = ["dep:relay", "dep:reqwest"]
-# self-update — `lumen upgrade`'s HTTPS download path needs the otherwise-optional
-# HTTP client. Pure decode/verify deps (flate2/tar/sha2/semver) stay non-optional;
-# only reqwest is gated here so the default serving build stays HTTP-client-free
-# and clean to cross-compile. The published binary enables it (lumen-release.yml).
-self-update = ["dep:reqwest"]
-# report-issue — `lumen report-issue`'s node-probe + GitHub issue-submit path
-# needs the otherwise-optional HTTP client. The offline path (diagnostics +
-# pre-filled URL + --dry-run) works without it, so the default build still
-# offers the command. The published binary enables it (lumen-release.yml).
-report-issue = ["dep:reqwest"]
+# self-update / report-issue — enable the online (HTTPS) paths of the shared
+# CLI-ops lib. Offline builds still ship both commands (upgrade --check / the
+# report-issue dry-run + pre-filled-URL fallback). The published binary enables
+# them (lumen-release.yml); both map to the lib's single `online` capability.
+self-update = ["cclab-cli-std/online"]
+report-issue = ["cclab-cli-std/online"]
 operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars"]
 # OTLP trace export. Compiled into the release binary (lumen-release.yml / build.sh
 # pass --features otel); off in plain dev builds so they don't pay the OTLP build

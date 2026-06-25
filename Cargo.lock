@@ -1398,6 +1398,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cclab-cli-std"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "reqwest 0.12.28",
+ "semver",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tokio",
+]
+
+[[package]]
 name = "cclab-compass"
 version = "0.4.3"
 dependencies = [
@@ -6271,13 +6285,13 @@ dependencies = [
  "base64 0.22.1",
  "bytemuck",
  "byteorder",
+ "cclab-cli-std",
  "cclab-openapi-codegen",
  "chrono",
  "ciborium",
  "clap",
  "crc32fast",
  "criterion",
- "flate2",
  "futures",
  "hnsw_rs",
  "jieba-rs",
@@ -6301,13 +6315,10 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "schemars",
- "semver",
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2 0.10.9",
  "smallvec",
- "tar",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
