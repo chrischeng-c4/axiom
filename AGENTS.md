@@ -208,6 +208,27 @@ To add a new subcommand:
 
 Both steps in (3) are required — missing either will silently fail to register.
 
+## CLI Convention: every CLI ships `llm`, `upgrade`, `report-issue`
+
+Every CLI surface (`mamba`, `jet`, `lumen`, `vat`, `aw`/`cclab`, and any new
+tool) MUST expose three agent-facing subcommands; a CLI is not done until all
+three appear in `--help`:
+
+- `llm [topic] [--format md|json]` — offline self-documentation that teaches an
+  agent to drive the tool (default topic `outline`). Keep content in one in-code
+  source of truth; reference: `projects/lumen/src/bin/lumen.rs` + `src/spec.rs`.
+- `upgrade [--version <tag>] [--check]` — self-update to the latest
+  `<project>@*` GitHub release; the in-binary form of
+  `projects/<project>/install.sh` (detect target → download tarball → verify
+  sha256 → atomic replace).
+- `report-issue [--title <t>] [message...]` — file a structured **issue** report
+  (GitHub issues / Agentic Workflow), auto-attaching `--version` + OS/arch +
+  failing context. Named `report-issue`, not `report`, so it never collides with
+  domain `report` verbs (e.g. `jet report` = HTML test reports).
+
+Full spec: **`CONTRIBUTING.md` → "CLI convention: every CLI ships `llm`,
+`upgrade`, `report-issue`"**.
+
 ## Constraints
 
 Use rustup toolchain, not Homebrew rustc:
