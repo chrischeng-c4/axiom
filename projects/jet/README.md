@@ -105,7 +105,7 @@ readiness questions.
 | WASM And Multi-Target Execution | #3783 | implemented | passing | smoke, conformance, corpus, negative | partial | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
 | Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
 | Library Build And Package Publishing | #168 | implemented | verified | conformance | partial | `jet build --lib` (ESM+CJS, externalized deps/peerDeps, multi-entry), `.d.ts` emission, and `jet publish --build` with metadata validation + private-registry (`.npmrc` scoped) e2e all shipped and tested (A1-A3 merged). `partial`: `preserve_modules`/IIFE lib output, class-member `.d.ts` reduction, and some CJS re-export edge cases are TODO follow-ups. |
-| Component Workbench (Stories) | #169 | implemented | verified | conformance | partial | CSF `*.stories.tsx` discovery, `jet stories` dev manager + isolated preview, preview HMR, and a prop-type-derived Controls panel all shipped and tested (B1-B3 + B2b merged). `partial`: full hook-state-preserving React refresh, bare-import resolution beyond React, and generic/cross-file prop types are TODO follow-ups; static export (B4) deferred to phase 2. |
+| Component Workbench (Stories) | #169 | implemented | verified | conformance | ready_for_basic | CSF `*.stories.tsx` discovery, `jet stories` dev manager + isolated preview, preview HMR, and a prop-type-derived Controls panel (B1-B3 + B2b). The earlier `partial` follow-ups have since shipped: hook-state-preserving React Refresh (#196), `node_modules` bare-import resolution for dev + static (#197), generic/cross-file/intersection prop-type controls (#198), CSF2 `Template.bind`/re-exported stories/spread args (#199), and `jet stories build` static export (#190). CSF-compatible, no Storybook runtime. |
 
 ### Rust-Native Frontend Toolchain Replacement
 
@@ -175,6 +175,7 @@ Gate Inventory:
 | Production Bundle Output Parity | epic | #3782 | implemented | verified | conformance | `cargo test -p jet --lib bundler -- --nocapture`<br>projects/jet/fixtures/bundler/production |
 | Transform Resolver Parity | epic | #3782 | implemented | verified | corpus | `cargo test -p jet --lib transform -- --nocapture`<br>projects/jet/fixtures/bundler/transform-resolver |
 | Asset Sourcemap Negative Paths | epic | #3782 | implemented | verified | negative | `cargo test -p jet --lib asset -- --nocapture`<br>projects/jet/fixtures/bundler/assets |
+| SCSS / Sass Compilation | change | #204 | implemented | verified | conformance | `cargo test -p jet --lib css::scss` — grass-based (pure-Rust, no C deps) `.scss`/`.sass` → CSS: nesting, variables, `@use`/`@import` partials, mixins; fed into the CSS pipeline (`@import` resolve → Tailwind JIT → lightningcss) before minify |
 
 ### Dev Server And HMR
 
@@ -352,18 +353,23 @@ Gate Inventory:
 | Library Build Mode | change | #170 | implemented | verified | conformance | `cargo test -p jet --test library_build` — ESM+CJS, externalized deps/peerDeps, multi-entry (preserve-modules/IIFE TODO) |
 | Type Declaration Emission | change | #171 | implemented | verified | conformance | `cargo test -p jet --test library_dts` — `.d.ts` per entry + `types` field (isolatedDeclarations) |
 | Publish And Private Registry | change | #172 | implemented | verified | conformance | `cargo test -p jet --test library_publish_e2e` — build + metadata validate; in-process mock-registry publish/install round-trip |
+| Library CSS Cascade-Merge | change | #205 | implemented | verified | conformance | `cargo test -p jet --lib bundler::css_bundle` — cascade-ordered CSS merge across entries + raw asset copy in `jet build --lib` |
 
 ### Component Workbench (Stories)
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| component-workbench | #169 | implemented | jet discovers and parses CSF `*.stories.tsx` (default-export meta + named-export stories), serves a jet-native manager UI (sidebar, isolated preview, toolbar) with HMR, and derives a live Controls panel from component prop types + `argTypes`. CSF-compatible with no Storybook runtime dependency; `jet stories build` static export is deferred to phase 2. | smoke, conformance, corpus, negative | `cargo test -p jet --test csf_discovery`<br>`cargo test -p jet --test manager`<br>`cargo test -p jet --test preview_hmr`<br>`cargo test -p jet --test controls`<br>`cargo test -p jet --lib stories` |
+| component-workbench | #169 | implemented | jet discovers and parses CSF `*.stories.tsx` (default-export meta + named-export stories), serves a jet-native manager UI (sidebar, isolated preview, toolbar) with HMR, and derives a live Controls panel from component prop types + `argTypes`. CSF/CSF2-compatible with no Storybook runtime dependency, with hook-state-preserving React Refresh, `node_modules` bare-import resolution, generic/cross-file prop-type controls, and a static `jet stories build` export (all shipped). | smoke, conformance, corpus, negative | `cargo test -p jet --test csf_discovery`<br>`cargo test -p jet --test manager`<br>`cargo test -p jet --test preview_hmr`<br>`cargo test -p jet --test controls`<br>`cargo test -p jet --test stories_build` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Component workbench readiness | epic | #169 | implemented | verified | conformance | B1 CSF discovery -> B2 `jet stories` manager -> B2b preview HMR -> B3 controls (all merged) |
 | CSF Story Discovery | change | #173 | implemented | verified | conformance | `cargo test -p jet --test csf_discovery` — glob + CSF3 meta/named-story parse into a story index |
 | Stories Dev Manager | change | #174 | implemented | verified | conformance | `cargo test -p jet --test manager` — `jet stories` command + manager UI + isolated per-story preview |
-| Stories Preview HMR | change | #176 | implemented | verified | conformance | `cargo test -p jet --test preview_hmr` — watcher + WS, preview re-render/reload, manager untouched (full hook-state refresh TODO) |
+| Stories Preview HMR | change | #176 | implemented | verified | conformance | `cargo test -p jet --test preview_hmr` — watcher + WS, preview re-render/reload, manager untouched |
 | Stories Controls Panel | change | #175 | implemented | verified | conformance | `cargo test -p jet --test controls` — prop-type-inferred controls + `argTypes` override; live arg edits re-render the preview |
 | Stories Static Export | change | #190 | implemented | verified | conformance | `cargo test -p jet --test stories_build` — `jet stories build` emits a static, server-less workbench (manager + per-story previews + transformed modules, relative URLs) |
+| Hook-State-Preserving Refresh | change | #196 | implemented | verified | conformance | `cargo test -p jet --test preview_hmr` — React Refresh preserves `useState`/hook state across preview edits |
+| Stories Bare-Import Resolution | change | #197 | implemented | verified | conformance | `cargo test -p jet --test manager` — `node_modules` bare-import resolution for stories dev + static export |
+| Generic / Cross-File Prop Controls | change | #198 | implemented | verified | conformance | `cargo test -p jet --test controls` — controls inferred from generic, cross-file, and intersection prop types |
+| CSF2 Template.bind + Re-Exports | change | #199 | implemented | verified | conformance | `cargo test -p jet --test csf_discovery` — CSF2 `Template.bind({})`, re-exported stories, and spread-args discovery |
