@@ -123,9 +123,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         owned_shards = cluster.owned_shards().len(),
         "cluster topology"
     );
-    let state = AppState::new(engine)
-        .with_body_limit(args.body_limit)
-        .with_cluster(cluster);
+    let mut state = AppState::new(engine).with_body_limit(args.body_limit).with_cluster(cluster);
+    // Scoped claim-check tokens (#446): enforce when KEEP_TOKEN_SECRET is set.
+    if let Ok(secret) = std::env::var("KEEP_TOKEN_SECRET") {
+        if !secret.is_empty() {
+            state = state.with_token_secret(secret.into_bytes());
+            tracing::info!("claim-check token enforcement ON");
+        }
+    }
     let app = keep::router(state.clone());
 
     let listener = TcpListener::bind(addr).await?;

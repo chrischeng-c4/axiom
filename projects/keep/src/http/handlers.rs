@@ -674,7 +674,35 @@ async fn claim_put(
         (status = 404, description = "Not found", body = crate::http::error::ApiError)
     )
 )]
-pub async fn get_input(State(st): State<AppState>, Path(id): Path<String>) -> Result<Response, ApiErr> {
+/// Enforce a scoped claim-check token on worker ops (#446). No-op when token
+/// enforcement is off. `write` = PUT result (scope.w); else GET input (scope.r).
+fn check_scope(st: &AppState, headers: &HeaderMap, id: &str, write: bool) -> Result<(), ApiErr> {
+    let Some(secret) = &st.token_secret else { return Ok(()) };
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .unwrap_or("");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    match claimtoken::verify(secret, token, now) {
+        Some(scope) if (if write { scope.w == id } else { scope.r == id }) => Ok(()),
+        _ => Err(ApiErr::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "missing, invalid, expired, or out-of-scope claim-check token",
+        )),
+    }
+}
+
+pub async fn get_input(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiErr> {
+    check_scope(&st, &headers, &id, false)?;
     claim_get(&st, "input", &id).await
 }
 
@@ -720,5 +748,6 @@ pub async fn put_result(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiErr> {
+    check_scope(&st, &headers, &id, true)?;
     claim_put(&st, "result", &id, q, headers, body).await
 }

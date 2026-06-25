@@ -37,6 +37,10 @@ pub struct AppState {
     pub waiters: Arc<waiters::ListWaiters>,
     /// Cluster topology / sharding (single-node by default).
     pub cluster: crate::cluster::Cluster,
+    /// Optional HMAC secret for scoped claim-check tokens (#446). When set, worker
+    /// ops (GET input / PUT result) require a valid in-scope token; when `None`,
+    /// claim-check is open (backward compatible).
+    pub token_secret: Option<Arc<Vec<u8>>>,
     draining: Arc<AtomicBool>,
 }
 
@@ -48,12 +52,19 @@ impl AppState {
             metrics: Arc::new(metrics::HttpMetrics::default()),
             waiters: Arc::new(waiters::ListWaiters::default()),
             cluster: Arc::new(crate::cluster::ClusterConfig::default()),
+            token_secret: None,
             draining: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn with_body_limit(mut self, body_limit: usize) -> Self {
         self.body_limit = body_limit;
+        self
+    }
+
+    /// Enable scoped claim-check token enforcement with `secret` (#446).
+    pub fn with_token_secret(mut self, secret: Vec<u8>) -> Self {
+        self.token_secret = Some(Arc::new(secret));
         self
     }
 

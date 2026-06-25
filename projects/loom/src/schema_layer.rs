@@ -286,12 +286,6 @@ fn completion_for(id: &str, result_inline: Option<Vec<u8>>) -> Option<Completion
     Some(CompletionMsg { run_id, node_id, attempt, result_ref, result_inline, failed: false, fan_out: vec![] })
 }
 
-/// Decode a relay entry payload (a [`TaskMessage`]) into a self-describing envelope.
-fn envelope_from_entry(payload: serde_json::Value, keep_base: &str, token: &str) -> Option<TaskEnvelope> {
-    let task: TaskMessage = serde_json::from_value(payload).ok()?;
-    Some(build_envelope(&task, keep_base, token.to_string()))
-}
-
 /// A [`TaskSource`] over relay's work-queue (phase 1, relay UNCHANGED). lease-batch
 /// returns only leases (no #166 entry bodies), so this leases singly — the single
 /// lease returns the body — up to the credit window. Completions are forwarded to
@@ -301,18 +295,42 @@ pub struct RelayTaskSource {
     relay: String,
     keep: String,
     shards: u32,
+    /// Optional HMAC secret: when set, each envelope gets a scoped keep token (#444).
+    secret: Option<Vec<u8>>,
     inflight: tokio::sync::Mutex<HashMap<String, (String, u64, String)>>, // id -> (lease_id, epoch, subject)
 }
 
 impl RelayTaskSource {
-    pub fn new(relay: impl Into<String>, keep: impl Into<String>, shards: u32) -> anyhow::Result<Self> {
+    pub fn new(
+        relay: impl Into<String>,
+        keep: impl Into<String>,
+        shards: u32,
+        secret: Option<Vec<u8>>,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             client: reqwest::Client::builder().http2_prior_knowledge().build()?,
             relay: relay.into(),
             keep: keep.into(),
             shards: shards.max(1),
+            secret,
             inflight: tokio::sync::Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Sign a scoped keep token for one task (readable input key + writable result
+    /// key, 5-min TTL) — so the worker hits keep directly but only within scope.
+    fn token_for(&self, task: &TaskMessage) -> String {
+        let Some(secret) = &self.secret else { return String::new() };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let scope = claimtoken::Scope {
+            r: task.input_refs.first().map(|k| k.0.clone()).unwrap_or_default(),
+            w: format!("{}:{}:result", task.run_id, task.node_id),
+            exp: now + 300,
+        };
+        claimtoken::sign(secret, &scope)
     }
 
     async fn lease_one(&self, group: &str) -> Option<TaskEnvelope> {
@@ -328,7 +346,8 @@ impl RelayTaskSource {
         let lease_id = lease.get("lease_id")?.as_str()?.to_string();
         let epoch = lease.get("epoch")?.as_u64()?;
         let payload = body.get("entry")?.get("payload")?.clone();
-        let env = envelope_from_entry(payload, &self.keep, "")?;
+        let task: TaskMessage = serde_json::from_value(payload).ok()?;
+        let env = build_envelope(&task, &self.keep, self.token_for(&task));
         self.inflight.lock().await.insert(env.id.clone(), (lease_id, epoch, group.to_string()));
         Some(env)
     }
@@ -390,10 +409,18 @@ pub fn run() -> anyhow::Result<()> {
         .ok()
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(8);
+    // Scoped keep tokens (#444): sign per-task tokens when set (must match keep's
+    // KEEP_TOKEN_SECRET). Absent → no tokens (open claim-check).
+    let secret =
+        std::env::var("LOOM_KEEP_TOKEN_SECRET").ok().filter(|s| !s.is_empty()).map(String::into_bytes);
+    let tokens_on = secret.is_some();
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
-        let source = Arc::new(RelayTaskSource::new(&relay, &keep, shards)?);
-        eprintln!("loom schema-layer: relay {relay}, keep {keep}, shards {shards}");
+        let source = Arc::new(RelayTaskSource::new(&relay, &keep, shards, secret)?);
+        eprintln!(
+            "loom schema-layer: relay {relay}, keep {keep}, shards {shards} (keep tokens {})",
+            if tokens_on { "on" } else { "off" }
+        );
         serve(&addr, router(source)).await
     })
 }
@@ -601,10 +628,15 @@ mod tests {
     }
 
     #[test]
-    fn envelope_from_entry_decodes_taskmessage() {
-        let payload = serde_json::to_value(task(vec![KeepRef("in:1".into())], None)).unwrap();
-        let e = envelope_from_entry(payload, "http://keep", "tok").unwrap();
-        assert_eq!(e.id, "run1:nodeA:2");
-        assert_eq!(e.result_put_url, "http://keep/v1/results/run1:nodeA:result");
+    fn signed_token_scopes_to_input_and_result_keys() {
+        let src = RelayTaskSource::new("r", "http://keep", 8, Some(b"secret".to_vec())).unwrap();
+        let tok = src.token_for(&task(vec![KeepRef("in:1".into())], None));
+        let scope = claimtoken::verify(b"secret", &tok, 0).unwrap();
+        assert_eq!(scope.r, "in:1");
+        assert_eq!(scope.w, "run1:nodeA:result");
+        assert!(claimtoken::verify(b"wrong", &tok, 0).is_none());
+        // no secret → empty token
+        let src2 = RelayTaskSource::new("r", "http://keep", 8, None).unwrap();
+        assert_eq!(src2.token_for(&task(vec![], None)), "");
     }
 }
