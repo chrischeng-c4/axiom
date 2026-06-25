@@ -24,6 +24,7 @@ use std::sync::{Arc, RwLock};
 use anyhow::{Context, Result};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
+use hyper::client::conn::http2::SendRequest;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -55,6 +56,12 @@ struct Proxy {
     /// emulator and the response returned verbatim, never recorded. Seeded from
     /// `serve`'s `routes` and mutated at runtime via `/__admin/routes`.
     routes: RwLock<HashMap<String, String>>,
+    /// Per-upstream pool of multiplexed h2c connections for the gRPC
+    /// reverse-proxy (key = `host:port`). hyper's http2 `SendRequest` is
+    /// clonable and multiplexes over one connection, so requests reuse a single
+    /// connection per upstream; a closed/unready entry is re-dialed (the dial
+    /// overwrites it). Async mutex because acquiring may dial across an await.
+    grpc_pool: tokio::sync::Mutex<HashMap<String, SendRequest<Incoming>>>,
 }
 
 fn full(status: StatusCode, headers: Vec<(String, String)>, body: Bytes) -> Response<BoxBody> {
@@ -96,6 +103,7 @@ pub async fn serve(
             .build()
             .context("build upstream client")?,
         routes: RwLock::new(routes.iter().cloned().collect()),
+        grpc_pool: tokio::sync::Mutex::new(HashMap::new()),
     });
 
     let listener = tokio::net::TcpListener::bind(host_port)
@@ -174,11 +182,12 @@ impl Proxy {
             let is_h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2".as_ref());
             let io = TokioIo::new(tls);
             if is_h2 {
-                // gRPC over the tunnel: route-only h2 reverse-proxy to the local emulator.
+                // h2 over the tunnel: gRPC is reverse-proxied (route-only), other
+                // HTTP/2 traffic takes the normal route/stub/forward path.
                 let svc = service_fn(move |r: Request<Incoming>| {
                     let proxy = proxy.clone();
-                    let host = host.clone();
-                    async move { Ok::<_, Infallible>(proxy.handle_h2(&host, r).await) }
+                    let authority = authority.clone();
+                    async move { Ok::<_, Infallible>(proxy.handle_h2(&authority, r).await) }
                 });
                 let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
                     .serve_connection(io, svc)
@@ -198,12 +207,28 @@ impl Proxy {
         Response::new(Full::new(Bytes::new()).boxed())
     }
 
-    /// h2 (gRPC) handler over the MITM: route-only. A routed host is
-    /// reverse-proxied to its local emulator over h2c, streaming the request /
-    /// response bodies AND HTTP/2 trailers verbatim (gRPC `grpc-status` rides
-    /// trailers, so the body must never be buffered). A non-routed h2 host gets a
-    /// clean 502 — v2 does not record/replay gRPC.
-    async fn handle_h2(&self, host: &str, req: Request<Incoming>) -> Response<GrpcBody> {
+    /// h2 handler over the MITM. **gRPC** (`content-type: application/grpc`) is
+    /// route-only: a routed host is reverse-proxied to its local emulator over
+    /// h2c, streaming the request/response bodies AND HTTP/2 trailers verbatim
+    /// (gRPC `grpc-status` rides trailers, so the body must never be buffered); a
+    /// non-routed gRPC host gets a clean 502. **Non-gRPC HTTP/2** (e.g. a REST
+    /// client that negotiated h2 via ALPN) takes the same route/stub/openapi/
+    /// cassette/forward path as HTTP/1 — so plain HTTP/2 traffic isn't mistaken
+    /// for gRPC.
+    async fn handle_h2(&self, authority: &str, req: Request<Incoming>) -> Response<GrpcBody> {
+        let host = authority.split(':').next().unwrap_or(authority);
+        let is_grpc = req
+            .headers()
+            .get(hyper::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|c| c.starts_with("application/grpc"))
+            .unwrap_or(false);
+        if !is_grpc {
+            // Plain HTTP/2 over the MITM: reuse the HTTP/1 handler's resolution
+            // and adapt its body to the gRPC-path response type.
+            let resp = self.handle("https", authority, req).await;
+            return resp.map(|b| b.map_err(|e: Infallible| match e {}).boxed());
+        }
         let target = self.routes.read().ok().and_then(|r| r.get(host).cloned());
         let Some(base) = target else {
             return grpc_error(
@@ -216,7 +241,7 @@ impl Proxy {
             .trim_start_matches("http://")
             .trim_end_matches('/')
             .to_string();
-        match grpc_reverse_proxy(&upstream, req).await {
+        match self.grpc_reverse_proxy(&upstream, req).await {
             Ok(resp) => resp,
             Err(e) => grpc_error(
                 StatusCode::BAD_GATEWAY,
@@ -455,44 +480,78 @@ impl Proxy {
             ),
         }
     }
-}
 
-/// Reverse-proxy an h2 request to `upstream` (`host:port`) over h2c, streaming
-/// the request/response bodies AND HTTP/2 trailers verbatim — so unary and
-/// streaming gRPC (with `grpc-status` in trailers) pass through unmodified.
-/// A fresh upstream connection per request; pooling is a future optimization.
-async fn grpc_reverse_proxy(
-    upstream: &str,
-    req: Request<Incoming>,
-) -> std::result::Result<Response<GrpcBody>, String> {
-    let tcp = tokio::net::TcpStream::connect(upstream)
-        .await
-        .map_err(|e| format!("connect {upstream}: {e}"))?;
-    let (mut sender, conn) =
-        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tcp))
+    /// Get-or-dial a pooled, multiplexed h2c `SendRequest` for `upstream`
+    /// (`host:port`). A live pooled connection is cloned (http2 `SendRequest`
+    /// multiplexes over one connection); a missing/closed/unready entry is
+    /// re-dialed and the dial overwrites the dead entry. The pool lock is held
+    /// only to read/insert, never across `send_request`, so concurrent gRPC
+    /// requests multiplex instead of serializing.
+    async fn upstream_sender(
+        &self,
+        upstream: &str,
+    ) -> std::result::Result<SendRequest<Incoming>, String> {
+        let cached = {
+            let pool = self.grpc_pool.lock().await;
+            pool.get(upstream).filter(|s| !s.is_closed()).cloned()
+        };
+        if let Some(mut sender) = cached {
+            if sender.ready().await.is_ok() {
+                return Ok(sender);
+            }
+            // Dead despite the is_closed pre-check — fall through to re-dial; the
+            // insert below overwrites the stale entry.
+        }
+        let tcp = tokio::net::TcpStream::connect(upstream)
             .await
-            .map_err(|e| format!("h2 handshake {upstream}: {e}"))?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    let (mut parts, body) = req.into_parts();
-    let pq = parts
-        .uri
-        .path_and_query()
-        .map(|p| p.as_str().to_string())
-        .unwrap_or_else(|| "/".to_string());
-    // Absolute upstream URI so the h2 `:authority`/`:path` are right; drop the
-    // stale `host` header.
-    parts.uri = format!("http://{upstream}{pq}")
-        .parse()
-        .map_err(|e| format!("upstream uri: {e}"))?;
-    parts.headers.remove(hyper::header::HOST);
-    let resp = sender
-        .send_request(Request::from_parts(parts, body))
-        .await
-        .map_err(|e| format!("h2 send {upstream}: {e}"))?;
-    // Stream the response (DATA + trailers) straight back — never collect.
-    Ok(resp.map(|b| b.map_err(|e| Box::new(e) as BoxErr).boxed()))
+            .map_err(|e| format!("connect {upstream}: {e}"))?;
+        let (mut sender, conn) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tcp))
+                .await
+                .map_err(|e| format!("h2 handshake {upstream}: {e}"))?;
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        sender
+            .ready()
+            .await
+            .map_err(|e| format!("h2 ready {upstream}: {e}"))?;
+        self.grpc_pool
+            .lock()
+            .await
+            .insert(upstream.to_string(), sender.clone());
+        Ok(sender)
+    }
+
+    /// Reverse-proxy an h2 request to `upstream` (`host:port`) over h2c, streaming
+    /// the request/response bodies AND HTTP/2 trailers verbatim — so unary and
+    /// streaming gRPC (with `grpc-status` in trailers) pass through unmodified.
+    /// Reuses a pooled multiplexed connection per upstream ([`Self::upstream_sender`]).
+    async fn grpc_reverse_proxy(
+        &self,
+        upstream: &str,
+        req: Request<Incoming>,
+    ) -> std::result::Result<Response<GrpcBody>, String> {
+        let mut sender = self.upstream_sender(upstream).await?;
+        let (mut parts, body) = req.into_parts();
+        let pq = parts
+            .uri
+            .path_and_query()
+            .map(|p| p.as_str().to_string())
+            .unwrap_or_else(|| "/".to_string());
+        // Absolute upstream URI so the h2 `:authority`/`:path` are right; drop the
+        // stale `host` header.
+        parts.uri = format!("http://{upstream}{pq}")
+            .parse()
+            .map_err(|e| format!("upstream uri: {e}"))?;
+        parts.headers.remove(hyper::header::HOST);
+        let resp = sender
+            .send_request(Request::from_parts(parts, body))
+            .await
+            .map_err(|e| format!("h2 send {upstream}: {e}"))?;
+        // Stream the response (DATA + trailers) straight back — never collect.
+        Ok(resp.map(|b| b.map_err(|e| Box::new(e) as BoxErr).boxed()))
+    }
 }
 
 /// A synthesized error response on the gRPC (h2) path.
