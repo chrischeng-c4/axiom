@@ -12,9 +12,9 @@
 //   - `read_python_pin` / `write_python_pin` — the `.python-version` file
 //     used by `uv python pin`
 //
-// Actually downloading new Python interpreters (the python-build-standalone
-// pipeline) lands in a later tick — that step needs the network/tar layer
-// already in place from Tick 17/18 and is too heavy to unit-test cheaply.
+// Managed Python download from remote python-build-standalone artifacts lands
+// above this foundation layer. The local/offline command surface can still
+// register an existing source interpreter into the managed Python dir.
 
 use std::env;
 use std::fs;

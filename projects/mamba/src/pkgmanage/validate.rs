@@ -813,8 +813,23 @@ fn probe_python(bin: &Path) -> FamilyResult {
     let tmp = ScratchDir::new("probe");
     let project = tmp.path().join("project");
     let data = tmp.path().join("uv-data");
+    let fake_python_dir = tmp.path().join("fake-python");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::create_dir_all(tmp.path().join("empty-path")).unwrap();
+    std::fs::create_dir_all(&fake_python_dir).unwrap();
+    let fake_python = fake_python_dir.join("python");
+    std::fs::write(
+        &fake_python,
+        "#!/bin/sh\nif [ \"$1\" = \"-I\" ]; then\n  echo \"3 12 7\"\n  exit 0\nfi\necho \"fake-python $@\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&fake_python).unwrap().permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&fake_python, perm).unwrap();
+    }
 
     let pin = invoke(bin, &project, &["python", "pin", "3.12"]);
     if !pin.status.success() {
@@ -842,6 +857,84 @@ fn probe_python(bin: &Path) -> FamilyResult {
         return FamilyResult::fail(format!("python dir mismatch: {printed}"));
     }
 
+    let install = Command::new(bin)
+        .args(["python", "install", "3.12.7", "--source"])
+        .arg(&fake_python)
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !install.status.success() {
+        return FamilyResult::fail(format!(
+            "python install failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        ));
+    }
+    let managed_root = data.join("python");
+    if !managed_root.join("3.12.7/bin/python").exists()
+        || !managed_root.join("bin/python3.12.7").exists()
+    {
+        return FamilyResult::fail("python install did not create managed launchers");
+    }
+
+    let bin_dir = Command::new(bin)
+        .args(["python", "dir", "--bin"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !bin_dir.status.success() {
+        return FamilyResult::fail("python dir --bin failed");
+    }
+    let printed_bin = String::from_utf8_lossy(&bin_dir.stdout)
+        .trim_end()
+        .to_string();
+    if printed_bin != managed_root.join("bin").to_string_lossy() {
+        return FamilyResult::fail(format!("python dir --bin mismatch: {printed_bin}"));
+    }
+
+    let shell = Command::new(bin)
+        .args(["python", "update-shell", "--shell", "bash"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !shell.status.success() {
+        return FamilyResult::fail("python update-shell failed");
+    }
+    let shell_stdout = String::from_utf8_lossy(&shell.stdout);
+    if !shell_stdout.contains(&format!(
+        "export PATH=\"{}:$PATH\"",
+        managed_root.join("bin").display()
+    )) {
+        return FamilyResult::fail(format!("python update-shell mismatch: {shell_stdout}"));
+    }
+
+    let download = Command::new(bin)
+        .args(["python", "download", "3.12.7", "--source"])
+        .arg(&fake_python)
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !download.status.success() {
+        return FamilyResult::fail(format!(
+            "python download failed: {}",
+            String::from_utf8_lossy(&download.stderr)
+        ));
+    }
+
+    let uninstall = Command::new(bin)
+        .args(["python", "uninstall", "3.12.7"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !uninstall.status.success() {
+        return FamilyResult::fail(format!(
+            "python uninstall failed: {}",
+            String::from_utf8_lossy(&uninstall.stderr)
+        ));
+    }
+    if managed_root.join("3.12.7").exists() || managed_root.join("bin/python3.12.7").exists() {
+        return FamilyResult::fail("python uninstall left managed files behind");
+    }
+
     let list = Command::new(bin)
         .args(["python", "list"])
         .env("PATH", tmp.path().join("empty-path"))
@@ -850,11 +943,10 @@ fn probe_python(bin: &Path) -> FamilyResult {
     if !list.status.success() {
         return FamilyResult::fail("python list failed with empty PATH");
     }
-    FamilyResult::pass("python list/pin/dir expose local interpreter management").with_paths(
-        Some(project),
-        None,
-        Some(data),
+    FamilyResult::pass(
+        "python install/download/uninstall/list/find/pin/dir/update-shell expose local interpreter management",
     )
+    .with_paths(Some(project), None, Some(data))
 }
 
 fn probe_workspace(bin: &Path) -> FamilyResult {
