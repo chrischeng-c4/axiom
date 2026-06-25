@@ -132,6 +132,25 @@ pub fn upsert_loop_state(body: &str, state: &LoopState) -> Result<String> {
     Ok(out)
 }
 
+/// Apply an EC verifier result to the loop-state block in a WI body — the
+/// producer side of the loop: parse the existing block (or start a fresh one),
+/// `record_verification` (append the iteration + decide `next_action` from the
+/// verifier), and re-emit the block in place. Pure; the caller persists the
+/// returned body. This is what the EC verify step calls so `aw run`'s loop
+/// engine has an up-to-date block to read (#188 E1/E4).
+pub fn apply_verification(
+    body: &str,
+    result: LastResult,
+    summary: Option<String>,
+) -> Result<String> {
+    let mut state = parse_loop_state(body).unwrap_or_default();
+    if state.version == 0 {
+        state.version = 1;
+    }
+    state.record_verification(result, summary);
+    upsert_loop_state(body, &state)
+}
+
 /// The loop's decision, given the latest verification (EC) result: the status
 /// the loop is now in, and the next command to run. Green = converged (merge);
 /// Red = keep iterating (adapt and re-gen); Blocked = HITL (no auto next).
@@ -318,6 +337,38 @@ mod tests {
             "replace must not disturb the workflow-state block"
         );
         assert_eq!(parse_loop_state(&after2).unwrap().status, LoopStatus::Converged);
+    }
+
+    #[test]
+    fn apply_verification_starts_then_advances_the_block_in_a_body() {
+        // Fresh body (no block) + a Red verdict -> a block appears, iterating,
+        // and the original body text is preserved.
+        let body = "# WI 188\n\nsome description\n";
+        let out = apply_verification(
+            body,
+            LastResult::Red {
+                dimension: "behavior".into(),
+                why: "t failed".into(),
+            },
+            Some("round 1".into()),
+        )
+        .unwrap();
+        assert!(out.contains(LOOP_START));
+        assert!(out.contains("some description"));
+        let s = parse_loop_state(&out).unwrap();
+        assert_eq!(s.version, 1);
+        assert_eq!(s.iterations.len(), 1);
+        assert_eq!(s.status, LoopStatus::Iterating);
+        assert_eq!(s.next_action.as_deref(), Some("aw td gen"));
+
+        // Re-apply a Green verdict on the same body -> converged, 2nd iteration,
+        // block replaced in place (not duplicated).
+        let out2 = apply_verification(&out, LastResult::Green, None).unwrap();
+        let s2 = parse_loop_state(&out2).unwrap();
+        assert_eq!(s2.iterations.len(), 2);
+        assert_eq!(s2.status, LoopStatus::Converged);
+        assert_eq!(s2.next_action.as_deref(), Some("aw td merge"));
+        assert_eq!(out2.matches(LOOP_START).count(), 1);
     }
 }
 // HANDWRITE-END aw-workitem-loop-state
