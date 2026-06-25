@@ -13,6 +13,7 @@
 pub mod add;
 pub mod builder;
 pub mod cache;
+pub mod export;
 pub mod hash;
 pub mod index;
 pub mod init;
@@ -25,4 +26,5 @@ pub mod remove;
 pub mod run;
 pub mod source;
 pub mod sync;
+pub mod tree;
 pub mod validate;

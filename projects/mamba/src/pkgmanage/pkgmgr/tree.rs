@@ -207,7 +207,7 @@ fn build_adjacency(lockfile: &Lockfile, invert: bool) -> BTreeMap<String, Vec<St
     for pkg in &lockfile.packages {
         let parent_key = normalize(&pkg.name);
         for dep in &pkg.dependencies {
-            let child_key = normalize(dep);
+            let child_key = normalize_dependency(dep);
             if invert {
                 adj.entry(child_key).or_default().push(parent_key.clone());
             } else {
@@ -293,6 +293,30 @@ fn normalize(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+fn normalize_dependency(spec: &str) -> String {
+    normalize(dependency_name(spec))
+}
+
+fn dependency_name(spec: &str) -> &str {
+    let trimmed = spec.trim();
+    let head = trimmed
+        .split_once(';')
+        .map(|(name, _)| name)
+        .unwrap_or(trimmed)
+        .trim();
+    let end = head
+        .char_indices()
+        .find_map(|(idx, ch)| {
+            if matches!(ch, '<' | '>' | '=' | '!' | '~') || ch.is_whitespace() || ch == '[' {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(head.len());
+    head[..end].trim()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,6 +377,18 @@ app v1.0
     └── idna v3.6
 ";
         assert_eq!(body, expected);
+    }
+
+    #[test]
+    fn dependency_specs_are_matched_by_name() {
+        let l = lock(vec![
+            pkg("app", "1.0", &["requests==2.31.0"]),
+            pkg("requests", "2.31.0", &[]),
+        ]);
+        assert_eq!(
+            render_lockfile_tree(&l, &TreeOptions::default()),
+            "app v1.0\n└── requests v2.31.0\n"
+        );
     }
 
     #[test]

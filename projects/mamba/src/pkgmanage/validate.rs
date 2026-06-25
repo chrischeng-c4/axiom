@@ -1,4 +1,4 @@
-// `mamba pkgmgr-validate` — drive the 9 release-blocking
+// `mamba pkgmgr-validate` — drive the release-blocking
 // package-manager workflow families and emit a JSON summary that
 // matches validation/profiles/package_manager.toml [runner_contract]
 // + [summary].
@@ -52,7 +52,7 @@ impl Drop for ScratchDir {
 }
 
 const REQUIRED_FAMILIES: &[&str] = &[
-    "init", "index", "add", "lock", "sync", "run", "install", "hash", "cache",
+    "init", "index", "add", "lock", "export", "tree", "sync", "run", "install", "hash", "cache",
 ];
 
 pub fn cmd_validate(sub: &ArgMatches) -> Result<()> {
@@ -146,6 +146,8 @@ fn run_family(family: &str, bin: &Path) -> FamilyResult {
         "index" => probe_index(bin),
         "add" => probe_add(bin),
         "lock" => probe_lock(bin),
+        "export" => probe_export(bin),
+        "tree" => probe_tree(bin),
         "sync" => probe_sync(bin),
         "run" => probe_run(bin),
         "install" => probe_install(bin),
@@ -179,6 +181,38 @@ fn build_frozen_index() -> ScratchDir {
     );
     stake_pkg(dir.path(), "frozen-demo-transitive", "0.2.0", &[]);
     dir
+}
+
+fn setup_locked_project(bin: &Path, project: &Path, index: &Path) -> Option<FamilyResult> {
+    if !invoke(bin, project, &["init"]).status.success() {
+        return Some(FamilyResult::fail(
+            "init failed before locked-project setup",
+        ));
+    }
+    let add = invoke(
+        bin,
+        project,
+        &[
+            "add",
+            "frozen-demo-pkg==0.1.0",
+            "--index",
+            index.to_str().unwrap(),
+        ],
+    );
+    if !add.status.success() {
+        return Some(FamilyResult::fail(format!(
+            "add failed before locked-project setup: {}",
+            String::from_utf8_lossy(&add.stderr)
+        )));
+    }
+    let lock = invoke(bin, project, &["lock", "--index", index.to_str().unwrap()]);
+    if !lock.status.success() {
+        return Some(FamilyResult::fail(format!(
+            "lock failed before locked-project setup: {}",
+            String::from_utf8_lossy(&lock.stderr)
+        )));
+    }
+    None
 }
 
 fn stake_pkg(index: &Path, normalized_name: &str, version: &str, requires: &[&str]) {
@@ -356,6 +390,71 @@ fn probe_lock(bin: &Path) -> FamilyResult {
     FamilyResult::pass("lock byte-identical on replay; records transitive").with_paths(
         Some(proj),
         Some(lock_path),
+        None,
+    )
+}
+
+fn probe_export(bin: &Path) -> FamilyResult {
+    let index = build_frozen_index();
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    if let Some(failure) = setup_locked_project(bin, &proj, index.path()) {
+        return failure;
+    }
+    let out = invoke(
+        bin,
+        &proj,
+        &["export", "--no-header", "--no-hashes", "--annotate"],
+    );
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "export exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !stdout.contains("frozen-demo-pkg==0.1.0")
+        || !stdout.contains("frozen-demo-transitive==0.2.0")
+        || !stdout.contains("# via frozen-demo-pkg")
+    {
+        return FamilyResult::fail(format!(
+            "requirements export missing pinned graph: {stdout}"
+        ));
+    }
+    FamilyResult::pass("export emits requirements pins + reverse-dep annotations").with_paths(
+        Some(proj.clone()),
+        Some(proj.join("mamba.lock")),
+        None,
+    )
+}
+
+fn probe_tree(bin: &Path) -> FamilyResult {
+    let index = build_frozen_index();
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    if let Some(failure) = setup_locked_project(bin, &proj, index.path()) {
+        return failure;
+    }
+    let out = invoke(bin, &proj, &["tree"]);
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "tree exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !stdout.contains("frozen-demo-pkg v0.1.0")
+        || !stdout.contains("frozen-demo-transitive v0.2.0")
+    {
+        return FamilyResult::fail(format!("tree missing locked graph: {stdout}"));
+    }
+    FamilyResult::pass("tree renders locked dependency graph").with_paths(
+        Some(proj.clone()),
+        Some(proj.join("mamba.lock")),
         None,
     )
 }

@@ -72,28 +72,35 @@ Gate Inventory: `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs
 
 ID: c4-package-manager-uv-like
 Type: DeveloperTool
-Surfaces: CLI: `mamba init` + `mamba index` + `mamba add` + `mamba remove` + `mamba lock` + `mamba sync` + `mamba install` + `mamba cache` + `mamba hash` + `mamba pkgmgr-validate` - project scaffold, frozen index, dependency, lockfile, install, cache, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
+Surfaces: CLI: `mamba init` + `mamba index` + `mamba add` + `mamba remove` + `mamba lock` + `mamba export` + `mamba tree` + `mamba sync` + `mamba install` + `mamba cache` + `mamba hash` + `mamba pkgmgr-validate` - project scaffold, frozen index, dependency, lockfile, export, tree, install, cache, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
 EC Dimensions: behavior: `cargo test -p mamba --test pkgmgr` - uv-like workflow fixtures; stability: `cargo test -p mamba --test schema_gates pkgmgr` - schema, pin, and idempotence contracts
-Root WI: #459
-Status: verified
-Required Verification: conformance, negative
+Root WI: #519
+Status: partial
+Required Verification: conformance, negative, uv-parity
 Promise:
 A built-in package manager surface for project scaffold, dependency add/remove, lockfile generation, sync/install, cache, and validation workflows. The product promise is `uv`-style ergonomics over the mamba runtime with `mamba.toml` and `mamba.lock` as the agent-readable project contract.
 Gate Inventory: `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Uv-like package manager workflow | epic | #459 | implemented | verified | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
+| Local-first package manager baseline | epic | #459 | implemented | verified | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
+| Full uv package-manager parity and beyond | epic | #519 | partial | in_progress | uv-parity | `cargo test -p mamba --test pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/src/pkgmanage/pkgmgr; projects/mamba/tests/pkgmgr |
 
-Current state: `mamba init/index/add/remove/lock/sync/run/install/hash/cache`
+Current state: `mamba init/index/add/remove/lock/export/tree/sync/run/install/hash/cache`
 plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
-local wheel paths, and explicit registry URL tests. `mamba index build` can
-materialize a frozen local index from wheel files or directories for
+local wheel paths, explicit registry URL tests, lockfile export to
+requirements.txt / pylock.toml, and dependency-tree rendering. `mamba index
+build` can materialize a frozen local index from wheel files or directories for
 `mamba add --index` / `mamba lock --index`. The package-manager validation
-profile requires all nine offline workflow families and keeps live network
+profile requires eleven offline workflow families and keeps live network
 coverage opt-in/report-only. `mamba add` / `mamba lock` do not treat public
 PyPI as an implicit default source; callers must provide a frozen local index,
 direct local wheel file, or explicit registry URL when resolving dependencies.
+Full uv parity remains open under #519; remaining command families include
+audit/check, version, venv, pip-compatible subcommands, tool run/upgrade/list,
+python discovery/install/list/pin/dir, build/publish package flows, workspace
+commands, cache size semantics, auth/index credentials, shell completion, and
+related parity fixtures.
 
 ## Test Completeness — what we tested, against what authority
 
