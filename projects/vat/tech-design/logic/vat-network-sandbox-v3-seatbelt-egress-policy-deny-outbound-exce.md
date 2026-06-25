@@ -45,7 +45,6 @@ edges:
   - { from: build, to: run }
   - { from: run, to: effect }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
