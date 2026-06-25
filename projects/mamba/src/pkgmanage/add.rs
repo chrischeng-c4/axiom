@@ -25,7 +25,6 @@ const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 const INDEX_URL_ENV: &str = "MAMBA_INDEX_URL";
-const DEFAULT_INDEX_URL: &str = "https://pypi.org";
 
 pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
     let spec_raw = sub
@@ -44,7 +43,7 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
     let index_dir = resolve_index_dir(sub);
     let offline = sub.get_flag("offline");
     let index_url = resolve_index_url(sub);
-    let resolved = resolve_dep(&spec, index_dir.as_deref(), offline, &index_url)?;
+    let resolved = resolve_dep(&spec, index_dir.as_deref(), offline, index_url.as_deref())?;
 
     let manifest_src = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -114,18 +113,17 @@ fn resolve_index_dir(sub: &ArgMatches) -> Option<PathBuf> {
         .or_else(|| std::env::var_os(FROZEN_INDEX_ENV).map(PathBuf::from))
 }
 
-fn resolve_index_url(sub: &ArgMatches) -> String {
+fn resolve_index_url(sub: &ArgMatches) -> Option<String> {
     sub.get_one::<String>("index-url")
         .cloned()
         .or_else(|| std::env::var(INDEX_URL_ENV).ok())
-        .unwrap_or_else(|| DEFAULT_INDEX_URL.to_string())
 }
 
 fn resolve_dep(
     spec: &DepSpec,
     index_dir: Option<&Path>,
     offline: bool,
-    index_url: &str,
+    index_url: Option<&str>,
 ) -> Result<ResolvedDep> {
     // Local frozen index path — always wins when configured.
     if let Some(idx) = index_dir {
@@ -148,8 +146,16 @@ fn resolve_dep(
             ),
         };
     }
-    // Default: PyPI.
-    resolve_with_pypi(spec, index_url)
+    if let Some(index_url) = index_url {
+        return resolve_with_pypi(spec, index_url);
+    }
+
+    bail!(
+        "no package source configured for `mamba add {}`; pass --index DIR, \
+         set {FROZEN_INDEX_ENV}, pass --index-url URL, set {INDEX_URL_ENV}, \
+         or use --offline with NAME==VERSION",
+        spec.name
+    )
 }
 
 fn resolve_with_local_index(spec: &DepSpec, idx: &Path) -> Result<ResolvedDep> {
