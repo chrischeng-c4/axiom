@@ -36,6 +36,17 @@ fn run_add(workdir: &Path, args: &[&str]) -> std::process::Output {
         .expect("spawn mamba add")
 }
 
+fn run_sync(workdir: &Path) -> std::process::Output {
+    Command::new(mamba_bin())
+        .arg("sync")
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
+        .env_remove("MAMBA_CACHE_DIR")
+        .current_dir(workdir)
+        .output()
+        .expect("spawn mamba sync")
+}
+
 /// PEP 503 normalize used by `mamba add` when keying the index dir.
 fn normalize_pep503(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
@@ -266,6 +277,121 @@ fn add_no_source_requires_explicit_registry() {
     assert!(
         !tmp.path().join("mamba.lock").exists(),
         "failed no-source add must not create mamba.lock"
+    );
+}
+
+#[test]
+fn add_direct_local_wheel_records_source_and_syncs_offline() {
+    use sha2::{Digest, Sha256};
+
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let wheels_dir = tmp.path().join("wheels");
+    std::fs::create_dir(&wheels_dir).unwrap();
+    let wheel_rel = "wheels/frozen_local_wheel-0.1.0-py3-none-any.whl";
+    let wheel_path = tmp.path().join(wheel_rel);
+    let wheel_bytes = b"fake-wheel-bytes-for-direct-local-wheel";
+    std::fs::write(&wheel_path, wheel_bytes).unwrap();
+    let expected_sha = {
+        let mut hasher = Sha256::new();
+        hasher.update(wheel_bytes);
+        format!("{:x}", hasher.finalize())
+    };
+
+    let out = run_add(
+        tmp.path(),
+        &["./wheels/frozen_local_wheel-0.1.0-py3-none-any.whl"],
+    );
+    assert!(
+        out.status.success(),
+        "direct local wheel add must succeed; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest_a = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let lock_a = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
+    assert!(
+        String::from_utf8_lossy(&manifest_a).contains("\"frozen_local_wheel==0.1.0\""),
+        "manifest must pin wheel dependency"
+    );
+    assert!(
+        lock_a.contains("source_kind = \"direct_file\"")
+            && lock_a.contains("path = \"wheels/frozen_local_wheel-0.1.0-py3-none-any.whl\"")
+            && lock_a.contains(&format!("sha256 = \"{expected_sha}\""))
+            && lock_a.contains("url = \"\""),
+        "lock must record direct file metadata: {lock_a}"
+    );
+
+    let replay = run_add(
+        tmp.path(),
+        &["./wheels/frozen_local_wheel-0.1.0-py3-none-any.whl"],
+    );
+    assert!(
+        replay.status.success(),
+        "replay add must succeed; stderr: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    assert_eq!(
+        manifest_a,
+        std::fs::read(tmp.path().join("mamba.toml")).unwrap(),
+        "direct local wheel manifest must be byte-identical on replay"
+    );
+    assert_eq!(
+        lock_a,
+        std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap(),
+        "direct local wheel lockfile must be byte-identical on replay"
+    );
+
+    let synced = run_sync(tmp.path());
+    assert!(
+        synced.status.success(),
+        "sync must consume direct-file lock offline; stderr: {}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let init = std::fs::read_to_string(
+        tmp.path()
+            .join(".venv/site-packages/frozen_local_wheel/__init__.py"),
+    )
+    .unwrap();
+    assert!(
+        init.contains("__mamba_source_kind__ = \"direct_file\"")
+            && init.contains(
+                "__mamba_source_path__ = \"wheels/frozen_local_wheel-0.1.0-py3-none-any.whl\""
+            ),
+        "sync stub must preserve direct source metadata: {init}"
+    );
+}
+
+#[test]
+fn add_missing_direct_local_wheel_fails_without_mutation() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
+
+    let out = run_add(
+        tmp.path(),
+        &["./wheels/does_not_exist-0.0.0-py3-none-any.whl"],
+    );
+    assert!(
+        !out.status.success(),
+        "missing local wheel add must fail; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("does_not_exist"),
+        "diagnostic must name missing path: {stderr:?}"
+    );
+    assert_eq!(
+        manifest_before,
+        std::fs::read_to_string(&manifest_path).unwrap(),
+        "failed missing-wheel add must not mutate mamba.toml"
+    );
+    assert!(
+        !tmp.path().join("mamba.lock").exists(),
+        "failed missing-wheel add must not create mamba.lock"
     );
 }
 

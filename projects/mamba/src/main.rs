@@ -105,7 +105,7 @@ fn cli() -> Command {
         .subcommand(
             Command::new("add")
                 .about("Add a dependency to mamba.toml and update mamba.lock")
-                .arg(Arg::new("spec").required(true).help("Dependency spec, e.g. foo==1.2.3 (bare names require --index or explicit --index-url)"))
+                .arg(Arg::new("spec").required(true).help("Dependency spec or local wheel path, e.g. foo==1.2.3 or ./wheels/foo-1.2.3-py3-none-any.whl (bare names require --index or explicit --index-url)"))
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
                 .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require pinned version or local index")),
