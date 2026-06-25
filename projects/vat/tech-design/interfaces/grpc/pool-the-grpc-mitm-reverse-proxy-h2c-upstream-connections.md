@@ -63,7 +63,6 @@ properties:
     description: "Pool guarded by a Mutex/RwLock; the request multiplexes on a cloned SendRequest rather than holding the lock for the whole call."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
