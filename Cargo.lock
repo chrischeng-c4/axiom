@@ -5321,6 +5321,7 @@ dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
  "clap",
+ "cli-std",
  "dashmap 6.2.1",
  "dirs",
  "flate2",
