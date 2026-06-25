@@ -676,10 +676,48 @@ exclude = ["packages/skip"]
         ));
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
-    if !stdout.contains("alpha-pkg==0.1.0") || stdout.contains("skip==9.9.9") {
+    if stdout.trim() != "alpha-pkg" || stdout.contains("skip") {
         return FamilyResult::fail(format!("workspace list output mismatch: {stdout}"));
     }
-    FamilyResult::pass("workspace list discovers uv workspace members").with_paths(
+
+    let paths = invoke(bin, root, &["workspace", "list", "--paths"]);
+    if !paths.status.success()
+        || !String::from_utf8_lossy(&paths.stdout)
+            .trim_end()
+            .ends_with("packages/alpha")
+    {
+        return FamilyResult::fail(format!(
+            "workspace list --paths mismatch: {} / {}",
+            paths.status,
+            String::from_utf8_lossy(&paths.stdout)
+        ));
+    }
+
+    let dir = invoke(bin, root, &["workspace", "dir", "--package", "alpha_pkg"]);
+    if !dir.status.success()
+        || !String::from_utf8_lossy(&dir.stdout)
+            .trim_end()
+            .ends_with("packages/alpha")
+    {
+        return FamilyResult::fail(format!(
+            "workspace dir --package mismatch: {} / {}",
+            dir.status,
+            String::from_utf8_lossy(&dir.stdout)
+        ));
+    }
+
+    let metadata = invoke(bin, root, &["workspace", "metadata"]);
+    let metadata_stdout = String::from_utf8_lossy(&metadata.stdout);
+    if !metadata.status.success()
+        || !metadata_stdout.contains("\"workspace\"")
+        || !metadata_stdout.contains("\"members\"")
+        || !metadata_stdout.contains("\"exclude\"")
+        || metadata_stdout.contains("\"name\":\"skip\"")
+    {
+        return FamilyResult::fail(format!("workspace metadata mismatch: {metadata_stdout}"));
+    }
+
+    FamilyResult::pass("workspace list/dir/metadata inspect uv workspace members").with_paths(
         Some(root.to_path_buf()),
         None,
         None,

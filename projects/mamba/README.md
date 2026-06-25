@@ -95,8 +95,9 @@ inspection. `mamba venv` exposes create/remove safety around PEP 405
 environments, and `mamba cache` now reports exact size/category info plus
 dry-run, age, size, and package-targeted pruning. `mamba python` exposes local
 interpreter list/find, `.python-version` pinning, and managed Python directory
-resolution. `mamba workspace list` inspects uv-compatible
-`[tool.uv.workspace]` membership and exclusion patterns. `mamba index build` can
+resolution. `mamba workspace list/dir/metadata` inspects uv-compatible
+`[tool.uv.workspace]` membership, member paths, root paths, and exclusion
+patterns. `mamba index build` can
 materialize a frozen local index from wheel files or directories for
 `mamba add --index` / `mamba lock --index`. The package-manager validation
 profile requires sixteen offline workflow families and keeps live network

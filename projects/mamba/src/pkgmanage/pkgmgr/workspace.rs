@@ -156,13 +156,7 @@ fn collect_string_array(arr: &[toml::Value], field_name: &str) -> Result<Vec<Str
 pub fn discover_workspace_members(
     workspace_root: &Path,
 ) -> Result<Vec<WorkspaceMember>, IndexError> {
-    let ws_toml = workspace_root.join("pyproject.toml");
-    let src = fs::read_to_string(&ws_toml).map_err(|err| IndexError::CacheIo {
-        path: ws_toml.display().to_string(),
-        detail: format!("reading workspace pyproject.toml: {err}"),
-    })?;
-
-    let cfg = match parse_workspace_config(&src)? {
+    let cfg = match read_workspace_config(workspace_root)? {
         Some(cfg) => cfg,
         None => return Ok(Vec::new()),
     };
@@ -198,6 +192,16 @@ pub fn discover_workspace_members(
     matched.sort();
 
     matched.into_iter().map(|root| read_member(&root)).collect()
+}
+
+/// Read and parse `[tool.uv.workspace]` from `<workspace_root>/pyproject.toml`.
+pub fn read_workspace_config(workspace_root: &Path) -> Result<Option<WorkspaceConfig>, IndexError> {
+    let ws_toml = workspace_root.join("pyproject.toml");
+    let src = fs::read_to_string(&ws_toml).map_err(|err| IndexError::CacheIo {
+        path: ws_toml.display().to_string(),
+        detail: format!("reading workspace pyproject.toml: {err}"),
+    })?;
+    parse_workspace_config(&src)
 }
 
 /// Expand one member pattern. Supports literal segments and single `*` per
@@ -340,7 +344,7 @@ fn read_member(root: &Path) -> Result<WorkspaceMember, IndexError> {
         })?;
 
     Ok(WorkspaceMember {
-        name: normalize_name(name),
+        name: normalize_workspace_package_name(name),
         version: version.to_string(),
         root: root.to_path_buf(),
         pyproject,
@@ -350,7 +354,7 @@ fn read_member(root: &Path) -> Result<WorkspaceMember, IndexError> {
 /// PEP 503 normalize: lowercase + collapse runs of `[-_.]` to single `-`.
 /// Duplicates the helper in `cache.rs` deliberately — keeping `workspace.rs`
 /// dependency-free of sibling modules makes it easier to test in isolation.
-fn normalize_name(name: &str) -> String {
+pub fn normalize_workspace_package_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut last_was_sep = false;
     for ch in name.chars() {
@@ -517,9 +521,11 @@ version = "0.2.0"
         assert_eq!(members[0].name, "alpha-pkg"); // normalized
         assert_eq!(members[0].version, "0.1.0");
         assert!(members[0].root.ends_with("packages/alpha"));
-        assert!(members[0]
-            .pyproject
-            .ends_with("packages/alpha/pyproject.toml"));
+        assert!(
+            members[0]
+                .pyproject
+                .ends_with("packages/alpha/pyproject.toml")
+        );
         assert_eq!(members[1].name, "beta-pkg");
     }
 
