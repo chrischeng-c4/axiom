@@ -138,3 +138,12 @@ changes:
     impl_mode: hand-written
     description: "Refresh C4 package-manager text so it reflects current pkgmanage implementation and the no-implicit-PyPI contract."
 ```
+
+# Reviews
+
+### Review 2
+**Verdict:** approved
+
+- [changes] Revised TD now binds each target file to `logic` or `unit-test`, giving codegen/CB a deterministic hand-written target set.
+- [logic] Source-policy contract remains scoped to no implicit public PyPI fallback while preserving explicit registry behavior.
+- [unit-test] Test contract remains actionable with focused no-source tests and the full pkgmgr umbrella gate.
