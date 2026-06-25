@@ -27,63 +27,74 @@ fill_sections: [logic, unit-test]
 
 ```mermaid
 ---
-id: lumen-upgrade-dispatch
+id: lumen-upgrade-contract
 entry: start
 nodes:
-  start:     { kind: start,    label: "lumen upgrade [--check|--tag|--force|-y]" }
-  resolve:   { kind: process,  label: "resolve current target + current version" }
-  query:     { kind: process,  label: "GitHub Releases API: list lumen@* releases" }
-  select:    { kind: process,  label: "pick target version (latest stable semver | --tag)" }
-  is_check:  { kind: decision, label: "--check?" }
-  report:    { kind: terminal, label: "print current vs latest; exit 0 (no change)" }
-  current:   { kind: decision, label: "already current and not --force?" }
-  uptodate:  { kind: terminal, label: "already up to date; exit 0" }
-  asset:     { kind: decision, label: "asset lumen-<target>.tar.gz exists?" }
-  noasset:   { kind: terminal, label: "no asset for target; exit non-zero" }
-  download:  { kind: process,  label: "download tarball + .sha256 to temp" }
-  verify:    { kind: decision, label: "sha256 matches?" }
-  shafail:   { kind: terminal, label: "sha mismatch; abort, binary intact; exit non-zero" }
-  extract:   { kind: process,  label: "extract inner lumen from tarball" }
-  replace:   { kind: decision, label: "atomic replace running exe (temp + rename)?" }
-  permfail:  { kind: terminal, label: "permission denied; binary intact; remediation msg" }
-  done:      { kind: terminal, label: "installed <new version>; exit 0" }
+  start:    { kind: start,    label: "lumen upgrade [--check] [--tag T] [--force] [-y]" }
+  selfexe:  { kind: process,  label: "current_exe() -> install_path; env!(CARGO_PKG_VERSION) -> cur" }
+  triple:   { kind: process,  label: "target = compile-time target triple (e.g. aarch64-apple-darwin)" }
+  list:     { kind: process,  label: "GET api.github.com/repos/{repo}/releases (UA + optional GITHUB_TOKEN)" }
+  pick:     { kind: process,  label: "tags lumen@X.Y.Z -> semver; pick = --tag T else max stable" }
+  ckflag:   { kind: decision, label: "--check?" }
+  report:   { kind: terminal, label: "print cur vs pick; exit 0" }
+  cmp:      { kind: decision, label: "pick == cur and not --force?" }
+  noop:     { kind: terminal, label: "'already up to date (X.Y.Z)'; exit 0" }
+  findasset:{ kind: decision, label: "asset 'lumen-{target}.tar.gz' in release?" }
+  noasset:  { kind: terminal, label: "err 'no asset for {target}'; exit 1" }
+  confirm:  { kind: decision, label: "tty and not -y -> confirm cur->pick?" }
+  abort:    { kind: terminal, label: "'aborted'; exit 0" }
+  dl:       { kind: process,  label: "download tarball + '.sha256' into temp dir beside install_path" }
+  sha:      { kind: decision, label: "sha256(tarball) == published sha?" }
+  shabad:   { kind: terminal, label: "err 'checksum mismatch'; drop temp; exit 1" }
+  untar:    { kind: process,  label: "gz-decode + untar; read inner 'lumen-{target}/lumen' -> temp bin; chmod 0755" }
+  persist:  { kind: process,  label: "write temp bin next to install_path (same dir = same fs)" }
+  rename:   { kind: decision, label: "rename(temp_bin, install_path) ok?" }
+  permbad:  { kind: terminal, label: "err 'cannot replace {path}: permission denied; re-run with sudo'; binary intact; exit 1" }
+  done:     { kind: terminal, label: "'upgraded cur -> pick'; exit 0" }
 edges:
-  - { from: start,    to: resolve }
-  - { from: resolve,  to: query }
-  - { from: query,    to: select }
-  - { from: select,   to: is_check }
-  - { from: is_check, to: report,   label: "yes" }
-  - { from: is_check, to: current,  label: "no" }
-  - { from: current,  to: uptodate, label: "yes" }
-  - { from: current,  to: asset,    label: "no" }
-  - { from: asset,    to: noasset,  label: "no" }
-  - { from: asset,    to: download, label: "yes" }
-  - { from: download, to: verify }
-  - { from: verify,   to: shafail,  label: "no" }
-  - { from: verify,   to: extract,  label: "yes" }
-  - { from: extract,  to: replace }
-  - { from: replace,  to: permfail, label: "no" }
-  - { from: replace,  to: done,     label: "yes" }
+  - { from: start,    to: selfexe }
+  - { from: selfexe,  to: triple }
+  - { from: triple,   to: list }
+  - { from: list,     to: pick }
+  - { from: pick,     to: ckflag }
+  - { from: ckflag,   to: report,    label: "yes" }
+  - { from: ckflag,   to: cmp,       label: "no" }
+  - { from: cmp,      to: noop,      label: "yes" }
+  - { from: cmp,      to: findasset, label: "no" }
+  - { from: findasset,to: noasset,   label: "no" }
+  - { from: findasset,to: confirm,   label: "yes" }
+  - { from: confirm,  to: abort,     label: "declined" }
+  - { from: confirm,  to: dl,        label: "yes/-y" }
+  - { from: dl,       to: sha }
+  - { from: sha,      to: shabad,    label: "no" }
+  - { from: sha,      to: untar,     label: "yes" }
+  - { from: untar,    to: persist }
+  - { from: persist,  to: rename }
+  - { from: rename,   to: permbad,   label: "no" }
+  - { from: rename,   to: done,      label: "yes" }
 ---
 flowchart TD
-    start([lumen upgrade]) --> resolve[resolve target + version]
-    resolve --> query[list lumen@* releases]
-    query --> select[pick target version]
-    select --> is_check{--check?}
-    is_check -->|yes| report([print current vs latest])
-    is_check -->|no| current{already current and not --force?}
-    current -->|yes| uptodate([already up to date])
-    current -->|no| asset{asset for target?}
-    asset -->|no| noasset([no asset; error])
-    asset -->|yes| download[download tarball + .sha256]
-    download --> verify{sha256 matches?}
-    verify -->|no| shafail([sha mismatch; abort])
-    verify -->|yes| extract[extract inner lumen]
-    extract --> replace{atomic replace exe?}
-    replace -->|no| permfail([permission denied; intact])
-    replace -->|yes| done([installed new version])
+    start([lumen upgrade]) --> selfexe[current_exe + cur version]
+    selfexe --> triple[compile-time target triple]
+    triple --> list[GET releases]
+    list --> pick[pick --tag or max stable semver]
+    pick --> ckflag{--check?}
+    ckflag -->|yes| report([print cur vs pick])
+    ckflag -->|no| cmp{pick == cur and not --force?}
+    cmp -->|yes| noop([already up to date])
+    cmp -->|no| findasset{asset for target?}
+    findasset -->|no| noasset([no asset; exit 1])
+    findasset -->|yes| confirm{confirm unless -y?}
+    confirm -->|declined| abort([aborted])
+    confirm -->|yes| dl[download tarball + .sha256 to temp]
+    dl --> sha{sha256 matches?}
+    sha -->|no| shabad([checksum mismatch; exit 1])
+    sha -->|yes| untar[untar inner lumen to temp bin]
+    untar --> persist[place temp bin in install dir]
+    persist --> rename{rename over install_path?}
+    rename -->|no| permbad([permission denied; intact; exit 1])
+    rename -->|yes| done([upgraded])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
