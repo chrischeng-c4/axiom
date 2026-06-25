@@ -915,11 +915,15 @@ fn is_whole_file_codegen_content(
     };
     let lines = content.lines().collect::<Vec<_>>();
     let spec_line = block.begin_line.saturating_sub(1);
+    // Tolerate a single leading shebang (`#!`) on line 1: an exec'd shell
+    // script must keep it above the managed markers, yet the file is still
+    // wholly owned by the CODEGEN block (#42).
     let before = lines
         .get(..spec_line)
         .unwrap_or(&[])
         .iter()
-        .all(|line| line.trim().is_empty());
+        .enumerate()
+        .all(|(idx, line)| line.trim().is_empty() || (idx == 0 && line.starts_with("#!")));
     let after = lines
         .get(block.end_line + 1..)
         .unwrap_or(&[])
@@ -3356,6 +3360,32 @@ changes:
         assert_eq!(generated.matches("#!/usr/bin/env bash").count(), 1);
         assert_eq!(generated.matches("# CODEGEN-BEGIN").count(), 1);
         assert!(generated.contains("echo \"build ${1:-debug}\""));
+    }
+
+    #[test]
+    fn whole_file_codegen_detector_tolerates_a_leading_shebang() {
+        // #42: a shell script keeps its `#!` on line 1, above the managed
+        // markers. The whole-file CODEGEN detector must still recognize the
+        // file as wholly owned by the block, so it counts as regenerable
+        // codegen and re-apply is a clean no-op rather than perpetual churn.
+        let with_shebang =
+            "#!/usr/bin/env bash\n# SPEC-MANAGED: x#text-source-unit\n# CODEGEN-BEGIN\nset -euo pipefail\n# CODEGEN-END\n";
+        let blocks = crate::generate::marker::parse_codegen_blocks(with_shebang);
+        assert!(
+            is_whole_file_codegen_content(with_shebang, &blocks),
+            "a single leading shebang must not disqualify whole-file CODEGEN"
+        );
+
+        // A non-shebang, non-empty line above the marker still disqualifies it.
+        let with_preamble =
+            "echo hi\n# SPEC-MANAGED: x#text-source-unit\n# CODEGEN-BEGIN\nset -euo pipefail\n# CODEGEN-END\n";
+        let blocks = crate::generate::marker::parse_codegen_blocks(with_preamble);
+        assert!(!is_whole_file_codegen_content(with_preamble, &blocks));
+
+        // Plain whole-file CODEGEN (no shebang) stays recognized.
+        let plain = "// SPEC-MANAGED: x#source\n// CODEGEN-BEGIN\npub fn f() {}\n// CODEGEN-END\n";
+        let blocks = crate::generate::marker::parse_codegen_blocks(plain);
+        assert!(is_whole_file_codegen_content(plain, &blocks));
     }
 
     #[test]

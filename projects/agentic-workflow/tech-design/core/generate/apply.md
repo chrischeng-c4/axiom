@@ -883,11 +883,15 @@ fn is_whole_file_codegen_content(
     };
     let lines = content.lines().collect::<Vec<_>>();
     let spec_line = block.begin_line.saturating_sub(1);
+    // Tolerate a single leading shebang (`#!`) on line 1: an exec'd shell
+    // script must keep it above the managed markers, yet the file is still
+    // wholly owned by the CODEGEN block (#42).
     let before = lines
         .get(..spec_line)
         .unwrap_or(&[])
         .iter()
-        .all(|line| line.trim().is_empty());
+        .enumerate()
+        .all(|(idx, line)| line.trim().is_empty() || (idx == 0 && line.starts_with("#!")));
     let after = lines
         .get(block.end_line + 1..)
         .unwrap_or(&[])
