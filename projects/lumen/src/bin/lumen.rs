@@ -543,7 +543,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     }
 
-    // Select the write log.
+    // Select the write log. `--wal raft` also yields a driver whose router is
+    // merged into the serve app below (peer RPCs ride the h2c port).
+    #[cfg(feature = "raft-wal")]
+    let mut raft_driver: Option<Arc<lumen::raft_driver::RaftDriver>> = None;
     let wal: SharedWal = match args.wal {
         WalBackend::Embedded => {
             tracing::info!("wal=embedded (in-process; single-node)");
@@ -578,28 +581,50 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
         #[cfg(feature = "raft-wal")]
         WalBackend::Raft => {
+            use lumen::config::ClusterConfig;
+            use lumen::raft::RaftGroup;
+            use lumen::raft_core::NodeId;
+
+            let cfg = ClusterConfig::from_env().context("raft: cluster config from env")?;
+            let node_id = cfg.replica_index()? as NodeId;
+            // Raft RPCs ride the client port (the driver's router is merged into
+            // the serve app), so the peer port is `args.port`. `LUMEN_PEERS`
+            // overrides host:port to run a multi-node group on one machine.
+            let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
+                .unwrap_or_else(|_| "lumen-headless".to_string());
+            let group = RaftGroup::from_config(&cfg, "lumen", &headless, args.port, args.port)
+                .context("raft: build peer group")?;
+            let mut peers: std::collections::HashMap<NodeId, String> =
+                std::collections::HashMap::new();
+            for (i, p) in group.peers.iter().enumerate() {
+                let id = i as NodeId;
+                if id != node_id {
+                    peers.insert(id, format!("http://{}:{}", p.host, p.raft_port));
+                }
+            }
+            // Honor lumen's `voter_count`: replicas `0..voter_count` vote, the
+            // rest are learners (matches the existing RaftGroup role assignment).
+            let membership = lumen::raft_core::Membership {
+                voters: (0..cfg.voter_count as NodeId).collect(),
+                learners: (cfg.voter_count as NodeId..cfg.replicas_per_shard as NodeId).collect(),
+            };
             tracing::info!(
+                node_id,
+                voters = ?membership.voters,
+                peers = ?peers.keys().collect::<Vec<_>>(),
                 data_dir = %args.raft_data_dir,
-                raft_port = args.raft_port,
-                "wal=raft (raftcore; single-node slice — multi-pod peers are Slice 2)"
+                "wal=raft (raftcore; multi-pod)"
             );
             let store = lumen::raft_store::RaftStore::open(
                 &args.raft_data_dir,
-                0,
+                node_id,
                 lumen::raft_store::FsyncPolicy::Always,
             )
             .context("open raft store")?;
-            // Single-node group: node 0 is the sole voter (trivially leader).
-            let membership = lumen::raft_core::Membership {
-                voters: vec![0],
-                learners: vec![],
-            };
             let driver = Arc::new(lumen::raft_driver::RaftDriver::spawn(
-                0,
-                membership,
-                std::collections::HashMap::new(),
-                store,
+                node_id, membership, peers, store,
             ));
+            raft_driver = Some(Arc::clone(&driver));
             Arc::new(lumen::wal_raft::RaftWal::new(driver))
         }
     };
@@ -703,7 +728,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
         tracing::info!(shard_count = shards.len(), "search backend=segment-sharded");
         state = state.with_search_backend(Arc::new(lumen::routing::EngineShardSearch::new(shards)));
     }
-    let app = lumen::api::router(state);
+    #[cfg_attr(not(feature = "raft-wal"), allow(unused_mut))]
+    let mut app = lumen::api::router(state);
+    // Peer raft RPCs (`/raft/*`, `/raftz`) share the h2c serve port.
+    #[cfg(feature = "raft-wal")]
+    if let Some(driver) = &raft_driver {
+        app = app.merge(driver.router());
+    }
 
     // Periodic RDB snapshotter.
     if let Some(store) = rdb_store {

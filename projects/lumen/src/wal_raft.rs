@@ -32,7 +32,9 @@ impl RaftWal {
 impl WalLog for RaftWal {
     async fn publish(&self, record: WalRecord) -> Result<u64> {
         let cmd = record.encode()?;
-        self.driver.propose_committed(cmd).await
+        // Leader-aware: proposes locally on the leader, else forwards to the
+        // current leader over h2c (the redirect is invisible to the coordinator).
+        self.driver.publish(cmd).await
     }
 
     async fn subscribe(&self, from_seq: u64) -> Result<WalStream> {
