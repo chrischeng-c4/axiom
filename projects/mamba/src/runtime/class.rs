@@ -10638,6 +10638,15 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         drop(guard);
                         return mb_obj_getitem(data, key);
                     }
+                    if class_name == "Context" {
+                        // contextvars.Context: `ctx[var]` reads the captured
+                        // ContextVar → value snapshot held in `_data` (KeyError
+                        // on a var that was not set in this context). Issue #282.
+                        let guard = fields.read().unwrap();
+                        let data = guard.get("_data").copied().unwrap_or(MbValue::none());
+                        drop(guard);
+                        return super::dict_ops::mb_dict_getitem(data, key);
+                    }
                     if class_name == "collections.defaultdict" {
                         let guard = fields.read().unwrap();
                         let data = guard.get("_data").copied().unwrap_or(MbValue::none());
@@ -11485,6 +11494,11 @@ pub(crate) fn unwrap_dictlike_data(obj: MbValue) -> Option<MbValue> {
                     || class_name == "collections.OrderedDict"
                     || class_name == "BaseCookie"
                     || class_name == "SimpleCookie"
+                    // contextvars.Context exposes its captured ContextVar →
+                    // value snapshot via a `_data` dict (built in
+                    // contextvars_mod::make_context) so dict(ctx) / membership /
+                    // ctx[var] read the mapping. Issue #282.
+                    || class_name == "Context"
                     || super::stdlib::collections_mod::user_wrapper_kind(class_name) == Some("dict")
                 {
                     let guard = fields.read().unwrap();
