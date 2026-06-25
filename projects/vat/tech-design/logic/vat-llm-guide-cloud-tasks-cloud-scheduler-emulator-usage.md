@@ -146,7 +146,6 @@ requirementDiagram
       verifies: guide_keeps_auto_host_sdks_distinct
     }
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
