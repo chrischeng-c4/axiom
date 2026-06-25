@@ -31,6 +31,7 @@ members = [
     "projects/agentic-workflow",
     "libs/compass",
     "libs/raftcore",
+    "libs/claimtoken",
     "libs/openapi-codegen",
     "projects/cap",
     "projects/vat",
