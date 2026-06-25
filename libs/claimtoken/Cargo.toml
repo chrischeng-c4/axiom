@@ -1,0 +1,17 @@
+[package]
+name = "claimtoken"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Scoped claim-check access tokens (HMAC-SHA256). loom's schema layer signs; keep verifies — so a worker hits keep directly but only within its key scope."
+
+[lib]
+name = "claimtoken"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+sha2 = "0.10"
