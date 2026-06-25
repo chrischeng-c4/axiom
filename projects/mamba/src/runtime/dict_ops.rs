@@ -1518,7 +1518,11 @@ pub fn mb_dict_merge(a: MbValue, b: MbValue) -> MbValue {
 
 /// dict | dict -> new merged dict (Python 3.9+ PEP 584, `__or__`).
 /// Creates a NEW dict: copies all pairs from `a`, then merges `b` (b wins on conflict).
-/// Raises TypeError if either operand is not a dict.
+/// Returns the `NotImplemented` singleton if either operand is not a dict, so
+/// that the operator dispatcher (or `dict.__or__(other)` called directly) can
+/// fall back / raise TypeError at the operator level — matching CPython, where
+/// `dict.__or__` only accepts another mapping and otherwise returns
+/// `NotImplemented` rather than eagerly raising.
 // REQ: R7
 pub fn mb_dict_or(a: MbValue, b: MbValue) -> MbValue {
     unsafe {
@@ -1529,13 +1533,7 @@ pub fn mb_dict_or(a: MbValue, b: MbValue) -> MbValue {
             .as_ptr()
             .map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
         if !is_a_dict || !is_b_dict {
-            super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "unsupported operand type(s) for |: operands must both be dict".to_string(),
-                )),
-            );
-            return MbValue::none();
+            return MbValue::not_implemented();
         }
         // Clone a's map, then merge b's entries
         let mut merged = a
@@ -1572,53 +1570,143 @@ pub fn mb_dict_or(a: MbValue, b: MbValue) -> MbValue {
     }
 }
 
-/// dict |= dict -> merged dict in-place (Python 3.9+ PEP 584, `__ior__`).
-/// Merges `b` into `a` in-place; returns `a`.
-/// Raises TypeError if either operand is not a dict.
+/// Collect (key, value) pairs from `other` for an in-place dict merge
+/// (`dict.__ior__` / `dict |= other`). Unlike `__or__`, the in-place form is as
+/// permissive as `dict.update`: it accepts another mapping OR any iterable of
+/// key/value pairs. Returns `Ok(pairs)` on success; `Err(exc)` carries the
+/// exception class name to raise — `TypeError` when `other` is not iterable
+/// (e.g. `None`), `ValueError` when an element of an iterable is not a 2-element
+/// sequence (CPython: "dictionary update sequence element #N has length L; 2 is
+/// required"). The string case iterates characters, each of length 1.
+unsafe fn collect_ior_pairs(other: MbValue) -> Result<Vec<(DictKey, MbValue)>, &'static str> {
+    let Some(ptr) = other.as_ptr() else {
+        // None / unboxed non-iterable scalar → not iterable.
+        return Err("TypeError");
+    };
+    // Build a list of candidate "elements" to interpret as 2-tuples.
+    let elements: Vec<MbValue> = match &(*ptr).data {
+        ObjData::Dict(ref lock) => {
+            // Mapping fast-path: copy entries directly (no pair unpacking).
+            return Ok(lock
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| {
+                    super::rc::retain_if_ptr(*v);
+                    (k.clone(), *v)
+                })
+                .collect());
+        }
+        ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
+        ObjData::Tuple(ref items) => items.iter().copied().collect(),
+        ObjData::Set(ref lock) => lock.read().unwrap().iter().copied().collect(),
+        ObjData::Str(ref s) => {
+            // Each character is a length-1 string → if any exist, the first one
+            // fails the length-2 requirement with a ValueError.
+            if s.is_empty() {
+                return Ok(Vec::new());
+            }
+            return Err("ValueError");
+        }
+        ObjData::Instance { .. } => {
+            // dict-like collections instances iterate as pairs via their
+            // backing dict (defaultdict / Counter / OrderedDict).
+            if let Some(backing) = super::class::unwrap_dictlike_data(other) {
+                if let Some(bp) = backing.as_ptr() {
+                    if let ObjData::Dict(ref src) = (*bp).data {
+                        return Ok(src
+                            .read()
+                            .unwrap()
+                            .iter()
+                            .map(|(k, v)| {
+                                super::rc::retain_if_ptr(*v);
+                                (k.clone(), *v)
+                            })
+                            .collect());
+                    }
+                }
+            }
+            return Err("TypeError");
+        }
+        _ => return Err("TypeError"),
+    };
+    // Interpret each element as a (key, value) 2-tuple/2-list.
+    let mut out = Vec::with_capacity(elements.len());
+    for item in elements {
+        let pair = item.as_ptr().and_then(|pp| match &(*pp).data {
+            ObjData::Tuple(ref t) if t.len() == 2 => Some((t[0], t[1])),
+            ObjData::List(ref l) => {
+                let l = l.read().unwrap();
+                if l.len() == 2 {
+                    Some((l[0], l[1]))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        });
+        match pair {
+            Some((k, v)) => {
+                super::rc::retain_if_ptr(v);
+                out.push((to_dict_key(k), v));
+            }
+            // Element is not a 2-sequence → CPython raises ValueError.
+            None => return Err("ValueError"),
+        }
+    }
+    Ok(out)
+}
+
+/// dict |= other -> merged in-place (Python 3.9+ PEP 584, `__ior__`).
+/// Merges `other` into `a` in-place and returns `a`. Like `dict.update`, the
+/// in-place merge accepts another mapping OR any iterable of key/value pairs
+/// (this is more permissive than `__or__`, which only accepts a mapping).
+/// Raises TypeError when `other` is not iterable and ValueError when an element
+/// is not a 2-sequence, matching CPython.
 // REQ: R7
 pub fn mb_dict_ior(a: MbValue, b: MbValue) -> MbValue {
     unsafe {
         let is_a_dict = a
             .as_ptr()
             .map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
-        let is_b_dict = b
-            .as_ptr()
-            .map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
-        if !is_a_dict || !is_b_dict {
-            super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "unsupported operand type(s) for |=: operands must both be dict".to_string(),
-                )),
-            );
-            return MbValue::none();
+        if !is_a_dict {
+            // The receiver is not a dict — defer to the generic operator path.
+            return MbValue::not_implemented();
         }
-        // Read b's entries first (avoid holding two write locks simultaneously)
-        let b_entries: Vec<(DictKey, MbValue)> = b
-            .as_ptr()
-            .and_then(|p| {
-                if let ObjData::Dict(ref lock) = (*p).data {
-                    Some(
-                        lock.read()
-                            .unwrap()
-                            .iter()
-                            .map(|(k, v)| (k.clone(), *v))
-                            .collect(),
-                    )
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-        // Merge into a in-place
+        // Collect b's pairs first (avoids holding two locks / nested borrows).
+        let pairs = match collect_ior_pairs(b) {
+            Ok(pairs) => pairs,
+            Err("ValueError") => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "dictionary update sequence element #0 has length 1; 2 is required"
+                            .to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+            Err(_) => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'{}' object is not iterable",
+                        super::builtins::value_type_name(b)
+                    ))),
+                );
+                return MbValue::none();
+            }
+        };
+        // Merge into a in-place.
         if let Some(pa) = a.as_ptr() {
             if let ObjData::Dict(ref lock) = (*pa).data {
                 let mut map = lock.write().unwrap();
-                for (k, v) in b_entries {
+                for (k, v) in pairs {
                     map.insert(k, v);
                 }
             }
         }
+        super::rc::retain_if_ptr(a);
         a
     }
 }
@@ -1776,12 +1864,11 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
         "__iter__" => super::iter::mb_iter(receiver),
         "__or__" => mb_dict_or(receiver, arg(0)),
         "__ror__" => mb_dict_or(arg(0), receiver),
-        // NOTE: __ior__ is not exposed as a dunder yet — the in-place
-        // implementation has a refcount/poisoning interaction that
-        // crashes when the merged dict survives into a subsequent
-        // dispatch. The augmented-assign codegen path already uses the
-        // out-of-place __or__ as a fallback, so `d |= other` keeps
-        // working through that lowering.
+        // `d.__ior__(other)` — PEP 584 in-place merge. Accepts a mapping or any
+        // iterable of key/value pairs (like `dict.update`), mutates the receiver
+        // in place, and returns it. The `|=` operator reaches the same
+        // `mb_dict_ior` via `mb_ior` → `mb_inplace` → `mb_bitor`.
+        "__ior__" => mb_dict_ior(receiver, arg(0)),
         "__eq__" => mb_dict_eq(receiver, arg(0)),
         "__ne__" => {
             let eq = mb_dict_eq(receiver, arg(0));
@@ -2326,20 +2413,24 @@ mod tests {
 
     // REQ: R7
     #[test]
-    fn test_dict_or_non_dict_raises_type_error() {
+    fn test_dict_or_non_dict_returns_not_implemented() {
+        // CPython's `dict.__or__` only accepts another mapping; for any other
+        // right operand it returns `NotImplemented` (so the operator can fall
+        // back / raise TypeError at the operator level) rather than eagerly
+        // raising itself.
         super::super::exception::mb_clear_exception();
         let d = mb_dict_new();
         mb_dict_setitem(d, str_val("a"), MbValue::from_int(1));
         let result = mb_dict_or(d, MbValue::from_int(42));
-        assert!(result.is_none(), "dict | int must return none sentinel");
+        assert!(
+            result.is_not_implemented(),
+            "dict.__or__(non-dict) must return NotImplemented"
+        );
         assert_eq!(
             super::super::exception::mb_has_exception().as_bool(),
-            Some(true),
-            "TypeError must be pending after dict | int",
+            Some(false),
+            "dict.__or__(non-dict) must NOT raise",
         );
-        let exc = super::super::exception::mb_get_exception();
-        let exc_type = super::super::exception::get_exception_type_pub(exc);
-        assert_eq!(exc_type.as_deref(), Some("TypeError"));
         super::super::exception::mb_clear_exception();
     }
 
