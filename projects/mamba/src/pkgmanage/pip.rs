@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use crate::pkgmanage::pkgmgr::pip_check::check_consistency;
 use crate::pkgmanage::pkgmgr::pip_compile::{
-    CompileOptions, compile_sources, parse_compile_format, write_compile_output,
+    CompileIndex, CompileOptions, compile_sources, parse_compile_format, write_compile_output,
 };
 use crate::pkgmanage::pkgmgr::pip_install::{
-    InstallOptions, InstallSource, install_sources, load_requirements_sources,
+    InstallIndex, InstallOptions, InstallSource, install_sources, load_requirements_sources,
     parse_install_source, sync_sources, uninstall_packages,
 };
 use crate::pkgmanage::pkgmgr::pip_inventory::{
@@ -19,6 +19,7 @@ use crate::pkgmanage::pkgmgr::pip_tree::render_installed_tree;
 use crate::pkgmanage::pkgmgr::tree::TreeOptions;
 
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
+const INDEX_URL_ENV: &str = "MAMBA_INDEX_URL";
 
 pub fn cmd_pip(sub: &ArgMatches) -> Result<()> {
     match sub.subcommand() {
@@ -38,11 +39,9 @@ pub fn cmd_pip(sub: &ArgMatches) -> Result<()> {
 fn cmd_pip_compile(sub: &ArgMatches) -> Result<()> {
     let output_file = sub.get_one::<String>("output-file").map(PathBuf::from);
     let opts = CompileOptions {
-        index: sub
-            .get_one::<String>("index")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os(FROZEN_INDEX_ENV).map(PathBuf::from))
-            .context("mamba pip compile requires --index DIR or MAMBA_FROZEN_INDEX")?,
+        index: pip_index(sub).context(
+            "mamba pip compile requires --index DIR, MAMBA_FROZEN_INDEX, --index-url URL, or MAMBA_INDEX_URL",
+        )?,
         format: parse_compile_format(sub.get_one::<String>("format"), output_file.as_ref())?,
         output_file,
         include_header: !sub.get_flag("no-header"),
@@ -183,8 +182,29 @@ fn install_options(sub: &ArgMatches) -> Result<InstallOptions> {
             .get_one::<String>("python")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("python3")),
-        index: sub.get_one::<String>("index").map(PathBuf::from),
+        index: pip_index(sub).map(|index| match index {
+            CompileIndex::Frozen(path) => InstallIndex::Frozen(path),
+            CompileIndex::Registry(url) => InstallIndex::Registry(url),
+        }),
     })
+}
+
+fn pip_index(sub: &ArgMatches) -> Option<CompileIndex> {
+    sub.get_one::<String>("index")
+        .map(|path| CompileIndex::Frozen(PathBuf::from(path)))
+        .or_else(|| {
+            std::env::var_os(FROZEN_INDEX_ENV).map(|path| CompileIndex::Frozen(PathBuf::from(path)))
+        })
+        .or_else(|| {
+            sub.get_one::<String>("index-url")
+                .cloned()
+                .map(CompileIndex::Registry)
+        })
+        .or_else(|| {
+            std::env::var(INDEX_URL_ENV)
+                .ok()
+                .map(CompileIndex::Registry)
+        })
 }
 
 fn collect_install_sources(sub: &ArgMatches) -> Result<Vec<InstallSource>> {
