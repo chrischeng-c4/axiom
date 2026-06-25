@@ -55,6 +55,7 @@ pub trait CompletionSink: Send + Sync {
         node_id: &str,
         attempt: u32,
         result_ref: Option<KeepRef>,
+        result_inline: Option<Vec<u8>>,
         failed: bool,
         fan_out: &[FanOutSpec],
     ) -> anyhow::Result<()>;
@@ -97,6 +98,12 @@ impl Registry {
     }
 }
 
+/// Max result size (bytes) reported inline instead of via keep (#127). From
+/// LOOM_INLINE_MAX_BYTES (default 4096); 0 disables inline (always claim-check).
+pub fn inline_max() -> usize {
+    std::env::var("LOOM_INLINE_MAX_BYTES").ok().and_then(|s| s.parse().ok()).unwrap_or(4096)
+}
+
 /// Execute one task: fetch its claim-check input from keep, run the handler,
 /// write the result (and any fan-out children's inputs) to keep, and report
 /// completion (or failure). No lease/ack — shared by the resident worker (after
@@ -109,10 +116,15 @@ pub async fn execute_task(
     sink: &dyn CompletionSink,
     registry: &Registry,
 ) -> anyhow::Result<()> {
-    // Claim-check input: the first input ref, else the message id as the key.
-    let input_id =
-        m.input_refs.first().map(|r| r.0.clone()).unwrap_or_else(|| m.message_id());
-    let input = keep.get_input(&input_id).await?.unwrap_or_default();
+    // Input resolution (#127 inline): prefer inline bytes; else fetch the first
+    // claim-check ref from keep; else (no input) skip keep entirely.
+    let input = if let Some(inline) = &m.input_inline {
+        inline.clone()
+    } else if let Some(first) = m.input_refs.first() {
+        keep.get_input(&first.0).await?.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     let outcome = match registry.get(&m.task_name) {
         Some(handler) => handler(input),
@@ -121,8 +133,15 @@ pub async fn execute_task(
 
     match outcome {
         Ok(mut out) => {
-            let result_id = format!("{}:{}:result", m.run_id, m.node_id);
-            keep.put_result(&result_id, out.result).await?;
+            // Small results go inline (skip keep); large results are claim-checked.
+            let max = inline_max();
+            let (result_ref, result_inline) = if max > 0 && out.result.len() <= max {
+                (None, Some(std::mem::take(&mut out.result)))
+            } else {
+                let result_id = format!("{}:{}:result", m.run_id, m.node_id);
+                keep.put_result(&result_id, std::mem::take(&mut out.result)).await?;
+                (Some(KeepRef(result_id)), None)
+            };
             // Persist any inline child inputs to keep (claim-check) and replace
             // them with an input ref, so chunk bytes never enter the control plane.
             for child in &mut out.fan_out {
@@ -136,7 +155,8 @@ pub async fn execute_task(
                 &m.run_id,
                 &m.node_id,
                 m.attempt,
-                Some(KeepRef(result_id)),
+                result_ref,
+                result_inline,
                 false,
                 &out.fan_out,
             )
@@ -144,7 +164,7 @@ pub async fn execute_task(
         }
         Err(_) => {
             // Let loom decide retry-or-fail (it owns the DAG + retry policy).
-            sink.report(&m.run_id, &m.node_id, m.attempt, None, true, &[]).await?;
+            sink.report(&m.run_id, &m.node_id, m.attempt, None, None, true, &[]).await?;
         }
     }
     Ok(())
@@ -240,29 +260,54 @@ pub fn run() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("loom worker requires LOOM_KEEP (keep base url)"))?;
     let subject = std::env::var("LOOM_RUNNER").unwrap_or_else(|_| "resident".to_string());
 
+    // Prefetch (#127): run K concurrent lease→process loops per worker process,
+    // so per-task round-trips overlap instead of serializing. LOOM_WORKER_CONCURRENCY.
+    let concurrency = std::env::var("LOOM_WORKER_CONCURRENCY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1);
+
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
-        let consumer = crate::relay_client::RelayWorkConsumer::new(&relay, &subject)?;
-        let keep = crate::keep_client::KeepHttp::new(&keep_base)?;
         let shards = std::env::var("LOOM_COMPLETION_SHARDS")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(8);
-        let sink =
-            crate::relay_client::RelayCompletionSink::new_sharded(&relay, "loom.completions", shards)?;
-        let registry = default_registry();
+        let consumer = std::sync::Arc::new(crate::relay_client::RelayWorkConsumer::new(&relay, &subject)?);
+        let keep = std::sync::Arc::new(crate::keep_client::KeepHttp::new(&keep_base)?);
+        let sink = std::sync::Arc::new(
+            crate::relay_client::RelayCompletionSink::new_sharded(&relay, "loom.completions", shards)?,
+        );
+        let registry = std::sync::Arc::new(default_registry());
 
-        eprintln!("loom worker: leasing `{subject}` from relay {relay}, keep {keep_base}");
-        loop {
-            match run_once("loom-worker", &consumer, &keep, &sink, &registry).await {
-                Ok(true) => {}
-                Ok(false) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
-                Err(e) => {
-                    eprintln!("loom worker: tick error: {e}");
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        eprintln!(
+            "loom worker: leasing `{subject}` from relay {relay}, keep {keep_base} (concurrency {concurrency})"
+        );
+        let mut loops = Vec::new();
+        for k in 0..concurrency {
+            let (c, kp, s, r) =
+                (consumer.clone(), keep.clone(), sink.clone(), registry.clone());
+            loops.push(tokio::spawn(async move {
+                let id = format!("loom-worker-{k}");
+                loop {
+                    match run_once(&id, c.as_ref(), kp.as_ref(), s.as_ref(), r.as_ref()).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await
+                        }
+                        Err(e) => {
+                            eprintln!("loom worker: tick error: {e}");
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        }
+                    }
                 }
-            }
+            }));
         }
+        for l in loops {
+            let _ = l.await;
+        }
+        Ok(())
     })
 }
 
@@ -283,6 +328,7 @@ mod tests {
                 task_name: name.into(),
                 args: serde_json::Value::Null,
                 input_refs: vec![KeepRef("in/n".into())],
+                input_inline: None,
                 runner: RunnerClass::Resident,
             },
         }
@@ -327,6 +373,7 @@ mod tests {
     #[derive(Default)]
     struct FakeSink {
         reports: Mutex<Vec<(String, bool, usize)>>,
+        inline: Mutex<Vec<Option<Vec<u8>>>>,
     }
     #[async_trait]
     impl CompletionSink for FakeSink {
@@ -336,10 +383,12 @@ mod tests {
             node: &str,
             _attempt: u32,
             _result: Option<KeepRef>,
+            result_inline: Option<Vec<u8>>,
             failed: bool,
             fan_out: &[FanOutSpec],
         ) -> anyhow::Result<()> {
             self.reports.lock().unwrap().push((node.to_string(), failed, fan_out.len()));
+            self.inline.lock().unwrap().push(result_inline);
             Ok(())
         }
     }
@@ -358,9 +407,24 @@ mod tests {
 
         let did = run_once("w1", &consumer, &keep, &sink, &echo_registry()).await.unwrap();
         assert!(did);
-        assert_eq!(keep.results.lock().unwrap().get("r:n:result").unwrap(), b"hello");
+        // "hello" is small → reported inline, NOT written to keep (#127 inline).
+        assert!(keep.results.lock().unwrap().is_empty(), "small result should skip keep");
+        assert_eq!(sink.inline.lock().unwrap().as_slice(), &[Some(b"hello".to_vec())]);
         assert_eq!(consumer.acked.lock().unwrap().as_slice(), &[("L1".to_string(), 7)]);
         assert_eq!(sink.reports.lock().unwrap().as_slice(), &[("n".to_string(), false, 0)]);
+    }
+
+    #[tokio::test]
+    async fn large_result_is_claim_checked_not_inlined() {
+        let consumer = FakeConsumer { next: Mutex::new(Some(task("big"))), ..Default::default() };
+        let keep = FakeKeep::default();
+        let sink = FakeSink::default();
+        let mut reg = Registry::new();
+        reg.register("big", Arc::new(|_| Ok(vec![b'x'; 5000].into()))); // > 4096 default
+        run_once("w1", &consumer, &keep, &sink, &reg).await.unwrap();
+        // large result → keep (claim-check), reported by ref, not inline
+        assert_eq!(keep.results.lock().unwrap().get("r:n:result").unwrap().len(), 5000);
+        assert_eq!(sink.inline.lock().unwrap().as_slice(), &[None]);
     }
 
     #[tokio::test]

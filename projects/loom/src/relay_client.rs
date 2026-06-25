@@ -178,6 +178,7 @@ impl CompletionSink for RelayCompletionSink {
         node_id: &str,
         attempt: u32,
         result_ref: Option<KeepRef>,
+        result_inline: Option<Vec<u8>>,
         failed: bool,
         fan_out: &[FanOutSpec],
     ) -> anyhow::Result<()> {
@@ -186,6 +187,7 @@ impl CompletionSink for RelayCompletionSink {
             node_id: node_id.to_string(),
             attempt,
             result_ref: result_ref.map(|r| r.0),
+            result_inline,
             failed,
             fan_out: fan_out.to_vec(),
         };
@@ -222,6 +224,7 @@ mod tests {
             task_name: "ingest".into(),
             args: serde_json::json!({"k": 1}),
             input_refs: vec![KeepRef("keep/in".into())],
+            input_inline: None,
             runner: RunnerClass::K8sJob,
         }
     }

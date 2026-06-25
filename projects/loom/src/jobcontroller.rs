@@ -184,6 +184,7 @@ mod tests {
             task_name: "crunch".into(),
             args: serde_json::Value::Null,
             input_refs: vec![KeepRef("in:1".into()), KeepRef("in:2".into())],
+            input_inline: None,
             runner: RunnerClass::K8sJob,
         }
     }
