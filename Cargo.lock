@@ -6478,6 +6478,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "clap_complete",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
