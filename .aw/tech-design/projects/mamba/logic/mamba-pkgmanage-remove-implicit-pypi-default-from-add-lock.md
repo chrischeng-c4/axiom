@@ -93,3 +93,11 @@ requirementDiagram
       verifymethod: test
     }
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract removes only the implicit public PyPI fallback while preserving frozen local index, explicit registry URL, and offline pinned add behavior.
+- [unit-test] Contract names the required negative tests plus the full `cargo test -p mamba --test pkgmgr` regression gate.
