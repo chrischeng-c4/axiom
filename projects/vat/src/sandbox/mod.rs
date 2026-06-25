@@ -22,7 +22,7 @@ pub mod seatbelt;
 
 use std::path::Path;
 
-use crate::spec::{EnvSpec, Isolation};
+use crate::spec::{EgressPolicy, EnvSpec, Isolation};
 
 /// An isolation backend resolves the user's command into the *actual* program
 /// + argv to exec (e.g. seatbelt wraps it in `sandbox-exec`). The caller then
@@ -45,11 +45,27 @@ pub trait Sandbox {
 /// @spec projects/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#source
 pub fn pick(spec: &EnvSpec) -> Box<dyn Sandbox> {
     match spec.isolation {
-        Isolation::None => Box::new(process::ProcessBackend),
+        Isolation::None => {
+            if spec.egress != EgressPolicy::Open {
+                eprintln!(
+                    "vat: warning: [network].egress confinement requires --isolation seatbelt; \
+                     running without egress enforcement."
+                );
+            }
+            Box::new(process::ProcessBackend)
+        }
         Isolation::Seatbelt => {
             if cfg!(target_os = "macos") && seatbelt::available() {
-                Box::new(seatbelt::SeatbeltBackend)
+                Box::new(seatbelt::SeatbeltBackend {
+                    egress: spec.egress,
+                })
             } else {
+                if spec.egress != EgressPolicy::Open {
+                    eprintln!(
+                        "vat: warning: seatbelt unavailable; [network].egress confinement \
+                         is not enforced."
+                    );
+                }
                 eprintln!(
                     "vat: seatbelt isolation requested but unavailable on this host; \
                      using process backend (workspace is still copy-on-write)."

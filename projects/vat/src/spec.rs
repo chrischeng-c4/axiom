@@ -36,6 +36,10 @@ pub struct EnvSpec {
     #[serde(default)]
     pub isolation: Isolation,
 
+    /// Outbound network egress policy (seatbelt-enforced).
+    #[serde(default)]
+    pub egress: EgressPolicy,
+
     /// GPU expectation for this vat.
     #[serde(default)]
     pub gpu: GpuRequest,
@@ -56,6 +60,7 @@ impl Default for EnvSpec {
             env: BTreeMap::new(),
             setup: Vec::new(),
             isolation: Isolation::default(),
+            egress: EgressPolicy::default(),
             gpu: GpuRequest::default(),
             limits: Limits::default(),
         }
@@ -89,6 +94,23 @@ pub enum Isolation {
     /// macOS seatbelt profile: reads allowed broadly, writes confined to the
     /// rootfs + temp. Opt-in; Metal still works (it's a host process).
     Seatbelt,
+}
+
+/// Outbound network egress policy, enforced by the seatbelt backend
+/// (`sandbox-exec`). Only enforceable under `Isolation::Seatbelt`; with
+/// `Isolation::None` it is advisory (vat warns it cannot confine egress).
+/// @spec projects/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#schema
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EgressPolicy {
+    /// No network restriction (current behaviour).
+    #[default]
+    Open,
+    /// Deny outbound network except localhost (loopback + unix sockets) — the
+    /// hermetic-with-routing mode: vat's local emulators/proxy stay reachable.
+    LocalhostOnly,
+    /// Deny all outbound network, including localhost.
+    Deny,
 }
 
 /// Whether the vat wants the GPU. Vat never *removes* GPU access (it can't —
