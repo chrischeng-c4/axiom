@@ -83,7 +83,8 @@ async def main():
                     env = json.loads(buf[4 : 4 + n])
                     buf = buf[4 + n :]
                     inp = env["input"]
-                    auth = {"authorization": f"Bearer {env['token']}"}  # scoped keep token (#444)
+                    # scoped keep token (#444), only when present (empty Bearer is illegal)
+                    auth = {"authorization": f"Bearer {env['token']}"} if env.get("token") else {}
                     if inp["kind"] == "inline":
                         d = bytes(inp["bytes"])
                     elif inp["kind"] == "keep_url":

@@ -14,6 +14,27 @@ use crate::model::KeepRef;
 use crate::scheduler::{CompletionMsg, Dispatcher, FanOutSpec, TaskMessage};
 use crate::worker::{CompletionSink, LeasedTask, RelayConsumer};
 
+/// The loom deployment's namespace (LOOM_NAMESPACE), if set — scopes every relay
+/// subject vhost-style (#451).
+pub fn loom_namespace() -> Option<String> {
+    std::env::var("LOOM_NAMESPACE").ok().filter(|s| !s.is_empty())
+}
+
+/// h2c reqwest client for relay calls, baking in `X-Relay-Namespace` as a default
+/// header when LOOM_NAMESPACE is set — so all relay requests are namespace-scoped
+/// with no per-call change (#451).
+pub fn relay_http_client() -> anyhow::Result<reqwest::Client> {
+    let mut b = reqwest::Client::builder().http2_prior_knowledge();
+    if let Some(ns) = loom_namespace() {
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(&ns) {
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert("x-relay-namespace", v);
+            b = b.default_headers(h);
+        }
+    }
+    Ok(b.build()?)
+}
+
 /// Publishes node dispatches to a relay broker over h2c.
 pub struct RelayDispatcher {
     client: reqwest::Client,
@@ -32,7 +53,7 @@ impl RelayDispatcher {
     /// Connect to a relay base URL, e.g. `http://relay:7400`.
     pub fn new(base: impl Into<String>) -> anyhow::Result<Self> {
         Ok(Self {
-            client: reqwest::Client::builder().http2_prior_knowledge().build()?,
+            client: relay_http_client()?,
             base: base.into(),
         })
     }
@@ -81,7 +102,7 @@ struct EntryInfo {
 impl RelayWorkConsumer {
     pub fn new(base: impl Into<String>, subject: impl Into<String>) -> anyhow::Result<Self> {
         Ok(Self {
-            client: reqwest::Client::builder().http2_prior_knowledge().build()?,
+            client: relay_http_client()?,
             base: base.into(),
             subject: subject.into(),
         })
@@ -162,7 +183,7 @@ impl RelayCompletionSink {
         shards: u32,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            client: reqwest::Client::builder().http2_prior_knowledge().build()?,
+            client: relay_http_client()?,
             base: base.into(),
             subject: subject.into(),
             shards: shards.max(1),

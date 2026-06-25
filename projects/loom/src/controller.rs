@@ -399,7 +399,7 @@ async fn completion_consumer(
     store: Arc<dyn RunStore>,
     dispatcher: Arc<dyn Dispatcher>,
 ) {
-    let client = match reqwest::Client::builder().http2_prior_knowledge().build() {
+    let client = match crate::relay_client::relay_http_client() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("loom completion consumer: client init failed: {e}");
