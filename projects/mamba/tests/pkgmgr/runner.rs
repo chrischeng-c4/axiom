@@ -61,6 +61,9 @@ mod shell;
 #[path = "sync.rs"]
 mod sync;
 
+#[path = "tool.rs"]
+mod tool;
+
 #[path = "tree.rs"]
 mod tree;
 
