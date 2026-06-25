@@ -25,7 +25,7 @@ pub mod deadline;
 pub mod raft;
 pub mod cluster;
 pub mod relay_client;
-pub mod relay_proxy;
+pub mod schema_layer;
 pub mod keep_client;
 
 pub mod controller;
