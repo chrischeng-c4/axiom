@@ -6,6 +6,7 @@ use mamba::driver::{Backend, CompilerConfig, CompilerSession, EmitMode, MambaCon
 use mamba::pkgmanage::add as pkg_add;
 use mamba::pkgmanage::builder as pkg_builder;
 use mamba::pkgmanage::cache as pkg_cache;
+use mamba::pkgmanage::export as pkg_export;
 use mamba::pkgmanage::hash as pkg_hash;
 use mamba::pkgmanage::index as pkg_index;
 use mamba::pkgmanage::init as pkg_init;
@@ -13,6 +14,7 @@ use mamba::pkgmanage::install as pkg_install;
 use mamba::pkgmanage::lock as pkg_lock;
 use mamba::pkgmanage::remove as pkg_remove;
 use mamba::pkgmanage::sync as pkg_sync;
+use mamba::pkgmanage::tree as pkg_tree;
 use mamba::pkgmanage::validate as pkg_validate;
 
 // Force-link Mamba native binding crates so their #[distributed_slice(MAMBA_MODULES)]
@@ -124,6 +126,28 @@ fn cli() -> Command {
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require frozen index")),
         )
         .subcommand(
+            Command::new("export")
+                .about("Export mamba.lock to requirements.txt or pylock.toml")
+                .arg(Arg::new("format").long("format").value_name("FORMAT").default_value("requirements-txt").help("requirements-txt | pylock.toml"))
+                .arg(Arg::new("output-file").long("output-file").short('o').value_name("PATH").help("Write output to PATH; omit or use - for stdout"))
+                .arg(Arg::new("no-hashes").long("no-hashes").action(ArgAction::SetTrue).help("Do not emit --hash continuations in requirements-txt output"))
+                .arg(Arg::new("no-header").long("no-header").action(ArgAction::SetTrue).help("Do not emit the generated header in requirements-txt output"))
+                .arg(Arg::new("no-emit-package").long("no-emit-package").value_name("NAME").action(ArgAction::Append).help("Exclude a package from requirements-txt output"))
+                .arg(Arg::new("marker").long("marker").value_name("PEP508").help("Append a global PEP 508 environment marker to requirements-txt pins"))
+                .arg(Arg::new("annotate").long("annotate").action(ArgAction::SetTrue).help("Annotate requirements pins with reverse dependency comments"))
+                .arg(Arg::new("requires-python").long("requires-python").value_name("SPEC").help("Set requires-python in pylock.toml output"))
+                .arg(Arg::new("environment").long("environment").value_name("MARKER").action(ArgAction::Append).help("Add an environment marker to pylock.toml output")),
+        )
+        .subcommand(
+            Command::new("tree")
+                .about("Display the dependency tree from mamba.lock")
+                .arg(Arg::new("depth").long("depth").value_name("N").help("Maximum tree depth"))
+                .arg(Arg::new("package").long("package").short('p').value_name("NAME").help("Render only the subtree rooted at NAME"))
+                .arg(Arg::new("invert").long("invert").action(ArgAction::SetTrue).help("Show reverse dependency tree"))
+                .arg(Arg::new("prune").long("prune").value_name("NAME").action(ArgAction::Append).help("Skip a dependency subtree"))
+                .arg(Arg::new("no-dedupe").long("no-dedupe").action(ArgAction::SetTrue).help("Render repeated subtrees instead of marking duplicates")),
+        )
+        .subcommand(
             Command::new("index")
                 .about("Build frozen local package indexes from wheel artifacts")
                 .subcommand_required(true)
@@ -218,6 +242,8 @@ fn main() -> Result<()> {
         Some(("add", sub)) => pkg_add::cmd_add(sub),
         Some(("remove", sub)) => pkg_remove::cmd_remove(sub),
         Some(("lock", sub)) => pkg_lock::cmd_lock(sub),
+        Some(("export", sub)) => pkg_export::cmd_export(sub),
+        Some(("tree", sub)) => pkg_tree::cmd_tree(sub),
         Some(("index", sub)) => pkg_index::cmd_index(sub),
         Some(("sync", sub)) => pkg_sync::cmd_sync(sub),
         Some(("cache", sub)) => pkg_cache::cmd_cache(sub),
