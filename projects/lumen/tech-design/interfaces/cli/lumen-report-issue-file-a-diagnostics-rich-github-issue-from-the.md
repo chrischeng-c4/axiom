@@ -127,3 +127,11 @@ flowchart TD
     r4[R4 resolve_repo] --> v4{default vs override?}
     r5[R5 issue_payload] --> v5{title+body+labels json?}
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract pins the binding behavior: a `Diagnostics` struct sourced from the build-time stamps + runtime consts, repo resolution (`--repo` else `DEFAULT_REPO`), optional node enrichment that degrades to an "unreachable" note, the `--dry-run` print-only exit, a gated submit path (feature + `GITHUB_TOKEN`) with confirmation and 2xx handling, and a no-token pre-filled-`issues/new` fallback. No path silently fails.
+- [unit-test] R1–R5 isolate the pure seams (`render_diagnostics`, `assemble_body`, `prefilled_url` percent-encoding, `resolve_repo`, `issue_payload` JSON) so behavior is verified without network or filesystem access — matching testability=required and scope_control=strict.
