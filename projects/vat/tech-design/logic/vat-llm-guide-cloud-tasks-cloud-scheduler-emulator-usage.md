@@ -202,3 +202,24 @@ factory must force REST transport + http endpoint + anonymous credentials). The 
 the client-wiring schema, the cloud-tasks/cloud-scheduler service config, the `vat llm` CLI
 behavior, the guide-content unit/e2e assertions, and the llm.rs + README changes are all
 in scope and consistent with the capability `agent-native-gpu-native-dev-containers`.
+
+# Contract Review — #457
+
+**Verdict:** approved
+
+The contract content is complete and internally consistent:
+
+- **Logic** captures the client-wiring decision: when an emulator host var is set, route through
+  a factory that forces REST transport + `http://$HOST` + anonymous credentials (or POST the v2
+  REST API directly); otherwise build the default gRPC/TLS/ADC client against GCP.
+- **Schema** describes the override shape (host_env, auto_read_by_sdk=false, transport=rest,
+  api_endpoint, credentials=anonymous, direct-REST alternative).
+- **Config** documents the `cloud-tasks` / `cloud-scheduler` built-in preset that exports the host
+  var consumed by the factory.
+- **CLI** specifies the `vat llm` guide additions and keeps the auto-host-reading SDKs distinct.
+- **Unit/E2E tests** assert the guide string contains the wiring note via the existing
+  `llm_guide_mentions_core_agent_contract` smoke test.
+- **Changes** are bounded to `src/commands/llm.rs` (hand-written guide string) and `README.md`,
+  with the existing test as the validation gate.
+
+Scope is bounded to documentation; no emulator behavior changes. Ready to implement.
