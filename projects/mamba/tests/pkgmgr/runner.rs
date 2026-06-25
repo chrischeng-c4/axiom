@@ -16,6 +16,9 @@
 #[path = "add.rs"]
 mod add;
 
+#[path = "audit.rs"]
+mod audit;
+
 #[path = "auth.rs"]
 mod auth;
 

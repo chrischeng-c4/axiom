@@ -4,6 +4,7 @@ use mamba::bench::{BenchRunner, BenchSuite, print_report, run_suite};
 use mamba::conformance::{ConformanceOptions, run_suite as run_conformance_suite};
 use mamba::driver::{Backend, CompilerConfig, CompilerSession, EmitMode, MambaConfig};
 use mamba::pkgmanage::add as pkg_add;
+use mamba::pkgmanage::audit as pkg_audit;
 use mamba::pkgmanage::auth as pkg_auth;
 use mamba::pkgmanage::builder as pkg_builder;
 use mamba::pkgmanage::cache as pkg_cache;
@@ -164,6 +165,12 @@ fn cli() -> Command {
                 .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require frozen index"))
                 .arg(Arg::new("check").long("check").action(ArgAction::SetTrue).help("Fail if mamba.lock is missing or out of date without writing it")),
+        )
+        .subcommand(
+            Command::new("audit")
+                .about("Audit mamba.lock against a local advisory database")
+                .arg(Arg::new("advisory-db").long("advisory-db").value_name("PATH").help("Local JSON advisory database (overrides $MAMBA_ADVISORY_DB)"))
+                .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit JSON findings")),
         )
         .subcommand(
             Command::new("export")
@@ -573,6 +580,7 @@ fn main() -> Result<()> {
         Some(("add", sub)) => pkg_add::cmd_add(sub),
         Some(("remove", sub)) => pkg_remove::cmd_remove(sub),
         Some(("lock", sub)) => pkg_lock::cmd_lock(sub),
+        Some(("audit", sub)) => pkg_audit::cmd_audit(sub),
         Some(("export", sub)) => pkg_export::cmd_export(sub),
         Some(("tree", sub)) => pkg_tree::cmd_tree(sub),
         Some(("version", sub)) => pkg_version::cmd_version(sub),
