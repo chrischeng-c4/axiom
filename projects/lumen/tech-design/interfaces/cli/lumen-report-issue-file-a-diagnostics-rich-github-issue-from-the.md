@@ -112,3 +112,11 @@ flowchart TD
     r3[R3 prefilled URL] --> v3{repo + percent-encoded title/body?}
     r4[R4 repo select] --> v4{default vs --repo override?}
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Dispatch flow covers the documented branches: optional `--url` node enrichment with graceful degradation, the `--dry-run` print-only exit, the token-present submit path with confirmation, and the no-token pre-filled-URL fallback — no path silently fails.
+- [unit-test] R1–R4 isolate the pure seams (diagnostics completeness, body layout, percent-encoded fallback URL, repo default/override), all `verify: test`, matching the testability gate without needing network access.
