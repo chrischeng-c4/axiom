@@ -70,6 +70,12 @@ enum Command {
     /// `--check` reports the available version without changing anything.
     // @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
     Upgrade(UpgradeArgs),
+    /// File a diagnostics-rich GitHub issue. Bundles the build version, target,
+    /// git sha and OS/arch (and an optional running node's status via `--url`)
+    /// with your description, then opens an issue via `GITHUB_TOKEN` — or prints
+    /// a pre-filled `issues/new` URL when no token is set. `--dry-run` previews.
+    // @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
+    ReportIssue(ReportIssueArgs),
 }
 
 #[derive(clap::Args)]
@@ -99,6 +105,33 @@ struct UpgradeArgs {
     /// Reinstall even when already on the selected version.
     #[arg(long)]
     force: bool,
+    /// Skip the confirmation prompt.
+    #[arg(short = 'y', long)]
+    yes: bool,
+}
+
+/// `lumen report-issue` flags.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
+#[derive(clap::Args)]
+struct ReportIssueArgs {
+    /// Issue title.
+    #[arg(short = 't', long)]
+    title: String,
+    /// Free-text description of the problem (placed above the diagnostics block).
+    #[arg(short = 'm', long)]
+    message: Option<String>,
+    /// Include a running node's `/version`+`/healthz` (e.g. http://localhost:7373).
+    #[arg(long)]
+    url: Option<String>,
+    /// Target repository (`owner/name`); defaults to lumen's release repo.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Add a label (repeatable).
+    #[arg(long)]
+    label: Vec<String>,
+    /// Assemble and print the report without submitting anything.
+    #[arg(long)]
+    dry_run: bool,
     /// Skip the confirmation prompt.
     #[arg(short = 'y', long)]
     yes: bool,
@@ -367,6 +400,18 @@ async fn main() -> Result<()> {
                 check: args.check,
                 tag: args.tag,
                 force: args.force,
+                yes: args.yes,
+            })
+            .await
+        }
+        Command::ReportIssue(args) => {
+            lumen::report_issue::run(lumen::report_issue::Options {
+                title: args.title,
+                message: args.message,
+                url: args.url,
+                repo: args.repo,
+                label: args.label,
+                dry_run: args.dry_run,
                 yes: args.yes,
             })
             .await

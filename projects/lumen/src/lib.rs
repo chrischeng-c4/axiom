@@ -42,6 +42,8 @@ pub mod operator;
 /// compatibility bridge for Lumen-owned primary/replica replication.
 pub mod raft;
 pub mod rdb;
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
+pub mod report_issue;
 pub mod routing;
 /// Columnar mmap disk segment (Stage 2 disk-tier): a single Number column
 /// for `n_docs` rows at one `applied_seq`, written page-aligned for zero-copy
