@@ -73,6 +73,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/{subject}/ack-batch", post(ack_batch))
         .route("/v1/{subject}/heartbeat", post(heartbeat))
         .route("/v1/{subject}/subscribe", get(subscribe))
+        .route("/v1/{subject}/consume", post(crate::consume::consume))
         .route("/v1/{subject}/len", get(log_len))
         .route("/healthz", get(healthz))
         .route("/openapi.json", get(openapi_json))

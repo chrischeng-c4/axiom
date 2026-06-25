@@ -38,6 +38,7 @@
 
 pub mod broadcast;
 pub mod config;
+pub mod consume;
 pub mod engine;
 pub mod log;
 pub mod openapi;
