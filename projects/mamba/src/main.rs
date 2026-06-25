@@ -14,6 +14,7 @@ use mamba::pkgmanage::index as pkg_index;
 use mamba::pkgmanage::init as pkg_init;
 use mamba::pkgmanage::install as pkg_install;
 use mamba::pkgmanage::lock as pkg_lock;
+use mamba::pkgmanage::package as pkg_package;
 use mamba::pkgmanage::pip as pkg_pip;
 use mamba::pkgmanage::python as pkg_python;
 use mamba::pkgmanage::remove as pkg_remove;
@@ -200,6 +201,45 @@ fn cli() -> Command {
                 .arg(Arg::new("version").value_name("VERSION").help("Explicit PEP 440 version to set"))
                 .arg(Arg::new("bump").long("bump").value_name("KIND").help("major | minor | patch | alpha | beta | rc | post | dev | release"))
                 .arg(Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).help("Print the next version without writing pyproject.toml")),
+        )
+        .subcommand(
+            Command::new("package")
+                .about("Build and validate Python package artifacts")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("build")
+                        .about("Build deterministic pure-Python wheel and sdist artifacts from pyproject.toml")
+                        .arg(Arg::new("project").long("project").value_name("DIR").help("Project directory; defaults to current directory"))
+                        .arg(Arg::new("out-dir").long("out-dir").short('o').value_name("DIR").help("Artifact output directory; defaults to dist/ under the project"))
+                        .arg(Arg::new("wheel").long("wheel").action(ArgAction::SetTrue).help("Build only a wheel unless --sdist is also passed"))
+                        .arg(Arg::new("sdist").long("sdist").action(ArgAction::SetTrue).help("Build only an sdist unless --wheel is also passed"))
+                        .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit built artifact paths as JSON")),
+                )
+                .subcommand(
+                    Command::new("publish")
+                        .about("Validate package upload payloads without leaking credentials")
+                        .arg(Arg::new("artifact").value_name("ARTIFACT").num_args(0..).action(ArgAction::Append).help("Wheel or sdist artifact; defaults to dist/*.whl and dist/*.tar.gz"))
+                        .arg(Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).help("Validate payloads without uploading"))
+                        .arg(Arg::new("repository").long("repository").value_name("NAME").help("Repository name in .pypirc, e.g. pypi or testpypi"))
+                        .arg(Arg::new("publish-url").long("publish-url").value_name("URL").help("Upload endpoint URL; overrides repository lookup"))
+                        .arg(Arg::new("username").long("username").short('u').value_name("USER").help("Upload username"))
+                        .arg(Arg::new("password").long("password").short('p').value_name("PASSWORD").help("Upload password or token"))
+                        .arg(Arg::new("pypirc").long("pypirc").value_name("FILE").help("Path to a .pypirc file; defaults to ~/.pypirc"))
+                        .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit publish dry-run summary as JSON")),
+                ),
+        )
+        .subcommand(
+            Command::new("publish")
+                .about("Validate package upload payloads without leaking credentials")
+                .arg(Arg::new("artifact").value_name("ARTIFACT").num_args(0..).action(ArgAction::Append).help("Wheel or sdist artifact; defaults to dist/*.whl and dist/*.tar.gz"))
+                .arg(Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).help("Validate payloads without uploading"))
+                .arg(Arg::new("repository").long("repository").value_name("NAME").help("Repository name in .pypirc, e.g. pypi or testpypi"))
+                .arg(Arg::new("publish-url").long("publish-url").value_name("URL").help("Upload endpoint URL; overrides repository lookup"))
+                .arg(Arg::new("username").long("username").short('u').value_name("USER").help("Upload username"))
+                .arg(Arg::new("password").long("password").short('p').value_name("PASSWORD").help("Upload password or token"))
+                .arg(Arg::new("pypirc").long("pypirc").value_name("FILE").help("Path to a .pypirc file; defaults to ~/.pypirc"))
+                .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit publish dry-run summary as JSON")),
         )
         .subcommand(
             Command::new("pip")
@@ -584,6 +624,8 @@ fn main() -> Result<()> {
         Some(("export", sub)) => pkg_export::cmd_export(sub),
         Some(("tree", sub)) => pkg_tree::cmd_tree(sub),
         Some(("version", sub)) => pkg_version::cmd_version(sub),
+        Some(("package", sub)) => pkg_package::cmd_package(sub),
+        Some(("publish", sub)) => pkg_package::cmd_publish(sub),
         Some(("pip", sub)) => pkg_pip::cmd_pip(sub),
         Some(("venv", sub)) => pkg_venv::cmd_venv(sub),
         Some(("python", sub)) => pkg_python::cmd_python(sub),
