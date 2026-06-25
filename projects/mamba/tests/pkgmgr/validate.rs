@@ -31,6 +31,7 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
         "index",
         "add",
         "lock",
+        "audit",
         "export",
         "tree",
         "version",
@@ -52,8 +53,8 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
         );
     }
     assert!(
-        stderr.contains("19 passed, 0 failed"),
-        "summary must report 19 passed: {stderr}"
+        stderr.contains("20 passed, 0 failed"),
+        "summary must report 20 passed: {stderr}"
     );
 }
 
@@ -94,6 +95,7 @@ fn pkgmgr_validate_json_has_runner_contract_shape() {
         "index",
         "add",
         "lock",
+        "audit",
         "export",
         "tree",
         "version",
