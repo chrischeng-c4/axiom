@@ -68,7 +68,7 @@ md-5 = { version = "0.10", optional = true }
 rcgen = { version = "0.13", optional = true }
 rustls = { version = "0.23", optional = true }
 tokio-rustls = { version = "0.26", optional = true }
-hyper = { version = "1", optional = true, features = ["server", "client", "http1"] }
+hyper = { version = "1", optional = true, features = ["server", "client", "http1", "http2"] }
 hyper-util = { version = "0.1", optional = true, features = ["tokio"] }
 http-body-util = { version = "0.1", optional = true }
 
@@ -82,6 +82,14 @@ tokio = { workspace = true }
 tonic = "0.12"
 tokio-stream = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# gRPC-through-MITM e2e (network sandbox v2): a raw h2 client over a CONNECT +
+# TLS(ALPN h2) tunnel, encoding the generated prost messages.
+hyper = { version = "1", features = ["client", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+prost = "0.13"
 
 # Emulator integration tests need the emulator feature (skipped in a lean build).
 [[test]]
@@ -114,4 +122,20 @@ required-features = ["emulator"]
 
 [[test]]
 name = "vat_emulator_openapi"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_tasks_grpc"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_scheduler_grpc"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_httpmock_routing"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_grpc_mitm_routing"
 required-features = ["emulator"]

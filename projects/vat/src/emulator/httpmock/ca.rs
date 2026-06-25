@@ -71,12 +71,15 @@ impl CaStore {
         // Build with an explicit crypto provider so we don't depend on a
         // process-global default being installed (rustls 0.23 requires one).
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-        let cfg = ServerConfig::builder_with_provider(provider)
+        let mut cfg = ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
             .context("rustls protocol versions")?
             .with_no_client_auth()
             .with_single_cert(chain, key)
             .context("rustls server config")?;
+        // Advertise h2 (gRPC) + http/1.1 so the MITM can serve gRPC over the
+        // decrypted tunnel (network sandbox v2); HTTP/1 clients still get h1.
+        cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         let cfg = Arc::new(cfg);
         self.leaves
             .lock()
