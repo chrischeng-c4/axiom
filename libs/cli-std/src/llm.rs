@@ -29,7 +29,7 @@ impl Format {
     }
 }
 
-/// Render `<tool> llm <topic> --format <fmt>`. `topic == "outline"` (the
+/// Render `<tool> llm --topic <topic> --format <fmt>`. `topic == "outline"` (the
 /// default) prints the topic map + the standard-command footer.
 pub fn render(
     project: &str,
@@ -70,7 +70,7 @@ pub fn render(
 fn outline_md(project: &str, topics: &[Topic]) -> String {
     let mut s = format!(
         "# {project} — agent topic outline\n\n\
-         Run `{project} llm <topic>` for detail (add `--format json` for a machine-readable form).\n\n\
+         Run `{project} llm --topic <topic>` for detail (add `--format json` for a machine-readable form).\n\n\
          ## Topics\n\n"
     );
     for t in topics {
@@ -78,9 +78,9 @@ fn outline_md(project: &str, topics: &[Topic]) -> String {
     }
     s.push_str(&format!(
         "\n## Standard agent commands\n\n\
-         - `{project} llm [topic] [--format md|json]` — this self-documentation (offline)\n\
-         - `{project} upgrade [--check] [--tag <v>]` — self-update from GitHub releases\n\
-         - `{project} report-issue --title <t> [message...]` — file a diagnostics-rich issue\n"
+         - `{project} llm [--topic <t>] [--format md|json]` — this self-documentation (offline)\n\
+         - `{project} upgrade [--version <tag>] [--check]` — self-update from GitHub releases\n\
+         - `{project} report-issue [--title <t>] [message...]` — file a diagnostics-rich issue\n"
     ));
     s
 }

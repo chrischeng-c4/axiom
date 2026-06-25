@@ -100,7 +100,7 @@ struct UpgradeArgs {
     #[arg(long)]
     check: bool,
     /// Install this exact version (`0.4.3` or `lumen@0.4.3`) instead of the latest.
-    #[arg(long)]
+    #[arg(long = "version")]
     tag: Option<String>,
     /// Reinstall even when already on the selected version.
     #[arg(long)]
@@ -162,7 +162,7 @@ enum LlmFormat {
 #[derive(Parser)]
 struct LlmArgs {
     /// Which agent-facing topic to print.
-    #[arg(value_enum, default_value_t = LlmTopic::Outline)]
+    #[arg(long, value_enum, default_value_t = LlmTopic::Outline)]
     topic: LlmTopic,
     /// Output format.
     #[arg(long, value_enum, default_value_t = LlmFormat::Md)]
@@ -415,7 +415,11 @@ async fn main() -> Result<()> {
                     message: args.message,
                     url: args.url,
                     repo: args.repo,
-                    label: args.label,
+                    // Always tag with the project label so reports route
+                    // automatically (CLI convention); keep any user labels too.
+                    label: std::iter::once("project:lumen".to_string())
+                        .chain(args.label)
+                        .collect(),
                     dry_run: args.dry_run,
                     yes: args.yes,
                 },
