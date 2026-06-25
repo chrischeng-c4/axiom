@@ -83,3 +83,49 @@ flowchart TD
     replace -->|no| permfail([permission denied; intact])
     replace -->|yes| done([installed new version])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: lumen-upgrade-verification
+requirements:
+  check_reports_no_change:
+    id: R1
+    text: "upgrade --check prints current vs latest and exits 0 without replacing the binary"
+    kind: functional
+    risk: high
+    verify: test
+  target_asset_selected:
+    id: R2
+    text: "the release asset name for the running target resolves to lumen-<target>.tar.gz (+ .sha256)"
+    kind: functional
+    risk: high
+    verify: test
+  sha_mismatch_aborts:
+    id: R3
+    text: "a tarball whose sha256 differs from the published .sha256 aborts the install and leaves the binary intact"
+    kind: functional
+    risk: high
+    verify: test
+  version_select_latest_or_tag:
+    id: R4
+    text: "version selection picks the highest stable semver across lumen@* tags, or the exact --tag when given"
+    kind: functional
+    risk: medium
+    verify: test
+  already_current_noop:
+    id: R5
+    text: "when the installed version equals the selected version and --force is absent, no download or replace occurs"
+    kind: functional
+    risk: medium
+    verify: test
+---
+flowchart TD
+    r1[R1 --check reports, no change] --> v1{exit 0 and binary untouched?}
+    r2[R2 target -> asset name] --> v2{lumen-target.tar.gz resolved?}
+    r3[R3 sha mismatch] --> v3{abort and binary intact?}
+    r4[R4 version select] --> v4{latest stable or --tag?}
+    r5[R5 already current] --> v5{no-op without --force?}
+```
