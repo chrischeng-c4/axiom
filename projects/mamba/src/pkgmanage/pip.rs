@@ -8,12 +8,15 @@ use crate::pkgmanage::pkgmgr::pip_check::check_consistency;
 use crate::pkgmanage::pkgmgr::pip_inventory::{
     ListOptions, enumerate_installed, find_by_name, render_freeze, render_list, render_show,
 };
+use crate::pkgmanage::pkgmgr::pip_tree::render_installed_tree;
+use crate::pkgmanage::pkgmgr::tree::TreeOptions;
 
 pub fn cmd_pip(sub: &ArgMatches) -> Result<()> {
     match sub.subcommand() {
         Some(("list", cmd)) => cmd_pip_list(cmd),
         Some(("freeze", cmd)) => cmd_pip_freeze(cmd),
         Some(("show", cmd)) => cmd_pip_show(cmd),
+        Some(("tree", cmd)) => cmd_pip_tree(cmd),
         Some(("check", cmd)) => cmd_pip_check(cmd),
         _ => Ok(()),
     }
@@ -69,6 +72,30 @@ fn cmd_pip_check(sub: &ArgMatches) -> Result<()> {
         println!("{}", issue.detail);
     }
     std::process::exit(1);
+}
+
+fn cmd_pip_tree(sub: &ArgMatches) -> Result<()> {
+    let dists = enumerate_installed(&site_packages_path(sub)?);
+    let opts = TreeOptions {
+        max_depth: sub
+            .get_one::<String>("depth")
+            .map(|s| s.parse::<usize>())
+            .transpose()
+            .context("parse --depth")?,
+        focus: sub.get_one::<String>("package").cloned(),
+        invert: sub.get_flag("invert"),
+        prune: sub
+            .get_many::<String>("prune")
+            .map(|vals| vals.cloned().collect())
+            .unwrap_or_default(),
+        no_dedupe: sub.get_flag("no-dedupe"),
+    };
+    let rendered = render_installed_tree(&dists, &opts);
+    if opts.focus.is_some() && rendered.trim().is_empty() {
+        bail!("package not found in site-packages inventory");
+    }
+    print!("{rendered}");
+    Ok(())
 }
 
 fn site_packages_path(sub: &ArgMatches) -> Result<PathBuf> {
