@@ -306,3 +306,30 @@ Implementation notes not obvious from the signature:
   Named `report-issue`, **not** `report`, because several CLIs use `report` for a
   domain concept (`jet report` = HTML **test** reports); the unambiguous name
   leaves those verbs untouched.
+
+## Releasing: each project owns its version and `<project>@X.Y.Z` tag
+
+Projects release **independently**. Each project crate sets its **own**
+`version` in its `Cargo.toml` (not `version.workspace`), so bumping one project
+never version-bumps the others. A release ships via the project's
+`.github/workflows/<project>-release.yml`, triggered by pushing a matching tag:
+
+```
+<project>@X.Y.Z        # e.g. lumen@0.4.4, vat@0.3.62
+```
+
+To cut a release:
+
+1. Bump the project crate's own `version` (e.g. `projects/lumen/Cargo.toml`
+   `version = "0.4.4"`), regenerate `Cargo.lock`, and commit
+   `release(<project>): <project>@X.Y.Z`.
+2. Merge to `main`.
+3. Tag that commit `<project>@X.Y.Z` and push the tag — the workflow builds the
+   per-target artifacts (`<project>-<target>.tar.gz` + `.sha256`) and publishes
+   the GitHub release that `<project> upgrade` consumes.
+
+Do **not** bump `[workspace.package].version` to release one project — that
+version is shared, so it would bump every crate still inheriting it. A few
+crates still inherit it (`version.workspace = true`); when a project starts
+releasing independently, give it its own `version` first (matching its last
+published release).
