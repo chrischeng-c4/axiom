@@ -224,7 +224,6 @@ e2e_tests:
     assertions:
       - "vat compiles without default features; the self-update HTTPS path is absent but the verbs still parse and the pure helpers remain testable."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
