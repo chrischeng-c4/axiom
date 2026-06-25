@@ -7556,13 +7556,25 @@ impl<'a> HirToMir<'a> {
                         }
                         return dest;
                     }
-                    // Special case: breakpoint(*args, **kwargs) — drop all
-                    // args. mb_breakpoint takes zero args and returns None.
+                    // Special case: breakpoint(*args) with no keyword args —
+                    // PEP 553 still forwards the positionals to the current
+                    // `sys.breakpointhook`. Pack them into a list, pair with an
+                    // empty kwargs dict, and route to mb_breakpoint_call (the
+                    // keyword-bearing form is handled earlier in ast_to_hir).
+                    // (#242)
                     if extern_name == "mb_breakpoint" {
+                        let pos_list = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::MakeList {
+                            dest: pos_list, elements: boxed_args.clone(), ty: self.tcx.any(),
+                        });
+                        let kwargs_dict = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::MakeDict {
+                            dest: kwargs_dict, keys: vec![], values: vec![], ty: self.tcx.any(),
+                        });
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: Some(dest),
-                            name: extern_name,
-                            args: vec![],
+                            name: "mb_breakpoint_call".to_string(),
+                            args: vec![pos_list, kwargs_dict],
                             ty: *ty,
                         });
                         return dest;

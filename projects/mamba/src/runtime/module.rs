@@ -1500,6 +1500,23 @@ pub fn mb_module_value_getattr(module_name: &str, attr: &str) -> Option<MbValue>
     None
 }
 
+/// Look up a module attribute directly from the registry's `attrs` map,
+/// returning the live value with a +1 retain. Unlike `mb_module_value_getattr`
+/// (which reads the cached module-object dict), this reflects in-place
+/// `sys.<attr> = ...` reassignments routed through `mb_module_setattr`, which
+/// only update `attrs`. Used by `breakpoint()` to read the current
+/// `sys.breakpointhook`. (#242)
+pub fn mb_module_attr_lookup(module_name: &str, attr: &str) -> Option<MbValue> {
+    let val = MODULES.with(|mods| {
+        let mods = mods.borrow();
+        mods.get(module_name).and_then(|m| m.attrs.get(attr).copied())
+    })?;
+    unsafe {
+        super::rc::retain_if_ptr(val);
+    }
+    Some(val)
+}
+
 /// Like `module_to_value` but writes the result back into `module.cached_value`.
 /// Call this whenever a module is fully initialised so subsequent `module_to_value`
 /// calls return the same heap pointer.
