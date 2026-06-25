@@ -57,6 +57,8 @@ pub enum EcCommand {
     Check(EcCheckArgs),
     /// Review whether each capability's EC covers every dimension its type requires (#188 E6).
     Review(EcReviewArgs),
+    /// Record a verifier (EC) result onto a LOCAL lifecycle work-item's loop-state block (#188 E1/E4).
+    Record(EcRecordArgs),
     /// Run generated external-contract verification commands.
     Verify(EcVerifyArgs),
     /// Generate, check, or preview EC-derived product documentation.
@@ -138,6 +140,26 @@ pub struct EcCheckArgs {
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args)]
 pub struct EcReviewArgs {
+    /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcRecordArgs {
+    /// Local lifecycle work-item slug to record the verification onto.
+    #[arg(long)]
+    pub wi: String,
+    /// Verifier result: green | red | blocked.
+    #[arg(long)]
+    pub result: String,
+    /// For a red result, the failing dimension (default: behavior).
+    #[arg(long)]
+    pub dimension: Option<String>,
+    /// Optional human summary of this verification round.
+    #[arg(long)]
+    pub summary: Option<String>,
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
@@ -537,6 +559,7 @@ pub fn run(args: EcArgs) -> Result<()> {
         EcCommand::Gen(args) => run_gen(&project, args),
         EcCommand::Check(args) => run_check(&project, args),
         EcCommand::Review(args) => run_review(&project, args),
+        EcCommand::Record(args) => run_record(args),
         EcCommand::Verify(args) => run_verify(&project, args),
         EcCommand::Doc(args) => run_doc(&project, args),
     }
@@ -966,6 +989,73 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     }
     if !findings.is_empty() {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Map a `--result` string to the loop's verifier verdict.
+fn parse_loop_result(
+    result: &str,
+    dimension: Option<&str>,
+    detail: Option<&str>,
+) -> Result<crate::cli::loop_state::LastResult> {
+    use crate::cli::loop_state::LastResult;
+    Ok(match result {
+        "green" | "pass" => LastResult::Green,
+        "red" | "fail" => LastResult::Red {
+            dimension: dimension.unwrap_or("behavior").to_string(),
+            why: detail.unwrap_or("verifier failed").to_string(),
+        },
+        "blocked" => LastResult::Blocked {
+            reason: detail.unwrap_or("blocked").to_string(),
+        },
+        other => anyhow::bail!("unknown --result `{other}` (expected green | red | blocked)"),
+    })
+}
+
+/// #188 E1/E4: the loop's "write verify result into wi" connector. Record an EC
+/// verifier verdict onto a LOCAL lifecycle work-item's `<!-- aw:loop-state -->`
+/// block (`apply_verification` -> the local backend's file). LOCAL-only by
+/// design: a remote tracker write is an outward step left out of this verb. The
+/// recorded `next_action` is then what `aw run`'s loop engine dispatches.
+fn run_record(args: EcRecordArgs) -> Result<()> {
+    use crate::issues::IssueBackend;
+    let project_root = crate::find_project_root()?;
+    let backend = crate::issues::local_backend(&project_root);
+    let result = parse_loop_result(&args.result, args.dimension.as_deref(), args.summary.as_deref())?;
+    let updated = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let Some(mut issue) = backend.get(&args.wi).await? else {
+                anyhow::bail!(
+                    "local lifecycle work item `{}` not found — this records onto LOCAL \
+                     lifecycle WIs only; persisting to a remote tracker is a separate, \
+                     outward step",
+                    args.wi
+                );
+            };
+            issue.body =
+                crate::cli::loop_state::apply_verification(&issue.body, result, args.summary.clone())?;
+            backend.write(&issue).await?;
+            Ok::<_, anyhow::Error>(issue)
+        })
+    })?;
+    let state = crate::cli::loop_state::parse_loop_state(&updated.body);
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "wi": args.wi,
+                "loop_state": state,
+            }))?
+        );
+    } else if let Some(state) = state {
+        println!(
+            "ec record {}: status={:?}, next_action={:?} ({} iteration(s))",
+            args.wi,
+            state.status,
+            state.next_action,
+            state.iterations.len()
+        );
     }
     Ok(())
 }
@@ -3505,6 +3595,24 @@ e2e_tests:
             ec_review_missing_dimensions(&CapabilityType::AgentFirst, &["behavior".to_string()])
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn parse_loop_result_maps_verdict_strings() {
+        use crate::cli::loop_state::LastResult;
+        assert_eq!(parse_loop_result("green", None, None).unwrap(), LastResult::Green);
+        assert_eq!(
+            parse_loop_result("red", Some("security"), Some("leak")).unwrap(),
+            LastResult::Red {
+                dimension: "security".into(),
+                why: "leak".into()
+            }
+        );
+        assert!(matches!(
+            parse_loop_result("blocked", None, Some("ec undefined")).unwrap(),
+            LastResult::Blocked { .. }
+        ));
+        assert!(parse_loop_result("nonsense", None, None).is_err());
     }
 
     #[test]
