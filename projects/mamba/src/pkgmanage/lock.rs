@@ -32,7 +32,6 @@ const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 const INDEX_URL_ENV: &str = "MAMBA_INDEX_URL";
-const DEFAULT_INDEX_URL: &str = "https://pypi.org";
 
 pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
     let project_dir = std::env::current_dir().context("read current directory")?;
@@ -62,11 +61,16 @@ pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
             if offline {
                 bail!(
                     "no frozen index configured and --offline set (pass --index DIR \
-                     or drop --offline to use PyPI)"
+                     or set {FROZEN_INDEX_ENV})"
                 );
             }
-            let index_url = resolve_index_url(sub);
-            resolve_via_pypi(&state.dependencies, &index_url)?
+            match resolve_index_url(sub) {
+                Some(index_url) => resolve_via_pypi(&state.dependencies, &index_url)?,
+                None => bail!(
+                    "no package source configured for `mamba lock`; pass --index DIR, \
+                     set {FROZEN_INDEX_ENV}, pass --index-url URL, or set {INDEX_URL_ENV}"
+                ),
+            }
         }
     };
 
@@ -76,11 +80,10 @@ pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn resolve_index_url(sub: &ArgMatches) -> String {
+fn resolve_index_url(sub: &ArgMatches) -> Option<String> {
     sub.get_one::<String>("index-url")
         .cloned()
         .or_else(|| std::env::var(INDEX_URL_ENV).ok())
-        .unwrap_or_else(|| DEFAULT_INDEX_URL.to_string())
 }
 
 fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
