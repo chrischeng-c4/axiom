@@ -135,7 +135,6 @@ requirementDiagram
       verifies: localhost_only_profile
     }
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
