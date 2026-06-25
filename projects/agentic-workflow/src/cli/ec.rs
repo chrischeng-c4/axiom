@@ -55,6 +55,8 @@ pub enum EcCommand {
     Gen(EcGenArgs),
     /// Check aw.toml EC inventory/list drift and generated test-file presence.
     Check(EcCheckArgs),
+    /// Review whether each capability's EC covers every dimension its type requires (#188 E6).
+    Review(EcReviewArgs),
     /// Run generated external-contract verification commands.
     Verify(EcVerifyArgs),
     /// Generate, check, or preview EC-derived product documentation.
@@ -128,6 +130,14 @@ pub struct EcGenArgs {
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args)]
 pub struct EcCheckArgs {
+    /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcReviewArgs {
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
@@ -526,6 +536,7 @@ pub fn run(args: EcArgs) -> Result<()> {
         EcCommand::Fill(args) => run_fill(&project, args),
         EcCommand::Gen(args) => run_gen(&project, args),
         EcCommand::Check(args) => run_check(&project, args),
+        EcCommand::Review(args) => run_review(&project, args),
         EcCommand::Verify(args) => run_verify(&project, args),
         EcCommand::Doc(args) => run_doc(&project, args),
     }
@@ -922,6 +933,38 @@ fn run_check(project: &str, args: EcCheckArgs) -> Result<()> {
         print_ec_findings(&summary);
     }
     if !summary.clean {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    let cases = load_ec_manifest(&ctx)?
+        .map(|(_, manifest)| manifest.cases)
+        .unwrap_or_default();
+    let findings = ec_review_findings(&ctx, &cases);
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "project": project,
+                "clean": findings.is_empty(),
+                "findings": findings,
+            }))?
+        );
+    } else if findings.is_empty() {
+        println!(
+            "ec review {project}: clean — every typed capability's EC covers its required dimensions"
+        );
+    } else {
+        println!("ec review {project}: {} finding(s)", findings.len());
+        for finding in &findings {
+            println!("  - {finding}");
+        }
+    }
+    if !findings.is_empty() {
         std::process::exit(1);
     }
     Ok(())
@@ -1583,6 +1626,40 @@ fn ec_review_missing_dimensions(
         .collect()
 }
 
+/// #188 E6: the EC review findings for a project — for each capability whose
+/// type is known (from the capability-types config), the required dimensions
+/// its EC cases do not cover. Empty = every typed capability's EC faithfully
+/// covers the dimensions its type demands. Shared by `aw ec check` and the
+/// dedicated `aw ec review` verb.
+fn ec_review_findings(ctx: &EcProjectContext, cases: &[EcManifestCase]) -> Vec<String> {
+    let mut findings = Vec::new();
+    if cases.is_empty() {
+        return findings;
+    }
+    let Ok(types) = crate::cli::capability_type::load_capability_types(&ctx.project_root) else {
+        return findings;
+    };
+    let mut covered: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for case in cases {
+        covered
+            .entry(case.capability_id.clone())
+            .or_default()
+            .push(case.category.clone());
+    }
+    for (cap_id, cats) in &covered {
+        if let Some(cap_type) = types.get(cap_id) {
+            for missing in ec_review_missing_dimensions(cap_type, cats) {
+                findings.push(format!(
+                    "capability `{cap_id}` ({}) EC is missing the required `{missing}` dimension",
+                    cap_type.as_str()
+                ));
+            }
+        }
+    }
+    findings
+}
+
 /// Which executable artifact `aw ec gen` should skeleton for a claim, dispatched
 /// on the gate command: `rig run` -> a lifecycle case TOML (mode-1, rig DSL);
 /// `cargo test` -> a native Rust `#[test]` body (mode-2); anything else -> none.
@@ -2190,32 +2267,8 @@ fn check_manifest_against_expected(
         .unwrap_or_default();
 
     // #188 E6: review whether each capability's EC covers every dimension its
-    // type requires (the "no missing dimension" judgment — a missing required
-    // dimension would yield a false green). Only capabilities with a known type
-    // (from the capability-types config) are reviewed, so projects without that
-    // config are unaffected.
-    if !actual_cases.is_empty() {
-        if let Ok(types) = crate::cli::capability_type::load_capability_types(&ctx.project_root) {
-            let mut covered: std::collections::BTreeMap<String, Vec<String>> =
-                std::collections::BTreeMap::new();
-            for case in &actual_cases {
-                covered
-                    .entry(case.capability_id.clone())
-                    .or_default()
-                    .push(case.category.clone());
-            }
-            for (cap_id, cats) in &covered {
-                if let Some(cap_type) = types.get(cap_id) {
-                    for missing in ec_review_missing_dimensions(cap_type, cats) {
-                        findings.push(format!(
-                            "capability `{cap_id}` ({}) EC is missing the required `{missing}` dimension",
-                            cap_type.as_str()
-                        ));
-                    }
-                }
-            }
-        }
-    }
+    // type requires (the "no missing dimension" judgment).
+    findings.extend(ec_review_findings(ctx, &actual_cases));
 
     if let Some(manifest) = actual {
         if manifest.version != EC_MANIFEST_VERSION {
