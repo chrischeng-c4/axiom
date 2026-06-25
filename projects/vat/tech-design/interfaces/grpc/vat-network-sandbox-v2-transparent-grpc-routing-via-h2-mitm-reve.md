@@ -42,7 +42,6 @@ edges:
   - { from: resp, to: emu }
   - { from: routed, to: noroute, label: "no" }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
