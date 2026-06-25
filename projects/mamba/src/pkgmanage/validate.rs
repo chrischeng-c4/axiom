@@ -615,7 +615,19 @@ fn probe_pip(bin: &Path) -> FamilyResult {
     if !stdout.contains("Requests==2.31.0") || !stdout.contains("urllib3==2.1.0") {
         return FamilyResult::fail(format!("pip freeze missing inventory: {stdout}"));
     }
-    FamilyResult::pass("pip list/freeze/check inspect site-packages inventory").with_paths(
+    let tree = invoke(
+        bin,
+        tmp.path(),
+        &["pip", "tree", "--site-packages", site.to_str().unwrap()],
+    );
+    if !tree.status.success() {
+        return FamilyResult::fail("pip tree failed");
+    }
+    let tree_stdout = String::from_utf8_lossy(&tree.stdout);
+    if !tree_stdout.contains("Requests v2.31.0") || !tree_stdout.contains("urllib3 v2.1.0") {
+        return FamilyResult::fail(format!("pip tree missing dependency graph: {tree_stdout}"));
+    }
+    FamilyResult::pass("pip list/freeze/tree/check inspect site-packages inventory").with_paths(
         Some(tmp.path().to_path_buf()),
         None,
         Some(site),

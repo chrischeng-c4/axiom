@@ -124,6 +124,91 @@ fn pip_check_reports_success_for_consistent_inventory() {
 }
 
 #[test]
+fn pip_tree_renders_installed_dependency_graph() {
+    let site = fixture_site();
+    let tmp = tempfile::tempdir().unwrap();
+    let out = run(
+        tmp.path(),
+        &[
+            "pip",
+            "tree",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Requests v2.31.0"), "{stdout}");
+    assert!(stdout.contains("└── urllib3 v2.1.0"), "{stdout}");
+}
+
+#[test]
+fn pip_tree_supports_focus_invert_prune_and_depth() {
+    let site = fixture_site();
+    let tmp = tempfile::tempdir().unwrap();
+
+    let depth = run(
+        tmp.path(),
+        &[
+            "pip",
+            "tree",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--package",
+            "Requests",
+            "--depth",
+            "0",
+        ],
+    );
+    assert!(depth.status.success());
+    let depth_stdout = String::from_utf8_lossy(&depth.stdout);
+    assert!(depth_stdout.contains("Requests v2.31.0"), "{depth_stdout}");
+    assert!(!depth_stdout.contains("urllib3"), "{depth_stdout}");
+
+    let inverted = run(
+        tmp.path(),
+        &[
+            "pip",
+            "tree",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--package",
+            "urllib3",
+            "--invert",
+        ],
+    );
+    assert!(inverted.status.success());
+    let inverted_stdout = String::from_utf8_lossy(&inverted.stdout);
+    assert!(
+        inverted_stdout.contains("urllib3 v2.1.0"),
+        "{inverted_stdout}"
+    );
+    assert!(
+        inverted_stdout.contains("Requests v2.31.0"),
+        "{inverted_stdout}"
+    );
+
+    let pruned = run(
+        tmp.path(),
+        &[
+            "pip",
+            "tree",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--prune",
+            "urllib3",
+        ],
+    );
+    assert!(pruned.status.success());
+    let pruned_stdout = String::from_utf8_lossy(&pruned.stdout);
+    assert!(!pruned_stdout.contains("urllib3"), "{pruned_stdout}");
+}
+
+#[test]
 fn pip_check_fails_when_required_dist_is_missing() {
     let site = tempfile::tempdir().unwrap();
     write_dist(

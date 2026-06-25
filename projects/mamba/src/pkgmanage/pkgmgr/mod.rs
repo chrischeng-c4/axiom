@@ -22,7 +22,7 @@
 //     requirements_export, pylock_export, pylock_import.
 //   * Operational helpers: tree, freshness, upgrade, version_bump, publish,
 //     parity, benchmark, indexes, cache_prune, bytecode, init_scaffold,
-//     pip_check, pip_inventory, pep723, name_normalize, netrc.
+//     pip_check, pip_inventory, pip_tree, pep723, name_normalize, netrc.
 //   * HTTP transport details: retry_after (Tick 75), cache_control (76),
 //     etag (79), link_header (86), media_type (89),
 //     content_disposition (91), range (94), accept_encoding (97) — covers
@@ -298,6 +298,7 @@ pub mod pep740;
 pub mod pip_check;
 pub mod pip_conf;
 pub mod pip_inventory;
+pub mod pip_tree;
 pub mod platform_selector;
 pub mod platforms;
 pub mod prerelease_policy;
@@ -362,8 +363,8 @@ pub use installer::{
 };
 pub use json_api::parse_json_metadata;
 pub use lockfile::{
-    Lockfile, LockfileDiff, LockfileError, Package, PackageChange, SourceRef, SourceRefKind,
-    MAX_SUPPORTED_FORMAT_VERSION,
+    Lockfile, LockfileDiff, LockfileError, MAX_SUPPORTED_FORMAT_VERSION, Package, PackageChange,
+    SourceRef, SourceRefKind,
 };
 pub use resolver::{ResolutionError, ResolutionErrorKind, ResolvedGraph, ResolvedNode, Resolver};
 pub use types::{FileHash, IndexClient, IndexError, PackageMetadata, ReleaseFile};
