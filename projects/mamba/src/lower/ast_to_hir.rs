@@ -4685,21 +4685,7 @@ impl<'a> AstLowerer<'a> {
                     span: stmt.span,
                     redef: false,
                 };
-                if default_inits.is_empty() {
-                    Some(placeholder)
-                } else {
-                    // `lower_stmt` yields a single statement, so wrap the def-time
-                    // default-slot inits + placeholder in an always-taken `if True:`
-                    // block. The inits execute in order at this textual position.
-                    let mut then_body = default_inits;
-                    then_body.push(placeholder);
-                    Some(HirStmt::If {
-                        cond: HirExpr::BoolLit(true, self.checker.tcx.bool()),
-                        then_body,
-                        else_body: Vec::new(),
-                        span: stmt.span,
-                    })
-                }
+                Some(placeholder)
             }
             ast::Stmt::AsyncFnDef {
                 name,
