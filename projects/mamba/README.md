@@ -72,7 +72,7 @@ Gate Inventory: `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs
 
 ID: c4-package-manager-uv-like
 Type: DeveloperTool
-Surfaces: CLI: `mamba init` + `mamba auth` + `mamba index` + `mamba add` + `mamba remove` + `mamba lock` + `mamba export` + `mamba tree` + `mamba version` + `mamba pip` + `mamba venv` + `mamba python` + `mamba workspace` + `mamba shell` + `mamba sync` + `mamba install` + `mamba tool` + `mamba cache` + `mamba hash` + `mamba generate-shell-completion` + `mamba pkgmgr-validate` - project scaffold, credentials, frozen index, dependency, lockfile, export, tree, version, pip inventory, venv, local Python discovery/pinning/install management, workspace inspection, shell integration, install, uv-style tool administration, cache, completion, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
+Surfaces: CLI: `mamba init` + `mamba auth` + `mamba index` + `mamba add` + `mamba remove` + `mamba lock` + `mamba audit` + `mamba export` + `mamba tree` + `mamba version` + `mamba pip` + `mamba venv` + `mamba python` + `mamba workspace` + `mamba shell` + `mamba sync` + `mamba install` + `mamba tool` + `mamba cache` + `mamba hash` + `mamba generate-shell-completion` + `mamba pkgmgr-validate` - project scaffold, credentials, frozen index, dependency, lockfile, audit, export, tree, version, pip inventory, venv, local Python discovery/pinning/install management, workspace inspection, shell integration, install, uv-style tool administration, cache, completion, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
 EC Dimensions: behavior: `cargo test -p mamba --test pkgmgr` - uv-like workflow fixtures; stability: `cargo test -p mamba --test schema_gates pkgmgr` - schema, pin, and idempotence contracts
 Root WI: #519
 Status: partial
@@ -92,7 +92,8 @@ local wheel paths, explicit registry URL tests, lockfile export to
 requirements.txt / pylock.toml, dependency-tree rendering, PEP 621 version
 bumping, and pip-compatible requirements compile plus installed-environment
 install/sync/uninstall/list/freeze/show/tree/check inspection and
-dependency-tree rendering. `mamba lock --check` and `mamba sync --check` provide
+dependency-tree rendering. `mamba audit` checks `mamba.lock` against an offline
+advisory database, and `mamba lock --check` / `mamba sync --check` provide
 CI-friendly drift gates without mutating lockfiles or environments. `mamba venv` exposes create/remove safety around PEP 405
 environments, and `mamba cache` now reports exact size/category info plus
 dry-run, age, size, and package-targeted pruning. `mamba python` exposes local
@@ -113,10 +114,10 @@ profile requires nineteen offline workflow families and keeps live network
 coverage opt-in/report-only. `mamba add` / `mamba lock` do not treat public
 PyPI as an implicit default source; callers must provide a frozen local index,
 direct local wheel file, or explicit registry URL when resolving dependencies.
-Full uv parity remains open under #519; remaining command families include
-audit, live Python standalone downloads, build/publish package flows, stored
-credential use by index/resolver flows, live-index pip compile/install/sync parity,
-and related parity fixtures.
+Full uv parity remains open under #519; remaining command families include live
+Python standalone downloads, build/publish package flows, stored credential use
+by index/resolver flows, live-index pip compile/install/sync parity, and related
+parity fixtures.
 
 ## Test Completeness — what we tested, against what authority
 
