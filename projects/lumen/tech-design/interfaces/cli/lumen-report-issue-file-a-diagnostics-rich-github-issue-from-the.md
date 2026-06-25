@@ -38,7 +38,7 @@ nodes:
   body:     { kind: process,  label: "body = [message?] + '\\n\\n---\\n' + render(diagnostics)" }
   dry:      { kind: decision, label: "--dry-run?" }
   print:    { kind: terminal, label: "print 'repo: {repo}', 'title: {title}', body; submit nothing; exit 0" }
-  cansubmit:{ kind: decision, label: "feature report-issue built AND GITHUB_TOKEN set?" }
+  cansubmit: { kind: decision, label: "feature report-issue built AND GITHUB_TOKEN set?" }
   confirm:  { kind: decision, label: "stdin tty AND not -y -> confirm 'file issue to {repo}?'" }
   abort:    { kind: terminal, label: "'aborted'; exit 0" }
   post:     { kind: process,  label: "POST https://api.github.com/repos/{repo}/issues {title, body, labels} (bearer token, UA)" }
@@ -87,44 +87,43 @@ flowchart TD
 
 ```mermaid
 ---
-id: lumen-report-issue-verification
+id: lumen-report-issue-contract-verification
 requirements:
-  diagnostics_block_complete:
+  render_diagnostics_fields:
     id: R1
-    text: "the assembled diagnostics block contains lumen version, target, git sha, built-at, and OS/arch"
+    text: "render_diagnostics(d) contains the version, target, git sha, built-at, os and arch values from the Diagnostics struct"
     kind: functional
     risk: high
     verify: test
-  body_includes_message:
+  assemble_body_order:
     id: R2
-    text: "assemble_body(message, diagnostics) places the operator message above the diagnostics block"
+    text: "assemble_body(Some(msg), diag) puts msg first, then a '---' separator, then the diagnostics block; assemble_body(None, diag) emits just the diagnostics block"
     kind: functional
     risk: medium
     verify: test
-  prefilled_url_encoded:
+  prefilled_url_encodes:
     id: R3
-    text: "the issues/new fallback URL targets the right repo and percent-encodes the title and body"
+    text: "prefilled_url(repo, title, body) yields https://github.com/{repo}/issues/new?title=..&body=.. with title and body percent-encoded (spaces, newlines, & escaped)"
     kind: functional
     risk: high
     verify: test
-  repo_default_and_override:
+  resolve_repo_default_override:
     id: R4
-    text: "the target repo defaults to the configured repo and is replaced by --repo owner/name"
+    text: "resolve_repo(None) == DEFAULT_REPO and resolve_repo(Some(\"o/n\")) == \"o/n\""
+    kind: functional
+    risk: medium
+    verify: test
+  issue_payload_shape:
+    id: R5
+    text: "issue_payload(title, body, labels) serializes to a JSON object with title, body, and a labels array (omitted/empty when no labels)"
     kind: functional
     risk: medium
     verify: test
 ---
 flowchart TD
-    r1[R1 diagnostics complete] --> v1{version+target+sha+built-at+os/arch?}
-    r2[R2 body layout] --> v2{message above diagnostics?}
-    r3[R3 prefilled URL] --> v3{repo + percent-encoded title/body?}
-    r4[R4 repo select] --> v4{default vs --repo override?}
+    r1[R1 render diagnostics] --> v1{all fields present?}
+    r2[R2 assemble_body] --> v2{message then --- then diagnostics?}
+    r3[R3 prefilled_url] --> v3{repo + percent-encoded title/body?}
+    r4[R4 resolve_repo] --> v4{default vs override?}
+    r5[R5 issue_payload] --> v5{title+body+labels json?}
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Dispatch flow covers the documented branches: optional `--url` node enrichment with graceful degradation, the `--dry-run` print-only exit, the token-present submit path with confirmation, and the no-token pre-filled-URL fallback — no path silently fails.
-- [unit-test] R1–R4 isolate the pure seams (diagnostics completeness, body layout, percent-encoded fallback URL, repo default/override), all `verify: test`, matching the testability gate without needing network access.
