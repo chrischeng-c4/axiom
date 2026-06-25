@@ -12,7 +12,7 @@ fill_sections: [logic, unit-test]
 
 ```mermaid
 ---
-id: mamba-pkgmanage-source-policy
+id: mamba-pkgmanage-source-policy-contract
 entry: invoked
 nodes:
   invoked: { kind: start, label: "mamba add/lock invoked" }
@@ -40,10 +40,10 @@ flowchart TD
     A["mamba add/lock invoked"] --> B{"Local frozen index configured?\n--index or MAMBA_FROZEN_INDEX"}
     B -- yes --> C["Resolve against frozen local index\n(no network, deterministic files)"]
     B -- no --> D{"Explicit registry configured?\n--index-url or MAMBA_INDEX_URL"}
-    D -- yes --> E["Resolve against explicit private/PyPI-compatible registry\n(preserve wiremock and private registry paths)"]
+    D -- yes --> E["Resolve against explicit private/PyPI-compatible registry\n(no implicit pypi.org default)"]
     D -- no --> F{"add --offline with NAME==VERSION?"}
     F -- yes --> G["Record pinned dependency without network\n(no artifact URL/hash guarantee)"]
-    F -- no --> H["Fail fast before manifest/lock writes\nDiagnostic names --index, MAMBA_FROZEN_INDEX, or --index-url"]
+    F -- no --> H["Fail fast before manifest/lock writes\nDiagnostic names --index, MAMBA_FROZEN_INDEX, --index-url, or MAMBA_INDEX_URL"]
 
     C --> I["Render deterministic mamba.toml/mamba.lock"]
     E --> I
@@ -53,7 +53,6 @@ flowchart TD
     I --> K["Verify frozen-index add/lock tests and explicit --index-url mock tests"]
     J --> L["Verify no-source add/lock failure tests"]
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
