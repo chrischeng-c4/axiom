@@ -1550,10 +1550,12 @@ fn default_tool_command(ctx: &EcProjectContext, tool: &str, path: &Path, id: &st
     let rel = relative_to(&ctx.project_root, path);
     match tool {
         "arena" => format!("arena run --spec {rel}"),
-        "rig" => path
-            .parent()
-            .map(|parent| format!("rig run --dir {}", relative_to(&ctx.project_root, parent)))
-            .unwrap_or_else(|| format!("rig run --dir {rel}")),
+        // #67/#62: rig's EC gate runs via `rig test`, which resolves cases from
+        // rig.toml `testpaths`. Target this claim's case by id — the EC category
+        // (behavior/efficiency/security/stability) is NOT a rig dimension, so it
+        // is not a `rig test <dimension>` positional. Red until the case TOML is
+        // authored (skeleton gen is aw-1, out of scope here).
+        "rig" => format!("rig test --case {id}"),
         "meter" => format!("meter run --target {rel}"),
         "guard" => format!(
             "guard scan {} --compact --no-persist",
@@ -1576,7 +1578,11 @@ enum CaseGenMode {
 
 fn case_gen_mode(case: &EcManifestCase) -> CaseGenMode {
     let cmd = case.command.trim_start();
-    if cmd.starts_with("rig run") || cmd.starts_with("target/debug/rig run") {
+    if cmd.starts_with("rig run")
+        || cmd.starts_with("target/debug/rig run")
+        || cmd.starts_with("rig test")
+        || cmd.starts_with("target/debug/rig test")
+    {
         CaseGenMode::Rig
     } else if cmd.starts_with("cargo test") {
         CaseGenMode::NativeRust
@@ -3348,10 +3354,23 @@ e2e_tests:
         let mut c = case("x", "search", "stability");
         c.command = "rig run --dir cases/resilience".into();
         assert_eq!(case_gen_mode(&c), CaseGenMode::Rig);
+        c.command = "rig test --case x".into();
+        assert_eq!(case_gen_mode(&c), CaseGenMode::Rig);
         c.command = "cargo test -p lumen --test api_e2e".into();
         assert_eq!(case_gen_mode(&c), CaseGenMode::NativeRust);
         c.command = "pytest x".into();
         assert_eq!(case_gen_mode(&c), CaseGenMode::Other);
+    }
+
+    #[test]
+    fn default_tool_command_rig_arm_targets_rig_test_case() {
+        // #67: the rig EC gate command repoints from `rig run --dir` to
+        // `rig test --case <claim-id>` (the new lifecycle-case launcher).
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_root(tmp.path());
+        let manifest = tmp.path().join("rig.toml");
+        let cmd = default_tool_command(&ctx, "rig", &manifest, "search-stability-fault-resilience");
+        assert_eq!(cmd, "rig test --case search-stability-fault-resilience");
     }
 
     #[test]
