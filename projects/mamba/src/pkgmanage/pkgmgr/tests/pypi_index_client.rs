@@ -38,6 +38,7 @@ fn make_real_client() -> IndexClient {
         max_concurrent: 4,
         timeout_secs: 30,
         retry_max: 3,
+        auth_header: None,
     }
 }
 

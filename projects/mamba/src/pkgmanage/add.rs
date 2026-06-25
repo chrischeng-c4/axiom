@@ -15,7 +15,7 @@
 // `name==version` specifier per invocation. Transitive resolution and
 // complex version selection are out of scope (per #2681 issue body).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -214,6 +214,7 @@ fn resolve_with_pypi(spec: &DepSpec, index_url: &str) -> Result<ResolvedDep> {
         max_concurrent: 8,
         timeout_secs: 30,
         retry_max: 3,
+        auth_header: crate::pkgmanage::auth::authorization_for_url(index_url)?,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -352,7 +353,7 @@ fn pick_best_wheel(
     meta: &crate::pkgmanage::pkgmgr::PackageMetadata,
     version: &str,
 ) -> Option<WheelPick> {
-    use crate::pkgmanage::pkgmgr::tags::{parse_wheel_filename, TagSelector};
+    use crate::pkgmanage::pkgmgr::tags::{TagSelector, parse_wheel_filename};
     let files = meta.releases.get(version)?;
     let selector = TagSelector::current_host();
     let mut best: Option<(u32, &str, &str)> = None;

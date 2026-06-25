@@ -19,9 +19,9 @@ use tokio::sync::Semaphore;
 
 use crate::pkgmanage::pkgmgr::{
     cache::{
-        artifact_path, default_cache_dir, promote_to_content_addressed, read_cached_artifact,
-        read_cached_etag, read_cached_metadata, read_content_addressed_artifact, write_cached_etag,
-        write_cached_metadata, METADATA_TTL_SECS,
+        METADATA_TTL_SECS, artifact_path, default_cache_dir, promote_to_content_addressed,
+        read_cached_artifact, read_cached_etag, read_cached_metadata,
+        read_content_addressed_artifact, write_cached_etag, write_cached_metadata,
     },
     json_api::parse_json_metadata,
     simple_api::{parse_simple_html, parse_simple_json},
@@ -50,6 +50,13 @@ impl IndexClient {
             default_cache_dir()
         } else {
             std::path::PathBuf::from(&self.cache_dir)
+        }
+    }
+
+    fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.auth_header.as_deref() {
+            Some(header) => req.header(reqwest::header::AUTHORIZATION, header),
+            None => req,
         }
     }
 
@@ -100,7 +107,7 @@ impl IndexClient {
         let mut attempt = 0u32;
         loop {
             // REQ: AC4 — attach If-None-Match when a cached ETag is available.
-            let req = client.get(&url);
+            let req = self.apply_auth(client.get(&url));
             let req = if let Some(ref etag) = cached_etag {
                 req.header("If-None-Match", etag)
             } else {
@@ -261,7 +268,7 @@ impl IndexClient {
         let mut attempt = 0u32;
         loop {
             // REQ: AC4 — attach If-None-Match when a cached ETag is available.
-            let req = client.get(&url).header(
+            let req = self.apply_auth(client.get(&url)).header(
                 "Accept",
                 "application/vnd.pypi.simple.v1+json, text/html;q=0.5",
             );
@@ -485,7 +492,7 @@ impl IndexClient {
 
         let mut attempt = 0u32;
         loop {
-            let response = match client.get(&file.url).send().await {
+            let response = match self.apply_auth(client.get(&file.url)).send().await {
                 Err(e) => {
                     if attempt >= self.retry_max {
                         return Err(IndexError::NetworkError {
@@ -709,7 +716,7 @@ impl IndexClient {
 
         let mut attempt = 0u32;
         loop {
-            let result = client.get(&url).send().await;
+            let result = self.apply_auth(client.get(&url)).send().await;
             match result {
                 Err(e) => {
                     if attempt >= self.retry_max {
@@ -800,6 +807,7 @@ mod tests {
             max_concurrent: 4,
             timeout_secs: 10,
             retry_max: 3,
+            auth_header: None,
         }
     }
 
@@ -817,6 +825,7 @@ mod tests {
             max_concurrent: 4,
             timeout_secs: 10,
             retry_max: 3,
+            auth_header: None,
         }
     }
 
