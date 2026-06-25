@@ -157,7 +157,6 @@ requirementDiagram
       verifies: mux_routes_by_content_type
     }
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
