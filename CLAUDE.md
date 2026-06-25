@@ -9,6 +9,13 @@ project:
 
 # CLAUDE.md - Implementation Essentials
 
+> **Start here.** Before changing anything, read the repo-root `README.md` (what
+> each project is) and `CONTRIBUTING.md` (the authoritative, repo-wide contract
+> for authoring files, services, and CLIs — file granularity, semantic paths,
+> the service archetype, and the CLI convention). This file is the
+> implementation quick-reference; when the two disagree on authoring,
+> `CONTRIBUTING.md` wins.
+
 ## Ecosystem (4 layers)
 
 ```
