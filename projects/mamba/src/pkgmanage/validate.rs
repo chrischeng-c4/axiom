@@ -947,6 +947,85 @@ fn probe_pip(bin: &Path) -> FamilyResult {
             "pip sync did not install requirement graph: {freeze_after_sync_stdout}"
         ));
     }
+
+    let live_app = build_probe_wheel(&wheels, "pip-live", "1.0.0", &["pip-live-dep==0.2.0"]);
+    let live_dep = build_probe_wheel(&wheels, "pip-live-dep", "0.2.0", &[]);
+    let live_index = match spawn_pip_registry(&live_app, &live_dep) {
+        Ok(url) => url,
+        Err(e) => return FamilyResult::fail(format!("spawn pip registry failed: {e}")),
+    };
+    let live_req = tmp.path().join("live-requirements.txt");
+    std::fs::write(&live_req, "pip-live==1.0.0\n").unwrap();
+    let live_compile = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "compile",
+            live_req.to_str().unwrap(),
+            "--index-url",
+            &live_index,
+            "--no-header",
+            "--generate-hashes",
+        ],
+    );
+    if !live_compile.status.success() {
+        return FamilyResult::fail(format!(
+            "pip live-index compile failed: {}",
+            String::from_utf8_lossy(&live_compile.stderr)
+        ));
+    }
+    let live_compile_stdout = String::from_utf8_lossy(&live_compile.stdout);
+    if !live_compile_stdout.contains("pip-live==1.0.0")
+        || !live_compile_stdout.contains("pip-live-dep==0.2.0")
+        || !live_compile_stdout.contains("--hash=sha256:")
+    {
+        return FamilyResult::fail(format!(
+            "pip live-index compile did not emit requirement graph: {live_compile_stdout}"
+        ));
+    }
+    let live_site = tmp.path().join("live-site");
+    let live_sync = Command::new(bin)
+        .args([
+            "pip",
+            "sync",
+            live_req.to_str().unwrap(),
+            "--index-url",
+            &live_index,
+            "--site-packages",
+            live_site.to_str().unwrap(),
+            "--python",
+            "python3",
+        ])
+        .env("MAMBA_CACHE_DIR", tmp.path().join("live-cache"))
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba");
+    if !live_sync.status.success() {
+        return FamilyResult::fail(format!(
+            "pip live-index sync failed: {}",
+            String::from_utf8_lossy(&live_sync.stderr)
+        ));
+    }
+    let live_freeze = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "freeze",
+            "--site-packages",
+            live_site.to_str().unwrap(),
+        ],
+    );
+    let live_freeze_stdout = String::from_utf8_lossy(&live_freeze.stdout);
+    if !live_freeze_stdout.contains("pip-live==1.0.0")
+        || !live_freeze_stdout.contains("pip-live-dep==0.2.0")
+    {
+        return FamilyResult::fail(format!(
+            "pip live-index sync did not install requirement graph: {live_freeze_stdout}"
+        ));
+    }
+
     let uninstall = invoke(
         bin,
         tmp.path(),
@@ -963,9 +1042,136 @@ fn probe_pip(bin: &Path) -> FamilyResult {
     }
 
     FamilyResult::pass(
-        "pip compile/install/sync/uninstall/list/freeze/tree/check inspect and mutate site-packages",
+        "pip compile/install/sync support frozen and explicit-index workflows; inventory commands inspect site-packages",
     )
     .with_paths(Some(tmp.path().to_path_buf()), None, Some(install_site))
+}
+
+fn spawn_pip_registry(app: &Path, dep: &Path) -> Result<String> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let app_bytes = std::fs::read(app).with_context(|| format!("read {}", app.display()))?;
+    let dep_bytes = std::fs::read(dep).with_context(|| format!("read {}", dep.display()))?;
+    let app_sha = sha256_bytes(&app_bytes);
+    let dep_sha = sha256_bytes(&dep_bytes);
+    let app_file = app
+        .file_name()
+        .and_then(|s| s.to_str())
+        .context("pip-live app filename")?
+        .to_string();
+    let dep_file = dep
+        .file_name()
+        .and_then(|s| s.to_str())
+        .context("pip-live dep filename")?
+        .to_string();
+    let listener = TcpListener::bind("127.0.0.1:0").context("bind pip registry")?;
+    let addr = listener.local_addr().context("read pip registry addr")?;
+    let base = format!("http://{addr}");
+    let thread_base = base.clone();
+    std::thread::spawn(move || {
+        for _ in 0..32 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("/");
+            let (status, content_type, body) = match path {
+                "/pypi/pip-live/json" => (
+                    "200 OK",
+                    "application/json",
+                    serde_json::json!({
+                        "info": { "name": "pip-live", "version": "1.0.0" },
+                        "releases": {
+                            "1.0.0": [{
+                                "filename": app_file,
+                                "url": format!("{thread_base}/files/{app_file}"),
+                                "digests": { "sha256": app_sha },
+                                "yanked": false
+                            }]
+                        }
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+                "/pypi/pip-live/1.0.0/json" => (
+                    "200 OK",
+                    "application/json",
+                    serde_json::json!({
+                        "info": {
+                            "name": "pip-live",
+                            "version": "1.0.0",
+                            "requires_dist": ["pip-live-dep==0.2.0"]
+                        }
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+                "/pypi/pip-live-dep/json" => (
+                    "200 OK",
+                    "application/json",
+                    serde_json::json!({
+                        "info": { "name": "pip-live-dep", "version": "0.2.0" },
+                        "releases": {
+                            "0.2.0": [{
+                                "filename": dep_file,
+                                "url": format!("{thread_base}/files/{dep_file}"),
+                                "digests": { "sha256": dep_sha },
+                                "yanked": false
+                            }]
+                        }
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+                "/pypi/pip-live-dep/0.2.0/json" => (
+                    "200 OK",
+                    "application/json",
+                    serde_json::json!({
+                        "info": {
+                            "name": "pip-live-dep",
+                            "version": "0.2.0",
+                            "requires_dist": []
+                        }
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+                p if p == format!("/files/{app_file}") => {
+                    ("200 OK", "application/octet-stream", app_bytes.clone())
+                }
+                p if p == format!("/files/{dep_file}") => {
+                    ("200 OK", "application/octet-stream", dep_bytes.clone())
+                }
+                _ => (
+                    "404 Not Found",
+                    "application/json",
+                    b"{\"error\":\"not found\"}".to_vec(),
+                ),
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&body);
+        }
+    });
+    Ok(base)
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 fn write_dist(site: &Path, dir_name: &str, metadata: &str) {

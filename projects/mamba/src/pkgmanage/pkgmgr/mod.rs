@@ -301,6 +301,7 @@ pub mod pip_compile;
 pub mod pip_conf;
 pub mod pip_install;
 pub mod pip_inventory;
+pub mod pip_registry;
 pub mod pip_tree;
 pub mod platform_selector;
 pub mod platforms;
