@@ -1130,11 +1130,14 @@ pub fn mb_len(val: MbValue) -> MbValue {
                         }
                         return MbValue::from_int(0);
                     }
-                    // dict-like collections (defaultdict, Counter, OrderedDict):
-                    // forward len() to the backing `_data` dict.
+                    // dict-like collections (defaultdict, Counter, OrderedDict)
+                    // and contextvars.Context: forward len() to the backing
+                    // `_data` dict. Context's `_data` is the captured
+                    // ContextVar → value snapshot. Issue #282.
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"
                         || class_name == "collections.OrderedDict"
+                        || class_name == "Context"
                     {
                         let data = fields.read().unwrap().get("_data").copied();
                         if let Some(d) = data {
