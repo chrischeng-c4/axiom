@@ -52,8 +52,8 @@ impl Drop for ScratchDir {
 }
 
 const REQUIRED_FAMILIES: &[&str] = &[
-    "init", "index", "add", "lock", "export", "tree", "version", "pip", "sync", "run", "install",
-    "hash", "cache",
+    "init", "index", "add", "lock", "export", "tree", "version", "pip", "venv", "sync", "run",
+    "install", "hash", "cache",
 ];
 
 pub fn cmd_validate(sub: &ArgMatches) -> Result<()> {
@@ -151,6 +151,7 @@ fn run_family(family: &str, bin: &Path) -> FamilyResult {
         "tree" => probe_tree(bin),
         "version" => probe_version(bin),
         "pip" => probe_pip(bin),
+        "venv" => probe_venv(bin),
         "sync" => probe_sync(bin),
         "run" => probe_run(bin),
         "install" => probe_install(bin),
@@ -540,6 +541,53 @@ fn write_dist(site: &Path, dir_name: &str, metadata: &str) {
     std::fs::write(dist.join("METADATA"), metadata).unwrap();
 }
 
+fn probe_venv(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let root = tmp.path().join("v");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("pyvenv.cfg"),
+        "home = /tmp\ninclude-system-site-packages = false\nversion = 3.12.0\n",
+    )
+    .unwrap();
+
+    let refuse = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "venv",
+            "create",
+            root.to_str().unwrap(),
+            "--python",
+            "/definitely/missing/python",
+        ],
+    );
+    if refuse.status.success() {
+        return FamilyResult::fail("venv create overwrote existing pyvenv.cfg");
+    }
+    let stderr = String::from_utf8_lossy(&refuse.stderr);
+    if !stderr.contains("refused_existing_pyvenv_cfg") {
+        return FamilyResult::fail(format!("venv create refusal missing reason: {stderr}"));
+    }
+
+    let remove = invoke(bin, tmp.path(), &["venv", "remove", root.to_str().unwrap()]);
+    if !remove.status.success() {
+        return FamilyResult::fail(format!(
+            "venv remove exit {:?}: {}",
+            remove.status.code(),
+            String::from_utf8_lossy(&remove.stderr)
+        ));
+    }
+    if root.exists() {
+        return FamilyResult::fail("venv remove left target tree behind");
+    }
+    FamilyResult::pass("venv create refuses overwrite and remove requires pyvenv.cfg").with_paths(
+        Some(root),
+        None,
+        None,
+    )
+}
+
 fn probe_sync(bin: &Path) -> FamilyResult {
     let index = build_frozen_index();
     let tmp = ScratchDir::new("probe");
@@ -673,7 +721,8 @@ fn probe_cache(bin: &Path) -> FamilyResult {
     let tmp = ScratchDir::new("probe");
     let cache_root = tmp.path().join("mamba-cache");
     std::fs::create_dir_all(&cache_root).unwrap();
-    std::fs::write(cache_root.join("blob.bin"), b"x").unwrap();
+    std::fs::create_dir_all(cache_root.join("artifacts/demo")).unwrap();
+    std::fs::write(cache_root.join("artifacts/demo/blob.whl"), b"xyz").unwrap();
 
     let dir_out = Command::new(bin)
         .args(["cache", "dir"])
@@ -695,6 +744,19 @@ fn probe_cache(bin: &Path) -> FamilyResult {
         ));
     }
 
+    let size_out = Command::new(bin)
+        .args(["cache", "size"])
+        .env("MAMBA_CACHE_DIR", &cache_root)
+        .output()
+        .expect("spawn mamba");
+    if !size_out.status.success() {
+        return FamilyResult::fail("cache size failed");
+    }
+    let size_stdout = String::from_utf8_lossy(&size_out.stdout);
+    if !size_stdout.contains("3 bytes") {
+        return FamilyResult::fail(format!("cache size output mismatch: {size_stdout}"));
+    }
+
     let clean_out = Command::new(bin)
         .args(["cache", "clean"])
         .env("MAMBA_CACHE_DIR", &cache_root)
@@ -703,10 +765,10 @@ fn probe_cache(bin: &Path) -> FamilyResult {
     if !clean_out.status.success() {
         return FamilyResult::fail("cache clean failed");
     }
-    if cache_root.join("blob.bin").exists() {
+    if cache_root.join("artifacts/demo/blob.whl").exists() {
         return FamilyResult::fail("cache clean did not remove blob");
     }
-    FamilyResult::pass("cache dir + clean honor MAMBA_CACHE_DIR").with_paths(
+    FamilyResult::pass("cache dir/size/clean honor MAMBA_CACHE_DIR").with_paths(
         None,
         None,
         Some(cache_root),

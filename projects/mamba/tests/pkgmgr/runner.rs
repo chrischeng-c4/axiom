@@ -58,5 +58,8 @@ mod tree;
 #[path = "validate.rs"]
 mod validate;
 
+#[path = "venv.rs"]
+mod venv;
+
 #[path = "version.rs"]
 mod version;
