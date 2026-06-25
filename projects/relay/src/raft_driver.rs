@@ -214,11 +214,9 @@ impl RaftDriver {
             Some(state) => RaftNode::from_persisted(id, &membership, state),
             None => RaftNode::new(id, &membership),
         };
-        let client = reqwest::Client::builder()
-            .http2_prior_knowledge()
-            .timeout(RPC_TIMEOUT)
-            .build()
-            .expect("reqwest client");
+        // Shared h2c client construction (#468): equivalent to the inline
+        // `http2_prior_knowledge().timeout(RPC_TIMEOUT)` builder, via cclab-h2c.
+        let client = cclab_h2c::h2c_client_with(Some(RPC_TIMEOUT), None).expect("reqwest client");
         let shared = Arc::new(Shared {
             id,
             subject: subject.into(),
