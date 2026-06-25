@@ -48,7 +48,6 @@ edges:
   - { from: store, to: dispatch }
   - { from: dispatch, to: done }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
