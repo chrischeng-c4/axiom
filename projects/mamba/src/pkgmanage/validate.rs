@@ -68,6 +68,7 @@ const REQUIRED_FAMILIES: &[&str] = &[
     "sync",
     "run",
     "install",
+    "tool",
     "hash",
     "cache",
 ];
@@ -175,6 +176,7 @@ fn run_family(family: &str, bin: &Path) -> FamilyResult {
         "sync" => probe_sync(bin),
         "run" => probe_run(bin),
         "install" => probe_install(bin),
+        "tool" => probe_tool(bin),
         "hash" => probe_hash(bin),
         "cache" => probe_cache(bin),
         other => FamilyResult {
@@ -963,6 +965,108 @@ fn probe_install(bin: &Path) -> FamilyResult {
     }
     FamilyResult::pass("install materialized tool dir + shim").with_paths(
         Some(tool_dir),
+        None,
+        Some(tools),
+    )
+}
+
+fn probe_tool(bin: &Path) -> FamilyResult {
+    let index = build_frozen_index();
+    stake_pkg(index.path(), "frozen-demo-pkg", "0.2.0", &[]);
+    let tmp = ScratchDir::new("probe");
+    let tools = tmp.path().join("mamba-tools");
+
+    let dir = Command::new(bin)
+        .args(["tool", "dir"])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !dir.status.success()
+        || String::from_utf8_lossy(&dir.stdout).trim_end() != tools.display().to_string()
+    {
+        return FamilyResult::fail("tool dir did not print tools root");
+    }
+
+    let install = Command::new(bin)
+        .args([
+            "tool",
+            "install",
+            "frozen-demo-pkg",
+            "--version",
+            "0.1.0",
+            "--index",
+            index.path().to_str().unwrap(),
+        ])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !install.status.success() {
+        return FamilyResult::fail(format!(
+            "tool install failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        ));
+    }
+
+    let upgrade = Command::new(bin)
+        .args([
+            "tool",
+            "upgrade",
+            "frozen-demo-pkg",
+            "--index",
+            index.path().to_str().unwrap(),
+        ])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !upgrade.status.success() {
+        return FamilyResult::fail("tool upgrade failed");
+    }
+    let manifest =
+        std::fs::read_to_string(tools.join("frozen-demo-pkg/manifest.toml")).unwrap_or_default();
+    if !manifest.contains("version = \"0.2.0\"") {
+        return FamilyResult::fail(format!("tool upgrade did not install latest: {manifest}"));
+    }
+
+    let list = Command::new(bin)
+        .args(["tool", "list"])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !list.status.success()
+        || !String::from_utf8_lossy(&list.stdout).contains("frozen-demo-pkg==0.2.0")
+    {
+        return FamilyResult::fail("tool list did not show upgraded tool");
+    }
+
+    let shell = Command::new(bin)
+        .args([
+            "tool",
+            "update-shell",
+            "--shell",
+            "bash",
+            "--bin-dir",
+            "/opt/mamba/bin",
+        ])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !shell.status.success()
+        || !String::from_utf8_lossy(&shell.stdout).contains("export PATH=\"/opt/mamba/bin:$PATH\"")
+    {
+        return FamilyResult::fail("tool update-shell did not emit PATH snippet");
+    }
+
+    let uninstall = Command::new(bin)
+        .args(["tool", "uninstall", "frozen-demo-pkg"])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !uninstall.status.success() || tools.join("frozen-demo-pkg").exists() {
+        return FamilyResult::fail("tool uninstall failed");
+    }
+
+    FamilyResult::pass("tool install/upgrade/list/dir/update-shell/uninstall are wired").with_paths(
+        None,
         None,
         Some(tools),
     )
