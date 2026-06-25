@@ -3805,7 +3805,7 @@ impl<'a> HirToMir<'a> {
             HirStmt::Global { .. } | HirStmt::Nonlocal { .. } => {
                 // Scope declarations — no MIR instructions needed
             }
-            HirStmt::FuncDefPlaceholder { name: func_sym, .. } => {
+            HirStmt::FuncDefPlaceholder { name: func_sym, redef, .. } => {
                 // Register the function's __name__ so `f.__name__` works.
                 {
                     let any_ty = self.tcx.any();
@@ -3925,6 +3925,23 @@ impl<'a> HirToMir<'a> {
                         }
                         func_vreg = result_vreg;
                     }
+                    self.current_stmts.push(MirInst::StoreGlobal {
+                        name: *func_sym,
+                        value: func_vreg,
+                    });
+                } else if *redef {
+                    // A non-decorated `def` that redefines a name previously
+                    // bound by a DECORATED `def`. The earlier decorated def
+                    // already ran its StoreGlobal (binding the name to the
+                    // decorator's wrapper/dummy); re-store the global to this
+                    // impl's FuncRef so the plain impl wins the name.
+                    let any_ty = self.tcx.any();
+                    let func_vreg = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: func_vreg,
+                        value: MirConst::FuncRef(*func_sym),
+                        ty: any_ty,
+                    });
                     self.current_stmts.push(MirInst::StoreGlobal {
                         name: *func_sym,
                         value: func_vreg,
