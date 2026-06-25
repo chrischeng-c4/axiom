@@ -67,7 +67,6 @@ properties:
     description: "ALPN http/1.1 or none keeps the existing route>stub>openapi>cassette>forward path."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
