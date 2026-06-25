@@ -147,3 +147,11 @@ flowchart TD
     r5[R5 extract_binary] --> v5{inner lumen bytes / err if absent?}
     r6[R6 decide_action] --> v6{UpToDate vs Install?}
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract pins the binding behavior: `current_exe()` install path, compile-time target triple, GitHub releases listing with UA/optional token, semver selection with `--tag` override, and the fail-safe ordering — download to a temp file in the install dir, verify sha256, untar the inner `lumen-<target>/lumen`, then a single atomic `rename` over the running binary so a permission failure leaves it intact. Exit codes (0 success/check/no-op, 1 on no-asset/sha-mismatch/permission) are explicit.
+- [unit-test] R1–R6 isolate the pure, unit-testable seams (`asset_name`/`sha_name`, `select_version`, tag→semver parse, `verify_sha256`, `extract_binary`, `decide_action`) so behavior is verified without network or filesystem mutation; consistent with scope_control=strict and testability=required.
