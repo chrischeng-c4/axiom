@@ -61,6 +61,7 @@ const REQUIRED_FAMILIES: &[&str] = &[
     "export",
     "tree",
     "version",
+    "package",
     "pip",
     "venv",
     "python",
@@ -170,6 +171,7 @@ fn run_family(family: &str, bin: &Path) -> FamilyResult {
         "export" => probe_export(bin),
         "tree" => probe_tree(bin),
         "version" => probe_version(bin),
+        "package" => probe_package(bin),
         "pip" => probe_pip(bin),
         "venv" => probe_venv(bin),
         "python" => probe_python(bin),
@@ -640,6 +642,76 @@ fn probe_version(bin: &Path) -> FamilyResult {
         return FamilyResult::fail(format!("version did not bump pyproject: {stdout} / {body}"));
     }
     FamilyResult::pass("version bumps PEP 621 project version").with_paths(Some(proj), None, None)
+}
+
+fn probe_package(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    let pkg = proj.join("src").join("demo_pkg");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        proj.join("pyproject.toml"),
+        "[project]\nname = \"demo-pkg\"\nversion = \"0.1.0\"\ndescription = \"Demo package\"\ndependencies = [\"requests>=2\"]\n",
+    )
+    .unwrap();
+    std::fs::write(pkg.join("__init__.py"), "__version__ = '0.1.0'\n").unwrap();
+    let dist = proj.join("dist");
+
+    let build = invoke(
+        bin,
+        &proj,
+        &["package", "build", "--out-dir", dist.to_str().unwrap()],
+    );
+    if !build.status.success() {
+        return FamilyResult::fail(format!(
+            "package build failed: {}",
+            String::from_utf8_lossy(&build.stderr)
+        ));
+    }
+    let wheel = dist.join("demo_pkg-0.1.0-py3-none-any.whl");
+    let sdist = dist.join("demo-pkg-0.1.0.tar.gz");
+    if !wheel.exists() || !sdist.exists() {
+        return FamilyResult::fail("package build did not emit wheel and sdist");
+    }
+
+    let pypirc = proj.join(".pypirc");
+    std::fs::write(
+        &pypirc,
+        "[testpypi]\nusername = __token__\npassword = secret-token\n",
+    )
+    .unwrap();
+    let publish = Command::new(bin)
+        .args([
+            "publish",
+            "--dry-run",
+            "--repository",
+            "testpypi",
+            "--pypirc",
+        ])
+        .arg(&pypirc)
+        .arg("--json")
+        .arg(&wheel)
+        .arg(&sdist)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba publish");
+    if !publish.status.success() {
+        return FamilyResult::fail(format!(
+            "publish dry-run failed: {}",
+            String::from_utf8_lossy(&publish.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&publish.stdout);
+    if !stdout.contains("https://test.pypi.org/legacy/")
+        || !stdout.contains("demo_pkg-0.1.0-py3-none-any.whl")
+        || !stdout.contains("demo-pkg-0.1.0.tar.gz")
+        || stdout.contains("secret-token")
+    {
+        return FamilyResult::fail(format!("publish dry-run summary mismatch: {stdout}"));
+    }
+
+    FamilyResult::pass("package build emits wheel/sdist; publish dry-run validates payloads")
+        .with_paths(Some(proj), None, Some(dist))
 }
 
 fn probe_pip(bin: &Path) -> FamilyResult {

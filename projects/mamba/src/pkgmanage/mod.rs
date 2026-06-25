@@ -23,6 +23,7 @@ pub mod install;
 pub mod lock;
 pub mod lockfile;
 pub mod manifest;
+pub mod package;
 pub mod pip;
 pub mod pkgmgr;
 pub mod python;

@@ -43,6 +43,9 @@ mod install;
 #[path = "lock.rs"]
 mod lock;
 
+#[path = "package.rs"]
+mod package;
+
 #[path = "pip.rs"]
 mod pip;
 
