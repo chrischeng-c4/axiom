@@ -1214,15 +1214,96 @@ pub(crate) fn nontext_codec_name(enc: &str) -> Option<&'static str> {
     })
 }
 
+/// Full set of CPython codec names + aliases (the names `codecs.lookup`
+/// resolves on this platform), normalised by lowercasing and stripping
+/// `-`/`_`/space (dots preserved, matching CPython's `normalize_encoding`
+/// punctuation handling for membership). Used by `str.encode` / `bytes.decode`
+/// to tell a recognised-but-not-enumerated codec (which keeps the lenient
+/// fallback) from a genuinely unknown name (which must raise `LookupError:
+/// unknown encoding: <name>`, matching CPython).
+const KNOWN_CODECS: &[&str] = &[
+    "037", "1026", "1125", "1140", "1250", "1251", "1252", "1253", "1254",
+    "1255", "1256", "1257", "1258", "273", "424", "437", "500", "646", "775",
+    "850", "852", "855", "857", "858", "860", "861", "862", "863", "864",
+    "865", "866", "869", "8859", "932", "936", "949", "950", "ansix3.41968",
+    "ansix3.41986", "ansix341968", "arabic", "ascii", "asmo708", "base64",
+    "base64codec", "big5", "big5hkscs", "big5tw", "bz2", "bz2codec", "charmap",
+    "chinese", "cp037", "cp1006", "cp1026", "cp1051", "cp1125", "cp1140",
+    "cp1250", "cp1251", "cp1252", "cp1253", "cp1254", "cp1255", "cp1256",
+    "cp1257", "cp1258", "cp1361", "cp154", "cp273", "cp367", "cp424", "cp437",
+    "cp500", "cp65001", "cp720", "cp737", "cp775", "cp819", "cp850", "cp852",
+    "cp855", "cp856", "cp857", "cp858", "cp860", "cp861", "cp862", "cp863",
+    "cp864", "cp865", "cp866", "cp866u", "cp869", "cp874", "cp875", "cp932",
+    "cp936", "cp949", "cp950", "cpgr", "cpis", "csascii", "csbig5", "csibm037",
+    "csibm1026", "csibm273", "csibm424", "csibm500", "csibm855", "csibm857",
+    "csibm858", "csibm860", "csibm861", "csibm863", "csibm864", "csibm865",
+    "csibm866", "csibm869", "csiso2022jp", "csiso2022kr", "csiso58gb231280",
+    "csisolatin1", "csisolatin2", "csisolatin3", "csisolatin4", "csisolatin5",
+    "csisolatin6", "csisolatinarabic", "csisolatincyrillic", "csisolatingreek",
+    "csisolatinhebrew", "cskoi8r", "cspc775baltic", "cspc850multilingual",
+    "cspc862latinhebrew", "cspc8codepage437", "cspcp852", "csptcp154",
+    "csshiftjis", "cyrillic", "cyrillicasian", "ebcdiccpbe", "ebcdiccpca",
+    "ebcdiccpch", "ebcdiccphe", "ebcdiccpnl", "ebcdiccpus", "ebcdiccpwt",
+    "ecma114", "ecma118", "elot928", "euccn", "eucgb2312cn", "eucjis2004",
+    "eucjisx0213", "eucjp", "euckr", "gb18030", "gb180302000", "gb2312",
+    "gb23121980", "gb231280", "gbk", "greek", "greek8", "hebrew", "hex",
+    "hexcodec", "hkscs", "hproman8", "hz", "hzgb", "hzgb2312", "ibm037",
+    "ibm039", "ibm1026", "ibm1051", "ibm1125", "ibm1140", "ibm273", "ibm367",
+    "ibm424", "ibm437", "ibm500", "ibm775", "ibm819", "ibm850", "ibm852",
+    "ibm855", "ibm857", "ibm858", "ibm860", "ibm861", "ibm862", "ibm863",
+    "ibm864", "ibm865", "ibm866", "ibm869", "idna", "iso2022jp", "iso2022jp1",
+    "iso2022jp2", "iso2022jp2004", "iso2022jp3", "iso2022jpext", "iso2022kr",
+    "iso646.irv1991", "iso646us", "iso8859", "iso88591", "iso885910",
+    "iso8859101992", "iso885911", "iso8859112001", "iso885911987", "iso885913",
+    "iso885914", "iso8859141998", "iso885915", "iso885916", "iso8859162001",
+    "iso88592", "iso885921987", "iso88593", "iso885931988", "iso88594",
+    "iso885941988", "iso88595", "iso885951988", "iso88596", "iso885961987",
+    "iso88597", "iso885971987", "iso88598", "iso885981988", "iso88599",
+    "iso885991989", "isoceltic", "isoir100", "isoir101", "isoir109",
+    "isoir110", "isoir126", "isoir127", "isoir138", "isoir144", "isoir148",
+    "isoir157", "isoir166", "isoir199", "isoir226", "isoir58", "isoir6",
+    "jisx0213", "johab", "koi8r", "koi8t", "koi8u", "korean", "ksc5601",
+    "ksc56011987", "ksx1001", "kz1048", "l1", "l10", "l2", "l3", "l4", "l5",
+    "l6", "l7", "l8", "l9", "latin", "latin1", "latin10", "latin2", "latin3",
+    "latin4", "latin5", "latin6", "latin7", "latin8", "latin9", "macarabic",
+    "maccenteuro", "maccentraleurope", "maccroatian", "maccyrillic", "macfarsi",
+    "macgreek", "maciceland", "macintosh", "maclatin2", "macroman",
+    "macromanian", "macturkish", "ms1361", "ms932", "ms936", "ms949", "ms950",
+    "mskanji", "palmos", "pt154", "ptcp154", "punycode", "quopri",
+    "quopricodec", "quotedprintable", "r8", "rawunicodeescape", "rk1048",
+    "roman8", "rot13", "ruscii", "shiftjis", "shiftjis2004", "shiftjisx0213",
+    "sjis", "sjis2004", "sjisx0213", "strk10482002", "thai", "tis620",
+    "tis6200", "tis62025290", "tis62025291", "u16", "u32", "u7", "u8", "uhc",
+    "ujis", "undefined", "unicode11utf7", "unicodebigunmarked", "unicodeescape",
+    "unicodelittleunmarked", "us", "usascii", "utf", "utf16", "utf16be",
+    "utf16le", "utf32", "utf32be", "utf32le", "utf7", "utf8", "utf8sig",
+    "utf8ucs2", "utf8ucs4", "uu", "uucodec", "windows1250", "windows1251",
+    "windows1252", "windows1253", "windows1254", "windows1255", "windows1256",
+    "windows1257", "windows1258", "xmacjapanese", "xmackorean",
+    "xmacsimpchinese", "xmactradchinese", "zip", "zlib", "zlibcodec",
+];
+
+/// True when `name` is a codec CPython's `codecs.lookup` resolves. Mirrors the
+/// `KNOWN_CODECS` membership after the same normalisation (lowercase + strip
+/// `-`/`_`/space, dots kept). A name that is *not* known is rejected with
+/// `LookupError: unknown encoding: <name>` by `str.encode`/`bytes.decode`.
+pub(crate) fn is_known_codec(name: &str) -> bool {
+    let norm: String = name
+        .chars()
+        .filter(|c| !matches!(c, '-' | '_' | ' '))
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    KNOWN_CODECS.binary_search(&norm.as_str()).is_ok()
+}
+
 pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
     unsafe {
         let st = match as_str(s) {
             Some(t) => t,
             None => return MbValue::none(),
         };
-        let enc = as_str(encoding)
-            .map(|e| e.to_ascii_lowercase())
-            .unwrap_or_else(|| "utf-8".to_string());
+        let enc_orig = as_str(encoding).unwrap_or("utf-8").to_string();
+        let enc = enc_orig.to_ascii_lowercase();
         let err = as_str(errors).unwrap_or("strict").to_string();
         let raise_uee = |enc_name: &str, ch: char, pos: usize| {
             super::exception::mb_raise(
@@ -1324,8 +1405,7 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
             }
             _ => {
                 // A known non-text codec (rot_13, base64, ...) is a LookupError
-                // via str.encode; unrecognised names keep the lenient utf-8
-                // fallback (covers valid text codecs not enumerated above).
+                // via str.encode ("not a text encoding").
                 if let Some(canon) = nontext_codec_name(&enc) {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
@@ -1335,11 +1415,19 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                     );
                     return MbValue::none();
                 }
-                if known_text_codec_fallback(&enc) {
-                    st.as_bytes().to_vec()
-                } else {
-                    return raise_lookup_error(format!("unknown encoding: {enc}"));
+                // A recognised-but-not-enumerated text codec (utf-7, idna,
+                // punycode, cp125x, ...) keeps the lenient utf-8 fallback. A
+                // name CPython's codecs.lookup does not resolve is rejected.
+                if !is_known_codec(&enc) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "unknown encoding: {enc_orig}"
+                        ))),
+                    );
+                    return MbValue::none();
                 }
+                st.as_bytes().to_vec()
             }
         };
         MbValue::from_ptr(MbObject::new_bytes(bytes))
