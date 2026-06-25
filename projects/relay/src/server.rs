@@ -67,13 +67,17 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/{subject}/publish", post(publish))
         .route("/v1/{subject}/publish-batch", post(publish_batch))
-        .route("/v1/{subject}/lease", post(lease))
-        .route("/v1/{subject}/ack", post(ack))
-        .route("/v1/{subject}/lease-batch", post(lease_batch))
-        .route("/v1/{subject}/ack-batch", post(ack_batch))
-        .route("/v1/{subject}/heartbeat", post(heartbeat))
-        .route("/v1/{subject}/subscribe", get(subscribe))
+        // Streaming work-queue consume (#449) — the primary consume path. The
+        // polling lease/ack/lease-batch/ack-batch/heartbeat routes below are
+        // DEPRECATED (superseded by /consume; loom's schema layer no longer uses
+        // them). Kept for the legacy direct-worker path; slated for removal.
         .route("/v1/{subject}/consume", post(crate::consume::consume))
+        .route("/v1/{subject}/lease", post(lease)) // deprecated → use /consume
+        .route("/v1/{subject}/ack", post(ack)) // deprecated → use /consume
+        .route("/v1/{subject}/lease-batch", post(lease_batch)) // deprecated
+        .route("/v1/{subject}/ack-batch", post(ack_batch)) // deprecated
+        .route("/v1/{subject}/heartbeat", post(heartbeat)) // deprecated
+        .route("/v1/{subject}/subscribe", get(subscribe))
         .route("/v1/{subject}/len", get(log_len))
         .route("/healthz", get(healthz))
         .route("/openapi.json", get(openapi_json))
