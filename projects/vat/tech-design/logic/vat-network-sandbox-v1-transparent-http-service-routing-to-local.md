@@ -47,7 +47,6 @@ edges:
   - { from: stub, to: forward, label: "miss" }
   - { from: forward, to: up }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
