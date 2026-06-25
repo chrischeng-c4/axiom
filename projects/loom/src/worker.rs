@@ -381,18 +381,18 @@ async fn bidi_session(
             }
         };
         // resolve input (inline / given keep URL / empty) — never builds a key.
-        // The scoped token (if any) authorizes the direct keep GET/PUT (#444).
-        let bearer = format!("Bearer {}", env.token);
+        // The scoped token (if any) authorizes the direct keep GET/PUT (#444); only
+        // sent when present (an empty Bearer is an illegal header).
+        let auth = (!env.token.is_empty()).then(|| format!("Bearer {}", env.token));
+        let with_auth = |rb: reqwest::RequestBuilder| match &auth {
+            Some(b) => rb.header(reqwest::header::AUTHORIZATION, b),
+            None => rb,
+        };
         let input = match &env.input {
             InputSource::Inline { bytes } => bytes.clone(),
-            InputSource::KeepUrl { url } => client
-                .get(url)
-                .header(reqwest::header::AUTHORIZATION, &bearer)
-                .send()
-                .await?
-                .bytes()
-                .await?
-                .to_vec(),
+            InputSource::KeepUrl { url } => {
+                with_auth(client.get(url)).send().await?.bytes().await?.to_vec()
+            }
             InputSource::Empty => Vec::new(),
         };
         let up = match registry.get(&env.task_name) {
@@ -401,9 +401,7 @@ async fn bidi_session(
                     if out.result.len() <= inline_max() {
                         UpFrame::Done { id: env.id.clone(), result_inline: Some(out.result) }
                     } else {
-                        client
-                            .put(&env.result_put_url)
-                            .header(reqwest::header::AUTHORIZATION, &bearer)
+                        with_auth(client.put(&env.result_put_url))
                             .body(out.result)
                             .send()
                             .await?;

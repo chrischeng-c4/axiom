@@ -106,7 +106,9 @@ pub struct TaskEnvelope {
 
 /// Build the self-describing envelope for a leased task. **Owns the keep key
 /// schema**: input/result keys are constructed here, so the worker only does dumb
-/// GET/PUT against given URLs.
+/// GET/PUT against given URLs. Keys stay bare (consistent with the controller's
+/// downstream wiring + inline resolution); keep isolation is via the namespace
+/// header the worker sends (#451), not the key.
 pub fn build_envelope(task: &TaskMessage, keep_base: &str, token: String) -> TaskEnvelope {
     let result_key = format!("{}:{}:result", task.run_id, task.node_id);
     let input = if let Some(bytes) = &task.input_inline {
@@ -329,7 +331,7 @@ impl RelayTaskSource {
         secret: Option<Vec<u8>>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            client: reqwest::Client::builder().http2_prior_knowledge().build()?,
+            client: crate::relay_client::relay_http_client()?,
             relay: relay.into(),
             keep: keep.into(),
             shards: shards.max(1),

@@ -98,7 +98,7 @@ async fn namespace_layer(req: Request, next: Next) -> Response {
 ///
 /// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#logic
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let app = Router::new()
         .route("/v1/{subject}/publish", post(publish))
         .route("/v1/{subject}/publish-batch", post(publish_batch))
         // Streaming work-queue consume (#449) — the primary consume path. The
@@ -115,10 +115,12 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/{subject}/len", get(log_len))
         .route("/healthz", get(healthz))
         .route("/openapi.json", get(openapi_json))
-        .with_state(state)
-        // vhost-style namespace isolation (#450) — rewrites the subject per the
-        // X-Relay-Namespace header before routing. healthz/openapi are unaffected.
-        .layer(middleware::from_fn(namespace_layer))
+        .with_state(state);
+    // vhost-style namespace isolation (#450): the namespace middleware must run
+    // BEFORE routing so the rewritten subject is the one matched + captured. A
+    // `.layer` on `app` runs *after* path-param capture, so wrap `app` as the
+    // fallback of an outer router whose layer runs first.
+    Router::new().fallback_service(app).layer(middleware::from_fn(namespace_layer))
 }
 
 #[cfg(test)]
