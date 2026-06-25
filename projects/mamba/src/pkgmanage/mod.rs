@@ -30,6 +30,7 @@ pub mod run;
 pub mod shell;
 pub mod source;
 pub mod sync;
+pub mod tool;
 pub mod tree;
 pub mod validate;
 pub mod venv;

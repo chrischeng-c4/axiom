@@ -42,6 +42,7 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
         "sync",
         "run",
         "install",
+        "tool",
         "hash",
         "cache",
     ] {
@@ -51,8 +52,8 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
         );
     }
     assert!(
-        stderr.contains("18 passed, 0 failed"),
-        "summary must report 18 passed: {stderr}"
+        stderr.contains("19 passed, 0 failed"),
+        "summary must report 19 passed: {stderr}"
     );
 }
 
@@ -104,6 +105,7 @@ fn pkgmgr_validate_json_has_runner_contract_shape() {
         "sync",
         "run",
         "install",
+        "tool",
         "hash",
         "cache",
     ] {

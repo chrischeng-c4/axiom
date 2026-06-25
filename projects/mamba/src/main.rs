@@ -18,6 +18,7 @@ use mamba::pkgmanage::python as pkg_python;
 use mamba::pkgmanage::remove as pkg_remove;
 use mamba::pkgmanage::shell as pkg_shell;
 use mamba::pkgmanage::sync as pkg_sync;
+use mamba::pkgmanage::tool as pkg_tool;
 use mamba::pkgmanage::tree as pkg_tree;
 use mamba::pkgmanage::validate as pkg_validate;
 use mamba::pkgmanage::venv as pkg_venv;
@@ -366,6 +367,38 @@ fn cli() -> Command {
                 .arg(Arg::new("uninstall").long("uninstall").value_name("NAME").help("Uninstall a tool")),
         )
         .subcommand(
+            Command::new("tool")
+                .about("Run and install commands provided by Python packages")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("install")
+                        .about("Install a tool from a frozen local index")
+                        .arg(Arg::new("name").required(true).help("Package name"))
+                        .arg(Arg::new("version").long("version").value_name("X.Y.Z").help("Pin a specific version; default is latest in index"))
+                        .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)")),
+                )
+                .subcommand(
+                    Command::new("upgrade")
+                        .about("Upgrade a tool to the latest version in a frozen local index")
+                        .arg(Arg::new("name").required(true).help("Package name"))
+                        .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)")),
+                )
+                .subcommand(Command::new("list").about("List installed tools"))
+                .subcommand(
+                    Command::new("uninstall")
+                        .about("Uninstall a tool")
+                        .arg(Arg::new("name").required(true).help("Package name")),
+                )
+                .subcommand(Command::new("dir").about("Print the tool install directory"))
+                .subcommand(
+                    Command::new("update-shell")
+                        .about("Print a managed PATH init block for tool launchers")
+                        .arg(Arg::new("shell").long("shell").value_name("SHELL").help("bash | zsh | fish | powershell | cmd | nushell | elvish; defaults to bash"))
+                        .arg(Arg::new("bin-dir").long("bin-dir").value_name("DIR").help("Launcher directory to prepend; defaults under the tool root")),
+                ),
+        )
+        .subcommand(
             Command::new("hash")
                 .about("Compute a content-addressed digest of one or more files")
                 .arg(Arg::new("path").required(true).num_args(1..).help("File(s) to hash"))
@@ -470,6 +503,7 @@ fn main() -> Result<()> {
         Some(("cache", sub)) => pkg_cache::cmd_cache(sub),
         Some(("hash", sub)) => pkg_hash::cmd_hash(sub),
         Some(("install", sub)) => pkg_install::cmd_install(sub),
+        Some(("tool", sub)) => pkg_tool::cmd_tool(sub),
         Some(("pkgmgr-validate", sub)) => pkg_validate::cmd_validate(sub),
         Some(("generate-shell-completion", sub)) => cmd_generate_shell_completion(sub),
         _ => {
