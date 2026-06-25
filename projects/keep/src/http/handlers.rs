@@ -620,13 +620,35 @@ pub async fn docs() -> Html<&'static str> {
 // mirror (PUT input, GET result).
 // ---------------------------------------------------------------------------
 
-async fn claim_get(st: &AppState, ns: &str, id: &str) -> Result<Response, ApiErr> {
-    let k = key_of(&format!("{ns}:{id}"))?;
+/// Per-tenant storage key for a claim-check payload: bare `{kind}:{id}` with no
+/// namespace, or `{ns}::{kind}:{id}` when `X-Keep-Namespace` is set (#464). The
+/// namespace is applied here — AFTER the token scope check, which keys on the
+/// bare URL id — so the token scope stays bare per loom's settled design.
+fn claim_storage_key(ns: &str, kind: &str, id: &str) -> String {
+    if ns.is_empty() {
+        format!("{kind}:{id}")
+    } else {
+        format!("{ns}::{kind}:{id}")
+    }
+}
+
+/// Extract loom's `X-Keep-Namespace` header (sent from `LOOM_NAMESPACE`); empty
+/// when absent, which keeps the bare key for single-tenant callers.
+fn claim_namespace(headers: &HeaderMap) -> String {
+    headers
+        .get("x-keep-namespace")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+async fn claim_get(st: &AppState, ns: &str, kind: &str, id: &str) -> Result<Response, ApiErr> {
+    let k = key_of(&claim_storage_key(ns, kind, id))?;
     match st.engine.get(&k) {
         None => Err(ApiErr::new(
             StatusCode::NOT_FOUND,
             "claim_check_not_found",
-            format!("{ns} not found: {id}"),
+            format!("{kind} not found: {id}"),
         )),
         Some(KvValue::Bytes(b)) => {
             Ok(([(CONTENT_TYPE, "application/octet-stream")], b).into_response())
@@ -642,12 +664,13 @@ async fn claim_get(st: &AppState, ns: &str, id: &str) -> Result<Response, ApiErr
 async fn claim_put(
     st: &AppState,
     ns: &str,
+    kind: &str,
     id: &str,
     q: TtlQuery,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiErr> {
-    let k = key_of(&format!("{ns}:{id}"))?;
+    let k = key_of(&claim_storage_key(ns, kind, id))?;
     let ct = headers
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -655,14 +678,23 @@ async fn claim_put(
     if ct.starts_with("application/json") {
         let req: SetRequestFast = serde_json::from_slice(&body)
             .map_err(|e| ApiErr::bad_request(format!("invalid JSON body: {e}")))?;
-        st.engine.set(&k, req.value.0, ttl(req.ttl_ms)).map_err(ApiErr::from)?;
+        st.engine
+            .set(&k, req.value.0, ttl(req.ttl_ms))
+            .map_err(ApiErr::from)?;
     } else {
         st.engine
             .set(&k, KvValue::Bytes(body.to_vec()), ttl(q.ttl_ms))
             .map_err(ApiErr::from)?;
     }
     ack_durable(st).await;
-    Ok((StatusCode::OK, Json(OkResponse { key: id.to_string(), ok: true })).into_response())
+    Ok((
+        StatusCode::OK,
+        Json(OkResponse {
+            key: id.to_string(),
+            ok: true,
+        }),
+    )
+        .into_response())
 }
 
 /// Fetch a job input by id (worker reads its input — #167).
@@ -677,7 +709,9 @@ async fn claim_put(
 /// Enforce a scoped claim-check token on worker ops (#446). No-op when token
 /// enforcement is off. `write` = PUT result (scope.w); else GET input (scope.r).
 fn check_scope(st: &AppState, headers: &HeaderMap, id: &str, write: bool) -> Result<(), ApiErr> {
-    let Some(secret) = &st.token_secret else { return Ok(()) };
+    let Some(secret) = &st.token_secret else {
+        return Ok(());
+    };
     let token = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -703,7 +737,8 @@ pub async fn get_input(
     Path(id): Path<String>,
 ) -> Result<Response, ApiErr> {
     check_scope(&st, &headers, &id, false)?;
-    claim_get(&st, "input", &id).await
+    let ns = claim_namespace(&headers);
+    claim_get(&st, &ns, "input", &id).await
 }
 
 /// Store a job input by id (producer writes the input — #167).
@@ -719,7 +754,8 @@ pub async fn put_input(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiErr> {
-    claim_put(&st, "input", &id, q, headers, body).await
+    let ns = claim_namespace(&headers);
+    claim_put(&st, &ns, "input", &id, q, headers, body).await
 }
 
 /// Fetch a job result by id (producer reads the result — #167).
@@ -731,8 +767,13 @@ pub async fn put_input(
         (status = 404, description = "Not found", body = crate::http::error::ApiError)
     )
 )]
-pub async fn get_result(State(st): State<AppState>, Path(id): Path<String>) -> Result<Response, ApiErr> {
-    claim_get(&st, "result", &id).await
+pub async fn get_result(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiErr> {
+    let ns = claim_namespace(&headers);
+    claim_get(&st, &ns, "result", &id).await
 }
 
 /// Store a job result by id (worker writes its result — #167).
@@ -749,5 +790,6 @@ pub async fn put_result(
     body: Bytes,
 ) -> Result<Response, ApiErr> {
     check_scope(&st, &headers, &id, true)?;
-    claim_put(&st, "result", &id, q, headers, body).await
+    let ns = claim_namespace(&headers);
+    claim_put(&st, &ns, "result", &id, q, headers, body).await
 }

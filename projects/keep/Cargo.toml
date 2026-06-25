@@ -77,6 +77,8 @@ redis = { version = "0.27", features = ["tokio-comp"] }
 reqwest = { workspace = true }
 # Shared h2c pool for the bench example (#467) — always available to examples.
 h2c = { path = "../../libs/h2c" }
+# Sign scoped claim-check tokens in the namespace-isolation tests (#464).
+claimtoken = { path = "../../libs/claimtoken" }
 # Engine perf-gate benchmark (meter bench, issue #126).
 criterion = "0.5"
 

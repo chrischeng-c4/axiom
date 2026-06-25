@@ -334,3 +334,118 @@ async fn openapi_document_is_served() {
     assert!(doc["paths"]["/v1/kv/{key}"].is_object());
     assert!(doc["paths"]["/healthz"].is_object());
 }
+
+// ---------------------------------------------------------------------------
+// Per-namespace claim-check key isolation (#464): X-Keep-Namespace is applied
+// as a storage-key prefix `{ns}::{kind}:{id}` AFTER the token scope check.
+// ---------------------------------------------------------------------------
+
+fn claim_put_req(path: &str, ns: Option<&str>, body: &'static str) -> Request<Body> {
+    let mut b = Request::builder()
+        .method("PUT")
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/octet-stream");
+    if let Some(ns) = ns {
+        b = b.header("x-keep-namespace", ns);
+    }
+    b.body(Body::from(body)).unwrap()
+}
+
+fn claim_get_req(path: &str, ns: Option<&str>) -> Request<Body> {
+    let mut b = Request::builder().method("GET").uri(path);
+    if let Some(ns) = ns {
+        b = b.header("x-keep-namespace", ns);
+    }
+    b.body(Body::empty()).unwrap()
+}
+
+#[tokio::test]
+async fn keep_ns_isolates_same_bare_key() {
+    let (app, _) = app();
+
+    // Two namespaces write the SAME bare result id.
+    let (st, _) = send(
+        &app,
+        claim_put_req("/v1/results/job-1", Some("tenant-a"), "AAA"),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send(
+        &app,
+        claim_put_req("/v1/results/job-1", Some("tenant-b"), "BBB"),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Each namespace reads back only its own value — no cross-namespace collision.
+    let (st, body) = send(&app, claim_get_req("/v1/results/job-1", Some("tenant-a"))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body, b"AAA".to_vec());
+    let (st, body) = send(&app, claim_get_req("/v1/results/job-1", Some("tenant-b"))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body, b"BBB".to_vec());
+
+    // A namespace that never wrote this id sees nothing.
+    let (st, _) = send(&app, claim_get_req("/v1/results/job-1", Some("tenant-c"))).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn keep_ns_absent_is_backcompat() {
+    let (app, _) = app();
+
+    // No X-Keep-Namespace ⇒ bare 'result:job-2' storage key.
+    let (st, _) = send(&app, claim_put_req("/v1/results/job-2", None, "PLAIN")).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, body) = send(&app, claim_get_req("/v1/results/job-2", None)).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body, b"PLAIN".to_vec());
+
+    // The bare key is observable on the generic KV path at 'result:job-2'.
+    let (st, _) = send(&app, claim_get_req("/v1/kv/result:job-2", None)).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // A namespaced read does NOT see the bare-written value.
+    let (st, _) = send(&app, claim_get_req("/v1/results/job-2", Some("tenant-a"))).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn keep_ns_token_checks_bare_key() {
+    let secret = b"test-secret".to_vec();
+    let state =
+        AppState::new(Arc::new(KvEngine::with_shards(16))).with_token_secret(secret.clone());
+    let app = router(state);
+
+    // Token scoped to the BARE result key 'job-3'.
+    let scope = claimtoken::Scope {
+        r: "job-3".into(),
+        w: "job-3".into(),
+        exp: u64::MAX,
+    };
+    let token = claimtoken::sign(&secret, &scope);
+
+    // PUT with a namespace header still passes — the token is verified against
+    // the bare 'job-3' from the URL, before the namespace prefix is applied.
+    let req = Request::builder()
+        .method("PUT")
+        .uri("/v1/results/job-3")
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header("x-keep-namespace", "tenant-a")
+        .body(Body::from("R3"))
+        .unwrap();
+    let (st, _) = send(&app, req).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Without the token ⇒ rejected, namespace notwithstanding.
+    let req = Request::builder()
+        .method("PUT")
+        .uri("/v1/results/job-3")
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header("x-keep-namespace", "tenant-a")
+        .body(Body::from("R3"))
+        .unwrap();
+    let (st, _) = send(&app, req).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
