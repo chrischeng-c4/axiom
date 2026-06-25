@@ -19,7 +19,7 @@ use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
@@ -30,7 +30,6 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
     let spec_raw = sub
         .get_one::<String>("spec")
         .context("missing required argument <spec>")?;
-    let spec = DepSpec::parse(spec_raw)?;
     let project_dir = std::env::current_dir().context("read current directory")?;
     let manifest_path = project_dir.join(MANIFEST_FILE);
     if !manifest_path.exists() {
@@ -40,10 +39,15 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
         );
     }
 
-    let index_dir = resolve_index_dir(sub);
-    let offline = sub.get_flag("offline");
-    let index_url = resolve_index_url(sub);
-    let resolved = resolve_dep(&spec, index_dir.as_deref(), offline, index_url.as_deref())?;
+    let resolved = if looks_like_wheel_path(spec_raw) {
+        resolve_with_local_wheel(spec_raw, &project_dir)?
+    } else {
+        let spec = DepSpec::parse(spec_raw)?;
+        let index_dir = resolve_index_dir(sub);
+        let offline = sub.get_flag("offline");
+        let index_url = resolve_index_url(sub);
+        resolve_dep(&spec, index_dir.as_deref(), offline, index_url.as_deref())?
+    };
 
     let manifest_src = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -99,12 +103,19 @@ struct ResolvedDep {
     /// `mamba sync` to perform a sha-verified download. None for the
     /// local-frozen / --offline paths where we don't know the URL.
     url: Option<String>,
+    source: SourceMeta,
 }
 
 impl ResolvedDep {
     fn dep_string(&self) -> String {
         format!("{}=={}", self.name, self.version)
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum SourceMeta {
+    Default,
+    DirectFile { path: String },
 }
 
 fn resolve_index_dir(sub: &ArgMatches) -> Option<PathBuf> {
@@ -137,6 +148,7 @@ fn resolve_dep(
                 version: v.to_string(),
                 sha256: None,
                 url: None,
+                source: SourceMeta::Default,
             }),
             None => bail!(
                 "version required for `mamba add {}` in --offline mode \
@@ -188,6 +200,7 @@ fn resolve_with_local_index(spec: &DepSpec, idx: &Path) -> Result<ResolvedDep> {
         version,
         sha256: None,
         url: None,
+        source: SourceMeta::Default,
     })
 }
 
@@ -244,7 +257,82 @@ fn resolve_with_pypi(spec: &DepSpec, index_url: &str) -> Result<ResolvedDep> {
         version,
         sha256,
         url,
+        source: SourceMeta::Default,
     })
+}
+
+fn looks_like_wheel_path(raw: &str) -> bool {
+    raw.ends_with(".whl") || raw.contains('/') || (cfg!(windows) && raw.contains('\\'))
+}
+
+fn resolve_with_local_wheel(raw: &str, project_dir: &Path) -> Result<ResolvedDep> {
+    let raw_path = Path::new(raw);
+    if raw_path.extension().and_then(|s| s.to_str()) != Some("whl") {
+        bail!("direct local dependency `{raw}` is not a wheel file (expected .whl)");
+    }
+    let abs_path = if raw_path.is_absolute() {
+        raw_path.to_path_buf()
+    } else {
+        project_dir.join(raw_path)
+    };
+    if !abs_path.exists() {
+        bail!("local wheel path does not exist: {}", raw_path.display());
+    }
+    if !abs_path.is_file() {
+        bail!("local wheel path is not a file: {}", raw_path.display());
+    }
+    let filename = abs_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .context("local wheel path is not valid UTF-8")?;
+    let wheel = crate::pkgmanage::pkgmgr::wheel_filename::parse_wheel_filename(filename)
+        .map_err(|e| anyhow::anyhow!("parse local wheel filename `{filename}`: {e}"))?;
+    let bytes = fs::read(&abs_path).with_context(|| format!("read {}", abs_path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let sha256 = format!("{:x}", hasher.finalize());
+    Ok(ResolvedDep {
+        name: wheel.distribution,
+        version: wheel.version,
+        sha256: Some(sha256),
+        url: None,
+        source: SourceMeta::DirectFile {
+            path: lockfile_path(raw_path, &abs_path, project_dir)?,
+        },
+    })
+}
+
+fn lockfile_path(raw_path: &Path, abs_path: &Path, project_dir: &Path) -> Result<String> {
+    if raw_path.is_absolute() {
+        let canonical_project = fs::canonicalize(project_dir)
+            .with_context(|| format!("canonicalize {}", project_dir.display()))?;
+        let canonical_abs = fs::canonicalize(abs_path)
+            .with_context(|| format!("canonicalize {}", abs_path.display()))?;
+        if let Ok(rel) = canonical_abs.strip_prefix(&canonical_project) {
+            return Ok(path_to_forward_slashes(rel));
+        }
+        return Ok(path_to_forward_slashes(&canonical_abs));
+    }
+
+    Ok(path_to_forward_slashes(&normalize_relative_path(raw_path)))
+}
+
+fn normalize_relative_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn path_to_forward_slashes(path: &Path) -> String {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Best-wheel pick result: the sha256 to record in the lockfile and the
@@ -514,13 +602,20 @@ pub(crate) fn dep_name(spec: &str) -> &str {
 fn render_lockfile_with_hashes(deps: &[String], just_added: &ResolvedDep) -> String {
     let mut hashes = std::collections::BTreeMap::new();
     let mut urls = std::collections::BTreeMap::new();
+    let mut sources = std::collections::BTreeMap::new();
     if let Some(h) = just_added.sha256.as_deref() {
         hashes.insert(just_added.name.clone(), h.to_string());
     }
     if let Some(u) = just_added.url.as_deref() {
         urls.insert(just_added.name.clone(), u.to_string());
     }
-    render_lockfile_with_known_hashes(deps, &hashes, &urls)
+    if let SourceMeta::DirectFile { path } = &just_added.source {
+        sources.insert(
+            just_added.name.clone(),
+            SourceMeta::DirectFile { path: path.clone() },
+        );
+    }
+    render_lockfile_with_known_hashes(deps, &hashes, &urls, &sources)
 }
 
 /// Deterministic lockfile rendering for an arbitrary dep list. Sorted +
@@ -530,6 +625,7 @@ pub(crate) fn render_lockfile_from_deps(deps: &[String]) -> String {
         deps,
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
     )
 }
 
@@ -537,6 +633,7 @@ pub(crate) fn render_lockfile_with_known_hashes(
     deps: &[String],
     hashes: &std::collections::BTreeMap<String, String>,
     urls: &std::collections::BTreeMap<String, String>,
+    sources: &std::collections::BTreeMap<String, SourceMeta>,
 ) -> String {
     let input_hash = compute_input_hash(deps);
     let mut entries: Vec<(String, String)> = deps
@@ -560,8 +657,18 @@ pub(crate) fn render_lockfile_with_known_hashes(
         out.push_str(&format!("name = \"{name}\"\n"));
         out.push_str(&format!("version = \"{version}\"\n"));
         out.push_str(&format!("sha256 = \"{sha}\"\n"));
-        out.push_str(&format!("url = \"{url}\"\n"));
-        out.push_str(&format!("source = \"pypi://{name}/{version}\"\n"));
+        match sources.get(name) {
+            Some(SourceMeta::DirectFile { path }) => {
+                out.push_str("url = \"\"\n");
+                out.push_str("source_kind = \"direct_file\"\n");
+                out.push_str(&format!("path = \"{path}\"\n"));
+                out.push_str(&format!("source = \"direct-file://{path}\"\n"));
+            }
+            _ => {
+                out.push_str(&format!("url = \"{url}\"\n"));
+                out.push_str(&format!("source = \"pypi://{name}/{version}\"\n"));
+            }
+        }
         out.push_str("dependencies = []\n");
     }
     out
@@ -655,6 +762,7 @@ mod tests {
             version: "1.0".into(),
             sha256: None,
             url: None,
+            source: SourceMeta::Default,
         };
         let deps = vec!["foo==1.0".to_string()];
         let a = render_lockfile_with_hashes(&deps, &r);
@@ -669,6 +777,7 @@ mod tests {
             version: "1.0".into(),
             sha256: Some("deadbeef".repeat(8)),
             url: Some("https://example.invalid/foo-1.0.whl".into()),
+            source: SourceMeta::Default,
         };
         let deps = vec!["foo==1.0".to_string()];
         let body = render_lockfile_with_hashes(&deps, &r);

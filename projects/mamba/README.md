@@ -86,10 +86,11 @@ Gate Inventory: `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test
 | Uv-like package manager workflow | epic | #3881 | partial | planned | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
 
 Current state: `mamba init/add/remove/lock/sync/run/install/hash/cache` plus
-`pkgmgr-validate` are wired through offline frozen-index gates and explicit
-registry URL tests. `mamba add` / `mamba lock` do not treat public PyPI as an
-implicit default source; callers must provide a frozen local index or an
-explicit registry URL when resolving unpinned/bare dependencies.
+`pkgmgr-validate` are wired through offline frozen-index gates, direct local
+wheel paths, and explicit registry URL tests. `mamba add` / `mamba lock` do not
+treat public PyPI as an implicit default source; callers must provide a frozen
+local index, direct local wheel file, or explicit registry URL when resolving
+dependencies.
 
 ## Test Completeness — what we tested, against what authority
 
