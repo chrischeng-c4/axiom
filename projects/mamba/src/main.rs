@@ -13,6 +13,7 @@ use mamba::pkgmanage::init as pkg_init;
 use mamba::pkgmanage::install as pkg_install;
 use mamba::pkgmanage::lock as pkg_lock;
 use mamba::pkgmanage::pip as pkg_pip;
+use mamba::pkgmanage::python as pkg_python;
 use mamba::pkgmanage::remove as pkg_remove;
 use mamba::pkgmanage::sync as pkg_sync;
 use mamba::pkgmanage::tree as pkg_tree;
@@ -215,6 +216,48 @@ fn cli() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("python")
+                .about("Discover local Python interpreters and manage .python-version pins")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("list")
+                        .about("List Python interpreters discovered on PATH")
+                        .arg(
+                            Arg::new("json")
+                                .long("json")
+                                .action(ArgAction::SetTrue)
+                                .help("Emit JSON"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("find")
+                        .about("Print the best installed Python matching a request or .python-version")
+                        .arg(
+                            Arg::new("request")
+                                .value_name("REQUEST")
+                                .help("Version request such as 3, 3.12, or 3.12.7"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("pin")
+                        .about("Write a pyenv/uv-compatible .python-version file")
+                        .arg(
+                            Arg::new("request")
+                                .required(true)
+                                .value_name("REQUEST")
+                                .help("Version request such as 3, 3.12, or 3.12.7"),
+                        )
+                        .arg(
+                            Arg::new("project")
+                                .long("project")
+                                .value_name("DIR")
+                                .help("Project directory; defaults to current directory"),
+                        ),
+                )
+                .subcommand(Command::new("dir").about("Print the managed Python install directory")),
+        )
+        .subcommand(
             Command::new("index")
                 .about("Build frozen local package indexes from wheel artifacts")
                 .subcommand_required(true)
@@ -332,6 +375,7 @@ fn main() -> Result<()> {
         Some(("version", sub)) => pkg_version::cmd_version(sub),
         Some(("pip", sub)) => pkg_pip::cmd_pip(sub),
         Some(("venv", sub)) => pkg_venv::cmd_venv(sub),
+        Some(("python", sub)) => pkg_python::cmd_python(sub),
         Some(("index", sub)) => pkg_index::cmd_index(sub),
         Some(("sync", sub)) => pkg_sync::cmd_sync(sub),
         Some(("cache", sub)) => pkg_cache::cmd_cache(sub),
