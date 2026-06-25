@@ -52,7 +52,8 @@ impl Drop for ScratchDir {
 }
 
 const REQUIRED_FAMILIES: &[&str] = &[
-    "init", "index", "add", "lock", "export", "tree", "sync", "run", "install", "hash", "cache",
+    "init", "index", "add", "lock", "export", "tree", "version", "pip", "sync", "run", "install",
+    "hash", "cache",
 ];
 
 pub fn cmd_validate(sub: &ArgMatches) -> Result<()> {
@@ -148,6 +149,8 @@ fn run_family(family: &str, bin: &Path) -> FamilyResult {
         "lock" => probe_lock(bin),
         "export" => probe_export(bin),
         "tree" => probe_tree(bin),
+        "version" => probe_version(bin),
+        "pip" => probe_pip(bin),
         "sync" => probe_sync(bin),
         "run" => probe_run(bin),
         "install" => probe_install(bin),
@@ -457,6 +460,84 @@ fn probe_tree(bin: &Path) -> FamilyResult {
         Some(proj.join("mamba.lock")),
         None,
     )
+}
+
+fn probe_version(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    let pyproject = proj.join("pyproject.toml");
+    std::fs::write(
+        &pyproject,
+        "[project]\nname = \"demo\"\nversion = \"1.2.3\"\n",
+    )
+    .unwrap();
+    let out = invoke(bin, &proj, &["version", "--bump", "patch"]);
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "version exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let body = std::fs::read_to_string(&pyproject).unwrap_or_default();
+    if stdout.trim() != "1.2.4" || !body.contains("version = \"1.2.4\"") {
+        return FamilyResult::fail(format!("version did not bump pyproject: {stdout} / {body}"));
+    }
+    FamilyResult::pass("version bumps PEP 621 project version").with_paths(Some(proj), None, None)
+}
+
+fn probe_pip(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let site = tmp.path().join("site-packages");
+    std::fs::create_dir_all(&site).unwrap();
+    write_dist(
+        &site,
+        "Requests-2.31.0.dist-info",
+        "Name: Requests\nVersion: 2.31.0\nRequires-Dist: urllib3>=2\n",
+    );
+    write_dist(
+        &site,
+        "urllib3-2.1.0.dist-info",
+        "Name: urllib3\nVersion: 2.1.0\n",
+    );
+
+    let check = invoke(
+        bin,
+        tmp.path(),
+        &["pip", "check", "--site-packages", site.to_str().unwrap()],
+    );
+    if !check.status.success() {
+        return FamilyResult::fail(format!(
+            "pip check exit {:?}: {}",
+            check.status.code(),
+            String::from_utf8_lossy(&check.stdout)
+        ));
+    }
+    let freeze = invoke(
+        bin,
+        tmp.path(),
+        &["pip", "freeze", "--site-packages", site.to_str().unwrap()],
+    );
+    if !freeze.status.success() {
+        return FamilyResult::fail("pip freeze failed");
+    }
+    let stdout = String::from_utf8_lossy(&freeze.stdout);
+    if !stdout.contains("Requests==2.31.0") || !stdout.contains("urllib3==2.1.0") {
+        return FamilyResult::fail(format!("pip freeze missing inventory: {stdout}"));
+    }
+    FamilyResult::pass("pip list/freeze/check inspect site-packages inventory").with_paths(
+        Some(tmp.path().to_path_buf()),
+        None,
+        Some(site),
+    )
+}
+
+fn write_dist(site: &Path, dir_name: &str, metadata: &str) {
+    let dist = site.join(dir_name);
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("METADATA"), metadata).unwrap();
 }
 
 fn probe_sync(bin: &Path) -> FamilyResult {

@@ -37,6 +37,9 @@ mod install;
 #[path = "lock.rs"]
 mod lock;
 
+#[path = "pip.rs"]
+mod pip;
+
 #[path = "remove.rs"]
 mod remove;
 
@@ -54,3 +57,6 @@ mod tree;
 
 #[path = "validate.rs"]
 mod validate;
+
+#[path = "version.rs"]
+mod version;
