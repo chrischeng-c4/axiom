@@ -256,9 +256,14 @@ pub enum HirStmt {
     },
     /// Placeholder for a function definition in the top-level order.
     /// Used to emit decorator applications at the correct position (#decorder).
+    /// `redef` marks a non-decorated `def` that redefines a name previously
+    /// bound by a DECORATED `def` in the same top-level scope: the impl must
+    /// re-store the global so it wins the name (otherwise the name stays bound
+    /// to the earlier decorator's wrapper/dummy).
     FuncDefPlaceholder {
         name: SymbolId,
         span: Span,
+        redef: bool,
     },
     /// Placeholder for a decorated class definition in the top-level order.
     /// Class registration itself happens at the top of the module body
