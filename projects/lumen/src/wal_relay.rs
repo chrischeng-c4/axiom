@@ -134,7 +134,7 @@ impl RelayWal {
         publisher_id: impl Into<String>,
     ) -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::builder().http2_prior_knowledge().build()?,
+            client: h2c::h2c_client()?,
             base: base_url.into().trim_end_matches('/').to_string(),
             subject: subject.into(),
             subscriber_id: subscriber_id.into(),

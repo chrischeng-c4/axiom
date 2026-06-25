@@ -6293,6 +6293,7 @@ dependencies = [
  "crc32fast",
  "criterion",
  "futures",
+ "h2c",
  "hnsw_rs",
  "jieba-rs",
  "k8s-openapi",
