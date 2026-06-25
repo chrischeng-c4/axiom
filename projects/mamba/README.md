@@ -15,7 +15,7 @@ For implementation map, see [llms.txt](llms.txt).
 | C1. Py3.12 functional parity — Axis 1 | #3331 | partial | planned | conformance | not_ready | confirmed README promise; CPython oracle gate remains open |
 | C2. Less CPU time AND less memory than CPython — Axis 2 | #3880 | planned | planned | conformance | not_ready | confirmed README promise; CPU/RSS ratio gates remain open |
 | C3. mambalibs end-to-end — Axis 3 | #3457 | partial | planned | conformance | not_ready | confirmed README promise; native module coverage remains open |
-| C4. Package manager — uv-like | #459 | implemented | verified | conformance | ready | uv-like offline workflow coverage is green across init/index/add/remove/lock/export/tree/version/pip/venv/python/sync/run/install/hash/cache |
+| C4. Package manager — uv-like | #459 | implemented | verified | conformance | ready | uv-like offline workflow coverage is green across init/index/add/remove/lock/export/tree/version/pip/venv/python/workspace/sync/run/install/hash/cache |
 
 ### C1. Py3.12 functional parity — Axis 1
 
@@ -72,7 +72,7 @@ Gate Inventory: `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs
 
 ID: c4-package-manager-uv-like
 Type: DeveloperTool
-Surfaces: CLI: `mamba init` + `mamba index` + `mamba add` + `mamba remove` + `mamba lock` + `mamba export` + `mamba tree` + `mamba version` + `mamba pip` + `mamba venv` + `mamba python` + `mamba sync` + `mamba install` + `mamba cache` + `mamba hash` + `mamba pkgmgr-validate` - project scaffold, frozen index, dependency, lockfile, export, tree, version, pip inventory, venv, local Python discovery/pinning, install, cache, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
+Surfaces: CLI: `mamba init` + `mamba index` + `mamba add` + `mamba remove` + `mamba lock` + `mamba export` + `mamba tree` + `mamba version` + `mamba pip` + `mamba venv` + `mamba python` + `mamba workspace` + `mamba sync` + `mamba install` + `mamba cache` + `mamba hash` + `mamba pkgmgr-validate` - project scaffold, frozen index, dependency, lockfile, export, tree, version, pip inventory, venv, local Python discovery/pinning, workspace inspection, install, cache, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
 EC Dimensions: behavior: `cargo test -p mamba --test pkgmgr` - uv-like workflow fixtures; stability: `cargo test -p mamba --test schema_gates pkgmgr` - schema, pin, and idempotence contracts
 Root WI: #519
 Status: partial
@@ -86,7 +86,7 @@ Gate Inventory: `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test
 | Local-first package manager baseline | epic | #459 | implemented | verified | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
 | Full uv package-manager parity and beyond | epic | #519 | partial | in_progress | uv-parity | `cargo test -p mamba --test pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/src/pkgmanage/pkgmgr; projects/mamba/tests/pkgmgr |
 
-Current state: `mamba init/index/add/remove/lock/export/tree/version/pip/venv/python/sync/run/install/hash/cache`
+Current state: `mamba init/index/add/remove/lock/export/tree/version/pip/venv/python/workspace/sync/run/install/hash/cache`
 plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
 local wheel paths, explicit registry URL tests, lockfile export to
 requirements.txt / pylock.toml, dependency-tree rendering, PEP 621 version
@@ -95,17 +95,18 @@ inspection. `mamba venv` exposes create/remove safety around PEP 405
 environments, and `mamba cache` now reports exact size/category info plus
 dry-run, age, size, and package-targeted pruning. `mamba python` exposes local
 interpreter list/find, `.python-version` pinning, and managed Python directory
-resolution. `mamba index build` can
+resolution. `mamba workspace list` inspects uv-compatible
+`[tool.uv.workspace]` membership and exclusion patterns. `mamba index build` can
 materialize a frozen local index from wheel files or directories for
 `mamba add --index` / `mamba lock --index`. The package-manager validation
-profile requires fifteen offline workflow families and keeps live network
+profile requires sixteen offline workflow families and keeps live network
 coverage opt-in/report-only. `mamba add` / `mamba lock` do not treat public
 PyPI as an implicit default source; callers must provide a frozen local index,
 direct local wheel file, or explicit registry URL when resolving dependencies.
 Full uv parity remains open under #519; remaining command families include
 audit/check, pip install/compile/sync subcommands, tool run/upgrade/list,
-python install/download, build/publish package flows, workspace commands,
-auth/index credentials, shell completion, and related parity fixtures.
+python install/download, build/publish package flows, auth/index credentials,
+shell completion, and related parity fixtures.
 
 ## Test Completeness — what we tested, against what authority
 
@@ -869,7 +870,7 @@ Measured numbers per axis are in **[Capability status — the four axes](#capabi
 | Capability      | C1 Py3.12 parity            | No — ① type **74.1%** enforced (auto-measured) + **100%** sound · ② ~18% run-correct |
 | Capability      | C2 Perf > CPython           | No — compute median ~13× faster, but object/float slower **and** memory regresses; the boxed value model is the keystone |
 | Capability      | C3 mambalibs end-to-end     | No — most kits stub-only |
-| Capability      | C4 Package manager (uv-like)| Yes — offline uv-like workflow gates cover init/index/add/remove/lock/export/tree/version/pip/venv/python/sync/run/install/hash/cache |
+| Capability      | C4 Package manager (uv-like)| Yes — offline uv-like workflow gates cover init/index/add/remove/lock/export/tree/version/pip/venv/python/workspace/sync/run/install/hash/cache |
 | Runtime         | core substrate stability    | **99.1%** — sound; only edge crashes (deep recursion, gen-nesting cap, MRO, async-gen hang) |
 | Ceiling         | match Golang (`mamba/go`)   | ~4× behind Go on compute today (Go ~50× vs CPython, mamba ~13×); gap = value model + codegen, not JIT-vs-AOT |
 | Standardization | managed                     | No — 5.1%; epic [#3882](https://github.com/chrischeng-c4/cclab/issues/3882) |
