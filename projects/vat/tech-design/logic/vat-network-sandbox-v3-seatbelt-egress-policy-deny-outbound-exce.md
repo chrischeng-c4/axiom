@@ -95,7 +95,6 @@ properties:
     description: "localhost-only is the hermetic-with-routing mode: vat's emulators/proxy bind 127.0.0.1 so they stay reachable while external hosts are denied."
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
