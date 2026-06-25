@@ -6145,10 +6145,12 @@ name = "loom"
 version = "0.4.3"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "axum 0.8.9",
  "chrono",
  "clap",
+ "futures",
  "hyper 1.9.0",
  "hyper-util",
  "raftcore",

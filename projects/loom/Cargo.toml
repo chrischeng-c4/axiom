@@ -28,6 +28,10 @@ tower = { workspace = true, features = ["util"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
 async-trait = { workspace = true }
+# Bidi h2 stream plumbing for the schema layer (#432): read the request stream
+# while writing the response stream.
+futures = { workspace = true }
+async-stream = { workspace = true }
 # relay/keep clients (h2c, no TLS — same as lumen's relay client).
 reqwest = { workspace = true }
 # Shared Raft consensus engine for replicated workflow state (#110).
