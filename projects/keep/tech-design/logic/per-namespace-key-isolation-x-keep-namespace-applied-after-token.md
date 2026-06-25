@@ -57,3 +57,32 @@ requirement KEEP_NS_TOKEN_CHECKS_BARE_KEY {
   verifymethod: test
 }
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: behavioral
+changes:
+  - path: projects/keep/src/http/handlers.rs
+    action: modify
+    impl_mode: hand-written
+    description: |
+      claim_get / claim_put gain a namespace argument; the engine storage key
+      becomes `{ns}::{kind}:{id}` when the namespace is non-empty, and stays the
+      bare `{kind}:{id}` otherwise (preserving single-tenant behavior). The four
+      claim-check wrappers (get_input / put_input / get_result / put_result)
+      extract the `X-Keep-Namespace` header and pass it through. The namespace
+      prefix is applied AFTER check_scope verifies the claim-check token against
+      the bare key from the URL, so token scope stays bare per the settled loom
+      design.
+  - path: projects/keep/tests/http_api.rs
+    action: modify
+    impl_mode: hand-written
+    description: |
+      Hand-written namespace behavior tests: (1) isolation — two requests with
+      different X-Keep-Namespace values writing the same bare key do not collide
+      and each namespace reads back only its own value; (2) back-compat — absent
+      header keeps the bare key; (3) token-checks-bare-key — an in-scope token
+      verifies against the bare URL key and works under any namespace.
+```
