@@ -123,6 +123,33 @@ fn tool_upgrade_reinstalls_latest_available_version() {
 }
 
 #[test]
+fn tool_run_auto_installs_from_index_and_executes_stub() {
+    let index = build_index();
+    let tmp = tempfile::tempdir().unwrap();
+    let tools = tmp.path().join("mamba-tools");
+
+    let out = run(
+        &tools,
+        &[
+            "tool",
+            "run",
+            "--version",
+            "0.1.0",
+            "--index",
+            index.path().to_str().unwrap(),
+            "frozen_demo_pkg",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "tool run must install and execute; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest = std::fs::read_to_string(tools.join("frozen-demo-pkg/manifest.toml")).unwrap();
+    assert!(manifest.contains("version = \"0.1.0\""), "{manifest}");
+}
+
+#[test]
 fn tool_dir_and_update_shell_are_scriptable() {
     let tmp = tempfile::tempdir().unwrap();
     let tools = tmp.path().join("mamba-tools");

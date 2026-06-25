@@ -4,13 +4,17 @@ use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use std::path::PathBuf;
 
-use crate::pkgmanage::install::{install_tool, list_tools, resolve_tools_root, uninstall_tool};
+use crate::pkgmanage::install::{
+    install_tool, is_tool_installed, list_tools, resolve_tools_root, run_installed_tool,
+    uninstall_tool,
+};
 use crate::pkgmanage::pkgmgr::shell::Shell;
 
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 
 pub fn cmd_tool(sub: &ArgMatches) -> Result<()> {
     match sub.subcommand() {
+        Some(("run", cmd)) => cmd_run(cmd),
         Some(("install", cmd)) => cmd_install(cmd),
         Some(("upgrade", cmd)) => cmd_upgrade(cmd),
         Some(("list", _)) => list_tools(),
@@ -20,6 +24,23 @@ pub fn cmd_tool(sub: &ArgMatches) -> Result<()> {
         Some((other, _)) => bail!("unknown tool subcommand `{other}`"),
         None => bail!("`mamba tool` requires a subcommand"),
     }
+}
+
+fn cmd_run(sub: &ArgMatches) -> Result<()> {
+    let name = required_name(sub)?;
+    if !is_tool_installed(name)? {
+        let index = resolve_index(sub)?;
+        install_tool(
+            name,
+            sub.get_one::<String>("version").map(String::as_str),
+            &index,
+        )?;
+    }
+    let args = sub
+        .get_many::<String>("args")
+        .map(|vals| vals.cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    run_installed_tool(name, &args)
 }
 
 fn cmd_install(sub: &ArgMatches) -> Result<()> {

@@ -21,6 +21,7 @@ use clap::ArgMatches;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const TOOLS_DIR_ENV: &str = "MAMBA_TOOLS_DIR";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
@@ -152,6 +153,40 @@ pub fn uninstall_tool(name: &str) -> Result<()> {
         return Ok(());
     }
     fs::remove_dir_all(&tool_dir).with_context(|| format!("remove {}", tool_dir.display()))?;
+    Ok(())
+}
+
+pub fn is_tool_installed(name: &str) -> Result<bool> {
+    Ok(resolve_tools_root()?
+        .join(normalize_pep503(name))
+        .join("manifest.toml")
+        .exists())
+}
+
+pub fn run_installed_tool(name: &str, args: &[String]) -> Result<()> {
+    let tools_root = resolve_tools_root()?;
+    let normalized = normalize_pep503(name);
+    let tool_dir = tools_root.join(&normalized);
+    if !tool_dir.join("manifest.toml").exists() {
+        bail!("tool `{name}` is not installed (run `mamba tool install {name}` first)");
+    }
+    let script = tool_dir.join("pkg").join(format!("{normalized}.py"));
+    if !script.exists() {
+        bail!(
+            "tool `{name}` is missing executable payload {}",
+            script.display()
+        );
+    }
+
+    let status = Command::new(std::env::current_exe().context("resolve current mamba binary")?)
+        .arg("run")
+        .arg(&script)
+        .args(args)
+        .status()
+        .with_context(|| format!("run tool `{name}` via {}", script.display()))?;
+    if !status.success() {
+        bail!("tool `{name}` exited with {status}");
+    }
     Ok(())
 }
 

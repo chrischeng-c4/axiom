@@ -1161,6 +1161,18 @@ fn probe_tool(bin: &Path) -> FamilyResult {
         return FamilyResult::fail(format!("tool upgrade did not install latest: {manifest}"));
     }
 
+    let run = Command::new(bin)
+        .args(["tool", "run", "frozen-demo-pkg"])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !run.status.success() {
+        return FamilyResult::fail(format!(
+            "tool run failed: {}",
+            String::from_utf8_lossy(&run.stderr)
+        ));
+    }
+
     let list = Command::new(bin)
         .args(["tool", "list"])
         .env("MAMBA_TOOLS_DIR", &tools)
@@ -1199,11 +1211,8 @@ fn probe_tool(bin: &Path) -> FamilyResult {
         return FamilyResult::fail("tool uninstall failed");
     }
 
-    FamilyResult::pass("tool install/upgrade/list/dir/update-shell/uninstall are wired").with_paths(
-        None,
-        None,
-        Some(tools),
-    )
+    FamilyResult::pass("tool run/install/upgrade/list/dir/update-shell/uninstall are wired")
+        .with_paths(None, None, Some(tools))
 }
 
 fn probe_hash(bin: &Path) -> FamilyResult {
