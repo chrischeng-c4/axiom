@@ -1,5 +1,5 @@
 ---
-id: vat-llm-guide-cloud-tasks-scheduler-client-wiring
+id: vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage
 summary: Extend the `vat llm` agent usage guide and the README emulator section to document how to wire a Cloud Tasks / Cloud Scheduler client at vat's built-in REST emulator — those SDKs do not auto-read the emulator host var and default to gRPC, so a factory must force the REST transport, an `http://$HOST` endpoint, and anonymous credentials.
 fill_sections: [scenarios, cli, e2e-test, changes]
 capability_refs:
@@ -11,13 +11,13 @@ capability_refs:
     rationale: "Closes a usability gap in vat's agent-facing usage contract: a consuming agent could not reliably connect a Cloud Tasks / Cloud Scheduler client to vat's built-in REST emulator because, unlike pubsub/firebase-auth/firestore/GCS, those SDKs do not auto-read the emulator host var and default to gRPC."
 ---
 
-# Vat LLM Guide: Cloud Tasks / Cloud Scheduler Client Wiring
+# Vat LLM Guide: Cloud Tasks / Cloud Scheduler Emulator Usage
 
 ## Scenarios
 <!-- type: scenarios lang: yaml -->
 
 ```yaml
-id: vat-llm-guide-cloud-tasks-scheduler-client-wiring-scenarios
+id: vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage-scenarios
 scenarios:
   - id: llm_guide_documents_cloud_tasks_client_wiring
     given:
@@ -56,7 +56,7 @@ commands:
 
 ```yaml
 e2e_tests:
-  - id: vat-llm-guide-cloud-tasks-scheduler-client-wiring
+  - id: vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage
     name: "vat llm guide documents cloud-tasks client wiring"
     capability_id: agent-native-gpu-native-dev-containers
     claim_id: agent-legible-state-and-diff-surface
