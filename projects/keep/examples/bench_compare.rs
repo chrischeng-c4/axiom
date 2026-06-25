@@ -171,20 +171,13 @@ async fn bench_engine(args: &Args, val: &str) -> Result<(), Box<dyn std::error::
 // --------------------------------------------------------------------------
 async fn bench_keep(args: &Args, val: &str) -> Result<(), Box<dyn std::error::Error>> {
     let n_clients = args.keep_clients.unwrap_or(args.concurrency).max(1);
-    let mut clients = Vec::with_capacity(n_clients);
-    for _ in 0..n_clients {
-        clients.push(
-            reqwest::Client::builder()
-                .http2_prior_knowledge()
-                .pool_max_idle_per_host(1)
-                // Bound a single request so a stalled stream can't hang the run.
-                .timeout(Duration::from_secs(10))
-                .build()?,
-        );
-    }
-    println!("  (keep over {n_clients} HTTP/2 connection(s))");
-    for c in &clients {
-        let _ = c.get(format!("{}/healthz", args.keep_url)).send().await;
+    // Shared h2c pool: N single-connection clients, round-robin dispatch (#467).
+    // The 10s timeout bounds a single request so a stalled stream can't hang the run.
+    let pool =
+        cclab_h2c::H2cPool::with_connections_and(n_clients, Some(Duration::from_secs(10)), None)?;
+    println!("  (keep over {} HTTP/2 connection(s))", pool.connections());
+    for _ in 0..pool.connections() {
+        let _ = pool.get(format!("{}/healthz", args.keep_url)).send().await;
     }
 
     let (n_req, actual) = plan(args);
@@ -194,7 +187,7 @@ async fn bench_keep(args: &Args, val: &str) -> Result<(), Box<dyn std::error::Er
         let start = Instant::now();
         let mut handles = Vec::new();
         for w in 0..args.concurrency {
-            let client = clients[w % n_clients].clone();
+            let client = pool.client().clone();
             let base_url = args.keep_url.clone();
             let val = val.to_string();
             let keyspace = args.keyspace;
@@ -246,25 +239,18 @@ async fn bench_keep(args: &Args, val: &str) -> Result<(), Box<dyn std::error::Er
 // --------------------------------------------------------------------------
 async fn bench_keep_noop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let n_clients = args.keep_clients.unwrap_or(args.concurrency).max(1);
-    let mut clients = Vec::with_capacity(n_clients);
-    for _ in 0..n_clients {
-        clients.push(
-            reqwest::Client::builder()
-                .http2_prior_knowledge()
-                .pool_max_idle_per_host(1)
-                .timeout(Duration::from_secs(10))
-                .build()?,
-        );
-    }
+    // Shared h2c pool, round-robin dispatch (#467); 10s per-request timeout.
+    let pool =
+        cclab_h2c::H2cPool::with_connections_and(n_clients, Some(Duration::from_secs(10)), None)?;
     let url = format!("{}/healthz", args.keep_url);
-    for c in &clients {
-        let _ = c.get(&url).send().await;
+    for _ in 0..pool.connections() {
+        let _ = pool.get(&url).send().await;
     }
     let per = args.ops / args.concurrency;
     let start = Instant::now();
     let mut handles = Vec::new();
-    for w in 0..args.concurrency {
-        let client = clients[w % n_clients].clone();
+    for _ in 0..args.concurrency {
+        let client = pool.client().clone();
         let url = url.clone();
         handles.push(tokio::spawn(async move {
             let mut lat = Vec::with_capacity(per);

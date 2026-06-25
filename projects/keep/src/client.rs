@@ -39,7 +39,7 @@ pub struct KvClient {
 impl KvClient {
     /// Connect to a keep base URL (e.g. `http://keep:7117`) and verify liveness.
     pub async fn connect(url: &str) -> Result<Self, ClientError> {
-        let http = reqwest::Client::builder().http2_prior_knowledge().build()?;
+        let http = cclab_h2c::h2c_client()?;
         let base = url.trim_end_matches('/').to_string();
         // Fail fast if the endpoint isn't reachable.
         let r = http.get(format!("{base}/healthz")).send().await?;
