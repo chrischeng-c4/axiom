@@ -10,8 +10,19 @@ path = "src/lib.rs"
 
 [dependencies]
 # Inherit the workspace reqwest (rustls, http2) so the lockfile stays
-# single-versioned; h2c uses prior-knowledge over cleartext.
+# single-versioned; h2c uses prior-knowledge over cleartext. Backs the
+# ergonomic `h2c_client()` / `H2cPool` (the reqwest-level option).
 reqwest = { workspace = true }
+
+# Frame-level connection manager (`H2cManager`): the low-level `h2` protocol
+# over tokio TCP, exposing the GOAWAY / ping / flow-control signals reqwest
+# hides, for adaptive sizing + health-managed dispatch.
+h2 = "0.4"
+tokio = { workspace = true }
+http = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
