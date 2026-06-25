@@ -286,18 +286,39 @@ fn completion_for(id: &str, result_inline: Option<Vec<u8>>) -> Option<Completion
     Some(CompletionMsg { run_id, node_id, attempt, result_ref, result_inline, failed: false, fan_out: vec![] })
 }
 
-/// A [`TaskSource`] over relay's work-queue (phase 1, relay UNCHANGED). lease-batch
-/// returns only leases (no #166 entry bodies), so this leases singly — the single
-/// lease returns the body — up to the credit window. Completions are forwarded to
-/// the controller via the `loom.completions` subject; ack releases the relay lease.
+/// Sign a scoped keep token for one task (readable input key `r` / writable result
+/// key `w`, 5-min TTL) — so the worker hits keep directly but only within scope.
+fn sign_token(secret: &Option<Vec<u8>>, task: &TaskMessage) -> String {
+    let Some(secret) = secret else { return String::new() };
+    let now =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let scope = claimtoken::Scope {
+        r: task.input_refs.first().map(|k| k.0.clone()).unwrap_or_default(),
+        w: format!("{}:{}:result", task.run_id, task.node_id),
+        exp: now + 300,
+    };
+    claimtoken::sign(secret, &scope)
+}
+
+/// One persistent bidi `/consume` stream to relay for a group: buffered entries
+/// down, Ack/Nack frames up.
+struct GroupStream {
+    down: tokio::sync::Mutex<mpsc::Receiver<TaskEnvelope>>,
+    up: mpsc::Sender<Vec<u8>>,
+}
+
+/// A [`TaskSource`] over relay's **bidi `/consume` stream** (#449): one persistent
+/// stream per group multiplexes relay's work-queue to the schema layer; entries
+/// are buffered + served via `lease`; `done`/`nack` ack via the same stream.
+/// Completions are forwarded to the controller via `loom.completions`.
 pub struct RelayTaskSource {
     client: reqwest::Client,
     relay: String,
     keep: String,
     shards: u32,
-    /// Optional HMAC secret: when set, each envelope gets a scoped keep token (#444).
     secret: Option<Vec<u8>>,
-    inflight: tokio::sync::Mutex<HashMap<String, (String, u64, String)>>, // id -> (lease_id, epoch, subject)
+    groups: tokio::sync::Mutex<HashMap<String, Arc<GroupStream>>>,
+    inflight: Arc<tokio::sync::Mutex<HashMap<String, (String, u64, String)>>>, // id -> (lease_id, epoch, group)
 }
 
 impl RelayTaskSource {
@@ -313,66 +334,94 @@ impl RelayTaskSource {
             keep: keep.into(),
             shards: shards.max(1),
             secret,
-            inflight: tokio::sync::Mutex::new(HashMap::new()),
+            groups: tokio::sync::Mutex::new(HashMap::new()),
+            inflight: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
 
-    /// Sign a scoped keep token for one task (readable input key + writable result
-    /// key, 5-min TTL) — so the worker hits keep directly but only within scope.
-    fn token_for(&self, task: &TaskMessage) -> String {
-        let Some(secret) = &self.secret else { return String::new() };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let scope = claimtoken::Scope {
-            r: task.input_refs.first().map(|k| k.0.clone()).unwrap_or_default(),
-            w: format!("{}:{}:result", task.run_id, task.node_id),
-            exp: now + 300,
-        };
-        claimtoken::sign(secret, &scope)
-    }
-
-    async fn lease_one(&self, group: &str) -> Option<TaskEnvelope> {
-        let resp = self
-            .client
-            .post(format!("{}/v1/{group}/lease", self.relay))
-            .json(&serde_json::json!({ "consumer_id": "loom-schema-layer" }))
-            .send()
-            .await
-            .ok()?;
-        let body: serde_json::Value = resp.json().await.ok()?;
-        let lease = body.get("lease")?.as_object()?;
-        let lease_id = lease.get("lease_id")?.as_str()?.to_string();
-        let epoch = lease.get("epoch")?.as_u64()?;
-        let payload = body.get("entry")?.get("payload")?.clone();
-        let task: TaskMessage = serde_json::from_value(payload).ok()?;
-        let env = build_envelope(&task, &self.keep, self.token_for(&task));
-        self.inflight.lock().await.insert(env.id.clone(), (lease_id, epoch, group.to_string()));
-        Some(env)
+    /// Open (or reuse) the bidi `/consume` stream for `group`. A background task
+    /// reads leased entries, builds envelopes, records the lease, and buffers them.
+    async fn group_stream(&self, group: &str) -> Arc<GroupStream> {
+        let mut groups = self.groups.lock().await;
+        if let Some(g) = groups.get(group) {
+            return g.clone();
+        }
+        let (up_tx, up_rx) = mpsc::channel::<Vec<u8>>(256);
+        let (down_tx, down_rx) = mpsc::channel::<TaskEnvelope>(256);
+        let _ = up_tx.try_send(encode_frame(&serde_json::json!({"type": "subscribe", "prefetch": 64})));
+        let (client, relay, keep, secret, g, inflight) = (
+            self.client.clone(),
+            self.relay.clone(),
+            self.keep.clone(),
+            self.secret.clone(),
+            group.to_string(),
+            self.inflight.clone(),
+        );
+        tokio::spawn(async move {
+            let body = reqwest::Body::wrap_stream(async_stream::stream! {
+                let mut rx = up_rx;
+                while let Some(b) = rx.recv().await { yield Ok::<Vec<u8>, std::io::Error>(b); }
+            });
+            let resp = match client.post(format!("{relay}/v1/{g}/consume")).body(body).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("schema-layer: consume connect {g} failed: {e}");
+                    return;
+                }
+            };
+            let mut down = resp.bytes_stream();
+            let mut dec = FrameDecoder::default();
+            while let Some(chunk) = down.next().await {
+                let Ok(chunk) = chunk else { break };
+                dec.push(&chunk);
+                while let Some(raw) = dec.next_frame() {
+                    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else { continue };
+                    let (Some(lease_id), Some(epoch), Some(payload)) = (
+                        v.get("lease_id").and_then(|x| x.as_str()),
+                        v.get("epoch").and_then(|x| x.as_u64()),
+                        v.get("payload"),
+                    ) else {
+                        continue;
+                    };
+                    let Ok(task) = serde_json::from_value::<TaskMessage>(payload.clone()) else {
+                        continue;
+                    };
+                    let env = build_envelope(&task, &keep, sign_token(&secret, &task));
+                    inflight.lock().await.insert(env.id.clone(), (lease_id.to_string(), epoch, g.clone()));
+                    if down_tx.send(env).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+        let gs = Arc::new(GroupStream { down: tokio::sync::Mutex::new(down_rx), up: up_tx });
+        groups.insert(group.to_string(), gs.clone());
+        gs
     }
 }
 
 #[async_trait]
 impl TaskSource for RelayTaskSource {
     async fn lease(&self, group: &str, max: u32) -> Vec<TaskEnvelope> {
-        loop {
-            let mut out = Vec::new();
-            for _ in 0..max {
-                match self.lease_one(group).await {
-                    Some(e) => out.push(e),
-                    None => break,
-                }
-            }
-            if !out.is_empty() {
-                return out;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await; // long-poll
+        let gs = self.group_stream(group).await;
+        let mut down = gs.down.lock().await;
+        let mut out = Vec::new();
+        if let Some(e) = down.recv().await {
+            out.push(e); // long-poll the first
+        } else {
+            return out;
         }
+        while out.len() < max as usize {
+            match down.try_recv() {
+                Ok(e) => out.push(e),
+                Err(_) => break,
+            }
+        }
+        out
     }
 
     async fn done(&self, id: &str, result_inline: Option<Vec<u8>>) {
-        let Some((lease_id, epoch, subject)) = self.inflight.lock().await.remove(id) else { return };
+        let Some((lease_id, epoch, group)) = self.inflight.lock().await.remove(id) else { return };
         if let Some(cm) = completion_for(id, result_inline) {
             let subj = format!("loom.completions.{}", shard_of(&cm.run_id, self.shards));
             let _ = self
@@ -382,17 +431,16 @@ impl TaskSource for RelayTaskSource {
                 .send()
                 .await;
         }
-        let _ = self
-            .client
-            .post(format!("{}/v1/{subject}/ack", self.relay))
-            .json(&serde_json::json!({ "lease_id": lease_id, "epoch": epoch }))
-            .send()
-            .await;
+        if let Some(gs) = self.groups.lock().await.get(&group) {
+            let _ = gs.up.send(encode_frame(&serde_json::json!({"type": "ack", "lease_id": lease_id, "epoch": epoch}))).await;
+        }
     }
 
     async fn nack(&self, id: &str) {
-        // Drop tracking; the relay lease expires → redeliver (relay has no nack).
-        self.inflight.lock().await.remove(id);
+        let Some((lease_id, _epoch, group)) = self.inflight.lock().await.remove(id) else { return };
+        if let Some(gs) = self.groups.lock().await.get(&group) {
+            let _ = gs.up.send(encode_frame(&serde_json::json!({"type": "nack", "lease_id": lease_id}))).await;
+        }
     }
 }
 
@@ -629,14 +677,11 @@ mod tests {
 
     #[test]
     fn signed_token_scopes_to_input_and_result_keys() {
-        let src = RelayTaskSource::new("r", "http://keep", 8, Some(b"secret".to_vec())).unwrap();
-        let tok = src.token_for(&task(vec![KeepRef("in:1".into())], None));
+        let tok = sign_token(&Some(b"secret".to_vec()), &task(vec![KeepRef("in:1".into())], None));
         let scope = claimtoken::verify(b"secret", &tok, 0).unwrap();
         assert_eq!(scope.r, "in:1");
         assert_eq!(scope.w, "run1:nodeA:result");
         assert!(claimtoken::verify(b"wrong", &tok, 0).is_none());
-        // no secret → empty token
-        let src2 = RelayTaskSource::new("r", "http://keep", 8, None).unwrap();
-        assert_eq!(src2.token_for(&task(vec![], None)), "");
+        assert_eq!(sign_token(&None, &task(vec![], None)), ""); // no secret → empty token
     }
 }
