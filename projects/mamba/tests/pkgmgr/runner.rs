@@ -52,6 +52,9 @@ mod run_preflight;
 #[path = "run_stdin.rs"]
 mod run_stdin;
 
+#[path = "shell.rs"]
+mod shell;
+
 #[path = "sync.rs"]
 mod sync;
 
