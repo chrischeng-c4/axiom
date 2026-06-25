@@ -141,7 +141,6 @@ commands:
     behavior:
       - "List llm, upgrade, and report-issue so all three mandatory CLI-convention verbs are discoverable."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
