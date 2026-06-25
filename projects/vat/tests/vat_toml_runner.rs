@@ -318,6 +318,11 @@ fn llm_guide_mentions_core_agent_contract() {
         // Native-or-Docker service contract is discoverable.
         "native or Docker",
         "runtime = \"docker\"",
+        // Cloud Tasks / Cloud Scheduler clients need an explicit REST/factory
+        // override (the SDKs don't auto-read the host var and default to gRPC).
+        "Pointing a client at",
+        "default to gRPC, while vat serves REST",
+        "forces the REST transport",
     ] {
         assert!(
             stdout.contains(expected),
