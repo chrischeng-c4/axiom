@@ -242,5 +242,49 @@ async fn grpc_routed_through_mitm_reaches_emulator() {
         .expect("sink did not receive the gRPC-dispatched task (MITM routing failed)");
     assert!(got.contains("POST /work"), "wrong request line: {got}");
     assert!(got.contains("hello-grpc-mitm"), "missing task body: {got}");
+
+    // 8) A SECOND CreateTask over gRPC — this is the 3rd reverse-proxied call to
+    //    the same emulator, so it exercises the POOLED upstream h2c connection
+    //    (the first call dialed + pooled it; this one multiplexes on the reused
+    //    connection). It must still dispatch to its own sink — proving the
+    //    pooled connection serves repeated requests, not just the first.
+    let (sink2_port, rx2) = spawn_sink();
+    let ct2 = pb::CreateTaskRequest {
+        parent: queue_name.clone(),
+        task: Some(pb::Task {
+            message_type: Some(pb::task::MessageType::HttpRequest(pb::HttpRequest {
+                url: format!("http://127.0.0.1:{sink2_port}/work2"),
+                http_method: pb::HttpMethod::Post as i32,
+                body: b"hello-grpc-reuse".to_vec(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }),
+        response_view: 0,
+    };
+    let req = Request::builder()
+        .method("POST")
+        .uri("http://cloudtasks.googleapis.com/google.cloud.tasks.v2.CloudTasks/CreateTask")
+        .header("content-type", "application/grpc")
+        .header("te", "trailers")
+        .body(Full::new(grpc_frame(&ct2.encode_to_vec())))
+        .unwrap();
+    let resp = sender
+        .send_request(req)
+        .await
+        .expect("CreateTask#2 send (pooled reuse)");
+    assert_eq!(resp.status(), 200, "CreateTask#2 h2 status (pooled reuse)");
+    let _ = resp.into_body().collect().await;
+    let got2 = rx2
+        .recv_timeout(Duration::from_secs(8))
+        .expect("sink2 did not receive the reused-connection gRPC task");
+    assert!(
+        got2.contains("POST /work2"),
+        "wrong request line (reuse): {got2}"
+    );
+    assert!(
+        got2.contains("hello-grpc-reuse"),
+        "missing task body (reuse): {got2}"
+    );
 }
 // HANDWRITE-END
