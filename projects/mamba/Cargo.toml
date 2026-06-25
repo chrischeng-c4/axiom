@@ -106,6 +106,7 @@ zip = { version = "0.6", default-features = false, features = ["deflate"] }
 # Sdist (`.tar.gz`) unpack for PEP 517 build path (Tick 18). Pure-Rust tar
 # reader; works with the existing flate2 GzDecoder for the gzip layer.
 tar = "0.4"
+zstd = "0.13"
 
 # HTML parsing for PEP 503 Simple API
 scraper.workspace = true

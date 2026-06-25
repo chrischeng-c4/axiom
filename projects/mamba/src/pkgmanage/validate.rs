@@ -139,6 +139,93 @@ fn find_http_header_end(bytes: &[u8]) -> Option<usize> {
     bytes.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
+fn fake_standalone_python_archive(version: &str) -> Result<Vec<u8>> {
+    let mut tar_bytes = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut tar_bytes);
+        let body = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"-I\" ]; then\n  echo \"{}\"\n  exit 0\nfi\necho \"downloaded-python $@\"\n",
+            version.replace('.', " ")
+        );
+        let mut header = tar::Header::new_gnu();
+        header
+            .set_path("python/install/bin/python3")
+            .context("set fake standalone Python path")?;
+        header.set_size(body.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder
+            .append(&header, body.as_bytes())
+            .context("append fake standalone Python")?;
+        builder.finish().context("finish fake standalone archive")?;
+    }
+    zstd::stream::encode_all(tar_bytes.as_slice(), 0).context("encode fake standalone archive")
+}
+
+fn spawn_python_archive_server(bytes: Vec<u8>) -> Result<(String, JoinHandle<Vec<u8>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").context("bind Python archive probe")?;
+    listener
+        .set_nonblocking(true)
+        .context("set Python archive listener nonblocking")?;
+    let addr = listener.local_addr().context("read Python archive addr")?;
+    let handle = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(pair) => break pair,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return b"timeout waiting for Python archive download".to_vec();
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => return format!("accept Python archive download: {e}").into_bytes(),
+            }
+        };
+        if let Err(e) = stream.set_nonblocking(false) {
+            return format!("set Python archive stream blocking: {e}").into_bytes();
+        }
+        let request = read_http_headers(&mut stream).unwrap_or_else(|e| e.into_bytes());
+        let text = String::from_utf8_lossy(&request);
+        let ok = text.starts_with("GET /cpython.tar.zst HTTP/1.1");
+        let response = if ok {
+            format!(
+                "HTTP/1.1 200 ok\r\ncontent-type: application/zstd\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                bytes.len()
+            )
+        } else {
+            "HTTP/1.1 404 missing\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_string()
+        };
+        let _ = stream.write_all(response.as_bytes());
+        if ok {
+            let _ = stream.write_all(&bytes);
+        }
+        request
+    });
+    Ok((format!("http://{addr}/cpython.tar.zst"), handle))
+}
+
+fn read_http_headers(stream: &mut TcpStream) -> std::result::Result<Vec<u8>, String> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| format!("set header read timeout: {e}"))?;
+    let mut out = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = stream
+            .read(&mut buf)
+            .map_err(|e| format!("read HTTP headers: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+        if find_http_header_end(&out).is_some() {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 const REQUIRED_FAMILIES: &[&str] = &[
     "init",
     "auth",
@@ -1515,6 +1602,66 @@ fn probe_python(bin: &Path) -> FamilyResult {
         return FamilyResult::fail("python uninstall left managed files behind");
     }
 
+    let archive = match fake_standalone_python_archive("3.12.8") {
+        Ok(bytes) => bytes,
+        Err(e) => return FamilyResult::fail(format!("fake standalone archive failed: {e}")),
+    };
+    let archive_sha = sha256_bytes(&archive);
+    let (archive_url, archive_handle) = match spawn_python_archive_server(archive) {
+        Ok(server) => server,
+        Err(e) => return FamilyResult::fail(format!("python archive server failed: {e}")),
+    };
+    let remote_download = Command::new(bin)
+        .args([
+            "python",
+            "download",
+            "3.12.8",
+            "--url",
+            archive_url.as_str(),
+            "--sha256",
+            archive_sha.as_str(),
+        ])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !remote_download.status.success() {
+        let _ = archive_handle.join();
+        return FamilyResult::fail(format!(
+            "python standalone download failed: {}",
+            String::from_utf8_lossy(&remote_download.stderr)
+        ));
+    }
+    let archive_request = match archive_handle.join() {
+        Ok(request) => request,
+        Err(_) => return FamilyResult::fail("python archive probe thread panicked"),
+    };
+    let archive_request_text = String::from_utf8_lossy(&archive_request);
+    if !archive_request_text.starts_with("GET /cpython.tar.zst HTTP/1.1") {
+        return FamilyResult::fail(format!(
+            "python archive request mismatch: {archive_request_text}"
+        ));
+    }
+    if !managed_root.join("3.12.8/bin/python").exists()
+        || !managed_root
+            .join("3.12.8/python/install/bin/python3")
+            .exists()
+        || !managed_root.join("bin/python3.12.8").exists()
+    {
+        return FamilyResult::fail("python standalone download did not create managed launchers");
+    }
+
+    let remote_uninstall = Command::new(bin)
+        .args(["python", "uninstall", "3.12.8"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !remote_uninstall.status.success() {
+        return FamilyResult::fail(format!(
+            "python standalone uninstall failed: {}",
+            String::from_utf8_lossy(&remote_uninstall.stderr)
+        ));
+    }
+
     let list = Command::new(bin)
         .args(["python", "list"])
         .env("PATH", tmp.path().join("empty-path"))
@@ -1524,7 +1671,7 @@ fn probe_python(bin: &Path) -> FamilyResult {
         return FamilyResult::fail("python list failed with empty PATH");
     }
     FamilyResult::pass(
-        "python install/download/uninstall/list/find/pin/dir/update-shell expose local interpreter management",
+        "python install/download/uninstall/list/find/pin/dir/update-shell expose local and standalone interpreter management",
     )
     .with_paths(Some(project), None, Some(data))
 }

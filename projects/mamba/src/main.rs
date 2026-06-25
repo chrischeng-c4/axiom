@@ -354,15 +354,21 @@ fn cli() -> Command {
                 .arg_required_else_help(true)
                 .subcommand(
                     Command::new("install")
-                        .about("Install a managed Python from a local source interpreter")
+                        .about("Install a managed Python from a local source interpreter or standalone archive")
                         .arg(Arg::new("request").value_name("REQUEST").help("Version request such as 3, 3.12, or 3.12.7; defaults to .python-version or any"))
-                        .arg(Arg::new("source").long("source").value_name("PYTHON").help("Local Python executable to register; defaults to a matching PATH interpreter")),
+                        .arg(Arg::new("source").long("source").value_name("PYTHON").help("Local Python executable to register; defaults to a matching PATH interpreter"))
+                        .arg(Arg::new("url").long("url").value_name("URL").help("Standalone Python archive URL; overrides python-build-standalone URL composition"))
+                        .arg(Arg::new("release-tag").long("release-tag").value_name("TAG").help("python-build-standalone release tag used to compose a GitHub archive URL"))
+                        .arg(Arg::new("sha256").long("sha256").value_name("HEX").help("Expected sha256 for the downloaded archive")),
                 )
                 .subcommand(
                     Command::new("download")
-                        .about("Download/register a managed Python from a local source interpreter")
+                        .about("Download/register a managed Python from a standalone archive")
                         .arg(Arg::new("request").value_name("REQUEST").help("Version request such as 3, 3.12, or 3.12.7; defaults to .python-version or any"))
-                        .arg(Arg::new("source").long("source").value_name("PYTHON").help("Local Python executable to register; defaults to a matching PATH interpreter")),
+                        .arg(Arg::new("source").long("source").value_name("PYTHON").help("Local Python executable to register instead of downloading"))
+                        .arg(Arg::new("url").long("url").value_name("URL").help("Standalone Python archive URL; overrides python-build-standalone URL composition"))
+                        .arg(Arg::new("release-tag").long("release-tag").value_name("TAG").help("python-build-standalone release tag used to compose a GitHub archive URL"))
+                        .arg(Arg::new("sha256").long("sha256").value_name("HEX").help("Expected sha256 for the downloaded archive")),
                 )
                 .subcommand(
                     Command::new("uninstall")
