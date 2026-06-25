@@ -180,8 +180,62 @@ disp_unary!(d_runtime_checkable, mb_typing_runtime_checkable);
 disp_binary!(d_assert_type, mb_typing_assert_type);
 disp_unary!(d_is_typeddict, mb_typing_is_typeddict);
 
-unsafe extern "C" fn d_overload(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+thread_local! {
+    /// Ordered registry of `@overload` stub functions, keyed by
+    /// `(module, qualname)`. CPython stores stubs under the decorated function's
+    /// `(__module__, __qualname__)` so `get_overloads(impl)` can recover them.
+    /// All stubs sharing a name lower to one FuncRef, so the key — not the
+    /// function value — distinguishes overload sets, and each `@overload`
+    /// occurrence appends.
+    static OVERLOAD_REGISTRY: std::cell::RefCell<
+        HashMap<(String, String), Vec<MbValue>>
+    > = std::cell::RefCell::new(HashMap::new());
+}
+
+/// `(module, qualname)` key for the decorated function. For a top-level `def`,
+/// `__qualname__ == __name__`, so the registered name suffices.
+fn overload_key(func: MbValue) -> (String, String) {
+    let module = extract_str(super::super::closure::mb_func_get_module(func))
+        .unwrap_or_default();
+    let name = extract_str(super::super::closure::mb_func_get_name(func))
+        .unwrap_or_default();
+    (module, name)
+}
+
+unsafe extern "C" fn d_overload(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    // Record the stub under its (module, name) so get_overloads can recover it,
+    // then return the shared dummy (calling an overload-only function raises
+    // NotImplementedError until a concrete impl rebinds the name).
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(&stub) = a.first() {
+        let key = overload_key(stub);
+        if !key.1.is_empty() {
+            OVERLOAD_REGISTRY.with(|r| {
+                r.borrow_mut().entry(key).or_default().push(stub);
+            });
+        }
+    }
     MbValue::from_func(d_overload_dummy as *const () as usize)
+}
+
+/// `typing.get_overloads(func)` — list of registered `@overload` stubs for the
+/// function, keyed by its `(__module__, __qualname__)`. Empty list if none.
+unsafe extern "C" fn d_get_overloads(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let stubs = a
+        .first()
+        .map(|&func| {
+            let key = overload_key(func);
+            OVERLOAD_REGISTRY.with(|r| r.borrow().get(&key).cloned().unwrap_or_default())
+        })
+        .unwrap_or_default();
+    MbValue::from_ptr(MbObject::new_list(stubs))
+}
+
+/// `typing.clear_overloads()` — drop the entire overload registry.
+unsafe extern "C" fn d_clear_overloads(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    OVERLOAD_REGISTRY.with(|r| r.borrow_mut().clear());
+    MbValue::none()
 }
 
 unsafe extern "C" fn d_overload_dummy(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -367,6 +421,10 @@ pub fn register() {
         ("assert_type", d_assert_type as *const () as usize),
         // is_typeddict(cls) -> bool, structural helper.
         ("is_typeddict", d_is_typeddict as *const () as usize),
+        // get_overloads(func) -> list of registered @overload stubs.
+        ("get_overloads", d_get_overloads as *const () as usize),
+        // clear_overloads() -> None, drops the overload registry.
+        ("clear_overloads", d_clear_overloads as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -422,14 +480,12 @@ pub fn register() {
         "WrapperDescriptorType",
         "abstractmethod",
         "assert_never",
-        "clear_overloads",
         "collections",
         "contextlib",
         "copyreg",
         "dataclass_transform",
         "defaultdict",
         "functools",
-        "get_overloads",
         "io",
         "no_type_check_decorator",
         "operator",
