@@ -391,14 +391,22 @@ pub fn run() -> anyhow::Result<()> {
     })
 }
 
-/// Background loop: lease worker completions from the `loom.completions` relay
-/// subject and fold them into the DAG (which dispatches newly-ready nodes).
+/// Background loop: consume worker completions from the `loom.completions` relay
+/// subject over the **bidi `/consume` stream** (#463) and fold them into the DAG
+/// (which dispatches newly-ready nodes). One persistent stream per shard:
+/// `Subscribe` up, leased completions down, `Ack` up on the same stream. The
+/// stream is the same path the schema layer's task consumer uses (#449), so
+/// relay's only consume path is now bidi `/consume`. On a stream drop it
+/// reconnects; in-flight (unacked) completions redeliver via relay's lease TTL.
 async fn completion_consumer(
     relay_base: String,
     subject: String,
     store: Arc<dyn RunStore>,
     dispatcher: Arc<dyn Dispatcher>,
 ) {
+    use crate::schema_layer::{encode_frame, FrameDecoder};
+    use futures::StreamExt;
+
     let client = match crate::relay_client::relay_http_client() {
         Ok(c) => c,
         Err(e) => {
@@ -406,41 +414,64 @@ async fn completion_consumer(
             return;
         }
     };
-    let lease_url = format!("{relay_base}/v1/{subject}/lease");
-    let ack_url = format!("{relay_base}/v1/{subject}/ack");
-    let consumer_id = format!("loom-controller-{subject}");
+    let url = format!("{relay_base}/v1/{subject}/consume");
     let idle = std::time::Duration::from_millis(200);
-    eprintln!("loom: consuming completions from {lease_url}");
+    eprintln!("loom: consuming completions from {url} (bidi /consume)");
     loop {
-        let leased = client
-            .post(&lease_url)
-            .json(&serde_json::json!({ "consumer_id": consumer_id }))
-            .send()
-            .await;
-        let body: serde_json::Value = match leased {
-            Ok(r) => r.json().await.unwrap_or(serde_json::Value::Null),
+        // One bidi stream: Subscribe up, leased completions down, Ack up. The
+        // up-channel is buffered so the Subscribe frame (and later Acks) queue
+        // without blocking; dropping `up_tx` at loop end ends the request body.
+        let (up_tx, up_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+        if up_tx
+            .send(encode_frame(&serde_json::json!({ "type": "subscribe", "prefetch": 64 })))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let body = reqwest::Body::wrap_stream(async_stream::stream! {
+            let mut rx = up_rx;
+            while let Some(b) = rx.recv().await { yield Ok::<Vec<u8>, std::io::Error>(b); }
+        });
+        let resp = match client.post(&url).body(body).send().await {
+            Ok(r) => r,
             Err(_) => {
                 tokio::time::sleep(idle).await;
                 continue;
             }
         };
-        let lease = body.get("lease").filter(|v| !v.is_null());
-        let entry = body.get("entry").filter(|v| !v.is_null());
-        let (Some(lease), Some(entry)) = (lease, entry) else {
-            tokio::time::sleep(idle).await;
-            continue;
-        };
-        let lease_id = lease.get("lease_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let epoch = lease.get("epoch").and_then(|v| v.as_u64()).unwrap_or(0);
-        let payload = entry.get("payload").cloned().unwrap_or(serde_json::Value::Null);
-        if let Ok(cm) = serde_json::from_value::<CompletionMsg>(payload) {
-            apply_completion_msg(&store, dispatcher.as_ref(), cm).await;
+        let mut down = resp.bytes_stream();
+        let mut dec = FrameDecoder::default();
+        while let Some(chunk) = down.next().await {
+            let Ok(chunk) = chunk else { break };
+            dec.push(&chunk);
+            while let Some(raw) = dec.next_frame() {
+                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else { continue };
+                let (Some(lease_id), Some(epoch), Some(payload)) = (
+                    v.get("lease_id").and_then(|x| x.as_str()),
+                    v.get("epoch").and_then(|x| x.as_u64()),
+                    v.get("payload"),
+                ) else {
+                    continue;
+                };
+                if let Ok(cm) = serde_json::from_value::<CompletionMsg>(payload.clone()) {
+                    apply_completion_msg(&store, dispatcher.as_ref(), cm).await;
+                }
+                // Ack on the same stream so relay commits the completion and frees
+                // a credit. A send error means the stream is gone → reconnect.
+                if up_tx
+                    .send(encode_frame(
+                        &serde_json::json!({ "type": "ack", "lease_id": lease_id, "epoch": epoch }),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
         }
-        let _ = client
-            .post(&ack_url)
-            .json(&serde_json::json!({ "lease_id": lease_id, "epoch": epoch }))
-            .send()
-            .await;
+        // Stream ended — reconnect; unacked completions redeliver via relay's TTL.
+        tokio::time::sleep(idle).await;
     }
 }
 

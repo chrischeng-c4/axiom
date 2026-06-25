@@ -20,6 +20,7 @@ use utoipa::OpenApi;
     paths(
         crate::server::publish,
         crate::server::publish_batch,
+        crate::consume::consume,
         crate::server::lease,
         crate::server::ack,
         crate::server::lease_batch,
@@ -47,6 +48,7 @@ mod tests {
         let doc = api_doc_json();
         for path in [
             "/v1/{subject}/publish",
+            "/v1/{subject}/consume",
             "/v1/{subject}/lease",
             "/v1/{subject}/ack",
             "/v1/{subject}/subscribe",
