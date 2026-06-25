@@ -52,8 +52,8 @@ impl Drop for ScratchDir {
 }
 
 const REQUIRED_FAMILIES: &[&str] = &[
-    "init", "index", "add", "lock", "export", "tree", "version", "pip", "venv", "sync", "run",
-    "install", "hash", "cache",
+    "init", "index", "add", "lock", "export", "tree", "version", "pip", "venv", "python", "sync",
+    "run", "install", "hash", "cache",
 ];
 
 pub fn cmd_validate(sub: &ArgMatches) -> Result<()> {
@@ -152,6 +152,7 @@ fn run_family(family: &str, bin: &Path) -> FamilyResult {
         "version" => probe_version(bin),
         "pip" => probe_pip(bin),
         "venv" => probe_venv(bin),
+        "python" => probe_python(bin),
         "sync" => probe_sync(bin),
         "run" => probe_run(bin),
         "install" => probe_install(bin),
@@ -585,6 +586,54 @@ fn probe_venv(bin: &Path) -> FamilyResult {
         Some(root),
         None,
         None,
+    )
+}
+
+fn probe_python(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let project = tmp.path().join("project");
+    let data = tmp.path().join("uv-data");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(tmp.path().join("empty-path")).unwrap();
+
+    let pin = invoke(bin, &project, &["python", "pin", "3.12"]);
+    if !pin.status.success() {
+        return FamilyResult::fail(format!(
+            "python pin exit {:?}: {}",
+            pin.status.code(),
+            String::from_utf8_lossy(&pin.stderr)
+        ));
+    }
+    let pin_body = std::fs::read_to_string(project.join(".python-version")).unwrap_or_default();
+    if pin_body != "3.12\n" {
+        return FamilyResult::fail(format!("python pin body mismatch: {pin_body:?}"));
+    }
+
+    let dir = Command::new(bin)
+        .args(["python", "dir"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !dir.status.success() {
+        return FamilyResult::fail("python dir failed");
+    }
+    let printed = String::from_utf8_lossy(&dir.stdout).trim_end().to_string();
+    if printed != data.join("python").to_string_lossy() {
+        return FamilyResult::fail(format!("python dir mismatch: {printed}"));
+    }
+
+    let list = Command::new(bin)
+        .args(["python", "list"])
+        .env("PATH", tmp.path().join("empty-path"))
+        .output()
+        .expect("spawn mamba");
+    if !list.status.success() {
+        return FamilyResult::fail("python list failed with empty PATH");
+    }
+    FamilyResult::pass("python list/pin/dir expose local interpreter management").with_paths(
+        Some(project),
+        None,
+        Some(data),
     )
 }
 

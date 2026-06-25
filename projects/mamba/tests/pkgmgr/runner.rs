@@ -40,6 +40,9 @@ mod lock;
 #[path = "pip.rs"]
 mod pip;
 
+#[path = "python.rs"]
+mod python;
+
 #[path = "remove.rs"]
 mod remove;
 
