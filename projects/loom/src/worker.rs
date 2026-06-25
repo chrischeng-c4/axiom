@@ -254,8 +254,6 @@ pub fn default_registry() -> Registry {
 }
 
 pub fn run() -> anyhow::Result<()> {
-    let relay = std::env::var("LOOM_RELAY")
-        .map_err(|_| anyhow::anyhow!("loom worker requires LOOM_RELAY (relay base url)"))?;
     let keep_base = std::env::var("LOOM_KEEP")
         .map_err(|_| anyhow::anyhow!("loom worker requires LOOM_KEEP (keep base url)"))?;
     let subject = std::env::var("LOOM_RUNNER").unwrap_or_else(|_| "resident".to_string());
@@ -270,6 +268,17 @@ pub fn run() -> anyhow::Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
+        let registry = std::sync::Arc::new(default_registry());
+
+        // Schema-layer mode (#442): a tiny bidi client — read self-describing Task
+        // envelopes, GET/PUT keep at the given URLs, send Done. No relay/keep schema
+        // knowledge. Otherwise the direct relay-lease path.
+        if let Ok(schema) = std::env::var("LOOM_SCHEMA_LAYER") {
+            return run_bidi(&schema, &keep_base, &subject, concurrency as u32, registry.as_ref()).await;
+        }
+
+        let relay = std::env::var("LOOM_RELAY")
+            .map_err(|_| anyhow::anyhow!("loom worker requires LOOM_RELAY or LOOM_SCHEMA_LAYER"))?;
         let shards = std::env::var("LOOM_COMPLETION_SHARDS")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
@@ -279,7 +288,6 @@ pub fn run() -> anyhow::Result<()> {
         let sink = std::sync::Arc::new(
             crate::relay_client::RelayCompletionSink::new_sharded(&relay, "loom.completions", shards)?,
         );
-        let registry = std::sync::Arc::new(default_registry());
 
         eprintln!(
             "loom worker: leasing `{subject}` from relay {relay}, keep {keep_base} (concurrency {concurrency})"
@@ -309,6 +317,94 @@ pub fn run() -> anyhow::Result<()> {
         }
         Ok(())
     })
+}
+
+/// Schema-layer bidi worker (#442): keep a bidi session to the schema layer,
+/// reconnecting on connect failure / stream end (so it survives the layer not
+/// being up yet, or restarts).
+async fn run_bidi(
+    schema_url: &str,
+    _keep_base: &str,
+    group: &str,
+    prefetch: u32,
+    registry: &Registry,
+) -> anyhow::Result<()> {
+    loop {
+        if let Err(e) = bidi_session(schema_url, group, prefetch, registry).await {
+            eprintln!("loom worker: bidi session ended ({e}); reconnecting");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
+/// One bidi session: subscribe, then for each self-describing Task — read input
+/// from the given keep URL (or inline), run the handler, write a large result to
+/// the given keep URL (or inline a small one), send Done. Owns no relay/keep schema.
+async fn bidi_session(
+    schema_url: &str,
+    group: &str,
+    prefetch: u32,
+    registry: &Registry,
+) -> anyhow::Result<()> {
+    use crate::schema_layer::{encode_frame, FrameDecoder, InputSource, TaskEnvelope, UpFrame};
+    use futures::StreamExt;
+    use tokio::sync::mpsc;
+
+    let client = reqwest::Client::builder().http2_prior_knowledge().build()?;
+    let (up_tx, up_rx) = mpsc::channel::<Vec<u8>>(64);
+    let body = reqwest::Body::wrap_stream(async_stream::stream! {
+        let mut rx = up_rx;
+        while let Some(b) = rx.recv().await { yield Ok::<Vec<u8>, std::io::Error>(b); }
+    });
+    let resp = client.post(format!("{schema_url}/v1/work/stream")).body(body).send().await?;
+    anyhow::ensure!(resp.status().is_success(), "schema-layer connect: {}", resp.status());
+    let mut down = resp.bytes_stream();
+    up_tx.send(encode_frame(&UpFrame::Subscribe { group: group.to_string(), prefetch })).await?;
+    eprintln!("loom worker: bidi to schema-layer {schema_url} (group {group}, prefetch {prefetch})");
+
+    let mut dec = FrameDecoder::default();
+    loop {
+        // next self-describing task envelope
+        let env: TaskEnvelope = loop {
+            if let Some(raw) = dec.next_frame() {
+                match serde_json::from_slice(&raw) {
+                    Ok(e) => break e,
+                    Err(e) => {
+                        eprintln!("loom worker: bad task envelope: {e}");
+                        return Ok(());
+                    }
+                }
+            }
+            match down.next().await {
+                Some(Ok(chunk)) => dec.push(&chunk),
+                _ => return Ok(()), // stream closed
+            }
+        };
+        // resolve input (inline / given keep URL / empty) — never builds a key
+        let input = match &env.input {
+            InputSource::Inline { bytes } => bytes.clone(),
+            InputSource::KeepUrl { url } => client.get(url).send().await?.bytes().await?.to_vec(),
+            InputSource::Empty => Vec::new(),
+        };
+        let up = match registry.get(&env.task_name) {
+            Some(handler) => match handler(input) {
+                Ok(out) => {
+                    if out.result.len() <= inline_max() {
+                        UpFrame::Done { id: env.id.clone(), result_inline: Some(out.result) }
+                    } else {
+                        client.put(&env.result_put_url).body(out.result).send().await?;
+                        UpFrame::Done { id: env.id.clone(), result_inline: None }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("loom worker: handler `{}` failed: {e}", env.task_name);
+                    UpFrame::Nack { id: env.id.clone() }
+                }
+            },
+            None => UpFrame::Nack { id: env.id.clone() },
+        };
+        up_tx.send(encode_frame(&up)).await?;
+    }
 }
 
 #[cfg(test)]
