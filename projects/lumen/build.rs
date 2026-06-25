@@ -28,6 +28,12 @@ fn main() {
         .map(|d| format!("{}", d.as_secs()))
         .unwrap_or_else(|_| "unknown".to_string());
     println!("cargo:rustc-env=LUMEN_BUILT_AT={built_at}");
+
+    // Stamp the exact target triple cargo built for so `lumen upgrade` can pick
+    // the matching `lumen-<target>.tar.gz` release asset. Cargo always sets
+    // `TARGET` for build scripts.
+    let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
+    println!("cargo:rustc-env=LUMEN_TARGET={target}");
 }
 
 /// Best-effort short SHA of HEAD. Returns `None` outside a git workspace.

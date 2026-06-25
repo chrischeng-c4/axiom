@@ -67,7 +67,7 @@ jobs:
       - name: Build lumen binary
         # --bin lumen: only the serving binary (skip lumen-consumer / -bench /
         # -openapi-dump; lumen-operator is feature-gated off by default anyway).
-        run: cargo build --release --locked -p lumen --bin lumen --features "otel relay-wal" --target ${{ matrix.target }}
+        run: cargo build --release --locked -p lumen --bin lumen --features "otel relay-wal self-update" --target ${{ matrix.target }}
 
       - name: Package artifact
         id: package
