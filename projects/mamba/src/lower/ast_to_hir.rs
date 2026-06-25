@@ -3454,10 +3454,22 @@ impl<'a> AstLowerer<'a> {
             // `X = enum.auto()` must evaluate at the class's
             // textual position, after preceding imports/bindings
             // have run (P2-R3 ordering, #1686 motivation).
+            // #82: cross-class property decorators such as `@Base.x.setter`
+            // must run after the base class placeholder has materialized the
+            // property object.
+            let has_cross_class_property_decorator = cls.methods.iter().any(|m| {
+                m.decorators.iter().any(|dec| matches!(
+                    dec,
+                    HirExpr::Attr { object, attr, .. }
+                        if matches!(attr.as_str(), "setter" | "deleter" | "getter")
+                            && !matches!(object.as_ref(), HirExpr::Var(..))
+                ))
+            });
             if !cls.decorators.is_empty()
                 || !cls.class_attr_assigns.is_empty()
                 || !cls.runtime_base_exprs.is_empty()
                 || !cls.class_kwargs.is_empty()
+                || has_cross_class_property_decorator
             {
                 if placeholder_to_top {
                     self.result.top_level.push(HirStmt::ClassDefPlaceholder {
