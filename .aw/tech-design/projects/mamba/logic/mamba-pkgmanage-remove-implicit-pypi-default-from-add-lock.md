@@ -94,3 +94,11 @@ requirementDiagram
       verifymethod: test
     }
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Source-policy decision tree is bounded to add/lock and distinguishes frozen local index, explicit registry URL, offline pinned add, and fail-fast no-source behavior.
+- [unit-test] Test requirements cover both new negative cases and regression protection for frozen-index plus explicit `--index-url` paths.
