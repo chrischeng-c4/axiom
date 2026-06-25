@@ -29,6 +29,8 @@ fn run_add(workdir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(mamba_bin())
         .arg("add")
         .args(args)
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
         .current_dir(workdir)
         .output()
         .expect("spawn mamba add")
@@ -234,6 +236,36 @@ fn add_offline_requires_explicit_version() {
     assert!(
         stderr.contains("--offline") || stderr.contains("offline"),
         "stderr must point at --offline mode: {stderr:?}"
+    );
+}
+
+#[test]
+fn add_no_source_requires_explicit_registry() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
+
+    let out = run_add(tmp.path(), &["bare_name"]);
+    assert!(
+        !out.status.success(),
+        "no-source add must fail; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no package source configured") && stderr.contains("--index-url"),
+        "stderr must name explicit source options: {stderr:?}"
+    );
+    assert_eq!(
+        manifest_before,
+        std::fs::read_to_string(&manifest_path).unwrap(),
+        "failed no-source add must not mutate mamba.toml"
+    );
+    assert!(
+        !tmp.path().join("mamba.lock").exists(),
+        "failed no-source add must not create mamba.lock"
     );
 }
 

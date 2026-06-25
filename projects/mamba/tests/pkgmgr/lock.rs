@@ -20,6 +20,8 @@ fn mamba_bin() -> PathBuf {
 fn run(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(mamba_bin())
         .args(args)
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
         .current_dir(dir)
         .output()
         .expect("spawn mamba")
@@ -182,6 +184,44 @@ fn lock_unresolvable_dep_fails_cleanly() {
     assert!(
         !proj.join("mamba.lock").exists(),
         "no partial lockfile on failure"
+    );
+}
+
+#[test]
+fn lock_no_source_requires_explicit_registry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+
+    let manifest_path = proj.join("mamba.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let edited = manifest.replace(
+        "dependencies = []",
+        "dependencies = [\n    \"frozen_demo_pkg==0.1.0\",\n]",
+    );
+    std::fs::write(&manifest_path, &edited).unwrap();
+
+    let out = run(&proj, &["lock"]);
+    assert!(
+        !out.status.success(),
+        "no-source lock must fail; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no package source configured") && stderr.contains("--index-url"),
+        "stderr must name explicit source options: {stderr:?}"
+    );
+    assert_eq!(
+        edited,
+        std::fs::read_to_string(&manifest_path).unwrap(),
+        "failed no-source lock must not mutate mamba.toml"
+    );
+    assert!(
+        !proj.join("mamba.lock").exists(),
+        "failed no-source lock must not write a partial lockfile"
     );
 }
 

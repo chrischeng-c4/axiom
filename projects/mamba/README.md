@@ -85,6 +85,12 @@ Gate Inventory: `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test
 |---|---|---:|---|---|---|---|
 | Uv-like package manager workflow | epic | #3881 | partial | planned | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
 
+Current state: `mamba init/add/remove/lock/sync/run/install/hash/cache` plus
+`pkgmgr-validate` are wired through offline frozen-index gates and explicit
+registry URL tests. `mamba add` / `mamba lock` do not treat public PyPI as an
+implicit default source; callers must provide a frozen local index or an
+explicit registry URL when resolving unpinned/bare dependencies.
+
 ## Test Completeness — what we tested, against what authority
 
 The question an ecosystem actually asks is not *"how many tests do you have"*
