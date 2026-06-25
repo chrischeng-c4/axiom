@@ -60,7 +60,6 @@ edges:
   - { from: dry, to: submit, label: "no" }
   - { from: submit, to: filed }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
