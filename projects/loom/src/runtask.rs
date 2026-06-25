@@ -29,6 +29,7 @@ fn task_from_env() -> anyhow::Result<TaskMessage> {
         task_name: var("LOOM_TASK_NAME")?,
         args: serde_json::Value::Null,
         input_refs,
+        input_inline: None,
         runner: RunnerClass::K8sJob,
     })
 }

@@ -24,6 +24,11 @@ pub struct TaskMessage {
     pub args: serde_json::Value,
     /// Claim-check inputs the runner fetches from keep.
     pub input_refs: Vec<KeepRef>,
+    /// Inline input bytes for small payloads (#127): when set, the worker uses
+    /// these directly instead of a keep fetch. Set by the dispatcher when an
+    /// upstream node produced a small inline result. Omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_inline: Option<Vec<u8>>,
     pub runner: RunnerClass,
 }
 
@@ -97,6 +102,10 @@ pub struct CompletionMsg {
     pub attempt: u32,
     #[serde(default)]
     pub result_ref: Option<String>,
+    /// Inline result bytes for small payloads (#127): the worker reports the
+    /// result inline instead of writing it to keep. Omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_inline: Option<Vec<u8>>,
     #[serde(default)]
     pub failed: bool,
     /// Runtime fan-out children to splice in after this node (#116).
@@ -111,15 +120,36 @@ pub async fn dispatch_ready(
     dispatcher: &dyn Dispatcher,
 ) -> anyhow::Result<usize> {
     let ready = run.ready_nodes();
+    // #127 inline: a node's first input ref may name an upstream node's result;
+    // if that result was produced inline (small), pass it as input_inline so the
+    // worker skips the keep fetch entirely. Build the lookup once per sweep.
+    let inline_results: std::collections::HashMap<String, Vec<u8>> = run
+        .nodes
+        .values()
+        .filter_map(|n| {
+            n.result_inline
+                .as_ref()
+                .map(|r| (format!("{}:{}:result", run.id.0, n.id.0), r.clone()))
+        })
+        .collect();
     for id in &ready {
         let node = &run.nodes[id];
+        let mut input_refs = node.task.input_refs.clone();
+        let mut input_inline = None;
+        if let Some(first) = input_refs.first() {
+            if let Some(bytes) = inline_results.get(&first.0) {
+                input_inline = Some(bytes.clone());
+                input_refs.clear(); // satisfied inline; no keep ref needed
+            }
+        }
         let msg = TaskMessage {
             run_id: run.id.0.clone(),
             node_id: node.id.0.clone(),
             attempt: node.attempt + 1,
             task_name: node.task.task_name.clone(),
             args: node.task.args.clone(),
-            input_refs: node.task.input_refs.clone(),
+            input_refs,
+            input_inline,
             runner: node.task.runner,
         };
         dispatcher.dispatch(node.task.runner.relay_route(), msg).await?;
