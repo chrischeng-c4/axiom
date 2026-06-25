@@ -115,6 +115,7 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
         max_concurrent: 8,
         timeout_secs: 30,
         retry_max: 3,
+        auth_header: crate::pkgmanage::auth::authorization_for_url(index_url)?,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()

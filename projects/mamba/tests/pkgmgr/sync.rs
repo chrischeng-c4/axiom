@@ -320,6 +320,77 @@ fn sync_downloads_and_verifies_wheel_when_url_and_sha_present() {
 }
 
 #[test]
+fn sync_download_uses_stored_auth_credentials() {
+    use sha2::{Digest, Sha256};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (server_url, body_sha) = rt.block_on(async {
+        use mamba::pkgmanage::pkgmgr::auth_header::basic_auth;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let body = b"auth-sync-fake-wheel-bytes";
+        let mut hasher = Sha256::new();
+        hasher.update(body);
+        let digest = format!("{:x}", hasher.finalize());
+        let expected_auth = basic_auth("__token__", "secret-token").unwrap();
+        Mock::given(method("GET"))
+            .and(path("/files/auth_sync_pkg-1.0.0-py3-none-any.whl"))
+            .and(header("authorization", expected_auth.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        std::mem::forget(server);
+        (url, digest)
+    });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let creds = tmp.path().join("credentials");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+    let login = Command::new(mamba_bin())
+        .args(["auth", "login", &server_url, "--token", "secret-token"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba auth login");
+    assert!(
+        login.status.success(),
+        "auth login must succeed: {}",
+        String::from_utf8_lossy(&login.stderr)
+    );
+
+    let wheel_url = format!("{server_url}/files/auth_sync_pkg-1.0.0-py3-none-any.whl");
+    let lock = format!(
+        "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"auth_sync_pkg\"\nversion = \"1.0.0\"\nsha256 = \"{body_sha}\"\nurl = \"{wheel_url}\"\nsource = \"pypi://auth_sync_pkg/1.0.0\"\ndependencies = []\n"
+    );
+    std::fs::write(proj.join("mamba.lock"), lock).unwrap();
+
+    let out = Command::new(mamba_bin())
+        .args(["sync"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .env("MAMBA_CACHE_DIR", &cache)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba sync");
+    assert!(
+        out.status.success(),
+        "authenticated sync must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let wheel = cache.join("artifacts/auth-sync-pkg/auth_sync_pkg-1.0.0-py3-none-any.whl");
+    assert!(
+        wheel.exists(),
+        "downloaded wheel missing: {}",
+        wheel.display()
+    );
+}
+
+#[test]
 fn sync_downloads_many_packages_in_parallel() {
     // Tick 16: stage N wheels on wiremock and verify `mamba sync` fetches
     // every one of them when the lockfile names them all. This validates the

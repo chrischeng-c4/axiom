@@ -235,12 +235,14 @@ fn download_and_verify_parallel(plan: &[LockedPkg], max_concurrent: usize) -> Re
                     .acquire()
                     .await
                     .expect("sync semaphore never closes mid-flight");
+                let auth_header = crate::pkgmanage::auth::authorization_for_url(&pkg.url)?;
                 let client = IndexClient {
                     index_url: derive_index_url(&pkg.url),
                     cache_dir: (*cache).clone(),
                     max_concurrent: 4,
                     timeout_secs: 60,
                     retry_max: 3,
+                    auth_header,
                 };
                 let file = ReleaseFile {
                     filename: derive_filename(&pkg.url, &pkg.name, &pkg.version),

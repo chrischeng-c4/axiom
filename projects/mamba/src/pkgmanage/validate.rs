@@ -336,11 +336,104 @@ fn probe_auth(bin: &Path) -> FamilyResult {
         return FamilyResult::fail("auth logout failed");
     }
 
-    FamilyResult::pass("auth dir/login/token/logout manage plaintext credentials").with_paths(
-        None,
-        None,
-        Some(creds),
+    let expected_auth =
+        match crate::pkgmanage::pkgmgr::auth_header::basic_auth("__token__", "index-token") {
+            Ok(header) => header,
+            Err(e) => return FamilyResult::fail(format!("build auth header failed: {e}")),
+        };
+    let index_url = match spawn_auth_index(expected_auth) {
+        Ok(url) => url,
+        Err(e) => return FamilyResult::fail(format!("spawn auth index failed: {e}")),
+    };
+    let index_login = Command::new(bin)
+        .args(["auth", "login", &index_url, "--token", "index-token"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !index_login.status.success() {
+        return FamilyResult::fail(format!(
+            "auth login for local index failed: {}",
+            String::from_utf8_lossy(&index_login.stderr)
+        ));
+    }
+    let project = tmp.path().join("auth-index-project");
+    std::fs::create_dir(&project).unwrap();
+    if !invoke(bin, &project, &["init"]).status.success() {
+        return FamilyResult::fail("init failed before authenticated add probe");
+    }
+    let auth_add = Command::new(bin)
+        .args(["add", "auth_demo", "--index-url", &index_url])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .env("MAMBA_CACHE_DIR", tmp.path().join("auth-index-cache"))
+        .current_dir(&project)
+        .output()
+        .expect("spawn mamba");
+    if !auth_add.status.success() {
+        return FamilyResult::fail(format!(
+            "authenticated add failed: {}",
+            String::from_utf8_lossy(&auth_add.stderr)
+        ));
+    }
+    let lock = std::fs::read_to_string(project.join("mamba.lock")).unwrap_or_default();
+    if !lock.contains("name = \"auth_demo\"") || !lock.contains("version = \"1.0.0\"") {
+        return FamilyResult::fail(format!("authenticated add did not lock auth_demo: {lock}"));
+    }
+
+    FamilyResult::pass(
+        "auth dir/login/token/logout manage credentials; index requests use stored auth",
     )
+    .with_paths(Some(project), None, Some(creds))
+}
+
+fn spawn_auth_index(expected_auth: String) -> Result<String> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").context("bind auth index")?;
+    let addr = listener.local_addr().context("read auth index addr")?;
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap_or(0);
+        let request = String::from_utf8_lossy(&buf[..n]);
+        let authorized = request.lines().any(|line| {
+            let Some((name, value)) = line.split_once(':') else {
+                return false;
+            };
+            name.eq_ignore_ascii_case("authorization") && value.trim() == expected_auth
+        });
+        let on_path = request.starts_with("GET /pypi/auth-demo/json ");
+        let (status, body) = if authorized && on_path {
+            (
+                "200 OK",
+                serde_json::json!({
+                    "info": { "name": "auth_demo", "version": "1.0.0" },
+                    "releases": {
+                        "1.0.0": [{
+                            "filename": "auth_demo-1.0.0-py3-none-any.whl",
+                            "url": "https://example.invalid/auth_demo-1.0.0-py3-none-any.whl",
+                            "digests": { "sha256": "6666666666666666666666666666666666666666666666666666666666666666" },
+                            "yanked": false
+                        }]
+                    }
+                })
+                .to_string(),
+            )
+        } else {
+            (
+                "401 Unauthorized",
+                "{\"error\":\"missing auth\"}".to_string(),
+            )
+        };
+        let response = format!(
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+    });
+    Ok(format!("http://{addr}"))
 }
 
 fn probe_index(bin: &Path) -> FamilyResult {

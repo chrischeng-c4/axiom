@@ -202,12 +202,16 @@ fn add_upserts_existing_dep_in_place() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
 
-    assert!(run_add(tmp.path(), &["foo==1.0.0", "--offline"])
-        .status
-        .success());
-    assert!(run_add(tmp.path(), &["foo==1.1.0", "--offline"])
-        .status
-        .success());
+    assert!(
+        run_add(tmp.path(), &["foo==1.0.0", "--offline"])
+            .status
+            .success()
+    );
+    assert!(
+        run_add(tmp.path(), &["foo==1.1.0", "--offline"])
+            .status
+            .success()
+    );
 
     let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
     assert!(
@@ -549,5 +553,75 @@ fn add_prefers_native_wheel_over_purepy_via_tags() {
     assert!(
         lock.contains(&format!("sha256 = \"{}\"", native_sha)),
         "lock must carry the NATIVE wheel sha (tag-aware selection), got: {lock}"
+    );
+}
+
+#[test]
+fn add_index_url_uses_stored_auth_credentials() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (server_url, expected_sha) = rt.block_on(async {
+        use mamba::pkgmanage::pkgmgr::auth_header::basic_auth;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let sha = "c".repeat(64);
+        let body = serde_json::json!({
+            "info": { "name": "auth_pkg", "version": "1.0.0" },
+            "releases": {
+                "1.0.0": [{
+                    "filename": "auth_pkg-1.0.0-py3-none-any.whl",
+                    "url": "https://example.invalid/auth_pkg-1.0.0-py3-none-any.whl",
+                    "digests": { "sha256": &sha },
+                    "yanked": false
+                }]
+            }
+        });
+        let expected_auth = basic_auth("__token__", "secret-token").unwrap();
+        Mock::given(method("GET"))
+            .and(path("/pypi/auth-pkg/json"))
+            .and(header("authorization", expected_auth.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        std::mem::forget(server);
+        (url, sha)
+    });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let creds = tmp.path().join("credentials");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let login = Command::new(mamba_bin())
+        .args(["auth", "login", &server_url, "--token", "secret-token"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba auth login");
+    assert!(
+        login.status.success(),
+        "auth login must succeed: {}",
+        String::from_utf8_lossy(&login.stderr)
+    );
+
+    let out = Command::new(mamba_bin())
+        .args(["add", "auth_pkg", "--index-url", &server_url])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .env("MAMBA_CACHE_DIR", &cache)
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba add");
+    assert!(
+        out.status.success(),
+        "authenticated add must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let lock = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
+    assert!(
+        lock.contains(&format!("sha256 = \"{}\"", expected_sha)),
+        "lock must carry sha from authenticated index: {lock}"
     );
 }
