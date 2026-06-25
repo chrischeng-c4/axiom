@@ -18,6 +18,11 @@
 # Tool-local runtime state such as GH device ids; process-local, never source.
 .local/
 
+# keep's default data dir (WAL + snapshots) — written under the cwd when keep runs
+# without KEEP_DATA_DIR set (e.g. from the repo root in an ad-hoc run). Runtime
+# store, never source. e2e scripts point KEEP_DATA_DIR at /tmp; this catches strays.
+/data/
+
 # vat copy-on-write workspaces and run state; process output, never source.
 .vat/
 
