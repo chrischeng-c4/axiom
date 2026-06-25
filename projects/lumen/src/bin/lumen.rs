@@ -752,9 +752,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
     tracing::info!(addr = %bind, shard_count = args.shard_count, "lumen serve listening");
 
     let grace = Duration::from_secs(args.grace_secs);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(engine.clone(), grace))
-        .await?;
+    // Serve HTTP/1.1 + h2c on one port via the shared h2c transport (hyper
+    // auto-builder), not `axum::serve` (HTTP/1-only). Matches the service
+    // archetype and lets in-cluster h2c clients connect.
+    h2c::serve(listener, app, shutdown_signal(engine.clone(), grace)).await;
     // Flush any batched spans before exit (no-op when OTLP was never enabled).
     #[cfg(feature = "otel")]
     opentelemetry::global::shutdown_tracer_provider();
