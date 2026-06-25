@@ -3,6 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use mamba::pkgmanage::pkgmgr::wheel_build::{
+    CoreMetadata, WheelBuilder, WheelMetadata, compose_filename,
+};
+
 fn mamba_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mamba"))
 }
@@ -19,6 +23,32 @@ fn write_dist(site: &Path, dir_name: &str, metadata: &str) {
     let dist = site.join(dir_name);
     std::fs::create_dir_all(&dist).unwrap();
     std::fs::write(dist.join("METADATA"), metadata).unwrap();
+}
+
+fn build_wheel(root: &Path, name: &str, version: &str, requires: &[&str]) -> PathBuf {
+    let filename = compose_filename(name, version, "py3", "none", "any");
+    let mut wheel_meta = WheelMetadata::new("mamba-pkgmgr-test");
+    wheel_meta.tags.push("py3-none-any".into());
+    let mut core_meta = CoreMetadata::new(name, version);
+    core_meta.requires_dist = requires.iter().map(|r| r.to_string()).collect();
+    let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
+    let module = name.replace(['-', '.'], "_").to_ascii_lowercase();
+    builder.add_file(
+        format!("{module}/__init__.py"),
+        format!("__version__ = {version:?}\n"),
+    );
+    builder.build_to_dir(root).unwrap()
+}
+
+fn build_wheel_index(wheels: &[PathBuf]) -> (tempfile::TempDir, std::process::Output) {
+    let index = tempfile::tempdir().unwrap();
+    let mut args = vec!["index", "build", "--out", index.path().to_str().unwrap()];
+    for wheel in wheels {
+        args.push(wheel.to_str().unwrap());
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let out = run(tmp.path(), &args);
+    (index, out)
 }
 
 fn fixture_site() -> tempfile::TempDir {
@@ -121,6 +151,282 @@ fn pip_check_reports_success_for_consistent_inventory() {
     );
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("No broken requirements found."));
+}
+
+#[test]
+fn pip_install_direct_wheel_and_uninstall_use_record() {
+    let wheel_dir = tempfile::tempdir().unwrap();
+    let wheel = build_wheel(wheel_dir.path(), "demo-pkg", "1.0.0", &[]);
+    let site = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+
+    let install = run(
+        tmp.path(),
+        &[
+            "pip",
+            "install",
+            wheel.to_str().unwrap(),
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    assert!(
+        install.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+    assert!(
+        site.path().join("demo_pkg").join("__init__.py").exists(),
+        "wheel module should be installed"
+    );
+
+    let list = run(
+        tmp.path(),
+        &[
+            "pip",
+            "list",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--no-header",
+        ],
+    );
+    assert!(list.status.success());
+    assert!(
+        String::from_utf8_lossy(&list.stdout).contains("demo-pkg"),
+        "{}",
+        String::from_utf8_lossy(&list.stdout)
+    );
+
+    let uninstall = run(
+        tmp.path(),
+        &[
+            "pip",
+            "uninstall",
+            "demo-pkg",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+        ],
+    );
+    assert!(
+        uninstall.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&uninstall.stderr)
+    );
+    assert!(
+        !site.path().join("demo_pkg").join("__init__.py").exists(),
+        "RECORD uninstall should remove installed package files"
+    );
+}
+
+#[test]
+fn pip_install_from_frozen_index_installs_dependencies() {
+    let wheel_dir = tempfile::tempdir().unwrap();
+    let app = build_wheel(wheel_dir.path(), "demo-app", "1.0.0", &["demo-dep==0.2.0"]);
+    let dep = build_wheel(wheel_dir.path(), "demo-dep", "0.2.0", &[]);
+    let (index, index_out) = build_wheel_index(&[app, dep]);
+    assert!(
+        index_out.status.success(),
+        "index stderr: {}",
+        String::from_utf8_lossy(&index_out.stderr)
+    );
+
+    let site = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let install = run(
+        tmp.path(),
+        &[
+            "pip",
+            "install",
+            "demo-app==1.0.0",
+            "--index",
+            index.path().to_str().unwrap(),
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    assert!(
+        install.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    let tree = run(
+        tmp.path(),
+        &[
+            "pip",
+            "tree",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--package",
+            "demo-app",
+        ],
+    );
+    assert!(tree.status.success());
+    let stdout = String::from_utf8_lossy(&tree.stdout);
+    assert!(stdout.contains("demo-app v1.0.0"), "{stdout}");
+    assert!(stdout.contains("demo-dep v0.2.0"), "{stdout}");
+}
+
+#[test]
+fn pip_sync_installs_requirements_and_prunes_extras() {
+    let wheel_dir = tempfile::tempdir().unwrap();
+    let app = build_wheel(wheel_dir.path(), "sync-app", "1.0.0", &["sync-dep==0.2.0"]);
+    let dep = build_wheel(wheel_dir.path(), "sync-dep", "0.2.0", &[]);
+    let extra = build_wheel(wheel_dir.path(), "sync-extra", "9.9.9", &[]);
+    let (index, index_out) = build_wheel_index(&[app, dep]);
+    assert!(
+        index_out.status.success(),
+        "index stderr: {}",
+        String::from_utf8_lossy(&index_out.stderr)
+    );
+
+    let site = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let preinstall = run(
+        tmp.path(),
+        &[
+            "pip",
+            "install",
+            extra.to_str().unwrap(),
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    assert!(preinstall.status.success());
+
+    let requirements = tmp.path().join("requirements.txt");
+    std::fs::write(&requirements, "sync-app==1.0.0\n").unwrap();
+    let sync = run(
+        tmp.path(),
+        &[
+            "pip",
+            "sync",
+            requirements.to_str().unwrap(),
+            "--index",
+            index.path().to_str().unwrap(),
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    assert!(
+        sync.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let freeze = run(
+        tmp.path(),
+        &[
+            "pip",
+            "freeze",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+        ],
+    );
+    assert!(freeze.status.success());
+    let stdout = String::from_utf8_lossy(&freeze.stdout);
+    assert!(stdout.contains("sync-app==1.0.0"), "{stdout}");
+    assert!(stdout.contains("sync-dep==0.2.0"), "{stdout}");
+    assert!(!stdout.contains("sync-extra"), "{stdout}");
+}
+
+#[test]
+fn pip_sync_keeps_dependencies_when_root_is_already_installed() {
+    let wheel_dir = tempfile::tempdir().unwrap();
+    let app = build_wheel(
+        wheel_dir.path(),
+        "ready-app",
+        "1.0.0",
+        &["ready-dep==0.2.0"],
+    );
+    let dep = build_wheel(wheel_dir.path(), "ready-dep", "0.2.0", &[]);
+    let extra = build_wheel(wheel_dir.path(), "ready-extra", "9.9.9", &[]);
+    let (index, index_out) = build_wheel_index(&[app.clone(), dep]);
+    assert!(
+        index_out.status.success(),
+        "index stderr: {}",
+        String::from_utf8_lossy(&index_out.stderr)
+    );
+
+    let site = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let install_root = run(
+        tmp.path(),
+        &[
+            "pip",
+            "install",
+            app.to_str().unwrap(),
+            "--index",
+            index.path().to_str().unwrap(),
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    assert!(
+        install_root.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&install_root.stderr)
+    );
+    let install_extra = run(
+        tmp.path(),
+        &[
+            "pip",
+            "install",
+            extra.to_str().unwrap(),
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    assert!(install_extra.status.success());
+
+    let requirements = tmp.path().join("requirements.txt");
+    std::fs::write(&requirements, "ready-app==1.0.0\n").unwrap();
+    let sync = run(
+        tmp.path(),
+        &[
+            "pip",
+            "sync",
+            requirements.to_str().unwrap(),
+            "--index",
+            index.path().to_str().unwrap(),
+            "--site-packages",
+            site.path().to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    assert!(
+        sync.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let freeze = run(
+        tmp.path(),
+        &[
+            "pip",
+            "freeze",
+            "--site-packages",
+            site.path().to_str().unwrap(),
+        ],
+    );
+    assert!(freeze.status.success());
+    let stdout = String::from_utf8_lossy(&freeze.stdout);
+    assert!(stdout.contains("ready-app==1.0.0"), "{stdout}");
+    assert!(stdout.contains("ready-dep==0.2.0"), "{stdout}");
+    assert!(!stdout.contains("ready-extra"), "{stdout}");
 }
 
 #[test]
