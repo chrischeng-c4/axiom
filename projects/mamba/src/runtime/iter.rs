@@ -574,9 +574,12 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                         return mb_iter(buf);
                     } else
                     // Dict-like collections classes: iterate over backing _data dict keys.
+                    // contextvars.Context iterates its captured ContextVar keys
+                    // (the `_data` snapshot), matching CPython. Issue #282.
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"
                         || class_name == "collections.OrderedDict"
+                        || class_name == "Context"
                     {
                         let guard = fields.read().unwrap();
                         let data = guard.get("_data").copied().unwrap_or(MbValue::none());
