@@ -93,6 +93,11 @@ relay-wal = ["dep:relay", "dep:reqwest"]
 # only reqwest is gated here so the default serving build stays HTTP-client-free
 # and clean to cross-compile. The published binary enables it (lumen-release.yml).
 self-update = ["dep:reqwest"]
+# report-issue — `lumen report-issue`'s node-probe + GitHub issue-submit path
+# needs the otherwise-optional HTTP client. The offline path (diagnostics +
+# pre-filled URL + --dry-run) works without it, so the default build still
+# offers the command. The published binary enables it (lumen-release.yml).
+report-issue = ["dep:reqwest"]
 operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars"]
 # OTLP trace export. Compiled into the release binary (lumen-release.yml / build.sh
 # pass --features otel); off in plain dev builds so they don't pay the OTLP build
