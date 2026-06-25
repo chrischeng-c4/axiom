@@ -66,13 +66,19 @@ pub fn issue_payload(title: &str, body: &str, labels: &[String]) -> serde_json::
     serde_json::Value::Object(map)
 }
 
-/// A browser-openable pre-filled `issues/new` URL (title + body percent-encoded).
-pub fn prefilled_url(repo: &str, title: &str, body: &str) -> String {
-    format!(
+/// A browser-openable pre-filled `issues/new` URL (title + body + labels
+/// percent-encoded). Labels are comma-joined into the `labels` query param so
+/// the convention's `project:<name>` tag survives the no-token fallback path.
+pub fn prefilled_url(repo: &str, title: &str, body: &str, labels: &[String]) -> String {
+    let mut url = format!(
         "https://github.com/{repo}/issues/new?title={}&body={}",
         percent_encode_query(title),
         percent_encode_query(body),
-    )
+    );
+    if !labels.is_empty() {
+        url.push_str(&format!("&labels={}", percent_encode_query(&labels.join(","))));
+    }
+    url
 }
 
 fn percent_encode_query(s: &str) -> String {
@@ -88,19 +94,22 @@ fn percent_encode_query(s: &str) -> String {
     out
 }
 
-fn print_preview(repo: &str, title: &str, body: &str) {
+fn print_preview(repo: &str, title: &str, body: &str, labels: &[String]) {
     println!("repo:  {repo}");
     println!("title: {title}");
+    if !labels.is_empty() {
+        println!("labels: {}", labels.join(", "));
+    }
     println!("---");
     println!("{body}");
 }
 
-fn print_fallback(repo: &str, title: &str, body: &str) {
+fn print_fallback(repo: &str, title: &str, body: &str, labels: &[String]) {
     eprintln!(
         "note: no GITHUB_TOKEN set (or built without the `online` feature) — \
          open this pre-filled issue, or set GITHUB_TOKEN to file it directly:"
     );
-    println!("{}", prefilled_url(repo, title, body));
+    println!("{}", prefilled_url(repo, title, body, labels));
     eprintln!("\n--- title ---\n{title}\n--- body ---\n{body}");
 }
 
@@ -125,7 +134,7 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
     );
 
     if opts.dry_run {
-        print_preview(&repo, &opts.title, &body);
+        print_preview(&repo, &opts.title, &body, &opts.label);
         return Ok(());
     }
 
@@ -144,7 +153,7 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
             .await?;
             println!("filed: {url}");
         }
-        None => print_fallback(&repo, &opts.title, &body),
+        None => print_fallback(&repo, &opts.title, &body, &opts.label),
     }
     Ok(())
 }
@@ -155,9 +164,9 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
     let body = assemble_body(opts.message.as_deref(), &render_diagnostics(tool, None));
     if opts.dry_run {
-        print_preview(&repo, &opts.title, &body);
+        print_preview(&repo, &opts.title, &body, &opts.label);
     } else {
-        print_fallback(&repo, &opts.title, &body);
+        print_fallback(&repo, &opts.title, &body, &opts.label);
     }
     Ok(())
 }
@@ -244,9 +253,13 @@ mod tests {
 
     #[test]
     fn url_and_repo_and_payload() {
-        let u = prefilled_url("o/n", "a b&c", "x\ny");
+        let u = prefilled_url("o/n", "a b&c", "x\ny", &[]);
         assert!(u.starts_with("https://github.com/o/n/issues/new?title="));
         assert!(u.contains("a%20b%26c") && u.contains("x%0Ay") && !u.contains(' '));
+        assert!(!u.contains("labels="));
+        // Labels survive the no-token URL fallback (convention `project:<name>`).
+        let ul = prefilled_url("o/n", "t", "b", &["project:jet".into(), "bug".into()]);
+        assert!(ul.contains("&labels=project%3Ajet%2Cbug"));
         assert_eq!(resolve_repo(&TOOL, None), "chrischeng-c4/axiom");
         assert_eq!(resolve_repo(&TOOL, Some("o/n")), "o/n");
         let p = issue_payload("t", "b", &["bug".into()]);
