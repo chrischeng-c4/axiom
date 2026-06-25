@@ -1,0 +1,93 @@
+# Auto-release on version bump.
+#
+# When a commit lands on `main` that bumps a project's pinned version in
+# `projects/<name>/Cargo.toml`, this workflow creates the matching
+# `<name>@<version>` git tag, which fires that project's existing
+# `<name>-release.yml` (build + GitHub release). No manual tagging needed.
+#
+# Why a PAT (not the default GITHUB_TOKEN): a tag pushed with the workflow's
+# automatic GITHUB_TOKEN does NOT trigger another workflow (GitHub's
+# anti-recursion rule), so the per-project release workflow would never run.
+# Pushing with a Personal Access Token (the `RELEASE_PAT` secret) makes the tag
+# a normal push event that DOES trigger `<name>-release.yml`.
+#
+# Setup (one-time): add a repo secret `RELEASE_PAT` — a fine-grained PAT with
+# `contents: read & write` on this repo (classic PATs need `repo` + `workflow`).
+# Without it the workflow no-ops with a clear message.
+#
+# This only TAGS; each project's release workflow owns its own build args
+# (features, --bin, package name), so adding/removing a project here is just a
+# matter of the `PROJECTS` list below + that project pinning its own version.
+name: auto-release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "projects/*/Cargo.toml"
+  workflow_dispatch:
+
+# Serialize runs so two quick merges can't race on the same tag.
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check RELEASE_PAT is configured
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          if [ -z "${RELEASE_PAT}" ]; then
+            echo "::warning::RELEASE_PAT secret is not set — auto-release is a no-op."
+            echo "Add a PAT secret named RELEASE_PAT (contents: read & write) to enable it."
+            echo "skip=true" >> "${GITHUB_ENV}"
+          fi
+
+      # Check out with the PAT so `git push` of new tags triggers the
+      # per-project release workflows. Full history + tags so we can tell which
+      # `<project>@<version>` tags already exist.
+      - uses: actions/checkout@v4
+        if: env.skip != 'true'
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Tag bumped projects
+        if: env.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          set -euo pipefail
+          # Releasable projects — each pins its own version in
+          # projects/<name>/Cargo.toml and ships a <name>-release.yml.
+          PROJECTS="jet lumen vat cap meter arena"
+
+          for p in ${PROJECTS}; do
+            manifest="projects/${p}/Cargo.toml"
+            [ -f "${manifest}" ] || { echo "${p}: no ${manifest} — skip"; continue; }
+
+            # First top-level `version = "X.Y.Z"` is the project's pinned version.
+            ver="$(grep -m1 -E '^version = "' "${manifest}" | sed -E 's/version = "(.*)"/\1/')"
+            if [ -z "${ver}" ]; then
+              echo "${p}: no pinned version in ${manifest} — skip"
+              continue
+            fi
+            tag="${p}@${ver}"
+
+            if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null \
+               || gh release view "${tag}" >/dev/null 2>&1; then
+              echo "${tag}: already tagged/released — skip"
+              continue
+            fi
+
+            echo "${tag}: new version — tagging to trigger ${p}-release.yml"
+            git tag -a "${tag}" -m "${p} ${ver} (auto-released on version bump)"
+            git push origin "${tag}"
+          done
