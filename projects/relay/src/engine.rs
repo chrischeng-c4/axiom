@@ -13,7 +13,7 @@
 //! Internally synchronized (per-shard `Mutex` behind an `RwLock` map, #128); all
 //! methods take `&self`. Share it as `Arc<Relay>`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -352,6 +352,27 @@ impl Relay {
         Ok(false)
     }
 
+    /// Release (Nack) a held lease for immediate redelivery; routed by scanning
+    /// shards for the `lease_id`. Wakes the subject's consumers so an idle
+    /// `/consume` stream re-leases the entry at once instead of waiting for TTL.
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn release(&self, subject: &str, lease_id: &str) -> io::Result<bool> {
+        let mut released = false;
+        for shard in 0..self.shards {
+            let ss = self.shard_state(subject, shard)?;
+            let mut g = ss.lock().expect("subject mutex");
+            if g.workqueue.release(lease_id) {
+                released = true;
+                break;
+            }
+        }
+        if released {
+            self.wake_subscribers(subject);
+        }
+        Ok(released)
+    }
+
     /// Acknowledge many leases; each shard acks the ones it owns. Returns
     /// (accepted count, committed offset of shard 0).
     ///
@@ -431,24 +452,34 @@ impl Relay {
     ///
     /// @spec projects/relay/tech-design/logic/reconciler-lease-reclaim-redeliver-liveness.md#logic
     pub fn reconcile(&self, now: DateTime<Utc>) -> usize {
-        let states: Vec<Arc<Mutex<SubjectState>>> = {
+        let states: Vec<(String, Arc<Mutex<SubjectState>>)> = {
             self.subjects
                 .read()
                 .expect("subjects rwlock")
-                .values()
-                .cloned()
+                .iter()
+                .map(|((subject, _shard), s)| (subject.clone(), Arc::clone(s)))
                 .collect()
         };
-        states
-            .iter()
-            .map(|s| {
-                s.lock()
-                    .expect("subject mutex")
-                    .workqueue
-                    .reclaim_expired(now)
-                    .len()
-            })
-            .sum()
+        let mut total = 0;
+        // Subjects with ≥1 reclaimed lease: wake their consumers so a redelivered
+        // entry is re-leased immediately (matches `release`; #465 wake-based push).
+        let mut woken: HashSet<String> = HashSet::new();
+        for (subject, s) in &states {
+            let n = s
+                .lock()
+                .expect("subject mutex")
+                .workqueue
+                .reclaim_expired(now)
+                .len();
+            if n > 0 {
+                total += n;
+                woken.insert(subject.clone());
+            }
+        }
+        for subject in woken {
+            self.wake_subscribers(&subject);
+        }
+        total
     }
 }
 // HANDWRITE-END
