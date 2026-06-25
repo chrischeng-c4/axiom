@@ -98,6 +98,29 @@ fn heartbeat_extends_lease() {
     assert!(r.reclaim_expired("q", past_original).unwrap().is_empty());
 }
 
+// release (Nack) makes a lease redelivery-eligible immediately — no ttl wait —
+// preserving the attempt count (epoch bumps on the re-lease). #465 fast Nack.
+#[test]
+fn release_redelivers_immediately() {
+    let mut r = relay();
+    let now = Utc::now();
+    publish(&mut r, "q", "m0");
+
+    let l0 = r.lease("q", "c1", now).unwrap().unwrap();
+    assert_eq!((l0.seq, l0.epoch), (0, 1));
+
+    // release at `now` (well within the ttl) re-leases at once at `now`.
+    assert!(r.release("q", &l0.lease_id).unwrap());
+    let l1 = r.lease("q", "c2", now).unwrap().unwrap();
+    assert_eq!(l1.seq, 0, "released seq is redelivered without waiting for ttl");
+    assert_eq!(l1.epoch, 2, "epoch bumped on re-lease");
+
+    // releasing an unknown / already-released lease is a no-op.
+    assert!(!r.release("q", &l0.lease_id).unwrap());
+    // the released entry was never committed (release does not ack).
+    assert!(r.committed_offset("q").unwrap().is_none());
+}
+
 // heartbeat is fenced: unknown lease / stale epoch returns None.
 #[test]
 fn heartbeat_is_fenced() {
