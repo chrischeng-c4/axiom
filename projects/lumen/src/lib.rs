@@ -63,6 +63,8 @@ pub mod storage;
 pub mod tls;
 pub mod tokenize;
 pub mod types;
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
+pub mod upgrade;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;

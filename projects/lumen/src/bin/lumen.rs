@@ -64,6 +64,12 @@ enum Command {
     /// controller (requires a build with `--features operator`); `gen-crd` prints
     /// the Lumen CustomResourceDefinition YAML for `kubectl apply`.
     K8s(K8sArgs),
+    /// Self-update this binary from a published GitHub release. Resolves the
+    /// running target + version, downloads the matching `lumen-<target>.tar.gz`,
+    /// verifies its sha256, and atomically replaces the running executable.
+    /// `--check` reports the available version without changing anything.
+    // @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
+    Upgrade(UpgradeArgs),
 }
 
 #[derive(clap::Args)]
@@ -78,6 +84,24 @@ enum K8sCmd {
     Operator,
     /// Print the Lumen CustomResourceDefinition as YAML and exit.
     GenCrd,
+}
+
+/// `lumen upgrade` flags.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
+#[derive(clap::Args)]
+struct UpgradeArgs {
+    /// Report the current and latest version without modifying the binary.
+    #[arg(long)]
+    check: bool,
+    /// Install this exact version (`0.4.3` or `lumen@0.4.3`) instead of the latest.
+    #[arg(long)]
+    tag: Option<String>,
+    /// Reinstall even when already on the selected version.
+    #[arg(long)]
+    force: bool,
+    /// Skip the confirmation prompt.
+    #[arg(short = 'y', long)]
+    yes: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -338,6 +362,15 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::K8s(args) => k8s(args).await,
+        Command::Upgrade(args) => {
+            lumen::upgrade::run(lumen::upgrade::Options {
+                check: args.check,
+                tag: args.tag,
+                force: args.force,
+                yes: args.yes,
+            })
+            .await
+        }
     }
 }
 
