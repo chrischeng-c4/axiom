@@ -29,4 +29,5 @@ pub mod source;
 pub mod sync;
 pub mod tree;
 pub mod validate;
+pub mod venv;
 pub mod version;
