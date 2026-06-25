@@ -188,7 +188,6 @@ e2e_tests:
     assertions:
       - "the existing REST e2e tests pass unchanged (REST + gRPC coexist on one port)."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
