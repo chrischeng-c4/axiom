@@ -13,6 +13,7 @@ use crate::pkgmanage::pkgmgr::pip_check::version_satisfies_all;
 use crate::pkgmanage::pkgmgr::pip_inventory::{
     InstalledDist, enumerate_installed, find_by_name, parse_metadata,
 };
+use crate::pkgmanage::pkgmgr::pip_registry::{download_registry_artifact, resolve_registry};
 use crate::pkgmanage::pkgmgr::requirements_loader::{LoadedRequirements, load_requirements_file};
 use crate::pkgmanage::pkgmgr::requirements_parse::{
     PackageRequirement, RequirementLine, parse_one_line,
@@ -25,7 +26,13 @@ use crate::pkgmanage::pkgmgr::{
 pub struct InstallOptions {
     pub site_packages: PathBuf,
     pub python: PathBuf,
-    pub index: Option<PathBuf>,
+    pub index: Option<InstallIndex>,
+}
+
+#[derive(Debug, Clone)]
+pub enum InstallIndex {
+    Frozen(PathBuf),
+    Registry(String),
 }
 
 #[derive(Debug, Clone)]
@@ -163,12 +170,49 @@ fn install_requirement(
         );
     }
 
-    let index = opts
-        .index
-        .as_deref()
-        .context("mamba pip install/sync requires --index DIR for package requirements")?;
-    let wheel = find_index_wheel(req, index)?;
-    install_wheel_recursive(&wheel, opts, state)
+    match opts.index.as_ref() {
+        Some(InstallIndex::Frozen(index)) => {
+            let wheel = find_index_wheel(req, index)?;
+            install_wheel_recursive(&wheel, opts, state)
+        }
+        Some(InstallIndex::Registry(index_url)) => {
+            install_registry_requirement(req, index_url, opts, state)
+        }
+        None => bail!(
+            "mamba pip install/sync requires --index DIR or --index-url URL for package requirements"
+        ),
+    }
+}
+
+fn install_registry_requirement(
+    req: &PackageRequirement,
+    index_url: &str,
+    opts: &InstallOptions,
+    state: &mut InstallState,
+) -> Result<()> {
+    let resolved = resolve_registry(index_url, std::slice::from_ref(req))?;
+    for node in &resolved.graph.nodes {
+        let pinned_req = PackageRequirement {
+            name: node.name.clone(),
+            specifiers: vec![format!("=={}", node.version)],
+            ..PackageRequirement::default()
+        };
+        if let Some(existing) = installed_satisfying(&pinned_req, &opts.site_packages) {
+            state.desired.insert(existing.canonical_name.clone());
+            state.actions.push(format!(
+                "already installed {}=={}",
+                existing.name, existing.version
+            ));
+            continue;
+        }
+        let file = resolved
+            .artifacts
+            .get(&node.name)
+            .with_context(|| format!("missing artifact for {}=={}", node.name, node.version))?;
+        let wheel = download_registry_artifact(index_url, &node.name, file)?;
+        let _ = install_wheel_once(&wheel, opts, state)?;
+    }
+    Ok(())
 }
 
 fn install_wheel_recursive(
@@ -176,9 +220,20 @@ fn install_wheel_recursive(
     opts: &InstallOptions,
     state: &mut InstallState,
 ) -> Result<()> {
+    if let Some(metadata) = install_wheel_once(wheel, opts, state)? {
+        install_metadata_dependencies(&metadata.requires, opts, state, &metadata.name)?;
+    }
+    Ok(())
+}
+
+fn install_wheel_once(
+    wheel: &Path,
+    opts: &InstallOptions,
+    state: &mut InstallState,
+) -> Result<Option<InstalledDist>> {
     let wheel = absolute_path(wheel)?;
     if !state.seen_wheels.insert(wheel.clone()) {
-        return Ok(());
+        return Ok(None);
     }
 
     let metadata = read_wheel_metadata(&wheel)?;
@@ -199,8 +254,7 @@ fn install_wheel_recursive(
         result.distribution, result.version
     ));
 
-    install_metadata_dependencies(&metadata.requires, opts, state, &metadata.name)?;
-    Ok(())
+    Ok(Some(metadata))
 }
 
 fn install_metadata_dependencies(

@@ -92,7 +92,8 @@ local wheel paths, explicit registry URL tests, lockfile export to
 requirements.txt / pylock.toml, dependency-tree rendering, PEP 621 version
 bumping, and pip-compatible requirements compile plus installed-environment
 install/sync/uninstall/list/freeze/show/tree/check inspection and
-dependency-tree rendering. `mamba audit` checks `mamba.lock` against an offline
+dependency-tree rendering against frozen indexes and explicit registry URLs.
+`mamba audit` checks `mamba.lock` against an offline
 advisory database, and `mamba lock --check` / `mamba sync --check` provide
 CI-friendly drift gates without mutating lockfiles or environments. `mamba package build`
 now emits deterministic pure-Python wheel and sdist artifacts from PEP 621
@@ -120,8 +121,8 @@ coverage opt-in/report-only. `mamba add` / `mamba lock` do not treat public
 PyPI as an implicit default source; callers must provide a frozen local index,
 direct local wheel file, or explicit registry URL when resolving dependencies.
 Full uv parity remains open under #519; remaining command families include live
-Python standalone downloads, real network publish uploads, live-index pip
-compile/install/sync parity, and related parity fixtures.
+Python standalone downloads, real network publish uploads, and related parity
+fixtures.
 
 ## Test Completeness — what we tested, against what authority
 

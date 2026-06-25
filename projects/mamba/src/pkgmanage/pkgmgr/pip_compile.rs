@@ -17,6 +17,7 @@ use crate::pkgmanage::pkgmgr::pip_compile::CompileFormat::{PylockToml, Requireme
 use crate::pkgmanage::pkgmgr::pip_install::{
     find_index_wheel, is_extra_marker, read_wheel_metadata,
 };
+use crate::pkgmanage::pkgmgr::pip_registry::resolve_registry;
 use crate::pkgmanage::pkgmgr::pylock_export::{PylockOptions, render_pylock_toml};
 use crate::pkgmanage::pkgmgr::requirements_export::{ExportOptions, export_requirements_txt};
 use crate::pkgmanage::pkgmgr::requirements_loader::{
@@ -33,8 +34,14 @@ pub enum CompileFormat {
 }
 
 #[derive(Debug, Clone)]
+pub enum CompileIndex {
+    Frozen(PathBuf),
+    Registry(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct CompileOptions {
-    pub index: PathBuf,
+    pub index: CompileIndex,
     pub output_file: Option<PathBuf>,
     pub format: CompileFormat,
     pub include_header: bool,
@@ -61,16 +68,11 @@ pub fn compile_sources(src_files: &[PathBuf], opts: &CompileOptions) -> Result<S
     }
 
     let constraints = constraints_by_name(&loaded.constraints)?;
-    let mut state = CompileState::default();
-    for req in &loaded.primary {
-        resolve_requirement(req, &constraints, opts, &mut state)?;
-    }
-
-    let packages = state.packages.into_values().collect::<Vec<_>>();
-    let lockfile = Lockfile {
-        format_version: 1,
-        input_hash: input_hash(&loaded),
-        packages,
+    let lockfile = match &opts.index {
+        CompileIndex::Frozen(index) => compile_frozen_lockfile(&loaded, &constraints, opts, index)?,
+        CompileIndex::Registry(index_url) => {
+            compile_registry_lockfile(&loaded, &constraints, opts, index_url)?
+        }
     };
 
     Ok(match opts.format {
@@ -85,6 +87,98 @@ pub fn compile_sources(src_files: &[PathBuf], opts: &CompileOptions) -> Result<S
             },
         ),
         PylockToml => render_pylock_toml(&lockfile, &PylockOptions::default()),
+    })
+}
+
+fn compile_frozen_lockfile(
+    loaded: &LoadedRequirements,
+    constraints: &BTreeMap<String, Vec<String>>,
+    opts: &CompileOptions,
+    index: &Path,
+) -> Result<Lockfile> {
+    let mut state = CompileState::default();
+    for req in &loaded.primary {
+        resolve_requirement(req, constraints, opts, index, &mut state)?;
+    }
+
+    Ok(Lockfile {
+        format_version: 1,
+        input_hash: input_hash(loaded),
+        packages: state.packages.into_values().collect::<Vec<_>>(),
+    })
+}
+
+fn compile_registry_lockfile(
+    loaded: &LoadedRequirements,
+    constraints: &BTreeMap<String, Vec<String>>,
+    opts: &CompileOptions,
+    index_url: &str,
+) -> Result<Lockfile> {
+    let roots = loaded
+        .primary
+        .iter()
+        .map(|req| constrained_requirement(req, constraints))
+        .collect::<Vec<_>>();
+    let resolved = resolve_registry(index_url, &roots)?;
+    let pinned: BTreeMap<String, String> = resolved
+        .graph
+        .nodes
+        .iter()
+        .map(|n| (n.name.clone(), n.version.clone()))
+        .collect();
+    let root_names = resolved
+        .graph
+        .roots
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let mut packages = Vec::new();
+    for node in &resolved.graph.nodes {
+        if opts.no_deps && !root_names.contains(&node.name) {
+            continue;
+        }
+        let artifact = resolved.artifacts.get(&node.name);
+        let sha256 = artifact
+            .map(|f| f.hash.digest.clone())
+            .or_else(|| {
+                node.files
+                    .iter()
+                    .find(|h| h.algorithm == "sha256")
+                    .map(|h| h.digest.clone())
+            })
+            .unwrap_or_default();
+        let dependencies = if opts.no_deps {
+            Vec::new()
+        } else {
+            node.requires
+                .iter()
+                .map(|req| match pinned.get(&req.name) {
+                    Some(version) => format!("{}=={}", req.name, version),
+                    None => req.name.clone(),
+                })
+                .collect()
+        };
+        packages.push(Package {
+            name: node.name.clone(),
+            version: node.version.clone(),
+            sha256,
+            source: format!("pypi://{}/{}", node.name, node.version),
+            dependencies,
+            markers: None,
+            source_ref: Some(SourceRef {
+                kind: SourceRefKind::Registry,
+                path: None,
+                url: None,
+                rev: None,
+            }),
+        });
+    }
+
+    Ok(Lockfile {
+        format_version: 1,
+        input_hash: input_hash(loaded),
+        packages,
     })
 }
 
@@ -187,10 +281,11 @@ fn resolve_requirement(
     req: &PackageRequirement,
     constraints: &BTreeMap<String, Vec<String>>,
     opts: &CompileOptions,
+    index: &Path,
     state: &mut CompileState,
 ) -> Result<()> {
     let req = constrained_requirement(req, constraints);
-    let wheel = wheel_for_requirement(&req, &opts.index)?;
+    let wheel = wheel_for_requirement(&req, index)?;
     let metadata = read_wheel_metadata(&wheel)?;
     let key = metadata.canonical_name.clone();
 
@@ -248,7 +343,7 @@ fn resolve_requirement(
     );
 
     for dep in dep_requirements {
-        resolve_requirement(&dep, constraints, opts, state)?;
+        resolve_requirement(&dep, constraints, opts, index, state)?;
     }
     Ok(())
 }
