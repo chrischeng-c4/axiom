@@ -86,7 +86,6 @@ commands:
     behavior:
       - "Unchanged external behaviour. Internally the gRPC reverse-proxy reuses a pooled per-upstream h2c connection (multiplexed) instead of handshaking per request; a dead pooled connection is transparently re-established."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
