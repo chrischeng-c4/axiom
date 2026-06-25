@@ -77,7 +77,6 @@ properties:
     description: "Internal optimization — no vat.toml or CLI surface. One reused connection per upstream target; no tunables in this increment."
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
