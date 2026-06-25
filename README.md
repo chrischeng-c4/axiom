@@ -31,6 +31,14 @@ The runtime tools are intentionally split by responsibility:
 - `arena` compares collected benchmark results across targets.
 - `guard` turns static and runtime security evidence into one posture report.
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the repo-wide authoring contract:
+how to shape files, paths, and names so the tree stays legible to agents and
+tooling, plus the shared **service archetype** (HA, HTTP/2 + OpenAPI,
+k8s-native) and the **CLI convention** every binary follows (`llm` / `upgrade` /
+`report-issue`).
+
 ## License
 
 MIT
