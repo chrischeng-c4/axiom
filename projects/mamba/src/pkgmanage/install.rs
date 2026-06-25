@@ -16,7 +16,7 @@
 //   - Repeating an install at the same version is an idempotent
 //     no-op that emits `no_op` to stderr.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use std::fs;
 use std::io::Write as _;
@@ -27,10 +27,10 @@ const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 
 pub fn cmd_install(sub: &ArgMatches) -> Result<()> {
     if sub.get_flag("list") {
-        return action_list();
+        return list_tools();
     }
     if let Some(name) = sub.get_one::<String>("uninstall") {
-        return action_uninstall(name);
+        return uninstall_tool(name);
     }
     let name = sub
         .get_one::<String>("name")
@@ -41,10 +41,10 @@ pub fn cmd_install(sub: &ArgMatches) -> Result<()> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os(FROZEN_INDEX_ENV).map(PathBuf::from))
         .context("no frozen index configured (pass --index DIR or set $MAMBA_FROZEN_INDEX)")?;
-    action_install(name, explicit_version.as_deref(), &index)
+    install_tool(name, explicit_version.as_deref(), &index)
 }
 
-fn action_install(name: &str, explicit_version: Option<&str>, index: &Path) -> Result<()> {
+pub fn install_tool(name: &str, explicit_version: Option<&str>, index: &Path) -> Result<()> {
     let normalized = normalize_pep503(name);
     let pkg_dir = index.join(&normalized);
     if !pkg_dir.exists() {
@@ -101,7 +101,7 @@ fn action_install(name: &str, explicit_version: Option<&str>, index: &Path) -> R
     Ok(())
 }
 
-fn action_list() -> Result<()> {
+pub fn list_tools() -> Result<()> {
     let tools_root = resolve_tools_root()?;
     if !tools_root.exists() {
         return Ok(());
@@ -144,7 +144,7 @@ fn action_list() -> Result<()> {
     Ok(())
 }
 
-fn action_uninstall(name: &str) -> Result<()> {
+pub fn uninstall_tool(name: &str) -> Result<()> {
     let tools_root = resolve_tools_root()?;
     let tool_dir = tools_root.join(normalize_pep503(name));
     if !tool_dir.exists() {
