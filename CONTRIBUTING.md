@@ -1,56 +1,59 @@
 # Contributing
 
+> An agent or human should learn *what exists* and *where to act* from `ls`,
+> paths, and filenames alone — without opening files. **Every file you don't
+> open is a saved tool call, less context burned, and a more precise action.**
+
+This repository is a multi-language ecosystem (Rust runtime + libraries, TS/UI,
+Python conformance tests, specs, generated code, configs, docs, handoffs). Two
+conventions run across all of it, both in service of the same goal — a tree an
+agent can navigate cheaply and act on correctly:
+
+1. **Authoring** — how to shape *any* artifact tree (files, paths, names) so it
+   is legible from its structure alone.
+2. **Ecosystem conventions** — the shapes every long-running **service** and
+   every **CLI** repeats, so there is one stack to learn instead of one per
+   project.
+
+---
+
 ## Authoring principle: right-sized files, semantic paths, explicit names
 
-> An agent or human should learn *what exists* and *where to act* from `ls`,
-> paths, and filenames alone — without opening files. Every file you don't open
-> is a saved tool call and less context burned.
-
-This is a multi-language ecosystem (Rust runtime + libraries, TS/UI, Python
-conformance tests, specs, generated code, configs, docs, handoffs). The
-principle below is **medium-agnostic** — it is about *navigability*, not about
-any language. Make the repository legible from its structure, so an agent can
-decide where to act, and tooling can operate on the tree, without opening many
-files.
+This principle is **medium-agnostic** — it is about *navigability*, not any
+language. Make the repository legible from its structure, so an agent can decide
+where to act, and tooling can operate on the tree, without opening many files.
 
 ### The three rules
 
-1. **Right-sized files — one coherent concern per file.** A file should have a
-   single reason to exist and a single reason to be opened. "Right-sized" is the
-   point, not "small": the optimal grain depends on the *access pattern* (do
-   readers scan-and-skip, or read many at once?) and on *cohesion* (does the
-   content form one concept, or several independent ones?). See *Balanced
-   splitting*.
-2. **Semantic paths — the directory IS the taxonomy.** The path classifies the
-   content and conveys a file's role before you open it. You should be able to
-   predict an artifact's path from its identity, and vice versa.
-3. **Explicit names — the leaf name briefs the content.** `ls <dir>/` should read
-   as a table of contents. A name that needs the file body to understand it is a
-   defect — rename it (prefer the concrete observable, `isleap_rule`, over a
-   vague `misc_cases`).
+| Rule | What it asserts | Smell → fix |
+|------|-----------------|-------------|
+| **Right-sized files** | one coherent concern per file — one reason to exist, one reason to open. "Right-sized" ≠ "small": grain follows *access pattern* + *cohesion* (see *Balanced splitting*). | a file you open for several unrelated reasons → split |
+| **Semantic paths** | the directory IS the taxonomy; the path conveys a file's role before you open it. Path ⇔ identity are mutually predictable. | you can't predict the path from what the file *is* → reclassify |
+| **Explicit names** | the leaf name briefs the content; `ls <dir>/` reads as a table of contents. | a name that needs the body to grasp (`misc_cases`) → rename to the observable (`isleap_rule`) |
 
 ### Balanced splitting
 
-Splitting earns its keep only when it improves navigation, reviewability, reuse,
-or selective execution. Use the rule both ways.
+Splitting must *earn its keep* — it pays off only when it improves navigation,
+reviewability, reuse, or selective execution. Default to keeping.
 
-**Split when** any holds:
-- a reader would otherwise search *inside* the file for one independent concern;
-- the pieces are owned or reviewed separately;
-- the pieces are executed, skipped, generated, or compared independently;
-- the resulting leaf names would form a useful table of contents.
+```text
+decide(file) →
+  SPLIT  if ANY of:
+    - a reader must search INSIDE it to reach one independent concern
+    - the pieces are owned / reviewed separately
+    - the pieces are executed / skipped / generated / compared independently
+    - the resulting leaf names would form a useful table of contents
+  KEEP   if ANY of:                                # cohesion outweighs file count
+    - the pieces only make sense read together     # split → a cross-file puzzle
+    - splitting would create trivial wrapper files
+    - a shared setup dominates the content          # the setup, not the cases, is the file
+    - the directory would only get noisier, not more discoverable
+  DEFAULT → KEEP
+```
 
-**Do _not_ split when** any holds:
-- the pieces only make sense read together — high-cohesion logic shredded across
-  many files becomes a cross-file puzzle, not a clearer tree;
-- the split would create trivial wrapper files;
-- a shared setup dominates the content (the setup, not the cases, is the file);
-- the directory would just get noisier without improving discovery.
-
-Rule of thumb: if a file needs internal section headers separating *unrelated*
-concerns, split it; if its parts share one concept or one setup, keep them. (So:
-several independently named/reviewed/executed concerns → consider splitting; a
-single rule exercised over a few representative inputs → one file, as a table.)
+Tie-break: a file needing internal headers between *unrelated* concerns wants
+splitting; parts sharing one concept or one setup stay together (a single rule
+over a few representative inputs → one file, as a table).
 
 ### Granularity scales with tooling
 
@@ -58,13 +61,13 @@ single rule exercised over a few representative inputs → one file, as a table.
 > stay mutually consistent — so **push granularity as fine as your tooling can
 > keep consistent, no finer.**
 
-Where a generator emits the regular structure and a linter enforces it,
-consistency is mechanical and maximal one-concern-per-file is cheap and
-sustainable (you never hand-maintain the many files). Where files are
-hand-written and hand-kept-consistent, that consistency cost bites at scale, so
-lean toward cohesion. **Generate + validate ⇒ go fine; hand-author ⇒ stay
-coherent.** This is why the Python fixture tree (below) goes maximally atomic —
-it is fully tooled — while hand-written source should not.
+```text
+generated + linted  ⇒  go maximally atomic    # consistency is mechanical — you never hand-maintain the files
+hand-authored       ⇒  stay coherent          # the consistency cost bites at scale — lean to cohesion
+```
+
+So a fully-tooled fixture tree goes maximally atomic (worked example below),
+while hand-written source should not.
 
 ### Path grammar (a pattern, not a mandate)
 
@@ -92,81 +95,49 @@ handoffs/release/2026-05-rc1-risk-summary.md
 tests/std-libs/calendar/behavior/isleap_rule.py     # worked below
 ```
 
-### Mamba test architecture: DDD, boundary-first
+### Organize by domain, not by tooling
 
-`projects/mamba/tests/` is organized by capability domain, not by runner
-technology. The tree should explain what boundary a test pins before an agent
-opens a file:
+Path grammar fixes the *axis* of a tree; this fixes its *first split*. Organize a
+tree by the **capability domain** it covers, not by the runner or tool that
+happens to execute it. The top level should tell an agent *what boundary each
+subtree pins* before it opens anything — that is what turns an `ls` into a map
+instead of a guess.
 
-```text
-projects/mamba/tests/
-├── cpython/     CPython replacement contract: runtime parity, strict type
-│                deltas, speed, memory, security, and compatibility fixtures.
-├── mambalibs/   Mamba-native library contracts with no CPython oracle.
-├── pkgmgr/      `mamba` CLI and package-manager behavior.
-└── governance/  Meta-gates over manifests, release profiles, CI policy, and
-                 test-inventory shape.
-```
-
-Use these boundaries when adding tests:
-
-- **`cpython/`** defines what mamba must do to replace CPython for a covered
-  slice. It answers: `surface` has the API, `behavior` matches CPython,
-  `errors` raises where CPython raises, `real_world` works in user-shaped
-  flows, `security` does not crash or hang, and `bench` is faster and
-  lower-memory than CPython.
-- **`type-strict`** is the deliberate incompatibility lane inside CPython
-  conformance: CPython may accept a case, but mamba must reject it with the
-  explicit inverse markers. Do not mix these cases into ordinary compatibility
-  fixtures.
-- **`mambalibs/`** is not CPython compatibility. It covers mamba-only native
-  library loading, ABI, generated stubs, and local artifact behavior.
-- **`pkgmgr/`** owns package-manager CLI behavior. It should spawn the built
-  `mamba` binary and pin observable CLI outcomes.
-- **`governance/`** owns contracts about the test system itself: manifest
-  schemas, release gates, profile definitions, skip debt, and structural lints.
-
-Cargo only auto-discovers top-level `tests/*.rs`; mamba therefore uses explicit
-`[[test]]` entries in `projects/mamba/Cargo.toml`. New Rust integration tests
-belong under a domain directory and must be wired through a domain entrypoint
-or umbrella runner, not dropped as ad-hoc root files. Domain-local helper
-scripts also stay under their domain, for example
-`tests/cpython/tools/regen_golden.py` rather than `tests/regen_golden.py`. The
-domain root should contain only entrypoints and taxonomy directories; concrete
-cases live below the taxonomy. For example, a parse-only Python case belongs in
-`tests/cpython/fixtures/core/parse/`, not in `tests/governance/`. The domain
-grammar is:
+A test tree, for instance, splits by what it proves — never by test framework:
 
 ```text
-tests/<domain>/<subject>/<concern>/<artifact>
+tests/
+├── <external-contract>/   parity / replacement contract against an oracle
+├── <native-libs>/         your own library contracts (no external oracle)
+├── <cli>/                 CLI / tool behavior, pinned on the built binary
+└── governance/            meta-gates over manifests, profiles, CI policy, inventory shape
 ```
 
-For CPython fixtures, the concrete grammar is:
+(`projects/mamba/tests/` is the reference adopter: `cpython/` pins the
+CPython-replacement contract, `mambalibs/` the native-library contracts,
+`pkgmgr/` the CLI, `governance/` the meta-gates. The same first-split-by-domain
+shape applies to specs, configs, and generated trees.)
 
-```text
-tests/cpython/fixtures/<bucket>/<lib>/<dimension>/<case>.py
-```
+Three rules keep such a tree legible:
 
-For manifest-backed governance gates, keep the manifest and the Rust checker
-discoverably paired:
+- **Entrypoints vs taxonomy.** A domain root holds only entrypoints and taxonomy
+  directories; concrete cases live *below* the taxonomy
+  (`<domain>/<subject>/<concern>/<artifact>`). A parse-only case belongs under
+  that domain's fixtures, never dumped in `governance/`.
+- **Wire deep artifacts explicitly.** Many build systems auto-discover
+  entrypoints only at a fixed location (Cargo discovers top-level `tests/*.rs`),
+  so artifacts nested under a domain must be reached through an explicit
+  entrypoint or umbrella runner — not dropped as ad-hoc root files. Domain-local
+  helper scripts stay under their domain (`<domain>/tools/regen_golden.py`, not
+  `tests/regen_golden.py`).
+- **Pair a manifest with its checker.** Where a gate is a manifest plus a
+  checker, keep the two discoverably named and co-located so finding one implies
+  the other.
 
-```text
-tests/governance/gates/<scope>/<gate>/manifest.toml
-tests/governance/schema_gates/<scope_or_gate>_fixture_<issue>.rs
-```
-
-For mambalibs:
-
-```text
-tests/mambalibs/fixtures/<gate>/manifest.toml
-tests/mambalibs/mambalibs_<gate>_fixture_<issue>.rs
-```
-
-Current migration debt: some CPython fixtures still exist as legacy monoliths
-such as `<lib>/surface.py`, `<lib>/behavior.py`, and `<lib>/errors.py`. They are
-discovered for backward compatibility, but new fixtures must use the
-dimension-directory shape. The `governance/ci_guard.rs` test locks the current
-count as a ceiling so the debt can only stay flat or shrink.
+**Migrating an existing tree toward this shape?** Lock the legacy form with a
+gate that counts old-style monoliths as a *ceiling* — it can only stay flat or
+shrink — so the debt is visible and one-directional while new artifacts adopt
+the finer shape.
 
 ### Where it applies (scope)
 
@@ -180,21 +151,18 @@ legible structure, not a mandate to shred cohesive code into wrapper files.
 
 ---
 
-## Example instantiation: Python test fixtures
+## Example: decomposing a monolith into a navigable tree
 
-> One worked instantiation of the principle above — **not** the definition. The
-> full spec lives in
-> `projects/mamba/tests/cpython/conventions/FIXTURE-LAYOUT.md`.
+> One worked instantiation of the principle above — **not** the definition.
 
-The mamba CPython conformance suite is the reference adopter. Each fixture is one
-self-contained case; the path is the grammar made concrete —
-`<bucket>/<lib>/<dimension>/<case>.py` — where `dimension` is the *concern* for
-tests (one of: surface · behavior · errors · bench · real_world · security). It
-goes **maximally atomic** precisely because it is fully tooled — `fixture_gen`
-emits the structure from a manifest and `fixture_lint` enforces it — so the
-"granularity scales with tooling" rule licenses one-case-per-file here.
+The clearest adopter is a fully-tooled conformance fixture tree, where a
+generator emits the structure and a linter enforces it — so it goes **maximally
+atomic** (one self-contained case per file) and the path is the grammar made
+concrete: `<bucket>/<subject>/<dimension>/<case>`, where `dimension` is the
+*concern* for tests (surface · behavior · errors · bench · real_world ·
+security).
 
-### Worked case: decomposing a behavior monolith
+### Before → after
 
 **Before** — one file, eight unrelated behaviors mixed together:
 
@@ -202,7 +170,7 @@ emits the structure from a manifest and `fixture_lint` enforces it — so the
 std-libs/calendar/behavior.py        # 8 cases, one big file
 ```
 
-**After** — the dimension is a directory; each case is a named leaf:
+**After** — the concern is a directory; each case is a named leaf:
 
 ```
 std-libs/calendar/behavior/
@@ -213,113 +181,119 @@ std-libs/calendar/behavior/
   ...
 ```
 
-`ls behavior/` is now the spec, and a reader jumps straight to the one case they
-need. No coverage is lost — and note `isleap_rule.py` keeps the rule's several
-input years *together* as one table (cohesion), rather than one-file-per-input
-(which would be over-splitting).
+`ls behavior/` is now the spec — a reader jumps straight to the one case they
+need, and no coverage is lost. Note `isleap_rule.py` keeps its several input
+years *together* as one table (cohesion), rather than one-file-per-input (which
+would be over-splitting).
 
-### Python fixture conventions (this tree only)
+### Keep tooling and per-tree conventions with the tree
 
-These apply to `.py` fixtures under the conformance tree — **not** to the general
-principle:
+The mechanics that make a tree fully tooled — its layout spec, the
+`generate → fill → lint` loop, the file template, and tree-local authoring
+conventions (hermetic per-file headers, oracle verification, performance
+baselines) — belong **with the tree**, not in this general guide. For the mamba
+CPython suite that source of truth is
+`projects/mamba/tests/cpython/conventions/FIXTURE-LAYOUT.md`: the six-dimension
+table, the `fixture_gen` → fill → `fixture_lint` loop, PEP 723 `[tool.mamba]`
+headers, the CPython oracle, and the perf-baseline flow.
 
-- PEP 723 `# /// script` header (+ a `[tool.mamba]` record) so `uv run <file>` is
-  hermetic and the tree is queryable.
-- CPython-3.12 exit-0 is the oracle; any filesystem use goes through `tempfile`;
-  end on one labelled `print(...)`.
-- `# mamba-xfail:` / `# mamba-mem-carveout:` directives (or the equivalent
-  `[tool.mamba]` fields).
-- CPython authoring verification runs through
-  `python3 projects/mamba/tests/cpython/tools/verify_cpython_oracle.py`; it
-  proves runtime fixtures exit `0` and match any golden, while bench fixtures
-  stay owned by the perf baseline flow.
-- CPython source-suite sizing is a separate reference denominator. Use
-  `python3 projects/mamba/tools/cpython_regrtest_inventory.py` before claiming
-  broad CPython coverage; the primary comparison is CPython `test_*` case
-  candidates versus mamba one-case-per-file fixtures grouped by dimension.
-  File count and module count are only navigation hints.
-- `projects/mamba/tests/harness/cpython/` owns discovery, execution,
-  collection, and reporting through Cargo test binaries such as
-  `conformance`, `conformance_contract`, `cpython_status`, and `perf_pin`.
-  `projects/mamba/tests/cpython/` stays the contract-data tree: fixtures,
-  config, conventions, and Python helper tools.
-- Harness quality is part of the CPython replacement goal: if a harness is
-  wrong, hides useful failure data, collects the wrong metrics, or makes normal
-  development loops too slow, fix the harness before adding more runtime work.
-- Performance gates use a machine-local CPython SQLite baseline generated by
-  `python3 projects/mamba/tests/cpython/tools/perf_baseline.py record`; it
-  stores internal fixture time, CPU time, and peak RSS under
-  `projects/mamba/tests/cpython/.cache/perf/`.
-- Before a long perf run, use
-  `cargo test -p mamba --test cpython_status -- --json` (or omit `--json` for
-  a capped human summary). It reports missing/stale perf baseline rows, missing
-  CPU/RSS cells, missing fixture files, and missing Python prereq imports per
-  pin. The `baseline_recordable_missing_rows` count is the immediate local
-  batch size for pins whose fixtures and Python prereqs are ready.
-- Fill baseline gaps incrementally with
-  `python3 projects/mamba/tests/cpython/tools/perf_baseline.py record --missing-only --ready-only --limit <N> --keep-going`.
-  This records only missing rows whose Python prereqs are available locally, so
-  agents can grow the sqlite baseline in small verified batches.
+---
 
-See `FIXTURE-LAYOUT.md` for the six-dimension table, the file template, and the
-`fixture_gen` → fill → `fixture_lint` loop.
+## Service archetype: HA, HTTP/2 + OpenAPI, k8s-native
+
+> The ecosystem's long-running network services share one shape. A new service
+> of this kind — a broker, a store, an orchestrator, an index — **copies the
+> archetype** rather than reinventing its transport, consensus, deployment, or
+> gates. The wins are concrete: one transport stack to learn, one HA engine to
+> harden, one set of gate files an agent can find by `ls` before opening
+> anything.
+
+Reference instantiations: **`keep`** (KV / claim-check store), **`relay`**
+(durable-log broker), **`lumen`** (search / dedup index). `loom` is a
+control-plane variant on the same runtime (greenfield — it shares the stack but
+its governance files are not yet grown; treat it as aspirational, not as a
+template for the gate files).
+
+A service is not "done" until it satisfies every row:
+
+| Dimension | Requirement | Reference / gotcha |
+|-----------|-------------|--------------------|
+| **Shape** | Workspace member that is **both `lib` and `bin`** — embeddable as a crate, runnable as a server. Metadata via `version/edition/authors/license = .workspace`. | every service `Cargo.toml` |
+| **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Serve via `hyper-util` `auto::Builder`, **not `axum::serve`** — `axum::serve` is HTTP/1-only. Every service repeats this note in its `Cargo.toml`. |
+| **HA / consensus** | Sharded, strongly-consistent state replicated with **`libs/raftcore`** (serde-only). Follower tails the leader over h2c. | Use `raftcore`, **not `openraft`** (it replaced openraft ecosystem-wide). A dedicated `<svc>-raft` bin is common (e.g. `relay-raft`); the raft path may be a Cargo feature (`keep`). |
+| **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
+| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); StatefulSet identity/peers from the **downward API**; an `HA.md`. | `keep/k8s`, `lumen/k8s` (+ `operator` feature). `loom` currently ships only a flat `deploy/k8s.yaml` — that's the un-grown form, not the target. |
+| **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
+| **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
+| **CLI** | The bin ships `llm` / `upgrade` / `report-issue`. | see the *CLI convention* below. |
+
+### Transport — h2c + OpenAPI on one port
+
+`axum::serve` speaks HTTP/1 only. To serve h2c (HTTP/2 cleartext, no TLS — the
+in-cluster default) alongside HTTP/1.1 on a single port, build the connection
+with `hyper-util`'s `auto::Builder`. In-tree clients are `reqwest` over h2c
+(rustls, no openssl). Describe the surface with `utoipa` so the OpenAPI doc is
+generated from the handlers, never hand-maintained.
+
+### HA — `raftcore`, sharded and strongly consistent
+
+State is **sharded** and **strongly consistent**, replicated by the shared
+`libs/raftcore` engine (serde-only; it replaced `openraft` across the
+ecosystem). The leader owns writes; followers tail it over h2c. Node identity
+and the peer set come from the Kubernetes **downward API** on a StatefulSet —
+nothing is hand-configured per replica. Gate consensus behind a Cargo feature
+only when a single-node mode is a legitimate deployment (e.g. `keep`).
+
+### EC gates — `vat`-driven, evidence under `external-contracts/`
+
+Every service carries a fixed set of **evidence-contract (EC) gate files**, each
+`SPEC-MANAGED` and pointed at a contract under `external-contracts/`. They are
+named so `ls` tells you what is enforced before you open anything:
+
+- **`vat.toml`** — the EC test runner; backs integration tests with **real
+  services / emulators** (never hand-rolled mocks) and lists the setup steps.
+- **`meter*.toml`** — performance/efficiency/stability EC gates
+  (`meter.toml` + `meter-<scope>-<dimension>.toml`, e.g.
+  `meter-keep-performance.toml`, `meter-search-{efficiency,stability}.toml`),
+  run via `vat run meter-*`; evidence under
+  `external-contracts/competitor-performance/`.
+- **`guard*.toml`** — the security EC gate (`guard-<scope>-security.toml`),
+  run via `vat run guard-security`; evidence under
+  `external-contracts/security-hardening/`.
+
+A breach is a non-zero-exit finding that blocks the `aw td merge` gate. Keep
+these files `SPEC-MANAGED` — regenerate them from their contract; do not
+hand-edit the `AW-EC-TOOL` block.
 
 ## CLI convention: every CLI ships `llm`, `upgrade`, `report-issue`
 
 > Every binary a human or agent runs must answer three questions without prior
 > knowledge: *how do I drive this?* (`llm`), *am I current?* (`upgrade`), and
-> *this is broken — how do I file it?* (`report-issue`). These three subcommands
-> are **mandatory** on every CLI surface in the ecosystem (`mamba`, `jet`,
-> `lumen`, `vat`, `aw`/`cclab`, and any new tool). They are the agent-facing
-> contract: an agent that has never seen the tool can self-onboard, self-update,
-> and file a structured defect using only the binary.
+> *this is broken — how do I file it?* (`report-issue`). These three are
+> **mandatory** on every CLI surface in the ecosystem (`mamba`, `jet`, `lumen`,
+> `vat`, `aw`/`cclab`, and any new tool) — the agent-facing contract that lets a
+> tool an agent has never seen self-onboard, self-update, and file a structured
+> defect using the binary alone.
 
-A new CLI is not "done" until all three are present and listed in `--help`.
+A new CLI is not "done" until all three appear in `--help`.
 
-### `llm` — agent-facing self-documentation (offline)
+| Subcommand | Signature | Contract |
+|------------|-----------|----------|
+| `llm` | `<cli> llm [topic] [--format md\|json]` | Offline (no server/network) docs that teach an agent to drive the tool. Default topic `outline` (a topic map); per-tool topics follow its domain. Markdown default, `--format json` for machine-readable. |
+| `upgrade` | `<cli> upgrade [--version <tag>] [--check]` | Self-update to the latest `<project>@*` GitHub release. `--check` = report whether newer exists, no install; `--version` = pin a tag. |
+| `report-issue` | `<cli> report-issue [--title <t>] [msg…]` | File a structured issue on the tracker, auto-attaching `--version` + OS/arch + the failing command/context. |
 
-```
-<cli> llm [topic] [--format md|json]
-```
+Implementation notes not obvious from the signature:
 
-Prints the docs that teach an LLM/agent to use the tool — **offline, no server,
-no network**. Default topic is `outline`: a topic map for context selection.
-Per-tool topics follow the tool's domain (e.g. `workflow`, `quickstart`,
-`recipes`, `integration`). Markdown by default (human/agent-readable); `--format
-json` for a machine-readable form.
-
-Keep the content in **one in-code source of truth** that also feeds any
-spec/help output, so docs cannot drift from behavior. Reference implementation:
-`projects/lumen/src/bin/lumen.rs` (`Llm`/`LlmTopic`/`LlmFormat`) backed by
-`projects/lumen/src/spec.rs`.
-
-### `upgrade` — self-update to the latest release
-
-```
-<cli> upgrade [--version <tag>] [--check]
-```
-
-Updates the running binary to the latest `<project>@*` GitHub release, reusing
-the per-project release pipeline (`.github/workflows/<project>-release.yml`
-tarballs + `sha256`). `--check` reports whether a newer release exists without
-installing; `--version <tag>` pins a specific release. The implementation is the
-in-binary form of `projects/<project>/install.sh`: detect target
-(`<arch>-<os>`), download the matching `*.tar.gz`, verify the `.sha256`, then
-atomically replace the binary on disk. Fail loudly on checksum mismatch; never
-leave a half-written binary.
-
-### `report-issue` — file an issue report
-
-```
-<cli> report-issue [--title <t>] [message...]
-```
-
-Files a structured bug/issue report against the project's tracker (GitHub issues
-on the axiom repo, routed through Agentic Workflow where configured — prefer
-`gh issue create`, else print a pre-filled issue URL). Auto-attach diagnostics:
-tool `--version`, OS/arch, and the failing command/context.
-
-The verb is deliberately `report-issue`, **not** `report`: several CLIs already
-use `report` for a domain concept (e.g. `jet report` manages HTML **test**
-reports), so the issue-reporter takes its own unambiguous name and leaves those
-existing `report` verbs untouched.
+- **`llm`** — keep the content in **one in-code source of truth** that also feeds
+  spec/help output, so docs cannot drift from behavior. Reference:
+  `projects/lumen/src/bin/lumen.rs` (`Llm`/`LlmTopic`/`LlmFormat`) + `src/spec.rs`.
+- **`upgrade`** — the in-binary form of `projects/<project>/install.sh`: detect
+  target (`<arch>-<os>`) → download the matching `*.tar.gz` → verify `.sha256` →
+  **atomically** replace the binary. Fail loudly on checksum mismatch; never
+  leave a half-written binary.
+- **`report-issue`** — prefer `gh issue create`, else print a pre-filled issue
+  URL (routed through Agentic Workflow where configured). Named `report-issue`,
+  **not** `report`, because several CLIs use `report` for a domain concept
+  (`jet report` = HTML **test** reports); the unambiguous name leaves those
+  verbs untouched.
