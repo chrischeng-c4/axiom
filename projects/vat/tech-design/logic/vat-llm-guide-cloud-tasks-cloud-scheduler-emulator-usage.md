@@ -45,7 +45,6 @@ edges:
   - { from: alt, to: directrest, label: "direct rest" }
   - { from: directrest, to: ready }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
