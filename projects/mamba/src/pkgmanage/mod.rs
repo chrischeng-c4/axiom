@@ -11,6 +11,7 @@
 // (PyPI-equivalents). See projects/mamba/PLAN.md.
 
 pub mod add;
+pub mod auth;
 pub mod builder;
 pub mod cache;
 pub mod export;

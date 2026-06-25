@@ -4,6 +4,7 @@ use mamba::bench::{BenchRunner, BenchSuite, print_report, run_suite};
 use mamba::conformance::{ConformanceOptions, run_suite as run_conformance_suite};
 use mamba::driver::{Backend, CompilerConfig, CompilerSession, EmitMode, MambaConfig};
 use mamba::pkgmanage::add as pkg_add;
+use mamba::pkgmanage::auth as pkg_auth;
 use mamba::pkgmanage::builder as pkg_builder;
 use mamba::pkgmanage::cache as pkg_cache;
 use mamba::pkgmanage::export as pkg_export;
@@ -110,6 +111,37 @@ fn cli() -> Command {
             Command::new("init")
                 .about("Scaffold a new mamba project (mamba.toml, .python-version, .gitignore, README.md, src/__init__.py)")
                 .arg(Arg::new("path").help("Project directory; defaults to current working directory")),
+        )
+        .subcommand(
+            Command::new("auth")
+                .about("Manage package index credentials")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("login")
+                        .about("Store plaintext credentials for a service")
+                        .arg(Arg::new("service").required(true).value_name("SERVICE").help("Domain or URL of the service"))
+                        .arg(Arg::new("username").long("username").short('u').value_name("USERNAME").help("Username to store; defaults to __token__"))
+                        .arg(Arg::new("token").long("token").short('t').required(true).value_name("TOKEN").help("Token to store; use - to read from stdin")),
+                )
+                .subcommand(
+                    Command::new("logout")
+                        .about("Remove stored credentials for a service")
+                        .arg(Arg::new("service").required(true).value_name("SERVICE").help("Domain or URL of the service"))
+                        .arg(Arg::new("username").long("username").short('u').value_name("USERNAME").help("Username to remove; defaults to __token__")),
+                )
+                .subcommand(
+                    Command::new("token")
+                        .about("Print the stored token for a service")
+                        .arg(Arg::new("service").required(true).value_name("SERVICE").help("Domain or URL of the service"))
+                        .arg(Arg::new("username").long("username").short('u').value_name("USERNAME").help("Username to look up; defaults to __token__")),
+                )
+                .subcommand(
+                    Command::new("dir")
+                        .about("Print the credentials directory or one credential file path")
+                        .arg(Arg::new("service").value_name("SERVICE").help("Optional service to resolve to a credential path"))
+                        .arg(Arg::new("username").long("username").short('u').value_name("USERNAME").help("Username to resolve; defaults to __token__")),
+                ),
         )
         .subcommand(
             Command::new("add")
@@ -421,6 +453,7 @@ fn main() -> Result<()> {
         Some(("surface-report", sub)) => cmd_surface_report(sub),
         Some(("pytest", sub)) => cmd_pytest(sub),
         Some(("init", sub)) => pkg_init::cmd_init(sub),
+        Some(("auth", sub)) => pkg_auth::cmd_auth(sub),
         Some(("add", sub)) => pkg_add::cmd_add(sub),
         Some(("remove", sub)) => pkg_remove::cmd_remove(sub),
         Some(("lock", sub)) => pkg_lock::cmd_lock(sub),
