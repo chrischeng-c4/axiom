@@ -1189,6 +1189,14 @@ struct HirToMir<'a> {
     /// Stack of finally bodies for active try blocks (parallel to try_handler_stack).
     /// Used to inline finally code before early exits (return/break/continue).
     finally_body_stack: Vec<Vec<crate::hir::HirStmt>>,
+    /// Stack of `mb_save_handled_exc` token vregs for try/except handler
+    /// regions whose handler body we are currently lowering. A `return` inside
+    /// an except handler bypasses the region's fall-through restore, so the
+    /// function epilogue must emit `mb_restore_handled_exc(token)` for every
+    /// token here (innermost first) to reinstate the caller's currently-handled
+    /// exception (CPython clears the handled exception when the handler frame
+    /// unwinds). See the `HirStmt::Try` handler-body lowering.
+    handler_region_tokens: Vec<VReg>,
     /// Symbol table for variable classification (global/nonlocal/cell/free).
     /// None when created without symbols (basic lowering).
     symbol_table: Option<&'a SymbolTable>,
@@ -1318,6 +1326,7 @@ impl<'a> HirToMir<'a> {
             with_ctx_stack: Vec::new(),
             with_exit_stack: Vec::new(),
             finally_body_stack: Vec::new(),
+            handler_region_tokens: Vec::new(),
             symbol_table: None,
             sym_types: HashMap::new(),
             sym_names: HashMap::new(),
@@ -1381,6 +1390,7 @@ impl<'a> HirToMir<'a> {
             with_ctx_stack: Vec::new(),
             with_exit_stack: Vec::new(),
             finally_body_stack: Vec::new(),
+            handler_region_tokens: Vec::new(),
             symbol_table: None,
             sym_types: HashMap::new(),
             sym_names: HashMap::new(),
@@ -1433,6 +1443,7 @@ impl<'a> HirToMir<'a> {
         self.is_gen_body = false;
         self.try_handler_stack.clear();
         self.finally_body_stack.clear();
+        self.handler_region_tokens.clear();
         self.in_module_scope = false;
     }
 
@@ -2636,6 +2647,7 @@ impl<'a> HirToMir<'a> {
                         args: vec![coro_handle, ret_val],
                         ty: self.tcx.none(),
                     });
+                    self.emit_handler_region_restores();
                     self.finish_block(Terminator::Return(Some(coro_handle)));
                 } else if self.is_gen_body {
                     // Generator body: box the return value so it arrives as
@@ -2646,6 +2658,7 @@ impl<'a> HirToMir<'a> {
                     } else {
                         self.emit_none()
                     };
+                    self.emit_handler_region_restores();
                     self.finish_block(Terminator::Return(Some(ret_vreg)));
                 } else if self.is_class_method {
                     // R4 P1: Class method body — box the return value so
@@ -2718,6 +2731,9 @@ impl<'a> HirToMir<'a> {
                             });
                         }
                     }
+                    // Returning out of an except handler (class-method body):
+                    // restore the caller's handled-exception state.
+                    self.emit_handler_region_restores();
                     self.finish_block(Terminator::Return(Some(ret_vreg)));
                 } else {
                     let ret_vreg = value.as_ref().map(|v| {
@@ -2804,6 +2820,10 @@ impl<'a> HirToMir<'a> {
                             });
                         }
                     }
+                    // Returning out of an except handler: restore the caller's
+                    // handled-exception state (the fall-through restore at
+                    // finally_block is bypassed by this return).
+                    self.emit_handler_region_restores();
                     self.finish_block(Terminator::Return(ret_vreg));
                 }
                 // Start a dead block for any unreachable code after return
@@ -2927,6 +2947,22 @@ impl<'a> HirToMir<'a> {
                     args: vec![catch_all_vreg],
                     ty: self.tcx.none(),
                 });
+                // Snapshot the currently-handled-exception state at try-entry
+                // (BEFORE any except handler runs mb_catch_exception*). When the
+                // handler region exits — fall-through into finally_block, or a
+                // `return` inside a handler body — we restore this snapshot so
+                // sys.exception()/sys.exc_info()/traceback.format_exc() stop
+                // reporting the just-handled exception (CPython clears the
+                // handled exception once the handler frame unwinds). Mid-handler
+                // callees still see the handled exception because the restore
+                // only fires when LEAVING the region.
+                let handled_exc_token = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(handled_exc_token),
+                    name: "mb_save_handled_exc".to_string(),
+                    args: Vec::new(),
+                    ty: self.tcx.int(),
+                });
                 // Try body — after each statement, check for pending exceptions
                 // so that exceptions propagate at statement boundaries (matching Python).
                 self.try_handler_stack.push((handler_block, finally_block));
@@ -2973,6 +3009,12 @@ impl<'a> HirToMir<'a> {
                     args: Vec::new(),
                     ty: self.tcx.any(),
                 });
+                // While lowering handler bodies, expose this region's restore
+                // token so a `return` inside an except handler restores the
+                // caller's handled-exception state (the return bypasses the
+                // fall-through restore at finally_block). Popped just before we
+                // emit finally_block below.
+                self.handler_region_tokens.push(handled_exc_token);
 
                 if has_star {
                     // except* lowering (PEP 654):
@@ -3140,8 +3182,27 @@ impl<'a> HirToMir<'a> {
                         self.finish_block(Terminator::Goto(merge_block));
                     }
                 }
+                // Done lowering handler bodies — this region's token no longer
+                // applies to a `return` (the only remaining exits are the
+                // fall-through restore below, the no-exception path, and the
+                // else path, all of which reach finally_block).
+                self.handler_region_tokens.pop();
                 // Finally block (normal path — no exception)
                 self.start_block(finally_block);
+                // Restore the handled-exception snapshot taken at try-entry on
+                // every fall-through edge (handler body completed, or the
+                // no-exception/else path converged here). On the no-exception
+                // path the snapshot equals the live state, so this is a no-op;
+                // on the handled path it clears the just-handled exception so
+                // sys.exception()/sys.exc_info()/format_exc() report the
+                // enclosing frame's state (CPython semantics). Runs BEFORE the
+                // finally body so the finally executes with the restored state.
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_restore_handled_exc".to_string(),
+                    args: vec![handled_exc_token],
+                    ty: self.tcx.none(),
+                });
                 for s in finally_body {
                     self.lower_stmt(s);
                 }
@@ -3427,7 +3488,13 @@ impl<'a> HirToMir<'a> {
                         let dead_block = self.fresh_block();
                         // Bare function body — return with None so the exception
                         // propagates to the caller (which will see mb_has_exception
-                        // at its try check).
+                        // at its try check). If this `raise` is lexically inside
+                        // an except handler, restore the caller's handled-exc
+                        // state first (a new exception raised from a handler is
+                        // propagating, not "handled" — and CPython has already
+                        // unwound this handler frame). Also keeps the runtime
+                        // save stack balanced on the raise-out-of-handler path.
+                        self.emit_handler_region_restores();
                         let none_vreg = self.emit_none();
                         self.finish_block(Terminator::Return(Some(none_vreg)));
                         self.start_block(dead_block);
@@ -9193,6 +9260,25 @@ impl<'a> HirToMir<'a> {
             args: Vec::new(),
             ty: self.tcx.none(),
         });
+    }
+
+    /// A `return` lexically inside one or more `except` handler bodies must
+    /// restore each enclosing handler region's handled-exception snapshot (the
+    /// return bypasses the fall-through restore at finally_block). Emit
+    /// `mb_restore_handled_exc(token)` for every active handler-region token,
+    /// innermost first, so the caller observes the handled-exception state that
+    /// CPython reinstates once the handler frame unwinds. No-op outside any
+    /// handler body. Idempotent at runtime (restore truncates the save stack).
+    fn emit_handler_region_restores(&mut self) {
+        let tokens: Vec<VReg> = self.handler_region_tokens.iter().rev().copied().collect();
+        for token in tokens {
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_restore_handled_exc".to_string(),
+                args: vec![token],
+                ty: self.tcx.none(),
+            });
+        }
     }
 
     /// Inside a try block, emit `mb_has_exception()` check after a call.
