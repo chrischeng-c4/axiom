@@ -92,7 +92,6 @@ properties:
     description: "Declaring a GCP emulator preset (cloud-tasks, pubsub, ...) auto-adds a route from its real googleapis host to the local emulator; explicit [network.routes] entries override/extend."
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
