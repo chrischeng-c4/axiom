@@ -200,7 +200,6 @@ requirementDiagram
       verifies: prefilled_url
     }
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
