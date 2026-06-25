@@ -1467,11 +1467,11 @@ mod tests {
 
     #[test]
     fn test_compute_tz_snapshot_shape() {
-        let (tz, alt, dst, n0, _n1) = compute_tz_snapshot();
-        assert_eq!(tz, alt);
-        assert_eq!(dst, 0);
-        assert!(tz >= -50_400 && tz <= 50_400);
-        let _ = n0;
+        let snap = compute_tz_snapshot();
+        assert_eq!(snap.timezone_west, snap.altzone_west);
+        assert_eq!(snap.daylight, 0);
+        assert!(snap.timezone_west >= -50_400 && snap.timezone_west <= 50_400);
+        let _ = snap.standard_name;
     }
 
     // -- register() surface coverage --
