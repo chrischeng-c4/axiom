@@ -40,7 +40,6 @@ edges:
   - { from: reuse, to: send }
   - { from: send, to: done }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
