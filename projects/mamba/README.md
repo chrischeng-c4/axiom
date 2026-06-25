@@ -92,7 +92,8 @@ local wheel paths, explicit registry URL tests, lockfile export to
 requirements.txt / pylock.toml, dependency-tree rendering, PEP 621 version
 bumping, and pip-compatible requirements compile plus installed-environment
 install/sync/uninstall/list/freeze/show/tree/check inspection and
-dependency-tree rendering. `mamba venv` exposes create/remove safety around PEP 405
+dependency-tree rendering. `mamba lock --check` and `mamba sync --check` provide
+CI-friendly drift gates without mutating lockfiles or environments. `mamba venv` exposes create/remove safety around PEP 405
 environments, and `mamba cache` now reports exact size/category info plus
 dry-run, age, size, and package-targeted pruning. `mamba python` exposes local
 interpreter list/find, `.python-version` pinning, managed Python directory
@@ -113,9 +114,9 @@ coverage opt-in/report-only. `mamba add` / `mamba lock` do not treat public
 PyPI as an implicit default source; callers must provide a frozen local index,
 direct local wheel file, or explicit registry URL when resolving dependencies.
 Full uv parity remains open under #519; remaining command families include
-audit/check, live Python standalone downloads, build/publish package flows,
-stored credential use by index/resolver flows, live-index pip compile/install/sync
-parity, and related parity fixtures.
+audit, live Python standalone downloads, build/publish package flows, stored
+credential use by index/resolver flows, live-index pip compile/install/sync parity,
+and related parity fixtures.
 
 ## Test Completeness — what we tested, against what authority
 

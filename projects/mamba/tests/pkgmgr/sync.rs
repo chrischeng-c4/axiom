@@ -76,20 +76,24 @@ fn build_index() -> tempfile::TempDir {
 
 fn setup_locked_project(proj: &Path, index: &Path) {
     assert!(run(proj, &["init"]).status.success());
-    assert!(run(
-        proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
-    assert!(run(proj, &["lock", "--index", index.to_str().unwrap()])
+    assert!(
+        run(
+            proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.to_str().unwrap()
+            ]
+        )
         .status
-        .success());
+        .success()
+    );
+    assert!(
+        run(proj, &["lock", "--index", index.to_str().unwrap()])
+            .status
+            .success()
+    );
 }
 
 #[test]
@@ -154,6 +158,46 @@ fn sync_second_run_is_a_clean_noop() {
         std::fs::read(proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py")).unwrap();
     assert_eq!(lock_a, lock_b, "lockfile byte-identical across syncs");
     assert_eq!(init_a, init_b, "package init.py untouched on no-op");
+}
+
+#[test]
+fn sync_check_reports_environment_drift_without_mutation() {
+    let index = build_index();
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    setup_locked_project(&proj, index.path());
+
+    let before = std::fs::read(proj.join("mamba.lock")).unwrap();
+    let out = run(&proj, &["sync", "--check"]);
+    assert!(!out.status.success(), "sync --check must fail before sync");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not synchronized"),
+        "stderr names drift: {stderr:?}"
+    );
+    assert!(
+        !proj.join(".venv").exists(),
+        "failed sync --check must not create .venv"
+    );
+    assert_eq!(
+        before,
+        std::fs::read(proj.join("mamba.lock")).unwrap(),
+        "sync --check must not rewrite the lockfile"
+    );
+
+    assert!(run(&proj, &["sync"]).status.success());
+    let synced = run(&proj, &["sync", "--check"]);
+    assert!(
+        synced.status.success(),
+        "sync --check must pass after sync; stderr: {}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&synced.stdout).contains("synchronized"),
+        "stdout names synchronized env: {}",
+        String::from_utf8_lossy(&synced.stdout)
+    );
 }
 
 #[test]

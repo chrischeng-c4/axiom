@@ -85,17 +85,19 @@ fn lock_records_direct_and_transitive_deps() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(run(
-        &proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.path().to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
 
     let out = run(&proj, &["lock", "--index", index.path().to_str().unwrap()]);
     assert!(
@@ -130,17 +132,19 @@ fn lock_does_not_create_venv_or_site_packages() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(run(
-        &proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.path().to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
     assert!(
         run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
             .status
@@ -232,17 +236,19 @@ fn lock_is_byte_identical_on_replay() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(run(
-        &proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.path().to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
     assert!(
         run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
             .status
@@ -256,6 +262,99 @@ fn lock_is_byte_identical_on_replay() {
     );
     let b = std::fs::read(proj.join("mamba.lock")).unwrap();
     assert_eq!(a, b, "lockfile must be byte-identical on replay");
+}
+
+#[test]
+fn lock_check_passes_when_lockfile_is_current() {
+    let index = build_index();
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
+            .status
+            .success()
+    );
+
+    let before = std::fs::read(proj.join("mamba.lock")).unwrap();
+    let out = run(
+        &proj,
+        &["lock", "--check", "--index", index.path().to_str().unwrap()],
+    );
+    assert!(
+        out.status.success(),
+        "lock --check must pass; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("up to date"),
+        "stdout names success: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let after = std::fs::read(proj.join("mamba.lock")).unwrap();
+    assert_eq!(before, after, "lock --check must not rewrite the lockfile");
+}
+
+#[test]
+fn lock_check_fails_without_mutating_stale_lockfile() {
+    let index = build_index();
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
+            .status
+            .success()
+    );
+
+    let lock_path = proj.join("mamba.lock");
+    let stale = std::fs::read_to_string(&lock_path)
+        .unwrap()
+        .replace("version = \"0.1.0\"", "version = \"9.9.9\"");
+    std::fs::write(&lock_path, &stale).unwrap();
+    let out = run(
+        &proj,
+        &["lock", "--check", "--index", index.path().to_str().unwrap()],
+    );
+    assert!(!out.status.success(), "stale lock --check must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("out of date"),
+        "stderr names stale lock: {stderr:?}"
+    );
+    assert_eq!(
+        stale,
+        std::fs::read_to_string(&lock_path).unwrap(),
+        "failed lock --check must not rewrite stale lockfile"
+    );
 }
 
 #[test]
