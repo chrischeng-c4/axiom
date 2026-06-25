@@ -579,6 +579,19 @@ impl CraneliftJitBackend {
                         vars.raw_ints.insert(*dest);
                         builder.ins().iconst(cl_types::I64, *v)
                     }
+                    MirConst::BigInt(radix, digits) => {
+                        // Big-int literal exceeding i64 (#99): allocate an immortal
+                        // heap BigInt at JIT compile time and embed its NaN-boxed
+                        // bits. NOT a raw int — it is a tagged pointer MbValue, so
+                        // it must NOT be added to `vars.raw_ints`.
+                        use num_bigint::BigInt;
+                        let big = BigInt::parse_bytes(digits.as_bytes(), *radix)
+                            .unwrap_or_else(|| BigInt::from(0));
+                        let ptr = MbObject::new_bigint_immortal(big);
+                        self.compile_time_objects.push(ptr);
+                        let val = MbValue::from_ptr(ptr);
+                        builder.ins().iconst(cl_types::I64, val.to_bits() as i64)
+                    }
                     MirConst::Float(v) => {
                         // Store as I64 (NaN-boxed): raw IEEE 754 bits as u64.
                         // MbValue::from_float stores raw bits for normal floats.
@@ -663,17 +676,22 @@ impl CraneliftJitBackend {
                     MirBinOp::In | MirBinOp::NotIn => false,
                     _ => matches!(resolved_ty, Ty::Int | Ty::Float | Ty::Bool),
                 };
-                let int_mod = matches!(op, MirBinOp::Mod) && matches!(resolved_ty, Ty::Int);
-                if matches!(op, MirBinOp::FloorDiv) || int_mod {
+                let is_mod = matches!(op, MirBinOp::Mod)
+                    && matches!(resolved_ty, Ty::Int | Ty::Float | Ty::Bool);
+                if matches!(op, MirBinOp::FloorDiv) || is_mod {
                     // Floor division → call mb_floordiv runtime for correct Python
                     // floor semantics and ZeroDivisionError handling (#1085).
-                    // Int modulo → call mb_mod for the same reason: the inline
-                    // `srem` fast path executed a raw Cranelift hardware trap on
-                    // `x % 0` (SIGILL, exit 132) instead of raising a catchable
-                    // ZeroDivisionError.
+                    // Modulo → call mb_mod for the same reason: the inline `srem`
+                    // fast path executed a raw Cranelift hardware trap on `x % 0`
+                    // (SIGILL, exit 132) instead of raising a catchable
+                    // ZeroDivisionError, and the inline float `%` path returned NaN
+                    // for `1.0 % 0.0` instead of raising ZeroDivisionError (#35).
+                    // Routing through the runtime also gives BigInt operands a
+                    // correct `%` / `//` result instead of operating on the raw
+                    // tagged pointer bits.
                     // Float operands are already NaN-boxed I64 MbValues — no boxing needed.
                     // Int/Bool operands need boxing from raw I64 to MbValue.
-                    let helper_name = if int_mod { "mb_mod" } else { "mb_floordiv" };
+                    let helper_name = if is_mod { "mb_mod" } else { "mb_floordiv" };
                     let floordiv_id = self.extern_funcs.get(helper_name).copied();
                     let is_float = matches!(resolved_ty, Ty::Float);
                     let box_id = if is_float {
