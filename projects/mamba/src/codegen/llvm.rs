@@ -171,6 +171,16 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                 MirConst::Int(i) => {
                     ir.push_str(&format!("  %v{} = add i64 0, {i}\n", dest.0));
                 }
+                MirConst::BigInt(radix, digits) => {
+                    // Big-int literal (#99) — simplified placeholder backend; the
+                    // value would require a runtime heap allocation. Embed the
+                    // NaN-boxed bits computed at codegen time.
+                    let bits = crate::runtime::bigint_ops::bigint_const_bits(*radix, digits);
+                    ir.push_str(&format!(
+                        "  ; bigint const (radix {radix}): {digits}\n  %v{} = add i64 0, {bits}\n",
+                        dest.0
+                    ));
+                }
                 MirConst::Float(f) => {
                     let bits = f.to_bits();
                     ir.push_str(&format!(
@@ -473,9 +483,7 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
             ));
         }
         MirInst::DeleteGlobal { name } => {
-            ir.push_str(&format!(
-                "  call void @mb_global_del_id(i64 {})\n", name.0
-            ));
+            ir.push_str(&format!("  call void @mb_global_del_id(i64 {})\n", name.0));
         }
         MirInst::LoadCell { dest, cell_idx, .. } => {
             ir.push_str(&format!(
