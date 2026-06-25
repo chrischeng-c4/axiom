@@ -37,6 +37,7 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
         "venv",
         "python",
         "workspace",
+        "shell",
         "sync",
         "run",
         "install",
@@ -49,8 +50,8 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
         );
     }
     assert!(
-        stderr.contains("16 passed, 0 failed"),
-        "summary must report 16 passed: {stderr}"
+        stderr.contains("17 passed, 0 failed"),
+        "summary must report 17 passed: {stderr}"
     );
 }
 
@@ -97,6 +98,7 @@ fn pkgmgr_validate_json_has_runner_contract_shape() {
         "venv",
         "python",
         "workspace",
+        "shell",
         "sync",
         "run",
         "install",

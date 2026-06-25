@@ -63,6 +63,7 @@ const REQUIRED_FAMILIES: &[&str] = &[
     "venv",
     "python",
     "workspace",
+    "shell",
     "sync",
     "run",
     "install",
@@ -168,6 +169,7 @@ fn run_family(family: &str, bin: &Path) -> FamilyResult {
         "venv" => probe_venv(bin),
         "python" => probe_python(bin),
         "workspace" => probe_workspace(bin),
+        "shell" => probe_shell(bin),
         "sync" => probe_sync(bin),
         "run" => probe_run(bin),
         "install" => probe_install(bin),
@@ -732,6 +734,59 @@ fn write_workspace_member(root: &Path, rel: &str, name: &str, version: &str) {
         format!("[project]\nname = {name:?}\nversion = {version:?}\n"),
     )
     .unwrap();
+}
+
+fn probe_shell(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let path = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "shell",
+            "path",
+            "--shell",
+            "bash",
+            "--bin-dir",
+            "/opt/mamba/bin",
+        ],
+    );
+    let path_stdout = String::from_utf8_lossy(&path.stdout);
+    if !path.status.success() || path_stdout.trim() != r#"export PATH="/opt/mamba/bin:$PATH""# {
+        return FamilyResult::fail(format!("shell path mismatch: {path_stdout}"));
+    }
+
+    let init = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "shell",
+            "init",
+            "--shell",
+            "nushell",
+            "--bin-dir",
+            "/opt/mamba/bin",
+        ],
+    );
+    let init_stdout = String::from_utf8_lossy(&init.stdout);
+    if !init.status.success()
+        || !init_stdout.contains("# >>> mamba initialize >>>")
+        || !init_stdout.contains("$env.PATH = ($env.PATH | prepend \"/opt/mamba/bin\")")
+        || !init_stdout.contains("# <<< mamba initialize <<<")
+    {
+        return FamilyResult::fail(format!("shell init mismatch: {init_stdout}"));
+    }
+
+    let completion = invoke(bin, tmp.path(), &["generate-shell-completion", "bash"]);
+    let completion_stdout = String::from_utf8_lossy(&completion.stdout);
+    if !completion.status.success()
+        || !completion_stdout.contains("workspace")
+        || !completion_stdout.contains("pkgmgr-validate")
+        || !completion_stdout.contains("generate-shell-completion")
+    {
+        return FamilyResult::fail("shell completion missing expected command tree");
+    }
+
+    FamilyResult::pass("shell path/init and completion generation are wired")
 }
 
 fn probe_sync(bin: &Path) -> FamilyResult {
