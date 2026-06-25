@@ -53,8 +53,11 @@ hyper-util = { version = "0.1", features = ["server", "server-auto", "server-gra
 reqwest = { workspace = true, optional = true }
 # Shared h2c client construction + ln(concurrency) pool sizing (#467).
 h2c = { path = "../../libs/h2c", optional = true }
-# Error glue for the raft module (behind the `raft` feature).
-anyhow = { workspace = true, optional = true }
+# Standard agent-facing CLI ops — llm/upgrade/report-issue (#471). Offline paths
+# always build; the network paths are gated behind keep's online features below.
+cli-std = { path = "../../libs/cli-std", default-features = false }
+# Error glue for the binary dispatch + the raft module.
+anyhow = { workspace = true }
 # Shared Raft consensus engine (libs/raftcore, serde-only) — replaces openraft.
 raftcore = { path = "../../libs/raftcore", optional = true }
 
@@ -67,7 +70,12 @@ default = []
 # off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
 client = ["dep:reqwest", "dep:h2c"]
 # raft — raftcore-backed consensus (HA phase C; see HA.md).
-raft = ["dep:raftcore", "dep:anyhow"]
+raft = ["dep:raftcore"]
+# Online (HTTPS) paths of the standard CLI ops (#471): `upgrade` self-install +
+# `report-issue` submit. Offline paths (llm, `upgrade --check`, `report-issue
+# --dry-run`) always build; release builds enable these.
+self-update = ["cli-std/online"]
+report-issue = ["cli-std/online"]
 
 [dev-dependencies]
 tokio-test = "0.4"
