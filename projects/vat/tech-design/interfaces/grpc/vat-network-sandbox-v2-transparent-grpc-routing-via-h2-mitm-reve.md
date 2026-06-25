@@ -100,7 +100,6 @@ commands:
     behavior:
       - "No new flags. Declaring a GCP emulator preset + http-mock already seeds the host route (#503); that route now transparently serves the host's gRPC traffic too, so a stock gRPC SDK client (TLS to the real host, trusting vat's CA) reaches the local emulator with no app config."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
