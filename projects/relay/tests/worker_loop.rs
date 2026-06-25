@@ -119,6 +119,9 @@ async fn openapi_lists_worker_facing_verbs() {
         .await
         .unwrap();
     for path in [
+        // The primary streaming consume path (#447/#448/#463).
+        "/v1/{subject}/consume",
+        // Deprecated polling verbs, retained for the direct-worker mode (#463).
         "/v1/{subject}/lease",
         "/v1/{subject}/ack",
         "/v1/{subject}/heartbeat",

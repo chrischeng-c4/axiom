@@ -101,16 +101,24 @@ pub fn router(state: AppState) -> Router {
     let app = Router::new()
         .route("/v1/{subject}/publish", post(publish))
         .route("/v1/{subject}/publish-batch", post(publish_batch))
-        // Streaming work-queue consume (#449) — the primary consume path. The
-        // polling lease/ack/lease-batch/ack-batch/heartbeat routes below are
-        // DEPRECATED (superseded by /consume; loom's schema layer no longer uses
-        // them). Kept for the legacy direct-worker path; slated for removal.
+        // Streaming work-queue consume (#449) — the primary consume path, listed
+        // in the OpenAPI doc. As of #463 every loom consumer uses it: the schema
+        // layer's task source (#449) and the controller's completion consumer.
+        //
+        // The polling lease/ack/lease-batch/ack-batch/heartbeat routes below are
+        // DEPRECATED but RETAINED with rationale (#463): (1) they are a
+        // SPEC-MANAGED public HTTP surface whose removal is a breaking change that
+        // belongs in a dedicated TD-driven deprecation, not this migration; (2)
+        // the direct-worker mode (`loom worker` without LOOM_SCHEMA_LAYER, via
+        // RelayWorkConsumer) is still a supported, tested deployment; (3) the
+        // engine lease/ack/release substrate they wrap is shared with /consume and
+        // stays regardless. New consumers must use /consume.
         .route("/v1/{subject}/consume", post(crate::consume::consume))
-        .route("/v1/{subject}/lease", post(lease)) // deprecated → use /consume
-        .route("/v1/{subject}/ack", post(ack)) // deprecated → use /consume
-        .route("/v1/{subject}/lease-batch", post(lease_batch)) // deprecated
-        .route("/v1/{subject}/ack-batch", post(ack_batch)) // deprecated
-        .route("/v1/{subject}/heartbeat", post(heartbeat)) // deprecated
+        .route("/v1/{subject}/lease", post(lease)) // DEPRECATED → use /consume
+        .route("/v1/{subject}/ack", post(ack)) // DEPRECATED → use /consume
+        .route("/v1/{subject}/lease-batch", post(lease_batch)) // DEPRECATED → /consume
+        .route("/v1/{subject}/ack-batch", post(ack_batch)) // DEPRECATED → /consume
+        .route("/v1/{subject}/heartbeat", post(heartbeat)) // DEPRECATED → /consume
         .route("/v1/{subject}/subscribe", get(subscribe))
         .route("/v1/{subject}/len", get(log_len))
         .route("/healthz", get(healthz))
