@@ -5498,7 +5498,7 @@ pub fn make_module_code_object(filename: &str, source: &str) -> MbValue {
     );
     fields.insert("co_firstlineno".to_string(), MbValue::from_int(1));
     fields.insert("co_code".to_string(), empty_bytes());
-    fields.insert("co_linetable".to_string(), empty_bytes());
+    fields.insert("co_linetable".to_string(), empty_linetable());
     fields.insert("co_exceptiontable".to_string(), empty_bytes());
     fields.insert(
         "co_consts".to_string(),
@@ -5516,6 +5516,29 @@ pub fn make_module_code_object(filename: &str, source: &str) -> MbValue {
 
 thread_local! {
     static CODE_CLASS_REGISTERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    // Shared empty `co_linetable` singleton. mamba stores empty line-table
+    // bytes for every compiled code object; CPython interns the line table
+    // across structurally-identical code objects (marshal dedup), so e.g.
+    // `(lambda x: x.y.z).__code__.co_linetable is (lambda a: a.b.c).__code__
+    // .co_linetable` is True. A single immortal empty-bytes object — RC ops
+    // are no-ops on it, so it can live in many code field maps at once —
+    // reproduces that object identity. Immortal so it never needs tracking.
+    static EMPTY_LINETABLE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The shared empty `co_linetable` bytes singleton (see EMPTY_LINETABLE).
+/// Returns the same object on every call within a thread so two code
+/// objects' `co_linetable` fields are identity-equal under `is`.
+fn empty_linetable() -> MbValue {
+    EMPTY_LINETABLE.with(|cell| {
+        let mut bits = cell.get();
+        if bits == 0 {
+            let ptr = super::rc::MbObject::new_bytes_immortal(Vec::new());
+            bits = MbValue::from_ptr(ptr).to_bits();
+            cell.set(bits);
+        }
+        MbValue::from_bits(bits)
+    })
 }
 
 /// Register the `code` native class (replace / __eq__ / __hash__) once per
@@ -5760,7 +5783,7 @@ fn make_code_object(func: MbValue) -> MbValue {
     );
     fields.insert("co_firstlineno".to_string(), MbValue::from_int(firstlineno));
     fields.insert("co_code".to_string(), empty_bytes());
-    fields.insert("co_linetable".to_string(), empty_bytes());
+    fields.insert("co_linetable".to_string(), empty_linetable());
     fields.insert("co_exceptiontable".to_string(), empty_bytes());
     fields.insert(
         "co_consts".to_string(),
