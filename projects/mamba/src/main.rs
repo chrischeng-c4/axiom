@@ -162,7 +162,8 @@ fn cli() -> Command {
                 .about("Regenerate mamba.lock from mamba.toml; resolves transitive deps via a frozen index or explicit registry URL")
                 .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index directory (overrides $MAMBA_FROZEN_INDEX)"))
                 .arg(Arg::new("index-url").long("index-url").value_name("URL").help("Explicit PyPI-compatible registry base URL (overrides $MAMBA_INDEX_URL)"))
-                .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require frozen index")),
+                .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require frozen index"))
+                .arg(Arg::new("check").long("check").action(ArgAction::SetTrue).help("Fail if mamba.lock is missing or out of date without writing it")),
         )
         .subcommand(
             Command::new("export")
@@ -422,7 +423,8 @@ fn cli() -> Command {
         .subcommand(
             Command::new("sync")
                 .about("Converge `.venv`/site-packages to mamba.lock (idempotent; second run is a no-op)")
-                .arg(Arg::new("jobs").long("jobs").short('j').value_name("N").help("Max concurrent downloads (overrides $MAMBA_JOBS; default 8)")),
+                .arg(Arg::new("jobs").long("jobs").short('j').value_name("N").help("Max concurrent downloads (overrides $MAMBA_JOBS; default 8)"))
+                .arg(Arg::new("check").long("check").action(ArgAction::SetTrue).help("Fail if the environment is not already synchronized without mutating it")),
         )
         .subcommand(
             Command::new("pkgmgr-validate")

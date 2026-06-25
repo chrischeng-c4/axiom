@@ -478,11 +478,19 @@ fn probe_lock(bin: &Path) -> FamilyResult {
     if !lock.contains("name = \"frozen-demo-transitive\"") {
         return FamilyResult::fail("lockfile missing transitive dep");
     }
-    FamilyResult::pass("lock byte-identical on replay; records transitive").with_paths(
-        Some(proj),
-        Some(lock_path),
-        None,
-    )
+    let check = invoke(
+        bin,
+        &proj,
+        &["lock", "--check", "--index", index.path().to_str().unwrap()],
+    );
+    if !check.status.success() {
+        return FamilyResult::fail(format!(
+            "lock --check failed: {}",
+            String::from_utf8_lossy(&check.stderr)
+        ));
+    }
+    FamilyResult::pass("lock byte-identical on replay; records transitive; check mode clean")
+        .with_paths(Some(proj), Some(lock_path), None)
 }
 
 fn probe_export(bin: &Path) -> FamilyResult {
@@ -1105,9 +1113,20 @@ fn probe_sync(bin: &Path) -> FamilyResult {
         &proj,
         &["lock", "--index", index.path().to_str().unwrap()],
     );
+    let precheck = invoke(bin, &proj, &["sync", "--check"]);
+    if precheck.status.success() {
+        return FamilyResult::fail("sync --check passed before environment existed");
+    }
     let first = invoke(bin, &proj, &["sync"]);
     if !first.status.success() {
         return FamilyResult::fail("first sync failed");
+    }
+    let check = invoke(bin, &proj, &["sync", "--check"]);
+    if !check.status.success() {
+        return FamilyResult::fail(format!(
+            "sync --check failed after sync: {}",
+            String::from_utf8_lossy(&check.stderr)
+        ));
     }
     let second = invoke(bin, &proj, &["sync"]);
     if !second.status.success() {
@@ -1117,7 +1136,7 @@ fn probe_sync(bin: &Path) -> FamilyResult {
     if !stderr.contains("no_op") {
         return FamilyResult::fail("second sync did not signal no_op");
     }
-    FamilyResult::pass("sync first-run installs; second-run no_op").with_paths(
+    FamilyResult::pass("sync check gates drift; first-run installs; second-run no_op").with_paths(
         Some(proj.clone()),
         Some(proj.join("mamba.lock")),
         Some(proj.join(".venv")),

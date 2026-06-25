@@ -19,14 +19,14 @@
 //   <INDEX>/<normalized_name>/<version>/metadata.toml   # optional;
 //     requires = ["other_pkg==X.Y.Z", ...]              # transitive edges
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::pkgmanage::add::{atomic_write, ManifestState};
+use crate::pkgmanage::add::{ManifestState, atomic_write};
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
@@ -74,8 +74,17 @@ pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
         }
     };
 
-    let body = render_lockfile(&state.dependencies, &resolved);
     let lock_path = project_dir.join(LOCKFILE_FILE);
+    let body = render_lockfile(&state.dependencies, &resolved);
+    if sub.get_flag("check") {
+        let existing = fs::read_to_string(&lock_path)
+            .with_context(|| format!("read {}", lock_path.display()))?;
+        if existing != body {
+            bail!("{LOCKFILE_FILE} is out of date; run `mamba lock`");
+        }
+        println!("{LOCKFILE_FILE} is up to date");
+        return Ok(());
+    }
     atomic_write(&lock_path, body.as_bytes())?;
     Ok(())
 }
@@ -87,10 +96,10 @@ fn resolve_index_url(sub: &ArgMatches) -> Option<String> {
 }
 
 fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
-    use crate::pkgmanage::pkgmgr::markers::{evaluate as eval_marker, MarkerEnv};
-    use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
-    use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Resolver};
     use crate::pkgmanage::pkgmgr::IndexClient;
+    use crate::pkgmanage::pkgmgr::markers::{MarkerEnv, evaluate as eval_marker};
+    use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
+    use crate::pkgmanage::pkgmgr::resolver::{Resolver, parse_requirement};
 
     let roots: Vec<crate::pkgmanage::pkgmgr::resolver::Requirement> = deps
         .iter()

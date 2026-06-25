@@ -21,7 +21,7 @@
 //
 // No partial state on failure: lockfile is never rewritten by sync.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,6 +55,21 @@ pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
     let site = venv_dir.join(SITE_PACKAGES);
 
     let plan = plan_install(&packages, &site);
+    if sub.get_flag("check") {
+        if !venv_dir.join("pyvenv.cfg").exists() {
+            bail!("environment is not synchronized with mamba.lock; missing .venv/pyvenv.cfg");
+        }
+        if !plan.is_empty() {
+            let missing = plan
+                .iter()
+                .map(|p| format!("{}=={}", p.name, p.version))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("environment is not synchronized with mamba.lock; pending packages: {missing}");
+        }
+        println!("environment is synchronized with mamba.lock");
+        return Ok(());
+    }
     if plan.is_empty() && venv_dir.exists() {
         eprintln!("no_op: environment already in sync with mamba.lock");
         return Ok(());
