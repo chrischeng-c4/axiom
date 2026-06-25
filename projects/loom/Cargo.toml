@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "loom — DAG workflow scheduler. Control-plane orchestrator over relay (broker) + keep (store); owns sharded, strongly-consistent workflow/DAG state and never sits in the data path."
+# Stamp git sha / build time / target for the standard CLI ops (#475).
+build = "build.rs"
 
 [lib]
 name = "loom"
@@ -38,3 +40,14 @@ reqwest = { workspace = true }
 raftcore = { path = "../../libs/raftcore" }
 # Scoped claim-check tokens the schema layer signs for workers (#444).
 claimtoken = { path = "../../libs/claimtoken" }
+# Standard agent-facing CLI ops — llm/upgrade/report-issue (#475). Offline paths
+# always build; the network paths are gated behind loom's online features below.
+cli-std = { path = "../../libs/cli-std", default-features = false }
+
+[features]
+default = []
+# Online (HTTPS) paths of the standard CLI ops (#475): `upgrade` self-install +
+# `report-issue` submit. Offline paths (llm, `upgrade --check`, `report-issue
+# --dry-run`) always build; release builds enable these.
+self-update = ["cli-std/online"]
+report-issue = ["cli-std/online"]
