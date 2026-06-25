@@ -39,7 +39,7 @@ nodes:
   report:   { kind: terminal, label: "print cur vs pick; exit 0" }
   cmp:      { kind: decision, label: "pick == cur and not --force?" }
   noop:     { kind: terminal, label: "'already up to date (X.Y.Z)'; exit 0" }
-  findasset:{ kind: decision, label: "asset 'lumen-{target}.tar.gz' in release?" }
+  findasset: { kind: decision, label: "asset 'lumen-{target}.tar.gz' in release?" }
   noasset:  { kind: terminal, label: "err 'no asset for {target}'; exit 1" }
   confirm:  { kind: decision, label: "tty and not -y -> confirm cur->pick?" }
   abort:    { kind: terminal, label: "'aborted'; exit 0" }
@@ -100,51 +100,50 @@ flowchart TD
 
 ```mermaid
 ---
-id: lumen-upgrade-verification
+id: lumen-upgrade-contract-verification
 requirements:
-  check_reports_no_change:
+  asset_name_for_target:
     id: R1
-    text: "upgrade --check prints current vs latest and exits 0 without replacing the binary"
+    text: "asset_name(target) returns 'lumen-<target>.tar.gz' and sha_name appends '.sha256'"
     kind: functional
     risk: high
     verify: test
-  target_asset_selected:
+  select_latest_stable:
     id: R2
-    text: "the release asset name for the running target resolves to lumen-<target>.tar.gz (+ .sha256)"
+    text: "select_version over ['lumen@0.4.0','lumen@0.4.3','lumen@0.4.10'] returns 0.4.10; an exact --tag overrides selection"
     kind: functional
     risk: high
     verify: test
-  sha_mismatch_aborts:
+  parse_tag_to_semver:
     id: R3
-    text: "a tarball whose sha256 differs from the published .sha256 aborts the install and leaves the binary intact"
-    kind: functional
-    risk: high
-    verify: test
-  version_select_latest_or_tag:
-    id: R4
-    text: "version selection picks the highest stable semver across lumen@* tags, or the exact --tag when given"
+    text: "parsing 'lumen@1.2.3' yields semver 1.2.3; a non-lumen or malformed tag is skipped, not an error"
     kind: functional
     risk: medium
     verify: test
-  already_current_noop:
+  sha_verify_matches:
+    id: R4
+    text: "verify_sha256 accepts bytes whose hex digest equals the expected string and rejects any other (case-insensitive hex)"
+    kind: functional
+    risk: high
+    verify: test
+  extract_inner_binary:
     id: R5
-    text: "when the installed version equals the selected version and --force is absent, no download or replace occurs"
+    text: "extract_binary reads 'lumen-<target>/lumen' from a gz tarball and returns its bytes; a tarball missing that entry errors"
+    kind: functional
+    risk: high
+    verify: test
+  already_current_noop:
+    id: R6
+    text: "decide_action returns UpToDate when selected == current and force is false; Install otherwise"
     kind: functional
     risk: medium
     verify: test
 ---
 flowchart TD
-    r1[R1 --check reports, no change] --> v1{exit 0 and binary untouched?}
-    r2[R2 target -> asset name] --> v2{lumen-target.tar.gz resolved?}
-    r3[R3 sha mismatch] --> v3{abort and binary intact?}
-    r4[R4 version select] --> v4{latest stable or --tag?}
-    r5[R5 already current] --> v5{no-op without --force?}
+    r1[R1 asset_name/sha_name] --> v1{lumen-target.tar.gz + .sha256?}
+    r2[R2 select_version] --> v2{max stable / --tag override?}
+    r3[R3 parse tag] --> v3{lumen@x.y.z -> semver; skip bad?}
+    r4[R4 verify_sha256] --> v4{accept match, reject mismatch?}
+    r5[R5 extract_binary] --> v5{inner lumen bytes / err if absent?}
+    r6[R6 decide_action] --> v6{UpToDate vs Install?}
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Dispatch flow covers the full upgrade path and every documented branch: `--check` short-circuit, already-current/`--force` no-op, missing per-target asset, sha256 verify gate, and the atomic-replace permission gate — each terminating safely with the binary intact on failure.
-- [unit-test] Requirements R1–R5 map onto the acceptance criteria (check no-op, target→asset resolution, sha-mismatch abort, latest-stable/`--tag` selection, already-current no-op) and are all `verify: test`, matching the code-artifact testability gate.
