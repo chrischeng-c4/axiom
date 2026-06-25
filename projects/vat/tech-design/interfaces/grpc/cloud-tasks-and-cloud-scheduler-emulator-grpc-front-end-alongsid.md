@@ -76,7 +76,6 @@ properties:
     description: "gRPC httpRequest.body is raw bytes; REST body is base64 — both normalize to the same internal Vec<u8> before dispatch."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
