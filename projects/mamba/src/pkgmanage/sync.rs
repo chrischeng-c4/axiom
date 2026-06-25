@@ -118,6 +118,12 @@ pub(crate) struct LockedPkg {
     /// path. When non-empty alongside `url`, sync streams the artifact via
     /// [`IndexClient::download_artifact`] which verifies the hash.
     pub(crate) sha256: String,
+    /// Optional source kind recorded by the lockfile. Direct local wheel
+    /// entries use `direct_file` and intentionally leave `url` empty so sync
+    /// stays offline.
+    pub(crate) source_kind: String,
+    /// Optional source path for local/direct entries.
+    pub(crate) path: String,
 }
 
 pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
@@ -152,11 +158,23 @@ pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let source_kind = tbl
+            .get("source_kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let path = tbl
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         out.push(LockedPkg {
             name,
             version,
             url,
             sha256,
+            source_kind,
+            path,
         });
     }
     Ok(out)
@@ -333,8 +351,10 @@ fn materialize_stub(site: &Path, pkg: &LockedPkg) -> Result<()> {
     let init_body = format!(
         "# stub-installed by `mamba sync` from a frozen local index\n\
          __mamba_pkg__ = {:?}\n\
-         __version__ = {:?}\n",
-        pkg.name, pkg.version
+         __version__ = {:?}\n\
+         __mamba_source_kind__ = {:?}\n\
+         __mamba_source_path__ = {:?}\n",
+        pkg.name, pkg.version, pkg.source_kind, pkg.path
     );
     fs::write(dir.join("__init__.py"), init_body)
         .with_context(|| format!("write {}/__init__.py", dir.display()))?;
