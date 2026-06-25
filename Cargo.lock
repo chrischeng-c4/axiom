@@ -5750,6 +5750,7 @@ dependencies = [
  "bincode",
  "claimtoken",
  "clap",
+ "cli-std",
  "crc32fast",
  "criterion",
  "crossbeam-channel",
