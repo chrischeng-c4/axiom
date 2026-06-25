@@ -396,28 +396,47 @@ async fn main() -> Result<()> {
         }
         Command::K8s(args) => k8s(args).await,
         Command::Upgrade(args) => {
-            lumen::upgrade::run(lumen::upgrade::Options {
-                check: args.check,
-                tag: args.tag,
-                force: args.force,
-                yes: args.yes,
-            })
+            cclab_cli_std::upgrade::run(
+                &TOOL,
+                cclab_cli_std::upgrade::Options {
+                    check: args.check,
+                    tag: args.tag,
+                    force: args.force,
+                    yes: args.yes,
+                },
+            )
             .await
         }
         Command::ReportIssue(args) => {
-            lumen::report_issue::run(lumen::report_issue::Options {
-                title: args.title,
-                message: args.message,
-                url: args.url,
-                repo: args.repo,
-                label: args.label,
-                dry_run: args.dry_run,
-                yes: args.yes,
-            })
+            cclab_cli_std::report_issue::run(
+                &TOOL,
+                cclab_cli_std::report_issue::Options {
+                    title: args.title,
+                    message: args.message,
+                    url: args.url,
+                    repo: args.repo,
+                    label: args.label,
+                    dry_run: args.dry_run,
+                    yes: args.yes,
+                },
+            )
             .await
         }
     }
 }
+
+/// This binary's identity + build provenance for the standard CLI ops
+/// (`upgrade` / `report-issue`), per the CONTRIBUTING.md CLI convention.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
+const TOOL: cclab_cli_std::ToolInfo = cclab_cli_std::ToolInfo {
+    project: "lumen",
+    repo: "chrischeng-c4/axiom",
+    target: env!("LUMEN_TARGET"),
+    version: env!("CARGO_PKG_VERSION"),
+    git_sha: env!("LUMEN_GIT_SHA"),
+    built_at: env!("LUMEN_BUILT_AT"),
+};
 
 /// `lumen spec gen` — generate a typed client from lumen's own OpenAPI document
 /// (offline; no engine or server) and write it into `--out`.

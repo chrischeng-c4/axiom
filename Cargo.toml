@@ -34,6 +34,7 @@ members = [
     "libs/claimtoken",
     "libs/openapi-codegen",
     "libs/h2c",
+    "libs/cli-std",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",
