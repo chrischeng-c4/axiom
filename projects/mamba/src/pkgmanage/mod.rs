@@ -32,3 +32,4 @@ pub mod tree;
 pub mod validate;
 pub mod venv;
 pub mod version;
+pub mod workspace;

@@ -66,3 +66,6 @@ mod venv;
 
 #[path = "version.rs"]
 mod version;
+
+#[path = "workspace.rs"]
+mod workspace;

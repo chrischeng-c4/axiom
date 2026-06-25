@@ -52,8 +52,22 @@ impl Drop for ScratchDir {
 }
 
 const REQUIRED_FAMILIES: &[&str] = &[
-    "init", "index", "add", "lock", "export", "tree", "version", "pip", "venv", "python", "sync",
-    "run", "install", "hash", "cache",
+    "init",
+    "index",
+    "add",
+    "lock",
+    "export",
+    "tree",
+    "version",
+    "pip",
+    "venv",
+    "python",
+    "workspace",
+    "sync",
+    "run",
+    "install",
+    "hash",
+    "cache",
 ];
 
 pub fn cmd_validate(sub: &ArgMatches) -> Result<()> {
@@ -153,6 +167,7 @@ fn run_family(family: &str, bin: &Path) -> FamilyResult {
         "pip" => probe_pip(bin),
         "venv" => probe_venv(bin),
         "python" => probe_python(bin),
+        "workspace" => probe_workspace(bin),
         "sync" => probe_sync(bin),
         "run" => probe_run(bin),
         "install" => probe_install(bin),
@@ -635,6 +650,50 @@ fn probe_python(bin: &Path) -> FamilyResult {
         None,
         Some(data),
     )
+}
+
+fn probe_workspace(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let root = tmp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        r#"
+[tool.uv.workspace]
+members = ["packages/*"]
+exclude = ["packages/skip"]
+"#,
+    )
+    .unwrap();
+    write_workspace_member(root, "packages/alpha", "Alpha_Pkg", "0.1.0");
+    write_workspace_member(root, "packages/skip", "skip", "9.9.9");
+
+    let out = invoke(bin, root, &["workspace", "list"]);
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "workspace list exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !stdout.contains("alpha-pkg==0.1.0") || stdout.contains("skip==9.9.9") {
+        return FamilyResult::fail(format!("workspace list output mismatch: {stdout}"));
+    }
+    FamilyResult::pass("workspace list discovers uv workspace members").with_paths(
+        Some(root.to_path_buf()),
+        None,
+        None,
+    )
+}
+
+fn write_workspace_member(root: &Path, rel: &str, name: &str, version: &str) {
+    let dir = root.join(rel);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("pyproject.toml"),
+        format!("[project]\nname = {name:?}\nversion = {version:?}\n"),
+    )
+    .unwrap();
 }
 
 fn probe_sync(bin: &Path) -> FamilyResult {

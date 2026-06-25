@@ -20,6 +20,7 @@ use mamba::pkgmanage::tree as pkg_tree;
 use mamba::pkgmanage::validate as pkg_validate;
 use mamba::pkgmanage::venv as pkg_venv;
 use mamba::pkgmanage::version as pkg_version;
+use mamba::pkgmanage::workspace as pkg_workspace;
 
 // Force-link Mamba native binding crates so their #[distributed_slice(MAMBA_MODULES)]
 // entries are included in the binary.  Without these, `mamba run` cannot resolve
@@ -258,6 +259,18 @@ fn cli() -> Command {
                 .subcommand(Command::new("dir").about("Print the managed Python install directory")),
         )
         .subcommand(
+            Command::new("workspace")
+                .about("Inspect uv-compatible [tool.uv.workspace] membership")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("list")
+                        .about("List workspace members from pyproject.toml")
+                        .arg(Arg::new("root").long("root").value_name("DIR").help("Workspace root directory; defaults to current directory"))
+                        .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit JSON")),
+                ),
+        )
+        .subcommand(
             Command::new("index")
                 .about("Build frozen local package indexes from wheel artifacts")
                 .subcommand_required(true)
@@ -376,6 +389,7 @@ fn main() -> Result<()> {
         Some(("pip", sub)) => pkg_pip::cmd_pip(sub),
         Some(("venv", sub)) => pkg_venv::cmd_venv(sub),
         Some(("python", sub)) => pkg_python::cmd_python(sub),
+        Some(("workspace", sub)) => pkg_workspace::cmd_workspace(sub),
         Some(("index", sub)) => pkg_index::cmd_index(sub),
         Some(("sync", sub)) => pkg_sync::cmd_sync(sub),
         Some(("cache", sub)) => pkg_cache::cmd_cache(sub),
