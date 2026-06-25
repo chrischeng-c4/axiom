@@ -218,7 +218,7 @@ fn cli() -> Command {
                 )
                 .subcommand(
                     Command::new("publish")
-                        .about("Validate package upload payloads without leaking credentials")
+                        .about("Publish package artifacts or validate upload payloads with --dry-run")
                         .arg(Arg::new("artifact").value_name("ARTIFACT").num_args(0..).action(ArgAction::Append).help("Wheel or sdist artifact; defaults to dist/*.whl and dist/*.tar.gz"))
                         .arg(Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).help("Validate payloads without uploading"))
                         .arg(Arg::new("repository").long("repository").value_name("NAME").help("Repository name in .pypirc, e.g. pypi or testpypi"))
@@ -226,12 +226,12 @@ fn cli() -> Command {
                         .arg(Arg::new("username").long("username").short('u').value_name("USER").help("Upload username"))
                         .arg(Arg::new("password").long("password").short('p').value_name("PASSWORD").help("Upload password or token"))
                         .arg(Arg::new("pypirc").long("pypirc").value_name("FILE").help("Path to a .pypirc file; defaults to ~/.pypirc"))
-                        .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit publish dry-run summary as JSON")),
+                        .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit publish summary as JSON")),
                 ),
         )
         .subcommand(
             Command::new("publish")
-                .about("Validate package upload payloads without leaking credentials")
+                .about("Publish package artifacts or validate upload payloads with --dry-run")
                 .arg(Arg::new("artifact").value_name("ARTIFACT").num_args(0..).action(ArgAction::Append).help("Wheel or sdist artifact; defaults to dist/*.whl and dist/*.tar.gz"))
                 .arg(Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).help("Validate payloads without uploading"))
                 .arg(Arg::new("repository").long("repository").value_name("NAME").help("Repository name in .pypirc, e.g. pypi or testpypi"))
@@ -239,7 +239,7 @@ fn cli() -> Command {
                 .arg(Arg::new("username").long("username").short('u').value_name("USER").help("Upload username"))
                 .arg(Arg::new("password").long("password").short('p').value_name("PASSWORD").help("Upload password or token"))
                 .arg(Arg::new("pypirc").long("pypirc").value_name("FILE").help("Path to a .pypirc file; defaults to ~/.pypirc"))
-                .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit publish dry-run summary as JSON")),
+                .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit publish summary as JSON")),
         )
         .subcommand(
             Command::new("pip")

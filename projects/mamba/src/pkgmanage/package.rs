@@ -4,21 +4,25 @@
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use flate2::read::GzDecoder;
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
+use crate::pkgmanage::pkgmgr::auth_header::basic_auth;
 use crate::pkgmanage::pkgmgr::extras_spec::normalize_extra;
 use crate::pkgmanage::pkgmgr::name_normalize::pep503_normalize;
 use crate::pkgmanage::pkgmgr::pep621::{License, ProjectTable, Readme};
 use crate::pkgmanage::pkgmgr::publish::{
-    ArtifactKind, PublishInputs, UploadArtifact, build_upload_multipart, default_pypirc_path,
-    parse_pypirc, resolve_repository,
+    ArtifactKind, PublishInputs, ResolvedRepository, UploadArtifact, build_upload_multipart,
+    default_pypirc_path, fresh_boundary, parse_pypirc, resolve_repository,
 };
 use crate::pkgmanage::pkgmgr::requirement_string::Requirement;
 use crate::pkgmanage::pkgmgr::sdist_build::SdistBuilder;
+use crate::pkgmanage::pkgmgr::url_redact::redact_credentials;
 use crate::pkgmanage::pkgmgr::wheel_build::{
     CoreMetadata, WheelBuilder, WheelMetadata, compose_filename, parse_core_metadata,
 };
@@ -98,10 +102,7 @@ pub fn cmd_package_build(sub: &ArgMatches) -> Result<()> {
 }
 
 pub fn cmd_publish(sub: &ArgMatches) -> Result<()> {
-    if !sub.get_flag("dry-run") {
-        bail!("network upload is not implemented yet; use --dry-run to validate publish payloads");
-    }
-
+    let dry_run = sub.get_flag("dry-run");
     let pypirc = load_pypirc(sub)?;
     let inputs = publish_inputs(sub);
     let repo = resolve_repository(&inputs, &pypirc);
@@ -117,8 +118,22 @@ pub fn cmd_publish(sub: &ArgMatches) -> Result<()> {
     let mut summaries = Vec::new();
     for path in artifacts {
         let upload = read_upload_artifact(&path)?;
-        let (content_type, body) = build_upload_multipart(&upload, DRY_RUN_BOUNDARY);
-        summaries.push(PublishDryRun {
+        let boundary = if dry_run {
+            DRY_RUN_BOUNDARY.to_string()
+        } else {
+            fresh_boundary()
+        };
+        let (content_type, body) = build_upload_multipart(&upload, &boundary);
+        let body_len = body.len();
+        let response_status = if dry_run {
+            None
+        } else {
+            Some(
+                upload_publish_artifact(&repo, &content_type, body)
+                    .with_context(|| format!("upload {}", upload.filename))?,
+            )
+        };
+        summaries.push(PublishSummary {
             path,
             filename: upload.filename,
             name: upload.name,
@@ -126,13 +141,16 @@ pub fn cmd_publish(sub: &ArgMatches) -> Result<()> {
             file_type: upload.file_type,
             sha256_hex: upload.sha256_hex,
             content_type,
-            body_len: body.len(),
+            body_len,
+            response_status,
         });
     }
 
+    let redacted_url = redact_credentials(&repo.url);
     if sub.get_flag("json") {
         let payload = json!({
-            "repository_url": repo.url,
+            "mode": if dry_run { "dry-run" } else { "upload" },
+            "repository_url": redacted_url,
             "username": repo.username,
             "password_present": repo.password.is_some(),
             "ca_cert": repo.ca_cert.map(|p| p.to_string_lossy().to_string()),
@@ -145,11 +163,12 @@ pub fn cmd_publish(sub: &ArgMatches) -> Result<()> {
                 "sha256": &s.sha256_hex,
                 "content_type": &s.content_type,
                 "body_bytes": s.body_len,
+                "response_status": s.response_status,
             })).collect::<Vec<_>>()
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
-    } else {
-        println!("publish dry-run target {}", repo.url);
+    } else if dry_run {
+        println!("publish dry-run target {redacted_url}");
         println!(
             "credentials username={} password_present={}",
             repo.username.as_deref().unwrap_or("<none>"),
@@ -159,6 +178,24 @@ pub fn cmd_publish(sub: &ArgMatches) -> Result<()> {
             println!(
                 "artifact {} {} {} sha256:{} body_bytes:{}",
                 s.filename, s.name, s.version, s.sha256_hex, s.body_len
+            );
+        }
+    } else {
+        println!("publish target {redacted_url}");
+        println!(
+            "credentials username={} password_present={}",
+            repo.username.as_deref().unwrap_or("<none>"),
+            repo.password.is_some()
+        );
+        for s in summaries {
+            println!(
+                "published {} {} {} status:{} sha256:{} body_bytes:{}",
+                s.filename,
+                s.name,
+                s.version,
+                s.response_status.unwrap_or_default(),
+                s.sha256_hex,
+                s.body_len
             );
         }
     }
@@ -171,7 +208,7 @@ struct SourceFile {
     data: Vec<u8>,
 }
 
-struct PublishDryRun {
+struct PublishSummary {
     path: PathBuf,
     filename: String,
     name: String,
@@ -180,6 +217,7 @@ struct PublishDryRun {
     sha256_hex: String,
     content_type: String,
     body_len: usize,
+    response_status: Option<u16>,
 }
 
 trait ArtifactKindLabel {
@@ -193,6 +231,53 @@ impl ArtifactKindLabel for ArtifactKind {
             ArtifactKind::Wheel => "wheel",
         }
     }
+}
+
+fn upload_publish_artifact(
+    repo: &ResolvedRepository,
+    content_type: &str,
+    body: Vec<u8>,
+) -> Result<u16> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build tokio runtime for publish upload")?;
+    rt.block_on(upload_publish_artifact_async(repo, content_type, body))
+}
+
+async fn upload_publish_artifact_async(
+    repo: &ResolvedRepository,
+    content_type: &str,
+    body: Vec<u8>,
+) -> Result<u16> {
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(60));
+    if let Some(path) = &repo.ca_cert {
+        let pem = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        let cert = reqwest::Certificate::from_pem(&pem)
+            .with_context(|| format!("parse PEM certificate {}", path.display()))?;
+        builder = builder.add_root_certificate(cert);
+    }
+    let client = builder.build().context("build publish HTTP client")?;
+    let mut req = client
+        .post(&repo.url)
+        .header(CONTENT_TYPE, content_type)
+        .header(ACCEPT, "application/json, text/plain;q=0.9, */*;q=0.8")
+        .body(body);
+    if let (Some(user), Some(password)) = (repo.username.as_deref(), repo.password.as_deref()) {
+        let header = basic_auth(user, password).map_err(anyhow::Error::from)?;
+        req = req.header(AUTHORIZATION, header);
+    }
+
+    let response = req.send().await.context("send publish upload request")?;
+    let status = response.status();
+    if !status.is_success() {
+        bail!(
+            "publish upload failed for {} with HTTP {}",
+            redact_credentials(&repo.url),
+            status.as_u16()
+        );
+    }
+    Ok(status.as_u16())
 }
 
 fn read_project_table(project_dir: &Path) -> Result<ProjectTable> {

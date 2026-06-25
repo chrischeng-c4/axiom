@@ -18,9 +18,13 @@
 use anyhow::{Context, Result};
 use clap::ArgMatches;
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -49,6 +53,90 @@ impl Drop for ScratchDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+fn spawn_publish_upload_server(expected_auth: String) -> Result<(String, JoinHandle<Vec<u8>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").context("bind publish upload probe")?;
+    listener
+        .set_nonblocking(true)
+        .context("set publish upload listener nonblocking")?;
+    let addr = listener.local_addr().context("read upload listener addr")?;
+    let handle = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(pair) => break pair,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return b"timeout waiting for publish upload".to_vec();
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => return format!("accept publish upload: {e}").into_bytes(),
+            }
+        };
+        if let Err(e) = stream.set_nonblocking(false) {
+            return format!("set publish upload stream blocking: {e}").into_bytes();
+        }
+        let request = read_http_request(&mut stream).unwrap_or_else(|e| e.into_bytes());
+        let text = String::from_utf8_lossy(&request);
+        let lower = text.to_ascii_lowercase();
+        let ok = text.starts_with("POST /legacy/ HTTP/1.1")
+            && lower.contains(&format!(
+                "authorization: {}",
+                expected_auth.to_ascii_lowercase()
+            ))
+            && lower.contains("content-type: multipart/form-data;");
+        let response = if ok {
+            "HTTP/1.1 200 ok\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"
+        } else {
+            "HTTP/1.1 400 bad\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad"
+        };
+        let _ = stream.write_all(response.as_bytes());
+        request
+    });
+    Ok((format!("http://{addr}/legacy/"), handle))
+}
+
+fn read_http_request(stream: &mut TcpStream) -> std::result::Result<Vec<u8>, String> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| format!("set upload read timeout: {e}"))?;
+    let mut out = Vec::new();
+    let mut buf = [0u8; 4096];
+    let mut content_len = None;
+    loop {
+        let n = stream
+            .read(&mut buf)
+            .map_err(|e| format!("read upload request: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+        if content_len.is_none() {
+            if let Some(header_end) = find_http_header_end(&out) {
+                let headers = String::from_utf8_lossy(&out[..header_end]);
+                content_len = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                });
+            }
+        }
+        if let (Some(header_end), Some(len)) = (find_http_header_end(&out), content_len) {
+            if out.len() >= header_end + 4 + len {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn find_http_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
 const REQUIRED_FAMILIES: &[&str] = &[
@@ -803,8 +891,63 @@ fn probe_package(bin: &Path) -> FamilyResult {
         return FamilyResult::fail(format!("publish dry-run summary mismatch: {stdout}"));
     }
 
-    FamilyResult::pass("package build emits wheel/sdist; publish dry-run validates payloads")
-        .with_paths(Some(proj), None, Some(dist))
+    let expected_auth =
+        match crate::pkgmanage::pkgmgr::auth_header::basic_auth("__token__", "secret-token") {
+            Ok(header) => header,
+            Err(e) => return FamilyResult::fail(format!("publish auth header failed: {e}")),
+        };
+    let (upload_url, handle) = match spawn_publish_upload_server(expected_auth) {
+        Ok(server) => server,
+        Err(e) => return FamilyResult::fail(format!("publish upload server failed: {e}")),
+    };
+    let upload = Command::new(bin)
+        .args([
+            "publish",
+            "--publish-url",
+            upload_url.as_str(),
+            "--username",
+            "__token__",
+            "--password",
+            "secret-token",
+            "--json",
+        ])
+        .arg(&wheel)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba publish upload");
+    if !upload.status.success() {
+        let _ = handle.join();
+        return FamilyResult::fail(format!(
+            "publish upload failed: {}",
+            String::from_utf8_lossy(&upload.stderr)
+        ));
+    }
+    let upload_stdout = String::from_utf8_lossy(&upload.stdout);
+    if !upload_stdout.contains("\"mode\": \"upload\"")
+        || !upload_stdout.contains("\"response_status\": 200")
+        || !upload_stdout.contains("demo_pkg-0.1.0-py3-none-any.whl")
+        || upload_stdout.contains("secret-token")
+    {
+        let _ = handle.join();
+        return FamilyResult::fail(format!("publish upload summary mismatch: {upload_stdout}"));
+    }
+    let request = match handle.join() {
+        Ok(request) => request,
+        Err(_) => return FamilyResult::fail("publish upload probe thread panicked"),
+    };
+    let request_text = String::from_utf8_lossy(&request);
+    if !request_text.starts_with("POST /legacy/ HTTP/1.1")
+        || !request_text.contains("name=\":action\"")
+        || !request_text.contains("file_upload")
+        || !request_text.contains("demo_pkg-0.1.0-py3-none-any.whl")
+    {
+        return FamilyResult::fail(format!("publish upload request mismatch: {request_text}"));
+    }
+
+    FamilyResult::pass(
+        "package build emits wheel/sdist; publish dry-run and upload validate payloads",
+    )
+    .with_paths(Some(proj), None, Some(dist))
 }
 
 fn probe_pip(bin: &Path) -> FamilyResult {

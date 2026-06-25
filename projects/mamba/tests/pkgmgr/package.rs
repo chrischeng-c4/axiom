@@ -1,9 +1,12 @@
 //! CLI integration tests for `mamba package` and `mamba publish`.
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 fn mamba_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mamba"))
@@ -63,6 +66,94 @@ fn read_sdist_entry(path: &Path, suffix: &str) -> String {
         }
     }
     panic!("missing sdist entry suffix {suffix}");
+}
+
+fn spawn_publish_server(
+    expected_auth: String,
+    status: u16,
+    response_body: &'static str,
+) -> (String, JoinHandle<Vec<u8>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(pair) => break pair,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        panic!("timed out waiting for publish upload");
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => panic!("accept publish upload: {e}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        let request = read_http_request(&mut stream);
+        let text = String::from_utf8_lossy(&request);
+        let lower = text.to_ascii_lowercase();
+        assert!(text.starts_with("POST /legacy/ HTTP/1.1"), "{text}");
+        assert!(
+            lower.contains(&format!(
+                "authorization: {}",
+                expected_auth.to_ascii_lowercase()
+            )),
+            "{text}"
+        );
+        assert!(
+            lower.contains("content-type: multipart/form-data;"),
+            "{text}"
+        );
+        let response = format!(
+            "HTTP/1.1 {status} test\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            response_body.len(),
+            response_body
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+        request
+    });
+    (format!("http://{addr}/legacy/"), handle)
+}
+
+fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut out = Vec::new();
+    let mut buf = [0u8; 4096];
+    let mut content_len = None;
+    loop {
+        let n = stream.read(&mut buf).unwrap();
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+        if content_len.is_none() {
+            if let Some(header_end) = find_header_end(&out) {
+                let headers = String::from_utf8_lossy(&out[..header_end]);
+                content_len = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                });
+            }
+        }
+        if let (Some(header_end), Some(len)) = (find_header_end(&out), content_len) {
+            if out.len() >= header_end + 4 + len {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn find_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
 #[test]
@@ -202,4 +293,107 @@ fn publish_dry_run_validates_payloads_without_leaking_token() {
         "package publish stderr: {}",
         String::from_utf8_lossy(&package_publish.stderr)
     );
+}
+
+#[test]
+fn publish_posts_artifact_without_leaking_token() {
+    use mamba::pkgmanage::pkgmgr::auth_header::basic_auth;
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_project(tmp.path());
+    let dist = tmp.path().join("dist");
+    let build = run(
+        tmp.path(),
+        &["package", "build", "--out-dir", dist.to_str().unwrap()],
+    );
+    assert!(build.status.success());
+    let wheel = dist.join("demo_pkg-0.1.0-py3-none-any.whl");
+    let expected_auth = basic_auth("__token__", "secret-token").unwrap();
+    let (url, handle) = spawn_publish_server(expected_auth, 200, "ok");
+
+    let out = run(
+        tmp.path(),
+        &[
+            "publish",
+            "--publish-url",
+            &url,
+            "--username",
+            "__token__",
+            "--password",
+            "secret-token",
+            "--json",
+            wheel.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "publish stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\"mode\": \"upload\""), "{stdout}");
+    assert!(stdout.contains("\"response_status\": 200"), "{stdout}");
+    assert!(
+        stdout.contains("demo_pkg-0.1.0-py3-none-any.whl"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("secret-token"),
+        "publish stdout leaked token: {stdout}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("secret-token"),
+        "publish stderr leaked token: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let request = handle.join().unwrap();
+    let request_text = String::from_utf8_lossy(&request);
+    assert!(request_text.contains("name=\":action\""), "{request_text}");
+    assert!(request_text.contains("file_upload"), "{request_text}");
+    assert!(
+        request_text.contains("demo_pkg-0.1.0-py3-none-any.whl"),
+        "{request_text}"
+    );
+}
+
+#[test]
+fn publish_failure_reports_status_without_leaking_response_body() {
+    use mamba::pkgmanage::pkgmgr::auth_header::basic_auth;
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_project(tmp.path());
+    let dist = tmp.path().join("dist");
+    let build = run(
+        tmp.path(),
+        &["package", "build", "--out-dir", dist.to_str().unwrap()],
+    );
+    assert!(build.status.success());
+    let wheel = dist.join("demo_pkg-0.1.0-py3-none-any.whl");
+    let expected_auth = basic_auth("__token__", "secret-token").unwrap();
+    let (url, handle) = spawn_publish_server(expected_auth, 403, "denied secret-token");
+
+    let out = run(
+        tmp.path(),
+        &[
+            "publish",
+            "--publish-url",
+            &url,
+            "--username",
+            "__token__",
+            "--password",
+            "secret-token",
+            wheel.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        !out.status.success(),
+        "publish unexpectedly succeeded: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("HTTP 403"), "{stderr}");
+    assert!(!stderr.contains("secret-token"), "{stderr}");
+    assert!(!stderr.contains("denied"), "{stderr}");
+    handle.join().unwrap();
 }
