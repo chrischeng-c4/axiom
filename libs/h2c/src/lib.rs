@@ -1,4 +1,4 @@
-//! `cclab-h2c` — shared HTTP/2 cleartext (h2c) client helpers for the ecosystem.
+//! `h2c` — shared HTTP/2 cleartext (h2c) client helpers for the ecosystem.
 //!
 //! Several components (loom → keep/relay, lumen's relay WAL, relay's raft peer
 //! transport) talk to each other over **h2c** (HTTP/2 over cleartext, via
@@ -94,7 +94,7 @@ fn h2c_builder(timeout: Option<Duration>, user_agent: Option<&str>) -> reqwest::
 ///
 /// ```no_run
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let pool = cclab_h2c::H2cPool::for_concurrency(256)?; // ~6 connections
+/// let pool = h2c::H2cPool::for_concurrency(256)?; // ~6 connections
 /// let resp = pool.get("http://keep:7117/healthz").send().await?;
 /// # let _ = resp; Ok(()) }
 /// ```

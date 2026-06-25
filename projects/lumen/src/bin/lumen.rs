@@ -396,9 +396,9 @@ async fn main() -> Result<()> {
         }
         Command::K8s(args) => k8s(args).await,
         Command::Upgrade(args) => {
-            cclab_cli_std::upgrade::run(
+            cli_std::upgrade::run(
                 &TOOL,
-                cclab_cli_std::upgrade::Options {
+                cli_std::upgrade::Options {
                     check: args.check,
                     tag: args.tag,
                     force: args.force,
@@ -408,9 +408,9 @@ async fn main() -> Result<()> {
             .await
         }
         Command::ReportIssue(args) => {
-            cclab_cli_std::report_issue::run(
+            cli_std::report_issue::run(
                 &TOOL,
-                cclab_cli_std::report_issue::Options {
+                cli_std::report_issue::Options {
                     title: args.title,
                     message: args.message,
                     url: args.url,
@@ -429,7 +429,7 @@ async fn main() -> Result<()> {
 /// (`upgrade` / `report-issue`), per the CONTRIBUTING.md CLI convention.
 /// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
 /// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
-const TOOL: cclab_cli_std::ToolInfo = cclab_cli_std::ToolInfo {
+const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
     project: "lumen",
     repo: "chrischeng-c4/axiom",
     target: env!("LUMEN_TARGET"),

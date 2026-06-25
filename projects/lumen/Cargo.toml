@@ -40,8 +40,8 @@ reqwest = { workspace = true, optional = true }
 # `lumen upgrade` / `lumen report-issue` — the standard agent-facing CLI ops,
 # shared across the ecosystem (CONTRIBUTING.md "CLI convention"). Offline paths
 # always build; the HTTPS paths are pulled in by lumen's `self-update` /
-# `report-issue` features via `cclab-cli-std/online`.
-cclab-cli-std = { path = "../../libs/cli-std", default-features = false }
+# `report-issue` features via `cli-std/online`.
+cli-std = { path = "../../libs/cli-std", default-features = false }
 # `lumen spec gen` — generate a typed client from lumen's own OpenAPI.
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 rayon = "1.10"
@@ -90,8 +90,8 @@ relay-wal = ["dep:relay", "dep:reqwest"]
 # CLI-ops lib. Offline builds still ship both commands (upgrade --check / the
 # report-issue dry-run + pre-filled-URL fallback). The published binary enables
 # them (lumen-release.yml); both map to the lib's single `online` capability.
-self-update = ["cclab-cli-std/online"]
-report-issue = ["cclab-cli-std/online"]
+self-update = ["cli-std/online"]
+report-issue = ["cli-std/online"]
 operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars"]
 # OTLP trace export. Compiled into the release binary (lumen-release.yml / build.sh
 # pass --features otel); off in plain dev builds so they don't pay the OTLP build

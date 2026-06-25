@@ -48,7 +48,7 @@ raftcore = { path = "../../libs/raftcore" }
 reqwest = { workspace = true }
 
 # Shared h2c client construction (ln(concurrency) pool heuristic) — #468.
-cclab-h2c = { path = "../../libs/h2c" }
+h2c = { path = "../../libs/h2c" }
 
 [dev-dependencies]
 tempfile = "3"
