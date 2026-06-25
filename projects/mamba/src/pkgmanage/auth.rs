@@ -7,6 +7,8 @@ use std::fs;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
+use crate::pkgmanage::pkgmgr::auth_header::basic_auth;
+
 const CREDENTIALS_DIR_ENV: &str = "MAMBA_CREDENTIALS_DIR";
 const TOKEN_USERNAME: &str = "__token__";
 
@@ -121,6 +123,58 @@ fn read_token(raw: &str) -> Result<String> {
 fn read_credential(path: &Path) -> Result<StoredCredential> {
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     toml::from_str(&raw).with_context(|| format!("parse {}", path.display()))
+}
+
+pub fn authorization_for_url(url: &str) -> Result<Option<String>> {
+    let service = normalize_service(url);
+    authorization_for_service(&service)
+}
+
+pub fn authorization_for_service(service: &str) -> Result<Option<String>> {
+    let dir = match credentials_dir() {
+        Ok(dir) => dir,
+        Err(_) => return Ok(None),
+    };
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+
+    let normalized = normalize_service(service);
+    let token_path = credential_path_in(&dir, &normalized, TOKEN_USERNAME);
+    if token_path.exists() {
+        let cred = read_credential(&token_path)?;
+        return credential_to_authorization(&cred);
+    }
+
+    let mut candidates = fs::read_dir(&dir)
+        .with_context(|| format!("read {}", dir.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("read entries {}", dir.display()))?;
+    candidates.sort_by_key(|entry| entry.path());
+    for entry in candidates {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let prefix = format!("{}__", safe_filename(&normalized));
+        if !name.starts_with(&prefix) || !name.ends_with(".toml") {
+            continue;
+        }
+        let cred = read_credential(&path)?;
+        if cred.service == normalized {
+            return credential_to_authorization(&cred);
+        }
+    }
+    Ok(None)
+}
+
+fn credential_to_authorization(cred: &StoredCredential) -> Result<Option<String>> {
+    Ok(Some(
+        basic_auth(&cred.username, &cred.token).map_err(anyhow::Error::from)?,
+    ))
 }
 
 fn service_arg(sub: &ArgMatches) -> Result<&str> {
