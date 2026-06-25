@@ -53,6 +53,7 @@ impl Drop for ScratchDir {
 
 const REQUIRED_FAMILIES: &[&str] = &[
     "init",
+    "auth",
     "index",
     "add",
     "lock",
@@ -159,6 +160,7 @@ impl FamilyResult {
 fn run_family(family: &str, bin: &Path) -> FamilyResult {
     match family {
         "init" => probe_init(bin),
+        "auth" => probe_auth(bin),
         "index" => probe_index(bin),
         "add" => probe_add(bin),
         "lock" => probe_lock(bin),
@@ -268,6 +270,71 @@ fn probe_init(bin: &Path) -> FamilyResult {
         return FamilyResult::fail("init did not create mamba.toml");
     }
     FamilyResult::pass("init created mamba.toml + scaffolding").with_paths(Some(proj), None, None)
+}
+
+fn probe_auth(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let creds = tmp.path().join("credentials");
+    let dir = Command::new(bin)
+        .args(["auth", "dir"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !dir.status.success()
+        || String::from_utf8_lossy(&dir.stdout).trim_end() != creds.display().to_string()
+    {
+        return FamilyResult::fail(format!(
+            "auth dir mismatch: {}",
+            String::from_utf8_lossy(&dir.stdout)
+        ));
+    }
+
+    let login = Command::new(bin)
+        .args([
+            "auth",
+            "login",
+            "https://Repo.EXAMPLE/simple",
+            "--username",
+            "alice",
+            "--token",
+            "secret-token",
+        ])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !login.status.success() {
+        return FamilyResult::fail(format!(
+            "auth login failed: {}",
+            String::from_utf8_lossy(&login.stderr)
+        ));
+    }
+
+    let token = Command::new(bin)
+        .args(["auth", "token", "repo.example", "--username", "alice"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !token.status.success() || String::from_utf8_lossy(&token.stdout).trim() != "secret-token" {
+        return FamilyResult::fail(format!(
+            "auth token mismatch: {}",
+            String::from_utf8_lossy(&token.stdout)
+        ));
+    }
+
+    let logout = Command::new(bin)
+        .args(["auth", "logout", "repo.example", "--username", "alice"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !logout.status.success() {
+        return FamilyResult::fail("auth logout failed");
+    }
+
+    FamilyResult::pass("auth dir/login/token/logout manage plaintext credentials").with_paths(
+        None,
+        None,
+        Some(creds),
+    )
 }
 
 fn probe_index(bin: &Path) -> FamilyResult {

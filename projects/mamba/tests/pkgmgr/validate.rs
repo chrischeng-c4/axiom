@@ -27,6 +27,7 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     for fam in [
         "init",
+        "auth",
         "index",
         "add",
         "lock",
@@ -50,8 +51,8 @@ fn pkgmgr_validate_human_reports_all_families_pass() {
         );
     }
     assert!(
-        stderr.contains("17 passed, 0 failed"),
-        "summary must report 17 passed: {stderr}"
+        stderr.contains("18 passed, 0 failed"),
+        "summary must report 18 passed: {stderr}"
     );
 }
 
@@ -88,6 +89,7 @@ fn pkgmgr_validate_json_has_runner_contract_shape() {
     }
     for fam in [
         "init",
+        "auth",
         "index",
         "add",
         "lock",
