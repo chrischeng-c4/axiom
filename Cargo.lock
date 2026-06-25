@@ -9596,6 +9596,7 @@ name = "relay"
 version = "0.4.3"
 dependencies = [
  "axum 0.8.9",
+ "cclab-h2c",
  "chrono",
  "ciborium",
  "crc32fast",
