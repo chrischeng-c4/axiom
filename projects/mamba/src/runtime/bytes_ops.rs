@@ -447,13 +447,14 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
             Some(d) => d,
             None => return MbValue::from_ptr(MbObject::new_str(String::new())),
         };
-        let enc = match encoding.as_ptr().and_then(|p| match &(*p).data {
-            ObjData::Str(s) => Some(s.to_ascii_lowercase()),
+        let enc_orig = match encoding.as_ptr().and_then(|p| match &(*p).data {
+            ObjData::Str(s) => Some(s.clone()),
             _ => None,
         }) {
             Some(e) => e,
             None => "utf-8".to_string(),
         };
+        let enc = enc_orig.to_ascii_lowercase();
         let err = encoding_errors_kind(errors);
         let s = match enc.as_str() {
             "utf-8" | "utf8" | "u8" => {
@@ -507,6 +508,8 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                 }
             }
             _ => {
+                // A known non-text codec (quopri, base64, ...) is a LookupError
+                // via bytes.decode ("not a text encoding").
                 if let Some(canon) = super::string_ops::nontext_codec_name(&enc) {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
@@ -516,11 +519,19 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                     );
                     return MbValue::none();
                 }
-                if known_text_codec_fallback(&enc) {
-                    return MbValue::from_ptr(MbObject::new_str(decode_utf8(&data, err)));
+                // A recognised-but-not-enumerated text codec keeps the lenient
+                // utf-8 fallback; a name CPython's codecs.lookup cannot resolve
+                // is rejected with LookupError (matching CPython).
+                if !super::string_ops::is_known_codec(&enc) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "unknown encoding: {enc_orig}"
+                        ))),
+                    );
+                    return MbValue::none();
                 }
-                raise_lookup_error(&format!("unknown encoding: {enc}"));
-                return MbValue::none();
+                decode_utf8(&data, err)
             }
         };
         MbValue::from_ptr(MbObject::new_str(s))
