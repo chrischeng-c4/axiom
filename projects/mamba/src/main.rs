@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use mamba::bench::{print_report, run_suite, BenchRunner, BenchSuite};
-use mamba::conformance::{run_suite as run_conformance_suite, ConformanceOptions};
+use mamba::bench::{BenchRunner, BenchSuite, print_report, run_suite};
+use mamba::conformance::{ConformanceOptions, run_suite as run_conformance_suite};
 use mamba::driver::{Backend, CompilerConfig, CompilerSession, EmitMode, MambaConfig};
 use mamba::pkgmanage::add as pkg_add;
 use mamba::pkgmanage::builder as pkg_builder;
@@ -12,10 +12,12 @@ use mamba::pkgmanage::index as pkg_index;
 use mamba::pkgmanage::init as pkg_init;
 use mamba::pkgmanage::install as pkg_install;
 use mamba::pkgmanage::lock as pkg_lock;
+use mamba::pkgmanage::pip as pkg_pip;
 use mamba::pkgmanage::remove as pkg_remove;
 use mamba::pkgmanage::sync as pkg_sync;
 use mamba::pkgmanage::tree as pkg_tree;
 use mamba::pkgmanage::validate as pkg_validate;
+use mamba::pkgmanage::version as pkg_version;
 
 // Force-link Mamba native binding crates so their #[distributed_slice(MAMBA_MODULES)]
 // entries are included in the binary.  Without these, `mamba run` cannot resolve
@@ -148,6 +150,43 @@ fn cli() -> Command {
                 .arg(Arg::new("no-dedupe").long("no-dedupe").action(ArgAction::SetTrue).help("Render repeated subtrees instead of marking duplicates")),
         )
         .subcommand(
+            Command::new("version")
+                .about("Read, set, or bump the PEP 621 [project].version in pyproject.toml")
+                .arg(Arg::new("version").value_name("VERSION").help("Explicit PEP 440 version to set"))
+                .arg(Arg::new("bump").long("bump").value_name("KIND").help("major | minor | patch | alpha | beta | rc | post | dev | release"))
+                .arg(Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).help("Print the next version without writing pyproject.toml")),
+        )
+        .subcommand(
+            Command::new("pip")
+                .about("pip-compatible installed-environment inspection")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("list")
+                        .about("List installed distributions from site-packages")
+                        .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages"))
+                        .arg(Arg::new("format").long("format").value_name("FORMAT").default_value("columns").help("columns | freeze"))
+                        .arg(Arg::new("no-header").long("no-header").action(ArgAction::SetTrue).help("Omit column headers"))
+                        .arg(Arg::new("sort-by-version").long("sort-by-version").action(ArgAction::SetTrue).help("Sort rows by version instead of package name")),
+                )
+                .subcommand(
+                    Command::new("freeze")
+                        .about("Emit installed distributions as requirements pins")
+                        .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages")),
+                )
+                .subcommand(
+                    Command::new("show")
+                        .about("Show metadata for one installed distribution")
+                        .arg(Arg::new("name").required(true).help("Package name"))
+                        .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages")),
+                )
+                .subcommand(
+                    Command::new("check")
+                        .about("Check installed distribution requirements")
+                        .arg(Arg::new("site-packages").long("site-packages").value_name("DIR").help("site-packages directory; defaults to .venv/site-packages")),
+                ),
+        )
+        .subcommand(
             Command::new("index")
                 .about("Build frozen local package indexes from wheel artifacts")
                 .subcommand_required(true)
@@ -244,6 +283,8 @@ fn main() -> Result<()> {
         Some(("lock", sub)) => pkg_lock::cmd_lock(sub),
         Some(("export", sub)) => pkg_export::cmd_export(sub),
         Some(("tree", sub)) => pkg_tree::cmd_tree(sub),
+        Some(("version", sub)) => pkg_version::cmd_version(sub),
+        Some(("pip", sub)) => pkg_pip::cmd_pip(sub),
         Some(("index", sub)) => pkg_index::cmd_index(sub),
         Some(("sync", sub)) => pkg_sync::cmd_sync(sub),
         Some(("cache", sub)) => pkg_cache::cmd_cache(sub),
@@ -314,11 +355,7 @@ fn run_one_fixture(path: &str) -> i32 {
     let _ = std::fs::remove_file(&tmp);
 
     let ok = matches!(ran, Ok(Ok(()))) && captured.contains(&format!("{stem} OK"));
-    if ok {
-        0
-    } else {
-        1
-    }
+    if ok { 0 } else { 1 }
 }
 
 /// Zygote-fork batch conformance runner. The fixed ~0.16s per-process init
