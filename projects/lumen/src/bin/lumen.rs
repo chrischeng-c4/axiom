@@ -117,9 +117,10 @@ struct ReportIssueArgs {
     /// Issue title.
     #[arg(short = 't', long)]
     title: String,
-    /// Free-text description of the problem (placed above the diagnostics block).
-    #[arg(short = 'm', long)]
-    message: Option<String>,
+    /// Free-text description of the problem (trailing words; placed above the
+    /// diagnostics block). The only positional — parameters are flags.
+    #[arg(value_name = "MSG", num_args = 0..)]
+    message: Vec<String>,
     /// Include a running node's `/version`+`/healthz` (e.g. http://localhost:7373).
     #[arg(long)]
     url: Option<String>,
@@ -412,7 +413,7 @@ async fn main() -> Result<()> {
                 &TOOL,
                 cli_std::report_issue::Options {
                     title: args.title,
-                    message: args.message,
+                    message: (!args.message.is_empty()).then(|| args.message.join(" ")),
                     url: args.url,
                     repo: args.repo,
                     // Always tag with the project label so reports route
