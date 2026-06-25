@@ -58,46 +58,38 @@ flowchart TD
 
 ```mermaid
 ---
-id: mamba-pkgmanage-no-implicit-pypi-unit-tests
+id: mamba-pkgmanage-no-implicit-pypi-contract-tests
 requirements:
   R1:
-    text: "add without local index or explicit registry fails before any manifest or lockfile mutation."
+    text: "add_no_source_requires_explicit_registry asserts no-source add fails without mutation."
     risk: high
-    verify: integration-test
+    verify: "cargo test -p mamba --test pkgmgr add_no_source_requires_explicit_registry -- --nocapture"
   R2:
-    text: "lock without local index or explicit registry fails before writing a partial lockfile."
+    text: "lock_no_source_requires_explicit_registry asserts no-source lock fails without partial lockfile."
     risk: high
-    verify: integration-test
+    verify: "cargo test -p mamba --test pkgmgr lock_no_source_requires_explicit_registry -- --nocapture"
   R3:
-    text: "frozen local index and explicit --index-url registry paths continue to pass."
+    text: "The complete pkgmgr integration binary stays green after source-policy changes."
     risk: high
-    verify: regression-test
+    verify: "cargo test -p mamba --test pkgmgr"
 ---
 requirementDiagram
-    requirement add_no_source {
+    requirement add_no_source_requires_explicit_registry {
       id: R1
-      text: "mamba add bare_dep with no source fails fast and leaves mamba.toml/mamba.lock unchanged."
+      text: "Add fails fast when no frozen index, no explicit registry, and no offline pin are present."
       risk: high
       verifymethod: test
     }
-    requirement lock_no_source {
+    requirement lock_no_source_requires_explicit_registry {
       id: R2
-      text: "mamba lock with deps and no source fails fast and does not write a partial lockfile."
+      text: "Lock fails fast when dependencies exist but no frozen index or explicit registry is present."
       risk: high
       verifymethod: test
     }
-    requirement source_paths_preserved {
+    requirement pkgmgr_umbrella_green {
       id: R3
-      text: "Existing frozen-index and explicit --index-url pkgmgr tests still pass."
+      text: "Frozen-index, explicit registry, sync, install, hash, cache, run, and validate regressions remain green."
       risk: high
       verifymethod: test
     }
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Source-policy decision tree is bounded to add/lock and distinguishes frozen local index, explicit registry URL, offline pinned add, and fail-fast no-source behavior.
-- [unit-test] Test requirements cover both new negative cases and regression protection for frozen-index plus explicit `--index-url` paths.
