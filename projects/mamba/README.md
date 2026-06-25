@@ -90,8 +90,8 @@ Current state: `mamba init/auth/index/add/remove/lock/export/tree/version/pip/ve
 plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
 local wheel paths, explicit registry URL tests, lockfile export to
 requirements.txt / pylock.toml, dependency-tree rendering, PEP 621 version
-bumping, and pip-compatible installed-environment list/freeze/show/check
-inspection. `mamba venv` exposes create/remove safety around PEP 405
+bumping, and pip-compatible installed-environment list/freeze/show/tree/check
+inspection plus dependency-tree rendering. `mamba venv` exposes create/remove safety around PEP 405
 environments, and `mamba cache` now reports exact size/category info plus
 dry-run, age, size, and package-targeted pruning. `mamba python` exposes local
 interpreter list/find, `.python-version` pinning, and managed Python directory
