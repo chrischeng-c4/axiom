@@ -3217,6 +3217,16 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
             if matches!((*pa).data, ObjData::Dict(_)) && matches!((*pb).data, ObjData::Dict(_)) {
                 return super::dict_ops::mb_dict_or(a, b);
             }
+            // `dict | <non-dict>` reaches here only as the fallback for `|=`
+            // (`mb_ior` → `mb_inplace` hands the dict receiver to `mb_bitor`,
+            // since `dict` has no Instance `__ior__`). PEP 584's in-place merge
+            // is as permissive as `dict.update`: it accepts any iterable of
+            // key/value pairs and mutates the receiver in place. Route it to
+            // `mb_dict_ior`, which validates and raises TypeError/ValueError to
+            // match CPython.
+            if matches!((*pa).data, ObjData::Dict(_)) {
+                return super::dict_ops::mb_dict_ior(a, b);
+            }
             // Counter | Counter — CPython multiset max. (#1636)
             if super::stdlib::collections_mod::is_counter_instance(a)
                 && super::stdlib::collections_mod::is_counter_instance(b)
