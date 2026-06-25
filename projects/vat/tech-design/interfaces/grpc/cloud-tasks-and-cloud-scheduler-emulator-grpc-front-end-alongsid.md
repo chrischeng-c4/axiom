@@ -100,7 +100,6 @@ properties:
             insecure channel; a REST client uses it as before.
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
