@@ -418,6 +418,14 @@ fn cli() -> Command {
                 .subcommand_required(true)
                 .arg_required_else_help(true)
                 .subcommand(
+                    Command::new("run")
+                        .about("Run an installed tool, installing from a frozen index when needed")
+                        .arg(Arg::new("name").required(true).help("Tool/package name"))
+                        .arg(Arg::new("version").long("version").value_name("X.Y.Z").help("Version to install when the tool is missing"))
+                        .arg(Arg::new("index").long("index").value_name("DIR").help("Frozen local index for auto-install when missing"))
+                        .arg(Arg::new("args").value_name("ARGS").num_args(0..).trailing_var_arg(true).allow_hyphen_values(true).help("Arguments passed to the tool")),
+                )
+                .subcommand(
                     Command::new("install")
                         .about("Install a tool from a frozen local index")
                         .arg(Arg::new("name").required(true).help("Package name"))
