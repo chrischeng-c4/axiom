@@ -123,6 +123,9 @@ test-results/
 # tempdir (see run.py / regen_golden.py / tests/cpython/harness/*.rs), but
 # this is a belt-and-suspenders guard so a stray leak is never committed.
 @test_*_tmp*
+# test.support TESTFN (src/runtime/stdlib/support_mod.rs uses "@mamba_test_<pid>",
+# a separate relative name from os_helper's "@test_*_tmp"); same CWD leak.
+@mamba_test_*
 # os_helper sibling artifacts (anchored to repo root only). Remove if a
 # legitimate root-level base/ or file.txt is ever introduced.
 /base/
