@@ -65,7 +65,6 @@ properties:
     description: "Local base URL the matched request is forwarded to (e.g. http://127.0.0.1:8085). path_and_query is appended; the response is returned verbatim and NOT recorded."
 required: [host, target]
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
