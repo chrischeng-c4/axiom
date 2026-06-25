@@ -129,7 +129,6 @@ requirementDiagram
       verifies: trailers_forwarded
     }
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
