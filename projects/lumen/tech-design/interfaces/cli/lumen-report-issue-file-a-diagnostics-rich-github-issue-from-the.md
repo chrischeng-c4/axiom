@@ -73,3 +73,42 @@ flowchart TD
     confirm -->|yes| post[POST issues]
     post --> created([print created issue URL])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: lumen-report-issue-verification
+requirements:
+  diagnostics_block_complete:
+    id: R1
+    text: "the assembled diagnostics block contains lumen version, target, git sha, built-at, and OS/arch"
+    kind: functional
+    risk: high
+    verify: test
+  body_includes_message:
+    id: R2
+    text: "assemble_body(message, diagnostics) places the operator message above the diagnostics block"
+    kind: functional
+    risk: medium
+    verify: test
+  prefilled_url_encoded:
+    id: R3
+    text: "the issues/new fallback URL targets the right repo and percent-encodes the title and body"
+    kind: functional
+    risk: high
+    verify: test
+  repo_default_and_override:
+    id: R4
+    text: "the target repo defaults to the configured repo and is replaced by --repo owner/name"
+    kind: functional
+    risk: medium
+    verify: test
+---
+flowchart TD
+    r1[R1 diagnostics complete] --> v1{version+target+sha+built-at+os/arch?}
+    r2[R2 body layout] --> v2{message above diagnostics?}
+    r3[R3 prefilled URL] --> v3{repo + percent-encoded title/body?}
+    r4[R4 repo select] --> v4{default vs --repo override?}
+```
