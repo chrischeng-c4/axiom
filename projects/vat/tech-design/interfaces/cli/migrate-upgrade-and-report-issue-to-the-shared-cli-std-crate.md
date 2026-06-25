@@ -134,7 +134,6 @@ e2e_tests:
     assertions:
       - "vat compiles with and without default features; the hand-rolled modules are gone."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
