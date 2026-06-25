@@ -302,6 +302,23 @@ fn cli() -> Command {
                 .subcommand_required(true)
                 .arg_required_else_help(true)
                 .subcommand(
+                    Command::new("install")
+                        .about("Install a managed Python from a local source interpreter")
+                        .arg(Arg::new("request").value_name("REQUEST").help("Version request such as 3, 3.12, or 3.12.7; defaults to .python-version or any"))
+                        .arg(Arg::new("source").long("source").value_name("PYTHON").help("Local Python executable to register; defaults to a matching PATH interpreter")),
+                )
+                .subcommand(
+                    Command::new("download")
+                        .about("Download/register a managed Python from a local source interpreter")
+                        .arg(Arg::new("request").value_name("REQUEST").help("Version request such as 3, 3.12, or 3.12.7; defaults to .python-version or any"))
+                        .arg(Arg::new("source").long("source").value_name("PYTHON").help("Local Python executable to register; defaults to a matching PATH interpreter")),
+                )
+                .subcommand(
+                    Command::new("uninstall")
+                        .about("Remove managed Python installations matching a request")
+                        .arg(Arg::new("request").value_name("REQUEST").help("Version request such as 3, 3.12, or 3.12.7; defaults to .python-version or any")),
+                )
+                .subcommand(
                     Command::new("list")
                         .about("List Python interpreters discovered on PATH")
                         .arg(
@@ -336,7 +353,17 @@ fn cli() -> Command {
                                 .help("Project directory; defaults to current directory"),
                         ),
                 )
-                .subcommand(Command::new("dir").about("Print the managed Python install directory")),
+                .subcommand(
+                    Command::new("dir")
+                        .about("Print the managed Python install directory")
+                        .arg(Arg::new("bin").long("bin").action(ArgAction::SetTrue).help("Print the managed Python executable directory")),
+                )
+                .subcommand(
+                    Command::new("update-shell")
+                        .about("Print a managed PATH init block for Python executables")
+                        .arg(Arg::new("shell").long("shell").value_name("SHELL").help("bash | zsh | fish | powershell | cmd | nushell | elvish; defaults to bash"))
+                        .arg(Arg::new("bin-dir").long("bin-dir").value_name("DIR").help("Launcher directory to prepend; defaults under the Python install root")),
+                ),
         )
         .subcommand(
             Command::new("shell")
