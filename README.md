@@ -17,6 +17,29 @@ details.
 | [meter](projects/meter/README.md) | Local resource measurement for agents — `measure` observes external executables for cpu/wall/RSS and sampled hot spots; `profile` folds embedded/source-aware phase data. |
 | [guard](projects/guard/README.md) | Security posture gate — turns compass static findings plus future vat/rig/meter/arena evidence into one agent-readable security report. |
 
+## Install
+
+Each binary ships a `curl | sh` installer that downloads the right prebuilt
+binary from GitHub Releases and drops it on your `PATH` (default
+`$HOME/.local/bin`). Self-update later with `<binary> upgrade`. Projects without
+an installer yet are marked _coming soon_.
+
+| Project | Binary | Install |
+|---------|--------|---------|
+| [agentic-workflow](projects/agentic-workflow/README.md) | `aw` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/agentic-workflow/install.sh \| sh` |
+| [arena](projects/arena/README.md) | `arena` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/arena/install.sh \| sh` |
+| [cap](projects/cap/README.md) | `cap` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/cap/install.sh \| sh` |
+| [guard](projects/guard/README.md) | `guard` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/guard/install.sh \| sh` |
+| [jet](projects/jet/README.md) | `jet` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/jet/install.sh \| sh` |
+| [keep](projects/keep/README.md) | `keep` | _coming soon_ |
+| [loom](projects/loom/README.md) | `loom` | _coming soon_ |
+| [lumen](projects/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/lumen/install.sh \| sh` |
+| [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
+| [meter](projects/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/meter/install.sh \| sh` |
+| [relay](projects/relay/README.md) | `relay-server` | _coming soon_ |
+| [rig](projects/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/rig/install.sh \| sh` |
+| [vat](projects/vat/README.md) | `vat` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/vat/install.sh \| sh` |
+
 ## Runtime Evidence Loop
 
 The runtime tools are intentionally split by responsibility:
