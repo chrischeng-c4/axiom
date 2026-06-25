@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -61,15 +61,12 @@ pub async fn serve(host_port: &str) -> Result<()> {
             "/v2/projects/{project}/locations/{location}/queues/{queue}/tasks/{task}",
             get(get_task).delete(delete_task).post(run_task),
         )
-        .with_state(state);
+        .with_state(state.clone());
 
-    let listener = tokio::net::TcpListener::bind(host_port)
-        .await
-        .with_context(|| format!("bind cloud-tasks emulator on {host_port}"))?;
-    axum::serve(listener, app)
-        .await
-        .context("serve cloud-tasks emulator")?;
-    Ok(())
+    // Serve the Cloud Tasks v2 gRPC service on the same port as the REST API
+    // (the stock SDK clients default to gRPC). Both share `state`.
+    let grpc = pb::cloud_tasks_server::CloudTasksServer::new(TasksGrpc { state });
+    super::grpc_mux::serve(host_port, app, grpc).await
 }
 
 fn parent(project: &str, location: &str) -> String {
@@ -306,5 +303,395 @@ async fn run_task(
     let task = state.inner.lock().unwrap().tasks.get(&name).cloned();
     deliver(&state, &name).await;
     Json(task.unwrap_or_else(|| json!({})))
+}
+
+// ---- gRPC front-end: google.cloud.tasks.v2.CloudTasks over the same store ----
+
+use super::googleapis::google::cloud::tasks::v2 as pb;
+use tonic::{Request, Response, Status};
+
+/// gRPC service backed by the SAME in-memory store + dispatcher as the REST
+/// surface, so a task created over either protocol is stored and delivered
+/// identically.
+#[derive(Clone)]
+struct TasksGrpc {
+    state: AppState,
+}
+
+fn method_to_str(m: i32) -> &'static str {
+    match pb::HttpMethod::try_from(m).unwrap_or(pb::HttpMethod::Post) {
+        pb::HttpMethod::Get => "GET",
+        pb::HttpMethod::Head => "HEAD",
+        pb::HttpMethod::Put => "PUT",
+        pb::HttpMethod::Delete => "DELETE",
+        pb::HttpMethod::Patch => "PATCH",
+        pb::HttpMethod::Options => "OPTIONS",
+        _ => "POST",
+    }
+}
+
+fn method_from_str(s: &str) -> i32 {
+    let m = match s.to_ascii_uppercase().as_str() {
+        "GET" => pb::HttpMethod::Get,
+        "HEAD" => pb::HttpMethod::Head,
+        "PUT" => pb::HttpMethod::Put,
+        "DELETE" => pb::HttpMethod::Delete,
+        "PATCH" => pb::HttpMethod::Patch,
+        "OPTIONS" => pb::HttpMethod::Options,
+        _ => pb::HttpMethod::Post,
+    };
+    m as i32
+}
+
+fn ts_to_rfc3339(ts: &prost_types::Timestamp) -> String {
+    chrono::DateTime::from_timestamp(ts.seconds, ts.nanos.max(0) as u32)
+        .unwrap_or_else(chrono::Utc::now)
+        .to_rfc3339()
+}
+
+fn rfc3339_to_ts(s: &str) -> Option<prost_types::Timestamp> {
+    let dt = chrono::DateTime::parse_from_rfc3339(s).ok()?;
+    Some(prost_types::Timestamp {
+        seconds: dt.timestamp(),
+        nanos: dt.timestamp_subsec_nanos() as i32,
+    })
+}
+
+/// Proto `Task` (httpRequest only) -> the JSON shape the shared store +
+/// `task_target` expect (body base64-encoded, like the REST API).
+fn task_proto_to_json(task: &pb::Task, name: &str) -> Value {
+    let mut j = json!({ "name": name });
+    if let Some(pb::task::MessageType::HttpRequest(h)) = &task.message_type {
+        let mut http = json!({
+            "url": h.url,
+            "httpMethod": method_to_str(h.http_method),
+        });
+        if !h.headers.is_empty() {
+            http["headers"] = json!(h.headers);
+        }
+        if !h.body.is_empty() {
+            http["body"] = json!(base64::engine::general_purpose::STANDARD.encode(&h.body));
+        }
+        match &h.authorization_header {
+            Some(pb::http_request::AuthorizationHeader::OidcToken(o)) => {
+                http["oidcToken"] = json!({
+                    "serviceAccountEmail": o.service_account_email,
+                    "audience": o.audience,
+                });
+            }
+            Some(pb::http_request::AuthorizationHeader::OauthToken(o)) => {
+                http["oauthToken"] = json!({
+                    "serviceAccountEmail": o.service_account_email,
+                    "scope": o.scope,
+                });
+            }
+            None => {}
+        }
+        j["httpRequest"] = http;
+    }
+    if let Some(ts) = &task.schedule_time {
+        j["scheduleTime"] = json!(ts_to_rfc3339(ts));
+    }
+    j
+}
+
+/// Stored JSON task -> proto `Task` for gRPC responses.
+fn task_json_to_proto(j: &Value) -> pb::Task {
+    let mut task = pb::Task {
+        name: j
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        ..Default::default()
+    };
+    if let Some(s) = j.get("scheduleTime").and_then(Value::as_str) {
+        task.schedule_time = rfc3339_to_ts(s);
+    }
+    if let Some(http) = j.get("httpRequest") {
+        let mut headers = std::collections::HashMap::new();
+        if let Some(map) = http.get("headers").and_then(Value::as_object) {
+            for (k, v) in map {
+                if let Some(s) = v.as_str() {
+                    headers.insert(k.clone(), s.to_string());
+                }
+            }
+        }
+        let body = http
+            .get("body")
+            .and_then(Value::as_str)
+            .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
+            .unwrap_or_default();
+        let authorization_header = http.get("oidcToken").map(|o| {
+            pb::http_request::AuthorizationHeader::OidcToken(pb::OidcToken {
+                service_account_email: o
+                    .get("serviceAccountEmail")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                audience: o
+                    .get("audience")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            })
+        });
+        task.message_type = Some(pb::task::MessageType::HttpRequest(pb::HttpRequest {
+            url: http
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            http_method: http
+                .get("httpMethod")
+                .and_then(Value::as_str)
+                .map(method_from_str)
+                .unwrap_or(pb::HttpMethod::Post as i32),
+            headers,
+            body,
+            authorization_header,
+        }));
+    }
+    task
+}
+
+fn queue_json_to_proto(j: &Value) -> pb::Queue {
+    pb::Queue {
+        name: j
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        state: pb::queue::State::Running as i32,
+        ..Default::default()
+    }
+}
+
+#[tonic::async_trait]
+impl pb::cloud_tasks_server::CloudTasks for TasksGrpc {
+    async fn create_queue(
+        &self,
+        request: Request<pb::CreateQueueRequest>,
+    ) -> Result<Response<pb::Queue>, Status> {
+        let req = request.into_inner();
+        let queue = req.queue.unwrap_or_default();
+        let name = if queue.name.is_empty() {
+            let mut store = self.state.inner.lock().unwrap();
+            store.seq += 1;
+            format!("{}/queues/q-{}", req.parent, store.seq)
+        } else {
+            queue.name.clone()
+        };
+        let json = json!({ "name": name, "state": "RUNNING" });
+        self.state
+            .inner
+            .lock()
+            .unwrap()
+            .queues
+            .insert(name.clone(), json.clone());
+        Ok(Response::new(queue_json_to_proto(&json)))
+    }
+
+    async fn get_queue(
+        &self,
+        request: Request<pb::GetQueueRequest>,
+    ) -> Result<Response<pb::Queue>, Status> {
+        let name = request.into_inner().name;
+        let json = self.state.inner.lock().unwrap().queues.get(&name).cloned();
+        match json {
+            Some(j) => Ok(Response::new(queue_json_to_proto(&j))),
+            None => Err(Status::not_found(format!("queue {name} not found"))),
+        }
+    }
+
+    async fn list_queues(
+        &self,
+        request: Request<pb::ListQueuesRequest>,
+    ) -> Result<Response<pb::ListQueuesResponse>, Status> {
+        let prefix = format!("{}/queues/", request.into_inner().parent);
+        let queues = self
+            .state
+            .inner
+            .lock()
+            .unwrap()
+            .queues
+            .iter()
+            .filter(|(name, _)| name.starts_with(&prefix))
+            .map(|(_, j)| queue_json_to_proto(j))
+            .collect();
+        Ok(Response::new(pb::ListQueuesResponse {
+            queues,
+            next_page_token: String::new(),
+        }))
+    }
+
+    async fn delete_queue(
+        &self,
+        request: Request<pb::DeleteQueueRequest>,
+    ) -> Result<Response<()>, Status> {
+        let name = request.into_inner().name;
+        let mut store = self.state.inner.lock().unwrap();
+        store.queues.remove(&name);
+        let task_prefix = format!("{name}/tasks/");
+        store.tasks.retain(|t, _| !t.starts_with(&task_prefix));
+        Ok(Response::new(()))
+    }
+
+    async fn create_task(
+        &self,
+        request: Request<pb::CreateTaskRequest>,
+    ) -> Result<Response<pb::Task>, Status> {
+        let req = request.into_inner();
+        let mut task = req.task.unwrap_or_default();
+        let name = {
+            let mut store = self.state.inner.lock().unwrap();
+            store.seq += 1;
+            if task.name.is_empty() {
+                format!("{}/tasks/t-{}", req.parent, store.seq)
+            } else {
+                task.name.clone()
+            }
+        };
+        task.name = name.clone();
+        let json = task_proto_to_json(&task, &name);
+        self.state
+            .inner
+            .lock()
+            .unwrap()
+            .tasks
+            .insert(name.clone(), json.clone());
+
+        // Same delivery path as REST createTask: wait until scheduleTime, deliver.
+        let delay = schedule_delay(&json);
+        let st = self.state.clone();
+        let task_name = name.clone();
+        tokio::spawn(async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            deliver(&st, &task_name).await;
+        });
+
+        Ok(Response::new(task))
+    }
+
+    async fn get_task(
+        &self,
+        request: Request<pb::GetTaskRequest>,
+    ) -> Result<Response<pb::Task>, Status> {
+        let name = request.into_inner().name;
+        let json = self.state.inner.lock().unwrap().tasks.get(&name).cloned();
+        match json {
+            Some(j) => Ok(Response::new(task_json_to_proto(&j))),
+            None => Err(Status::not_found(format!("task {name} not found"))),
+        }
+    }
+
+    async fn list_tasks(
+        &self,
+        request: Request<pb::ListTasksRequest>,
+    ) -> Result<Response<pb::ListTasksResponse>, Status> {
+        let prefix = format!("{}/tasks/", request.into_inner().parent);
+        let tasks = self
+            .state
+            .inner
+            .lock()
+            .unwrap()
+            .tasks
+            .iter()
+            .filter(|(name, _)| name.starts_with(&prefix))
+            .map(|(_, j)| task_json_to_proto(j))
+            .collect();
+        Ok(Response::new(pb::ListTasksResponse {
+            tasks,
+            next_page_token: String::new(),
+        }))
+    }
+
+    async fn delete_task(
+        &self,
+        request: Request<pb::DeleteTaskRequest>,
+    ) -> Result<Response<()>, Status> {
+        let name = request.into_inner().name;
+        self.state.inner.lock().unwrap().tasks.remove(&name);
+        Ok(Response::new(()))
+    }
+
+    async fn run_task(
+        &self,
+        request: Request<pb::RunTaskRequest>,
+    ) -> Result<Response<pb::Task>, Status> {
+        let name = request.into_inner().name;
+        let json = self.state.inner.lock().unwrap().tasks.get(&name).cloned();
+        let Some(json) = json else {
+            return Err(Status::not_found(format!("task {name} not found")));
+        };
+        deliver(&self.state, &name).await;
+        Ok(Response::new(task_json_to_proto(&json)))
+    }
+
+    async fn update_queue(
+        &self,
+        _request: Request<pb::UpdateQueueRequest>,
+    ) -> Result<Response<pb::Queue>, Status> {
+        Err(Status::unimplemented(
+            "UpdateQueue is not supported by the vat emulator",
+        ))
+    }
+
+    async fn purge_queue(
+        &self,
+        _request: Request<pb::PurgeQueueRequest>,
+    ) -> Result<Response<pb::Queue>, Status> {
+        Err(Status::unimplemented(
+            "PurgeQueue is not supported by the vat emulator",
+        ))
+    }
+
+    async fn pause_queue(
+        &self,
+        _request: Request<pb::PauseQueueRequest>,
+    ) -> Result<Response<pb::Queue>, Status> {
+        Err(Status::unimplemented(
+            "PauseQueue is not supported by the vat emulator",
+        ))
+    }
+
+    async fn resume_queue(
+        &self,
+        _request: Request<pb::ResumeQueueRequest>,
+    ) -> Result<Response<pb::Queue>, Status> {
+        Err(Status::unimplemented(
+            "ResumeQueue is not supported by the vat emulator",
+        ))
+    }
+
+    async fn get_iam_policy(
+        &self,
+        _request: Request<super::googleapis::google::iam::v1::GetIamPolicyRequest>,
+    ) -> Result<Response<super::googleapis::google::iam::v1::Policy>, Status> {
+        Err(Status::unimplemented(
+            "IAM is not supported by the vat emulator",
+        ))
+    }
+
+    async fn set_iam_policy(
+        &self,
+        _request: Request<super::googleapis::google::iam::v1::SetIamPolicyRequest>,
+    ) -> Result<Response<super::googleapis::google::iam::v1::Policy>, Status> {
+        Err(Status::unimplemented(
+            "IAM is not supported by the vat emulator",
+        ))
+    }
+
+    async fn test_iam_permissions(
+        &self,
+        _request: Request<super::googleapis::google::iam::v1::TestIamPermissionsRequest>,
+    ) -> Result<Response<super::googleapis::google::iam::v1::TestIamPermissionsResponse>, Status>
+    {
+        Err(Status::unimplemented(
+            "IAM is not supported by the vat emulator",
+        ))
+    }
 }
 // CODEGEN-END

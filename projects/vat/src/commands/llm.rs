@@ -120,6 +120,18 @@ artifacts = ["test-results/**", "playwright-report/**"]
   openapi > cassette > forward). `pubsub` still accepts `runtime = native`
   (gcloud) / `runtime = docker` (image) as a fidelity fallback; the others are
   built-in only (no official emulator exists).
+- Pointing a client at `cloud-tasks` / `cloud-scheduler`: unlike `pubsub` /
+  `firebase-auth` / `firestore` / GCS (whose SDKs auto-read their host var), the
+  official Cloud Tasks / Cloud Scheduler SDKs do NOT read
+  `CLOUD_TASKS_EMULATOR_HOST` / `CLOUD_SCHEDULER_EMULATOR_HOST` (Google ships no
+  emulator) and default to gRPC, while vat serves REST — so an env/DNS host
+  redirect fails. Build the client through one factory that, when the host var is
+  set, forces the REST transport, an `http://$HOST` endpoint, and anonymous
+  credentials. Python: `CloudTasksClient(transport="rest",
+  credentials=AnonymousCredentials(), client_options={"api_endpoint":
+  f"http://{host}"})`. Node: `new CloudTasksClient({fallback:'rest', apiEndpoint,
+  port, protocol:'http'})`. Or skip the SDK and POST the v2 REST API directly
+  (see `tests/vat_emulator_tasks.rs`).
 - Removing mocks: declare the emulator presets your code touches (the runner hits
   real local services), add `http-mock` for arbitrary third-party HTTP, and
   `openapi` to fake a documented API from its spec — tests then need no
