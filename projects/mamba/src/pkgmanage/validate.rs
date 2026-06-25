@@ -627,17 +627,113 @@ fn probe_pip(bin: &Path) -> FamilyResult {
     if !tree_stdout.contains("Requests v2.31.0") || !tree_stdout.contains("urllib3 v2.1.0") {
         return FamilyResult::fail(format!("pip tree missing dependency graph: {tree_stdout}"));
     }
-    FamilyResult::pass("pip list/freeze/tree/check inspect site-packages inventory").with_paths(
-        Some(tmp.path().to_path_buf()),
-        None,
-        Some(site),
+
+    let wheels = tmp.path().join("wheels");
+    let app = build_probe_wheel(&wheels, "pip-demo", "1.0.0", &["pip-demo-dep==0.2.0"]);
+    let dep = build_probe_wheel(&wheels, "pip-demo-dep", "0.2.0", &[]);
+    let index = tmp.path().join("index");
+    let index_out = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "index",
+            "build",
+            "--out",
+            index.to_str().unwrap(),
+            app.to_str().unwrap(),
+            dep.to_str().unwrap(),
+        ],
+    );
+    if !index_out.status.success() {
+        return FamilyResult::fail("pip probe index build failed");
+    }
+
+    let req = tmp.path().join("requirements.txt");
+    std::fs::write(&req, "pip-demo==1.0.0\n").unwrap();
+    let install_site = tmp.path().join("install-site");
+    let sync = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "sync",
+            req.to_str().unwrap(),
+            "--index",
+            index.to_str().unwrap(),
+            "--site-packages",
+            install_site.to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    if !sync.status.success() {
+        return FamilyResult::fail(format!(
+            "pip sync failed: {}",
+            String::from_utf8_lossy(&sync.stderr)
+        ));
+    }
+    let freeze_after_sync = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "freeze",
+            "--site-packages",
+            install_site.to_str().unwrap(),
+        ],
+    );
+    let freeze_after_sync_stdout = String::from_utf8_lossy(&freeze_after_sync.stdout);
+    if !freeze_after_sync_stdout.contains("pip-demo==1.0.0")
+        || !freeze_after_sync_stdout.contains("pip-demo-dep==0.2.0")
+    {
+        return FamilyResult::fail(format!(
+            "pip sync did not install requirement graph: {freeze_after_sync_stdout}"
+        ));
+    }
+    let uninstall = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "uninstall",
+            "pip-demo",
+            "--site-packages",
+            install_site.to_str().unwrap(),
+        ],
+    );
+    if !uninstall.status.success() {
+        return FamilyResult::fail("pip uninstall failed");
+    }
+
+    FamilyResult::pass(
+        "pip install/sync/uninstall/list/freeze/tree/check inspect and mutate site-packages",
     )
+    .with_paths(Some(tmp.path().to_path_buf()), None, Some(install_site))
 }
 
 fn write_dist(site: &Path, dir_name: &str, metadata: &str) {
     let dist = site.join(dir_name);
     std::fs::create_dir_all(&dist).unwrap();
     std::fs::write(dist.join("METADATA"), metadata).unwrap();
+}
+
+fn build_probe_wheel(out_dir: &Path, name: &str, version: &str, requires: &[&str]) -> PathBuf {
+    use crate::pkgmanage::pkgmgr::wheel_build::{
+        CoreMetadata, WheelBuilder, WheelMetadata, compose_filename,
+    };
+
+    let filename = compose_filename(name, version, "py3", "none", "any");
+    let mut wheel_meta = WheelMetadata::new("mamba-pkgmgr-validate");
+    wheel_meta.tags.push("py3-none-any".into());
+    let mut core_meta = CoreMetadata::new(name, version);
+    core_meta.requires_dist = requires.iter().map(|r| r.to_string()).collect();
+    let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
+    let module = name.replace(['-', '.'], "_").to_ascii_lowercase();
+    builder.add_file(
+        format!("{module}/__init__.py"),
+        format!("__version__ = {version:?}\n"),
+    );
+    builder.build_to_dir(out_dir).unwrap()
 }
 
 fn probe_venv(bin: &Path) -> FamilyResult {

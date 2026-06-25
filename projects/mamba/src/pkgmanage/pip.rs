@@ -2,9 +2,13 @@
 
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::pkgmanage::pkgmgr::pip_check::check_consistency;
+use crate::pkgmanage::pkgmgr::pip_install::{
+    InstallOptions, InstallSource, install_sources, load_requirements_sources,
+    parse_install_source, sync_sources, uninstall_packages,
+};
 use crate::pkgmanage::pkgmgr::pip_inventory::{
     ListOptions, enumerate_installed, find_by_name, render_freeze, render_list, render_show,
 };
@@ -13,6 +17,9 @@ use crate::pkgmanage::pkgmgr::tree::TreeOptions;
 
 pub fn cmd_pip(sub: &ArgMatches) -> Result<()> {
     match sub.subcommand() {
+        Some(("install", cmd)) => cmd_pip_install(cmd),
+        Some(("sync", cmd)) => cmd_pip_sync(cmd),
+        Some(("uninstall", cmd)) => cmd_pip_uninstall(cmd),
         Some(("list", cmd)) => cmd_pip_list(cmd),
         Some(("freeze", cmd)) => cmd_pip_freeze(cmd),
         Some(("show", cmd)) => cmd_pip_show(cmd),
@@ -20,6 +27,35 @@ pub fn cmd_pip(sub: &ArgMatches) -> Result<()> {
         Some(("check", cmd)) => cmd_pip_check(cmd),
         _ => Ok(()),
     }
+}
+
+fn cmd_pip_install(sub: &ArgMatches) -> Result<()> {
+    let opts = install_options(sub)?;
+    for action in install_sources(&collect_install_sources(sub)?, &opts)? {
+        println!("{action}");
+    }
+    Ok(())
+}
+
+fn cmd_pip_sync(sub: &ArgMatches) -> Result<()> {
+    let opts = install_options(sub)?;
+    for action in sync_sources(&collect_sync_sources(sub)?, &opts)? {
+        println!("{action}");
+    }
+    Ok(())
+}
+
+fn cmd_pip_uninstall(sub: &ArgMatches) -> Result<()> {
+    let site = site_packages_path(sub)?;
+    let packages: Vec<String> = sub
+        .get_many::<String>("package")
+        .context("pip uninstall requires at least one package")?
+        .cloned()
+        .collect();
+    for action in uninstall_packages(&packages, &site)? {
+        println!("{action}");
+    }
+    Ok(())
 }
 
 fn cmd_pip_list(sub: &ArgMatches) -> Result<()> {
@@ -104,4 +140,49 @@ fn site_packages_path(sub: &ArgMatches) -> Result<PathBuf> {
     }
     let cwd = std::env::current_dir().context("read current directory")?;
     Ok(cwd.join(".venv").join("site-packages"))
+}
+
+fn install_options(sub: &ArgMatches) -> Result<InstallOptions> {
+    Ok(InstallOptions {
+        site_packages: site_packages_path(sub)?,
+        python: sub
+            .get_one::<String>("python")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("python3")),
+        index: sub.get_one::<String>("index").map(PathBuf::from),
+    })
+}
+
+fn collect_install_sources(sub: &ArgMatches) -> Result<Vec<InstallSource>> {
+    let mut sources = Vec::new();
+    if let Some(specs) = sub.get_many::<String>("spec") {
+        for spec in specs {
+            sources.push(parse_install_source(spec)?);
+        }
+    }
+    if let Some(files) = sub.get_many::<String>("requirement") {
+        for file in files {
+            append_loaded_requirements(&mut sources, &PathBuf::from(file))?;
+        }
+    }
+    if sources.is_empty() {
+        bail!("pip install requires a package, wheel, or -r/--requirement file");
+    }
+    Ok(sources)
+}
+
+fn collect_sync_sources(sub: &ArgMatches) -> Result<Vec<InstallSource>> {
+    let mut sources = Vec::new();
+    let files = sub
+        .get_many::<String>("src")
+        .context("pip sync requires at least one requirements file")?;
+    for file in files {
+        append_loaded_requirements(&mut sources, &PathBuf::from(file))?;
+    }
+    Ok(sources)
+}
+
+fn append_loaded_requirements(sources: &mut Vec<InstallSource>, path: &Path) -> Result<()> {
+    sources.extend(load_requirements_sources(path)?);
+    Ok(())
 }
