@@ -31,7 +31,9 @@ Full details: `ECOSYSTEM.md`. Domain model schemas: `projects/agentic-workflow/s
 ## Codex Operational Rules
 
 Use `rg` for search, use `apply_patch` for manual edits, respect the workspace
-sandbox, and request escalation when GitHub/network-backed commands need it.
+sandbox. Run all `aw ...` and `gh ...` commands with escalated permissions,
+because they may touch GitHub/network-backed state, workflow metadata, or git
+index/refs.
 
 <!-- aw:start -->
 ## Agentic Workflow CLI Surface
