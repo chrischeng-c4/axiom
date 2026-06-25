@@ -6,6 +6,11 @@
 # sends Done; the schema layer forwards completions; the controller folds → run
 # succeeds. Proves the no-SDK polyglot contract end to end.
 #
+# NOTE: this is the one-time POLYGLOT PROOF (interim low-level `h2` lib, since
+# httpx can't h2c). Routine e2e use the Rust bidi client (schema-layer-e2e.sh,
+# namespace-e2e.sh) — more efficient, fewer moving parts. mamba #458 (native h2c
+# HTTP client) will replace the low-level `h2` here with a real httpx-style client.
+#
 # Python deps (h2 + httpx) auto-installed into a throwaway venv.
 set -uo pipefail
 cd "$(dirname "$0")/../../.."
