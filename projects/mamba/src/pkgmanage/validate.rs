@@ -1,4 +1,4 @@
-// `mamba pkgmgr-validate` — drive the 8 release-blocking
+// `mamba pkgmgr-validate` — drive the 9 release-blocking
 // package-manager workflow families and emit a JSON summary that
 // matches validation/profiles/package_manager.toml [runner_contract]
 // + [summary].
@@ -52,7 +52,7 @@ impl Drop for ScratchDir {
 }
 
 const REQUIRED_FAMILIES: &[&str] = &[
-    "init", "add", "lock", "sync", "run", "install", "hash", "cache",
+    "init", "index", "add", "lock", "sync", "run", "install", "hash", "cache",
 ];
 
 pub fn cmd_validate(sub: &ArgMatches) -> Result<()> {
@@ -143,6 +143,7 @@ impl FamilyResult {
 fn run_family(family: &str, bin: &Path) -> FamilyResult {
     match family {
         "init" => probe_init(bin),
+        "index" => probe_index(bin),
         "add" => probe_add(bin),
         "lock" => probe_lock(bin),
         "sync" => probe_sync(bin),
@@ -211,6 +212,65 @@ fn probe_init(bin: &Path) -> FamilyResult {
         return FamilyResult::fail("init did not create mamba.toml");
     }
     FamilyResult::pass("init created mamba.toml + scaffolding").with_paths(Some(proj), None, None)
+}
+
+fn probe_index(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let wheels = tmp.path().join("wheels");
+    std::fs::create_dir(&wheels).unwrap();
+    let filename = "frozen_demo_pkg-0.1.0-py3-none-any.whl";
+    let wheel = wheels.join(filename);
+    std::fs::write(&wheel, b"fake-wheel-bytes-for-index-build").unwrap();
+    let index = tmp.path().join("index");
+
+    let out = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "index",
+            "build",
+            "--out",
+            index.to_str().unwrap(),
+            wheels.to_str().unwrap(),
+        ],
+    );
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "index build exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    let indexed = index.join("frozen-demo-pkg").join("0.1.0").join(filename);
+    if !indexed.exists() {
+        return FamilyResult::fail("index build did not materialize normalized package layout");
+    }
+    let first = std::fs::read(&indexed).unwrap();
+    let replay = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "index",
+            "build",
+            "--out",
+            index.to_str().unwrap(),
+            wheels.to_str().unwrap(),
+        ],
+    );
+    if !replay.status.success() {
+        return FamilyResult::fail("index build replay failed");
+    }
+    let second = std::fs::read(&indexed).unwrap();
+    if first != second {
+        return FamilyResult::fail("indexed wheel not byte-identical on replay");
+    }
+
+    FamilyResult::pass("index build materialized wheel layout; replay byte-identical").with_paths(
+        Some(index),
+        None,
+        None,
+    )
 }
 
 fn probe_add(bin: &Path) -> FamilyResult {

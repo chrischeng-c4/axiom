@@ -7,6 +7,7 @@ use mamba::pkgmanage::add as pkg_add;
 use mamba::pkgmanage::builder as pkg_builder;
 use mamba::pkgmanage::cache as pkg_cache;
 use mamba::pkgmanage::hash as pkg_hash;
+use mamba::pkgmanage::index as pkg_index;
 use mamba::pkgmanage::init as pkg_init;
 use mamba::pkgmanage::install as pkg_install;
 use mamba::pkgmanage::lock as pkg_lock;
@@ -123,13 +124,25 @@ fn cli() -> Command {
                 .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).help("Disallow network; require frozen index")),
         )
         .subcommand(
+            Command::new("index")
+                .about("Build frozen local package indexes from wheel artifacts")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("build")
+                        .about("Build a frozen local index from wheel files or directories")
+                        .arg(Arg::new("out").long("out").short('o').required(true).value_name("DIR").help("Output frozen index directory"))
+                        .arg(Arg::new("paths").required(true).num_args(1..).value_name("WHEEL_OR_DIR").help("Wheel file(s) or directories to scan recursively")),
+                ),
+        )
+        .subcommand(
             Command::new("sync")
                 .about("Converge `.venv`/site-packages to mamba.lock (idempotent; second run is a no-op)")
                 .arg(Arg::new("jobs").long("jobs").short('j').value_name("N").help("Max concurrent downloads (overrides $MAMBA_JOBS; default 8)")),
         )
         .subcommand(
             Command::new("pkgmgr-validate")
-                .about("Drive the 8 release-blocking pkgmgr workflow families and emit a summary")
+                .about("Drive the 9 release-blocking pkgmgr workflow families and emit a summary")
                 .arg(Arg::new("include-live-network").long("include-live-network").action(ArgAction::SetTrue).help("Also walk opt-in live-network workflows (never blocks)"))
                 .arg(Arg::new("json").long("json").action(ArgAction::SetTrue).help("Emit machine-readable JSON to stdout")),
         )
@@ -205,6 +218,7 @@ fn main() -> Result<()> {
         Some(("add", sub)) => pkg_add::cmd_add(sub),
         Some(("remove", sub)) => pkg_remove::cmd_remove(sub),
         Some(("lock", sub)) => pkg_lock::cmd_lock(sub),
+        Some(("index", sub)) => pkg_index::cmd_index(sub),
         Some(("sync", sub)) => pkg_sync::cmd_sync(sub),
         Some(("cache", sub)) => pkg_cache::cmd_cache(sub),
         Some(("hash", sub)) => pkg_hash::cmd_hash(sub),
