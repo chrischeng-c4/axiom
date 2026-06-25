@@ -5734,6 +5734,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "bincode",
+ "cclab-h2c",
  "claimtoken",
  "clap",
  "crc32fast",
