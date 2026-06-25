@@ -1499,6 +1499,19 @@ fn keep_harness() -> bool {
     std::env::var_os("MAMBA_PYTEST_KEEP_HARNESS").is_some()
 }
 
+/// RAII guard removing a per-child scratch directory on drop, so test children
+/// run in an isolated cwd without leaking relative TESTFN artifacts into the
+/// repo. `None` = isolation could not be set up; drop is then a no-op.
+struct ScratchDirGuard(Option<PathBuf>);
+
+impl Drop for ScratchDirGuard {
+    fn drop(&mut self) {
+        if let Some(dir) = self.0.take() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}
+
 /// Run the mamba binary on `script` and return (exit-status, stdout, stderr).
 /// Enforces `opts.timeout_secs` and reports a Timeout exit-style status
 /// when the wallclock exceeds the budget.
@@ -1507,8 +1520,37 @@ fn run_mamba_child(
     opts: &PytestOptions,
 ) -> (std::process::ExitStatus, String, String) {
     let mut cmd = Command::new(&opts.mamba_bin);
-    cmd.arg("run").arg(script);
+    // Resolve the harness script to an absolute path so it still loads after
+    // we point the child at a throwaway working directory below. The harness
+    // temps live next to the fixture (a real repo dir), so canonicalizing keeps
+    // them resolvable regardless of cwd.
+    let script_abs = std::fs::canonicalize(script).unwrap_or_else(|_| script.to_path_buf());
+    cmd.arg("run").arg(&script_abs);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    // Run each test child in an isolated scratch cwd (CPython regrtest-style
+    // isolation) so relative test.support / os_helper TESTFN artifacts
+    // (`@mamba_test_<pid>`, `@test_<pid>_tmp`, `.dir`/`.dat`/`.pag` companions)
+    // land in throwaway scratch instead of the repo tree. Removed on return.
+    let scratch = std::env::temp_dir().join(format!(
+        "mamba_pytest_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let scratch = if std::fs::create_dir_all(&scratch).is_ok() {
+        cmd.current_dir(&scratch);
+        cmd.env("TMPDIR", &scratch)
+            .env("TEMP", &scratch)
+            .env("TMP", &scratch);
+        Some(scratch)
+    } else {
+        None
+    };
+    // Clean up the scratch dir before each early return / on completion.
+    let _scratch_guard = ScratchDirGuard(scratch);
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,

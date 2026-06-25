@@ -38,21 +38,33 @@ def _is_type_strict(p: Path) -> bool:
 
 
 def _run(interp: list[str], py_file: Path) -> str:
-    try:
-        result = subprocess.run(
-            [*interp, str(py_file)],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        output = result.stdout
-        if result.returncode != 0 and result.stderr:
-            lines = result.stderr.strip().split("\n")
-            exc_line = lines[-1] if lines else ""
-            output += f"EXCEPTION: {exc_line}\n"
-        return output
-    except subprocess.TimeoutExpired:
-        return "TIMEOUT\n"
+    # Run each fixture in a throwaway working directory (CPython regrtest
+    # isolation): relative test.support / os_helper TESTFN artifacts
+    # (@mamba_test_<pid>, @test_<pid>_tmp, .dir/.dat/.pag companions) land in
+    # scratch instead of the repo tree. The fixture path is resolved to an
+    # absolute path so it still loads from the new cwd.
+    import tempfile
+
+    abs_file = py_file.resolve()
+    with tempfile.TemporaryDirectory(prefix="mamba_regen_") as cwd:
+        env = dict(os.environ, TMPDIR=cwd, TEMP=cwd, TMP=cwd)
+        try:
+            result = subprocess.run(
+                [*interp, str(abs_file)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=cwd,
+                env=env,
+            )
+            output = result.stdout
+            if result.returncode != 0 and result.stderr:
+                lines = result.stderr.strip().split("\n")
+                exc_line = lines[-1] if lines else ""
+                output += f"EXCEPTION: {exc_line}\n"
+            return output
+        except subprocess.TimeoutExpired:
+            return "TIMEOUT\n"
 
 
 def _write_if_changed(path: Path, content: str) -> bool:
