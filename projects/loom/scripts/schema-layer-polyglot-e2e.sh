@@ -16,10 +16,12 @@ VENV=/tmp/loom-pyv
 [ -d "$VENV" ] || python3 -m venv "$VENV"
 "$VENV/bin/python" -c 'import h2, httpx' 2>/dev/null || "$VENV/bin/pip" install -q h2 httpx
 
+# Scoped claim-check tokens ON (#444/#446): keep enforces, schema layer signs.
+SECRET=loom-e2e-secret
 RELAY_BIND=127.0.0.1:7461 RELAY_DATA_DIR=$d/relay ./target/release/relay-server >$d/relay.log 2>&1 &
-KEEP_DATA_DIR=$d/keep ./target/release/keep --host 127.0.0.1 --port 7462 >$d/keep.log 2>&1 &
+KEEP_DATA_DIR=$d/keep KEEP_TOKEN_SECRET=$SECRET ./target/release/keep --host 127.0.0.1 --port 7462 >$d/keep.log 2>&1 &
 LOOM_ADDR=127.0.0.1:7463 LOOM_RELAY=$RELAY LOOM_COMPLETION_SHARDS=8 LOOM_GC_RETENTION_SECS=0 ./target/release/loom controller >$d/ctl.log 2>&1 &
-LOOM_ADDR=127.0.0.1:7464 LOOM_RELAY=$RELAY LOOM_KEEP=$KEEP LOOM_COMPLETION_SHARDS=8 ./target/release/loom schema-layer >$d/sl.log 2>&1 &
+LOOM_ADDR=127.0.0.1:7464 LOOM_RELAY=$RELAY LOOM_KEEP=$KEEP LOOM_COMPLETION_SHARDS=8 LOOM_KEEP_TOKEN_SECRET=$SECRET ./target/release/loom schema-layer >$d/sl.log 2>&1 &
 trap 'pkill -f target/release/loom; pkill -f target/release/relay-server; pkill -f target/release/keep; pkill -f bidi_worker.py' EXIT
 for i in $(seq 1 40); do curl -sf $LOOM/healthz>/dev/null 2>&1 && curl -sf $SL/healthz>/dev/null 2>&1 && curl -sf $KEEP/healthz>/dev/null 2>&1 && break; sleep 0.3; done
 

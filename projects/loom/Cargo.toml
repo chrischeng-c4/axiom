@@ -36,3 +36,5 @@ async-stream = { workspace = true }
 reqwest = { workspace = true }
 # Shared Raft consensus engine for replicated workflow state (#110).
 raftcore = { path = "../../libs/raftcore" }
+# Scoped claim-check tokens the schema layer signs for workers (#444).
+claimtoken = { path = "../../libs/claimtoken" }

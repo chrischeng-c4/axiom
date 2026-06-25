@@ -83,17 +83,18 @@ async def main():
                     env = json.loads(buf[4 : 4 + n])
                     buf = buf[4 + n :]
                     inp = env["input"]
+                    auth = {"authorization": f"Bearer {env['token']}"}  # scoped keep token (#444)
                     if inp["kind"] == "inline":
                         d = bytes(inp["bytes"])
                     elif inp["kind"] == "keep_url":
-                        d = (await keep.get(inp["url"])).content
+                        d = (await keep.get(inp["url"], headers=auth)).content
                     else:
                         d = b""
                     out = HANDLERS.get(env["task_name"], lambda b: b)(d)
                     if len(out) <= 4096:  # small → inline; large → keep, then Done
                         conn.send_data(sid, frame({"type": "done", "id": env["id"], "result_inline": list(out)}))
                     else:
-                        await keep.put(env["result_put_url"], content=out)
+                        await keep.put(env["result_put_url"], content=out, headers=auth)
                         conn.send_data(sid, frame({"type": "done", "id": env["id"]}))
                     print(f"ran {env['task_name']} {env['id']}", flush=True)
             elif isinstance(ev, h2.events.StreamEnded):
