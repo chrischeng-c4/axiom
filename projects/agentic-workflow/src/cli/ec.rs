@@ -1566,6 +1566,23 @@ fn default_tool_command(ctx: &EcProjectContext, tool: &str, path: &Path, id: &st
     }
 }
 
+/// #188 E6: the EC review's "no missing dimension" check. EC is the one artifact
+/// trusted blindly — a defect in it yields a false green no downstream step can
+/// catch — so reviewing whether it faithfully captures the capability (with no
+/// missing dimension) is the judgment that deserves review/revise. Given the
+/// capability type and the dimensions (categories) the EC's cases actually
+/// cover, return the required dimensions NOT covered (empty = complete).
+fn ec_review_missing_dimensions(
+    capability_type: &crate::cli::capability_type::CapabilityType,
+    covered_categories: &[String],
+) -> Vec<&'static str> {
+    crate::cli::capability_type::required_ec_dimensions(capability_type)
+        .iter()
+        .copied()
+        .filter(|req| !covered_categories.iter().any(|c| c == req))
+        .collect()
+}
+
 /// Which executable artifact `aw ec gen` should skeleton for a claim, dispatched
 /// on the gate command: `rig run` -> a lifecycle case TOML (mode-1, rig DSL);
 /// `cargo test` -> a native Rust `#[test]` body (mode-2); anything else -> none.
@@ -2171,6 +2188,34 @@ fn check_manifest_against_expected(
     let actual_cases = actual
         .map(|manifest| manifest.cases.clone())
         .unwrap_or_default();
+
+    // #188 E6: review whether each capability's EC covers every dimension its
+    // type requires (the "no missing dimension" judgment — a missing required
+    // dimension would yield a false green). Only capabilities with a known type
+    // (from the capability-types config) are reviewed, so projects without that
+    // config are unaffected.
+    if !actual_cases.is_empty() {
+        if let Ok(types) = crate::cli::capability_type::load_capability_types(&ctx.project_root) {
+            let mut covered: std::collections::BTreeMap<String, Vec<String>> =
+                std::collections::BTreeMap::new();
+            for case in &actual_cases {
+                covered
+                    .entry(case.capability_id.clone())
+                    .or_default()
+                    .push(case.category.clone());
+            }
+            for (cap_id, cats) in &covered {
+                if let Some(cap_type) = types.get(cap_id) {
+                    for missing in ec_review_missing_dimensions(cap_type, cats) {
+                        findings.push(format!(
+                            "capability `{cap_id}` ({}) EC is missing the required `{missing}` dimension",
+                            cap_type.as_str()
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     if let Some(manifest) = actual {
         if manifest.version != EC_MANIFEST_VERSION {
@@ -3391,6 +3436,22 @@ e2e_tests:
         let manifest = tmp.path().join("rig.toml");
         let cmd = default_tool_command(&ctx, "rig", &manifest, "search-stability-fault-resilience");
         assert_eq!(cmd, "rig test --case search-stability-fault-resilience");
+    }
+
+    #[test]
+    fn ec_review_flags_missing_required_dimensions_for_the_capability_type() {
+        use crate::cli::capability_type::CapabilityType;
+        // A Service capability requires behavior + efficiency + security + stability.
+        let covered = vec!["behavior".to_string(), "security".to_string()];
+        assert_eq!(
+            ec_review_missing_dimensions(&CapabilityType::Service, &covered),
+            vec!["efficiency", "stability"],
+        );
+        // AgentFirst requires only behavior -> fully covered -> no review finding.
+        assert!(
+            ec_review_missing_dimensions(&CapabilityType::AgentFirst, &["behavior".to_string()])
+                .is_empty()
+        );
     }
 
     #[test]
