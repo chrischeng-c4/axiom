@@ -9,6 +9,10 @@ description = "vat — agent-native, GPU-native dev containers for macOS/Linux. 
 [lib]
 name = "vat"
 path = "src/lib.rs"
+# The vendored googleapis protos (google.api/iam/rpc/type) carry doc-comment
+# prose that prost emits as `///` docs; cargo would run them as doctests and
+# fail (they aren't Rust). vat has no real doctests, so disable them crate-wide.
+doctest = false
 
 [[bin]]
 name = "vat"
