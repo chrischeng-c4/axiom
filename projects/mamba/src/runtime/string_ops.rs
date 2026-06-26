@@ -319,6 +319,91 @@ fn push_utf32_codepoint(out: &mut Vec<u8>, codepoint: u32, be: bool) {
     }
 }
 
+fn push_utf8_codepoint(out: &mut Vec<u8>, codepoint: u32) {
+    if codepoint <= 0x7F {
+        out.push(codepoint as u8);
+    } else if codepoint <= 0x7FF {
+        out.push(0xC0 | ((codepoint >> 6) as u8));
+        out.push(0x80 | ((codepoint & 0x3F) as u8));
+    } else if codepoint <= 0xFFFF {
+        out.push(0xE0 | ((codepoint >> 12) as u8));
+        out.push(0x80 | (((codepoint >> 6) & 0x3F) as u8));
+        out.push(0x80 | ((codepoint & 0x3F) as u8));
+    } else {
+        out.push(0xF0 | ((codepoint >> 18) as u8));
+        out.push(0x80 | (((codepoint >> 12) & 0x3F) as u8));
+        out.push(0x80 | (((codepoint >> 6) & 0x3F) as u8));
+        out.push(0x80 | ((codepoint & 0x3F) as u8));
+    }
+}
+
+fn encode_surrogate_codepoints_utf8(
+    object: MbValue,
+    codepoints: &[u32],
+    encoding: &str,
+    err: &str,
+) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    for (idx, &cp) in codepoints.iter().enumerate() {
+        if (0xD800..=0xDFFF).contains(&cp) {
+            match err {
+                "ignore" => continue,
+                "replace" => push_utf8_codepoint(&mut out, '?' as u32),
+                "surrogateescape" if (0xDC80..=0xDCFF).contains(&cp) => {
+                    out.push((cp - 0xDC00) as u8);
+                }
+                "surrogatepass" => push_utf8_codepoint(&mut out, cp),
+                _ => {
+                    raise_unicode_encode_error_instance(
+                        encoding,
+                        object,
+                        idx,
+                        idx + 1,
+                        "surrogates not allowed",
+                        cp,
+                    );
+                    return None;
+                }
+            }
+        } else {
+            push_utf8_codepoint(&mut out, cp);
+        }
+    }
+    Some(out)
+}
+
+fn encode_surrogate_codepoints_ascii(
+    object: MbValue,
+    codepoints: &[u32],
+    err: &str,
+) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    for (idx, &cp) in codepoints.iter().enumerate() {
+        if cp < 0x80 {
+            out.push(cp as u8);
+        } else if (0xDC80..=0xDCFF).contains(&cp) && err == "surrogateescape" {
+            out.push((cp - 0xDC00) as u8);
+        } else {
+            match err {
+                "ignore" => continue,
+                "replace" => out.push(b'?'),
+                _ => {
+                    raise_unicode_encode_error_instance(
+                        "ascii",
+                        object,
+                        idx,
+                        idx + 1,
+                        "ordinal not in range(128)",
+                        cp,
+                    );
+                    return None;
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
 fn encode_surrogate_codepoints_utf16(
     object: MbValue,
     codepoints: &[u32],
@@ -1969,12 +2054,36 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
         };
         let bytes = match enc.as_str() {
             "utf-8-sig" | "utf_8_sig" => {
+                if let Some(codepoints) = surrogate_codepoints(s) {
+                    let Some(mut out) =
+                        encode_surrogate_codepoints_utf8(s, &codepoints, "utf-8", &err)
+                    else {
+                        return MbValue::none();
+                    };
+                    out.splice(0..0, [0xEF, 0xBB, 0xBF]);
+                    return MbValue::from_ptr(MbObject::new_bytes(out));
+                }
                 let mut out = vec![0xEF, 0xBB, 0xBF];
                 out.extend_from_slice(st.as_bytes());
                 out
             }
-            "utf-8" | "utf8" | "u8" => st.as_bytes().to_vec(),
+            "utf-8" | "utf8" | "u8" => {
+                if let Some(codepoints) = surrogate_codepoints(s) {
+                    let Some(out) = encode_surrogate_codepoints_utf8(s, &codepoints, "utf-8", &err)
+                    else {
+                        return MbValue::none();
+                    };
+                    return MbValue::from_ptr(MbObject::new_bytes(out));
+                }
+                st.as_bytes().to_vec()
+            }
             "ascii" | "us-ascii" => {
+                if let Some(codepoints) = surrogate_codepoints(s) {
+                    let Some(out) = encode_surrogate_codepoints_ascii(s, &codepoints, &err) else {
+                        return MbValue::none();
+                    };
+                    return MbValue::from_ptr(MbObject::new_bytes(out));
+                }
                 let mut out: Vec<u8> = Vec::with_capacity(st.len());
                 for (pos, ch) in st.chars().enumerate() {
                     if (ch as u32) < 0x80 {
