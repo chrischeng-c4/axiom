@@ -7,14 +7,14 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat http_mock_preset_exports_proxy_env -- --nocapture --ignored
+// @command cargo test -p vat --test vat_emulator_httpmock -- --nocapture --include-ignored
 // AW-EC-END
 
 // Contract: a preset = http-mock vat.toml run exports HTTP(S)_PROXY + NO_PROXY + the CA-trust vars; the runner curls a stubbed https URL with no code change and gets the stub.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_http_mock_preset_run_smoke() {
-    let command = "cargo test -p vat http_mock_preset_exports_proxy_env -- --nocapture --ignored";
+    let command = "cargo test -p vat --test vat_emulator_httpmock -- --nocapture --include-ignored";
     let id = "vat-http-mock-preset-run-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

@@ -228,7 +228,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat builtin_preset_exports_host -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulator_pubsub -- --nocapture --include-ignored"
     assertions:
       - "a `preset = \"firebase-auth\"` or `preset = \"pubsub\"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown."
   - id: vat-emulator-lean-build

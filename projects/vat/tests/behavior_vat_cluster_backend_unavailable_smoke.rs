@@ -7,7 +7,7 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat cluster_backend_unavailable_reports_jsonl_error -- --nocapture
+// @command cargo test -p vat --test vat_cluster -- --nocapture
 // AW-EC-END
 
 // Contract: a cluster service with no backend on PATH emits a cluster_backend_unavailable JSONL error and a non-zero exit.
@@ -15,8 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_cluster_backend_unavailable_smoke() {
-    let command =
-        "cargo test -p vat cluster_backend_unavailable_reports_jsonl_error -- --nocapture";
+    let command = "cargo test -p vat --test vat_cluster -- --nocapture";
     let id = "vat-cluster-backend-unavailable-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

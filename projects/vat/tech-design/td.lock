@@ -1,16 +1,16 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-26T08:06:53.757558+00:00"
-digest = "sha256:2f6fce8ad6bc0bad9758f07a9d216125798b48e09fef13f00bd414729994c6e5"
+generated_at = "2026-06-26T18:57:32.625948+00:00"
+digest = "sha256:d06556aef141964d331b27fe4dc69e0acce2dcf6e417d08af8e01c57a19b50e3"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
-digest = "sha256:c453b63449e28e3d926b09ecb54930667f00389b8b6351a9057e3eb0bfb25046"
+digest = "sha256:a541df6346d4e9af86f636eb5b249aa60c780fed16cd1d269120e6f3f281edef"
 
 [[files]]
 path = "interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md"
-digest = "sha256:5696aebeec22fa64f2b770e552b8f7f6786644be44a31cc42f8109537270f747"
+digest = "sha256:137a842b0ac4ecfef61f13b06df178a2c88b0d0ce89789fd4ed0ae061957385c"
 
 [[files]]
 path = "interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md"
@@ -26,7 +26,7 @@ digest = "sha256:a965209b37117245a4b51d0b2295028a85fef47af0afd83b4f43072acc5d054
 
 [[files]]
 path = "interfaces/rest/openapi-driven-mock-http-service.md"
-digest = "sha256:cdab86df29caf5314c40eaa98261e9a69a8db4ff3012b777f88627516100b63f"
+digest = "sha256:dd4884f2d29332294a335422e0faca48c7f2e22f60b1a0b93403f40466a1b1ab"
 
 [[files]]
 path = "logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md"
@@ -34,23 +34,23 @@ digest = "sha256:c7c4e3c55c2d1f1028328ae0931775d6b37c1cd7aca88b211eee934c1d9b157
 
 [[files]]
 path = "logic/built-in-cloud-storage-gcs-emulator.md"
-digest = "sha256:160f67cfc8d55e5aec09d6571c20da95231562aa906bd8f8e614c396e4ff904e"
+digest = "sha256:cc040805b0824ea4b2935c55fa14426fa151f6babff50ca011b172e30969b406"
 
 [[files]]
 path = "logic/built-in-cloud-tasks-cloud-scheduler-emulators.md"
-digest = "sha256:055d5c2ea5799f4b2716bb74761023eec7419c92cde506d2299d35c4ab7b608d"
+digest = "sha256:756456c8b47bebb199ae0ab7c8537869f7ce0fa624d9358bdbebc6638d8a3f92"
 
 [[files]]
 path = "logic/built-in-cloud-workflows-emulator.md"
-digest = "sha256:3f3caa05912d14cfcff47813a3c24ba24dc94fcf56a92a2bb8a761dddeee5169"
+digest = "sha256:310d5483df96597f2d72629de4b451e21b6142b0733d4b4bd6445e5cdb0edc35"
 
 [[files]]
 path = "logic/built-in-http-mock-record-replay-proxy.md"
-digest = "sha256:86f36e74f5a72125be860826a5a9e06425836bbed231d418322879781c8a9ffa"
+digest = "sha256:aa739dce95a633e82064485a546956721ac2076f754c1909e52e9e0543995ed2"
 
 [[files]]
 path = "logic/built-in-rust-emulators-pub-sub-firebase-auth.md"
-digest = "sha256:96217e70d16e2f193d27ac310e2fc6cbe6bbecb4846c9a3aa310b123d7f2d28d"
+digest = "sha256:67cbe880d0c2d8e469d05147bb234a3066fe7e23e9c247557e630489c8514c5c"
 
 [[files]]
 path = "logic/external-contracts.md"
@@ -58,23 +58,23 @@ digest = "sha256:49a0f8a0b52801a77450b0cb63d50b44a474deaee590454eb2587fa40a3b712
 
 [[files]]
 path = "logic/gcp-firebase-emulator-service-presets.md"
-digest = "sha256:22ef930f9156cafb45c04d54c364612b85f7081b90b97b0fe48460e1caee5f4f"
+digest = "sha256:201d59a57eef0fd6980ecad76afe24f5719bdceb7083a9c3efa70b1dad6a0a0e"
 
 [[files]]
 path = "logic/kind-like-local-kubernetes-clusters.md"
-digest = "sha256:d901f9f5ee0e8827e030cada744dc7d46ff7f4aaba07d08e3456d065197af367"
+digest = "sha256:fc797bae03ac8747097cd42993de83f326b23a5a495d514ca09579b77363fbd4"
 
 [[files]]
 path = "logic/llm-agent-usage-guide.md"
-digest = "sha256:03f5e44c52b7fd23ce6a32d547cc5237ec9597cb4c4e60bf59f7a863682b20fe"
+digest = "sha256:2860986a019818207bd9efab6b7500049c3d446a221f2fdf2df8fe8af7eab3b3"
 
 [[files]]
 path = "logic/local-agent-test-runner-protocol.md"
-digest = "sha256:6e75ee6e7b66af7a71ce54249890db1a99e2f16ebde081c773991ee6b7f7084e"
+digest = "sha256:fca71d48799920b24c4f8f1ce80050a45db34e71707acfbd506e315fae26b522"
 
 [[files]]
 path = "logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md"
-digest = "sha256:27327f2024aedef1147ce601827250a71c180025189c4cb8408af0493ae5289d"
+digest = "sha256:be9e0611a40e93da539c5c79a0821f9a9cb055e732eb96be54214e7397930d4a"
 
 [[files]]
 path = "logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md"

@@ -7,7 +7,7 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat cli_convention -- --nocapture
+// @command cargo test -p vat --test vat_cli_convention -- --nocapture
 // AW-EC-END
 
 // Contract: vat --help lists llm, upgrade, report-issue.
@@ -16,7 +16,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_cli_std_parity() {
-    let command = "cargo test -p vat cli_convention -- --nocapture";
+    let command = "cargo test -p vat --test vat_cli_convention -- --nocapture";
     let id = "vat-cli-std-parity";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

@@ -7,14 +7,14 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat builtin_preset_exports_host -- --nocapture --ignored
+// @command cargo test -p vat --test vat_emulator_pubsub -- --nocapture --include-ignored
 // AW-EC-END
 
 // Contract: a `preset = "firebase-auth"` or `preset = "pubsub"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_builtin_preset_run_smoke() {
-    let command = "cargo test -p vat builtin_preset_exports_host -- --nocapture --ignored";
+    let command = "cargo test -p vat --test vat_emulator_pubsub -- --nocapture --include-ignored";
     let id = "vat-builtin-preset-run-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

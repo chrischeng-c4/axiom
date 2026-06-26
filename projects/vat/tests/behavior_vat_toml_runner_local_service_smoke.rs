@@ -7,7 +7,7 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat vat_toml_runner -- --nocapture
+// @command cargo test -p vat --test vat_toml_runner -- --nocapture
 // AW-EC-END
 
 // Contract: vat run <runner-id> starts a local readiness service, runs the runner, captures logs, records artifacts, and returns JSON evidence.
@@ -16,7 +16,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_toml_runner_local_service_smoke() {
-    let command = "cargo test -p vat vat_toml_runner -- --nocapture";
+    let command = "cargo test -p vat --test vat_toml_runner -- --nocapture";
     let id = "vat-toml-runner-local-service-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

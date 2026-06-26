@@ -156,7 +156,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture"
+    command: "cargo test -p vat --test vat_toml_runner -- --nocapture"
     assertions:
       - "`vat llm` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands."
       - "the guide mentions the cloud-tasks / cloud-scheduler client-wiring factory (REST transport + http endpoint + anonymous credentials) and the direct-REST alternative."

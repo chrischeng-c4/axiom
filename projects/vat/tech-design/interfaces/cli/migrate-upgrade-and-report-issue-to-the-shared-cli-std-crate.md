@@ -120,7 +120,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat cli_convention -- --nocapture"
+    command: "cargo test -p vat --test vat_cli_convention -- --nocapture"
     assertions:
       - "vat --help lists llm, upgrade, report-issue."
       - "vat report-issue --title X --dry-run prints the diagnostics body incl. the vat version and OS."

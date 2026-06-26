@@ -7,7 +7,7 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat firebase_bundle_exports_hosts -- --nocapture --ignored
+// @command cargo test -p vat --test vat_emulators -- --nocapture --include-ignored
 // AW-EC-END
 
 // Contract: a firebase preset with a firebase.json starts the suite and exports the configured *_EMULATOR_HOST vars.
@@ -15,7 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_firebase_bundle_smoke() {
-    let command = "cargo test -p vat firebase_bundle_exports_hosts -- --nocapture --ignored";
+    let command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored";
     let id = "vat-firebase-bundle-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

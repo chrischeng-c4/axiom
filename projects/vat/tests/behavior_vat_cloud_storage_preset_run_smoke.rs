@@ -7,14 +7,14 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat cloud_storage_preset_exports_host -- --nocapture --ignored
+// @command cargo test -p vat --test vat_emulator_storage -- --nocapture --include-ignored
 // AW-EC-END
 
 // Contract: a preset = cloud-storage vat.toml run exports STORAGE_EMULATOR_HOST and the runner uploads then downloads an object byte-identical; nothing remains after teardown.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_cloud_storage_preset_run_smoke() {
-    let command = "cargo test -p vat cloud_storage_preset_exports_host -- --nocapture --ignored";
+    let command = "cargo test -p vat --test vat_emulator_storage -- --nocapture --include-ignored";
     let id = "vat-cloud-storage-preset-run-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
