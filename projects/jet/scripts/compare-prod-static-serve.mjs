@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-scripts-compare-prod-static-serve-mjs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import { spawn, spawnSync } from "node:child_process";
 import fsSync from "node:fs";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
@@ -450,3 +451,5 @@ async function main() {
 }
 
 await main();
+
+// </HANDWRITE>
