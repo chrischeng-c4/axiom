@@ -1,5 +1,5 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
-// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-plan-rs" tracker="pending-tracker" reason="Existing hand-written code in projects/jet/src/codegen/plan.rs requires tracked generator coverage."
+// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-plan-rs" tracker="standardize-gap-projects-jet-src-codegen-plan-rs" reason="Existing hand-written code in projects/jet/src/codegen/plan.rs requires tracked generator coverage."
 //! Per-operation generation plan, shared by the type, client, and hooks
 //! emitters so function names, the grouped `XxxData` request type, and the
 //! `XxxResponse` type stay consistent (hey-api style).
