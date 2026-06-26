@@ -58,6 +58,7 @@ pub fn cleanup_all_runtime_state() {
     exception::cleanup_all_exceptions();
     file_io::cleanup_all_files();
     module::cleanup_all_modules();
+    string_ops::cleanup_all_surrogate_strings();
     async_rt::cleanup_all_async();
     // Phase 2: Clear GC tracking (objects may already be freed by phase 1 releases).
     gc::gc_clear_all_state();
