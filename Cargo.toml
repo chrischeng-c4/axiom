@@ -35,6 +35,7 @@ members = [
     "libs/openapi-codegen",
     "libs/h2c",
     "libs/cli-std",
+    "libs/raft-host",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",

@@ -48,6 +48,10 @@ pub mod raft;
 pub mod raft_core;
 #[cfg(feature = "raft-wal")]
 pub mod raft_driver;
+/// `EngineSm` — lumen's `Engine` as a shared-`raft_host` state machine (the
+/// convergence onto `libs/raft-host`; #524).
+#[cfg(feature = "raft-wal")]
+pub mod raft_sm;
 #[cfg(feature = "raft-wal")]
 pub mod raft_store;
 pub mod rdb;
