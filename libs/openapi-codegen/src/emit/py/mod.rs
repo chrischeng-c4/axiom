@@ -88,6 +88,64 @@ mod tests {
       } }
     }"##;
 
+    const RECURSIVE_UNION_SPEC: &str = r##"{
+      "openapi": "3.0.0",
+      "info": { "title": "Mini", "version": "1.0.0" },
+      "paths": {},
+      "components": { "schemas": {
+        "MatchQuery": {
+          "type": "object",
+          "properties": {
+            "field": { "type": "string" },
+            "text": { "type": "string" }
+          },
+          "required": ["field", "text"]
+        },
+        "TermQuery": {
+          "type": "object",
+          "properties": {
+            "field": { "type": "string" },
+            "value": { "type": "string" }
+          },
+          "required": ["field", "value"]
+        },
+        "QueryNode": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["match"],
+              "properties": { "match": { "$ref": "#/components/schemas/MatchQuery" } }
+            },
+            {
+              "type": "object",
+              "required": ["term"],
+              "properties": { "term": { "$ref": "#/components/schemas/TermQuery" } }
+            },
+            {
+              "type": "object",
+              "required": ["and"],
+              "properties": {
+                "and": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/QueryNode" }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["not"],
+              "properties": { "not": { "$ref": "#/components/schemas/QueryNode" } }
+            }
+          ]
+        },
+        "SearchRequest": {
+          "type": "object",
+          "properties": { "query": { "$ref": "#/components/schemas/QueryNode" } },
+          "required": ["query"]
+        }
+      } }
+    }"##;
+
     fn opts() -> GenOptions {
         GenOptions {
             lang: Lang::Py,
@@ -129,6 +187,54 @@ mod tests {
         assert!(models.contains("    id: int\n"));
         assert!(models.contains("    name: str\n"));
         assert!(models.contains("    tag: Optional[str] = None\n"));
+    }
+
+    #[test]
+    fn pydantic_models_preserve_inline_oneof_object_variants() {
+        let out = generate(RECURSIVE_UNION_SPEC, &opts()).unwrap();
+        let models = file(&out, "models.py");
+        assert!(models.contains("from pydantic import BaseModel, Field, RootModel"));
+        assert!(models.contains("class QueryNodeMatch(BaseModel):"));
+        assert!(models.contains("class QueryNodeTerm(BaseModel):"));
+        assert!(models.contains("class QueryNodeAnd(BaseModel):"));
+        assert!(models.contains("    and_: list[QueryNode] = Field(alias=\"and\")"));
+        assert!(models.contains("class QueryNodeNot(BaseModel):"));
+        assert!(models.contains("    not_: QueryNode = Field(alias=\"not\")"));
+        assert!(models.contains(
+            "class QueryNode(RootModel[QueryNodeMatch | QueryNodeTerm | QueryNodeAnd | QueryNodeNot]):"
+        ));
+
+        let dir = write_generated_python_package(&out);
+        let script = format!(
+            r#"
+import sys
+sys.path.insert(0, {dir:?})
+from generated_api import QueryNode, QueryNodeAnd, QueryNodeMatch, SearchRequest
+
+node = QueryNode.model_validate({{"and": [
+    {{"match": {{"field": "body", "text": "hello"}}}},
+    {{"not": {{"term": {{"field": "status", "value": "draft"}}}}}},
+]}})
+assert isinstance(node.root, QueryNodeAnd), type(node.root)
+assert isinstance(node.root.and_[0].root, QueryNodeMatch), type(node.root.and_[0].root)
+search = SearchRequest.model_validate({{"query": {{"match": {{"field": "body", "text": "hello"}}}}}})
+assert isinstance(search.query.root, QueryNodeMatch), type(search.query.root)
+QueryNode.model_json_schema()
+"#,
+            dir = dir.display().to_string(),
+        );
+        let output = Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .expect("run generated Python oneOf pydantic smoke");
+        assert!(
+            output.status.success(),
+            "generated Python oneOf pydantic smoke failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
