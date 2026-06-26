@@ -1,23 +1,23 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#vat-toml-runner-local-service-smoke
+// SPEC-MANAGED: projects/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md#vat-cli-convention-help-lists-all-three
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-toml-runner-local-service-smoke
+// @ec vat-cli-convention-help-lists-all-three
 // @capability agent-native-gpu-native-dev-containers
-// @claim local-agent-test-runner-protocol
+// @claim vat-cli-convention-help-lists-all-three
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat vat_toml_runner -- --nocapture
+// @command cargo test -p vat cli_convention -- --nocapture
 // AW-EC-END
 
-// Contract: vat run <runner-id> starts a local readiness service, runs the runner, captures logs, records artifacts, and returns JSON evidence.
-// Contract: failed runner evidence remains inspectable.
-// Contract: direct vat run -- <cmd> compatibility is preserved.
+// Contract: `vat --help` output contains `llm`, `upgrade`, and `report-issue`.
+// Contract: `vat upgrade --check` exits 0 and reports current vs latest without writing the binary (network-permitting; offline it errors cleanly, never panics).
+// Contract: `vat report-issue --title X --dry-run` prints a body containing the vat version and OS/arch and submits nothing.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_toml_runner_local_service_smoke() {
-    let command = "cargo test -p vat vat_toml_runner -- --nocapture";
-    let id = "vat-toml-runner-local-service-smoke";
+fn vat_cli_convention_help_lists_all_three() {
+    let command = "cargo test -p vat cli_convention -- --nocapture";
+    let id = "vat-cli-convention-help-lists-all-three";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

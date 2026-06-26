@@ -1,23 +1,23 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#vat-toml-runner-local-service-smoke
+// SPEC-MANAGED: projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-dispatch-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-toml-runner-local-service-smoke
+// @ec vat-cloud-workflows-dispatch-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim local-agent-test-runner-protocol
+// @claim vat-cloud-workflows-dispatch-smoke
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat vat_toml_runner -- --nocapture
+// @command cargo test -p vat --test vat_emulator_workflows -- --nocapture
 // AW-EC-END
 
-// Contract: vat run <runner-id> starts a local readiness service, runs the runner, captures logs, records artifacts, and returns JSON evidence.
-// Contract: failed runner evidence remains inspectable.
-// Contract: direct vat run -- <cmd> compatibility is preserved.
+// Contract: createWorkflow + createExecution for a workflow that assigns, call: http.post to a local sink, and returns yields a SUCCEEDED execution with the expected result and the sink receives the call.
+// Contract: a try block calling a dead URL falls through to except (no panic); a named subworkflow call returns its value.
+// Contract: no gcloud / Java / Docker required; the emulator starts in well under a second.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_toml_runner_local_service_smoke() {
-    let command = "cargo test -p vat vat_toml_runner -- --nocapture";
-    let id = "vat-toml-runner-local-service-smoke";
+fn vat_cloud_workflows_dispatch_smoke() {
+    let command = "cargo test -p vat --test vat_emulator_workflows -- --nocapture";
+    let id = "vat-cloud-workflows-dispatch-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
