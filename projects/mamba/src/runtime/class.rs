@@ -12061,9 +12061,8 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                         {
                             return result;
                         }
-                        let name_val = MbValue::from_ptr(MbObject::new_str(type_name));
                         let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
-                        return mb_instance_new_with_init(name_val, args_list);
+                        return super::builtins::mb_call_spread(func, args_list);
                     }
                 }
                 // weakref.ref(obj)() — zero-arg invocation of the strong-ref
