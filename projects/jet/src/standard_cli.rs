@@ -1,5 +1,5 @@
 //! jet's adapter over the shared `cli-std` crate for the three standard
-//! agent-facing commands (`llm` / `upgrade` / `report-issue`), per the CLI
+//! agent-facing commands (`llm` / `upgrade` / `issue`), per the CLI
 //! convention in `CONTRIBUTING.md`.
 //!
 //! `cli-std` is clap-agnostic and owns the *logic* (offline docs render, release
@@ -78,7 +78,8 @@ Packages live in a global content-addressed store (`jet store`). The lockfile is
 | run e2e flows              | `jet e2e run`                 |
 | inspect / lint config      | `jet config lint`             |
 | update this tool           | `jet upgrade`                 |
-| file a bug                 | `jet report-issue \"...\"`      |",
+| search known issues        | `jet issue search \"hmr\"`      |
+| file a bug                 | `jet issue create \"...\"`      |",
     },
 ];
 
@@ -124,25 +125,64 @@ pub fn upgrade_command() -> Command {
         )
 }
 
-/// `jet report-issue [--title <t>] [--dry-run] [message...]`
-pub fn report_issue_command() -> Command {
-    Command::new("report-issue")
-        .about("File a structured issue report against the axiom tracker")
-        .arg(
-            Arg::new("title")
-                .long("title")
-                .help("Issue title (default: derived from the message)"),
+/// `jet issue <search|view|create>` — search, read, and file jet issues.
+pub fn issue_command() -> Command {
+    Command::new("issue")
+        .about("Search, view, and file jet issues on the axiom tracker")
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(
+            Command::new("search")
+                .about("Search jet's issues (project:jet); omit the query to list recent")
+                .arg(
+                    Arg::new("query")
+                        .num_args(0..)
+                        .help("Search text (omit to list recent issues)"),
+                )
+                .arg(
+                    Arg::new("state")
+                        .long("state")
+                        .value_parser(["open", "closed", "all"])
+                        .default_value("open")
+                        .help("Issue state filter"),
+                )
+                .arg(
+                    Arg::new("limit")
+                        .long("limit")
+                        .value_parser(clap::value_parser!(u32))
+                        .default_value("20")
+                        .help("Max results"),
+                ),
         )
-        .arg(
-            Arg::new("dry-run")
-                .long("dry-run")
-                .action(ArgAction::SetTrue)
-                .help("Print the issue that would be filed (and its URL) without creating it"),
+        .subcommand(
+            Command::new("view")
+                .about("Print a single issue by number")
+                .arg(
+                    Arg::new("number")
+                        .required(true)
+                        .value_parser(clap::value_parser!(u64))
+                        .help("Issue number"),
+                ),
         )
-        .arg(
-            Arg::new("message")
-                .num_args(0..)
-                .help("Free-text description of the problem"),
+        .subcommand(
+            Command::new("create")
+                .about("File a structured issue (auto-tagged project:jet)")
+                .arg(
+                    Arg::new("title")
+                        .long("title")
+                        .help("Issue title (default: derived from the message)"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .action(ArgAction::SetTrue)
+                        .help("Print the issue that would be filed (and its URL) without creating it"),
+                )
+                .arg(
+                    Arg::new("message")
+                        .num_args(0..)
+                        .help("Free-text description of the problem"),
+                ),
         )
 }
 
@@ -178,34 +218,60 @@ pub async fn run_upgrade(matches: &ArgMatches) -> Result<()> {
     .await
 }
 
-/// `jet report-issue` — file a structured issue via cli-std, always tagged with
-/// the `project:jet` label so reports route automatically.
-pub async fn run_report_issue(matches: &ArgMatches) -> Result<()> {
-    let msg = matches
-        .get_many::<String>("message")
-        .map(|v| v.cloned().collect::<Vec<_>>().join(" "))
-        .unwrap_or_default();
-    let title = matches.get_one::<String>("title").cloned().unwrap_or_else(|| {
-        if msg.trim().is_empty() {
-            "jet: issue report".to_string()
-        } else {
-            let head: String = msg.lines().next().unwrap_or("").chars().take(72).collect();
-            format!("jet: {head}")
+/// `jet issue <verb>` — dispatch search/view/create to cli-std. `create` always
+/// tags `project:jet`; `search` defaults to jet's own issues.
+pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
+    match matches.subcommand() {
+        Some(("search", m)) => {
+            let query = m
+                .get_many::<String>("query")
+                .map(|v| v.cloned().collect::<Vec<_>>().join(" "))
+                .filter(|s| !s.trim().is_empty());
+            cli_std::issue::search(
+                &TOOL,
+                cli_std::issue::SearchOptions {
+                    query,
+                    state: m
+                        .get_one::<String>("state")
+                        .cloned()
+                        .unwrap_or_else(|| "open".to_string()),
+                    limit: *m.get_one::<u32>("limit").unwrap_or(&20),
+                },
+            )
+            .await
         }
-    });
-    let message = (!msg.trim().is_empty()).then_some(msg);
-
-    cli_std::report_issue::run(
-        &TOOL,
-        cli_std::report_issue::Options {
-            title,
-            message,
-            url: None,
-            repo: None,
-            label: vec!["project:jet".to_string()],
-            dry_run: matches.get_flag("dry-run"),
-            yes: true,
-        },
-    )
-    .await
+        Some(("view", m)) => {
+            let number = *m.get_one::<u64>("number").expect("number is required");
+            cli_std::issue::view(&TOOL, number).await
+        }
+        Some(("create", m)) => {
+            let msg = m
+                .get_many::<String>("message")
+                .map(|v| v.cloned().collect::<Vec<_>>().join(" "))
+                .unwrap_or_default();
+            let title = m.get_one::<String>("title").cloned().unwrap_or_else(|| {
+                if msg.trim().is_empty() {
+                    "jet: issue report".to_string()
+                } else {
+                    let head: String = msg.lines().next().unwrap_or("").chars().take(72).collect();
+                    format!("jet: {head}")
+                }
+            });
+            let message = (!msg.trim().is_empty()).then_some(msg);
+            cli_std::issue::create(
+                &TOOL,
+                cli_std::issue::CreateOptions {
+                    title,
+                    message,
+                    url: None,
+                    repo: None,
+                    label: vec!["project:jet".to_string()],
+                    dry_run: m.get_flag("dry-run"),
+                    yes: true,
+                },
+            )
+            .await
+        }
+        _ => anyhow::bail!("unknown `jet issue` subcommand; try search / view / create"),
+    }
 }

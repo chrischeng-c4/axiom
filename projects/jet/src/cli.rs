@@ -1405,7 +1405,7 @@ pub fn command() -> Command {
         .subcommand(browser_bridge_command())
         .subcommand(crate::standard_cli::llm_command())
         .subcommand(crate::standard_cli::upgrade_command())
-        .subcommand(crate::standard_cli::report_issue_command())
+        .subcommand(crate::standard_cli::issue_command())
 }
 
 fn serve_command() -> Command {
@@ -3500,7 +3500,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
 
         Some(("llm", m)) => crate::standard_cli::run_llm(m),
         Some(("upgrade", m)) => crate::standard_cli::run_upgrade(m).await,
-        Some(("report-issue", m)) => crate::standard_cli::run_report_issue(m).await,
+        Some(("issue", m)) => crate::standard_cli::run_issue(m).await,
 
         _ => {
             anyhow::bail!("Unknown jet subcommand. Run 'jet --help' for usage.")
