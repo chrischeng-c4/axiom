@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:5d65a1ff" tracker="pending-tracker" reason="Tests: build to a temp out_dir emits index.html + one preview per story + the transformed modules they import; emitted URLs are relative and resolve to files present in the output; dev jet stories behavior unaffected."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:5d65a1ff" tracker="standardize-gap-projects-jet-tests-stories-stories-build-rs" reason="Tests: build to a temp out_dir emits index.html + one preview per story + the transformed modules they import; emitted URLs are relative and resolve to files present in the output; dev jet stories behavior unaffected."
 //! Integration tests for B4: `jet stories build` — static export of the
 //! workbench (#190).
 //!
