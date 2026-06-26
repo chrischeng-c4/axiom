@@ -28,7 +28,20 @@ pub enum IterKind {
     List(MbValue),
     /// Iterating over dict keys (preserves the original key type:
     /// int, str, bool, None, instance, etc.).
-    DictKeys(Vec<DictKey>),
+    DictKeys {
+        source: MbValue,
+        keys: Vec<DictKey>,
+        expected_len: usize,
+        expected_version: u64,
+    },
+    /// Iterating over a dict view while retaining the source dict so mutation
+    /// checks match CPython instead of degrading the view to a plain list.
+    DictView {
+        source: MbValue,
+        items: MbValue,
+        expected_len: usize,
+        expected_version: u64,
+    },
     /// Iterating over a tuple
     Tuple(MbValue),
     /// Iterating over string characters
@@ -145,6 +158,77 @@ fn raise_type_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+fn raise_dict_changed_size_error() {
+    super::exception::set_current_exception(super::exception::MbException::new(
+        "RuntimeError",
+        "dictionary changed size during iteration",
+    ));
+}
+
+fn dict_current_len(source: MbValue) -> Option<usize> {
+    let ptr = source.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            Some(lock.read().unwrap().len())
+        } else {
+            None
+        }
+    }
+}
+
+fn dict_iter_changed(source: MbValue, expected_len: usize, expected_version: u64) -> bool {
+    dict_current_len(source).map_or(true, |len| len != expected_len)
+        || super::dict_ops::dict_version(source) != expected_version
+}
+
+fn dict_keys_iter_kind(source: MbValue) -> IterKind {
+    let Some(ptr) = source.as_ptr() else {
+        return IterKind::DictKeys {
+            source: MbValue::none(),
+            keys: Vec::new(),
+            expected_len: 0,
+            expected_version: 0,
+        };
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let expected_len = map.len();
+            let expected_version = super::dict_ops::dict_version(source);
+            let keys = map.keys().cloned().collect();
+            drop(map);
+            super::rc::retain_if_ptr(source);
+            IterKind::DictKeys {
+                source,
+                keys,
+                expected_len,
+                expected_version,
+            }
+        } else {
+            IterKind::DictKeys {
+                source: MbValue::none(),
+                keys: Vec::new(),
+                expected_len: 0,
+                expected_version: 0,
+            }
+        }
+    }
+}
+
+fn dict_view_iter_kind(source: MbValue, items: MbValue) -> IterKind {
+    let expected_len = dict_current_len(source).unwrap_or(0);
+    let expected_version = super::dict_ops::dict_version(source);
+    unsafe {
+        super::rc::retain_if_ptr(source);
+    }
+    IterKind::DictView {
+        source,
+        items,
+        expected_len,
+        expected_version,
+    }
+}
+
 fn raise_not_iterable_type_error(value: MbValue) -> MbValue {
     let type_name = if value.as_int().is_some() {
         "int"
@@ -234,7 +318,8 @@ pub fn mb_iter_type_name(v: MbValue) -> Option<&'static str> {
             IterKind::Reversed { .. } => "list_reverseiterator",
             IterKind::List(_) => "list_iterator",
             IterKind::Tuple(_) => "tuple_iterator",
-            IterKind::DictKeys(_) => "dict_keyiterator",
+            IterKind::DictKeys { .. } => "dict_keyiterator",
+            IterKind::DictView { .. } => "dict_iterator",
             IterKind::Str(_) => "str_ascii_iterator",
             IterKind::Generator(_) => "generator",
             IterKind::UserDefined { .. } => "iterator",
@@ -400,11 +485,56 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             let start = index.min(items.len());
             Some(items[start..].to_vec())
         }
-        IterKind::DictKeys(ref keys) => {
+        IterKind::DictKeys {
+            source,
+            keys,
+            expected_len,
+            expected_version,
+        } => {
             // Dict-key iterators (dict / Counter / defaultdict views) drain to
             // the original key values.
-            let start = iter.index.min(keys.len());
-            Some(keys[start..].iter().map(dict_key_to_mbvalue).collect())
+            let out = if dict_iter_changed(source, expected_len, expected_version) {
+                raise_dict_changed_size_error();
+                Vec::new()
+            } else {
+                let start = iter.index.min(keys.len());
+                keys[start..].iter().map(dict_key_to_mbvalue).collect()
+            };
+            unsafe {
+                super::rc::release_if_ptr(source);
+            }
+            Some(out)
+        }
+        IterKind::DictView {
+            source,
+            items,
+            expected_len,
+            expected_version,
+        } => {
+            let out = if dict_iter_changed(source, expected_len, expected_version) {
+                raise_dict_changed_size_error();
+                Vec::new()
+            } else if let Some(ptr) = items.as_ptr() {
+                unsafe {
+                    if let ObjData::List(ref lock) = (*ptr).data {
+                        let values = lock.read().unwrap();
+                        let start = iter.index.min(values.len());
+                        for &item in &values[start..] {
+                            super::rc::retain_if_ptr(item);
+                        }
+                        values[start..].to_vec()
+                    } else {
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            unsafe {
+                super::rc::release_if_ptr(source);
+                super::rc::release_if_ptr(items);
+            }
+            Some(out)
         }
         IterKind::Str(ref chars) => {
             let start = iter.index.min(chars.len());
@@ -508,7 +638,7 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                         IterKind::Str(s.chars().collect())
                     }
                 }
-                ObjData::Dict(ref lock) => {
+                ObjData::Dict(_) => {
                     // ET.Element stub dicts iterate their children, not keys.
                     if let Some(children) = super::stdlib::xml_mod::element_stub_children(obj) {
                         if let Some(cp) = children.as_ptr() {
@@ -518,13 +648,13 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                                     items,
                                 )))
                             } else {
-                                IterKind::DictKeys(lock.read().unwrap().keys().cloned().collect())
+                                dict_keys_iter_kind(obj)
                             }
                         } else {
-                            IterKind::DictKeys(lock.read().unwrap().keys().cloned().collect())
+                            dict_keys_iter_kind(obj)
                         }
                     } else {
-                        IterKind::DictKeys(lock.read().unwrap().keys().cloned().collect())
+                        dict_keys_iter_kind(obj)
                     }
                 }
                 ObjData::Set(ref lock) => {
@@ -539,8 +669,17 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                 } => {
                     if let Some(data) = super::dict_ops::mappingproxy_mapping(obj) {
                         return mb_iter(data);
-                    } else if let Some(items) = super::dict_ops::dict_view_elements(obj) {
-                        IterKind::List(MbValue::from_ptr(MbObject::new_list_borrowed(items)))
+                    } else if let (Some(kind), Some(data)) = (
+                        super::dict_ops::dict_view_kind(obj),
+                        super::dict_ops::dict_view_data(obj),
+                    ) {
+                        let items = match kind {
+                            "keys" => super::dict_ops::mb_dict_keys(data),
+                            "items" => super::dict_ops::mb_dict_items(data),
+                            "values" => super::dict_ops::mb_dict_values(data),
+                            _ => MbValue::from_ptr(MbObject::new_list(Vec::new())),
+                        };
+                        dict_view_iter_kind(data, items)
                     } else
                     // tempfile NamedTemporaryFile / SpooledTemporaryFile
                     // iterate their remaining lines, like a real file object.
@@ -594,8 +733,8 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                         let data = guard.get("_data").copied().unwrap_or(MbValue::none());
                         drop(guard);
                         if let Some(dptr) = data.as_ptr() {
-                            if let ObjData::Dict(ref lock) = (*dptr).data {
-                                IterKind::DictKeys(lock.read().unwrap().keys().cloned().collect())
+                            if let ObjData::Dict(_) = (*dptr).data {
+                                dict_keys_iter_kind(data)
                             } else {
                                 return MbValue::none();
                             }
@@ -780,7 +919,16 @@ pub fn mb_iter_length_hint(handle: MbValue) -> Option<i64> {
                 Some((total as i64 - it.index as i64).max(0))
             }
             IterKind::Str(chars) => Some((chars.len() as i64 - it.index as i64).max(0)),
-            IterKind::DictKeys(keys) => Some((keys.len() as i64 - it.index as i64).max(0)),
+            IterKind::DictKeys { keys, .. } => Some((keys.len() as i64 - it.index as i64).max(0)),
+            IterKind::DictView { items, .. } => {
+                let total = items.as_ptr().map(|ptr| unsafe {
+                    match &(*ptr).data {
+                        ObjData::List(lock) => lock.read().unwrap().len(),
+                        _ => 0,
+                    }
+                })?;
+                Some((total as i64 - it.index as i64).max(0))
+            }
             IterKind::Reversed { items, index } => {
                 Some((items.len() as i64 - *index as i64).max(0))
             }
@@ -2671,6 +2819,13 @@ fn release_iter(iter: &MbIterator) {
         IterKind::List(v) | IterKind::Tuple(v) => unsafe {
             super::rc::release_if_ptr(*v);
         },
+        IterKind::DictKeys { source, .. } => unsafe {
+            super::rc::release_if_ptr(*source);
+        },
+        IterKind::DictView { source, items, .. } => unsafe {
+            super::rc::release_if_ptr(*source);
+            super::rc::release_if_ptr(*items);
+        },
         // Enumerate/Zip: inner iterator(s) are separate ITERATORS entries
         // identified by id. Release each by removing and dropping via release_iter.
         IterKind::Enumerate { inner_id, .. } => {
@@ -3621,7 +3776,17 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
                 MbValue::none()
             }
         }
-        IterKind::DictKeys(keys) => {
+        IterKind::DictKeys {
+            source,
+            keys,
+            expected_len,
+            expected_version,
+        } => {
+            if dict_iter_changed(*source, *expected_len, *expected_version) {
+                iter.exhausted = true;
+                raise_dict_changed_size_error();
+                return MbValue::none();
+            }
             if iter.index < keys.len() {
                 let key = &keys[iter.index];
                 iter.index += 1;
@@ -3630,6 +3795,32 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
                 iter.exhausted = true;
                 MbValue::none()
             }
+        }
+        IterKind::DictView {
+            source,
+            items,
+            expected_len,
+            expected_version,
+        } => {
+            if dict_iter_changed(*source, *expected_len, *expected_version) {
+                iter.exhausted = true;
+                raise_dict_changed_size_error();
+                return MbValue::none();
+            }
+            if let Some(ptr) = items.as_ptr() {
+                unsafe {
+                    if let ObjData::List(ref lock) = (*ptr).data {
+                        let values = lock.read().unwrap();
+                        if iter.index < values.len() {
+                            let value = values[iter.index];
+                            iter.index += 1;
+                            return value;
+                        }
+                    }
+                }
+            }
+            iter.exhausted = true;
+            MbValue::none()
         }
         IterKind::Range {
             current,
@@ -3910,6 +4101,29 @@ mod tests {
         let v2 = mb_next(it);
         assert!(v2.is_ptr()); // String key
         assert!(mb_next(it).is_none()); // exhausted
+        mb_iter_release(it);
+    }
+
+    #[test]
+    fn test_dict_iter_raises_runtime_error_on_size_change() {
+        use super::super::dict_ops::mb_dict_setitem;
+
+        super::super::exception::mb_clear_exception();
+        let obj = MbValue::from_ptr(MbObject::new_dict());
+        mb_dict_setitem(obj, MbValue::from_int(1), MbValue::from_int(1));
+        mb_dict_setitem(obj, MbValue::from_int(2), MbValue::from_int(2));
+
+        let it = mb_iter(obj);
+        assert_eq!(mb_next(it).as_int(), Some(1));
+        mb_dict_setitem(obj, MbValue::from_int(101), MbValue::from_int(0));
+
+        let val = mb_next_or_stop(it);
+        assert!(val.is_stop_iter_sentinel());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("RuntimeError")
+        );
+        super::super::exception::mb_clear_exception();
         mb_iter_release(it);
     }
 
