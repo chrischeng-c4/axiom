@@ -528,7 +528,7 @@ unsafe extern "C" fn dispatch_next(args_ptr: *const MbValue, nargs: usize) -> Mb
     if nargs >= 2 {
         super::super::iter::mb_next_default(iter_handle, args[1])
     } else {
-        super::super::iter::mb_next(iter_handle)
+        super::super::iter::mb_next_raise(iter_handle)
     }
 }
 
