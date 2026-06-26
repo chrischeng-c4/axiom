@@ -62,6 +62,13 @@ struct Proxy {
     /// connection per upstream; a closed/unready entry is re-dialed (the dial
     /// overwrites it). Async mutex because acquiring may dial across an await.
     grpc_pool: tokio::sync::Mutex<HashMap<String, SendRequest<Incoming>>>,
+    /// Forward policy. `true` (default) = forward an unmatched request to the
+    /// real upstream and record it. `false` (hermetic / `--no-forward`) = an
+    /// unmatched request returns a 502 "forwarding disabled" with NO upstream
+    /// connection and NO cassette write, so a sandboxed run can't reach the
+    /// internet through the proxy. Routes, stubs, OpenAPI, and cassette replay
+    /// still serve regardless.
+    forward: bool,
 }
 
 fn full(status: StatusCode, headers: Vec<(String, String)>, body: Bytes) -> Response<BoxBody> {
@@ -82,12 +89,14 @@ fn json_resp(status: StatusCode, v: serde_json::Value) -> Response<BoxBody> {
 }
 
 /// Serve the HTTP mock proxy until the process is killed. `routes` seeds the
-/// host-routing table (`(host, local base URL)` pairs).
+/// host-routing table (`(host, local base URL)` pairs). When `forward` is false
+/// (hermetic mode) an unmatched request is blocked instead of forwarded.
 pub async fn serve(
     host_port: &str,
     ca_path: &str,
     cassette_dir: &str,
     routes: &[(String, String)],
+    forward: bool,
 ) -> Result<()> {
     let ca = CaStore::generate().context("mint CA")?;
     // Write the CA pem so vat can export it as the runner's trust bundle.
@@ -104,6 +113,7 @@ pub async fn serve(
             .context("build upstream client")?,
         routes: RwLock::new(routes.iter().cloned().collect()),
         grpc_pool: tokio::sync::Mutex::new(HashMap::new()),
+        forward,
     });
 
     let listener = tokio::net::TcpListener::bind(host_port)
@@ -325,7 +335,19 @@ impl Proxy {
             );
         }
 
-        // 4) Forward to the real upstream and record (auto mode).
+        // 4) Forward to the real upstream and record (auto mode) — unless the
+        // proxy is hermetic (no-forward): block the unmatched request instead of
+        // reaching the internet. No upstream connection, no cassette write.
+        if !self.forward {
+            return json_resp(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "error": format!(
+                        "hermetic: no local match for {host}{path}; forwarding disabled"
+                    )
+                }),
+            );
+        }
         let url = format!("{scheme}://{authority}{path_and_query}");
         match self.send_upstream(&method, &url, &req_headers, &body).await {
             Ok((status, headers, bytes)) => {

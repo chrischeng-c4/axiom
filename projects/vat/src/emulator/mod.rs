@@ -66,6 +66,9 @@ pub enum Kind {
         ca_path: String,
         cassette_dir: String,
         routes: Vec<(String, String)>,
+        /// Forward unmatched requests to the real upstream (default). When false
+        /// (hermetic / `--no-forward`) an unmatched request is blocked.
+        forward: bool,
     },
     /// The OpenAPI mock serves responses from a spec document.
     Openapi {
@@ -87,7 +90,8 @@ pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
             ca_path,
             cassette_dir,
             routes,
-        } => httpmock::serve(host_port, &ca_path, &cassette_dir, &routes).await,
+            forward,
+        } => httpmock::serve(host_port, &ca_path, &cassette_dir, &routes, forward).await,
         Kind::Openapi { spec } => openapi::serve(host_port, &spec).await,
     }
 }
