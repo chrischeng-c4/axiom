@@ -14,7 +14,9 @@
 //! `online` feature; the offline paths (`llm`, `upgrade --check` messaging,
 //! `report-issue --dry-run` / pre-filled-URL fallback) always build.
 
+pub mod issue;
 pub mod llm;
+/// Deprecated alias of [`issue`] — kept until keep/loom/lumen adopt `issue`.
 pub mod report_issue;
 pub mod upgrade;
 
