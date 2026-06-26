@@ -1,7 +1,7 @@
 ---
 id: aw-td-ast-parse-rust-source-unit-sections-as-typed-td-bodies
 summary: Parse rust-source-unit TD sections into typed TD AST bodies and dispatch them as structural generator input.
-fill_sections: [logic, unit-test]
+fill_sections: [logic, unit-test, changes]
 ---
 
 # TD: aw td_ast parse rust-source-unit sections as typed TD bodies
@@ -112,4 +112,27 @@ requirementDiagram
     element rust_source_unit_dispatch_routes_as_structural_generator {
       type: "rs/#[test]"
     }
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: projects/agentic-workflow/src/td_ast/types.rs
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: Add the RustSourceUnit typed body and map SectionType::RustSourceUnit to a source-unit section kind.
+  - path: projects/agentic-workflow/src/td_ast/parse.rs
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: Parse rust-source-unit fences through generate::rust_source_unit and return typed parse errors on invalid Rust.
+  - path: projects/agentic-workflow/src/generate/from_td_ast.rs
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: Classify TypedBody::RustSourceUnit as the rust-source-unit structural generator route.
 ```
