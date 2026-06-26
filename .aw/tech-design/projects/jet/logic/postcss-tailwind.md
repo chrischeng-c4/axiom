@@ -453,31 +453,37 @@ cargo test -p jet tailwind::preflight::tests::preflight_contains_reset_rules
 files:
   - path: .aw/tech-design/crates/jet/logic/postcss-tailwind.md
     action: MODIFY
+    section: doc
     impl_mode: hand-written
     desc: Replace old TODO-heavy test coverage spec with this checkable current-state contract.
 
   - path: crates/jet/src/css/tailwind/utilities.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing tests cover color, typography, display, and grid utility output.
 
   - path: crates/jet/src/css/tailwind/variants.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing tests cover variant wrapping and ParsedClass splitting.
 
   - path: crates/jet/src/css/import_resolver.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing tests cover three-level import chain resolution.
 
   - path: crates/jet/src/css/output.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing tests cover deterministic content hash generation.
 
   - path: crates/jet/src/css/tailwind/preflight.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing tests cover baseline Preflight reset content.
 ```
