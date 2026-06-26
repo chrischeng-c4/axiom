@@ -37,6 +37,7 @@ members = [
     "libs/cli-std",
     "libs/raft-host",
     "libs/operator",
+    "libs/service-http",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",
