@@ -89,7 +89,6 @@ commands:
       - "Service/emulator spawns are NOT sandboxed (they keep network to serve/forward)."
       - "`--isolation none` (default) is unchanged; the egress-needs-seatbelt warning still fires once when applicable."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
