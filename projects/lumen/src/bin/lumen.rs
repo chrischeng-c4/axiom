@@ -170,8 +170,13 @@ struct LlmArgs {
     format: LlmFormat,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
 enum WalBackend {
+    /// Auto-detect (default, k8s-native): a StatefulSet with
+    /// `REPLICAS_PER_SHARD > 1` runs raft (replica/HA mode); a single replica —
+    /// or no cluster context (local dev) — runs embedded. An explicit
+    /// `--wal <backend>` overrides this.
+    Auto,
     /// In-process log. Single-node / dev. No external dependency.
     Embedded,
     /// NATS JetStream legacy backend.
@@ -182,6 +187,23 @@ enum WalBackend {
     /// Lumen-owned raftcore replication (#515). HA without an external broker.
     #[cfg(feature = "raft-wal")]
     Raft,
+}
+
+/// Resolve `--wal auto` to a concrete backend, k8s-native: a StatefulSet with
+/// `REPLICAS_PER_SHARD > 1` (the downward-API value) runs raft; one replica — or
+/// no cluster context (the env unset, e.g. local dev) — runs embedded. An
+/// explicit `--wal <backend>` passes through unchanged.
+fn resolve_wal_backend(requested: WalBackend) -> WalBackend {
+    if requested != WalBackend::Auto {
+        return requested;
+    }
+    #[cfg(feature = "raft-wal")]
+    if raft_host::cluster::replica_mode() {
+        tracing::info!("wal=auto → raft (StatefulSet REPLICAS_PER_SHARD > 1)");
+        return WalBackend::Raft;
+    }
+    tracing::info!("wal=auto → embedded (single replica / no cluster context)");
+    WalBackend::Embedded
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -283,7 +305,7 @@ struct ServeArgs {
     #[arg(long, env = "LUMEN_LOG_FORMAT", value_enum, default_value_t = LogFormat::Pretty)]
     log_format: LogFormat,
     /// Write-log backend.
-    #[arg(long = "wal", env = "LUMEN_WAL", value_enum, default_value_t = WalBackend::Embedded)]
+    #[arg(long = "wal", env = "LUMEN_WAL", value_enum, default_value_t = WalBackend::Auto)]
     wal: WalBackend,
     /// NATS URL (used when `--wal nats`).
     #[arg(long, env = "LUMEN_NATS_URL", default_value = "nats://localhost:4222")]
@@ -549,7 +571,12 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let mut raft_host: Option<Arc<raft_host::RaftHost>> = None;
     #[cfg(feature = "raft-wal")]
     let mut raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
-    let wal: Option<SharedWal> = match args.wal {
+    // k8s-native auto-detect: `--wal auto` (the default) picks raft when the
+    // StatefulSet runs >1 replica per shard, else embedded — so single-node /
+    // local dev needs no flags or cluster env.
+    let backend = resolve_wal_backend(args.wal);
+    let wal: Option<SharedWal> = match backend {
+        WalBackend::Auto => unreachable!("auto is resolved by resolve_wal_backend"),
         WalBackend::Embedded => {
             tracing::info!("wal=embedded (in-process; single-node)");
             Some(Arc::new(MemWal::new()))
@@ -583,43 +610,26 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
         #[cfg(feature = "raft-wal")]
         WalBackend::Raft => {
-            use lumen::config::ClusterConfig;
-            use lumen::raft::RaftGroup;
-            use raft_host::NodeId;
-
-            let cfg = ClusterConfig::from_env().context("raft: cluster config from env")?;
-            let node_id = cfg.replica_index()? as NodeId;
-            // Raft RPCs ride the client port (the driver's router is merged into
-            // the serve app), so the peer port is `args.port`. `LUMEN_PEERS`
-            // overrides host:port to run a multi-node group on one machine.
+            // Topology from the StatefulSet downward API via the shared helper
+            // (node id + membership + peers — no hand-rolled ordinal/DNS math).
+            // Raft RPCs ride the client port (the host's router merges into the
+            // serve app), so the peer port is `args.port`; `LUMEN_PEERS` overrides
+            // host:port to run a multi-node group on one machine.
             let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
                 .unwrap_or_else(|_| "lumen-headless".to_string());
-            let group = RaftGroup::from_config(&cfg, "lumen", &headless, args.port, args.port)
-                .context("raft: build peer group")?;
-            let mut peers: std::collections::HashMap<NodeId, String> =
-                std::collections::HashMap::new();
-            for (i, p) in group.peers.iter().enumerate() {
-                let id = i as NodeId;
-                if id != node_id {
-                    peers.insert(id, format!("http://{}:{}", p.host, p.raft_port));
-                }
-            }
-            // Honor lumen's `voter_count`: replicas `0..voter_count` vote, the
-            // rest are learners (matches the existing RaftGroup role assignment).
-            let membership = raft_host::Membership {
-                voters: (0..cfg.voter_count as NodeId).collect(),
-                learners: (cfg.voter_count as NodeId..cfg.replicas_per_shard as NodeId).collect(),
-            };
+            let topo =
+                raft_host::ClusterTopology::from_env("lumen", &headless, args.port, "LUMEN_PEERS")
+                    .context("raft: cluster topology from env")?;
             tracing::info!(
-                node_id,
-                voters = ?membership.voters,
-                peers = ?peers.keys().collect::<Vec<_>>(),
+                node_id = topo.node_id,
+                voters = ?topo.membership.voters,
+                peers = ?topo.peers.keys().collect::<Vec<_>>(),
                 data_dir = %args.raft_data_dir,
                 "wal=raft (raftcore; multi-pod)"
             );
             let store = raft_host::RaftStore::open(
                 &args.raft_data_dir,
-                node_id,
+                topo.node_id,
                 raft_host::FsyncPolicy::Always,
             )
             .context("open raft store")?;
@@ -629,9 +639,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
             // `RaftHost::spawn`; snapshot/compaction is driven externally below.
             let sm = lumen::raft_sm::EngineSm::new(engine.clone(), 0);
             let host = Arc::new(raft_host::RaftHost::spawn(
-                node_id,
-                membership,
-                peers,
+                topo.node_id,
+                topo.membership,
+                topo.peers,
                 store,
                 sm.clone() as Arc<dyn raft_host::RaftStateMachine>,
                 raft_host::HostConfig {
