@@ -320,7 +320,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat cluster_backend_unavailable_reports_jsonl_error -- --nocapture"
+    command: "cargo test -p vat --test vat_cluster -- --nocapture"
     assertions:
       - "a cluster service with no backend on PATH emits a cluster_backend_unavailable JSONL error and a non-zero exit."
       - "vat never panics on the unavailable path."
@@ -329,7 +329,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat vat_cluster_create_exports_kubeconfig -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_cluster -- --nocapture --include-ignored"
     assertions:
       - "with a real backend and Docker available, vat creates the cluster, the runner reaches the cluster via KUBECONFIG, and vat state shows services[].cluster.backend."
       - "the cluster is deleted at teardown under keep=never; the test skips gracefully when no backend/docker is present."
@@ -338,7 +338,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat vat_cluster_standalone_lifecycle -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_cluster -- --nocapture --include-ignored"
     assertions:
       - "vat cluster create then ls --json lists the cluster, kubeconfig prints a usable path, and delete removes it from the registry and the backend."
       - "the test skips gracefully when no backend/docker is present."

@@ -7,14 +7,14 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat openapi_preset_serves_spec -- --nocapture --ignored
+// @command cargo test -p vat --test vat_emulator_openapi -- --nocapture --include-ignored
 // AW-EC-END
 
 // Contract: a preset = openapi vat.toml run exports OPENAPI_MOCK_HOST and the runner curls a documented operation, getting the spec-derived response with no app code change.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_openapi_preset_run_smoke() {
-    let command = "cargo test -p vat openapi_preset_serves_spec -- --nocapture --ignored";
+    let command = "cargo test -p vat --test vat_emulator_openapi -- --nocapture --include-ignored";
     let id = "vat-openapi-preset-run-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

@@ -232,7 +232,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat openapi_preset_serves_spec -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulator_openapi -- --nocapture --include-ignored"
     assertions:
       - "a preset = openapi vat.toml run exports OPENAPI_MOCK_HOST and the runner curls a documented operation, getting the spec-derived response with no app code change."
   - id: vat-openapi-lean-build

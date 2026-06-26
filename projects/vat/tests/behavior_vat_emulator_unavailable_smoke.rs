@@ -7,7 +7,7 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat gcloud_emulator_unavailable_reports_jsonl_error -- --nocapture
+// @command cargo test -p vat --test vat_emulators -- --nocapture
 // AW-EC-END
 
 // Contract: a firestore preset with an empty PATH (no gcloud, no docker) emits a structured service_runtime_unavailable JSONL error and a non-zero exit.
@@ -15,8 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_emulator_unavailable_smoke() {
-    let command =
-        "cargo test -p vat gcloud_emulator_unavailable_reports_jsonl_error -- --nocapture";
+    let command = "cargo test -p vat --test vat_emulators -- --nocapture";
     let id = "vat-emulator-unavailable-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

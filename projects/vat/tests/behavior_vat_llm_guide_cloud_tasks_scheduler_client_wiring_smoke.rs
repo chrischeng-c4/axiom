@@ -7,7 +7,7 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture
+// @command cargo test -p vat --test vat_toml_runner -- --nocapture
 // AW-EC-END
 
 // Contract: `vat llm` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands.
@@ -15,7 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_llm_guide_cloud_tasks_scheduler_client_wiring_smoke() {
-    let command = "cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture";
+    let command = "cargo test -p vat --test vat_toml_runner -- --nocapture";
     let id = "vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

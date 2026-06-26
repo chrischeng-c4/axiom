@@ -7,14 +7,15 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat cloud_workflows_orchestrates_sibling -- --nocapture --ignored
+// @command cargo test -p vat --test vat_emulator_workflows -- --nocapture --include-ignored
 // AW-EC-END
 
 // Contract: a vat.toml with preset = cloud-workflows alongside another emulator preset runs a workflow whose http step targets that sibling emulator's exported host, end to end.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_cloud_workflows_orchestrates_sibling() {
-    let command = "cargo test -p vat cloud_workflows_orchestrates_sibling -- --nocapture --ignored";
+    let command =
+        "cargo test -p vat --test vat_emulator_workflows -- --nocapture --include-ignored";
     let id = "vat-cloud-workflows-orchestrates-sibling";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

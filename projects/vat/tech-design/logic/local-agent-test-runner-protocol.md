@@ -624,7 +624,7 @@ e2e_tests:
     claim_id: local-agent-test-runner-protocol
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat vat_toml_runner -- --nocapture"
+    command: "cargo test -p vat --test vat_toml_runner -- --nocapture"
     assertions:
       - "vat run <runner-id> starts a local readiness service, runs the runner, captures logs, records artifacts, and returns JSON evidence."
       - "failed runner evidence remains inspectable."

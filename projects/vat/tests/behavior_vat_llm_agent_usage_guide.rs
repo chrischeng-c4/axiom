@@ -7,7 +7,7 @@
 // @contract agent-legible-state-and-diff-surface
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture
+// @command cargo test -p vat --test vat_toml_runner -- --nocapture
 // AW-EC-END
 
 // Contract: `vat llm` exits successfully.
@@ -17,7 +17,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_llm_agent_usage_guide() {
-    let command = "cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture";
+    let command = "cargo test -p vat --test vat_toml_runner -- --nocapture";
     let id = "vat-llm-agent-usage-guide";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
