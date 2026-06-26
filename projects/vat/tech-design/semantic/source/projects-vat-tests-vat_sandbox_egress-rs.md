@@ -1,5 +1,37 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_sandbox_egress-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-vat-tests-vat_sandbox_egress-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat e2e test source behavior for the local agent test runner protocol."
+---
+
+# Standardized projects/vat/tests/vat_sandbox_egress.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/vat/tests/vat_sandbox_egress.rs`, captured as a rust-source-unit (td_ast) item-tree
+during vat standardization onto the codegen ladder.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `seatbelt_profile` | projects/vat/tests/vat_sandbox_egress.rs | function | private | 21 | fn seatbelt_profile(egress: EgressPolicy) -> Option<String> |
+| `run_sandboxed` | projects/vat/tests/vat_sandbox_egress.rs | function | private | 38 | fn run_sandboxed(profile: &str, argv: &[&str]) -> bool |
+| `localhost_only_profile_has_deny_and_localhost_allow` | projects/vat/tests/vat_sandbox_egress.rs | function | private | 48 | fn localhost_only_profile_has_deny_and_localhost_allow() |
+| `localhost_only_profile_is_accepted_by_sandbox_exec` | projects/vat/tests/vat_sandbox_egress.rs | function | private | 61 | fn localhost_only_profile_is_accepted_by_sandbox_exec() |
+| `localhost_only_allows_loopback_denies_external` | projects/vat/tests/vat_sandbox_egress.rs | function | private | 76 | fn localhost_only_allows_loopback_denies_external() |
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 //! Network sandbox v3: seatbelt egress policy.
 //!
 //! Exercises the policy through the public sandbox API (`sandbox::pick` →
@@ -117,4 +149,17 @@ fn localhost_only_allows_loopback_denies_external() {
         "external connect was allowed under localhost-only (egress not confined)"
     );
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tests/vat_sandbox_egress.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/vat/tests/vat_sandbox_egress.rs` captured during vat standardization.
+```

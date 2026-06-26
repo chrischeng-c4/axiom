@@ -1,5 +1,36 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_runner_sandbox-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-vat-tests-vat_runner_sandbox-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat e2e test source behavior for the local agent test runner protocol."
+---
+
+# Standardized projects/vat/tests/vat_runner_sandbox.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/vat/tests/vat_runner_sandbox.rs`, captured as a rust-source-unit (td_ast) item-tree
+during vat standardization onto the codegen ladder.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `vat_bin` | projects/vat/tests/vat_runner_sandbox.rs | function | private | 25 | fn vat_bin() -> &'static str |
+| `seatbelt_active` | projects/vat/tests/vat_runner_sandbox.rs | function | private | 30 | fn seatbelt_active() -> bool |
+| `bash_available` | projects/vat/tests/vat_runner_sandbox.rs | function | private | 38 | fn bash_available() -> bool |
+| `runner_mode_seatbelt_egress_allows_localhost_denies_external` | projects/vat/tests/vat_runner_sandbox.rs | function | private | 47 | fn runner_mode_seatbelt_egress_allows_localhost_denies_external() |
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 //! Integration test for #527: the sandbox (seatbelt isolation + the
 //! `[network].egress` policy) applies to RUNNER-mode commands, not just direct
 //! mode.
@@ -135,4 +166,17 @@ cmd = ["/bin/bash", "-c", "exec 3<>/dev/tcp/1.1.1.1/80"]
         "external runner should be denied under seatbelt localhost-only: {result}"
     );
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tests/vat_runner_sandbox.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/vat/tests/vat_runner_sandbox.rs` captured during vat standardization.
+```

@@ -1,8 +1,8 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-27T07:00:48.337833+00:00"
-digest = "sha256:7cb310aba056fe7828bf6b690b852598aef4e725b752834f13cc073045f58250"
+generated_at = "2026-06-27T07:01:32.897814+00:00"
+digest = "sha256:6bbc0bfd7ed52f4ac5618a4a8494a542620616d7aed60623cb07bd71ae7edbbe"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -199,6 +199,30 @@ digest = "sha256:7605009ac1f25f9b544f1cec9e8961dab805194c61fefc1555bf9385440bd23
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_concurrent_runners-rs.md"
 digest = "sha256:60f733551ba4cd20ce9ec49aef5f170c19ad7b55f26a14ba5aae8a49259b0e7e"
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat_emulator_grpc_mitm_routing-rs.md"
+digest = "sha256:16df611c2dc5b3a0c0ea90216e65bce80ee0cfe993c112836359eef16fc5a19e"
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat_emulator_httpmock_routing-rs.md"
+digest = "sha256:eb128c8d8c5c51b03635a0ef73316138202f3fceaa134941b48ce0126be26ef2"
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat_emulator_scheduler_grpc-rs.md"
+digest = "sha256:040e874f8faac960feab273dca4d4077bdb9c372a157f446611119c398d914bc"
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat_emulator_tasks_grpc-rs.md"
+digest = "sha256:888d162486114c36c3b9b23c36539f7b2852c2d1abcade4a488eefd0a16a1d81"
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat_runner_sandbox-rs.md"
+digest = "sha256:9404d4806029c7d4f1ae86a438b8eb45b22fd9ba73ac3f6e10818b092cb075db"
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat_sandbox_egress-rs.md"
+digest = "sha256:7606d371dc6f007d01548f5afa7a5ff30c3b9ff5cb71b83b1cf9e68f223da754"
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_toml_runner-rs.md"

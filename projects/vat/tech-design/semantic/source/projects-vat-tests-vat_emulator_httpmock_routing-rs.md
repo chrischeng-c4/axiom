@@ -1,5 +1,41 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_httpmock_routing-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-vat-tests-vat_emulator_httpmock_routing-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat e2e test source behavior for the local agent test runner protocol."
+---
+
+# Standardized projects/vat/tests/vat_emulator_httpmock_routing.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/vat/tests/vat_emulator_httpmock_routing.rs`, captured as a rust-source-unit (td_ast) item-tree
+during vat standardization onto the codegen ladder.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `vat_bin` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 14 | fn vat_bin() -> &'static str |
+| `free_port` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 18 | fn free_port() -> u16 |
+| `wait_for_port` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 26 | fn wait_for_port(addr: &str) |
+| `drop` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 39 | fn drop(&mut self) |
+| `spawn_sink` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 47 | fn spawn_sink() -> (u16, mpsc::Receiver<String>) |
+| `spawn_proxy` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 71 | fn spawn_proxy(routes: &[(&str, u16)]) -> (String, Killed) |
+| `http_mock_routes_known_host_to_local_sink` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 101 | async fn http_mock_routes_known_host_to_local_sink() |
+| `http_mock_admin_registers_route_at_runtime` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 124 | async fn http_mock_admin_registers_route_at_runtime() |
+| `http_mock_routes_https_via_mitm` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 153 | async fn http_mock_routes_https_via_mitm() |
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 //! Integration test for http-mock host-routing (network sandbox v1).
 //! Spawns `vat emulator http-mock` with a route and asserts a proxied request to
 //! the routed host is served by a local sink — over plain HTTP, via the
@@ -37,7 +73,6 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
-/// @spec projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_httpmock_routing-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -176,4 +211,17 @@ async fn http_mock_routes_https_via_mitm() {
         .expect("sink did not receive the MITM-routed https request");
     assert!(got.contains("GET /s"), "wrong request line: {got}");
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tests/vat_emulator_httpmock_routing.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/vat/tests/vat_emulator_httpmock_routing.rs` captured during vat standardization.
+```
