@@ -126,7 +126,3 @@ fn which(bin: &str) -> Option<std::path::PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 // CODEGEN-END
-// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
-// CODEGEN-BEGIN
-
-// CODEGEN-END
