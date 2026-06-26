@@ -96,7 +96,3 @@ pub fn tail(events_path: &Path, n: usize) -> Result<Vec<Event>> {
     Ok(all.split_off(start))
 }
 // CODEGEN-END
-// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
-// CODEGEN-BEGIN
-
-// CODEGEN-END

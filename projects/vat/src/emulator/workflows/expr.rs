@@ -685,7 +685,3 @@ mod tests {
     }
 }
 // CODEGEN-END
-// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
-// CODEGEN-BEGIN
-
-// CODEGEN-END

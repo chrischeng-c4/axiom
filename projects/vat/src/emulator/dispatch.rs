@@ -101,7 +101,3 @@ pub async fn dispatch_http(client: &reqwest::Client, target: &Target) -> anyhow:
     Ok(dispatch_collect(client, target).await?.code)
 }
 // CODEGEN-END
-// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
-// CODEGEN-BEGIN
-
-// CODEGEN-END

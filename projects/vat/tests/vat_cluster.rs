@@ -265,7 +265,3 @@ fn vat_cluster_standalone_lifecycle() {
         .any(|c| c["name"] == name.as_str()));
 }
 // CODEGEN-END
-// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
-// CODEGEN-BEGIN
-
-// CODEGEN-END
