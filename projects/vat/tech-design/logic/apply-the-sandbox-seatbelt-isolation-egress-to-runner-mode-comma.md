@@ -78,7 +78,6 @@ properties:
     description: "No new vat.toml/CLI surface. Reuses --isolation and [network].egress; this WI only changes WHERE they apply (runner commands too, not just direct mode)."
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
