@@ -1,5 +1,7 @@
 # vat — local agent test runner capsules
 
+## Brief
+
 `vat` is a local development test runner for the one operator Docker was never
 designed for: a **coding/ML agent**. It is *not* "Docker minus the GUI" and it
 is not a long-lived process manager. An agent writes `vat.toml`; vat prepares an
@@ -23,11 +25,9 @@ cleans up according to the run policy.
    copy-on-write disposability, and git-like fork/snapshot — all on the
    **unflagged** path.
 
-## Capability Index
+## Capabilities
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Agent-Native GPU-Native Dev Containers | - | implemented | verified | smoke | ready | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), GCP/Firebase emulators (including built-in Rust Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, a Cloud Workflows interpreter, and Cloud Storage), and host GPU access without a VM. |
+Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
 
 ## AW Verification Snapshot
 
@@ -45,16 +45,25 @@ cleans up according to the run policy.
 | Test gate | `cargo test -p vat` passed |
 | Health gate | `aw health vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
 
-## Agent-Native GPU-Native Dev Containers
+### Capability Index
 
-| Field | Value |
-|---|---|
-| ID | agent-native-gpu-native-dev-containers |
-| Root WI | - |
-| Status | verified |
-| Promise | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), GCP/Firebase emulators (including built-in Rust Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, a Cloud Workflows interpreter, and Cloud Storage), and host GPU access without a VM. |
-| Required Verification | smoke |
-| Gate Inventory | `cargo test -p vat`; `rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured projects/vat/README.md`; `rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal projects/vat/README.md projects/vat/src/gpu.rs`; `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md` |
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Agent-Native GPU-Native Dev Containers | #4152 | implemented | verified | smoke | ready | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), GCP/Firebase emulators (including built-in Rust Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, a Cloud Workflows interpreter, and Cloud Storage), and host GPU access without a VM. |
+
+### Agent-Native GPU-Native Dev Containers
+
+ID: agent-native-gpu-native-dev-containers
+Type: AgentFirst
+Surfaces: CLI: `vat run` + `vat emulator` + `vat state/diff/fork/snapshot` - Agent-facing dev-container CLI: copy-on-write run + structured state/diff, fork/snapshot, built-in GCP/Firebase emulators (REST+gRPC), and the network sandbox (routes/egress/hermetic).
+EC Dimensions: behavior: `cargo test` - vat.toml run protocol, built-in emulators (REST + gRPC), transparent routing, and seatbelt egress/hermetic conformance via cargo test -p vat.
+Root WI: #4152
+Status: verified
+Required Verification: smoke
+Promise:
+vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), GCP/Firebase emulators (including built-in Rust Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, a Cloud Workflows interpreter, and Cloud Storage), and host GPU access without a VM.
+Gate Inventory:
+- `cargo test -p vat`; `rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured projects/vat/README.md`; `rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal projects/vat/README.md projects/vat/src/gpu.rs`; `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -69,8 +78,18 @@ cleans up according to the run policy.
 | Built-in Rust emulator (Cloud Storage / GCS) | change | #148 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_storage -- --nocapture` |
 | Built-in HTTP mock + record/replay proxy (HTTPS MITM) | change | #149 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_httpmock -- --nocapture` |
 | OpenAPI-driven mock HTTP service (spec → responses) | change | #150 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_openapi -- --nocapture` |
+| `vat upgrade` / `vat report-issue` (mandatory CLI convention) | change | #491 | implemented | verified | smoke | `cargo test -p vat --test vat_cli_convention -- --nocapture` |
+| Dual-protocol emulators (Cloud Tasks + Scheduler gRPC alongside REST) | change | #499 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_tasks_grpc --test vat_emulator_scheduler_grpc -- --nocapture` |
+| Network sandbox v1 — transparent HTTP host-routing | change | #503 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_httpmock_routing -- --nocapture` |
+| Network sandbox v2 — transparent gRPC routing (h2 MITM) | change | #509 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_grpc_mitm_routing -- --nocapture` |
+| Adopt the shared cli-std crate | change | #514 | implemented | verified | smoke | `cargo test -p vat --test vat_cli_convention -- --nocapture` |
+| gRPC reverse-proxy h2c connection pool | change | #516 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_grpc_mitm_routing -- --nocapture` |
+| Network sandbox v3 — seatbelt egress policy | change | #518 | implemented | verified | smoke | `cargo test -p vat --test vat_sandbox_egress -- --nocapture` |
+| Sandbox applied to runner-mode commands | change | #527 | implemented | verified | smoke | `cargo test -p vat --test vat_runner_sandbox -- --nocapture` |
+| Full-hermetic http-mock no-forward mode | change | #530 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_httpmock_hermetic -- --nocapture` |
 | Copy-on-write fork and snapshot lifecycle | epic | - | implemented | verified | smoke | `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md` |
 | Resource isolation boundary | epic | - | implemented | verified | smoke | `rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox` |
+
 
 ## What vat is *not*
 
