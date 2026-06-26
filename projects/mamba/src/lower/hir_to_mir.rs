@@ -780,16 +780,15 @@ pub fn lower_hir_to_mir_with_symbols_src(
             // Collect raw per-method info in declaration order.
             let mut raw: Vec<(String, Raw)> = Vec::new();
             for m in &cls.methods {
-                let name = sym_name_lookup(m.name)
-                    .unwrap_or_else(|| format!("method_{}", m.name.0));
-                let marker_attrs = m.decorators
+                let name =
+                    sym_name_lookup(m.name).unwrap_or_else(|| format!("method_{}", m.name.0));
+                let marker_attrs = m
+                    .decorators
                     .iter()
                     .filter_map(|dec| match dec {
                         HirExpr::Var(dec_sym, _) => sym_name_lookup(*dec_sym)
                             .and_then(|name| method_decorator_marker_attr_name(&name)),
-                        HirExpr::Attr { attr, .. } => {
-                            method_decorator_marker_attr_name(attr)
-                        }
+                        HirExpr::Attr { attr, .. } => method_decorator_marker_attr_name(attr),
                         _ => None,
                     })
                     .collect();
@@ -821,9 +820,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                                 // `@enum.property` — the enum module's property
                                 // descriptor behaves like the builtin property for
                                 // member attribute access. Treat it as Property.
-                                if attr == "property"
-                                    && obj_name.as_deref() == Some("enum")
-                                {
+                                if attr == "property" && obj_name.as_deref() == Some("enum") {
                                     r.kind = MethodDecorKind::Property;
                                 } else if attr == "cached_property"
                                     && obj_name.as_deref() == Some("functools")
@@ -915,7 +912,9 @@ pub fn lower_hir_to_mir_with_symbols_src(
         // decorator reads it. Mark it so the eager `None` registration pass
         // skips it and the placeholder's `Some(sym)` pass handles it.
         if cls.force_textual_registration || methods.iter().any(|m| m.6.is_some()) {
-            lowerer.classes_needing_textual_registration.insert(cls.name.0);
+            lowerer
+                .classes_needing_textual_registration
+                .insert(cls.name.0);
         }
         lowerer.pending_classes.push((
             class_name.clone(),
@@ -2495,7 +2494,8 @@ impl<'a> HirToMir<'a> {
                     });
                 }
                 if self.in_module_scope {
-                    self.current_stmts.push(MirInst::DeleteGlobal { name: *sym_id });
+                    self.current_stmts
+                        .push(MirInst::DeleteGlobal { name: *sym_id });
                 }
                 self.sym_to_vreg.remove(sym_id);
             }
@@ -2746,8 +2746,7 @@ impl<'a> HirToMir<'a> {
                         && self.try_handler_stack.is_empty()
                     {
                         let none_vreg = self.emit_none();
-                        let ctxs: Vec<VReg> =
-                            self.with_ctx_stack.iter().rev().copied().collect();
+                        let ctxs: Vec<VReg> = self.with_ctx_stack.iter().rev().copied().collect();
                         for ctx in ctxs {
                             self.current_stmts.push(MirInst::CallExtern {
                                 dest: None,
@@ -3325,16 +3324,20 @@ impl<'a> HirToMir<'a> {
                                     }
                                     raise_emitted = true;
                                 } else if class_name == "ExceptionGroup"
-                                    || class_name == "BaseExceptionGroup" {
+                                    || class_name == "BaseExceptionGroup"
+                                {
                                     // raise (Base)ExceptionGroup(...): pass ALL
                                     // positional args so the constructor can
                                     // validate the arity and argument types
                                     // (CPython raises TypeError/ValueError on bad
                                     // shape) before raising the group.
-                                    let boxed: Vec<VReg> = args.iter().map(|a| {
-                                        let v = self.lower_expr(a);
-                                        self.box_operand(v, a.ty())
-                                    }).collect();
+                                    let boxed: Vec<VReg> = args
+                                        .iter()
+                                        .map(|a| {
+                                            let v = self.lower_expr(a);
+                                            self.box_operand(v, a.ty())
+                                        })
+                                        .collect();
                                     let args_list = self.fresh_vreg();
                                     self.current_stmts.push(MirInst::MakeList {
                                         dest: args_list,
@@ -3898,7 +3901,11 @@ impl<'a> HirToMir<'a> {
             HirStmt::Global { .. } | HirStmt::Nonlocal { .. } => {
                 // Scope declarations — no MIR instructions needed
             }
-            HirStmt::FuncDefPlaceholder { name: func_sym, redef, .. } => {
+            HirStmt::FuncDefPlaceholder {
+                name: func_sym,
+                redef,
+                ..
+            } => {
                 // Register the function's __name__ so `f.__name__` works.
                 {
                     let any_ty = self.tcx.any();
@@ -3952,7 +3959,8 @@ impl<'a> HirToMir<'a> {
                         match dec_expr {
                             HirExpr::Var(dec_sym, _)
                                 if !self.user_class_syms.contains(&dec_sym.0)
-                                    && self.class_syms
+                                    && self
+                                        .class_syms
                                         .get(&dec_sym.0)
                                         .map(|name| {
                                             matches!(
@@ -3962,8 +3970,8 @@ impl<'a> HirToMir<'a> {
                                         })
                                         .unwrap_or(false) =>
                             {
-                                let class_name = self.class_syms.get(&dec_sym.0).cloned()
-                                    .unwrap_or_default();
+                                let class_name =
+                                    self.class_syms.get(&dec_sym.0).cloned().unwrap_or_default();
                                 let extern_name = match class_name.as_str() {
                                     "property" => "mb_property_new",
                                     "staticmethod" => "mb_staticmethod_new",
@@ -4145,10 +4153,12 @@ impl<'a> HirToMir<'a> {
                 Some(sym) => self.pending_classes[i].1 == sym,
                 // #82: skip classes that must register at their textual
                 // placeholder (cross-class chained property decorator).
-                None => self.pending_classes[i].8.is_empty()
-                    && !self
-                        .classes_needing_textual_registration
-                        .contains(&self.pending_classes[i].1.0),
+                None => {
+                    self.pending_classes[i].8.is_empty()
+                        && !self
+                            .classes_needing_textual_registration
+                            .contains(&self.pending_classes[i].1 .0)
+                }
             };
             if should_emit {
                 let registration = self.pending_classes.remove(i);
@@ -4184,7 +4194,9 @@ impl<'a> HirToMir<'a> {
             }
             let list_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeList {
-                dest: list_vreg, elements: base_vregs, ty: self.tcx.any(),
+                dest: list_vreg,
+                elements: base_vregs,
+                ty: self.tcx.any(),
             });
             list_vreg
         };
@@ -4195,7 +4207,16 @@ impl<'a> HirToMir<'a> {
         let any_ty = self.tcx.any();
         let mut name_vregs = Vec::new();
         let mut value_vregs = Vec::new();
-        for (method_name, method_sym, decor_kind, setter_sym, deleter_sym, marker_attrs, generic_decorator) in methods {
+        for (
+            method_name,
+            method_sym,
+            decor_kind,
+            setter_sym,
+            deleter_sym,
+            marker_attrs,
+            generic_decorator,
+        ) in methods
+        {
             let name_vreg = self.emit_str_const(method_name);
             name_vregs.push(name_vreg);
             let addr_vreg = self.fresh_vreg();
@@ -4225,8 +4246,10 @@ impl<'a> HirToMir<'a> {
                 MethodDecorKind::Property => {
                     let mut w = self.fresh_vreg();
                     self.current_stmts.push(MirInst::CallExtern {
-                        dest: Some(w), name: "mb_property_new".to_string(),
-                        args: vec![addr_vreg], ty: any_ty,
+                        dest: Some(w),
+                        name: "mb_property_new".to_string(),
+                        args: vec![addr_vreg],
+                        ty: any_ty,
                     });
                     // Attach setter if present. mb_property_setter returns a NEW
                     // property (sharing fget); capture it so the accessor is not
@@ -4240,8 +4263,10 @@ impl<'a> HirToMir<'a> {
                         });
                         let next = self.fresh_vreg();
                         self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(next), name: "mb_property_setter".to_string(),
-                            args: vec![w, setter_addr], ty: any_ty,
+                            dest: Some(next),
+                            name: "mb_property_setter".to_string(),
+                            args: vec![w, setter_addr],
+                            ty: any_ty,
                         });
                         w = next;
                     }
@@ -4255,8 +4280,10 @@ impl<'a> HirToMir<'a> {
                         });
                         let next = self.fresh_vreg();
                         self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(next), name: "mb_property_deleter".to_string(),
-                            args: vec![w, del_addr], ty: any_ty,
+                            dest: Some(next),
+                            name: "mb_property_deleter".to_string(),
+                            args: vec![w, del_addr],
+                            ty: any_ty,
                         });
                         w = next;
                     }
@@ -4265,16 +4292,20 @@ impl<'a> HirToMir<'a> {
                 MethodDecorKind::ClassMethod => {
                     let w = self.fresh_vreg();
                     self.current_stmts.push(MirInst::CallExtern {
-                        dest: Some(w), name: "mb_classmethod_new".to_string(),
-                        args: vec![addr_vreg], ty: any_ty,
+                        dest: Some(w),
+                        name: "mb_classmethod_new".to_string(),
+                        args: vec![addr_vreg],
+                        ty: any_ty,
                     });
                     w
                 }
                 MethodDecorKind::StaticMethod => {
                     let w = self.fresh_vreg();
                     self.current_stmts.push(MirInst::CallExtern {
-                        dest: Some(w), name: "mb_staticmethod_new".to_string(),
-                        args: vec![addr_vreg], ty: any_ty,
+                        dest: Some(w),
+                        name: "mb_staticmethod_new".to_string(),
+                        args: vec![addr_vreg],
+                        ty: any_ty,
                     });
                     w
                 }
@@ -4282,8 +4313,10 @@ impl<'a> HirToMir<'a> {
                     let name_str = self.emit_str_const(method_name);
                     let w = self.fresh_vreg();
                     self.current_stmts.push(MirInst::CallExtern {
-                        dest: Some(w), name: "mb_cached_property_new".to_string(),
-                        args: vec![addr_vreg, name_str], ty: any_ty,
+                        dest: Some(w),
+                        name: "mb_cached_property_new".to_string(),
+                        args: vec![addr_vreg, name_str],
+                        ty: any_ty,
                     });
                     w
                 }
@@ -4311,11 +4344,15 @@ impl<'a> HirToMir<'a> {
         }
         let names_list = self.fresh_vreg();
         self.current_stmts.push(MirInst::MakeList {
-            dest: names_list, elements: name_vregs, ty: self.tcx.any(),
+            dest: names_list,
+            elements: name_vregs,
+            ty: self.tcx.any(),
         });
         let values_list = self.fresh_vreg();
         self.current_stmts.push(MirInst::MakeList {
-            dest: values_list, elements: value_vregs, ty: self.tcx.any(),
+            dest: values_list,
+            elements: value_vregs,
+            ty: self.tcx.any(),
         });
         // R10: Emit class keyword arguments BEFORE class registration
         // so they are available in KWARGS_REGISTRY when __init_subclass__ is called.
@@ -4330,11 +4367,15 @@ impl<'a> HirToMir<'a> {
             }
             let keys_list = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeList {
-                dest: keys_list, elements: key_vregs, ty: self.tcx.any(),
+                dest: keys_list,
+                elements: key_vregs,
+                ty: self.tcx.any(),
             });
             let vals_list_kw = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeList {
-                dest: vals_list_kw, elements: val_vregs_kw, ty: self.tcx.any(),
+                dest: vals_list_kw,
+                elements: val_vregs_kw,
+                ty: self.tcx.any(),
             });
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
@@ -4357,7 +4398,9 @@ impl<'a> HirToMir<'a> {
             }
             let fields_list = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeList {
-                dest: fields_list, elements: field_vregs, ty: self.tcx.any(),
+                dest: fields_list,
+                elements: field_vregs,
+                ty: self.tcx.any(),
             });
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
@@ -4382,7 +4425,9 @@ impl<'a> HirToMir<'a> {
             }
             let abs_list = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeList {
-                dest: abs_list, elements: abs_vregs, ty: self.tcx.any(),
+                dest: abs_list,
+                elements: abs_vregs,
+                ty: self.tcx.any(),
             });
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
@@ -4409,7 +4454,9 @@ impl<'a> HirToMir<'a> {
             }
             let args_tuple = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
-                dest: args_tuple, elements: arg_vregs, ty: self.tcx.any(),
+                dest: args_tuple,
+                elements: arg_vregs,
+                ty: self.tcx.any(),
             });
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
@@ -4426,7 +4473,9 @@ impl<'a> HirToMir<'a> {
             }
             let slots_list = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeList {
-                dest: slots_list, elements: slot_vregs, ty: self.tcx.any(),
+                dest: slots_list,
+                elements: slot_vregs,
+                ty: self.tcx.any(),
             });
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
@@ -6572,6 +6621,9 @@ impl<'a> HirToMir<'a> {
                 dest
             }
             HirExpr::Var(sym, ty) => {
+                if let Some(&vreg) = self.sym_to_vreg.get(sym) {
+                    return vreg;
+                }
                 // NotImplemented / Ellipsis builtin constants → emit as MirConst
                 if let Some(st) = self.symbol_table {
                     if (sym.0 as usize) < st.all_symbols().len() {
@@ -7400,9 +7452,10 @@ impl<'a> HirToMir<'a> {
                         // expression: pass ALL positional args so the constructor
                         // validates arity + argument types (CPython raises
                         // TypeError/ValueError on a bad shape).
-                        if class_name == "ExceptionGroup"
-                            || class_name == "BaseExceptionGroup" {
-                            let boxed: Vec<VReg> = args.iter().zip(arg_vregs.iter())
+                        if class_name == "ExceptionGroup" || class_name == "BaseExceptionGroup" {
+                            let boxed: Vec<VReg> = args
+                                .iter()
+                                .zip(arg_vregs.iter())
                                 .map(|(a, &v)| self.box_operand(v, a.ty()))
                                 .collect();
                             let args_list = self.fresh_vreg();
@@ -7658,7 +7711,10 @@ impl<'a> HirToMir<'a> {
                     // The historical mb_exec intrinsic is single-arg, so route
                     // the two-arg form through the dedicated runtime entry.
                     if extern_name == "mb_exec" {
-                        let code_arg = boxed_args.first().copied().unwrap_or_else(|| self.emit_none());
+                        let code_arg = boxed_args
+                            .first()
+                            .copied()
+                            .unwrap_or_else(|| self.emit_none());
                         if boxed_args.len() >= 2 {
                             self.current_stmts.push(MirInst::CallExtern {
                                 dest: Some(dest),
@@ -7685,11 +7741,16 @@ impl<'a> HirToMir<'a> {
                     if extern_name == "mb_breakpoint" {
                         let pos_list = self.fresh_vreg();
                         self.current_stmts.push(MirInst::MakeList {
-                            dest: pos_list, elements: boxed_args.clone(), ty: self.tcx.any(),
+                            dest: pos_list,
+                            elements: boxed_args.clone(),
+                            ty: self.tcx.any(),
                         });
                         let kwargs_dict = self.fresh_vreg();
                         self.current_stmts.push(MirInst::MakeDict {
-                            dest: kwargs_dict, keys: vec![], values: vec![], ty: self.tcx.any(),
+                            dest: kwargs_dict,
+                            keys: vec![],
+                            values: vec![],
+                            ty: self.tcx.any(),
                         });
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: Some(dest),
@@ -9053,7 +9114,9 @@ impl<'a> HirToMir<'a> {
                         ty: none_ty,
                     });
                 });
-                let changed: Vec<SymbolId> = self.sym_to_vreg.iter()
+                let changed: Vec<SymbolId> = self
+                    .sym_to_vreg
+                    .iter()
                     .filter(|(s, v)| pre_vregs.get(*s).copied() != Some(**v))
                     .map(|(s, _)| *s)
                     .collect();
@@ -10254,6 +10317,55 @@ mod tests {
         assert!(all_stmts
             .iter()
             .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == target)));
+    }
+
+    #[test]
+    fn test_assigned_builtin_name_shadows_builtin_value() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let str_ty = tcx.str();
+        let any_ty = tcx.any();
+
+        let mut symbols = SymbolTable::new();
+        let input_sym = symbols.define("input".to_string(), SymbolKind::Function);
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: Vec::new(),
+            top_level: vec![
+                HirStmt::Assign {
+                    target: HirLValue::Var(input_sym),
+                    value: HirExpr::StrLit("shadow".to_string(), str_ty),
+                    span: Span::dummy(),
+                },
+                HirStmt::Expr {
+                    expr: HirExpr::Var(input_sym, any_ty),
+                    span: Span::dummy(),
+                },
+            ],
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let all_stmts: Vec<_> = mir.bodies[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .collect();
+
+        assert!(all_stmts
+            .iter()
+            .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == input_sym)));
+        assert!(
+            !all_stmts
+                .iter()
+                .any(|s| matches!(s, MirInst::CallExtern { name, .. } if name == "mb_builtin_get")),
+            "assigned builtin name must read the assigned value, not the builtin object"
+        );
     }
 
     // ── P0-R4: CallExtern return propagation tests ──────────────────────
