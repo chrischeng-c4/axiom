@@ -64,7 +64,6 @@ properties:
       egress: { type: string, enum: [open, localhost-only, deny] }
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
