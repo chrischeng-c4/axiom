@@ -546,19 +546,21 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Select the write log. `--wal raft` also yields a driver whose router is
     // merged into the serve app below (peer RPCs ride the h2c port).
     #[cfg(feature = "raft-wal")]
-    let mut raft_driver: Option<Arc<lumen::raft_driver::RaftDriver>> = None;
-    let wal: SharedWal = match args.wal {
+    let mut raft_host: Option<Arc<raft_host::RaftHost>> = None;
+    #[cfg(feature = "raft-wal")]
+    let mut raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
+    let wal: Option<SharedWal> = match args.wal {
         WalBackend::Embedded => {
             tracing::info!("wal=embedded (in-process; single-node)");
-            Arc::new(MemWal::new())
+            Some(Arc::new(MemWal::new()))
         }
         WalBackend::Nats => {
             tracing::info!(url = %args.nats_url, "wal=nats (JetStream)");
-            Arc::new(
+            Some(Arc::new(
                 connect_nats_with_retry(&args.nats_url, args.nats_connect_timeout_secs)
                     .await
                     .context("connect NATS write log")?,
-            )
+            ))
         }
         #[cfg(feature = "relay-wal")]
         WalBackend::Relay => {
@@ -577,13 +579,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 None => lumen::wal_relay::RelayWal::new(&args.relay_url, &args.relay_subject),
             }
             .context("connect relay write log")?;
-            Arc::new(relay)
+            Some(Arc::new(relay))
         }
         #[cfg(feature = "raft-wal")]
         WalBackend::Raft => {
             use lumen::config::ClusterConfig;
             use lumen::raft::RaftGroup;
-            use lumen::raft_core::NodeId;
+            use raft_host::NodeId;
 
             let cfg = ClusterConfig::from_env().context("raft: cluster config from env")?;
             let node_id = cfg.replica_index()? as NodeId;
@@ -604,7 +606,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             }
             // Honor lumen's `voter_count`: replicas `0..voter_count` vote, the
             // rest are learners (matches the existing RaftGroup role assignment).
-            let membership = lumen::raft_core::Membership {
+            let membership = raft_host::Membership {
                 voters: (0..cfg.voter_count as NodeId).collect(),
                 learners: (cfg.voter_count as NodeId..cfg.replicas_per_shard as NodeId).collect(),
             };
@@ -615,19 +617,40 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 data_dir = %args.raft_data_dir,
                 "wal=raft (raftcore; multi-pod)"
             );
-            let store = lumen::raft_store::RaftStore::open(
+            let store = raft_host::RaftStore::open(
                 &args.raft_data_dir,
                 node_id,
-                lumen::raft_store::FsyncPolicy::Always,
+                raft_host::FsyncPolicy::Always,
             )
             .context("open raft store")?;
-            let driver = Arc::new(lumen::raft_driver::RaftDriver::spawn(
-                node_id, membership, peers, store,
+            // The host is the sole applier: committed entries fold straight into
+            // the engine (via `EngineSm`), so there is no `WalLog`/coordinator
+            // seam for the raft path. Cold-start (restore + replay) happens in
+            // `RaftHost::spawn`; snapshot/compaction is driven externally below.
+            let sm = lumen::raft_sm::EngineSm::new(engine.clone(), 0);
+            let host = Arc::new(raft_host::RaftHost::spawn(
+                node_id,
+                membership,
+                peers,
+                store,
+                sm.clone() as Arc<dyn raft_host::RaftStateMachine>,
+                raft_host::HostConfig {
+                    snapshot: raft_host::SnapshotPolicy::External,
+                    ..Default::default()
+                },
             ));
-            raft_driver = Some(Arc::clone(&driver));
-            Arc::new(lumen::wal_raft::RaftWal::new(driver))
+            raft_host = Some(Arc::clone(&host));
+            raft_writer = Some(Arc::new(lumen::raft_sm::RaftWriteSink::new(host, sm)));
+            None
         }
     };
+
+    // The raft path is the sole applier (no WalLog/coordinator seam): it
+    // cold-starts inside `RaftHost::spawn` and uses the host as its `WriteSink`.
+    #[cfg(feature = "raft-wal")]
+    let is_raft = raft_writer.is_some();
+    #[cfg(not(feature = "raft-wal"))]
+    let is_raft = false;
 
     // Persistence bootstrap: load the latest checkpoint (if any) so we tail from
     // its sequence instead of replaying the whole log. Two modes share the
@@ -664,7 +687,12 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Cold-start sequence: the WAL position the checkpoint is current as of, so
     // the apply loop tails from `start_seq + 1`.
     let mut start_seq = {
-        if let Some(store) = &segment_store {
+        if is_raft {
+            // Raft cold-starts inside `RaftHost::spawn` (snapshot restore + replay
+            // of committed entries); the engine here is fresh and the host owns
+            // the applied seq, so there is nothing to load from `--data-dir`.
+            0
+        } else if let Some(store) = &segment_store {
             // Segment mode: reopen every collection from the newest checkpoint
             // INTO `engine` (no whole-collection load), replacing the CBOR restore.
             match store
@@ -686,7 +714,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // → AOF replay (`start_seq+1 .. A`) → broker tail (`A+1 ..`). After replay the
     // apply loop keeps appending to this same writer, and the checkpoint
     // snapshotter trims it. The default CBOR path never builds one.
-    let aof_writer: Option<lumen::coordinator::SharedAof> = if segment_mode {
+    let aof_writer: Option<lumen::coordinator::SharedAof> = if segment_mode && !is_raft {
         match &args.data_dir {
             Some(dir) => {
                 let aof_path = std::path::Path::new(dir).join("aof.log");
@@ -710,9 +738,21 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     // (c) Start the apply loop. In segment mode with an AOF, the loop appends
     // every applied record to it; otherwise the default loop runs unchanged.
-    let writer = match aof_writer.clone() {
-        Some(aof) => WriteCoordinator::start_from_with_aof(wal, engine.clone(), start_seq, aof),
-        None => WriteCoordinator::start_from(wal, engine.clone(), start_seq),
+    // The raft path uses the `RaftHost` as its `WriteSink`; every other backend
+    // uses the `WriteCoordinator` (sole applier over a `WalLog`). Both are erased
+    // to `Arc<dyn WriteSink>` so the API binds to a single write seam.
+    #[cfg(feature = "raft-wal")]
+    let raft_writer = raft_writer.take();
+    #[cfg(not(feature = "raft-wal"))]
+    let raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
+    let writer: Arc<dyn lumen::coordinator::WriteSink> = if let Some(rw) = raft_writer {
+        rw
+    } else {
+        let wal = wal.expect("non-raft backend yields a WAL");
+        match aof_writer.clone() {
+            Some(aof) => WriteCoordinator::start_from_with_aof(wal, engine.clone(), start_seq, aof),
+            None => WriteCoordinator::start_from(wal, engine.clone(), start_seq),
+        }
     };
 
     let auth = Arc::new(AuthConfig::from_env()?);
@@ -732,12 +772,34 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let mut app = lumen::api::router(state);
     // Peer raft RPCs (`/raft/*`, `/raftz`) share the h2c serve port.
     #[cfg(feature = "raft-wal")]
-    if let Some(driver) = &raft_driver {
-        app = app.merge(driver.router());
+    if let Some(host) = &raft_host {
+        app = app.merge(host.router());
     }
 
-    // Periodic RDB snapshotter.
-    if let Some(store) = rdb_store {
+    // Periodic snapshotter. Raft mode: the host captures the engine RDB AND
+    // compacts the raft log (bounding it + arming InstallSnapshot for a fresh
+    // replica) — the shared backup layer (#524, closes #522 by construction).
+    // Otherwise the RDB snapshotter writes the `--data-dir` checkpoints the apply
+    // loop tails from on restart.
+    #[cfg(feature = "raft-wal")]
+    if let Some(host) = raft_host.clone() {
+        let period = Duration::from_secs(args.snapshot_secs.max(1));
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(period);
+            ticker.tick().await; // skip immediate fire
+            loop {
+                ticker.tick().await;
+                match host.snapshot_and_compact().await {
+                    Ok(idx) if idx > 0 => {
+                        tracing::info!(snapshot_index = idx, "raft snapshot taken + log compacted")
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "raft snapshot/compact failed"),
+                }
+            }
+        });
+    }
+    if let (false, Some(store)) = (is_raft, rdb_store) {
         let snap_engine = engine.clone();
         let snap_writer = writer.clone();
         let period = Duration::from_secs(args.snapshot_secs.max(1));
