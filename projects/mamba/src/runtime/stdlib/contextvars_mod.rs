@@ -57,6 +57,16 @@ thread_local! {
     static MISSING: RefCell<Option<MbValue>> = const { RefCell::new(None) };
 }
 
+pub(crate) type ContextMap = FxHashMap<u64, (MbValue, MbValue)>;
+
+/// Replace the current thread's ContextVar map, returning the previous map.
+///
+/// `threading.Thread.start()` uses this to emulate CPython's per-thread empty
+/// context while it synchronously runs a target in mamba's stub threading model.
+pub(crate) fn replace_current_context(next: ContextMap) -> ContextMap {
+    CURRENT.with(|c| std::mem::replace(&mut *c.borrow_mut(), next))
+}
+
 static NEXT_VAR_ID: AtomicU64 = AtomicU64::new(1);
 
 fn extract_str(val: MbValue) -> Option<String> {
@@ -341,7 +351,7 @@ fn list_items(v: MbValue) -> Vec<MbValue> {
 
 /// Reconstruct the `var_id → (ContextVar, value)` map captured in a Context's
 /// parallel `_ids` / `_vars` / `_vals` lists.
-fn context_snapshot_map(ctx: MbValue) -> FxHashMap<u64, (MbValue, MbValue)> {
+fn context_snapshot_map(ctx: MbValue) -> ContextMap {
     let ids = list_items(inst_field(ctx, "_ids").unwrap_or(MbValue::none()));
     let vars = list_items(inst_field(ctx, "_vars").unwrap_or(MbValue::none()));
     let vals = list_items(inst_field(ctx, "_vals").unwrap_or(MbValue::none()));
