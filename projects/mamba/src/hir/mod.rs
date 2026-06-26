@@ -307,6 +307,7 @@ pub enum HirLValue {
 #[derive(Debug, Clone)]
 pub enum HirExpr {
     IntLit(i64, TypeId),
+    BigIntLit(String, TypeId),
     FloatLit(f64, TypeId),
     StrLit(String, TypeId),
     BytesLit(Vec<u8>, TypeId),
@@ -508,6 +509,7 @@ impl HirExpr {
     pub fn ty(&self) -> TypeId {
         match self {
             HirExpr::IntLit(_, t)
+            | HirExpr::BigIntLit(_, t)
             | HirExpr::FloatLit(_, t)
             | HirExpr::StrLit(_, t)
             | HirExpr::BytesLit(_, t)

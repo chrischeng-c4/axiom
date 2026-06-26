@@ -605,6 +605,7 @@ impl Resolver {
                 }
             }
             Expr::IntLit(_)
+            | Expr::BigIntLit(_)
             | Expr::FloatLit(_)
             | Expr::ComplexLit(_)
             | Expr::StrLit(_)

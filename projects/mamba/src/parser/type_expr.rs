@@ -199,6 +199,7 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_expr()?;
                 let lit_name = match &expr.node {
                     super::ast::Expr::IntLit(v) => Some(v.to_string()),
+                    super::ast::Expr::BigIntLit(v) => Some(v.clone()),
                     super::ast::Expr::FloatLit(v) => Some(v.to_string()),
                     super::ast::Expr::BoolLit(b) => Some(if *b {
                         "True".to_string()
