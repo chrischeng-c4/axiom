@@ -18,6 +18,9 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 pub(crate) const INT_SUBCLASS_VALUE_FIELD: &str = "__mamba_int_value__";
+pub(crate) const STR_SUBCLASS_VALUE_FIELD: &str = "__mamba_str_value__";
+pub(crate) const LIST_SUBCLASS_VALUE_FIELD: &str = "__mamba_list_value__";
+pub(crate) const DICT_SUBCLASS_VALUE_FIELD: &str = "__mamba_dict_value__";
 
 /// A class definition stored at runtime.
 pub struct MbClass {
@@ -2385,6 +2388,11 @@ fn instance_new_with_init_impl(
     {
         return MbValue::none();
     }
+    if let Some(base) = builtin_data_payload_base(&name) {
+        if !seed_builtin_data_subclass_value(instance, args_list, base) {
+            return MbValue::none();
+        }
+    }
     if let Some(shape) = namedtuple_subclass_shape(&name) {
         if !seed_namedtuple_subclass_fields(instance, args_list, &name, &shape) {
             return MbValue::none();
@@ -2596,6 +2604,127 @@ fn seed_int_subclass_value(instance: MbValue, args_list: MbValue) -> bool {
                     .write()
                     .unwrap()
                     .insert(INT_SUBCLASS_VALUE_FIELD.to_string(), value);
+            }
+        }
+    }
+    true
+}
+
+fn builtin_data_payload_base(class_name: &str) -> Option<&'static str> {
+    for ancestor in class_mro_list(class_name).into_iter().skip(1) {
+        match ancestor.as_str() {
+            "str" => return Some("str"),
+            "list" => return Some("list"),
+            "dict" => return Some("dict"),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn payload_field_for_base(base: &str) -> &'static str {
+    match base {
+        "str" => STR_SUBCLASS_VALUE_FIELD,
+        "list" => LIST_SUBCLASS_VALUE_FIELD,
+        "dict" => DICT_SUBCLASS_VALUE_FIELD,
+        _ => "",
+    }
+}
+
+pub(crate) fn is_builtin_data_payload_field(name: &str) -> bool {
+    matches!(
+        name,
+        STR_SUBCLASS_VALUE_FIELD | LIST_SUBCLASS_VALUE_FIELD | DICT_SUBCLASS_VALUE_FIELD
+    )
+}
+
+pub(crate) fn builtin_data_payload(obj: MbValue) -> Option<(&'static str, MbValue)> {
+    obj.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            let base = builtin_data_payload_base(class_name)?;
+            let field = payload_field_for_base(base);
+            fields.read().unwrap().get(field).copied().map(|v| (base, v))
+        } else {
+            None
+        }
+    })
+}
+
+pub(crate) fn builtin_data_payload_if_unoverridden(
+    obj: MbValue,
+    method_name: &str,
+) -> Option<(&'static str, MbValue)> {
+    let overridden = obj.as_ptr().is_some_and(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            !lookup_method(class_name, method_name).is_none()
+        } else {
+            false
+        }
+    });
+    if overridden {
+        None
+    } else {
+        builtin_data_payload(obj)
+    }
+}
+
+fn seed_builtin_data_subclass_value(instance: MbValue, args_list: MbValue, base: &str) -> bool {
+    let args = super::builtins::extract_items(args_list);
+    let value = match base {
+        "str" => match args.len() {
+            0 => MbValue::from_ptr(MbObject::new_str(String::new())),
+            1 => super::builtins::mb_str(args[0]),
+            _ => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "str() takes at most 1 argument ({} given)",
+                        args.len()
+                    ))),
+                );
+                return false;
+            }
+        },
+        "list" => match args.len() {
+            0 => MbValue::from_ptr(MbObject::new_list(vec![])),
+            1 => super::list_ops::mb_list_from_iterable(args[0]),
+            _ => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "list expected at most 1 argument, got {}",
+                        args.len()
+                    ))),
+                );
+                return false;
+            }
+        },
+        "dict" => match args.len() {
+            0 => super::dict_ops::mb_dict_new(),
+            1 => super::dict_ops::mb_dict_from_pairs(args[0]),
+            _ => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "dict expected at most 1 argument, got {}",
+                        args.len()
+                    ))),
+                );
+                return false;
+            }
+        },
+        _ => return true,
+    };
+    if super::exception::mb_has_exception().as_bool() == Some(true) {
+        return false;
+    }
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .write()
+                    .unwrap()
+                    .insert(payload_field_for_base(base).to_string(), value);
             }
         }
     }
@@ -5068,7 +5197,7 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 // `__ns_order__` is SimpleNamespace's hidden
                                 // insertion-order list; it must not surface in
                                 // __dict__ (vars() already excludes it).
-                                if k == "__ns_order__" || hidden.contains(k) {
+                                if k == "__ns_order__" || hidden.contains(k) || is_builtin_data_payload_field(k) {
                                     continue;
                                 }
                                 let key =
@@ -5114,6 +5243,20 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     //     __getattr__ / AttributeError.
                     if class_attr_lookup(class_name, &attr_name).is_some() {
                         return MbValue::none();
+                    }
+                    // Builtin DATA-payload subclasses (str/list/dict) are
+                    // nominal Instances with a hidden payload. Expose the
+                    // inherited builtin method surface only after descriptors,
+                    // instance fields, class attrs, and explicit None attrs miss.
+                    if let Some((base, payload)) =
+                        builtin_data_payload_if_unoverridden(obj, &attr_name)
+                    {
+                        if builtin_type_method_names_by_name(base)
+                            .iter()
+                            .any(|method| *method == attr_name.as_str())
+                        {
+                            return make_bound_native_method(payload, &attr_name);
+                        }
                     }
                     // 4. Fallback: __getattr__(self, name) dunder — call if it is a
                     //    TAG_FUNC function pointer; return value directly for other
@@ -6874,11 +7017,19 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
                     } else {
                         let fields = fields.read().unwrap();
                         for k in fields.keys() {
+                            if is_builtin_data_payload_field(k) {
+                                continue;
+                            }
                             push(k.clone(), &mut names, &mut seen);
                         }
                         drop(fields);
                         for k in mb_dir_mro_keys(class_name) {
                             push(k, &mut names, &mut seen);
+                        }
+                        if let Some(base) = builtin_data_payload_base(class_name) {
+                            for k in builtin_type_method_names_by_name(base) {
+                                push(k.to_string(), &mut names, &mut seen);
+                            }
                         }
                     }
                 }
@@ -10741,6 +10892,9 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
         let args = MbValue::from_ptr(MbObject::new_list(vec![key]));
         return mb_call_method(obj, method_name, args);
     }
+    if let Some((_base, payload)) = builtin_data_payload_if_unoverridden(obj, "__getitem__") {
+        return mb_obj_getitem(payload, key);
+    }
     MbValue::none()
 }
 
@@ -10968,6 +11122,9 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
         let args = MbValue::from_ptr(MbObject::new_list(vec![key, value]));
         return mb_call_method(obj, method_name, args);
     }
+    if let Some((_base, payload)) = builtin_data_payload_if_unoverridden(obj, "__setitem__") {
+        return mb_obj_setitem(payload, key, value);
+    }
     MbValue::none()
 }
 
@@ -11063,6 +11220,10 @@ pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
                             MbValue::from_ptr(MbObject::new_str("__delitem__".to_string()));
                         let args = MbValue::from_ptr(MbObject::new_list(vec![key]));
                         let _ = mb_call_method(obj, method_name, args);
+                    } else if let Some((_base, payload)) =
+                        builtin_data_payload_if_unoverridden(obj, "__delitem__")
+                    {
+                        mb_obj_delitem(payload, key);
                     } else if let super::rc::ObjData::Instance { ref class_name, .. } = (*ptr).data
                     {
                         super::exception::mb_raise(
@@ -15691,6 +15852,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         if super::builtins::mb_callable(fv).as_bool() == Some(true) {
                             super::rc::retain_if_ptr(fv);
                             return super::builtins::mb_call_spread(fv, args);
+                        }
+                    }
+                    if field_val.is_none() {
+                        if let Some((_base, payload)) =
+                            builtin_data_payload_if_unoverridden(receiver, &name)
+                        {
+                            return mb_call_method(payload, method_name, args);
                         }
                     }
                     // str-mixin enum members ((str, Enum) / StrEnum) inherit

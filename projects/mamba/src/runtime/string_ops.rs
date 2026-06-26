@@ -3620,6 +3620,11 @@ pub fn value_to_string(val: MbValue) -> String {
                         }
                         return value_to_string(result);
                     }
+                    if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__str__")
+                    {
+                        return value_to_string(payload);
+                    }
                     // PEP 654 ExceptionGroup str: "message (N sub-exceptions)".
                     if super::exception::is_subclass_of(class_name, "BaseExceptionGroup")
                         || super::exception::is_subclass_of(class_name, "ExceptionGroup")

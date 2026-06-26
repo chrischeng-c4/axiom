@@ -228,6 +228,7 @@ impl TypeChecker {
             "UnicodeError",
             "UnicodeDecodeError",
             "UnicodeEncodeError",
+            "UnicodeTranslateError",
             "AssertionError",
             "BufferError",
             "EOFError",
