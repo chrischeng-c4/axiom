@@ -4395,6 +4395,13 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         let lb = ub.map(|(_, d)| d).unwrap_or(b);
         return mb_values_eq(la, lb);
     }
+    let da = super::class::unwrap_dictlike_data(a);
+    let db = super::class::unwrap_dictlike_data(b);
+    if da.is_some() || db.is_some() {
+        let la = da.unwrap_or(a);
+        let lb = db.unwrap_or(b);
+        return mb_values_eq(la, lb);
+    }
     // PEP 604 union cross-representation equality: a `X | Y` UnionType equals
     // the typing.Union[X, Y] alias (and is order-insensitive) by member set.
     if let Some(eq) = super::stdlib::typing_mod::union_values_equal(a, b) {
