@@ -404,6 +404,17 @@ fn parse_typed_body(
             })?;
             TypedBody::JsonSchema(p)
         }
+        SectionKind::RustSourceUnitFamily => {
+            // @spec projects/agentic-workflow/tech-design/logic/aw-td-ast-parse-rust-source-unit-sections-as-typed-td-bodies.md#logic
+            let unit = crate::generate::rust_source_unit::parse(&content).map_err(|e| {
+                (
+                    TdParseErrorKind::TypedPayloadParse,
+                    format!("Rust source-unit typed-payload parse error: {}", e),
+                    Some(e.to_string()),
+                )
+            })?;
+            TypedBody::RustSourceUnit(unit)
+        }
         SectionKind::MarkdownFamily => TypedBody::Markdown(content),
         SectionKind::Unsupported => TypedBody::Unsupported(content),
     };
@@ -430,6 +441,7 @@ fn compute_hash(body: &TypedBody) -> Option<u64> {
         TypedBody::AsyncApi(p) => serde_yaml::to_string(p).ok()?.into_bytes(),
         TypedBody::CliManifest(p) => serde_yaml::to_string(p).ok()?.into_bytes(),
         TypedBody::ConfigManifest(p) => serde_yaml::to_string(p).ok()?.into_bytes(),
+        TypedBody::RustSourceUnit(p) => serde_yaml::to_string(p).ok()?.into_bytes(),
         TypedBody::Markdown(s) => s.as_bytes().to_vec(),
         TypedBody::Placeholder | TypedBody::Unsupported(_) => return None,
     };
@@ -511,6 +523,61 @@ mod tests {
             by_type.get(&SectionType::StateMachine).unwrap(),
             TypedBody::MermaidPlus(_)
         ));
+    }
+
+    #[test]
+    fn parse_td_str_parses_rust_source_unit_body() {
+        let raw = concat!(
+            "---\n",
+            "id: rust-source-unit-fixture\n",
+            "---\n\n",
+            "## Rust Source Unit\n",
+            "<!-- type: rust-source-unit lang: rust -->\n\n",
+            "```rust\n",
+            "pub struct Demo {\n",
+            "    pub value: i32,\n",
+            "}\n",
+            "```\n",
+        );
+
+        let ast = parse_td_str(raw).expect("parse rust-source-unit");
+        let section = ast
+            .sections
+            .iter()
+            .find(|s| s.section_type == SectionType::RustSourceUnit)
+            .expect("rust-source-unit section");
+        let TypedBody::RustSourceUnit(unit) = &section.body else {
+            panic!("expected RustSourceUnit typed body");
+        };
+
+        assert_eq!(unit.emit(), "pub struct Demo {\n    pub value: i32,\n}");
+        assert!(
+            section.content_hash.is_some(),
+            "rust-source-unit bodies must carry a content hash"
+        );
+    }
+
+    #[test]
+    fn parse_td_str_rejects_invalid_rust_source_unit() {
+        let raw = concat!(
+            "---\n",
+            "id: bad-rust-source-unit\n",
+            "---\n\n",
+            "## Rust Source Unit\n",
+            "<!-- type: rust-source-unit lang: rust -->\n\n",
+            "```rust\n",
+            "pub struct {\n",
+            "```\n",
+        );
+
+        let err = parse_td_str(raw).unwrap_err();
+        assert_eq!(
+            err.kind,
+            super::super::payloads::TdParseErrorKind::TypedPayloadParse
+        );
+        assert_eq!(err.section_type, SectionType::RustSourceUnit);
+        assert!(err.message.contains("Rust source-unit"));
+        assert!(err.source.is_some(), "parse error source must be carried");
     }
 
     #[test]
