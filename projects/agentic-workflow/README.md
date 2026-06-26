@@ -89,6 +89,14 @@ checks those typed edges, EC command results, and existing artifact health; it
 does not infer semantic coverage from prose. Production-required EC cases may
 not remain `unmapped`.
 
+Agentic Workflow is the generator-authoritative implementation of this protocol,
+but its own production gate is intentionally narrower than a full AW takeover of
+another project. For `agentic-workflow` / `aw` self-health, capability contracts
+and EC claim closure are authoritative. Managed ownership, semantic coverage,
+traceability, TD lock, CB verify, cold rebuild, and workspace test gates remain
+observable readiness metrics, but they do not block self-health production
+readiness unless they are expressed as capability or EC contract failures.
+
 EC source of truth lives under `projects/<name>/external-contracts/` as
 markdown, using the same section authoring pattern as TD:
 
