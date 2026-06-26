@@ -27,6 +27,7 @@
 
 use crate::parser::ast::{CallArg, Expr, Module, Stmt, TypeParam, TypeParamKind};
 use crate::source::span::{Span, Spanned};
+use std::collections::HashSet;
 
 /// Name of the TypeVar-construction intrinsic (see `runtime::pep695`).
 pub const TYPEVAR_INTRINSIC: &str = "__mb_pep695_typevar__";
@@ -35,7 +36,7 @@ pub const TYPE_ALIAS_INTRINSIC: &str = "__mb_pep695_type_alias__";
 
 /// Desugar all PEP 695 constructs in a module (in place).
 pub fn desugar_module(module: &mut Module) {
-    let hoist = desugar_block(&mut module.stmts, false);
+    let hoist = desugar_block(&mut module.stmts, false, &[], None);
     // Module scope absorbs everything; nothing can hoist past it.
     debug_assert!(hoist.before.is_empty() && hoist.after.is_empty());
 }
@@ -134,6 +135,344 @@ fn attr_tuple_assign(
     )
 }
 
+/// Build `Class.Nested.attr` for a class-body lazy alias reference.
+fn class_attr_expr(path: &[Name], attr: &str, span: Span) -> Spanned<Expr> {
+    let mut object = sp(Expr::Ident(path[0].clone()), span);
+    for seg in &path[1..] {
+        object = sp(
+            Expr::Attr {
+                object: Box::new(object),
+                attr: seg.clone(),
+            },
+            span,
+        );
+    }
+    sp(
+        Expr::Attr {
+            object: Box::new(object),
+            attr: attr.to_string(),
+        },
+        span,
+    )
+}
+
+fn collect_target_names(expr: &Expr, out: &mut HashSet<Name>) {
+    match expr {
+        Expr::Ident(name) => {
+            out.insert(name.clone());
+        }
+        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::UnpackTarget(items) => {
+            for item in items {
+                collect_target_names(&item.node, out);
+            }
+        }
+        Expr::Starred(inner) => collect_target_names(&inner.node, out),
+        _ => {}
+    }
+}
+
+fn collect_class_local_names(stmts: &[Spanned<Stmt>]) -> HashSet<Name> {
+    let mut names = HashSet::new();
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::VarDecl { name, .. }
+            | Stmt::BareAnnotation { name, .. }
+            | Stmt::FnDef { name, .. }
+            | Stmt::AsyncFnDef { name, .. }
+            | Stmt::ClassDef { name, .. }
+            | Stmt::EnumDef { name, .. }
+            | Stmt::TypeAlias { name, .. } => {
+                names.insert(name.clone());
+            }
+            Stmt::Assign { target, .. } | Stmt::AugAssign { target, .. } => {
+                collect_target_names(&target.node, &mut names);
+            }
+            Stmt::For {
+                targets,
+                body,
+                else_body,
+                ..
+            }
+            | Stmt::AsyncFor {
+                targets,
+                body,
+                else_body,
+                ..
+            } => {
+                names.extend(targets.iter().cloned());
+                names.extend(collect_class_local_names(body));
+                if let Some(body) = else_body {
+                    names.extend(collect_class_local_names(body));
+                }
+            }
+            Stmt::Import {
+                module,
+                names: Some(imports),
+                ..
+            } => {
+                let _ = module;
+                for (name, alias) in imports {
+                    names.insert(alias.as_ref().unwrap_or(name).clone());
+                }
+            }
+            Stmt::Import {
+                module,
+                names: None,
+                module_alias,
+            } => {
+                if let Some(alias) = module_alias {
+                    names.insert(alias.clone());
+                } else if let Some(root) = module.first() {
+                    names.insert(root.clone());
+                }
+            }
+            Stmt::With { items, body } | Stmt::AsyncWith { items, body } => {
+                for item in items {
+                    if let Some(alias) = &item.alias {
+                        names.insert(alias.clone());
+                    }
+                }
+                names.extend(collect_class_local_names(body));
+            }
+            Stmt::If {
+                body,
+                elif_clauses,
+                else_body,
+                ..
+            } => {
+                names.extend(collect_class_local_names(body));
+                for (_, body) in elif_clauses {
+                    names.extend(collect_class_local_names(body));
+                }
+                if let Some(body) = else_body {
+                    names.extend(collect_class_local_names(body));
+                }
+            }
+            Stmt::While {
+                body, else_body, ..
+            } => {
+                names.extend(collect_class_local_names(body));
+                if let Some(body) = else_body {
+                    names.extend(collect_class_local_names(body));
+                }
+            }
+            Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                names.extend(collect_class_local_names(body));
+                for handler in handlers {
+                    if let Some(name) = &handler.name {
+                        names.insert(name.clone());
+                    }
+                    names.extend(collect_class_local_names(&handler.body));
+                }
+                if let Some(body) = else_body {
+                    names.extend(collect_class_local_names(body));
+                }
+                if let Some(body) = finally_body {
+                    names.extend(collect_class_local_names(body));
+                }
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    names.extend(collect_class_local_names(&arm.body));
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn rewrite_class_alias_value(
+    expr: &mut Spanned<Expr>,
+    class_path: &[Name],
+    class_locals: &HashSet<Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    match &mut expr.node {
+        Expr::Ident(name) if class_locals.contains(name) && !shadowed.contains(name) => {
+            *expr = class_attr_expr(class_path, name, expr.span);
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            rewrite_class_alias_value(lhs, class_path, class_locals, shadowed);
+            rewrite_class_alias_value(rhs, class_path, class_locals, shadowed);
+        }
+        Expr::UnaryOp { operand, .. }
+        | Expr::Starred(operand)
+        | Expr::YieldFrom(operand)
+        | Expr::Await(operand) => {
+            rewrite_class_alias_value(operand, class_path, class_locals, shadowed);
+        }
+        Expr::Call { func, args } => {
+            rewrite_class_alias_value(func, class_path, class_locals, shadowed);
+            for arg in args {
+                match arg {
+                    CallArg::Positional(value)
+                    | CallArg::StarArg(value)
+                    | CallArg::DoubleStarArg(value)
+                    | CallArg::Keyword { value, .. } => {
+                        rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+                    }
+                }
+            }
+        }
+        Expr::Attr { object, .. } => {
+            rewrite_class_alias_value(object, class_path, class_locals, shadowed);
+        }
+        Expr::Index { object, index } => {
+            rewrite_class_alias_value(object, class_path, class_locals, shadowed);
+            rewrite_class_alias_value(index, class_path, class_locals, shadowed);
+        }
+        Expr::Slice { start, stop, step } => {
+            for part in [start, stop, step] {
+                if let Some(part) = part {
+                    rewrite_class_alias_value(part, class_path, class_locals, shadowed);
+                }
+            }
+        }
+        Expr::ListLit(items)
+        | Expr::SetLit(items)
+        | Expr::TupleLit(items)
+        | Expr::UnpackTarget(items) => {
+            for item in items {
+                rewrite_class_alias_value(item, class_path, class_locals, shadowed);
+            }
+        }
+        Expr::DictLit(entries) => {
+            for (key, value) in entries {
+                if let Some(key) = key {
+                    rewrite_class_alias_value(key, class_path, class_locals, shadowed);
+                }
+                rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+            }
+        }
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            rewrite_class_alias_value(body, class_path, class_locals, shadowed);
+            rewrite_class_alias_value(condition, class_path, class_locals, shadowed);
+            rewrite_class_alias_value(else_body, class_path, class_locals, shadowed);
+        }
+        Expr::Lambda { params, body } => {
+            for param in params.iter_mut() {
+                if let Some(default) = &mut param.default {
+                    rewrite_class_alias_value(default, class_path, class_locals, shadowed);
+                }
+            }
+            let added: Vec<Name> = params
+                .iter()
+                .filter_map(|param| {
+                    if shadowed.insert(param.name.clone()) {
+                        Some(param.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            rewrite_class_alias_value(body, class_path, class_locals, shadowed);
+            for name in added {
+                shadowed.remove(&name);
+            }
+        }
+        Expr::ListComp {
+            element,
+            generators,
+        }
+        | Expr::SetComp {
+            element,
+            generators,
+        }
+        | Expr::GeneratorExpr {
+            element,
+            generators,
+        } => {
+            rewrite_comprehension(element, generators, class_path, class_locals, shadowed);
+        }
+        Expr::DictComp {
+            key,
+            value,
+            generators,
+        } => {
+            rewrite_comprehension(key, generators, class_path, class_locals, shadowed);
+            rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+        }
+        Expr::FString(parts) => {
+            for part in parts {
+                if let crate::parser::ast::FStringPart::Expr(value, format) = part {
+                    rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+                    if let Some(format) = format {
+                        for part in format {
+                            if let crate::parser::ast::FStringPart::Expr(value, _) = part {
+                                rewrite_class_alias_value(
+                                    value,
+                                    class_path,
+                                    class_locals,
+                                    shadowed,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Expr::Yield(value) => {
+            if let Some(value) = value {
+                rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+            }
+        }
+        Expr::Walrus { target, value } => {
+            rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+            shadowed.insert(target.clone());
+        }
+        Expr::ChainedCompare { operands, .. } => {
+            for operand in operands {
+                rewrite_class_alias_value(operand, class_path, class_locals, shadowed);
+            }
+        }
+        Expr::IntLit(_)
+        | Expr::BigIntLit(_)
+        | Expr::FloatLit(_)
+        | Expr::ComplexLit(_)
+        | Expr::StrLit(_)
+        | Expr::BytesLit(_)
+        | Expr::BoolLit(_)
+        | Expr::NoneLit
+        | Expr::Ellipsis
+        | Expr::Ident(_) => {}
+    }
+}
+
+fn rewrite_comprehension(
+    element: &mut Spanned<Expr>,
+    generators: &mut [crate::parser::ast::Comprehension],
+    class_path: &[Name],
+    class_locals: &HashSet<Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    let mut added = Vec::new();
+    for generator in generators {
+        rewrite_class_alias_value(&mut generator.iter, class_path, class_locals, shadowed);
+        for target in &generator.targets {
+            if shadowed.insert(target.clone()) {
+                added.push(target.clone());
+            }
+        }
+        for condition in &mut generator.conditions {
+            rewrite_class_alias_value(condition, class_path, class_locals, shadowed);
+        }
+    }
+    rewrite_class_alias_value(element, class_path, class_locals, shadowed);
+    for name in added {
+        shadowed.remove(&name);
+    }
+}
+
 use crate::parser::ast::Name;
 
 /// Statements hoisted out of a class body.
@@ -168,7 +507,12 @@ struct AfterItem {
 /// Desugar one statement block. `in_class` marks class bodies, whose typevar
 /// bindings must hoist out to the nearest non-class scope. Returns the
 /// hoists destined for the enclosing block (non-empty only for class bodies).
-fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists {
+fn desugar_block(
+    stmts: &mut Vec<Spanned<Stmt>>,
+    in_class: bool,
+    class_path: &[Name],
+    class_locals: Option<&HashSet<Name>>,
+) -> ClassHoists {
     let old = std::mem::take(stmts);
     let mut out: Vec<Spanned<Stmt>> = Vec::new();
     let mut hoist_up = ClassHoists {
@@ -196,7 +540,10 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
             } => {
                 let name = name.clone();
                 let tps = type_params.clone();
-                let mut h = desugar_block(body, true);
+                let mut nested_path = class_path.to_vec();
+                nested_path.push(name.clone());
+                let nested_locals = collect_class_local_names(body);
+                let mut h = desugar_block(body, true, &nested_path, Some(&nested_locals));
                 // Items leaving this class body gain its name as path prefix.
                 for item in &mut h.after {
                     item.path.insert(0, name.clone());
@@ -255,7 +602,7 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
             } => {
                 let name = name.clone();
                 let tps = type_params.clone();
-                let _ = desugar_block(body, false);
+                let _ = desugar_block(body, false, &[], None);
                 if tps.is_empty() {
                     out.push(st);
                 } else {
@@ -287,7 +634,17 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
             } => {
                 let name = name.clone();
                 let tps = type_params.clone();
-                let value = value.clone();
+                let mut value = value.clone();
+                if let (true, Some(locals)) = (in_class, class_locals) {
+                    if !class_path.is_empty() {
+                        rewrite_class_alias_value(
+                            &mut value,
+                            class_path,
+                            locals,
+                            &mut HashSet::new(),
+                        );
+                    }
+                }
                 // Param typevars must exist when the alias's constructor call
                 // runs (it captures the params tuple eagerly), so they go
                 // before the (outermost) class statement when in a class body.
@@ -367,14 +724,14 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                         else_body,
                         ..
                     } => {
-                        let h = desugar_block(body, in_class);
+                        let h = desugar_block(body, in_class, class_path, class_locals);
                         route(h, &mut out, &mut hoist_up);
                         for (_, b) in elif_clauses {
-                            let h = desugar_block(b, in_class);
+                            let h = desugar_block(b, in_class, class_path, class_locals);
                             route(h, &mut out, &mut hoist_up);
                         }
                         if let Some(b) = else_body {
-                            let h = desugar_block(b, in_class);
+                            let h = desugar_block(b, in_class, class_path, class_locals);
                             route(h, &mut out, &mut hoist_up);
                         }
                     }
@@ -387,15 +744,15 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                     | Stmt::AsyncFor {
                         body, else_body, ..
                     } => {
-                        let h = desugar_block(body, in_class);
+                        let h = desugar_block(body, in_class, class_path, class_locals);
                         route(h, &mut out, &mut hoist_up);
                         if let Some(b) = else_body {
-                            let h = desugar_block(b, in_class);
+                            let h = desugar_block(b, in_class, class_path, class_locals);
                             route(h, &mut out, &mut hoist_up);
                         }
                     }
                     Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
-                        let h = desugar_block(body, in_class);
+                        let h = desugar_block(body, in_class, class_path, class_locals);
                         route(h, &mut out, &mut hoist_up);
                     }
                     Stmt::Try {
@@ -404,24 +761,30 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                         else_body,
                         finally_body,
                     } => {
-                        let h = desugar_block(body, in_class);
+                        let h = desugar_block(body, in_class, class_path, class_locals);
                         route(h, &mut out, &mut hoist_up);
                         for handler in handlers {
-                            let h = desugar_block(&mut handler.body, in_class);
+                            let h = desugar_block(
+                                &mut handler.body,
+                                in_class,
+                                class_path,
+                                class_locals,
+                            );
                             route(h, &mut out, &mut hoist_up);
                         }
                         if let Some(b) = else_body {
-                            let h = desugar_block(b, in_class);
+                            let h = desugar_block(b, in_class, class_path, class_locals);
                             route(h, &mut out, &mut hoist_up);
                         }
                         if let Some(b) = finally_body {
-                            let h = desugar_block(b, in_class);
+                            let h = desugar_block(b, in_class, class_path, class_locals);
                             route(h, &mut out, &mut hoist_up);
                         }
                     }
                     Stmt::Match { arms, .. } => {
                         for arm in arms {
-                            let h = desugar_block(&mut arm.body, in_class);
+                            let h =
+                                desugar_block(&mut arm.body, in_class, class_path, class_locals);
                             route(h, &mut out, &mut hoist_up);
                         }
                     }
@@ -571,5 +934,52 @@ mod tests {
                     if matches!(&target.node, Expr::Ident(n) if n == "X")
             ));
         }
+    }
+
+    #[test]
+    fn class_body_type_alias_rewrites_class_local_value_names() {
+        let m = desugared("class Holder:\n    member = int\n    type Inner = member\n");
+        let Stmt::ClassDef { body, .. } = &m.stmts[0].node else {
+            panic!("expected class definition");
+        };
+        let Stmt::Assign { value, .. } = &body[3].node else {
+            panic!("expected real alias assignment");
+        };
+        let Expr::Call { args, .. } = &value.node else {
+            panic!("expected type alias constructor");
+        };
+        let Some(CallArg::Positional(thunk)) = args.get(1) else {
+            panic!("expected alias value thunk");
+        };
+        let Expr::Lambda { body, .. } = &thunk.node else {
+            panic!("expected lambda thunk");
+        };
+        assert!(matches!(
+            &body.node,
+            Expr::Attr { object, attr }
+                if attr == "member"
+                    && matches!(&object.node, Expr::Ident(name) if name == "Holder")
+        ));
+    }
+
+    #[test]
+    fn class_body_type_alias_keeps_type_param_name_unqualified() {
+        let m = desugared("class Holder[T]:\n    type Inner = T\n");
+        let Stmt::ClassDef { body, .. } = &m.stmts[1].node else {
+            panic!("expected class definition after typevar binding");
+        };
+        let Stmt::Assign { value, .. } = &body[2].node else {
+            panic!("expected real alias assignment");
+        };
+        let Expr::Call { args, .. } = &value.node else {
+            panic!("expected type alias constructor");
+        };
+        let Some(CallArg::Positional(thunk)) = args.get(1) else {
+            panic!("expected alias value thunk");
+        };
+        let Expr::Lambda { body, .. } = &thunk.node else {
+            panic!("expected lambda thunk");
+        };
+        assert!(matches!(&body.node, Expr::Ident(name) if name == "T"));
     }
 }
