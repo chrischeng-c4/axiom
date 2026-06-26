@@ -2344,6 +2344,24 @@ pub fn mb_type(val: MbValue) -> MbValue {
                 ObjData::List(_) => "list",
                 ObjData::Dict(_) => "dict",
                 ObjData::Tuple(_) => "tuple",
+                ObjData::Instance { class_name, fields } if class_name == "type" => {
+                    if let Some(type_name) = fields.read().ok().and_then(|f| {
+                        f.get("__name__").and_then(|v| {
+                            v.as_ptr().and_then(|p| {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                    }) {
+                        if let Some(meta) = super::class::class_metaclass_name(&type_name) {
+                            return make_type_object(&meta);
+                        }
+                    }
+                    return make_type_object(class_name);
+                }
                 ObjData::Instance { class_name, .. } => {
                     return make_type_object(class_name);
                 }

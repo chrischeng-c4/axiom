@@ -3793,7 +3793,10 @@ impl<'a> AstLowerer<'a> {
             // have run (P2-R3 ordering, #1686 motivation).
             // #82: cross-class property decorators such as `@Base.x.setter`
             // must run after the base class placeholder has materialized the
-            // property object.
+            // property object. Classes with bases or explicit metaclasses also
+            // need textual materialization so metaclass inheritance,
+            // __init_subclass__, and metaclass __new__/__init__ observe source
+            // order.
             let has_cross_class_property_decorator = cls.methods.iter().any(|m| {
                 m.decorators.iter().any(|dec| {
                     matches!(
@@ -3809,6 +3812,8 @@ impl<'a> AstLowerer<'a> {
                 || !cls.runtime_base_exprs.is_empty()
                 || cls.runtime_base_list_expr.is_some()
                 || !cls.class_kwargs.is_empty()
+                || cls.metaclass.is_some()
+                || !bases.is_empty()
                 || has_cross_class_property_decorator
             {
                 if placeholder_to_top {

@@ -927,6 +927,9 @@ pub fn lower_hir_to_mir_with_symbols_src(
             cls.slots.clone(),
             cls.class_kwargs.clone(),
         ));
+        lowerer
+            .pending_class_finalizers
+            .push((class_name.clone(), cls.name));
         if !cls.runtime_base_exprs.is_empty() {
             lowerer.pending_runtime_class_bases.push((
                 class_name.clone(),
@@ -1156,6 +1159,9 @@ struct HirToMir<'a> {
     /// initializer expressions like `X = enum.auto()` see imports/bindings
     /// established by preceding statements (#1686 motivation).
     pending_class_attrs: Vec<(String, SymbolId, String, HirExpr)>,
+    /// Class-definition finalizers emitted after method table + class attrs are
+    /// populated, so metaclass hooks see the complete namespace.
+    pending_class_finalizers: Vec<(String, SymbolId)>,
     /// abc: per-class names of methods decorated `@abc.abstractmethod` (and the
     /// abstract{property,classmethod,staticmethod} variants). Emitted after
     /// `mb_class_define_multi` so the runtime can compute `__abstractmethods__`
@@ -1327,6 +1333,7 @@ impl<'a> HirToMir<'a> {
             pending_runtime_class_bases: Vec::new(),
             pending_runtime_class_base_lists: Vec::new(),
             pending_class_attrs: Vec::new(),
+            pending_class_finalizers: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
             pending_dataclass_fields: Vec::new(),
@@ -1392,6 +1399,7 @@ impl<'a> HirToMir<'a> {
             pending_runtime_class_bases: Vec::new(),
             pending_runtime_class_base_lists: Vec::new(),
             pending_class_attrs: Vec::new(),
+            pending_class_finalizers: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
             pending_dataclass_fields: Vec::new(),
@@ -2280,6 +2288,7 @@ impl<'a> HirToMir<'a> {
         // produced a ClassDefPlaceholder (defensive; top-level classes always
         // emit one when they carry attr assigns).
         self.emit_class_attrs_for(None);
+        self.emit_class_finalizers_for(None);
 
         // (#1690) Class decorators are no longer applied here. Each decorated
         // class emits a `HirStmt::ClassDefPlaceholder` at its textual
@@ -4061,6 +4070,7 @@ impl<'a> HirToMir<'a> {
                 // motivation), and BEFORE decorators so the decorator sees the
                 // fully-initialized class body (CPython execution order).
                 self.emit_class_attrs_for(Some(*cls_sym));
+                self.emit_class_finalizers_for(Some(*cls_sym));
                 // PEP 557: record ordered dataclass field facts BEFORE the
                 // decorator call so the runtime `@dataclass` synthesizer sees
                 // them. Emitted here (not at registration time) so default
@@ -4503,6 +4513,24 @@ impl<'a> HirToMir<'a> {
                     dest: None,
                     name: "mb_class_set_class_attr".to_string(),
                     args: vec![cls_vreg, attr_vreg, boxed],
+                    ty: self.tcx.none(),
+                });
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn emit_class_finalizers_for(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_class_finalizers.len() {
+            if cls_sym.map_or(true, |s| self.pending_class_finalizers[i].1 == s) {
+                let (class_name, _) = self.pending_class_finalizers.remove(i);
+                let cls_vreg = self.emit_str_const(&class_name);
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_class_finalize_definition".to_string(),
+                    args: vec![cls_vreg],
                     ty: self.tcx.none(),
                 });
             } else {
@@ -6646,9 +6674,11 @@ impl<'a> HirToMir<'a> {
                 }
                 // Exception type names (ValueError, TypeError, etc.) → emit as string constants
                 // so issubclass(ValueError, Exception) receives string MbValues.
-                // Builtin primitive type names (bool, int, list, …) → emit a call to
+                // Builtin primitive type names (bool, int, list, …) and user class
+                // names in value position → emit a call to
                 // mb_builtin_type_obj() so the result is the *same* singleton as
-                // returned by mb_type(), making `type(True) is bool` → True.
+                // returned by mb_type(), making `type(True) is bool` and
+                // `type(UserClass) is type` → True.
                 if let Some(class_name) = self.class_syms.get(&sym.0).cloned() {
                     const BUILTIN_TYPE_NAMES: &[&str] = &[
                         "int",
@@ -6665,7 +6695,9 @@ impl<'a> HirToMir<'a> {
                         "type",
                         "object",
                     ];
-                    if BUILTIN_TYPE_NAMES.contains(&class_name.as_str()) {
+                    if BUILTIN_TYPE_NAMES.contains(&class_name.as_str())
+                        || self.user_class_syms.contains(&sym.0)
+                    {
                         // Emit: mb_builtin_type_obj(<string_const_name>)
                         let name_vreg = self.emit_str_const(&class_name);
                         let dest = self.fresh_vreg();
