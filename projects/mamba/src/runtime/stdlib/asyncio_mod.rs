@@ -40,6 +40,14 @@ dispatch_unary!(dispatch_ensure_future, rt_create_task);
 dispatch_unary!(dispatch_shield, mb_asyncio_shield);
 dispatch_variadic!(dispatch_gather, rt_gather);
 
+unsafe extern "C" fn dispatch_get_event_loop(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    make_event_loop()
+}
+
+unsafe extern "C" fn dispatch_future(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    make_future()
+}
+
 unsafe extern "C" fn dispatch_event(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     make_event()
 }
@@ -81,6 +89,14 @@ pub fn register() {
         ("wait", dispatch_wait as *const () as usize),
         ("wait_for", dispatch_wait_for as *const () as usize),
         ("shield", dispatch_shield as *const () as usize),
+        (
+            "get_event_loop",
+            dispatch_get_event_loop as *const () as usize,
+        ),
+        (
+            "get_running_loop",
+            dispatch_get_event_loop as *const () as usize,
+        ),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -88,6 +104,18 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
+
+    register_event_loop_class();
+    register_future_class();
+    let future_addr = dispatch_future as *const () as usize;
+    attrs.insert("Future".to_string(), MbValue::from_func(future_addr));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(future_addr as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut()
+            .insert(future_addr as u64, "asyncio.Future".to_string());
+    });
 
     register_event_class();
     let event_addr = dispatch_event as *const () as usize;
@@ -140,7 +168,6 @@ pub fn register() {
         "DatagramTransport",
         "DefaultEventLoopPolicy",
         "FastChildWatcher",
-        "Future",
         "Handle",
         "IncompleteReadError",
         "LifoQueue",
@@ -184,9 +211,7 @@ pub fn register() {
         "current_task",
         "eager_task_factory",
         "get_child_watcher",
-        "get_event_loop",
         "get_event_loop_policy",
-        "get_running_loop",
         "iscoroutine",
         "iscoroutinefunction",
         "isfuture",
@@ -219,27 +244,170 @@ pub fn register() {
         s.borrow_mut().insert(shell as u64);
     });
 
-    // Exception classes: register as instance shells carrying an empty-tuple
-    // `args` attribute (mirroring a real exception instance's `args`). Surface
-    // probes do `hasattr(asyncio.X, "args")`, which resolves the instance field;
-    // mamba does not yet model these as real exception *type* objects, so a bare
-    // callable shell (whose `type()` is `builtin_function_or_method`) cannot
-    // answer the attribute probe. No fixture constructs or `isinstance`/`type`-
-    // checks these names, so an instance shell is sufficient and non-regressing.
-    for exc_name in ["CancelledError", "InvalidStateError", "TimeoutError"] {
-        let inst = MbObject::new_instance(exc_name.to_string());
-        unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*inst).data {
-                fields.write().unwrap().insert(
-                    "args".to_string(),
-                    MbValue::from_ptr(MbObject::new_tuple(Vec::new())),
-                );
-            }
-        }
-        attrs.insert(exc_name.to_string(), MbValue::from_ptr(inst));
-    }
+    register_exception_classes(&mut attrs);
 
     super::register_module("asyncio", attrs);
+}
+
+fn new_str(s: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.to_string()))
+}
+
+fn get_field(inst: MbValue, key: &str) -> Option<MbValue> {
+    inst.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn set_field(inst: MbValue, key: &str, val: MbValue) {
+    if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::super::rc::retain_if_ptr(val);
+                let prev = fields.write().unwrap().insert(key.to_string(), val);
+                if let Some(p) = prev {
+                    super::super::rc::release_if_ptr(p);
+                }
+            }
+        }
+    }
+}
+
+fn make_event_loop() -> MbValue {
+    MbValue::from_ptr(MbObject::new_instance("asyncio.EventLoop".to_string()))
+}
+
+extern "C" fn loop_create_future(_this: MbValue) -> MbValue {
+    make_future()
+}
+
+fn register_event_loop_class() {
+    let mut methods: HashMap<String, MbValue> = HashMap::new();
+    methods.insert(
+        "create_future".to_string(),
+        MbValue::from_func(loop_create_future as *const () as usize),
+    );
+    super::super::class::mb_class_register(
+        "asyncio.EventLoop",
+        vec!["object".to_string()],
+        methods,
+    );
+}
+
+fn make_future() -> MbValue {
+    let inst = MbValue::from_ptr(MbObject::new_instance("asyncio.Future".to_string()));
+    set_field(inst, "_state", new_str("PENDING"));
+    set_field(inst, "_result", MbValue::none());
+    inst
+}
+
+fn future_state(fut: MbValue) -> String {
+    get_field(fut, "_state")
+        .and_then(|v| {
+            v.as_ptr().map(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    s.clone()
+                } else {
+                    String::new()
+                }
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn raise_asyncio(exc: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(new_str(exc), new_str(msg));
+    MbValue::none()
+}
+
+extern "C" fn future_cancel(this: MbValue) -> MbValue {
+    if future_state(this) == "PENDING" {
+        set_field(this, "_state", new_str("CANCELLED"));
+        return MbValue::from_bool(true);
+    }
+    MbValue::from_bool(false)
+}
+
+extern "C" fn future_cancelled(this: MbValue) -> MbValue {
+    MbValue::from_bool(future_state(this) == "CANCELLED")
+}
+
+extern "C" fn future_done(this: MbValue) -> MbValue {
+    MbValue::from_bool(matches!(
+        future_state(this).as_str(),
+        "FINISHED" | "CANCELLED"
+    ))
+}
+
+extern "C" fn future_result(this: MbValue) -> MbValue {
+    match future_state(this).as_str() {
+        "FINISHED" => get_field(this, "_result").unwrap_or_else(MbValue::none),
+        "CANCELLED" => raise_asyncio("CancelledError", ""),
+        _ => raise_asyncio("InvalidStateError", "Result is not set."),
+    }
+}
+
+fn register_future_class() {
+    let mut methods: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("cancel", future_cancel as *const () as usize),
+        ("cancelled", future_cancelled as *const () as usize),
+        ("done", future_done as *const () as usize),
+        ("result", future_result as *const () as usize),
+    ] {
+        methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register(
+        "asyncio.Future",
+        vec!["object".to_string()],
+        methods,
+    );
+}
+
+fn make_exception_type_object(name: &str) -> MbValue {
+    let cls = MbObject::new_instance("type".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*cls).data {
+            let mut f = fields.write().unwrap();
+            f.insert("__name__".to_string(), new_str(name));
+            f.insert("__qualname__".to_string(), new_str(name));
+            f.insert("__module__".to_string(), new_str("asyncio"));
+            f.insert(
+                "args".to_string(),
+                MbValue::from_ptr(MbObject::new_tuple(Vec::new())),
+            );
+        }
+    }
+    MbValue::from_ptr(cls)
+}
+
+fn register_exception_classes(attrs: &mut HashMap<String, MbValue>) {
+    let empty = HashMap::new;
+    super::super::class::mb_class_register("BaseException", vec![], empty());
+    super::super::class::mb_class_register("Exception", vec!["BaseException".to_string()], empty());
+    super::super::class::mb_class_register("OSError", vec!["Exception".to_string()], empty());
+    super::super::class::mb_class_register(
+        "CancelledError",
+        vec!["Exception".to_string()],
+        empty(),
+    );
+    super::super::class::mb_class_register(
+        "InvalidStateError",
+        vec!["Exception".to_string()],
+        empty(),
+    );
+    super::super::class::mb_class_register(
+        "TimeoutError",
+        vec!["OSError".to_string()],
+        empty(),
+    );
+    for exc_name in ["CancelledError", "InvalidStateError", "TimeoutError"] {
+        attrs.insert(exc_name.to_string(), make_exception_type_object(exc_name));
+    }
 }
 
 fn make_event() -> MbValue {
@@ -387,6 +555,8 @@ pub fn mb_asyncio_Task() -> MbValue {
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::exception;
+
     use super::*;
 
     #[test]
@@ -394,5 +564,32 @@ mod tests {
         let input = MbValue::from_int(42);
         let v = mb_asyncio_shield(input);
         assert_eq!(v.as_int(), Some(42));
+    }
+
+    #[test]
+    fn test_future_cancel_marks_cancelled_and_result_raises() {
+        exception::mb_clear_exception();
+        let fut = make_future();
+        assert_eq!(future_cancelled(fut).as_bool(), Some(false));
+        assert_eq!(future_cancel(fut).as_bool(), Some(true));
+        assert_eq!(future_cancelled(fut).as_bool(), Some(true));
+        let _ = future_result(fut);
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("CancelledError")
+        );
+        exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_future_pending_result_raises_invalid_state() {
+        exception::mb_clear_exception();
+        let fut = make_future();
+        let _ = future_result(fut);
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("InvalidStateError")
+        );
+        exception::mb_clear_exception();
     }
 }

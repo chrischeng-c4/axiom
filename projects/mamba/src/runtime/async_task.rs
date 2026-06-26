@@ -373,10 +373,58 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
             super::rc::retain_if_ptr(result);
         }
         result
+    } else if let Some(result) = await_asyncio_future(awaitable) {
+        result
     } else {
         // await on a non-coroutine (e.g. list from asyncio.gather, constant value):
         // pass through unchanged so users can `await asyncio.gather(...)`.
         awaitable
+    }
+}
+
+fn await_asyncio_future(awaitable: MbValue) -> Option<MbValue> {
+    let (class_name, state, result) = awaitable.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            let fields = fields.read().unwrap();
+            let state = fields
+                .get("_state")
+                .and_then(|v| v.as_ptr())
+                .map(|p| {
+                    if let ObjData::Str(ref s) = (*p).data {
+                        s.clone()
+                    } else {
+                        String::new()
+                    }
+                })
+                .unwrap_or_default();
+            let result = fields.get("_result").copied().unwrap_or_else(MbValue::none);
+            Some((class_name.clone(), state, result))
+        } else {
+            None
+        }
+    })?;
+    if class_name != "asyncio.Future" {
+        return None;
+    }
+    match state.as_str() {
+        "CANCELLED" => {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("CancelledError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(String::new())),
+            );
+            Some(MbValue::none())
+        }
+        "FINISHED" => {
+            unsafe {
+                super::rc::retain_if_ptr(result);
+            }
+            Some(result)
+        }
+        _ => Some(awaitable),
     }
 }
 
