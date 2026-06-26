@@ -278,7 +278,7 @@ struct GenArgs {
 enum GenLang {
     /// TypeScript: types + fetch/axios client + TanStack Query hooks.
     Ts,
-    /// Python: pydantic models + httpx client.
+    /// Python: pydantic models + generated sync/async HTTP/2 runtime.
     Py,
     /// Rust: serde models + reqwest client.
     Rust,
