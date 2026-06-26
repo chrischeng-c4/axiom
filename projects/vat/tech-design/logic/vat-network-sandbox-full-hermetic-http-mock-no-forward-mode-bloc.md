@@ -61,7 +61,6 @@ properties:
     description: "route, stub, openapi, cassette-replay still serve in no-forward mode; only forward+record is disabled. Non-routed h2/gRPC already 502s."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
