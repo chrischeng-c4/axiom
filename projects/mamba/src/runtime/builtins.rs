@@ -1040,6 +1040,14 @@ pub(crate) fn validate_len_result(result: MbValue) -> MbValue {
     MbValue::none()
 }
 
+fn len_type_error(val: MbValue) -> MbValue {
+    raise_type_error(format!(
+        "object of type '{}' has no len()",
+        value_type_name(val),
+    ));
+    MbValue::none()
+}
+
 pub fn mb_len(val: MbValue) -> MbValue {
     // Iterator handles encode as tagged ints. For range iterators we can
     // compute the remaining element count in O(1) from (current, stop, step);
@@ -1055,6 +1063,7 @@ pub fn mb_len(val: MbValue) -> MbValue {
         if super::stdlib::array_mod::is_array_handle(id) {
             return super::stdlib::array_mod::mb_array_len(val);
         }
+        return len_type_error(val);
     }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
@@ -1216,13 +1225,13 @@ pub fn mb_len(val: MbValue) -> MbValue {
                         );
                         return MbValue::none();
                     }
-                    MbValue::from_int(0)
+                    len_type_error(val)
                 }
-                _ => MbValue::from_int(0),
+                _ => len_type_error(val),
             }
         }
     } else {
-        MbValue::from_int(0)
+        len_type_error(val)
     }
 }
 
@@ -11486,7 +11495,12 @@ mod tests {
 
     #[test]
     fn test_len_non_collection() {
-        assert_eq!(mb_len(MbValue::from_int(42)).as_int(), Some(0));
+        assert!(mb_len(MbValue::from_int(42)).is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
