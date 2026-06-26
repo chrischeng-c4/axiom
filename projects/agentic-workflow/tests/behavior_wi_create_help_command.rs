@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec wi-create-help-command
-// @capability unmapped
-// @claim wi-create-help-command
+// @capability work-item-planning
+// @claim capability-to-epic-planning
 // @contract wi-create-help-command
 // @category behavior
 // @required_for_production true

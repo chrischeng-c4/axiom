@@ -139,6 +139,8 @@ requirementDiagram
 ```yaml
 e2e_tests:
   - id: wi-create-remote-unit-command
+    capability_id: work-item-planning
+    claim_id: capability-to-epic-planning
     name: wi create remote compatibility unit command
     command: cargo test -p agentic-workflow wi_create_remote -- --nocapture
     assertions:
@@ -146,6 +148,8 @@ e2e_tests:
       - compatibility flag parses
       - backend decision is config-driven
   - id: wi-create-help-command
+    capability_id: work-item-planning
+    claim_id: capability-to-epic-planning
     name: wi create help smoke
     command: ./target/debug/aw wi create --help
     assertions:

@@ -1022,7 +1022,11 @@ fn run_record(args: EcRecordArgs) -> Result<()> {
     use crate::issues::IssueBackend;
     let project_root = crate::find_project_root()?;
     let backend = crate::issues::local_backend(&project_root);
-    let result = parse_loop_result(&args.result, args.dimension.as_deref(), args.summary.as_deref())?;
+    let result = parse_loop_result(
+        &args.result,
+        args.dimension.as_deref(),
+        args.summary.as_deref(),
+    )?;
     let updated = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async {
             let Some(mut issue) = backend.get(&args.wi).await? else {
@@ -1033,8 +1037,11 @@ fn run_record(args: EcRecordArgs) -> Result<()> {
                     args.wi
                 );
             };
-            issue.body =
-                crate::cli::loop_state::apply_verification(&issue.body, result, args.summary.clone())?;
+            issue.body = crate::cli::loop_state::apply_verification(
+                &issue.body,
+                result,
+                args.summary.clone(),
+            )?;
             backend.write(&issue).await?;
             Ok::<_, anyhow::Error>(issue)
         })
@@ -1451,9 +1458,14 @@ fn extract_e2e_cases_from_markdown(
     let lines: Vec<&str> = content.lines().collect();
     let mut out = Vec::new();
     let mut idx = 0usize;
+    let mut fence = MarkdownFenceState::default();
     while idx < lines.len() {
         let line = lines[idx];
-        if is_section_annotation(line, "e2e-test") {
+        if fence.observe(line) {
+            idx += 1;
+            continue;
+        }
+        if !fence.in_fence() && is_section_annotation(line, "e2e-test") {
             let Some((yaml, next_idx)) = fenced_yaml_after(&lines, idx + 1) else {
                 idx += 1;
                 continue;
@@ -1564,9 +1576,14 @@ fn extract_tool_manifests_from_markdown(
     let lines: Vec<&str> = content.lines().collect();
     let mut out = Vec::new();
     let mut idx = 0usize;
+    let mut fence = MarkdownFenceState::default();
     while idx < lines.len() {
         let line = lines[idx];
-        if is_section_annotation(line, "tool-contract") {
+        if fence.observe(line) {
+            idx += 1;
+            continue;
+        }
+        if !fence.in_fence() && is_section_annotation(line, "tool-contract") {
             let Some((yaml, next_idx)) = fenced_yaml_after(&lines, idx + 1) else {
                 idx += 1;
                 continue;
@@ -1627,6 +1644,45 @@ fn extract_tool_manifests_from_markdown(
         idx += 1;
     }
     Ok(out)
+}
+
+#[derive(Default)]
+struct MarkdownFenceState {
+    marker: Option<(char, usize)>,
+}
+
+impl MarkdownFenceState {
+    fn in_fence(&self) -> bool {
+        self.marker.is_some()
+    }
+
+    fn observe(&mut self, line: &str) -> bool {
+        let Some((marker, len, rest)) = markdown_fence_marker(line) else {
+            return false;
+        };
+        if let Some((open_marker, open_len)) = self.marker {
+            if marker == open_marker && len >= open_len && rest.trim().is_empty() {
+                self.marker = None;
+                return true;
+            }
+            return false;
+        }
+        self.marker = Some((marker, len));
+        true
+    }
+}
+
+fn markdown_fence_marker(line: &str) -> Option<(char, usize, &str)> {
+    let trimmed = line.trim_start();
+    let marker = trimmed.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+    let len = trimmed.chars().take_while(|ch| *ch == marker).count();
+    if len < 3 {
+        return None;
+    }
+    Some((marker, len, &trimmed[len..]))
 }
 
 fn is_section_annotation(line: &str, section_type: &str) -> bool {
@@ -3622,16 +3678,20 @@ e2e_tests:
             vec!["efficiency", "stability"],
         );
         // AgentFirst requires only behavior -> fully covered -> no review finding.
-        assert!(
-            ec_review_missing_dimensions(&CapabilityType::AgentFirst, &["behavior".to_string()])
-                .is_empty()
-        );
+        assert!(ec_review_missing_dimensions(
+            &CapabilityType::AgentFirst,
+            &["behavior".to_string()]
+        )
+        .is_empty());
     }
 
     #[test]
     fn parse_loop_result_maps_verdict_strings() {
         use crate::cli::loop_state::LastResult;
-        assert_eq!(parse_loop_result("green", None, None).unwrap(), LastResult::Green);
+        assert_eq!(
+            parse_loop_result("green", None, None).unwrap(),
+            LastResult::Green
+        );
         assert_eq!(
             parse_loop_result("red", Some("security"), Some("leak")).unwrap(),
             LastResult::Red {
@@ -3857,6 +3917,46 @@ edition = "2021"
             "projects/demo/tests/behavior_demo_happy_path.rs"
         );
         assert!(manifest.generated_from_td_digest.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn ignores_e2e_markers_inside_source_code_fences() {
+        let (tmp, ctx) = write_demo_repo();
+        let source_dir = ctx.td_root.join("surface/interfaces/src");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(
+            source_dir.join("standardize.md"),
+            r##"
+## Source
+<!-- type: source lang: rust -->
+
+````rust
+fn writes_fixture() {
+    let body = r#"
+## Fixture Contract
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: fixture-contract
+    command: cargo test -p demo fixture_contract
+```
+"#;
+    assert!(body.contains("fixture-contract"));
+}
+````
+"##,
+        )
+        .unwrap();
+
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        assert_eq!(manifest.cases.len(), 1);
+        assert!(manifest
+            .cases
+            .iter()
+            .all(|case| case.id != "fixture-contract"));
+        assert!(tmp.path().exists());
     }
 
     #[test]

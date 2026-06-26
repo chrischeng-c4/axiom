@@ -5245,7 +5245,15 @@ async fn build_capability_report_inner(
 ) -> Result<CapabilityReport> {
     let project_root = crate::find_project_root()?;
     if verify {
-        eprintln!("aw capability verify: running configured project test gates for `{project}`");
+        if super::project::project_health_caps_ec_only(project) {
+            eprintln!(
+                "aw capability verify: running capability and EC gates for `{project}`; workspace test_cmd is advisory for self-health"
+            );
+        } else {
+            eprintln!(
+                "aw capability verify: running configured project test gates for `{project}`"
+            );
+        }
     }
     let test_gates = project_test_gate_report(project, &project_root, verify)?;
     let cap_path = resolve_capability_path(&project_root, project, cap_path_override)?;

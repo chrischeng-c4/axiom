@@ -176,6 +176,8 @@ requirementDiagram
 ```yaml
 e2e_tests:
   - id: completeness-placeholder-unit-command
+    capability_id: td-cb-lifecycle-automation
+    claim_id: cb-lifecycle-dispatch
     command: cargo test -p agentic-workflow completeness_placeholder -- --nocapture
     assertions:
       - placeholder code is rejected

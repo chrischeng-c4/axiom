@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec wi-remove-agent-estimate-build
-// @capability unmapped
-// @claim wi-remove-agent-estimate-build
+// @capability work-item-planning
+// @claim capability-to-epic-planning
 // @contract wi-remove-agent-estimate-build
 // @category behavior
 // @required_for_production true
