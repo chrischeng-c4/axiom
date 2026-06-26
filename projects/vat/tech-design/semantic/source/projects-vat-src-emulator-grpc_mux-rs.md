@@ -1,5 +1,33 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-emulator-grpc_mux-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-vat-src-emulator-grpc_mux-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves the shared REST/gRPC emulator listener contract used by Cloud Tasks and Cloud Scheduler emulator presets."
+---
+
+# Standardized projects/vat/src/emulator/grpc_mux.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/vat/src/emulator/grpc_mux.rs`, captured as a rust-source-unit (td_ast) item-tree
+during vat standardization onto the codegen ladder.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `serve` | projects/vat/src/emulator/grpc_mux.rs | function | pub | 22 | serve<S>(host_port: &str, rest: Router, grpc: S) -> Result<()> |
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 //! Serve a tonic gRPC service and an axum REST router on ONE port.
 //!
 //! The REST router owns its `/v1` / `/v2` routes; the tonic service is mounted
@@ -22,7 +50,6 @@ use axum::Router;
 /// Any tonic server qualifies: it is a `Service<Request, Error = Infallible>`
 /// whose response body is a tonic `BoxBody` (which axum renders via
 /// `IntoResponse`).
-/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-grpc_mux-rs.md#source
 pub async fn serve<S>(host_port: &str, rest: Router, grpc: S) -> Result<()>
 where
     S: tonic::codegen::Service<axum::extract::Request, Error = std::convert::Infallible>
@@ -42,4 +69,18 @@ where
         .context("serve grpc+rest emulator")?;
     Ok(())
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/src/emulator/grpc_mux.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/vat/src/emulator/grpc_mux.rs` captured during vat
+      standardization.
+```
