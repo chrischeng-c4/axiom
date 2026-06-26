@@ -1,8 +1,8 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-26T18:57:32.625948+00:00"
-digest = "sha256:d06556aef141964d331b27fe4dc69e0acce2dcf6e417d08af8e01c57a19b50e3"
+generated_at = "2026-06-27T06:59:16.950182+00:00"
+digest = "sha256:66226fe4fe6cec6b057a4ff6aad024e4afd0ebc6a0da8bbae2702c9d258500c6"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -202,7 +202,11 @@ digest = "sha256:63bd3560ae5b3837a11dad7d911604b7866f2e4e045b54bf3a77d162e94f6fd
 
 [[files]]
 path = "semantic/vat-commands.md"
-digest = "sha256:85d661d6e060595aa47739aaa1bc006652c41991e9076a1fa3efb6bcf48b7307"
+digest = "sha256:53cb502faa5ba3c7ab6f1f2a668d27a3b7c9b2dd038de4d477389679354ec9a3"
+
+[[files]]
+path = "semantic/vat-emulator.md"
+digest = "sha256:80f8fb2eb74da805b00816153819cf72a5fd1dd7fd6a83f23546c9b7c015d00a"
 
 [[files]]
 path = "semantic/vat-install-script.md"
@@ -210,7 +214,7 @@ digest = "sha256:5cc09e81aa82532fd7ddd1328fb5135bf4275e9dbe2ee02d77dfc9257d55a46
 
 [[files]]
 path = "semantic/vat-projects-vat.md"
-digest = "sha256:e3e53b3e68a99b0b1caea37dd5953abef0fe0c24ce5946836d18ce41066aca1e"
+digest = "sha256:4468e709ad7b6ad46a1f37b087392b647690cb19bb2cd419ffcb1138e6ca666a"
 
 [[files]]
 path = "semantic/vat-sandbox.md"
@@ -218,8 +222,8 @@ digest = "sha256:1cb7d290f685bce33af5a11210a84be1e9aea62dd50fe68ea0f4c802247f035
 
 [[files]]
 path = "semantic/vat-src.md"
-digest = "sha256:1b5526631845075632b3d3e02dd85038883f855fba8d54e4ba7d4cf29343c518"
+digest = "sha256:fc07671cb8430c7171aa5ca6bc261ef655e604a1fb4073d256db02f9f06d0ac2"
 
 [[files]]
 path = "semantic/vat-tests.md"
-digest = "sha256:cfbe55a62e834a097f34afe28f37b206c3de13f8715464988cda9537a36a6947"
+digest = "sha256:4d8d01ef937036b27736819ba6d8765832f0981688e27952ea3e32d95b484e33"
