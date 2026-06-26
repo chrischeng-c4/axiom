@@ -128,6 +128,23 @@ flowchart TD
     r5[R5 issue_payload] --> v5{title+body+labels json?}
 ```
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Wire the lumen report-issue command, flags, project label, and cli_std report_issue execution path."
+  - path: libs/cli-std/src/report_issue.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Shared report-issue diagnostics, body assembly, URL prefill, repo resolution, payload shaping, and pure tests."
+```
+
 # Reviews
 
 ### Review 1
