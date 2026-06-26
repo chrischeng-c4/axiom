@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:25f2eddb" tracker="pending-tracker" reason="New SVGR transform: parse an .svg file and emit a React component module (a component returning the SVG as JSX with props/ref forwarded); configurable named (ReactComponent) and/or default export, matching vite-plugin-svgr defaults."
+// HANDWRITE-BEGIN gap="missing-generator:logic:25f2eddb" tracker="standardize-gap-projects-jet-src-asset-svgr-rs" reason="New SVGR transform: parse an .svg file and emit a React component module (a component returning the SVG as JSX with props/ref forwarded); configurable named (ReactComponent) and/or default export, matching vite-plugin-svgr defaults."
 //! SVGR transform: turn an `.svg` file into a React component module.
 //!
 //! Mirrors `vite-plugin-svgr` (which `fe-shared` configures with
