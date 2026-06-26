@@ -102,11 +102,9 @@ Canonical field-style capability contracts below are machine-readable input for 
 ### Rust-Native Frontend Toolchain Replacement
 
 ID: rust-native-frontend-toolchain
-Type: DeveloperTool
-Surfaces: CLI: `jet install` + `jet build` + `jet dev` + `jet test` - Aggregate frontend toolchain entrypoints for package, build, dev, and test workflows.
-EC Dimensions: behavior: `projects/jet/scripts/verify-basic-dom-gates.sh --all` - Basic frontend replacement flow across package, build, dev, serve, workspace, test, e2e, and trace gates.
 Root WI: #3778
 Status: verified
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative, dogfood
 Promise:
 Jet is gated as an all-in-one Basic frontend replacement in dependency order:
@@ -120,6 +118,10 @@ Gate Inventory:
 - `projects/jet/scripts/verify-basic-dom-gates.sh --all`
 - projects/jet/tests/fixtures/dom-production-build
 - `cargo test -p jet --test openapi_golden`
+Surfaces:
+- CLI: `jet install` + `jet build` + `jet dev` + `jet test` - Aggregate frontend toolchain entrypoints for package, build, dev, and test workflows.
+EC Dimensions:
+- behavior: `projects/jet/scripts/verify-basic-dom-gates.sh --all` - Basic frontend replacement flow across package, build, dev, serve, workspace, test, e2e, and trace gates.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -130,11 +132,9 @@ Gate Inventory:
 ### Package Manager
 
 ID: package-manager
-Type: DeveloperTool
-Surfaces: CLI: `jet install` + `jet add` + `jet remove` + `jet update` - Package lifecycle commands that own dependency and lockfile behavior.
-EC Dimensions: behavior: `cargo test -p jet --lib pkg_manager -- --nocapture` - Package lifecycle, lockfile, workspace, registry, and negative-path conformance.
 Root WI: #3779
 Status: verified
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative
 Promise:
 Jet owns fixture hydration, mutation, workspace, and frozen-lockfile checks;
@@ -142,6 +142,10 @@ isolated npm/pnpm benchmark evidence is green for the current Basic corpus.
 Gate Inventory:
 - `cargo test -p jet --lib pkg_manager -- --nocapture`
 - `node projects/jet/scripts/compare-pkg-management.mjs --baseline-tools npm,pnpm --require-baselines`
+Surfaces:
+- CLI: `jet install` + `jet add` + `jet remove` + `jet update` - Package lifecycle commands that own dependency and lockfile behavior.
+EC Dimensions:
+- behavior: `cargo test -p jet --lib pkg_manager -- --nocapture` - Package lifecycle, lockfile, workspace, registry, and negative-path conformance.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -153,11 +157,9 @@ Gate Inventory:
 ### Bundler And Production Build
 
 ID: bundler-production-build
-Type: DeveloperTool
-Surfaces: CLI: `jet build` + `jet build --wasm` - Production and WASM build command surface.
-EC Dimensions: behavior: `node projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3` - DOM production build corpus, runtime smoke, and Vite/Webpack comparison behavior.
 Root WI: #3782
 Status: verified
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative
 Promise:
 Jet production build replacement is green after package manager and Browser
@@ -166,6 +168,10 @@ runtime smoke, and performance/size comparisons for the current fixture set.
 Gate Inventory:
 - `node projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3`
 - projects/jet/tests/fixtures/dom-production-build
+Surfaces:
+- CLI: `jet build` + `jet build --wasm` - Production and WASM build command surface.
+EC Dimensions:
+- behavior: `projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3` - DOM production build corpus, runtime smoke, and Vite/Webpack comparison behavior.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -178,11 +184,9 @@ Gate Inventory:
 ### Dev Server And HMR
 
 ID: dev-server-hmr
-Type: DeveloperTool
-Surfaces: CLI: `jet dev` + `jet dev --proxy PATH=URL` + `jet serve` - Dev server control plane, proxy/HMR entrypoints, and production static serving surface.; UI: `http://localhost:<port>` - Connected browser client for HMR, browser log intake, and local app inspection.
-EC Dimensions: behavior: `cargo test -p jet --lib dev_server -- --nocapture` - Local serving, HMR, proxy, browser-log intake, and production static serving conformance.
 Root WI: #3780
 Status: verified
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative, dogfood
 Promise:
 `jet dev` can replace Vite-style local development serving and HMR for real
@@ -203,6 +207,11 @@ Gate Inventory:
 - `cargo test -p jet --lib dev_server::proxy -- --nocapture`
 - `cargo test -p jet --lib cli::e2e_command_contract_tests -- --nocapture`
 - `projects/jet/scripts/compare-prod-static-serve.mjs --jet-bin target/release/jet`
+Surfaces:
+- CLI: `jet dev` + `jet dev --proxy PATH=URL` + `jet serve` - Dev server control plane, proxy/HMR entrypoints, and production static serving surface.
+- UI: `http://localhost:<port>` - Connected browser client for HMR, browser log intake, and local app inspection.
+EC Dimensions:
+- behavior: `cargo test -p jet --lib dev_server -- --nocapture` - Local serving, HMR, proxy, browser-log intake, and production static serving conformance.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -216,11 +225,9 @@ Gate Inventory:
 ### Workspace And Task Runner
 
 ID: workspace-task-runner
-Type: DeveloperTool
-Surfaces: CLI: `jet run` + `jet exec` - Workspace script and binary execution surface.
-EC Dimensions: behavior: `cargo test -p jet --lib task_runner -- --nocapture` - Workspace script execution, graph cache, package selection, and task-runner parity behavior.
 Root WI: #3781
 Status: verified
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative
 Promise:
 Jet workspace/task-runner replacement remains part of the package-management
@@ -233,6 +240,10 @@ Gate Inventory:
 - `cargo test -p jet --lib task_runner -- --nocapture`
 - `cargo test -p jet --lib task_runner::config::tests -- --nocapture`
 - `cargo run -p jet -- config schema --check`
+Surfaces:
+- CLI: `jet run` + `jet exec` - Workspace script and binary execution surface.
+EC Dimensions:
+- behavior: `cargo test -p jet --lib task_runner -- --nocapture` - Workspace script execution, graph cache, package selection, and task-runner parity behavior.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -244,11 +255,9 @@ Gate Inventory:
 ### Native Test And Product-Flow E2E
 
 ID: native-test-product-flow-e2e
-Type: DeveloperTool
-Surfaces: CLI: `jet test` + `jet e2e` - Native test runner and product-flow e2e surface.; WebAppE2E: `jet e2e` - Browser-driven product-flow verification for frontend behavior across app and API boundaries.
-EC Dimensions: behavior: `jet e2e` - Browser-driven product-flow verification across frontend behavior and app/API boundaries.
 Root WI: #3785
 Status: verified
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative, dogfood
 Promise:
 Jet native tests, reporter artifacts, product-flow e2e, and trace evidence are
@@ -262,6 +271,11 @@ Gate Inventory:
 - `cargo test -p jet --lib reporter -- --nocapture`
 - `cargo test -p jet --lib e2e -- --nocapture`
 - `cargo test -p jet --lib trace -- --nocapture`
+Surfaces:
+- CLI: `jet test` + `jet e2e` - Native test runner and product-flow e2e surface.
+- WebAppE2E: `jet e2e` - Browser-driven product-flow verification for frontend behavior across app and API boundaries.
+EC Dimensions:
+- behavior: `jet e2e` - Browser-driven product-flow verification across frontend behavior and app/API boundaries.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -276,11 +290,9 @@ Gate Inventory:
 ### WASM And Multi-Target Execution
 
 ID: wasm-multi-target
-Type: DeveloperTool
-Surfaces: CLI: `jet build --wasm` - WASM build target surface.
-EC Dimensions: behavior: `projects/jet/scripts/verify-advanced-wasm-gates.sh` - WASM build, runtime subset, renderer target, and DOM/WASM parity behavior gates.
 Root WI: #3783
 Status: auditing
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative
 Promise:
 Jet can sink the frontend app model into WASM only after Basic package
@@ -291,6 +303,10 @@ Gate Inventory:
 - projects/jet/fixtures/wasm/runtime-subset
 - projects/jet/fixtures/wasm/renderer-targets
 - `projects/jet/scripts/verify-advanced-wasm-gates.sh`
+Surfaces:
+- CLI: `jet build --wasm` - WASM build target surface.
+EC Dimensions:
+- behavior: `projects/jet/scripts/verify-advanced-wasm-gates.sh` - WASM build, runtime subset, renderer target, and DOM/WASM parity behavior gates.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -310,11 +326,9 @@ Gate Inventory:
 ### Browser, Trace, And Parity Infrastructure
 
 ID: browser-trace-parity
-Type: DeveloperTool
-Surfaces: CLI: `jet bb` + `jet trace` - Browser Bridge and trace diagnostic surface.
-EC Dimensions: behavior: `node projects/jet/scripts/verify-browser-bridge-replacement.mjs` - Browser Bridge automation, trace evidence, and DOM/WASM parity corpus behavior.
 Root WI: #3786
 Status: auditing
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative
 Promise:
 Jet Browser Bridge, trace, and parity diagnostics are the second Basic
@@ -324,6 +338,10 @@ Gate Inventory:
 - projects/jet/fixtures/trace/artifacts
 - projects/jet/fixtures/browser/automation-diagnostics
 - projects/jet/parity/**
+Surfaces:
+- CLI: `jet bb` + `jet trace` - Browser Bridge and trace diagnostic surface.
+EC Dimensions:
+- behavior: `projects/jet/scripts/verify-browser-bridge-replacement.mjs` - Browser Bridge automation, trace evidence, and DOM/WASM parity corpus behavior.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
