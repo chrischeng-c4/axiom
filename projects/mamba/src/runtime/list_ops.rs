@@ -1609,11 +1609,22 @@ pub fn mb_list_len(list: MbValue) -> MbValue {
     MbValue::from_int(0)
 }
 
-/// Check if value is a sequence (list or tuple) — used for PEP 634 sequence pattern matching.
+/// Check if value is a PEP 634 sequence-pattern subject.
 pub fn mb_is_sequence(val: MbValue) -> MbValue {
+    if val.is_int() {
+        let id = val.as_int().unwrap_or(0) as u64;
+        return MbValue::from_bool(
+            super::iter::mb_iter_range_len(val).is_some()
+                || super::stdlib::array_mod::is_array_handle(id),
+        );
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
-            return MbValue::from_bool(matches!((*ptr).data, ObjData::List(_) | ObjData::Tuple(_)));
+            return MbValue::from_bool(match &(*ptr).data {
+                ObjData::List(_) | ObjData::Tuple(_) => true,
+                ObjData::Instance { class_name, .. } => class_name == "memoryview",
+                _ => false,
+            });
         }
     }
     MbValue::from_bool(false)
@@ -1666,9 +1677,20 @@ pub fn mb_seq_len_boxed(val: MbValue) -> MbValue {
     MbValue::from_int(0)
 }
 
-/// Sequence-generic length: works for both lists and tuples (#827).
+/// Sequence-generic length for PEP 634 pattern matching (#827).
 /// Returns raw i64 (not NaN-boxed) for use in pattern-match length comparisons.
 pub fn mb_seq_len(val: MbValue) -> i64 {
+    if val.is_int() {
+        if let Some(n) = super::iter::mb_iter_range_len(val) {
+            return n;
+        }
+        let id = val.as_int().unwrap_or(0) as u64;
+        if super::stdlib::array_mod::is_array_handle(id) {
+            return super::stdlib::array_mod::mb_array_len(val)
+                .as_int()
+                .unwrap_or(0);
+        }
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -1678,6 +1700,9 @@ pub fn mb_seq_len(val: MbValue) -> i64 {
                 ObjData::Tuple(ref items) => {
                     return items.len() as i64;
                 }
+                ObjData::Instance { class_name, .. } if class_name == "memoryview" => {
+                    return super::builtins::mb_len(val).as_int().unwrap_or(0);
+                }
                 _ => {}
             }
         }
@@ -1685,9 +1710,18 @@ pub fn mb_seq_len(val: MbValue) -> i64 {
     0
 }
 
-/// Sequence-generic getitem: works for both lists and tuples (#827).
+/// Sequence-generic getitem for PEP 634 pattern matching (#827).
 /// Takes raw i64 index (not NaN-boxed) for use in pattern-match element extraction.
 pub fn mb_seq_getitem(val: MbValue, index: i64) -> MbValue {
+    if val.is_int() {
+        if let Some(item) = super::iter::range_iter_getitem(val, index) {
+            return super::bigint_ops::int_from_i64(item);
+        }
+        let id = val.as_int().unwrap_or(0) as u64;
+        if super::stdlib::array_mod::is_array_handle(id) {
+            return super::stdlib::array_mod::mb_array_getitem(val, MbValue::from_int(index));
+        }
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -1712,6 +1746,9 @@ pub fn mb_seq_getitem(val: MbValue, index: i64) -> MbValue {
                     }
                     return MbValue::none();
                 }
+                ObjData::Instance { class_name, .. } if class_name == "memoryview" => {
+                    return super::class::mb_obj_getitem(val, MbValue::from_int(index));
+                }
                 _ => {}
             }
         }
@@ -1719,8 +1756,8 @@ pub fn mb_seq_getitem(val: MbValue, index: i64) -> MbValue {
     MbValue::none()
 }
 
-/// Sequence-generic slice: works for both lists and tuples (#827).
-/// Returns a new list for both list and tuple inputs (PEP 634 star capture is a list).
+/// Sequence-generic slice for PEP 634 star-capture binding (#827).
+/// Returns a new list for all supported inputs (PEP 634 star capture is a list).
 pub fn mb_seq_slice(val: MbValue, start: MbValue, stop: MbValue) -> MbValue {
     let start_idx = start.as_int().unwrap_or(0);
     let stop_idx = stop.as_int().unwrap_or(0);
@@ -1745,6 +1782,16 @@ pub fn mb_seq_slice(val: MbValue, start: MbValue, stop: MbValue) -> MbValue {
                 _ => {}
             }
         }
+    }
+    if mb_is_sequence(val).as_bool() == Some(true) {
+        let len = mb_seq_len(val);
+        let s = start_idx.max(0).min(len);
+        let e = stop_idx.max(0).min(len);
+        let mut slice = Vec::with_capacity((e - s).max(0) as usize);
+        for idx in s..e {
+            slice.push(mb_seq_getitem(val, idx));
+        }
+        return MbValue::from_ptr(MbObject::new_list(slice));
     }
     mb_list_new()
 }
@@ -1965,6 +2012,7 @@ pub fn dispatch_list_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{builtins, iter, stdlib::array_mod};
 
     // ── Creation ──
 
@@ -2597,6 +2645,39 @@ mod tests {
     fn test_is_sequence_tuple() {
         let tup = MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(1)]));
         assert_eq!(mb_is_sequence(tup).as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_is_sequence_range() {
+        let range = iter::mb_range_iter(
+            MbValue::from_int(0),
+            MbValue::from_int(3),
+            MbValue::from_int(1),
+        );
+        assert_eq!(mb_is_sequence(range).as_bool(), Some(true));
+        assert_eq!(mb_seq_len(range), 3);
+        assert_eq!(mb_seq_getitem(range, 2).as_int(), Some(2));
+    }
+
+    #[test]
+    fn test_is_sequence_array_handle() {
+        let init = MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec()));
+        let array = array_mod::mb_array_new(
+            MbValue::from_ptr(MbObject::new_str("b".to_string())),
+            init,
+        );
+        assert_eq!(mb_is_sequence(array).as_bool(), Some(true));
+        assert_eq!(mb_seq_len(array), 3);
+        assert_eq!(mb_seq_getitem(array, 2).as_int(), Some(99));
+    }
+
+    #[test]
+    fn test_is_sequence_memoryview() {
+        let bytes = MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec()));
+        let view = builtins::mb_memoryview(bytes);
+        assert_eq!(mb_is_sequence(view).as_bool(), Some(true));
+        assert_eq!(mb_seq_len(view), 3);
+        assert_eq!(mb_seq_getitem(view, 2).as_int(), Some(99));
     }
 
     #[test]
