@@ -22,6 +22,7 @@ pub fn mb_create_task(coro: MbValue) -> MbValue {
         name: format!("task-{coro_id}"),
         coroutine_id: coro_id,
         done: false,
+        cancelled: false,
         result: MbValue::none(),
     };
     let id = alloc_task_id();
@@ -69,6 +70,7 @@ pub fn mb_cancel_task(task_handle: MbValue) -> MbValue {
             if let Some(task) = tasks.get_mut(&(id as u64)) {
                 if !task.done {
                     task.done = true;
+                    task.cancelled = true;
                     task.result = MbValue::none();
                     Some(task.coroutine_id)
                 } else {
@@ -98,7 +100,7 @@ pub fn mb_task_cancelled(task_handle: MbValue) -> MbValue {
                 .read()
                 .unwrap()
                 .get(&(id as u64))
-                .map(|t| t.done && t.result.is_none())
+                .map(|t| t.cancelled)
                 .unwrap_or(false),
         )
     } else {
@@ -188,6 +190,7 @@ impl EventLoop {
                     .unwrap_or(MbValue::none());
                 if let Some(task) = TASKS.write().unwrap().get_mut(&task_id) {
                     task.done = true;
+                    task.cancelled = false;
                     task.result = result;
                 }
             } else {
@@ -373,6 +376,8 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
             super::rc::retain_if_ptr(result);
         }
         result
+    } else if let Some(result) = await_asyncio_task(awaitable) {
+        result
     } else if let Some(result) = await_asyncio_future(awaitable) {
         result
     } else {
@@ -380,6 +385,87 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         // pass through unchanged so users can `await asyncio.gather(...)`.
         awaitable
     }
+}
+
+fn raise_cancelled_error() {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("CancelledError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+    );
+}
+
+fn asyncio_task_ids(awaitable: MbValue) -> Option<(u64, u64)> {
+    awaitable.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if class_name != "asyncio.Task" {
+                return None;
+            }
+            let fields = fields.read().unwrap();
+            let task_id = fields.get("_task_id").and_then(|v| v.as_int())? as u64;
+            let coro_id = fields.get("_coro_id").and_then(|v| v.as_int())? as u64;
+            Some((task_id, coro_id))
+        } else {
+            None
+        }
+    })
+}
+
+fn await_asyncio_task(awaitable: MbValue) -> Option<MbValue> {
+    let (task_id, coro_id) = asyncio_task_ids(awaitable)?;
+    if TASKS
+        .read()
+        .unwrap()
+        .get(&task_id)
+        .map(|task| task.cancelled)
+        .unwrap_or(false)
+    {
+        raise_cancelled_error();
+        return Some(MbValue::none());
+    }
+
+    let mut event_loop = EventLoop::new();
+    event_loop.schedule(task_id);
+    let max_iterations = 100_000;
+    for _ in 0..max_iterations {
+        super::gc::gc_safepoint();
+        let done = TASKS
+            .read()
+            .unwrap()
+            .get(&task_id)
+            .map(|task| task.done)
+            .unwrap_or(true);
+        if done {
+            break;
+        }
+        event_loop.tick();
+    }
+
+    let (cancelled, result) = TASKS
+        .read()
+        .unwrap()
+        .get(&task_id)
+        .map(|task| (task.cancelled, task.result))
+        .unwrap_or((false, MbValue::none()));
+    if cancelled {
+        raise_cancelled_error();
+        return Some(MbValue::none());
+    }
+    if COROUTINES
+        .read()
+        .unwrap()
+        .get(&coro_id)
+        .is_some_and(|coro| coro.exhausted)
+    {
+        unsafe {
+            super::rc::retain_if_ptr(result);
+        }
+        return Some(result);
+    }
+    Some(awaitable)
 }
 
 fn await_asyncio_future(awaitable: MbValue) -> Option<MbValue> {
@@ -412,10 +498,7 @@ fn await_asyncio_future(awaitable: MbValue) -> Option<MbValue> {
     }
     match state.as_str() {
         "CANCELLED" => {
-            super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("CancelledError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(String::new())),
-            );
+            raise_cancelled_error();
             Some(MbValue::none())
         }
         "FINISHED" => {
@@ -557,6 +640,7 @@ pub fn mb_run_until_complete(main_coro: MbValue) -> MbValue {
             name: "main".to_string(),
             coroutine_id: coro_id,
             done: false,
+            cancelled: false,
             result: MbValue::none(),
         };
         let id = alloc_task_id();
