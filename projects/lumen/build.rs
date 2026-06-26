@@ -53,3 +53,7 @@ fn short_sha() -> Option<String> {
     }
 }
 // CODEGEN-END
+// SPEC-MANAGED: projects/lumen/tech-design/logic/strengthen-generator-for-9-file-s-are-handwrite-because-they-are.md#rust-source-unit
+// CODEGEN-BEGIN
+
+// CODEGEN-END
