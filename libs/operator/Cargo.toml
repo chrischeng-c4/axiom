@@ -1,0 +1,23 @@
+[package]
+name = "operator"
+version = "0.1.0"
+edition = "2021"
+description = "Shared k8s operator scaffold for axiom services: a generic reconcile controller + leader-election lease + a sharded-HA render toolkit. A service supplies a ManagedService (its CRD + render) and gets the controller for free."
+
+[lib]
+name = "operator"
+path = "src/lib.rs"
+
+[dependencies]
+# Pinned to lumen's operator surface so the workspace lock stays single-versioned.
+kube = { version = "0.98", features = ["runtime", "derive", "client"] }
+k8s-openapi = { version = "0.24", features = ["v1_32"] }
+schemars = "0.8"
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
