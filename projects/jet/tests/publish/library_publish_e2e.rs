@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:99fe4be9" tracker="standardize-gap-projects-jet-tests-publish-library-publish-e2e-rs" reason="In-process mock npm registry (axum) e2e: jet publish a built library to the mock registry, then resolve+download it back (install round-trip), asserting the tarball contains the built JS/.d.ts and that scoped private-registry routing + Bearer auth are exercised. Plus metadata-validation unit tests (missing main/exports path -> error; auto-fill from build output)."
+// <HANDWRITE gap="missing-generator:unit-test:99fe4be9" tracker="standardize-gap-projects-jet-tests-publish-library-publish-e2e-rs" reason="In-process mock npm registry (axum) e2e: jet publish a built library to the mock registry, then resolve+download it back (install round-trip), asserting the tarball contains the built JS/.d.ts and that scoped private-registry routing + Bearer auth are exercised. Plus metadata-validation unit tests (missing main/exports path -> error; auto-fill from build output).">
 //! End-to-end `jet publish --build` against an in-process mock npm registry.
 //!
 //! What this exercises (all hermetic — no real network, no Verdaccio/npm):
@@ -448,4 +448,4 @@ export function makeWidget(n: number): Widget {
         "downloaded tarball bytes must be byte-identical to what was published"
     );
 }
-// HANDWRITE-END
+// </HANDWRITE>

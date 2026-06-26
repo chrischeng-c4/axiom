@@ -52,6 +52,7 @@ struct StaticAsset {
     last_modified: Option<SystemTime>,
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-dev-server.md#schema
 impl StaticAsset {
     fn len(&self) -> u64 {
         self.bytes.len() as u64

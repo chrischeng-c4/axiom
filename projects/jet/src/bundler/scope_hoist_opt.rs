@@ -835,6 +835,7 @@ fn is_literal_inline_boundary(b: &[u8], mut i: usize) -> bool {
 ///
 /// The follow-up mangle pass then compresses the generated local names, and
 /// orphan slot/alias declarations can be dropped.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn lower_direct_export_reads(code: &str) -> String {
     let mut result = code.to_string();
     for _ in 0..8 {
@@ -996,6 +997,7 @@ fn span_within(inner: (usize, usize), outer: (usize, usize)) -> bool {
 /// Modules that are passed as a retained CommonJS `module` object, reassign
 /// `module.exports`, or export a property literally named `exports` are left
 /// untouched. The caller keeps the existing parse guard around this pass.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn optimize_generated_module_glue(code: &str) -> String {
     if !code.contains("var _mods=[") || !code.contains("function _r") {
         return code.to_string();
@@ -4435,6 +4437,7 @@ const raw = `_m0_x`;"#;
 }
 // CODEGEN-END
 
+// <HANDWRITE gap="standardize:projects-jet-src-bundler-scope-hoist-opt-rs-reexport-wrapper-collapse" tracker="standardize-gap-projects-jet-src-bundler-scope-hoist-opt-rs" reason="Existing hand-written re-export wrapper collapse lives outside generated block; generator primitive does not yet cover post-flattening wrapper redirection.">
 #[derive(Debug, Clone)]
 struct ReexportWrapper {
     id: usize,
@@ -4450,6 +4453,7 @@ struct ReexportTarget {
     default_interop: bool,
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 impl ReexportTarget {
     fn expr(&self) -> String {
         if self.default_interop {
@@ -4476,6 +4480,7 @@ impl ReexportTarget {
 /// the leaf module and removes the wrapper section, but only when every
 /// `_r(wrapper)` use is a property read or the default-import thunk shape that
 /// Jet itself emits.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn collapse_pure_reexport_wrappers(code: &str) -> String {
     let mut current = code.to_string();
     for _ in 0..4 {
@@ -5346,3 +5351,4 @@ fn collect_prefixed_ident_occurrences_in_range(
         i += 1;
     }
 }
+// </HANDWRITE>

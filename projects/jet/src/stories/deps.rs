@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:b3d9a1f2" tracker="standardize-gap-projects-jet-src-stories-deps-rs" reason="Shared node_modules bare-import resolution for the stories workbench (dev server + static export): resolve a bare specifier to an on-disk node_modules file via the project ModuleResolver, extract every import specifier (incl. bare) from source, and key a dep by its node_modules-relative path so both the dev route and the static layout map a dep consistently."
+// <HANDWRITE gap="missing-generator:logic:b3d9a1f2" tracker="standardize-gap-projects-jet-src-stories-deps-rs" reason="Shared node_modules bare-import resolution for the stories workbench (dev server + static export): resolve a bare specifier to an on-disk node_modules file via the project ModuleResolver, extract every import specifier (incl. bare) from source, and key a dep by its node_modules-relative path so both the dev route and the static layout map a dep consistently.">
 //! Shared `node_modules` bare-import resolution for `jet stories` (#197).
 //!
 //! Both the dev workbench server ([`super::server`]) and the static exporter
@@ -266,4 +266,4 @@ const dyn = import("ignored");
         assert!(resolve_bare_specifier(root, &importer, "react").is_none());
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

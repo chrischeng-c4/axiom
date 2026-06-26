@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:41fd209d" tracker="standardize-gap-projects-jet-tests-stories-preview-hmr-rs" reason="Tests: a changed module yields the correct invalidation set; the preview HTML includes the HMR client; a react-refresh-compatible vs incompatible edit routes to patch vs full reload; the manager shell is not reloaded."
+// <HANDWRITE gap="missing-generator:unit-test:41fd209d" tracker="standardize-gap-projects-jet-tests-stories-preview-hmr-rs" reason="Tests: a changed module yields the correct invalidation set; the preview HTML includes the HMR client; a react-refresh-compatible vs incompatible edit routes to patch vs full reload; the manager shell is not reloaded.">
 //! Integration tests for B2b (#176): HMR + state-preserving React refresh for
 //! the `jet stories` preview frame.
 //!
@@ -482,4 +482,4 @@ fn manager_shell_has_no_react_refresh_runtime_or_reload() {
         "manager shell must never reload the whole page"
     );
 }
-// HANDWRITE-END
+// </HANDWRITE>

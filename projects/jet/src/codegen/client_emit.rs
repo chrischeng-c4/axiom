@@ -1,5 +1,5 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
-// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-client-emit-rs" tracker="standardize-gap-projects-jet-src-codegen-client-emit-rs" reason="Existing hand-written code in projects/jet/src/codegen/client_emit.rs requires tracked generator coverage."
+// <HANDWRITE gap="standardize:projects-jet-src-codegen-client-emit-rs" tracker="standardize-gap-projects-jet-src-codegen-client-emit-rs" reason="Existing hand-written code in projects/jet/src/codegen/client_emit.rs requires tracked generator coverage.">
 //! Emits `runtime.ts` (the fetch or axios base) and `client.ts` (a `createClient`
 //! factory with one typed function per operation, taking a grouped `data` arg).
 
@@ -308,4 +308,4 @@ mod tests {
         assert!(axios.contains("return response.data;"));
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

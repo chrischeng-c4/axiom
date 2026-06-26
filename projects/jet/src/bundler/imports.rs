@@ -69,6 +69,7 @@ pub fn extract_imports(source: &str, is_typescript: bool) -> Result<ModuleImport
 /// byte-for-byte the same parse the transform would redo, so the caller can
 /// stash it and skip the second parse. TS/TSX/JSX trees are NOT reusable: their
 /// source is rewritten before the module transform parses it.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn extract_imports_with_tree(
     source: &str,
     is_typescript: bool,

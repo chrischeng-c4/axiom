@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-codegen-openapi-golden-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Golden-snapshot and type-check gates for `jet codegen openapi`.
 //!
 //! @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#unit-test
@@ -232,3 +233,5 @@ fn tool_available(tool: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
+
+// </HANDWRITE>

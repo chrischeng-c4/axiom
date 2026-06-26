@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:a764f528" tracker="standardize-gap-projects-jet-src-stories-mod-rs" reason="New stories module root: StoryIndex/StoryEntry/StoryMeta types and discover(root) that globs *.stories.* and assembles the index + diagnostics."
+// <HANDWRITE gap="missing-generator:logic:a764f528" tracker="standardize-gap-projects-jet-src-stories-mod-rs" reason="New stories module root: StoryIndex/StoryEntry/StoryMeta types and discover(root) that globs *.stories.* and assembles the index + diagnostics.">
 //! Story discovery + CSF parsing for `jet stories`.
 //!
 //! This module is the foundation that the manager (B2) and controls (B3)
@@ -439,4 +439,4 @@ mod tests {
         assert_eq!(path, vec!["Widget".to_string()]);
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>
