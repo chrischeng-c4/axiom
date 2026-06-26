@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-scripts-compare-pkg-management-mjs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -1088,3 +1089,5 @@ function main() {
 }
 
 main();
+
+// </HANDWRITE>
