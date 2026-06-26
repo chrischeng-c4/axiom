@@ -1,5 +1,5 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
-// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-tsmap-rs" tracker="standardize-gap-projects-jet-src-codegen-tsmap-rs" reason="Existing hand-written code in projects/jet/src/codegen/tsmap.rs requires tracked generator coverage."
+// <HANDWRITE gap="standardize:projects-jet-src-codegen-tsmap-rs" tracker="standardize-gap-projects-jet-src-codegen-tsmap-rs" reason="Existing hand-written code in projects/jet/src/codegen/tsmap.rs requires tracked generator coverage.">
 //! Maps an OpenAPI [`Schema`] to a TypeScript type expression.
 //!
 //! Named declarations for top-level component schemas are produced by
@@ -291,4 +291,4 @@ mod tests {
         );
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

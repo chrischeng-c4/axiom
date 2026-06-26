@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:d0ce83ef" tracker="standardize-gap-projects-jet-src-stories-server-rs" reason="start_stories_workbench(root, host, port): discover StoryIndex, build a dev-server variant (reuse dev_server substrate) with routes for the manager, isolated preview, and module serving; build per-story entry via module graph."
+// <HANDWRITE gap="missing-generator:logic:d0ce83ef" tracker="standardize-gap-projects-jet-src-stories-server-rs" reason="start_stories_workbench(root, host, port): discover StoryIndex, build a dev-server variant (reuse dev_server substrate) with routes for the manager, isolated preview, and module serving; build per-story entry via module graph.">
 //! The `jet stories` native workbench server (B2).
 //!
 //! A small, focused axum server — deliberately *not* a fork of
@@ -748,4 +748,4 @@ mod tests {
         assert_eq!(story_module_url(Path::new("/proj"), &story), "/a/B.stories.tsx");
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

@@ -337,6 +337,7 @@ struct PrefetchedModule {
     tree: Option<tree_sitter::Tree>,
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub struct Bundler {
     resolver: Arc<crate::resolver::ModuleResolver>,
     transformer: Arc<crate::transform::Transformer>,

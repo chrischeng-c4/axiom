@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:de93f93a" tracker="standardize-gap-projects-jet-tests-stories-csf-discovery-rs" reason="Fixtures (Button.stories.tsx, Card.stories.tsx, malformed) + tests: glob finds both, meta+named stories parsed with merged args, title hierarchy + stable ids, malformed file -> diagnostic without aborting discovery."
+// <HANDWRITE gap="missing-generator:unit-test:de93f93a" tracker="standardize-gap-projects-jet-tests-stories-csf-discovery-rs" reason="Fixtures (Button.stories.tsx, Card.stories.tsx, malformed) + tests: glob finds both, meta+named stories parsed with merged args, title hierarchy + stable ids, malformed file -> diagnostic without aborting discovery.">
 //! Integration tests for B1: CSF story discovery + parse (`jet stories`).
 //!
 //! Fixtures are written into a temp dir so the WalkDir/globset discovery path
@@ -386,4 +386,4 @@ fn spread_args_merge_static_base() {
         "imported-base spread must not leak resolved keys"
     );
 }
-// HANDWRITE-END
+// </HANDWRITE>

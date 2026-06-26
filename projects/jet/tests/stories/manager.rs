@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:059f4bfc" tracker="standardize-gap-projects-jet-tests-stories-manager-rs" reason="Tests: manager route returns HTML listing discovered stories; preview route renders the selected story in isolation; switching stories swaps the preview."
+// <HANDWRITE gap="missing-generator:unit-test:059f4bfc" tracker="standardize-gap-projects-jet-tests-stories-manager-rs" reason="Tests: manager route returns HTML listing discovered stories; preview route renders the selected story in isolation; switching stories swaps the preview.">
 //! Integration tests for B2: the `jet stories` native workbench server.
 //!
 //! These exercise the real axum router ([`jet::stories::server::build_router`])
@@ -293,4 +293,4 @@ async fn module_route_resolves_and_serves_node_modules_dep() {
     let (missing, _) = get(&router, "/@dep/clsx/dist/nope.mjs").await;
     assert_eq!(missing, StatusCode::NOT_FOUND);
 }
-// HANDWRITE-END
+// </HANDWRITE>

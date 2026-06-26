@@ -176,6 +176,7 @@ pub struct JetBuildConfig {
 /// library-build mode) with all behaviour defaulted. Entries default to the
 /// `package.json` `exports`/`module`/`main` discovery; formats default to
 /// `["esm"]`.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema
 /// @issue #170
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -241,6 +242,7 @@ pub struct LibConfig {
 /// from = "assets/icons"
 /// to = "icons"
 /// ```
+/// @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawCopy {

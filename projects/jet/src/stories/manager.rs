@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:583d99f9" tracker="standardize-gap-projects-jet-src-stories-manager-rs" reason="Manager UI: render the manager HTML shell (sidebar tree from StoryIndex, toolbar, preview iframe) and the isolated per-story preview HTML entry (mounts only the selected story component, no app router/shell)."
+// <HANDWRITE gap="missing-generator:logic:583d99f9" tracker="standardize-gap-projects-jet-src-stories-manager-rs" reason="Manager UI: render the manager HTML shell (sidebar tree from StoryIndex, toolbar, preview iframe) and the isolated per-story preview HTML entry (mounts only the selected story component, no app router/shell).">
 //! HTML rendering for the `jet stories` native workbench (B2).
 //!
 //! Two pure functions, no I/O and no server state, so they are trivially
@@ -1044,4 +1044,4 @@ mod tests {
         assert_eq!(html.matches("id=\"jet-root\"").count(), 1);
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

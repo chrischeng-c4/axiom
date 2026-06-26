@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:5570b214" tracker="standardize-gap-projects-jet-src-stories-csf-rs" reason="CSF parser: given a story file source, extract the default export (meta: component ref, title, args, argTypes) and named exports (stories: name, args, render) using the existing extract_imports/tree-sitter surface."
+// <HANDWRITE gap="missing-generator:logic:5570b214" tracker="standardize-gap-projects-jet-src-stories-csf-rs" reason="CSF parser: given a story file source, extract the default export (meta: component ref, title, args, argTypes) and named exports (stories: name, args, render) using the existing extract_imports/tree-sitter surface.">
 //! Component Story Format (CSF) parser.
 //!
 //! Given the source of a `*.stories.@(ts|tsx|js|jsx)` file, this module
@@ -893,4 +893,4 @@ export { A as B } from './other.stories';
         assert_eq!(renamed.relative_source, "./other.stories");
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

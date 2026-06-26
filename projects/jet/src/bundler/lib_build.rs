@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:3833b5e5" tracker="standardize-gap-projects-jet-src-bundler-lib-build-rs" reason="New library-build orchestrator implementing the contract flow: resolve entries + externals (dependencies + peerDependencies) from package.json, build/tree-shake per entry, emit ESM (bare `import` for externals) and optional CJS (`require()` for externals), write one output per (entry x format) under out_dir, return LibBuildResult."
+// <HANDWRITE gap="missing-generator:logic:3833b5e5" tracker="standardize-gap-projects-jet-src-bundler-lib-build-rs" reason="New library-build orchestrator implementing the contract flow: resolve entries + externals (dependencies + peerDependencies) from package.json, build/tree-shake per entry, emit ESM (bare `import` for externals) and optional CJS (`require()` for externals), write one output per (entry x format) under out_dir, return LibBuildResult.">
 //! Library-build orchestrator for `jet build --lib`.
 //!
 //! Unlike the app bundle path (`Bundler::bundle`), which inlines every
@@ -1807,4 +1807,4 @@ mod tests {
         );
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>
