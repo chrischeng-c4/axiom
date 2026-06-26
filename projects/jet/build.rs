@@ -1,5 +1,5 @@
 // Stamp build provenance into the binary for the standard CLI ops
-// (`llm` / `upgrade` / `report-issue`, via `cli-std`): the target triple
+// (`llm` / `upgrade` / `issue`, via `cli-std`): the target triple
 // `jet upgrade` matches against release assets, plus a best-effort git sha and
 // build timestamp. All three are best-effort and never fail the build.
 
