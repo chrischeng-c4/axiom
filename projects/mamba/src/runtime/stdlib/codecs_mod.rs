@@ -553,6 +553,8 @@ fn normalize_encoding(name: &str) -> &str {
     match name.to_lowercase().replace(['-', '_', ' '], "").as_str() {
         s if s.starts_with("utf8") => "utf-8",
         s if s.starts_with("ascii") || s == "usascii" || s == "646" => "ascii",
+        s if s == "idna" => "idna",
+        s if s == "punycode" => "punycode",
         s if s.starts_with("latin1")
             || s == "iso88591"
             || s == "8859"
@@ -586,6 +588,8 @@ fn canonical_codec_name(name: &str) -> Option<&'static str> {
         "utf-32" => Some("utf-32"),
         "utf-32-le" => Some("utf-32-le"),
         "utf-32-be" => Some("utf-32-be"),
+        "idna" => Some("idna"),
+        "punycode" => Some("punycode"),
         _ => None,
     }
 }
@@ -655,6 +659,54 @@ fn encode_error_repl(name: &str, c: char) -> Option<Vec<u8>> {
         }
         "namereplace" => Some(format!("\\N{{U+{:04X}}}", cp).into_bytes()),
         _ => None, // strict / surrogate* → caller raises
+    }
+}
+
+pub(crate) fn punycode_encode_bytes(s: &str) -> Option<Vec<u8>> {
+    idna::punycode::encode_str(s).map(String::into_bytes)
+}
+
+pub(crate) fn punycode_decode_string(bytes: &[u8]) -> Option<String> {
+    let input = std::str::from_utf8(bytes).ok()?;
+    idna::punycode::decode_to_string(input)
+}
+
+pub(crate) fn idna_encode_bytes(s: &str) -> Option<Vec<u8>> {
+    let (out, rest) = idna_encode_ready_labels(s, true)?;
+    if rest.is_empty() {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn idna_decode_string(bytes: &[u8]) -> Option<String> {
+    let input = std::str::from_utf8(bytes).ok()?;
+    Some(idna::domain_to_unicode(input).0)
+}
+
+fn idna_encode_ready_labels(input: &str, final_chunk: bool) -> Option<(Vec<u8>, String)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (idx, ch) in input.char_indices() {
+        if ch != '.' {
+            continue;
+        }
+        let label = &input[start..idx];
+        if !label.is_empty() {
+            out.extend_from_slice(idna::domain_to_ascii(label).ok()?.as_bytes());
+        }
+        out.push(b'.');
+        start = idx + ch.len_utf8();
+    }
+    let rest = &input[start..];
+    if final_chunk {
+        if !rest.is_empty() {
+            out.extend_from_slice(idna::domain_to_ascii(rest).ok()?.as_bytes());
+        }
+        Some((out, String::new()))
+    } else {
+        Some((out, rest.to_string()))
     }
 }
 
@@ -750,6 +802,14 @@ pub fn mb_codecs_encode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
         }
         "utf-32-le" => encode_u32_units(s, true),
         "utf-32-be" => encode_u32_units(s, false),
+        "idna" => match idna_encode_bytes(s) {
+            Some(v) => v,
+            None => return raise_unicode_encode_error("'idna' codec can't encode input"),
+        },
+        "punycode" => match punycode_encode_bytes(s) {
+            Some(v) => v,
+            None => return raise_unicode_encode_error("'punycode' codec can't encode input"),
+        },
         _ => return raise_lookup_error(&format!("unknown encoding: {}", enc)),
     };
     MbValue::from_ptr(MbObject::new_bytes(bytes))
@@ -837,6 +897,14 @@ pub fn mb_codecs_decode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
         "utf-32" => return mb_codecs_utf_32_decode(obj),
         "utf-32-le" => decode_u32_units(bytes, true),
         "utf-32-be" => decode_u32_units(bytes, false),
+        "idna" => match idna_decode_string(bytes) {
+            Some(v) => v,
+            None => return raise_unicode_decode_error("'idna' codec can't decode input"),
+        },
+        "punycode" => match punycode_decode_string(bytes) {
+            Some(v) => v,
+            None => return raise_unicode_decode_error("'punycode' codec can't decode input"),
+        },
         _ => return raise_lookup_error(&format!("unknown encoding: {}", enc)),
     };
     MbValue::from_ptr(MbObject::new_str(s))
@@ -1781,6 +1849,8 @@ fn codec_encode_bytes(mode: &str, s: &str) -> Option<Vec<u8>> {
             b.extend(encode_u32_units(s, true));
             b
         }
+        "idna" => idna_encode_bytes(s)?,
+        "punycode" => punycode_encode_bytes(s)?,
         _ => return None,
     })
 }
@@ -1805,6 +1875,8 @@ fn codec_decode_str(mode: &str, bytes: &[u8]) -> Option<String> {
             let (slice, le) = utf32_bom(bytes);
             decode_u32_units(slice, le)
         }
+        "idna" => idna_decode_string(bytes)?,
+        "punycode" => punycode_decode_string(bytes)?,
         _ => return None,
     })
 }
@@ -1931,10 +2003,25 @@ fn incr_encode(self_v: MbValue, args_list: MbValue) -> MbValue {
     let sig = inst_field(self_v, "sig")
         .map(|v| v.as_bool() == Some(true))
         .unwrap_or(false);
+    let is_final = pos_arg(args_list, 1)
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
     let s = extract_str(input).unwrap_or_default();
     // rot-13 is a str->str transform — it yields a str, not bytes.
     if is_rot13_codec(&mode) {
         return MbValue::from_ptr(MbObject::new_str(rot13_transform(&s)));
+    }
+    if mode == "idna" {
+        let mut buffered = inst_field(self_v, "buffer")
+            .and_then(extract_str)
+            .unwrap_or_default();
+        buffered.push_str(&s);
+        let (out, rest) = match idna_encode_ready_labels(&buffered, is_final) {
+            Some(v) => v,
+            None => return raise_unicode_encode_error("'idna' codec can't encode input"),
+        };
+        set_inst_field(self_v, "buffer", new_str(rest));
+        return new_bytes(out);
     }
     let mut out = codec_encode_bytes(&mode, &s).unwrap_or_default();
     // utf-8-sig emits a BOM before the first chunk.
@@ -1954,6 +2041,7 @@ fn incr_encode(self_v: MbValue, args_list: MbValue) -> MbValue {
 
 fn incr_encode_reset(self_v: MbValue, _args: MbValue) -> MbValue {
     set_inst_field(self_v, "first", MbValue::from_bool(true));
+    set_inst_field(self_v, "buffer", new_str(String::new()));
     MbValue::none()
 }
 
@@ -2281,6 +2369,7 @@ extern "C" fn factory_incr_encoder_call(self_v: MbValue) -> MbValue {
         inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)),
     );
     set_inst_field(inst, "first", MbValue::from_bool(true));
+    set_inst_field(inst, "buffer", new_str(String::new()));
     inst
 }
 
@@ -2463,6 +2552,8 @@ fn supported_byte_codec(mode: &str) -> bool {
             | "utf-32"
             | "utf-32-le"
             | "utf-32-be"
+            | "idna"
+            | "punycode"
     )
 }
 
@@ -2777,6 +2868,31 @@ pub fn mb_codecs_iterencode2(iterable: MbValue, encoding: MbValue) -> MbValue {
     }
     let items = super::super::builtins::extract_items(iterable);
     let mut out = Vec::with_capacity(items.len());
+    if mode == "idna" {
+        let mut buffered = String::new();
+        for it in items {
+            buffered.push_str(&extract_str(it).unwrap_or_default());
+            let (chunk, rest) = match idna_encode_ready_labels(&buffered, false) {
+                Some(v) => v,
+                None => return raise_unicode_encode_error("'idna' codec can't encode input"),
+            };
+            buffered = rest;
+            if !chunk.is_empty() {
+                out.push(new_bytes(chunk));
+            }
+        }
+        let (chunk, rest) = match idna_encode_ready_labels(&buffered, true) {
+            Some(v) => v,
+            None => return raise_unicode_encode_error("'idna' codec can't encode input"),
+        };
+        if !rest.is_empty() {
+            return raise_unicode_encode_error("'idna' codec can't encode input");
+        }
+        if !chunk.is_empty() {
+            out.push(new_bytes(chunk));
+        }
+        return MbValue::from_ptr(MbObject::new_list(out));
+    }
     let mut first = true;
     for it in items {
         let s = extract_str(it).unwrap_or_default();
