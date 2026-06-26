@@ -4300,6 +4300,32 @@ fn mb_richcmp_eq(a: MbValue, b: MbValue) -> bool {
     mb_values_identical(a, b) || mb_values_eq(a, b)
 }
 
+fn generic_alias_origin_args(
+    class_name: &str,
+    fields: &super::rc::MbRwLock<super::rc::InstanceFields>,
+) -> Option<(MbValue, Vec<MbValue>)> {
+    let (origin_key, args_key) = match class_name {
+        "GenericAlias" => ("__origin__", "__args__"),
+        "types.GenericAlias" => ("_origin", "_args"),
+        _ => return None,
+    };
+    let (origin, args_val) = {
+        let g = fields.read().ok()?;
+        (*g.get(origin_key)?, *g.get(args_key)?)
+    };
+    let args = args_val
+        .as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(items) => items.to_vec(),
+                ObjData::List(lock) => lock.read().unwrap().iter().copied().collect(),
+                _ => vec![args_val],
+            }
+        })
+        .unwrap_or_else(|| vec![args_val]);
+    Some((origin, args))
+}
+
 /// Try the reflected __eq__ on `obj` (i.e. obj.__eq__(other)).
 /// Returns true/false if the reflected op gives a definitive answer, false if not.
 fn try_reflected_eq(obj: MbValue, other: MbValue) -> bool {
@@ -4854,6 +4880,31 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                         (Some(na), Some(nb)) => na == nb,
                         _ => false,
                     };
+                }
+                // PEP 585 / types.GenericAlias equality: two generic aliases
+                // compare by origin and args, not heap identity. This covers
+                // lazy bound expressions such as Sequence[S] rebuilt on demand.
+                (
+                    ObjData::Instance {
+                        class_name: ca,
+                        fields: fa,
+                    },
+                    ObjData::Instance {
+                        class_name: cb,
+                        fields: fb,
+                    },
+                ) if matches!(ca.as_str(), "GenericAlias" | "types.GenericAlias")
+                    || matches!(cb.as_str(), "GenericAlias" | "types.GenericAlias") =>
+                {
+                    let Some((oa, aa)) = generic_alias_origin_args(ca, fa) else {
+                        return false;
+                    };
+                    let Some((ob, ab)) = generic_alias_origin_args(cb, fb) else {
+                        return false;
+                    };
+                    return mb_richcmp_eq(oa, ob)
+                        && aa.len() == ab.len()
+                        && aa.iter().zip(ab.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y));
                 }
                 (
                     ObjData::Instance {
@@ -11283,6 +11334,65 @@ mod tests {
         assert_eq!(mb_eq(a, b).as_bool(), Some(false));
         assert_eq!(mb_lt(a, b).as_bool(), Some(true));
         assert_eq!(mb_lt(b, a).as_bool(), Some(false));
+    }
+
+    fn generic_alias_instance(
+        class_name: &str,
+        origin_field: &str,
+        args_field: &str,
+        origin: MbValue,
+        args: Vec<MbValue>,
+    ) -> MbValue {
+        let ptr = MbObject::new_instance(class_name.to_string());
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut g = fields.write().unwrap();
+                g.insert(origin_field.to_string(), origin);
+                g.insert(
+                    args_field.to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(args)),
+                );
+            }
+        }
+        MbValue::from_ptr(ptr)
+    }
+
+    #[test]
+    fn test_generic_alias_equality_uses_origin_and_args() {
+        let origin = make_type_object("list");
+        let typevar = MbValue::from_ptr(MbObject::new_instance("TypeVar".to_string()));
+        let alias_a = generic_alias_instance(
+            "GenericAlias",
+            "__origin__",
+            "__args__",
+            origin,
+            vec![typevar],
+        );
+        let alias_b = generic_alias_instance(
+            "GenericAlias",
+            "__origin__",
+            "__args__",
+            origin,
+            vec![typevar],
+        );
+        let alias_c = generic_alias_instance(
+            "GenericAlias",
+            "__origin__",
+            "__args__",
+            origin,
+            vec![make_type_object("int")],
+        );
+        let types_alias = generic_alias_instance(
+            "types.GenericAlias",
+            "_origin",
+            "_args",
+            origin,
+            vec![typevar],
+        );
+
+        assert_eq!(mb_eq(alias_a, alias_b).as_bool(), Some(true));
+        assert_eq!(mb_eq(alias_a, alias_c).as_bool(), Some(false));
+        assert_eq!(mb_eq(alias_a, types_alias).as_bool(), Some(true));
     }
 
     #[test]

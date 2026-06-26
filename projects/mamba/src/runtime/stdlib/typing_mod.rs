@@ -294,6 +294,7 @@ pub fn register() {
         "Type",
         "Literal",
         "Callable",
+        "Sequence",
         "Annotated",
         "NoReturn",
         "Never",
@@ -392,7 +393,6 @@ pub fn register() {
         "Reversible",
         "Mapping",
         "MutableMapping",
-        "Sequence",
         "MutableSequence",
         "AbstractSet",
         "MutableSet",
@@ -1233,6 +1233,18 @@ pub fn special_form_subscript(name: &str, key: MbValue) -> MbValue {
                 origin
             };
             make_alias("generic", origin, items, Some("typing.Callable"), None)
+        }
+        "Sequence" => {
+            let origin = super::super::module::mb_module_getattr(
+                new_str_v("collections.abc"),
+                new_str_v("Sequence"),
+            );
+            let origin = if origin.is_none() {
+                super::super::builtins::make_type_object("Sequence")
+            } else {
+                origin
+            };
+            make_alias("generic", origin, items, Some("typing.Sequence"), None)
         }
         _ => {
             // ClassVar / Final / Required / TypeGuard / Unpack / unknown:
