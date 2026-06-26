@@ -1,8 +1,8 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-27T07:00:02.420306+00:00"
-digest = "sha256:b53f3a116e4adaf561ef95be68ac3efad12a726eda5c485684d1b50701cce310"
+generated_at = "2026-06-27T07:00:48.337833+00:00"
+digest = "sha256:7cb310aba056fe7828bf6b690b852598aef4e725b752834f13cc073045f58250"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -191,6 +191,10 @@ digest = "sha256:c16839ae6f8cc22a9f569d55e0f741e7285f716e7f9f8018b2b2810c6eecbc3
 [[files]]
 path = "semantic/source/projects-vat-src-store-rs.md"
 digest = "sha256:c6bc7648f48b193100feb3af2e359d31b4c63619b06062705949d6b658638ccf"
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat_cli_convention-rs.md"
+digest = "sha256:7605009ac1f25f9b544f1cec9e8961dab805194c61fefc1555bf9385440bd233"
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_concurrent_runners-rs.md"
