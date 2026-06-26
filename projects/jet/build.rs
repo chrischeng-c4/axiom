@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-build-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/jet/tech-design/semantic/jet-projects-jet.md#schema
+// CODEGEN-BEGIN
 // Stamp build provenance into the binary for the standard CLI ops
 // (`llm` / `upgrade` / `issue`, via `cli-std`): the target triple
 // `jet upgrade` matches against release assets, plus a best-effort git sha and
@@ -42,5 +43,4 @@ fn short_sha() -> Option<String> {
     let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!sha.is_empty()).then_some(sha)
 }
-
-// </HANDWRITE>
+// CODEGEN-END
