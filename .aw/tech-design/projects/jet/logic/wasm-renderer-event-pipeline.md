@@ -384,6 +384,7 @@ existing "spike subset" `bail!` policy.
 ```yaml
 changes:
   - date: 2026-04-27
+    section: doc
     impl_mode: hand-written
     description: Initial spec authored alongside enhancement-synthetic-event-pipeline-canvas-click-fiber-handle.
     refs: [R1, R2, R3, R4, R5, R6, R7, R8, R9]

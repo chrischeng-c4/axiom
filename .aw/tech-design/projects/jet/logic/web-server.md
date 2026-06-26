@@ -206,6 +206,7 @@ changes:
     purpose: "Integration coverage for W_parse_*, W_boot_*, W_reuse_existing."
   - path: .aw/tech-design/crates/jet/logic/web-server.md
     action: create
+    section: doc
     impl_mode: hand-written
     purpose: "This spec."
 ```
