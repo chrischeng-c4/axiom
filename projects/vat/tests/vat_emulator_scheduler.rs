@@ -113,7 +113,3 @@ async fn cloud_scheduler_emulator_fires_job_on_run() {
     assert!(got.contains("tick-payload"), "missing job body: {got}");
 }
 // CODEGEN-END
-// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
-// CODEGEN-BEGIN
-
-// CODEGEN-END

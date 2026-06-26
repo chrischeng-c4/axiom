@@ -178,7 +178,3 @@ async fn cloud_storage_emulator_roundtrips() {
     assert_eq!(after.status().as_u16(), 404);
 }
 // CODEGEN-END
-// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
-// CODEGEN-BEGIN
-
-// CODEGEN-END
