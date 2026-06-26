@@ -58,7 +58,6 @@ fn collect_used_externs(module: &MirModule) -> HashSet<String> {
                         used.insert("mb_setattr".into());
                     }
                     MirInst::GetItem { .. } => {
-                        used.insert("mb_list_getitem".into());
                         used.insert("mb_obj_getitem".into());
                     }
                     MirInst::SetItem { .. } => {
@@ -804,13 +803,7 @@ impl CraneliftBackend {
                 index,
                 ty: _,
             } => {
-                // Try list-specific getitem first, fall back to generic __getitem__
-                let func_name = if self.extern_funcs.contains_key("mb_list_getitem") {
-                    "mb_list_getitem"
-                } else {
-                    "mb_obj_getitem"
-                };
-                if let Some(&func_id) = self.extern_funcs.get(func_name) {
+                if let Some(&func_id) = self.extern_funcs.get("mb_obj_getitem") {
                     let func_ref = self.module().declare_func_in_func(func_id, builder.func);
                     let ov = vars.get(*object, builder, cl_types::I64);
                     let iv = vars.get(*index, builder, cl_types::I64);
@@ -1696,7 +1689,6 @@ mod tests {
         };
         let m = module_with_single_block(vec![inst]);
         let used = collect_used_externs(&m);
-        assert!(used.contains("mb_list_getitem"));
         assert!(used.contains("mb_obj_getitem"));
     }
 
