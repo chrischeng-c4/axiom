@@ -1,6 +1,13 @@
 ---
 id: jet-codegen-openapi
 summary: Standalone jet codegen openapi command reading an OpenAPI 3.0/3.1 spec and emitting TypeScript types, a typed fetch client, and TanStack Query hooks.
+capability_refs:
+  - id: rust-native-frontend-toolchain
+    role: primary
+    gap: production-replacement-readiness
+    claim: full-toolchain-dogfood-flow
+    coverage: partial
+    rationale: "jet codegen openapi is part of the Rust-native frontend toolchain surface for generating typed frontend API clients."
 fill_sections: [logic, unit-test]
 ---
 
@@ -121,6 +128,71 @@ requirement R5 {
   risk: High
   verifymethod: Test
 }
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/codegen/mod.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Own the pure OpenAPI generation pipeline and CLI-facing run path:
+      parse spec JSON, build type map and operation plans, emit selected files,
+      and write deterministic output.
+  - path: "projects/jet/src/codegen/openapi.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Model the OpenAPI 3.0/3.1 subset consumed by Jet codegen, including
+      nullable reconciliation inputs and deterministic path/schema maps.
+  - path: "projects/jet/src/codegen/tsmap.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Map OpenAPI schema nodes to TypeScript type expressions for nullable,
+      object, array, enum, composition, ref, and additionalProperties cases.
+  - path: "projects/jet/src/codegen/plan.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Build operation plans with deterministic names, grouped input fields,
+      query/mutation classification, and response type aliases.
+  - path: "projects/jet/src/codegen/types_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Emit types.ts from component schemas plus per-operation request and
+      response type aliases.
+  - path: "projects/jet/src/codegen/client_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Emit runtime.ts and typed client.ts functions for the selected OpenAPI
+      operation plans.
+  - path: "projects/jet/src/codegen/hooks_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Emit TanStack Query hooks for GET operations and mutations for write
+      operations.
+  - path: "projects/jet/tests/codegen/openapi_golden.rs"
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: |
+      Golden snapshots, deterministic output checks, nullable/composition
+      assertions, and TypeScript smoke coverage for jet codegen openapi.
 ```
 
 # Reviews
