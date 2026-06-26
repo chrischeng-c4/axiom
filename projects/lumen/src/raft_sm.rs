@@ -17,9 +17,12 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use raft_host::{Index, RaftStateMachine};
 
+use crate::coordinator::WriteSink;
+use crate::log_entry::RaftLogEntry;
 use crate::rdb::RdbSnapshot;
 use crate::storage::{ApplyOutcome, Engine};
 use crate::wal::WalRecord;
+use raft_host::RaftHost;
 
 /// How many recent apply outcomes to retain for the write handler to claim.
 const OUTCOME_WINDOW: u64 = 8192;
@@ -93,6 +96,32 @@ impl RaftStateMachine for EngineSm {
 
     fn applied_index(&self) -> Index {
         self.applied.load(Ordering::Acquire)
+    }
+}
+
+/// The [`WriteSink`] for `--wal raft`: a write proposes through the shared
+/// [`RaftHost`] (which handles leader-redirect + read-your-write), and the rich
+/// [`ApplyOutcome`] is claimed from the local [`EngineSm`] apply (the host
+/// applies on every node, so a follower has its own outcome).
+pub struct RaftWriteSink {
+    host: Arc<RaftHost>,
+    sm: Arc<EngineSm>,
+}
+
+impl RaftWriteSink {
+    pub fn new(host: Arc<RaftHost>, sm: Arc<EngineSm>) -> Self {
+        Self { host, sm }
+    }
+}
+
+#[async_trait::async_trait]
+impl WriteSink for RaftWriteSink {
+    async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
+        let index = self.host.propose(WalRecord::new(entry).encode()?).await?;
+        self.sm.take_outcome(index)
+    }
+    fn applied_seq(&self) -> u64 {
+        self.sm.applied_index()
     }
 }
 
