@@ -278,26 +278,31 @@ cargo test -p jet --test to_have_screenshot_tests
 files:
   - path: .aw/tech-design/crates/jet/logic/to-have-screenshot.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home the toHaveScreenshot TD as a checker-compliant current-state contract.
 
   - path: .aw/tech-design/crates/jet/testing/to-have-screenshot.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove the unexpected top-level testing directory copy of this TD.
 
   - path: crates/jet/runtime/test/index.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing expect page toHaveScreenshot matcher.
 
   - path: crates/jet/src/test_runner/worker.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing MatchSnapshot handling and snapshot storage logic.
 
   - path: crates/jet/tests/to_have_screenshot_tests.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing integration tests for baseline write match named snapshot and locator rejection.
 ```

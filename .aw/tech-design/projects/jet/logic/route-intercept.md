@@ -192,6 +192,7 @@ changes:
     purpose: "Integration coverage RI1..RI9."
   - path: .aw/tech-design/crates/jet/logic/route-intercept.md
     action: create
+    section: doc
     impl_mode: hand-written
     purpose: "This spec."
 ```
