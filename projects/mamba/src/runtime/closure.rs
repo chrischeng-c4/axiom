@@ -696,17 +696,38 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     static GLOBAL_ID_NAMESPACE: std::cell::RefCell<HashMap<i64, MbValue>> =
         std::cell::RefCell::new(HashMap::new());
+    static MISSING_GLOBAL_RAISES_NAME_ERROR: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn set_missing_global_name_error_enabled(enabled: bool) -> bool {
+    MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.replace(enabled))
+}
+
+pub(crate) fn restore_missing_global_name_error_enabled(previous: bool) {
+    MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.set(previous));
+}
+
+fn missing_global_should_raise_name_error() -> bool {
+    MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.get())
+}
+
+fn raise_missing_global_name_error(name: &str) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("NameError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!("name '{name}' is not defined"))),
+    );
 }
 
 /// Get a global variable by name.
 pub fn mb_global_get(name: MbValue) -> MbValue {
     let var_name = extract_str(name).unwrap_or_default();
     GLOBAL_NAMESPACE.with(|ns| {
-        let val = ns
-            .borrow()
-            .get(&var_name)
-            .copied()
-            .unwrap_or(MbValue::none());
+        let val = ns.borrow().get(&var_name).copied();
+        if val.is_none() && missing_global_should_raise_name_error() {
+            raise_missing_global_name_error(&var_name);
+        }
+        let val = val.unwrap_or_else(MbValue::none);
         unsafe {
             super::rc::retain_if_ptr(val);
         }
@@ -737,7 +758,14 @@ pub fn mb_global_set(name: MbValue, value: MbValue) {
 pub fn mb_global_get_id(id: MbValue) -> MbValue {
     let key = id.to_bits() as i64;
     GLOBAL_ID_NAMESPACE.with(|ns| {
-        let val = ns.borrow().get(&key).copied().unwrap_or(MbValue::none());
+        let val = ns.borrow().get(&key).copied();
+        if val.is_none() && missing_global_should_raise_name_error() {
+            let name = MODULE_SYM_INFO
+                .with(|m| m.borrow().get(&key).map(|(name, _)| name.clone()))
+                .unwrap_or_else(|| format!("<symbol {key}>"));
+            raise_missing_global_name_error(&name);
+        }
+        let val = val.unwrap_or_else(MbValue::none);
         unsafe {
             super::rc::retain_if_ptr(val);
         }
@@ -771,7 +799,9 @@ pub fn mb_global_del_id(id: MbValue) {
     GLOBAL_ID_NAMESPACE.with(|ns| {
         let old = ns.borrow_mut().remove(&key);
         if let Some(prev) = old {
-            unsafe { super::rc::release_if_ptr(prev); }
+            unsafe {
+                super::rc::release_if_ptr(prev);
+            }
         }
     });
 }
@@ -979,6 +1009,7 @@ pub(crate) fn cleanup_all_closures() {
     let _ = CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_ID_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.set(false));
     let _ = FUNC_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_DOCS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_MODULES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));

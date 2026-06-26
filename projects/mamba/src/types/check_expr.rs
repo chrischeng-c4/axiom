@@ -52,6 +52,18 @@ pub(crate) fn restore_stdlib_arg_check(prev: bool) {
     SUPPRESS_STDLIB_ARG_CHECK.with(|c| c.set(prev));
 }
 
+fn is_pep695_lazy_thunk_arg(
+    func_name: Option<&str>,
+    positional_index: usize,
+    arg: &Spanned<Expr>,
+) -> bool {
+    matches!(arg.node, Expr::Lambda { .. })
+        && matches!(
+            (func_name, positional_index),
+            (Some("__mb_pep695_typevar__"), 2 | 3) | (Some("__mb_pep695_type_alias__"), 1)
+        )
+}
+
 /// Expression, operator, and pattern type checking.
 impl TypeChecker {
     pub(crate) fn check_expr(&mut self, expr: &Spanned<Expr>) -> TypeId {
@@ -221,7 +233,15 @@ impl TypeChecker {
                         for arg in args {
                             match arg {
                                 CallArg::Positional(a) => {
-                                    let at = self.check_expr(a);
+                                    let at = if is_pep695_lazy_thunk_arg(
+                                        func_name.as_deref(),
+                                        param_idx,
+                                        a,
+                                    ) {
+                                        self.tcx.any()
+                                    } else {
+                                        self.check_expr(a)
+                                    };
                                     arg_types.push(at);
                                     if matches!(
                                         func_name.as_deref(),
