@@ -1763,6 +1763,7 @@ impl<'a> HirToMir<'a> {
 
         // ── Phase 1: Generate body function ──
         self.reset();
+        self.cell_override = func.captures.iter().map(|s| s.0).collect();
         let entry = self.fresh_block();
         self.current_block_id = Some(entry);
 
@@ -1790,6 +1791,17 @@ impl<'a> HirToMir<'a> {
                 ty: int_ty,
             });
             self.sym_to_vreg.insert(*sym, arg_vreg);
+        }
+
+        for (sym, ty) in &func.params {
+            if self.cell_override.contains(&sym.0) {
+                let vreg = *self.sym_to_vreg.get(sym).expect("param just inserted");
+                let boxed = self.box_operand(vreg, *ty);
+                self.current_stmts.push(MirInst::StoreGlobal {
+                    name: *sym,
+                    value: boxed,
+                });
+            }
         }
 
         let any_ty = self.tcx.any();

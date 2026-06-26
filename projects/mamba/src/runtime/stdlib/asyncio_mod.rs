@@ -1,6 +1,7 @@
 use super::super::async_task::{
     mb_async_wait as rt_async_wait, mb_await as rt_await, mb_create_task as rt_create_task,
-    mb_gather as rt_gather, mb_run_until_complete, mb_sleep as rt_sleep,
+    mb_drive_pending_tasks_until, mb_gather as rt_gather, mb_run_until_complete,
+    mb_sleep as rt_sleep,
 };
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
@@ -38,6 +39,10 @@ dispatch_unary!(dispatch_create_task, rt_create_task);
 dispatch_unary!(dispatch_ensure_future, rt_create_task);
 dispatch_unary!(dispatch_shield, mb_asyncio_shield);
 dispatch_variadic!(dispatch_gather, rt_gather);
+
+unsafe extern "C" fn dispatch_event(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    make_event()
+}
 
 unsafe extern "C" fn dispatch_wait(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
@@ -84,6 +89,17 @@ pub fn register() {
         });
     }
 
+    register_event_class();
+    let event_addr = dispatch_event as *const () as usize;
+    attrs.insert("Event".to_string(), MbValue::from_func(event_addr));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(event_addr as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut()
+            .insert(event_addr as u64, "asyncio.Event".to_string());
+    });
+
     // Constants
     attrs.insert(
         "FIRST_COMPLETED".into(),
@@ -123,7 +139,6 @@ pub fn register() {
         "DatagramProtocol",
         "DatagramTransport",
         "DefaultEventLoopPolicy",
-        "Event",
         "FastChildWatcher",
         "Future",
         "Handle",
@@ -225,6 +240,92 @@ pub fn register() {
     }
 
     super::register_module("asyncio", attrs);
+}
+
+fn make_event() -> MbValue {
+    let inst = MbObject::new_instance("asyncio.Event".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            fields
+                .write()
+                .unwrap()
+                .insert("_flag".to_string(), MbValue::from_bool(false));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn event_flag(event: MbValue) -> bool {
+    event
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("_flag")
+                    .and_then(|v| v.as_bool())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(false)
+}
+
+fn set_event_flag(event: MbValue, value: bool) {
+    if let Some(ptr) = event.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .write()
+                    .unwrap()
+                    .insert("_flag".to_string(), MbValue::from_bool(value));
+            }
+        }
+    }
+}
+
+extern "C" fn event_set(this: MbValue) -> MbValue {
+    set_event_flag(this, true);
+    MbValue::none()
+}
+
+extern "C" fn event_clear(this: MbValue) -> MbValue {
+    set_event_flag(this, false);
+    MbValue::none()
+}
+
+extern "C" fn event_is_set(this: MbValue) -> MbValue {
+    MbValue::from_bool(event_flag(this))
+}
+
+extern "C" fn event_wait(this: MbValue) -> MbValue {
+    if !event_flag(this) {
+        mb_drive_pending_tasks_until(|| event_flag(this), 100_000);
+    }
+    let result = MbValue::from_bool(event_flag(this));
+    let name = MbValue::from_ptr(MbObject::new_str("asyncio.Event.wait".to_string()));
+    let locals = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    let coro = super::super::async_rt::mb_coroutine_new(name, locals);
+    super::super::async_rt::mb_coroutine_complete(coro, result);
+    coro
+}
+
+fn register_event_class() {
+    let mut methods: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("wait", event_wait as *const () as usize),
+        ("set", event_set as *const () as usize),
+        ("clear", event_clear as *const () as usize),
+        ("is_set", event_is_set as *const () as usize),
+    ] {
+        methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register(
+        "asyncio.Event",
+        vec!["object".to_string()],
+        methods,
+    );
 }
 
 /// asyncio.run(coro) — drive the event loop until coro completes.
