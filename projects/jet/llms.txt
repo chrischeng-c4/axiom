@@ -24,8 +24,7 @@
 - Build debug: `./build.sh debug`.
 - Build release: `./build.sh release`.
 - Install: repo root `install.sh --project=jet` dispatches to `./install.sh`.
-- Test: `cargo test -p jet`.
-- Test: `npm --cache /private/tmp/aw-npm-cache/react-bench --prefix examples/react-bench ci --ignore-scripts && cargo test -p jet -p jet-wasm`.
+- Test: `projects/jet/scripts/verify-basic-dom-gates.sh --all`.
 
 ## Root Artifacts
 
