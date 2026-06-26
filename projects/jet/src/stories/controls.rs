@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:604ec8f4" tracker="pending-tracker" reason="Map a prop type to a control kind (bool->toggle, string->text, number->number, string-literal union->select with options, else text), then apply meta.argTypes overrides (control type/options/disable). Returns the resolved control descriptors for a story."
+// HANDWRITE-BEGIN gap="missing-generator:logic:604ec8f4" tracker="standardize-gap-projects-jet-src-stories-controls-rs" reason="Map a prop type to a control kind (bool->toggle, string->text, number->number, string-literal union->select with options, else text), then apply meta.argTypes overrides (control type/options/disable). Returns the resolved control descriptors for a story."
 //! Control inference + resolution for `jet stories` (B3).
 //!
 //! This module is pure (no I/O, no AST) so it is trivially unit-testable. It
