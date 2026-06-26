@@ -490,6 +490,40 @@ pub fn to_dict_key(val: MbValue) -> DictKey {
     DictKey::Other(format!("{}", val.to_bits()))
 }
 
+fn has_pending_exception() -> bool {
+    super::exception::current_exception_type().is_some()
+}
+
+fn to_dict_key_checked(val: MbValue) -> Option<DictKey> {
+    let key = to_dict_key(val);
+    if has_pending_exception() {
+        None
+    } else {
+        Some(key)
+    }
+}
+
+enum DictLookup {
+    Hit(usize),
+    Miss,
+    Error,
+}
+
+fn dict_lookup_index(map: &indexmap::IndexMap<DictKey, MbValue>, needle: &DictKey) -> DictLookup {
+    for (index, key) in map.keys().enumerate() {
+        if key == needle {
+            if has_pending_exception() {
+                return DictLookup::Error;
+            }
+            return DictLookup::Hit(index);
+        }
+        if has_pending_exception() {
+            return DictLookup::Error;
+        }
+    }
+    DictLookup::Miss
+}
+
 /// Convert a DictKey back to an MbValue for iteration/display.
 pub fn dict_key_to_mbvalue(key: &DictKey) -> MbValue {
     match key {
@@ -739,7 +773,9 @@ pub fn mb_dict_getitem(dict: MbValue, key: MbValue) -> MbValue {
             return super::list_ops::mb_list_getitem(children, key);
         }
     }
-    let dk = to_dict_key(key);
+    let Some(dk) = to_dict_key_checked(key) else {
+        return MbValue::none();
+    };
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -747,9 +783,15 @@ pub fn mb_dict_getitem(dict: MbValue, key: MbValue) -> MbValue {
                     Ok(g) => g,
                     Err(_) => lock.read().unwrap(),
                 };
-                if let Some(&v) = guard.get(&dk) {
-                    super::rc::retain_if_ptr(v);
-                    return v;
+                match dict_lookup_index(&guard, &dk) {
+                    DictLookup::Hit(index) => {
+                        if let Some((_, &v)) = guard.get_index(index) {
+                            super::rc::retain_if_ptr(v);
+                            return v;
+                        }
+                    }
+                    DictLookup::Error => return MbValue::none(),
+                    DictLookup::Miss => {}
                 }
                 drop(guard);
                 let key_repr = dict_key_raw_str(&dk);
@@ -766,7 +808,9 @@ pub fn mb_dict_getitem(dict: MbValue, key: MbValue) -> MbValue {
 
 /// dict.get(key, default) -> value
 pub fn mb_dict_get(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
-    let dk = to_dict_key(key);
+    let Some(dk) = to_dict_key_checked(key) else {
+        return MbValue::none();
+    };
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -774,9 +818,15 @@ pub fn mb_dict_get(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
                     Ok(g) => g,
                     Err(_) => lock.read().unwrap(),
                 };
-                if let Some(&val) = guard.get(&dk) {
-                    super::rc::retain_if_ptr(val);
-                    return val;
+                match dict_lookup_index(&guard, &dk) {
+                    DictLookup::Hit(index) => {
+                        if let Some((_, &val)) = guard.get_index(index) {
+                            super::rc::retain_if_ptr(val);
+                            return val;
+                        }
+                    }
+                    DictLookup::Error => return MbValue::none(),
+                    DictLookup::Miss => {}
                 }
                 super::rc::retain_if_ptr(default);
                 return default;
@@ -804,22 +854,34 @@ pub fn mb_dict_setitem(dict: MbValue, key: MbValue, value: MbValue) {
         );
         return;
     }
-    let dk = to_dict_key(key);
+    let Some(dk) = to_dict_key_checked(key) else {
+        return;
+    };
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                super::rc::retain_if_ptr(value);
                 let mut map = match lock.try_write() {
                     Ok(m) => m,
                     Err(_) => lock.write().unwrap(),
                 };
-                if let Some(existing) = map.get_mut(&dk) {
-                    let old_val = *existing;
-                    *existing = value;
-                    super::rc::release_if_ptr(old_val);
-                } else {
-                    map.insert(dk, value);
-                    bump_dict_version(dict);
+                match dict_lookup_index(&map, &dk) {
+                    DictLookup::Hit(index) => {
+                        if let Some((_, existing)) = map.get_index_mut(index) {
+                            super::rc::retain_if_ptr(value);
+                            let old_val = *existing;
+                            *existing = value;
+                            super::rc::release_if_ptr(old_val);
+                        }
+                    }
+                    DictLookup::Miss => {
+                        super::rc::retain_if_ptr(value);
+                        map.insert(dk, value);
+                        if has_pending_exception() {
+                            return;
+                        }
+                        bump_dict_version(dict);
+                    }
+                    DictLookup::Error => return,
                 }
             }
         }
@@ -870,12 +932,21 @@ pub fn mb_dict_delitem(dict: MbValue, key: MbValue) {
             return;
         }
     }
-    let dk = to_dict_key(key);
+    let Some(dk) = to_dict_key_checked(key) else {
+        return;
+    };
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                if lock.write().unwrap().shift_remove(&dk).is_some() {
-                    bump_dict_version(dict);
+                let mut map = lock.write().unwrap();
+                match dict_lookup_index(&map, &dk) {
+                    DictLookup::Hit(index) => {
+                        if map.shift_remove_index(index).is_some() {
+                            bump_dict_version(dict);
+                        }
+                    }
+                    DictLookup::Miss => {}
+                    DictLookup::Error => return,
                 }
             }
         }
@@ -886,7 +957,9 @@ pub fn mb_dict_delitem(dict: MbValue, key: MbValue) {
 
 /// key in dict -> bool
 pub fn mb_dict_contains(dict: MbValue, key: MbValue) -> MbValue {
-    let dk = to_dict_key(key);
+    let Some(dk) = to_dict_key_checked(key) else {
+        return MbValue::none();
+    };
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -894,7 +967,11 @@ pub fn mb_dict_contains(dict: MbValue, key: MbValue) -> MbValue {
                     Ok(g) => g,
                     Err(_) => lock.read().unwrap(),
                 };
-                return MbValue::from_bool(guard.contains_key(&dk));
+                return match dict_lookup_index(&guard, &dk) {
+                    DictLookup::Hit(_) => MbValue::from_bool(true),
+                    DictLookup::Miss => MbValue::from_bool(false),
+                    DictLookup::Error => MbValue::none(),
+                };
             }
         }
     }
@@ -1293,15 +1370,23 @@ pub fn mb_dict_items(dict: MbValue) -> MbValue {
 
 /// dict.pop(key, default) -> removed value or default
 pub fn mb_dict_pop(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
-    let dk = to_dict_key(key);
+    let Some(dk) = to_dict_key_checked(key) else {
+        return MbValue::none();
+    };
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                if let Some(v) = lock.write().unwrap().shift_remove(&dk) {
-                    bump_dict_version(dict);
-                    return v;
+                let mut map = lock.write().unwrap();
+                match dict_lookup_index(&map, &dk) {
+                    DictLookup::Hit(index) => {
+                        if let Some((_, v)) = map.shift_remove_index(index) {
+                            bump_dict_version(dict);
+                            return v;
+                        }
+                    }
+                    DictLookup::Miss => return default,
+                    DictLookup::Error => return MbValue::none(),
                 }
-                return default;
             }
         }
     }
@@ -1310,13 +1395,22 @@ pub fn mb_dict_pop(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
 
 /// dict.pop(key) without default — raises KeyError if key not found.
 pub fn mb_dict_pop_no_default(dict: MbValue, key: MbValue) -> MbValue {
-    let dk = to_dict_key(key);
+    let Some(dk) = to_dict_key_checked(key) else {
+        return MbValue::none();
+    };
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                if let Some(v) = lock.write().unwrap().shift_remove(&dk) {
-                    bump_dict_version(dict);
-                    return v;
+                let mut map = lock.write().unwrap();
+                match dict_lookup_index(&map, &dk) {
+                    DictLookup::Hit(index) => {
+                        if let Some((_, v)) = map.shift_remove_index(index) {
+                            bump_dict_version(dict);
+                            return v;
+                        }
+                    }
+                    DictLookup::Error => return MbValue::none(),
+                    DictLookup::Miss => {}
                 }
                 // Raise KeyError (CPython 3.12 format)
                 let key_repr = dict_key_raw_str(&dk);
@@ -1333,18 +1427,31 @@ pub fn mb_dict_pop_no_default(dict: MbValue, key: MbValue) -> MbValue {
 
 /// dict.setdefault(key, default) -> existing or newly set value
 pub fn mb_dict_setdefault(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
-    let dk = to_dict_key(key);
+    let Some(dk) = to_dict_key_checked(key) else {
+        return MbValue::none();
+    };
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let mut map = lock.write().unwrap();
-                let inserted = !map.contains_key(&dk);
-                let val = *map.entry(dk).or_insert(default);
-                if inserted {
-                    bump_dict_version(dict);
+                match dict_lookup_index(&map, &dk) {
+                    DictLookup::Hit(index) => {
+                        if let Some((_, &val)) = map.get_index(index) {
+                            super::rc::retain_if_ptr(val);
+                            return val;
+                        }
+                    }
+                    DictLookup::Miss => {
+                        map.insert(dk, default);
+                        if has_pending_exception() {
+                            return MbValue::none();
+                        }
+                        bump_dict_version(dict);
+                        super::rc::retain_if_ptr(default);
+                        return default;
+                    }
+                    DictLookup::Error => return MbValue::none(),
                 }
-                super::rc::retain_if_ptr(val);
-                return val;
             }
         }
     }
@@ -1451,13 +1558,28 @@ pub fn mb_dict_update(dict: MbValue, other: MbValue) {
             return;
         };
 
+        if has_pending_exception() {
+            return;
+        }
+
         let mut map = dict_lock.write().unwrap();
         let mut changed_keys = false;
         for (k, v) in pairs {
-            if !map.contains_key(&k) {
-                changed_keys = true;
+            match dict_lookup_index(&map, &k) {
+                DictLookup::Hit(index) => {
+                    if let Some((_, existing)) = map.get_index_mut(index) {
+                        *existing = v;
+                    }
+                }
+                DictLookup::Miss => {
+                    map.insert(k, v);
+                    if has_pending_exception() {
+                        return;
+                    }
+                    changed_keys = true;
+                }
+                DictLookup::Error => return,
             }
-            map.insert(k, v);
         }
         if changed_keys {
             bump_dict_version(dict);
