@@ -115,6 +115,16 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
 
     let tags = list_release_tags(&client, tool.repo).await?;
     let Some((tag, selected)) = select_version(&tags, &prefix, opts.tag.as_deref()) else {
+        if opts.check && opts.tag.is_none() {
+            println!("current: {current}");
+            println!("latest:  none");
+            println!(
+                "→ no stable {} release found (scanned {} tags)",
+                tool.project,
+                tags.len()
+            );
+            return Ok(());
+        }
         match opts.tag.as_deref() {
             Some(t) => bail!(
                 "no {} release matching `{t}` (scanned {} tags)",

@@ -9,6 +9,7 @@
 //! carry overflow). Mirrors the release-patch skill's bump logic.
 
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
     // Invalidate the cached build env when profile/HEAD/version changes.
@@ -33,6 +34,18 @@ fn main() {
     };
 
     println!("cargo:rustc-env=AW_BUILD_VERSION={}", build_version);
+
+    let git_sha = short_sha().unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=AW_GIT_SHA={git_sha}");
+
+    let built_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| format!("{}", d.as_secs()))
+        .unwrap_or_else(|_| "unknown".to_string());
+    println!("cargo:rustc-env=AW_BUILT_AT={built_at}");
+
+    let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
+    println!("cargo:rustc-env=AW_TARGET={target}");
 }
 
 /// Bump the patch segment of `X.Y.Z`, with base-64 carry (minor/patch 0-63).
