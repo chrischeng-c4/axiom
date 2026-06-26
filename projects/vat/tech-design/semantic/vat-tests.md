@@ -795,6 +795,11 @@ element UT_SOURCE_TESTS {
 ```yaml
 coverage_kind: semantic
 changes:
+  - action: annotate
+    section: unit-test
+    description: |
+      Existing test behavior is covered by the Unit Test evidence section.
+    impl_mode: hand-written
   - path: "projects/vat/tests/vat_emulator_storage.rs"
     action: modify
     section: schema

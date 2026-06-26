@@ -1,6 +1,12 @@
 ---
 id: semantic-vat-src
 summary: Semantic coverage for "projects/vat/src"
+capability_refs:
+  - id: "agent-native-gpu-native-dev-containers"
+    role: primary
+    claim: "host-process-execution-and-gpu-visibility"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/vat/src`."
 fill_sections: [schema, changes]
 ---
 
