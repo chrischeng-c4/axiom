@@ -1,5 +1,25 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-tests-wal_relay-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-lumen-tests-wal_relay-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: long-running-stability
+    role: primary
+    claim: "log-fan-out-rebuild-from-log"
+    coverage: partial
+    rationale: "Relay WAL integration test source-unit for publish/subscribe ordering."
+---
+
+# Standardized projects/lumen/tests/wal_relay.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Rust source-unit TD for `projects/lumen/tests/wal_relay.rs`, captured during #39 lumen migration onto td_ast lossless source generation.
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 //! #124 — lumen tails relay's broadcast as its WAL. Only with `--features
 //! relay-wal`. Publishes records to an in-process relay broker and tails them
 //! back through `RelayWal`.
@@ -301,4 +321,17 @@ async fn invalid_relay_payload_is_reported_not_silently_skipped() {
         "unexpected error: {err}"
     );
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/tests/wal_relay.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/lumen/tests/wal_relay.rs` captured during #39 lumen standardization.
+```

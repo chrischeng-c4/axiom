@@ -1,5 +1,25 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-build-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-lumen-build-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: cli-interface
+    role: primary
+    claim: "service-process-interface"
+    coverage: partial
+    rationale: "Build script provenance stamping source-unit for lumen's CLI/build identity."
+---
+
+# Standardized projects/lumen/build.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Rust source-unit TD for `projects/lumen/build.rs`, captured during #39 lumen migration onto td_ast lossless source generation.
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 //! Build script: stamp `LUMEN_GIT_SHA` and `LUMEN_BUILT_AT` into the binary
 //! so `GET /version` can report provenance.
 //!
@@ -52,4 +72,17 @@ fn short_sha() -> Option<String> {
         Some(sha)
     }
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/build.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/lumen/build.rs` captured during #39 lumen standardization.
+```
