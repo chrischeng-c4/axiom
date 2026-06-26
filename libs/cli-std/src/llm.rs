@@ -80,7 +80,7 @@ fn outline_md(project: &str, topics: &[Topic]) -> String {
         "\n## Standard agent commands\n\n\
          - `{project} llm [--topic <t>] [--format md|json]` — this self-documentation (offline)\n\
          - `{project} upgrade [--version <tag>] [--check]` — self-update from GitHub releases\n\
-         - `{project} report-issue [--title <t>] [message...]` — file a diagnostics-rich issue\n"
+         - `{project} issue search [query]` · `view <n>` · `create [--title <t>] [message...]` — search, read, and file diagnostics-rich issues\n"
     ));
     s
 }
@@ -100,7 +100,8 @@ mod tests {
         let o = render("lumen", "0.4.3", T, "outline", Format::Md).unwrap();
         assert!(o.contains("`workflow`"));
         assert!(o.contains("lumen upgrade"));
-        assert!(o.contains("report-issue"));
+        assert!(o.contains("lumen issue search"));
+        assert!(!o.contains("report-issue"));
     }
 
     #[test]
