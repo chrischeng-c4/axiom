@@ -173,6 +173,18 @@ impl EventLoop {
             // Step the coroutine
             mb_coroutine_step(MbValue::from_int(coro_id as i64));
 
+            if super::exception::current_exception_type().is_some() {
+                if let Some(coro) = COROUTINES.write().unwrap().get_mut(&coro_id) {
+                    coro.exhausted = true;
+                }
+                if let Some(task) = TASKS.write().unwrap().get_mut(&task_id) {
+                    task.done = true;
+                    task.cancelled = false;
+                    task.result = MbValue::none();
+                }
+                continue;
+            }
+
             // Check if coroutine is done
             let exhausted = COROUTINES
                 .read()
