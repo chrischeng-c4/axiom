@@ -52,6 +52,10 @@ unsafe extern "C" fn dispatch_event(_args_ptr: *const MbValue, _nargs: usize) ->
     make_event()
 }
 
+unsafe extern "C" fn dispatch_queue(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    make_queue()
+}
+
 unsafe extern "C" fn dispatch_wait(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let tasks = a.get(0).copied().unwrap_or_else(MbValue::none);
@@ -89,6 +93,7 @@ pub fn register() {
         ("wait", dispatch_wait as *const () as usize),
         ("wait_for", dispatch_wait_for as *const () as usize),
         ("shield", dispatch_shield as *const () as usize),
+        ("Queue", dispatch_queue as *const () as usize),
         (
             "get_event_loop",
             dispatch_get_event_loop as *const () as usize,
@@ -118,6 +123,12 @@ pub fn register() {
     });
 
     register_event_class();
+    register_queue_class();
+    let queue_addr = dispatch_queue as *const () as usize;
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut()
+            .insert(queue_addr as u64, "asyncio.Queue".to_string());
+    });
     let event_addr = dispatch_event as *const () as usize;
     attrs.insert("Event".to_string(), MbValue::from_func(event_addr));
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
@@ -177,7 +188,6 @@ pub fn register() {
         "PidfdChildWatcher",
         "PriorityQueue",
         "Protocol",
-        "Queue",
         "QueueEmpty",
         "QueueFull",
         "ReadTransport",
@@ -305,6 +315,14 @@ fn make_future() -> MbValue {
     inst
 }
 
+fn completed_coroutine(name: &str, result: MbValue) -> MbValue {
+    let name = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    let locals = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    let coro = super::super::async_rt::mb_coroutine_new(name, locals);
+    super::super::async_rt::mb_coroutine_complete(coro, result);
+    coro
+}
+
 fn future_state(fut: MbValue) -> String {
     get_field(fut, "_state")
         .and_then(|v| {
@@ -361,11 +379,7 @@ fn register_future_class() {
     ] {
         methods.insert(name.to_string(), MbValue::from_func(addr));
     }
-    super::super::class::mb_class_register(
-        "asyncio.Future",
-        vec!["object".to_string()],
-        methods,
-    );
+    super::super::class::mb_class_register("asyncio.Future", vec!["object".to_string()], methods);
 }
 
 fn make_exception_type_object(name: &str) -> MbValue {
@@ -400,11 +414,7 @@ fn register_exception_classes(attrs: &mut HashMap<String, MbValue>) {
         vec!["Exception".to_string()],
         empty(),
     );
-    super::super::class::mb_class_register(
-        "TimeoutError",
-        vec!["OSError".to_string()],
-        empty(),
-    );
+    super::super::class::mb_class_register("TimeoutError", vec!["OSError".to_string()], empty());
     for exc_name in ["CancelledError", "InvalidStateError", "TimeoutError"] {
         attrs.insert(exc_name.to_string(), make_exception_type_object(exc_name));
     }
@@ -471,12 +481,7 @@ extern "C" fn event_wait(this: MbValue) -> MbValue {
     if !event_flag(this) {
         mb_drive_pending_tasks_until(|| event_flag(this), 100_000);
     }
-    let result = MbValue::from_bool(event_flag(this));
-    let name = MbValue::from_ptr(MbObject::new_str("asyncio.Event.wait".to_string()));
-    let locals = MbValue::from_ptr(MbObject::new_list(Vec::new()));
-    let coro = super::super::async_rt::mb_coroutine_new(name, locals);
-    super::super::async_rt::mb_coroutine_complete(coro, result);
-    coro
+    completed_coroutine("asyncio.Event.wait", MbValue::from_bool(event_flag(this)))
 }
 
 fn register_event_class() {
@@ -489,11 +494,65 @@ fn register_event_class() {
     ] {
         methods.insert(name.to_string(), MbValue::from_func(addr));
     }
-    super::super::class::mb_class_register(
-        "asyncio.Event",
-        vec!["object".to_string()],
-        methods,
+    super::super::class::mb_class_register("asyncio.Event", vec!["object".to_string()], methods);
+}
+
+fn make_queue() -> MbValue {
+    let inst = MbValue::from_ptr(MbObject::new_instance("asyncio.Queue".to_string()));
+    set_field(
+        inst,
+        "_items",
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
     );
+    inst
+}
+
+fn queue_items(queue: MbValue) -> MbValue {
+    get_field(queue, "_items").unwrap_or_else(|| MbValue::from_ptr(MbObject::new_list(Vec::new())))
+}
+
+fn method_arg0(args: MbValue) -> Option<MbValue> {
+    args.as_ptr().and_then(|p| unsafe {
+        if let ObjData::List(ref lk) = (*p).data {
+            lk.read().unwrap().first().copied()
+        } else {
+            None
+        }
+    })
+}
+
+unsafe extern "C" fn queue_put(this: MbValue, args: MbValue) -> MbValue {
+    let item = method_arg0(args).unwrap_or_else(MbValue::none);
+    super::super::list_ops::mb_list_append(queue_items(this), item);
+    completed_coroutine("asyncio.Queue.put", MbValue::none())
+}
+
+unsafe extern "C" fn queue_get(this: MbValue, _args: MbValue) -> MbValue {
+    let items = queue_items(this);
+    let result = if super::super::list_ops::mb_list_len(items).as_int() == Some(0) {
+        MbValue::none()
+    } else {
+        super::super::list_ops::mb_list_pop_at(items, MbValue::from_int(0))
+    };
+    completed_coroutine("asyncio.Queue.get", result)
+}
+
+unsafe extern "C" fn queue_empty(this: MbValue, _args: MbValue) -> MbValue {
+    let is_empty = super::super::list_ops::mb_list_len(queue_items(this)).as_int() == Some(0);
+    MbValue::from_bool(is_empty)
+}
+
+fn register_queue_class() {
+    let mut methods: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("put", queue_put as *const () as usize),
+        ("get", queue_get as *const () as usize),
+        ("empty", queue_empty as *const () as usize),
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+        methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register("asyncio.Queue", vec!["object".to_string()], methods);
 }
 
 /// asyncio.run(coro) — drive the event loop until coro completes.
