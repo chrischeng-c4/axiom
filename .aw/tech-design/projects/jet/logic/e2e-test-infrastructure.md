@@ -279,46 +279,56 @@ npx playwright test --config=e2e/playwright.config.ts --project=jet-dev e2e/jet/
 files:
   - path: .aw/tech-design/crates/jet/logic/e2e-test-infrastructure.md
     action: MODIFY
+    section: doc
     impl_mode: hand-written
     desc: Move the TD out of unexpected e2e subdir and normalize section formats.
   - path: e2e/grid/app.spec.ts
     action: MOVE
+    section: doc
     from: e2e/app.spec.ts
     impl_mode: hand-written
     desc: Move RuSheet grid app tests into e2e/grid.
   - path: e2e/grid/cell-editing.spec.ts
     action: MOVE
+    section: doc
     from: e2e/cell-editing.spec.ts
     impl_mode: hand-written
     desc: Move grid cell-editing tests into e2e/grid.
   - path: e2e/jet/
     action: MOVE
+    section: doc
     from: examples/mini-react/
     impl_mode: hand-written
     desc: Move the mini-react fixture app into e2e/jet.
   - path: e2e/jet/tests/build.spec.ts
     action: RENAME
+    section: doc
     from: e2e/jet/tests/dom-snapshot.spec.ts
     impl_mode: hand-written
     desc: Rename DOM snapshot parity tests to build.spec.ts.
   - path: e2e/jet/tests/dev-server.spec.ts
     action: CREATE
+    section: doc
     impl_mode: hand-written
     desc: Add dev-server tests for transform, env, alias, proxy, and polyfill coverage.
   - path: e2e/jet/tests/hmr.spec.ts
     action: CREATE
+    section: doc
     impl_mode: hand-written
     desc: Add HMR tests for module, Fast Refresh, CSS, and overlay cycles.
   - path: e2e/jet/tests/css.spec.ts
     action: CREATE
+    section: doc
     impl_mode: hand-written
     desc: Add CSS pipeline tests for PostCSS, Tailwind, and rebuild behavior.
   - path: e2e/playwright.config.ts
     action: CREATE
+    section: doc
     impl_mode: hand-written
     desc: Add unified Playwright config with vite-build, jet-build, and jet-dev projects.
   - path: examples/mini-react/playwright.config.ts
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Replace fixture-local Playwright config with the unified e2e config.
 ```
