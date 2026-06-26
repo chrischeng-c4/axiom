@@ -31,6 +31,8 @@ fn dev_spec() -> LumenSpec {
         image: "lumen:latest".into(),
         image_pull_policy: None,
         shard_count: 1,
+        replicas_per_shard: 1,
+        voter_count: 1,
         log_format: LogFormat::Pretty,
         log_level: None,
         auth: AuthMode::Off,
@@ -56,6 +58,8 @@ fn prod_spec() -> LumenSpec {
         image: "registry.example.com/lumen:1.2.3".into(),
         image_pull_policy: Some("Always".into()),
         shard_count: 6,
+        replicas_per_shard: 1,
+        voter_count: 1,
         log_format: LogFormat::Json,
         log_level: Some("warn".into()),
         auth: AuthMode::Required,
@@ -351,6 +355,41 @@ fn external_broker_skips_managed_relay_objects() {
         cm["data"]["LUMEN_RELAY_URL"],
         "http://shared-relay.infra:7000"
     );
+}
+
+#[test]
+fn raft_ha_renders_serving_statefulset() {
+    // `replicasPerShard > 1` switches the serving fleet from a Deployment+HPA to a
+    // raft-HA StatefulSet whose pods carry the downward-API env raft_host::cluster
+    // reads — the operator↔raft-host wiring, end to end.
+    let mut spec = dev_spec();
+    spec.shard_count = 2;
+    spec.replicas_per_shard = 3;
+    spec.voter_count = 3;
+    let l = lumen("search", spec);
+    let objs = render(&l);
+
+    // The serving fleet is now a StatefulSet + headless Service; no Deployment/HPA.
+    assert!(has(&objs, "StatefulSet", "search"), "got {:?}", kinds(&objs));
+    assert!(has(&objs, "Service", "search-headless"));
+    assert!(!has(&objs, "Deployment", "search"));
+    assert!(!has(&objs, "HorizontalPodAutoscaler", "search"));
+
+    let sts = find(&objs, "StatefulSet", "search");
+    assert_eq!(sts["spec"]["serviceName"], "search-headless");
+    assert_eq!(sts["spec"]["podManagementPolicy"], "Parallel");
+    assert_eq!(sts["spec"]["replicas"], 6); // shard_count(2) × replicasPerShard(3)
+
+    // Exactly the env `raft_host::cluster::ClusterTopology::from_env` reads.
+    let env = env_names(&sts["spec"]["template"]["spec"]["containers"][0]);
+    for k in [
+        "POD_NAME",
+        "REPLICAS_PER_SHARD",
+        "VOTER_COUNT",
+        "LUMEN_HEADLESS_SERVICE",
+    ] {
+        assert!(env.contains(&k.to_string()), "missing {k} in {env:?}");
+    }
 }
 
 #[test]
