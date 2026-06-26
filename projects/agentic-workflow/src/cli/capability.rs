@@ -7467,6 +7467,7 @@ fn strip_migrated_capability_sources(body: &str) -> String {
             if (heading_level == 2 || heading_level == 3)
                 && title.eq_ignore_ascii_case("Capability Index")
             {
+                push_capability_insert_marker(&mut out, &mut inserted_marker);
                 idx += 1;
                 continue;
             }
@@ -8949,6 +8950,11 @@ fn parse_markdown_capability_block(
     let mut surfaces = Vec::new();
     let mut ec_dimensions = Vec::new();
     let mut machine_table_spans = Vec::<(usize, usize)>::new();
+    if contract.is_some() {
+        if let Some(span) = markdown_field_capability_contract_span(lines, heading_idx, block_end) {
+            machine_table_spans.push(span);
+        }
+    }
     let fenced = markdown_fenced_line_mask(lines);
     let mut cursor = heading_idx + 1;
     while cursor < block_end {
@@ -9220,6 +9226,50 @@ fn parse_markdown_field_capability_contract(
             .remove("efficiencycube")
             .unwrap_or_else(|| "-".to_string()),
     })
+}
+
+fn markdown_field_capability_contract_span(
+    lines: &[&str],
+    heading_idx: usize,
+    block_end: usize,
+) -> Option<(usize, usize)> {
+    let fenced = markdown_fenced_line_mask(lines);
+    let mut cursor = heading_idx + 1;
+    let mut start = None;
+    let mut saw_id = false;
+    while cursor < block_end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let trimmed = lines[cursor].trim();
+        if start.is_none() {
+            if trimmed.is_empty() {
+                cursor += 1;
+                continue;
+            }
+            if parse_markdown_table_at(lines, cursor).is_some() || parse_heading(trimmed).is_some()
+            {
+                return None;
+            }
+            let Some((key, _value)) = parse_markdown_contract_field_line(trimmed) else {
+                cursor += 1;
+                continue;
+            };
+            saw_id = key == "id";
+            start = Some(cursor);
+            cursor += 1;
+            continue;
+        }
+        if parse_markdown_table_at(lines, cursor).is_some() || parse_heading(trimmed).is_some() {
+            break;
+        }
+        if let Some((key, _value)) = parse_markdown_contract_field_line(trimmed) {
+            saw_id |= key == "id";
+        }
+        cursor += 1;
+    }
+    start.and_then(|start| saw_id.then_some((start, cursor)))
 }
 
 fn parse_markdown_contract_field_line(line: &str) -> Option<(String, String)> {
@@ -15105,6 +15155,48 @@ Legacy intro.
     }
 
     #[test]
+    fn markdown_migration_does_not_duplicate_existing_field_style_contract() {
+        let body = r#"# Jet
+
+## Brief
+
+Jet is a Rust-native frontend toolchain.
+
+## Capabilities
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Surfaces: CLI: `jet install` - package installs.
+EC Dimensions: behavior: `cargo test -p jet pkg_manager` - package lifecycle.
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+"#;
+        let doc = cap_doc(body);
+        let migrated = render_capability_markdown_migration(body, &doc, "jet");
+
+        assert_eq!(migrated.matches("\nID: package-manager\n").count(), 1);
+        assert_eq!(migrated.matches("\nType: DeveloperTool\n").count(), 1);
+        assert_eq!(migrated.matches("\nSurfaces:\n").count(), 1);
+        assert_eq!(migrated.matches("\nEC Dimensions:\n").count(), 1);
+
+        let reparsed = cap_doc(&migrated);
+        assert_eq!(reparsed.format_version(), 2);
+        assert_eq!(reparsed.capabilities.len(), 1);
+        assert!(!reparsed.requires_format_migration());
+    }
+
+    #[test]
     fn markdown_work_root_table_rejects_invalid_enums() {
         let body = one_markdown_capability().replace("| partial |", "| doing |");
         let err = parse_capability_document(&body, Path::new("README.md")).unwrap_err();
@@ -15225,6 +15317,50 @@ Benchmark reference stays after the registry.
             migrated.find("\n### Search\n").unwrap() < migrated.find("\n## Benchmarks\n").unwrap()
         );
         assert!(!migrated.contains(CAPABILITY_MIGRATION_INSERT_MARKER));
+    }
+
+    #[test]
+    fn markdown_migration_inserts_registry_at_top_level_capability_index() {
+        let body = r#"# vat
+
+Agent runner.
+
+## Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Agent-Native Containers | #4152 | implemented | verified | smoke | ready | Runs agent-native environments. |
+
+## AW Verification Snapshot
+
+| Field | Value |
+|---|---|
+| Last verified | 2026-06-20 |
+
+## Agent-Native Containers
+
+| Field | Value |
+|---|---|
+| ID | agent-native-containers |
+| Root WI | #4152 |
+| Status | candidate |
+| Promise | Runs agent-native environments. |
+| Required Verification | smoke |
+| Gate Inventory | cargo test -p vat |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Runner protocol | epic | #4152 | implemented | verified | smoke | cargo test -p vat |
+"#;
+        let doc = cap_doc(body);
+        let migrated = render_capability_markdown_migration(body, &doc, "vat");
+
+        let registry = migrated.find("\n### Capability Index\n").unwrap();
+        let snapshot = migrated.find("\n## AW Verification Snapshot\n").unwrap();
+        assert!(registry < snapshot);
+        let reparsed = cap_doc(&migrated);
+        assert_eq!(reparsed.format_version(), 2);
+        assert!(!reparsed.requires_format_migration());
     }
 
     #[test]

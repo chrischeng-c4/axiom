@@ -29,22 +29,6 @@ cleans up according to the run policy.
 
 Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
 
-## AW Verification Snapshot
-
-| Field | Value |
-|---|---|
-| Last verified | 2026-06-20 |
-| Production readiness | ready |
-| Tech design root | `projects/vat/tech-design` |
-| TD lock | `projects/vat/tech-design/td.lock` |
-| External-contract inventory | `projects/vat/tests/aw-ec.toml` |
-| Source ownership | full codegen, 100.0% (65/65) |
-| Semantic coverage | 100.0% |
-| Traceability coverage | 95.6% |
-| External-contract gate | passed, 6/6 |
-| Test gate | `cargo test -p vat` passed |
-| Health gate | `aw health vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
-
 ### Capability Index
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
@@ -56,7 +40,7 @@ Canonical field-style capability contracts below are machine-readable input for 
 ID: agent-native-gpu-native-dev-containers
 Type: AgentFirst
 Surfaces: CLI: `vat run` + `vat emulator` + `vat state/diff/fork/snapshot` - Agent-facing dev-container CLI: copy-on-write run + structured state/diff, fork/snapshot, built-in GCP/Firebase emulators (REST+gRPC), and the network sandbox (routes/egress/hermetic).
-EC Dimensions: behavior: `cargo test` - vat.toml run protocol, built-in emulators (REST + gRPC), transparent routing, and seatbelt egress/hermetic conformance via cargo test -p vat.
+EC Dimensions: behavior: `cargo test -p vat` - vat.toml run protocol, built-in emulators (REST + gRPC), transparent routing, and seatbelt egress/hermetic conformance.
 Root WI: #4152
 Status: verified
 Required Verification: smoke
@@ -90,6 +74,22 @@ Gate Inventory:
 | Copy-on-write fork and snapshot lifecycle | epic | - | implemented | verified | smoke | `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md` |
 | Resource isolation boundary | epic | - | implemented | verified | smoke | `rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox` |
 
+
+## AW Verification Snapshot
+
+| Field | Value |
+|---|---|
+| Last verified | 2026-06-20 |
+| Production readiness | ready |
+| Tech design root | `projects/vat/tech-design` |
+| TD lock | `projects/vat/tech-design/td.lock` |
+| External-contract inventory | `projects/vat/tests/aw-ec.toml` |
+| Source ownership | full codegen, 100.0% (65/65) |
+| Semantic coverage | 100.0% |
+| Traceability coverage | 95.6% |
+| External-contract gate | passed, 6/6 |
+| Test gate | `cargo test -p vat` passed |
+| Health gate | `aw health vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
 
 ## What vat is *not*
 
