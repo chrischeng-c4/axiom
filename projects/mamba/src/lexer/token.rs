@@ -5,6 +5,53 @@ use logos::Logos;
 /// into AST BigInt literals.
 pub const BIG_INT_LITERAL_SENTINEL: i64 = i64::MIN;
 
+const SURROGATE_ESCAPE_MARKER: [char; 3] = ['\u{E000}', '\u{E001}', '\u{E002}'];
+
+fn push_surrogate_escape_marker(out: &mut String, codepoint: u32) {
+    for marker in SURROGATE_ESCAPE_MARKER {
+        out.push(marker);
+    }
+    out.push_str(&format!("{codepoint:04x}"));
+}
+
+pub(crate) fn decode_surrogate_escape_markers(s: &str) -> Option<Vec<u32>> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut idx = 0;
+    let mut codepoints = Vec::new();
+    let mut saw_marker = false;
+    while idx < chars.len() {
+        let c = chars[idx];
+        if c != SURROGATE_ESCAPE_MARKER[0] {
+            codepoints.push(c as u32);
+            idx += 1;
+            continue;
+        }
+
+        let marker_end = idx + SURROGATE_ESCAPE_MARKER.len();
+        if marker_end > chars.len()
+            || chars[idx..marker_end] != SURROGATE_ESCAPE_MARKER
+            || marker_end + 4 > chars.len()
+        {
+            codepoints.push(c as u32);
+            idx += 1;
+            continue;
+        }
+
+        let mut hex = String::with_capacity(4);
+        for h in &chars[marker_end..marker_end + 4] {
+            hex.push(*h);
+        }
+        let cp = u32::from_str_radix(&hex, 16).ok()?;
+        if !(0xD800..=0xDFFF).contains(&cp) {
+            return None;
+        }
+        saw_marker = true;
+        codepoints.push(cp);
+        idx = marker_end + 4;
+    }
+    saw_marker.then_some(codepoints)
+}
+
 /// Map a Unicode character name (per Python's `\N{name}` syntax) to a char.
 /// Contains a small but representative set of common Unicode names.
 fn unicode_name_to_char(name: &str) -> Option<char> {
@@ -164,6 +211,10 @@ pub(crate) fn apply_escape_sequences(s: &str) -> String {
                     }
                 }
                 if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                    if (0xD800..=0xDFFF).contains(&n) {
+                        push_surrogate_escape_marker(&mut result, n);
+                        continue;
+                    }
                     if let Some(uc) = char::from_u32(n) {
                         result.push(uc);
                         continue;
@@ -182,6 +233,10 @@ pub(crate) fn apply_escape_sequences(s: &str) -> String {
                     }
                 }
                 if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                    if (0xD800..=0xDFFF).contains(&n) {
+                        push_surrogate_escape_marker(&mut result, n);
+                        continue;
+                    }
                     if let Some(uc) = char::from_u32(n) {
                         result.push(uc);
                         continue;
@@ -672,10 +727,7 @@ fn parse_prefixed_int_literal(s: &str, radix: u32, is_digit: fn(u8) -> bool) -> 
     if body.is_empty() || !underscores_between_digits(body, is_digit) {
         return None;
     }
-    Some(
-        i64::from_str_radix(&body.replace('_', ""), radix)
-            .unwrap_or(BIG_INT_LITERAL_SENTINEL),
-    )
+    Some(i64::from_str_radix(&body.replace('_', ""), radix).unwrap_or(BIG_INT_LITERAL_SENTINEL))
 }
 
 /// Token kind produced by the lexer.
@@ -817,8 +869,14 @@ pub enum TokenKind {
     #[regex(r"0[oO][A-Za-z0-9_]*", priority = 1)]
     #[regex(r"0[bB][A-Za-z0-9_]*", priority = 1)]
     #[regex(r"0_[A-Za-z][A-Za-z0-9_]*", priority = 3)]
-    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ][A-Za-z0-9_]+", priority = 2)]
-    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ][A-Za-z0-9_]+", priority = 2)]
+    #[regex(
+        r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ][A-Za-z0-9_]+",
+        priority = 2
+    )]
+    #[regex(
+        r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ][A-Za-z0-9_]+",
+        priority = 2
+    )]
     #[regex(r"[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ][A-Za-z0-9_]+", priority = 2)]
     #[regex(r"[0-9][0-9_]*\.[0-9_]*[eE][+-]?[A-Za-z0-9_]*", priority = 1)]
     #[regex(r"\.[0-9][0-9_]*[eE][+-]?[A-Za-z0-9_]*", priority = 1)]
