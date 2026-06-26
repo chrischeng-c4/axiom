@@ -452,7 +452,17 @@ impl CraneliftBackend {
                         .iconst(cl_types::I64, MbValue::ellipsis().to_bits() as i64),
                     MirConst::Str(s) => {
                         // Use immortal refcount for compile-time string constants (#1129 R4).
-                        let str_val = MbValue::from_ptr(MbObject::new_str_immortal(s.clone()));
+                        let str_val = if let Some(codepoints) =
+                            crate::lexer::token::decode_surrogate_escape_markers(s)
+                        {
+                            MbValue::from_ptr(
+                                crate::runtime::string_ops::new_surrogate_codepoints_str_immortal(
+                                    codepoints,
+                                ),
+                            )
+                        } else {
+                            MbValue::from_ptr(MbObject::new_str_immortal(s.clone()))
+                        };
                         builder
                             .ins()
                             .iconst(cl_types::I64, str_val.to_bits() as i64)
@@ -513,8 +523,7 @@ impl CraneliftBackend {
                         let dv = vars.get(*dest, builder, cl_types::I64);
                         builder.def_var(dv, zero);
                     }
-                } else if (matches!(op, MirBinOp::FloorDiv)
-                    || matches!(op, MirBinOp::Mod))
+                } else if (matches!(op, MirBinOp::FloorDiv) || matches!(op, MirBinOp::Mod))
                     && matches!(resolved_ty, Ty::Int | Ty::Float | Ty::Bool)
                 {
                     // Floor division / modulo → call mb_floordiv / mb_mod runtime

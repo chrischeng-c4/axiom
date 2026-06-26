@@ -39,13 +39,23 @@ pub(crate) fn new_surrogate_codepoints_str(codepoints: Vec<u32>) -> MbValue {
     val
 }
 
+pub(crate) fn new_surrogate_codepoints_str_immortal(codepoints: Vec<u32>) -> *mut MbObject {
+    let ptr = MbObject::new_str_immortal(SURROGATE_SENTINEL.to_string());
+    SURROGATE_STRINGS.with(|strings| {
+        strings.borrow_mut().insert(ptr as usize, codepoints);
+    });
+    ptr
+}
+
 pub(crate) fn new_lone_surrogate_str(codepoint: u32) -> MbValue {
     debug_assert!((0xD800..=0xDFFF).contains(&codepoint));
     new_surrogate_codepoints_str(vec![codepoint])
 }
 
 pub(crate) fn cleanup_all_surrogate_strings() {
-    SURROGATE_STRINGS.with(|strings| strings.borrow_mut().clear());
+    // Surrogate metadata is keyed by object pointer, but lookup first verifies
+    // the object is the sentinel string. Clearing here breaks already-compiled
+    // string literals when imports run nested runtime cleanup.
 }
 
 pub(crate) fn surrogate_codepoints(val: MbValue) -> Option<Vec<u32>> {
@@ -187,7 +197,7 @@ fn raise_overflow_error(msg: impl Into<String>) -> MbValue {
 fn known_text_codec_fallback(enc: &str) -> bool {
     matches!(
         enc.replace('_', "-").as_str(),
-            "idna"
+        "idna"
             | "utf-7"
             | "utf7"
             | "euc-jp"
@@ -207,6 +217,180 @@ fn known_text_codec_fallback(enc: &str) -> bool {
             | "gb2312"
             | "gb18030"
     )
+}
+
+fn encode_error_char_repr(codepoint: u32) -> String {
+    if codepoint <= 0xFFFF {
+        format!("\\u{codepoint:04x}")
+    } else {
+        format!("\\U{codepoint:08x}")
+    }
+}
+
+fn raise_unicode_encode_error_instance(
+    encoding: &str,
+    object: MbValue,
+    start: usize,
+    end: usize,
+    reason: &str,
+    codepoint: u32,
+) -> MbValue {
+    let char_repr = encode_error_char_repr(codepoint);
+    let message = format!(
+        "'{encoding}' codec can't encode character '{char_repr}' in position {start}: {reason}"
+    );
+    let inst = MbValue::from_ptr(MbObject::new_instance("UnicodeEncodeError".to_string()));
+    unsafe {
+        super::rc::retain_if_ptr(object);
+        super::rc::retain_if_ptr(object);
+        if let Some(ptr) = inst.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut fields = fields.write().unwrap();
+                fields.insert(
+                    "message".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(message)),
+                );
+                fields.insert(
+                    "__type__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str("UnicodeEncodeError".to_string())),
+                );
+                fields.insert("__cause__".to_string(), MbValue::none());
+                fields.insert("__context__".to_string(), MbValue::none());
+                fields.insert(
+                    "__suppress_context__".to_string(),
+                    MbValue::from_bool(false),
+                );
+                fields.insert(
+                    "encoding".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(encoding.to_string())),
+                );
+                fields.insert("object".to_string(), object);
+                fields.insert("start".to_string(), MbValue::from_int(start as i64));
+                fields.insert("end".to_string(), MbValue::from_int(end as i64));
+                fields.insert(
+                    "reason".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(reason.to_string())),
+                );
+                fields.insert(
+                    "args".to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(vec![
+                        MbValue::from_ptr(MbObject::new_str(encoding.to_string())),
+                        object,
+                        MbValue::from_int(start as i64),
+                        MbValue::from_int(end as i64),
+                        MbValue::from_ptr(MbObject::new_str(reason.to_string())),
+                    ])),
+                );
+            }
+        }
+    }
+    super::class::mb_raise_instance(inst);
+    MbValue::none()
+}
+
+fn push_utf16_codepoint(out: &mut Vec<u8>, codepoint: u32, be: bool) {
+    if codepoint <= 0xFFFF {
+        let unit = codepoint as u16;
+        if be {
+            out.extend_from_slice(&unit.to_be_bytes());
+        } else {
+            out.extend_from_slice(&unit.to_le_bytes());
+        }
+        return;
+    }
+
+    let n = codepoint - 0x10000;
+    let high = 0xD800u16 + ((n >> 10) as u16);
+    let low = 0xDC00u16 + ((n & 0x3FF) as u16);
+    for unit in [high, low] {
+        if be {
+            out.extend_from_slice(&unit.to_be_bytes());
+        } else {
+            out.extend_from_slice(&unit.to_le_bytes());
+        }
+    }
+}
+
+fn push_utf32_codepoint(out: &mut Vec<u8>, codepoint: u32, be: bool) {
+    if be {
+        out.extend_from_slice(&codepoint.to_be_bytes());
+    } else {
+        out.extend_from_slice(&codepoint.to_le_bytes());
+    }
+}
+
+fn encode_surrogate_codepoints_utf16(
+    object: MbValue,
+    codepoints: &[u32],
+    encoding: &str,
+    err: &str,
+    be: bool,
+    bom: Option<&[u8]>,
+) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    if let Some(prefix) = bom {
+        out.extend_from_slice(prefix);
+    }
+    for (idx, &cp) in codepoints.iter().enumerate() {
+        if (0xD800..=0xDFFF).contains(&cp) {
+            match err {
+                "ignore" => continue,
+                "replace" => push_utf16_codepoint(&mut out, '?' as u32, be),
+                "surrogatepass" => push_utf16_codepoint(&mut out, cp, be),
+                _ => {
+                    raise_unicode_encode_error_instance(
+                        encoding,
+                        object,
+                        idx,
+                        idx + 1,
+                        "surrogates not allowed",
+                        cp,
+                    );
+                    return None;
+                }
+            }
+        } else {
+            push_utf16_codepoint(&mut out, cp, be);
+        }
+    }
+    Some(out)
+}
+
+fn encode_surrogate_codepoints_utf32(
+    object: MbValue,
+    codepoints: &[u32],
+    encoding: &str,
+    err: &str,
+    be: bool,
+    bom: Option<&[u8]>,
+) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    if let Some(prefix) = bom {
+        out.extend_from_slice(prefix);
+    }
+    for (idx, &cp) in codepoints.iter().enumerate() {
+        if (0xD800..=0xDFFF).contains(&cp) {
+            match err {
+                "ignore" => continue,
+                "replace" => push_utf32_codepoint(&mut out, '?' as u32, be),
+                "surrogatepass" => push_utf32_codepoint(&mut out, cp, be),
+                _ => {
+                    raise_unicode_encode_error_instance(
+                        encoding,
+                        object,
+                        idx,
+                        idx + 1,
+                        "surrogates not allowed",
+                        cp,
+                    );
+                    return None;
+                }
+            }
+        } else {
+            push_utf32_codepoint(&mut out, cp, be);
+        }
+    }
+    Some(out)
 }
 
 fn int_digits_for_percent(v: MbValue, radix: u32) -> Option<(bool, String)> {
@@ -1321,6 +1505,22 @@ pub fn mb_str_encode(s: MbValue) -> MbValue {
     // Default encoding/errors path — `mb_str_encode_with` covers the
     // explicit-args form so the dispatcher can route both calls.
     unsafe {
+        if let Some(codepoints) = surrogate_codepoints(s) {
+            if let Some((idx, cp)) = codepoints
+                .iter()
+                .enumerate()
+                .find(|(_, cp)| (0xD800..=0xDFFF).contains(*cp))
+            {
+                return raise_unicode_encode_error_instance(
+                    "utf-8",
+                    s,
+                    idx,
+                    idx + 1,
+                    "surrogates not allowed",
+                    *cp,
+                );
+            }
+        }
         if let Some(st) = as_str(s) {
             MbValue::from_ptr(MbObject::new_bytes(st.as_bytes().to_vec()))
         } else {
@@ -1361,65 +1561,379 @@ pub(crate) fn nontext_codec_name(enc: &str) -> Option<&'static str> {
 /// fallback) from a genuinely unknown name (which must raise `LookupError:
 /// unknown encoding: <name>`, matching CPython).
 const KNOWN_CODECS: &[&str] = &[
-    "037", "1026", "1125", "1140", "1250", "1251", "1252", "1253", "1254",
-    "1255", "1256", "1257", "1258", "273", "424", "437", "500", "646", "775",
-    "850", "852", "855", "857", "858", "860", "861", "862", "863", "864",
-    "865", "866", "869", "8859", "932", "936", "949", "950", "ansix3.41968",
-    "ansix3.41986", "ansix341968", "arabic", "ascii", "asmo708", "base64",
-    "base64codec", "big5", "big5hkscs", "big5tw", "bz2", "bz2codec", "charmap",
-    "chinese", "cp037", "cp1006", "cp1026", "cp1051", "cp1125", "cp1140",
-    "cp1250", "cp1251", "cp1252", "cp1253", "cp1254", "cp1255", "cp1256",
-    "cp1257", "cp1258", "cp1361", "cp154", "cp273", "cp367", "cp424", "cp437",
-    "cp500", "cp65001", "cp720", "cp737", "cp775", "cp819", "cp850", "cp852",
-    "cp855", "cp856", "cp857", "cp858", "cp860", "cp861", "cp862", "cp863",
-    "cp864", "cp865", "cp866", "cp866u", "cp869", "cp874", "cp875", "cp932",
-    "cp936", "cp949", "cp950", "cpgr", "cpis", "csascii", "csbig5", "csibm037",
-    "csibm1026", "csibm273", "csibm424", "csibm500", "csibm855", "csibm857",
-    "csibm858", "csibm860", "csibm861", "csibm863", "csibm864", "csibm865",
-    "csibm866", "csibm869", "csiso2022jp", "csiso2022kr", "csiso58gb231280",
-    "csisolatin1", "csisolatin2", "csisolatin3", "csisolatin4", "csisolatin5",
-    "csisolatin6", "csisolatinarabic", "csisolatincyrillic", "csisolatingreek",
-    "csisolatinhebrew", "cskoi8r", "cspc775baltic", "cspc850multilingual",
-    "cspc862latinhebrew", "cspc8codepage437", "cspcp852", "csptcp154",
-    "csshiftjis", "cyrillic", "cyrillicasian", "ebcdiccpbe", "ebcdiccpca",
-    "ebcdiccpch", "ebcdiccphe", "ebcdiccpnl", "ebcdiccpus", "ebcdiccpwt",
-    "ecma114", "ecma118", "elot928", "euccn", "eucgb2312cn", "eucjis2004",
-    "eucjisx0213", "eucjp", "euckr", "gb18030", "gb180302000", "gb2312",
-    "gb23121980", "gb231280", "gbk", "greek", "greek8", "hebrew", "hex",
-    "hexcodec", "hkscs", "hproman8", "hz", "hzgb", "hzgb2312", "ibm037",
-    "ibm039", "ibm1026", "ibm1051", "ibm1125", "ibm1140", "ibm273", "ibm367",
-    "ibm424", "ibm437", "ibm500", "ibm775", "ibm819", "ibm850", "ibm852",
-    "ibm855", "ibm857", "ibm858", "ibm860", "ibm861", "ibm862", "ibm863",
-    "ibm864", "ibm865", "ibm866", "ibm869", "idna", "iso2022jp", "iso2022jp1",
-    "iso2022jp2", "iso2022jp2004", "iso2022jp3", "iso2022jpext", "iso2022kr",
-    "iso646.irv1991", "iso646us", "iso8859", "iso88591", "iso885910",
-    "iso8859101992", "iso885911", "iso8859112001", "iso885911987", "iso885913",
-    "iso885914", "iso8859141998", "iso885915", "iso885916", "iso8859162001",
-    "iso88592", "iso885921987", "iso88593", "iso885931988", "iso88594",
-    "iso885941988", "iso88595", "iso885951988", "iso88596", "iso885961987",
-    "iso88597", "iso885971987", "iso88598", "iso885981988", "iso88599",
-    "iso885991989", "isoceltic", "isoir100", "isoir101", "isoir109",
-    "isoir110", "isoir126", "isoir127", "isoir138", "isoir144", "isoir148",
-    "isoir157", "isoir166", "isoir199", "isoir226", "isoir58", "isoir6",
-    "jisx0213", "johab", "koi8r", "koi8t", "koi8u", "korean", "ksc5601",
-    "ksc56011987", "ksx1001", "kz1048", "l1", "l10", "l2", "l3", "l4", "l5",
-    "l6", "l7", "l8", "l9", "latin", "latin1", "latin10", "latin2", "latin3",
-    "latin4", "latin5", "latin6", "latin7", "latin8", "latin9", "macarabic",
-    "maccenteuro", "maccentraleurope", "maccroatian", "maccyrillic", "macfarsi",
-    "macgreek", "maciceland", "macintosh", "maclatin2", "macroman",
-    "macromanian", "macturkish", "ms1361", "ms932", "ms936", "ms949", "ms950",
-    "mskanji", "palmos", "pt154", "ptcp154", "punycode", "quopri",
-    "quopricodec", "quotedprintable", "r8", "rawunicodeescape", "rk1048",
-    "roman8", "rot13", "ruscii", "shiftjis", "shiftjis2004", "shiftjisx0213",
-    "sjis", "sjis2004", "sjisx0213", "strk10482002", "thai", "tis620",
-    "tis6200", "tis62025290", "tis62025291", "u16", "u32", "u7", "u8", "uhc",
-    "ujis", "undefined", "unicode11utf7", "unicodebigunmarked", "unicodeescape",
-    "unicodelittleunmarked", "us", "usascii", "utf", "utf16", "utf16be",
-    "utf16le", "utf32", "utf32be", "utf32le", "utf7", "utf8", "utf8sig",
-    "utf8ucs2", "utf8ucs4", "uu", "uucodec", "windows1250", "windows1251",
-    "windows1252", "windows1253", "windows1254", "windows1255", "windows1256",
-    "windows1257", "windows1258", "xmacjapanese", "xmackorean",
-    "xmacsimpchinese", "xmactradchinese", "zip", "zlib", "zlibcodec",
+    "037",
+    "1026",
+    "1125",
+    "1140",
+    "1250",
+    "1251",
+    "1252",
+    "1253",
+    "1254",
+    "1255",
+    "1256",
+    "1257",
+    "1258",
+    "273",
+    "424",
+    "437",
+    "500",
+    "646",
+    "775",
+    "850",
+    "852",
+    "855",
+    "857",
+    "858",
+    "860",
+    "861",
+    "862",
+    "863",
+    "864",
+    "865",
+    "866",
+    "869",
+    "8859",
+    "932",
+    "936",
+    "949",
+    "950",
+    "ansix3.41968",
+    "ansix3.41986",
+    "ansix341968",
+    "arabic",
+    "ascii",
+    "asmo708",
+    "base64",
+    "base64codec",
+    "big5",
+    "big5hkscs",
+    "big5tw",
+    "bz2",
+    "bz2codec",
+    "charmap",
+    "chinese",
+    "cp037",
+    "cp1006",
+    "cp1026",
+    "cp1051",
+    "cp1125",
+    "cp1140",
+    "cp1250",
+    "cp1251",
+    "cp1252",
+    "cp1253",
+    "cp1254",
+    "cp1255",
+    "cp1256",
+    "cp1257",
+    "cp1258",
+    "cp1361",
+    "cp154",
+    "cp273",
+    "cp367",
+    "cp424",
+    "cp437",
+    "cp500",
+    "cp65001",
+    "cp720",
+    "cp737",
+    "cp775",
+    "cp819",
+    "cp850",
+    "cp852",
+    "cp855",
+    "cp856",
+    "cp857",
+    "cp858",
+    "cp860",
+    "cp861",
+    "cp862",
+    "cp863",
+    "cp864",
+    "cp865",
+    "cp866",
+    "cp866u",
+    "cp869",
+    "cp874",
+    "cp875",
+    "cp932",
+    "cp936",
+    "cp949",
+    "cp950",
+    "cpgr",
+    "cpis",
+    "csascii",
+    "csbig5",
+    "csibm037",
+    "csibm1026",
+    "csibm273",
+    "csibm424",
+    "csibm500",
+    "csibm855",
+    "csibm857",
+    "csibm858",
+    "csibm860",
+    "csibm861",
+    "csibm863",
+    "csibm864",
+    "csibm865",
+    "csibm866",
+    "csibm869",
+    "csiso2022jp",
+    "csiso2022kr",
+    "csiso58gb231280",
+    "csisolatin1",
+    "csisolatin2",
+    "csisolatin3",
+    "csisolatin4",
+    "csisolatin5",
+    "csisolatin6",
+    "csisolatinarabic",
+    "csisolatincyrillic",
+    "csisolatingreek",
+    "csisolatinhebrew",
+    "cskoi8r",
+    "cspc775baltic",
+    "cspc850multilingual",
+    "cspc862latinhebrew",
+    "cspc8codepage437",
+    "cspcp852",
+    "csptcp154",
+    "csshiftjis",
+    "cyrillic",
+    "cyrillicasian",
+    "ebcdiccpbe",
+    "ebcdiccpca",
+    "ebcdiccpch",
+    "ebcdiccphe",
+    "ebcdiccpnl",
+    "ebcdiccpus",
+    "ebcdiccpwt",
+    "ecma114",
+    "ecma118",
+    "elot928",
+    "euccn",
+    "eucgb2312cn",
+    "eucjis2004",
+    "eucjisx0213",
+    "eucjp",
+    "euckr",
+    "gb18030",
+    "gb180302000",
+    "gb2312",
+    "gb23121980",
+    "gb231280",
+    "gbk",
+    "greek",
+    "greek8",
+    "hebrew",
+    "hex",
+    "hexcodec",
+    "hkscs",
+    "hproman8",
+    "hz",
+    "hzgb",
+    "hzgb2312",
+    "ibm037",
+    "ibm039",
+    "ibm1026",
+    "ibm1051",
+    "ibm1125",
+    "ibm1140",
+    "ibm273",
+    "ibm367",
+    "ibm424",
+    "ibm437",
+    "ibm500",
+    "ibm775",
+    "ibm819",
+    "ibm850",
+    "ibm852",
+    "ibm855",
+    "ibm857",
+    "ibm858",
+    "ibm860",
+    "ibm861",
+    "ibm862",
+    "ibm863",
+    "ibm864",
+    "ibm865",
+    "ibm866",
+    "ibm869",
+    "idna",
+    "iso2022jp",
+    "iso2022jp1",
+    "iso2022jp2",
+    "iso2022jp2004",
+    "iso2022jp3",
+    "iso2022jpext",
+    "iso2022kr",
+    "iso646.irv1991",
+    "iso646us",
+    "iso8859",
+    "iso88591",
+    "iso885910",
+    "iso8859101992",
+    "iso885911",
+    "iso8859112001",
+    "iso885911987",
+    "iso885913",
+    "iso885914",
+    "iso8859141998",
+    "iso885915",
+    "iso885916",
+    "iso8859162001",
+    "iso88592",
+    "iso885921987",
+    "iso88593",
+    "iso885931988",
+    "iso88594",
+    "iso885941988",
+    "iso88595",
+    "iso885951988",
+    "iso88596",
+    "iso885961987",
+    "iso88597",
+    "iso885971987",
+    "iso88598",
+    "iso885981988",
+    "iso88599",
+    "iso885991989",
+    "isoceltic",
+    "isoir100",
+    "isoir101",
+    "isoir109",
+    "isoir110",
+    "isoir126",
+    "isoir127",
+    "isoir138",
+    "isoir144",
+    "isoir148",
+    "isoir157",
+    "isoir166",
+    "isoir199",
+    "isoir226",
+    "isoir58",
+    "isoir6",
+    "jisx0213",
+    "johab",
+    "koi8r",
+    "koi8t",
+    "koi8u",
+    "korean",
+    "ksc5601",
+    "ksc56011987",
+    "ksx1001",
+    "kz1048",
+    "l1",
+    "l10",
+    "l2",
+    "l3",
+    "l4",
+    "l5",
+    "l6",
+    "l7",
+    "l8",
+    "l9",
+    "latin",
+    "latin1",
+    "latin10",
+    "latin2",
+    "latin3",
+    "latin4",
+    "latin5",
+    "latin6",
+    "latin7",
+    "latin8",
+    "latin9",
+    "macarabic",
+    "maccenteuro",
+    "maccentraleurope",
+    "maccroatian",
+    "maccyrillic",
+    "macfarsi",
+    "macgreek",
+    "maciceland",
+    "macintosh",
+    "maclatin2",
+    "macroman",
+    "macromanian",
+    "macturkish",
+    "ms1361",
+    "ms932",
+    "ms936",
+    "ms949",
+    "ms950",
+    "mskanji",
+    "palmos",
+    "pt154",
+    "ptcp154",
+    "punycode",
+    "quopri",
+    "quopricodec",
+    "quotedprintable",
+    "r8",
+    "rawunicodeescape",
+    "rk1048",
+    "roman8",
+    "rot13",
+    "ruscii",
+    "shiftjis",
+    "shiftjis2004",
+    "shiftjisx0213",
+    "sjis",
+    "sjis2004",
+    "sjisx0213",
+    "strk10482002",
+    "thai",
+    "tis620",
+    "tis6200",
+    "tis62025290",
+    "tis62025291",
+    "u16",
+    "u32",
+    "u7",
+    "u8",
+    "uhc",
+    "ujis",
+    "undefined",
+    "unicode11utf7",
+    "unicodebigunmarked",
+    "unicodeescape",
+    "unicodelittleunmarked",
+    "us",
+    "usascii",
+    "utf",
+    "utf16",
+    "utf16be",
+    "utf16le",
+    "utf32",
+    "utf32be",
+    "utf32le",
+    "utf7",
+    "utf8",
+    "utf8sig",
+    "utf8ucs2",
+    "utf8ucs4",
+    "uu",
+    "uucodec",
+    "windows1250",
+    "windows1251",
+    "windows1252",
+    "windows1253",
+    "windows1254",
+    "windows1255",
+    "windows1256",
+    "windows1257",
+    "windows1258",
+    "xmacjapanese",
+    "xmackorean",
+    "xmacsimpchinese",
+    "xmactradchinese",
+    "zip",
+    "zlib",
+    "zlibcodec",
 ];
 
 /// True when `name` is a codec CPython's `codecs.lookup` resolves. Mirrors the
@@ -1501,6 +2015,19 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
             // BOM (matching CPython's native default). Needed by plistlib's
             // binary writer (unicode strings → utf-16be) and test_xml_encodings.
             "utf-16be" | "utf-16-be" | "utf_16_be" => {
+                if let Some(codepoints) = surrogate_codepoints(s) {
+                    let Some(out) = encode_surrogate_codepoints_utf16(
+                        s,
+                        &codepoints,
+                        "utf-16-be",
+                        &err,
+                        true,
+                        None,
+                    ) else {
+                        return MbValue::none();
+                    };
+                    return MbValue::from_ptr(MbObject::new_bytes(out));
+                }
                 let mut out = Vec::with_capacity(st.len() * 2);
                 for u in st.encode_utf16() {
                     out.extend_from_slice(&u.to_be_bytes());
@@ -1508,6 +2035,19 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                 out
             }
             "utf-16le" | "utf-16-le" | "utf_16_le" => {
+                if let Some(codepoints) = surrogate_codepoints(s) {
+                    let Some(out) = encode_surrogate_codepoints_utf16(
+                        s,
+                        &codepoints,
+                        "utf-16-le",
+                        &err,
+                        false,
+                        None,
+                    ) else {
+                        return MbValue::none();
+                    };
+                    return MbValue::from_ptr(MbObject::new_bytes(out));
+                }
                 let mut out = Vec::with_capacity(st.len() * 2);
                 for u in st.encode_utf16() {
                     out.extend_from_slice(&u.to_le_bytes());
@@ -1515,6 +2055,19 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                 out
             }
             "utf-16" | "utf16" => {
+                if let Some(codepoints) = surrogate_codepoints(s) {
+                    let Some(out) = encode_surrogate_codepoints_utf16(
+                        s,
+                        &codepoints,
+                        "utf-16",
+                        &err,
+                        false,
+                        Some(&[0xFF, 0xFE]),
+                    ) else {
+                        return MbValue::none();
+                    };
+                    return MbValue::from_ptr(MbObject::new_bytes(out));
+                }
                 let mut out = vec![0xFF, 0xFE];
                 for u in st.encode_utf16() {
                     out.extend_from_slice(&u.to_le_bytes());
@@ -1522,6 +2075,19 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                 out
             }
             "utf-32be" | "utf-32-be" | "utf_32_be" => {
+                if let Some(codepoints) = surrogate_codepoints(s) {
+                    let Some(out) = encode_surrogate_codepoints_utf32(
+                        s,
+                        &codepoints,
+                        "utf-32-be",
+                        &err,
+                        true,
+                        None,
+                    ) else {
+                        return MbValue::none();
+                    };
+                    return MbValue::from_ptr(MbObject::new_bytes(out));
+                }
                 let mut out = Vec::with_capacity(st.len() * 4);
                 for ch in st.chars() {
                     out.extend_from_slice(&(ch as u32).to_be_bytes());
@@ -1529,6 +2095,19 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                 out
             }
             "utf-32le" | "utf-32-le" | "utf_32_le" => {
+                if let Some(codepoints) = surrogate_codepoints(s) {
+                    let Some(out) = encode_surrogate_codepoints_utf32(
+                        s,
+                        &codepoints,
+                        "utf-32-le",
+                        &err,
+                        false,
+                        None,
+                    ) else {
+                        return MbValue::none();
+                    };
+                    return MbValue::from_ptr(MbObject::new_bytes(out));
+                }
                 let mut out = Vec::with_capacity(st.len() * 4);
                 for ch in st.chars() {
                     out.extend_from_slice(&(ch as u32).to_le_bytes());
@@ -1536,6 +2115,19 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                 out
             }
             "utf-32" | "utf32" => {
+                if let Some(codepoints) = surrogate_codepoints(s) {
+                    let Some(out) = encode_surrogate_codepoints_utf32(
+                        s,
+                        &codepoints,
+                        "utf-32",
+                        &err,
+                        false,
+                        Some(&[0xFF, 0xFE, 0x00, 0x00]),
+                    ) else {
+                        return MbValue::none();
+                    };
+                    return MbValue::from_ptr(MbObject::new_bytes(out));
+                }
                 let mut out = vec![0xFF, 0xFE, 0x00, 0x00];
                 for ch in st.chars() {
                     out.extend_from_slice(&(ch as u32).to_le_bytes());
@@ -1685,15 +2277,10 @@ pub fn mb_str_splitlines(s: MbValue, keepends: MbValue) -> MbValue {
 pub fn mb_str_expandtabs(s: MbValue, tabsize: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
-            let bigint_tabsize = tabsize.as_ptr().map_or(false, |p| {
-                matches!(&(*p).data, ObjData::BigInt(_))
-            });
-            if bigint_tabsize
-                || tabsize
-                    .as_int()
-                    .map(|i| i > 1_000_000_000)
-                    .unwrap_or(false)
-            {
+            let bigint_tabsize = tabsize
+                .as_ptr()
+                .map_or(false, |p| matches!(&(*p).data, ObjData::BigInt(_)));
+            if bigint_tabsize || tabsize.as_int().map(|i| i > 1_000_000_000).unwrap_or(false) {
                 return raise_overflow_error("Python int too large to convert to C int");
             }
             let size: usize = tabsize
@@ -2642,9 +3229,7 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
 
         let (mut sign_prefix, body) = match conv {
             'd' | 'i' => {
-                if let Some((negative, digits)) =
-                    val.and_then(|a| int_digits_for_percent(a, 10))
-                {
+                if let Some((negative, digits)) = val.and_then(|a| int_digits_for_percent(a, 10)) {
                     let prefix = if negative {
                         "-".to_string()
                     } else if sign_plus {
@@ -2656,7 +3241,10 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                     };
                     (prefix, digits)
                 } else {
-                    let v = val.and_then(|a| a.as_float()).map(|f| f as i64).unwrap_or(0);
+                    let v = val
+                        .and_then(|a| a.as_float())
+                        .map(|f| f as i64)
+                        .unwrap_or(0);
                     let prefix = if v < 0 {
                         "-".to_string()
                     } else if sign_plus {
@@ -3659,10 +4247,12 @@ pub fn value_to_string(val: MbValue) -> String {
                             .ok()
                             .and_then(|f| f.get("__name__").copied())
                             .and_then(|v| v.as_ptr())
-                            .and_then(|p| if let ObjData::Str(ref s) = (*p).data {
-                                Some(s.clone())
-                            } else {
-                                None
+                            .and_then(|p| {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
                             });
                         if let Some(name) = name {
                             return format!("<class '{name}'>");
@@ -3743,9 +4333,7 @@ pub fn value_to_string(val: MbValue) -> String {
                     }
                     // zoneinfo.ZoneInfo str is its key (e.g. "America/New_York").
                     if class_name == "ZoneInfo" {
-                        if let Some(k) = fields.read().ok()
-                            .and_then(|f| f.get("key").copied())
-                        {
+                        if let Some(k) = fields.read().ok().and_then(|f| f.get("key").copied()) {
                             if let Some(p) = k.as_ptr() {
                                 if let ObjData::Str(ref s) = (*p).data {
                                     return s.clone();
@@ -3803,7 +4391,11 @@ pub fn value_to_string(val: MbValue) -> String {
                                 }
                             });
                             let m = msg_v.as_ptr().and_then(|p| unsafe {
-                                if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
                             });
                             if let (Some(n), Some(m)) = (n, m) {
                                 return format!(
@@ -3923,7 +4515,11 @@ pub fn value_to_string(val: MbValue) -> String {
 /// gives `NaN`); inf/-inf and integer-valued floats already match via `{}`.
 pub fn complex_repr_string(re: f64, im: f64) -> String {
     fn part(f: f64) -> String {
-        if f.is_nan() { "nan".to_string() } else { format!("{f}") }
+        if f.is_nan() {
+            "nan".to_string()
+        } else {
+            format!("{f}")
+        }
     }
     if re == 0.0 && re.is_sign_positive() {
         format!("{}j", part(im))

@@ -605,7 +605,15 @@ impl CraneliftJitBackend {
                         .iconst(cl_types::I64, MbValue::ellipsis().to_bits() as i64),
                     MirConst::Str(s) => {
                         // Allocate immortal string at JIT compile time (#1129 R4).
-                        let ptr = MbObject::new_str_immortal(s.clone());
+                        let ptr = if let Some(codepoints) =
+                            crate::lexer::token::decode_surrogate_escape_markers(s)
+                        {
+                            crate::runtime::string_ops::new_surrogate_codepoints_str_immortal(
+                                codepoints,
+                            )
+                        } else {
+                            MbObject::new_str_immortal(s.clone())
+                        };
                         self.compile_time_objects.push(ptr);
                         let str_val = MbValue::from_ptr(ptr);
                         builder
