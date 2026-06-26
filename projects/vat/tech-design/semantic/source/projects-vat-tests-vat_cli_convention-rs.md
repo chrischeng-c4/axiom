@@ -1,5 +1,36 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_cli_convention-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-vat-tests-vat_cli_convention-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves the binary smoke tests for vat's mandatory CLI convention verbs."
+---
+
+# Standardized projects/vat/tests/vat_cli_convention.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/vat/tests/vat_cli_convention.rs`, captured as a rust-source-unit (td_ast) item-tree
+during vat standardization onto the codegen ladder.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `cli_convention_help_lists_all_three` | projects/vat/tests/vat_cli_convention.rs | function | private | 15 |  |
+| `cli_convention_report_issue_dry_run` | projects/vat/tests/vat_cli_convention.rs | function | private | 28 |  |
+| `cli_convention_upgrade_check_exits_cleanly` | projects/vat/tests/vat_cli_convention.rs | function | private | 51 |  |
+| `vat` | projects/vat/tests/vat_cli_convention.rs | function | private | 10 | vat() -> &'static str |
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 //! Binary smoke test for the mandatory CLI convention: every CLI ships
 //! `llm`, `upgrade`, and `report-issue` (CONTRIBUTING.md).
 //!
@@ -62,4 +93,18 @@ fn cli_convention_upgrade_check_exits_cleanly() {
         out.status
     );
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tests/vat_cli_convention.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/vat/tests/vat_cli_convention.rs` captured during vat
+      standardization.
+```
