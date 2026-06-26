@@ -68,7 +68,7 @@ fn is_pep695_lazy_thunk_arg(
 impl TypeChecker {
     pub(crate) fn check_expr(&mut self, expr: &Spanned<Expr>) -> TypeId {
         match &expr.node {
-            Expr::IntLit(_) => self.tcx.int(),
+            Expr::IntLit(_) | Expr::BigIntLit(_) => self.tcx.int(),
             Expr::FloatLit(_) => self.tcx.float(),
             Expr::ComplexLit(_) => self.tcx.any(), // heap ObjData::Complex (ast_to_hir lowers to `complex(0, N)`)
             Expr::StrLit(_) => self.tcx.str(),

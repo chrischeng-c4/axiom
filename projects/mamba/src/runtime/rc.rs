@@ -792,6 +792,18 @@ impl MbObject {
         Box::into_raw(obj)
     }
 
+    /// Allocate an immortal BigInt for compile-time integer constants.
+    pub fn new_bigint_immortal(value: BigInt) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(IMMORTAL_REFCOUNT),
+                kind: ObjKind::BigInt,
+            },
+            data: ObjData::BigInt(value),
+        });
+        Box::into_raw(obj)
+    }
+
     /// Allocate a Complex heap object (R3 CPython 3.12 conformance).
     pub fn new_complex(real: f64, imag: f64) -> *mut Self {
         let obj = Box::new(MbObject {

@@ -299,6 +299,7 @@ fn mangle_expr(expr: &mut Spanned<Expr>, class: Option<&str>) {
         }
         Expr::Yield(None)
         | Expr::IntLit(_)
+        | Expr::BigIntLit(_)
         | Expr::FloatLit(_)
         | Expr::ComplexLit(_)
         | Expr::StrLit(_)

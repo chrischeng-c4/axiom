@@ -9970,6 +9970,7 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
     use crate::parser::ast::Expr;
     match expr {
         Expr::IntLit(i) => MbValue::from_int(*i),
+        Expr::BigIntLit(s) => super::bigint_ops::bigint_from_literal(s),
         Expr::FloatLit(f) => MbValue::from_float(*f),
         Expr::BoolLit(b) => MbValue::from_bool(*b),
         Expr::NoneLit => MbValue::none(),
@@ -10192,7 +10193,7 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
             // Calling a non-callable literal ((1)() in an eval'd f-string)
             // raises TypeError like CPython.
             let callee_type = match &func.node {
-                Expr::IntLit(_) => Some("int"),
+                Expr::IntLit(_) | Expr::BigIntLit(_) => Some("int"),
                 Expr::FloatLit(_) => Some("float"),
                 Expr::StrLit(_) => Some("str"),
                 Expr::BoolLit(_) => Some("bool"),
@@ -10341,6 +10342,7 @@ fn exec_collect_index_idents(expr: &crate::parser::ast::Expr, out: &mut Vec<Stri
         Expr::Attr { .. }
         | Expr::Call { .. }
         | Expr::IntLit(_)
+        | Expr::BigIntLit(_)
         | Expr::FloatLit(_)
         | Expr::ComplexLit(_)
         | Expr::StrLit(_)

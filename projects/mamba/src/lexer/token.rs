@@ -1,5 +1,10 @@
 use logos::Logos;
 
+/// Sentinel used only for syntactically valid integer literals whose value
+/// exceeds `i64`. The parser re-reads the token source text and turns these
+/// into AST BigInt literals.
+pub const BIG_INT_LITERAL_SENTINEL: i64 = i64::MIN;
+
 /// Map a Unicode character name (per Python's `\N{name}` syntax) to a char.
 /// Contains a small but representative set of common Unicode names.
 fn unicode_name_to_char(name: &str) -> Option<char> {
@@ -645,7 +650,7 @@ fn parse_decimal_int_literal(s: &str) -> Option<i64> {
     if digits.starts_with('0') && digits.chars().any(|c| c != '0') {
         return None;
     }
-    digits.parse::<i64>().ok()
+    Some(digits.parse::<i64>().unwrap_or(BIG_INT_LITERAL_SENTINEL))
 }
 
 fn parse_decimal_float_literal(s: &str) -> Option<f64> {
@@ -667,7 +672,10 @@ fn parse_prefixed_int_literal(s: &str, radix: u32, is_digit: fn(u8) -> bool) -> 
     if body.is_empty() || !underscores_between_digits(body, is_digit) {
         return None;
     }
-    i64::from_str_radix(&body.replace('_', ""), radix).ok()
+    Some(
+        i64::from_str_radix(&body.replace('_', ""), radix)
+            .unwrap_or(BIG_INT_LITERAL_SENTINEL),
+    )
 }
 
 /// Token kind produced by the lexer.
@@ -1440,6 +1448,12 @@ mod tests {
     fn test_lex_hex_with_underscores() {
         let kinds = lex_kinds("0xFF_FF");
         assert_eq!(kinds, vec![TokenKind::Int(0xFFFF)]);
+    }
+
+    #[test]
+    fn test_lex_big_int_literal_uses_sentinel() {
+        let kinds = lex_kinds("123456789012345678901234567890");
+        assert_eq!(kinds, vec![TokenKind::Int(BIG_INT_LITERAL_SENTINEL)]);
     }
 
     // --- Float literals ---

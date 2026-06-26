@@ -171,6 +171,14 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                 MirConst::Int(i) => {
                     ir.push_str(&format!("  %v{} = add i64 0, {i}\n", dest.0));
                 }
+                MirConst::BigInt(s) => {
+                    ir.push_str(&format!(
+                        "  ; bigint const: {}\n  %v{} = add i64 0, {}\n",
+                        s.escape_debug(),
+                        dest.0,
+                        crate::runtime::bigint_ops::bigint_immortal_from_literal(s).to_bits()
+                    ));
+                }
                 MirConst::Float(f) => {
                     let bits = f.to_bits();
                     ir.push_str(&format!(

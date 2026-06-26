@@ -6474,6 +6474,15 @@ impl<'a> HirToMir<'a> {
                 });
                 dest
             }
+            HirExpr::BigIntLit(s, ty) => {
+                let dest = self.fresh_vreg();
+                self.current_stmts.push(MirInst::LoadConst {
+                    dest,
+                    value: MirConst::BigInt(s.clone()),
+                    ty: *ty,
+                });
+                dest
+            }
             HirExpr::FloatLit(f, ty) => {
                 let dest = self.fresh_vreg();
                 self.current_stmts.push(MirInst::LoadConst {

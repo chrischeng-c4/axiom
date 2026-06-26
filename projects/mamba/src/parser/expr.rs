@@ -1,7 +1,7 @@
 use super::ast::*;
 use super::Parser;
 use crate::error::MambaError;
-use crate::lexer::token::TokenKind;
+use crate::lexer::token::{TokenKind, BIG_INT_LITERAL_SENTINEL};
 use crate::source::span::{Span, Spanned};
 
 /// Binding power for Pratt parsing.
@@ -237,8 +237,16 @@ impl<'a> Parser<'a> {
         match &token.kind {
             TokenKind::Int(v) => {
                 let v = *v;
-                self.advance();
-                Ok(Spanned::new(Expr::IntLit(v), self.span_from(start)))
+                let (_tok_start, tok_end) = self.advance();
+                let span = self.span_from(start);
+                if v == BIG_INT_LITERAL_SENTINEL {
+                    Ok(Spanned::new(
+                        Expr::BigIntLit(self.text_at(start, tok_end).to_string()),
+                        span,
+                    ))
+                } else {
+                    Ok(Spanned::new(Expr::IntLit(v), span))
+                }
             }
             TokenKind::Float(v) => {
                 let v = *v;
@@ -1082,6 +1090,14 @@ mod tests {
     #[test]
     fn test_int_literal() {
         assert!(matches!(parse_expr_str("42"), Expr::IntLit(42)));
+    }
+
+    #[test]
+    fn test_big_int_literal() {
+        assert!(matches!(
+            parse_expr_str("123456789012345678901234567890"),
+            Expr::BigIntLit(s) if s == "123456789012345678901234567890"
+        ));
     }
 
     #[test]

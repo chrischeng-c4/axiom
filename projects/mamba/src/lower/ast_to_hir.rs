@@ -136,6 +136,7 @@ fn expr_has_yield(expr: &ast::Expr) -> bool {
 
         // Leaf nodes
         ast::Expr::IntLit(_)
+        | ast::Expr::BigIntLit(_)
         | ast::Expr::FloatLit(_)
         | ast::Expr::ComplexLit(_)
         | ast::Expr::StrLit(_)
@@ -312,7 +313,7 @@ fn ast_expr_float_hint(
     use ast::{BinOp, UnaryOp};
     match expr {
         ast::Expr::FloatLit(_) => FloatHint::Float,
-        ast::Expr::IntLit(_) => FloatHint::Int,
+        ast::Expr::IntLit(_) | ast::Expr::BigIntLit(_) => FloatHint::Int,
         ast::Expr::BoolLit(_) => FloatHint::Int,
         ast::Expr::Ident(name) => env.get(name).copied().unwrap_or(FloatHint::Unknown),
         ast::Expr::UnaryOp { op, operand } => match op {
@@ -1920,6 +1921,7 @@ fn func_sig_meta(
             Option::None => (Option::None, false),
             Some(expr) => match &expr.node {
                 ast::Expr::IntLit(v) => (Some(HirSigDefault::Int(*v)), false),
+                ast::Expr::BigIntLit(_) => (Option::None, true),
                 ast::Expr::FloatLit(v) => (Some(HirSigDefault::Float(*v)), false),
                 ast::Expr::StrLit(s) => (Some(HirSigDefault::Str(s.clone())), false),
                 ast::Expr::BoolLit(b) => (Some(HirSigDefault::Bool(*b)), false),
@@ -1929,6 +1931,7 @@ fn func_sig_meta(
                     operand,
                 } => match &operand.node {
                     ast::Expr::IntLit(v) => (Some(HirSigDefault::Int(v.wrapping_neg())), false),
+                    ast::Expr::BigIntLit(_) => (Option::None, true),
                     ast::Expr::FloatLit(v) => (Some(HirSigDefault::Float(-*v)), false),
                     _ => (Option::None, true),
                 },
@@ -4099,7 +4102,10 @@ impl<'a> AstLowerer<'a> {
                 fn hir_atomic(e: &HirExpr) -> bool {
                     matches!(
                         e,
-                        HirExpr::Var(..) | HirExpr::IntLit(..) | HirExpr::FloatLit(..)
+                        HirExpr::Var(..)
+                            | HirExpr::IntLit(..)
+                            | HirExpr::BigIntLit(..)
+                            | HirExpr::FloatLit(..)
                             | HirExpr::StrLit(..) | HirExpr::BoolLit(..) | HirExpr::NoneLit(..)
                             // Slice nodes are special-cased at Index sites
                             // (packed to (start, stop, step)); hoisting one
@@ -4784,6 +4790,7 @@ impl<'a> AstLowerer<'a> {
     fn lower_expr(&mut self, expr: &Spanned<ast::Expr>) -> Option<HirExpr> {
         match &expr.node {
             ast::Expr::IntLit(i) => Some(HirExpr::IntLit(*i, self.checker.tcx.int())),
+            ast::Expr::BigIntLit(s) => Some(HirExpr::BigIntLit(s.clone(), self.checker.tcx.int())),
             ast::Expr::FloatLit(f) => Some(HirExpr::FloatLit(*f, self.checker.tcx.float())),
             ast::Expr::ComplexLit(f) => {
                 // Lower `Nj` to `complex(0.0, N)` so the value is an

@@ -228,6 +228,7 @@ impl MirUnaryOp {
 #[derive(Debug, Clone)]
 pub enum MirConst {
     Int(i64),
+    BigInt(String),
     Float(f64),
     Bool(bool),
     Str(String),
