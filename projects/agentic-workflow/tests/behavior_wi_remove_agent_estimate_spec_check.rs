@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec wi-remove-agent-estimate-spec-check
-// @capability unmapped
-// @claim wi-remove-agent-estimate-spec-check
+// @capability work-item-planning
+// @claim capability-to-epic-planning
 // @contract wi-remove-agent-estimate-spec-check
 // @category behavior
 // @required_for_production true
@@ -14,7 +14,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn wi_remove_agent_estimate_spec_check() {
-    let command = "./target/debug/aw td check projects/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md";
+    let command =
+        "./target/debug/aw td check projects/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md";
     let id = "wi-remove-agent-estimate-spec-check";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

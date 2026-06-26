@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec wi-create-remote-unit-command
-// @capability unmapped
-// @claim wi-create-remote-unit-command
+// @capability work-item-planning
+// @claim capability-to-epic-planning
 // @contract wi-create-remote-unit-command
 // @category behavior
 // @required_for_production true

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec completeness-placeholder-unit-command
-// @capability unmapped
-// @claim completeness-placeholder-unit-command
+// @capability td-cb-lifecycle-automation
+// @claim cb-lifecycle-dispatch
 // @contract completeness-placeholder-unit-command
 // @category behavior
 // @required_for_production true

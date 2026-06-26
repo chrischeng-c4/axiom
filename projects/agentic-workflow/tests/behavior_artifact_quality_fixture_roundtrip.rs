@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec artifact-quality-fixture-roundtrip
-// @capability unmapped
-// @claim artifact-quality-fixture-roundtrip
+// @capability td-cb-lifecycle-automation
+// @claim td-lifecycle-dispatch
 // @contract artifact-quality-fixture-roundtrip
 // @category behavior
 // @required_for_production true
