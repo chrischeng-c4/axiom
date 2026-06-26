@@ -568,6 +568,111 @@ changes:
       Bridge, then production build, and that npm/pnpm/Playwright are isolated
       baselines rather than Jet executors.
     impl_mode: hand-written
+  - path: "projects/jet/scripts/compare-pkg-management.mjs"
+    action: annotate
+    section: scenarios
+    description: |
+      Own the Jet-only package fixture hydration, isolated baseline, install
+      maturity, fixture breadth, phase-order, and npm-ci exclusion scenarios.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/compare-pkg-management.mjs"
+    action: annotate
+    section: mindmap
+    description: |
+      Own the package-management replacement decomposition across Jet executor,
+      incumbent baselines, install evidence, fixture breadth, and gate ordering.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/compare-pkg-management.mjs"
+    action: annotate
+    section: state-machine
+    description: |
+      Own the package gate state progression from source fixture hydration
+      through benchmark evidence, contracts, policy checks, and green/red result.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/compare-pkg-management.mjs"
+    action: annotate
+    section: interaction
+    description: |
+      Own the interaction between the Basic DOM gate, package comparator, Jet
+      install, isolated baselines, and emitted JSON evidence.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/compare-pkg-management.mjs"
+    action: annotate
+    section: dependency
+    description: |
+      Own the dependency graph connecting the phase gate, comparator, Jet CLI,
+      incumbent baselines, package evidence, and CI ordering.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/compare-pkg-management.mjs"
+    action: annotate
+    section: db-model
+    description: |
+      Own the local evidence data model for package gate results, fixture
+      evidence, install maturity, and baseline benchmark records.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/compare-pkg-management.mjs"
+    action: annotate
+    section: schema
+    description: |
+      Own the package gate evidence schema, including required checks,
+      per-fixture fields, and Jet install maturity fields.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/compare-pkg-management.mjs"
+    action: annotate
+    section: config
+    description: |
+      Own the package gate environment knobs for phase selection, baseline tool
+      selection, required baselines, and command timeouts.
+    impl_mode: hand-written
+  - path: "projects/jet/README.md"
+    action: annotate
+    section: rest-api
+    description: |
+      Record that this package-management replacement gate does not introduce a
+      REST API surface.
+    impl_mode: hand-written
+  - path: "projects/jet/README.md"
+    action: annotate
+    section: rpc-api
+    description: |
+      Record that this package-management replacement gate does not introduce an
+      RPC surface.
+    impl_mode: hand-written
+  - path: "projects/jet/README.md"
+    action: annotate
+    section: async-api
+    description: |
+      Record that this package-management replacement gate does not introduce a
+      pub-sub, queue, or WebSocket surface.
+    impl_mode: hand-written
+  - path: "projects/jet/README.md"
+    action: annotate
+    section: wireframe
+    description: |
+      Record that this package-management replacement gate is CLI and JSON
+      evidence only, not an interactive UI flow.
+    impl_mode: hand-written
+  - path: "projects/jet/README.md"
+    action: annotate
+    section: component
+    description: |
+      Record that this package-management replacement gate does not introduce a
+      frontend component surface.
+    impl_mode: hand-written
+  - path: "projects/jet/README.md"
+    action: annotate
+    section: design-token
+    description: |
+      Record that this package-management replacement gate does not introduce
+      design tokens.
+    impl_mode: hand-written
+  - path: "projects/jet/README.md"
+    action: annotate
+    section: runtime-image
+    description: |
+      Record that this package-management replacement gate does not introduce a
+      runtime image surface.
+    impl_mode: hand-written
 ```
 
 # Reviews

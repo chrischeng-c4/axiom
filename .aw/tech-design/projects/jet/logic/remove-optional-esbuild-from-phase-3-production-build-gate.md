@@ -148,4 +148,25 @@ changes:
       Keep the phase-3 guard that rejects optional esbuild executor usage and
       then runs the DOM production corpus comparator.
     impl_mode: hand-written
+  - path: "projects/jet/scripts/verify-basic-dom-gates.sh"
+    action: verify
+    section: scenarios
+    description: |
+      Verify the build-gate scenarios for rejecting optional esbuild executor
+      usage, using Jet internal minification, and reaching corpus comparison.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/verify-basic-dom-gates.sh"
+    action: verify
+    section: cli
+    description: |
+      Own the phase-3 CLI gate command and esbuild guard scan command used by
+      the production build readiness check.
+    impl_mode: hand-written
+  - path: "projects/jet/src/cli.rs"
+    action: verify
+    section: unit-test
+    description: |
+      Own the unit-test requirement that Jet build avoids optional esbuild
+      executor paths while preserving internal minification.
+    impl_mode: hand-written
 ```

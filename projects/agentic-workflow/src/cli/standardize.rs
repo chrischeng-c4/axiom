@@ -2222,8 +2222,7 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
                 &configured,
                 target,
                 &td_content,
-            )
-            || semantic_td_needs_traceability_metadata_migration(&td_content);
+            );
         if !needs_migration {
             continue;
         }
@@ -3989,13 +3988,6 @@ fn semantic_td_needs_generated_capability_ref_migration(
         && !content.contains("capability_scope:")
         && semantic_capability_ref_for_group(project_root, configured, &semantic_group_key(target))
             .is_some()
-}
-
-fn semantic_td_needs_traceability_metadata_migration(content: &str) -> bool {
-    content.contains("coverage_kind: semantic")
-        && traceability_td_section_blockers("<semantic-td>", content)
-            .iter()
-            .any(|blocker| blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge)
 }
 
 fn source_spec_refs(abs: &Path, project_root: &Path) -> Vec<String> {

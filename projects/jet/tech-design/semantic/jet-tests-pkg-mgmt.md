@@ -134,4 +134,11 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:jet-pkg-replacement-gate>"
+  - path: "projects/jet/tests/pkg-mgmt/pkg_replacement_gate.rs"
+    action: verify
+    section: unit-test
+    description: |
+      Preserve the observed package-management source-test evidence graph while
+      semantic coverage is promoted toward deterministic generator primitives.
+    impl_mode: hand-written
 ```

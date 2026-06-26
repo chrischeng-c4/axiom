@@ -1,7 +1,7 @@
 ---
 id: semantic-jet-examples-test-specs
 summary: Semantic coverage for "projects/jet/examples/test-specs"
-fill_sections: [tests, changes]
+fill_sections: [e2e-test, changes]
 capability_refs:
   - id: rust-native-frontend-toolchain
     role: primary
@@ -13,8 +13,8 @@ capability_refs:
 
 # Semantic TD: jet/examples/test-specs
 
-## Tests
-<!-- type: tests lang: yaml -->
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
 
 ```yaml
 frontend_semantic:
@@ -70,7 +70,7 @@ coverage_kind: semantic
 changes:
   - path: "projects/jet/examples/test-specs/page-object-pattern.spec.ts"
     action: modify
-    section: tests
+    section: e2e-test
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
