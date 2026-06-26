@@ -4,6 +4,46 @@ use super::rc::{MbObject, ObjData};
 /// Implements Python-compatible dict methods. All mutable access goes
 /// through RwLock guards for thread-safety.
 use super::value::MbValue;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+static DICT_VERSIONS: OnceLock<Mutex<HashMap<usize, u64>>> = OnceLock::new();
+
+fn dict_versions() -> &'static Mutex<HashMap<usize, u64>> {
+    DICT_VERSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn dict_identity(dict: MbValue) -> Option<usize> {
+    let ptr = dict.as_ptr()?;
+    unsafe {
+        if matches!((*ptr).data, ObjData::Dict(_)) {
+            Some(ptr as usize)
+        } else {
+            None
+        }
+    }
+}
+
+pub(crate) fn dict_version(dict: MbValue) -> u64 {
+    let Some(id) = dict_identity(dict) else {
+        return 0;
+    };
+    dict_versions()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .copied()
+        .unwrap_or(0)
+}
+
+fn bump_dict_version(dict: MbValue) {
+    let Some(id) = dict_identity(dict) else {
+        return;
+    };
+    let mut versions = dict_versions().lock().unwrap();
+    let entry = versions.entry(id).or_insert(0);
+    *entry = entry.wrapping_add(1);
+}
 
 /// Type-preserving dict key. Distinguishes int from string keys so that
 /// `d[1]` and `d["1"]` are distinct entries (matching CPython semantics).
@@ -758,6 +798,7 @@ pub fn mb_dict_setitem(dict: MbValue, key: MbValue, value: MbValue) {
                     super::rc::release_if_ptr(old_val);
                 } else {
                     map.insert(dk, value);
+                    bump_dict_version(dict);
                 }
             }
         }
@@ -812,7 +853,9 @@ pub fn mb_dict_delitem(dict: MbValue, key: MbValue) {
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.write().unwrap().shift_remove(&dk);
+                if lock.write().unwrap().shift_remove(&dk).is_some() {
+                    bump_dict_version(dict);
+                }
             }
         }
     }
@@ -894,7 +937,7 @@ fn dict_view_class_kind(class_name: &str) -> Option<&'static str> {
     }
 }
 
-fn dict_view_data(view: MbValue) -> Option<MbValue> {
+pub(crate) fn dict_view_data(view: MbValue) -> Option<MbValue> {
     let ptr = view.as_ptr()?;
     unsafe {
         if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
@@ -1233,7 +1276,11 @@ pub fn mb_dict_pop(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                return lock.write().unwrap().shift_remove(&dk).unwrap_or(default);
+                if let Some(v) = lock.write().unwrap().shift_remove(&dk) {
+                    bump_dict_version(dict);
+                    return v;
+                }
+                return default;
             }
         }
     }
@@ -1247,6 +1294,7 @@ pub fn mb_dict_pop_no_default(dict: MbValue, key: MbValue) -> MbValue {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 if let Some(v) = lock.write().unwrap().shift_remove(&dk) {
+                    bump_dict_version(dict);
                     return v;
                 }
                 // Raise KeyError (CPython 3.12 format)
@@ -1268,7 +1316,12 @@ pub fn mb_dict_setdefault(dict: MbValue, key: MbValue, default: MbValue) -> MbVa
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                let val = *lock.write().unwrap().entry(dk).or_insert(default);
+                let mut map = lock.write().unwrap();
+                let inserted = !map.contains_key(&dk);
+                let val = *map.entry(dk).or_insert(default);
+                if inserted {
+                    bump_dict_version(dict);
+                }
                 super::rc::retain_if_ptr(val);
                 return val;
             }
@@ -1378,8 +1431,15 @@ pub fn mb_dict_update(dict: MbValue, other: MbValue) {
         };
 
         let mut map = dict_lock.write().unwrap();
+        let mut changed_keys = false;
         for (k, v) in pairs {
+            if !map.contains_key(&k) {
+                changed_keys = true;
+            }
             map.insert(k, v);
+        }
+        if changed_keys {
+            bump_dict_version(dict);
         }
     }
 }
@@ -1389,7 +1449,11 @@ pub fn mb_dict_clear(dict: MbValue) {
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.write().unwrap().clear();
+                let mut map = lock.write().unwrap();
+                if !map.is_empty() {
+                    map.clear();
+                    bump_dict_version(dict);
+                }
             }
         }
     }
@@ -1454,6 +1518,7 @@ pub fn mb_dict_popitem(dict: MbValue) -> MbValue {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let mut map = lock.write().unwrap();
                 if let Some((k, v)) = map.pop() {
+                    bump_dict_version(dict);
                     let key = dict_key_to_mbvalue(&k);
                     return MbValue::from_ptr(MbObject::new_tuple(vec![key, v]));
                 }
