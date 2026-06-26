@@ -222,7 +222,7 @@ variation:
 
 | Lib | Role |
 |-----|------|
-| **`libs/raftcore`** | the step-driven raft **consensus core** (serde-only; replaced openraft). |
+| **`libs/raft-core`** | the step-driven raft **consensus core** (serde-only; replaced openraft). |
 | **`libs/raft-host`** | the raft **host**: h2c peer transport, the single apply loop, **snapshot + log compaction** (the "backup layer"), read-your-write `propose`, and **k8s topology + auto-mode** (`cluster::ClusterTopology::from_env` + `replica_mode`). A service supplies a `RaftStateMachine` (`apply`/`snapshot`/`restore`/`applied_index`) and gets HA + backup for free. |
 | **`libs/h2c`** | the **transport**: `h2c::serve` (server, feature `server`) + `h2c_client`/`H2cPool` (client). |
 | **`libs/cli-std`** | the **standard CLI** commands (`llm` / `upgrade` / `issue`). |
@@ -242,8 +242,9 @@ A service is not "done" until it satisfies every row:
 |-----------|-------------|--------------------|
 | **Shape** | Workspace member that is **both `lib` and `bin`** — embeddable as a crate, runnable as a server. Metadata via `version/edition/authors/license = .workspace`. | every service `Cargo.toml` |
 | **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Serve via **`libs/h2c`'s `h2c::serve` (feature `server`)** — built on `hyper-util` `auto::Builder`, **not `axum::serve`** (HTTP/1-only). The same crate's client side (`h2c_client`/`H2cPool`) is the in-tree client. |
+| **Standard endpoints** | The same operational surface on the one port: **`/healthz`** (liveness), **`/readyz`** (readiness), **`/metrics`** (Prometheus), **`/openapi.json`** (machine OpenAPI), **`/docs`** (Swagger UI). Probes + scrape **depend** on these, so they stay auth-exempt and always-on. | `lumen` is the reference (all five). The contract is reachable three ways — **`<cli> spec`** (offline) ≡ **`/openapi.json`** (served) ≡ **`/docs`** (browsable) — one OpenAPI, three access paths. |
 | **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`cclab-openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
-| **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raftcore`** driven by **`libs/raft-host`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raftcore`+`raft-host`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
+| **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-host`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-host`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
 | **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
 | **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); StatefulSet identity/peers from the **downward API**; an `HA.md`. | `keep/k8s`, `lumen/k8s` (+ `operator` feature). `loom` currently ships only a flat `deploy/k8s.yaml` — that's the un-grown form, not the target. |
 | **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
@@ -277,15 +278,47 @@ own `openapi_json()` into `cclab_openapi_codegen::generate`). Do **not** add a
 second codegen path — extend the shared crate (a new emitter / capability) so
 every service benefits.
 
-### HA — `raftcore`, sharded and strongly consistent
+### Standard endpoints — one operational surface, one contract three ways
+
+Every service exposes the same five endpoints on its one port, so an operator,
+a probe, a scraper, or an agent finds the same surface without per-service
+lookup:
+
+```
+/healthz       liveness  — k8s livenessProbe
+/readyz        readiness — k8s readinessProbe (gates traffic)
+/metrics       Prometheus exposition — the ServiceMonitor scrape target
+/openapi.json  the machine-readable OpenAPI (utoipa-generated)
+/docs          Swagger UI — the human-browsable render of that OpenAPI
+```
+
+`/healthz` and `/readyz` are **not optional**: the StatefulSet/Deployment the
+operator renders points its probes at them, and `/metrics` is the scrape target —
+so all three stay **auth-exempt and always-on** (a 401 on `/healthz` fails the
+probe). They are the intersection of the *Transport* and *Deploy* rows.
+
+The integration contract is reachable **three equivalent ways** — same OpenAPI,
+different access path:
+
+| Path | Context |
+|------|---------|
+| **`<cli> spec [--format openapi\|openapi-yaml\|json-schema] [--shapes] [--fields]`** | **offline** (no server) — for agents, CI, codegen input. The offline twin of `/openapi.json`; `spec gen` is its codegen sub-verb. |
+| **`/openapi.json`** | served, machine-readable |
+| **`/docs`** | served, human-browsable (Swagger UI) |
+
+So `spec` belongs to **this** archetype (a service has an OpenAPI to emit), **not**
+`cli-std` — which carries only the universal `llm`/`upgrade`/`issue` that *every*
+CLI ships, services and non-services alike. `lumen` is the reference for all of it.
+
+### HA — `raft-core`, sharded and strongly consistent
 
 **HA is mandatory for any stateful service — not a "wire it later" slice.** A
-DTO / cluster-state surface (`/debug/cluster`) without the `raftcore` replication
+DTO / cluster-state surface (`/debug/cluster`) without the `raft-core` replication
 path actually wired does **not** satisfy the HA row; the service is not
-production-ready until writes are ordered and replicated through `raftcore`.
+production-ready until writes are ordered and replicated through `raft-core`.
 
 State is **sharded** and **strongly consistent**, replicated by the shared
-`libs/raftcore` engine (serde-only; it replaced `openraft` across the
+`libs/raft-core` engine (serde-only; it replaced `openraft` across the
 ecosystem). The leader owns writes; followers tail it over h2c. Node identity
 and the peer set come from the Kubernetes **downward API** on a StatefulSet —
 nothing is hand-configured per replica. Gate consensus behind a Cargo feature
