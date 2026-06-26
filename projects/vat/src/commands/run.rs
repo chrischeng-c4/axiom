@@ -831,7 +831,19 @@ fn prepare_service(
             ResolvedRuntime::Native => prepare_preset_service(vat, cfg, service, preset)?,
             ResolvedRuntime::Docker => prepare_preset_docker_service(vat, service, preset)?,
             ResolvedRuntime::Builtin => {
-                prepare_builtin_service(service, preset, &cfg.root, &explicit_network_routes(cfg))?
+                // Hermetic when the run confines egress (localhost-only/deny):
+                // the http-mock proxy then blocks unmatched requests too.
+                let hermetic = !matches!(
+                    cfg.network.as_ref().map(|n| n.egress).unwrap_or_default(),
+                    crate::spec::EgressPolicy::Open
+                );
+                prepare_builtin_service(
+                    service,
+                    preset,
+                    &cfg.root,
+                    &explicit_network_routes(cfg),
+                    hermetic,
+                )?
             }
         }
     } else {
@@ -1435,6 +1447,7 @@ fn prepare_builtin_service(
     preset: ServicePreset,
     root: &Path,
     network_routes: &[(String, String)],
+    hermetic: bool,
 ) -> Result<ServicePlan> {
     let port = resolve_service_port(&service.port)?;
     let exe =
@@ -1468,6 +1481,11 @@ fn prepare_builtin_service(
         for (host, target) in network_routes {
             command.push("--route".to_string());
             command.push(format!("{host}={target}"));
+        }
+        // Hermetic ([network].egress != open): the proxy must not reach the
+        // internet either — an unmatched request is blocked, not forwarded.
+        if hermetic {
+            command.push("--no-forward".to_string());
         }
         http_mock_env(&host_port, &ca_path.to_string_lossy())
     } else {
@@ -3230,8 +3248,14 @@ mod tests {
     #[test]
     fn prepare_builtin_service_exports_host_and_self_command() {
         let svc = test_service("auth", &[]);
-        let plan = prepare_builtin_service(&svc, ServicePreset::FirebaseAuth, Path::new("."), &[])
-            .unwrap();
+        let plan = prepare_builtin_service(
+            &svc,
+            ServicePreset::FirebaseAuth,
+            Path::new("."),
+            &[],
+            false,
+        )
+        .unwrap();
         assert_eq!(plan.prepare_mode, "builtin_emulator");
         assert!(plan
             .exported_env
@@ -3246,6 +3270,7 @@ mod tests {
             ServicePreset::Pubsub,
             Path::new("."),
             &[],
+            false,
         )
         .unwrap();
         assert!(plan
@@ -3293,7 +3318,7 @@ mod tests {
                 resolve_preset_runtime(&svc, preset).unwrap(),
                 ResolvedRuntime::Builtin
             ));
-            let plan = prepare_builtin_service(&svc, preset, Path::new("."), &[]).unwrap();
+            let plan = prepare_builtin_service(&svc, preset, Path::new("."), &[], false).unwrap();
             assert_eq!(plan.command[2], kind);
             assert!(plan.exported_env.iter().any(|k| k == var));
         }
