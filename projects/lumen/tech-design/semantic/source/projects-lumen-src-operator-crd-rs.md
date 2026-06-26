@@ -84,6 +84,17 @@ pub struct LumenSpec {
     #[serde(default = "default_shard_count")]
     pub shard_count: u32,
 
+    /// Raft replicas per shard. `1` (default) = stateless serving (a Deployment +
+    /// HPA). `> 1` switches the serving fleet to a raft-HA **StatefulSet** whose
+    /// pods inject the downward-API env `raft_host::cluster` reads.
+    #[serde(default = "default_replicas_per_shard")]
+    pub replicas_per_shard: u32,
+
+    /// Voting members per shard (the rest are learners). Only meaningful when
+    /// `replicasPerShard > 1`.
+    #[serde(default = "default_replicas_per_shard")]
+    pub voter_count: u32,
+
     /// Log output format: `json` (prod/staging) or `pretty` (dev).
     #[serde(default)]
     pub log_format: LogFormat,
@@ -311,6 +322,9 @@ pub struct LumenStatus {
 }
 
 fn default_shard_count() -> u32 {
+    1
+}
+fn default_replicas_per_shard() -> u32 {
     1
 }
 fn default_serving_cpu() -> String {

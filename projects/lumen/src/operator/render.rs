@@ -105,15 +105,83 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         out.push(broker_headless_service(lumen));
         out.push(broker_pdb(lumen));
     }
-    out.push(serving_deployment(lumen));
-    out.push(serving_service(lumen));
-    out.push(serving_hpa(lumen));
-    out.push(serving_pdb(lumen));
+    if lumen.spec.replicas_per_shard > 1 {
+        // raft-HA serving: a StatefulSet (stable peer identity) + its headless
+        // Service; no HPA (raft needs a fixed membership).
+        out.push(serving_statefulset(lumen));
+        out.push(serving_headless_service(lumen));
+        out.push(serving_service(lumen));
+        out.push(serving_pdb(lumen));
+    } else {
+        // stateless serving: a Deployment + HPA (today's default).
+        out.push(serving_deployment(lumen));
+        out.push(serving_service(lumen));
+        out.push(serving_hpa(lumen));
+        out.push(serving_pdb(lumen));
+    }
     if lumen.spec.observability {
         out.push(service_monitor(lumen));
         out.push(prometheus_rule(lumen));
     }
     out
+}
+
+/// The downward-API env the raft-HA serving pods carry on top of `serving_env`:
+/// exactly the quartet (+ headless service) `raft_host::cluster::ClusterTopology::
+/// from_env` reads. `SHARD_COUNT` already comes from the serving ConfigMap.
+fn downward_api_env(lumen: &Lumen) -> Vec<Value> {
+    vec![
+        json!({ "name": "POD_NAME", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
+        json!({ "name": "POD_NAMESPACE", "valueFrom": { "fieldRef": { "fieldPath": "metadata.namespace" } } }),
+        json!({ "name": "REPLICAS_PER_SHARD", "value": lumen.spec.replicas_per_shard.to_string() }),
+        json!({ "name": "VOTER_COUNT", "value": lumen.spec.voter_count.to_string() }),
+        json!({ "name": "LUMEN_HEADLESS_SERVICE", "value": format!("{}-headless", instance(lumen)) }),
+    ]
+}
+
+/// The raft-HA serving fleet: the serving Deployment recast as a StatefulSet —
+/// stable per-pod identity for raft peers, no HPA, replicas = shards × replicas,
+/// + the downward-API env. Rendered instead of the Deployment when
+/// `replicasPerShard > 1`. Derived from [`serving_deployment`] so the pod
+/// template (image/probes/security/env) stays in one place.
+fn serving_statefulset(lumen: &Lumen) -> Value {
+    let name = instance(lumen);
+    let mut sts = serving_deployment(lumen);
+    sts["kind"] = json!("StatefulSet");
+    let spec = sts["spec"]
+        .as_object_mut()
+        .expect("serving spec is an object");
+    spec.remove("strategy"); // Deployment-only
+    spec.insert("serviceName".into(), json!(format!("{name}-headless")));
+    spec.insert("podManagementPolicy".into(), json!("Parallel"));
+    spec.insert(
+        "updateStrategy".into(),
+        json!({ "type": "RollingUpdate" }),
+    );
+    spec.insert(
+        "replicas".into(),
+        json!(lumen.spec.shard_count * lumen.spec.replicas_per_shard),
+    );
+    if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut() {
+        env.extend(downward_api_env(lumen));
+    }
+    sts
+}
+
+/// Headless Service backing the serving StatefulSet's stable peer DNS.
+fn serving_headless_service(lumen: &Lumen) -> Value {
+    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
+    json!({
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": meta(&format!("{name}-headless"), &ns, labels(&name, "server"), &owner),
+        "spec": {
+            "clusterIP": "None",
+            "publishNotReadyAddresses": true,
+            "selector": selector(&name, "server"),
+            "ports": [{ "name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP" }],
+        },
+    })
 }
 
 fn service_account(lumen: &Lumen) -> Value {
