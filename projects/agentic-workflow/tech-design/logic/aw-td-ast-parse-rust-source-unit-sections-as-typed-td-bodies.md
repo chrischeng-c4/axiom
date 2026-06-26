@@ -44,7 +44,6 @@ flowchart TD
   parse_ok -->|clean| typed_body([TypedBody::RustSourceUnit plus content_hash])
   dispatch([dispatch_from_tdast]) --> structural([rust-source-unit StructuralGenerator source_backed=false])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
