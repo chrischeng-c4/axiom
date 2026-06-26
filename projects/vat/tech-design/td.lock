@@ -1,12 +1,36 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-21T08:34:07.327396+00:00"
-digest = "sha256:1e6818eb660280ec79cc22398cdf89ffd3a6093aaa8f7c757be2ab1dc0586d50"
+generated_at = "2026-06-26T08:06:53.757558+00:00"
+digest = "sha256:2f6fce8ad6bc0bad9758f07a9d216125798b48e09fef13f00bd414729994c6e5"
+
+[[files]]
+path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
+digest = "sha256:c453b63449e28e3d926b09ecb54930667f00389b8b6351a9057e3eb0bfb25046"
+
+[[files]]
+path = "interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md"
+digest = "sha256:5696aebeec22fa64f2b770e552b8f7f6786644be44a31cc42f8109537270f747"
+
+[[files]]
+path = "interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md"
+digest = "sha256:f8cabf5e5ae067d959bd5b13bff4d49419fcb4a4abdb47fe14270c6207849966"
+
+[[files]]
+path = "interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md"
+digest = "sha256:eaac006dc69b8d03ff9a37f0047f66e5ed6d2068b391b317849785a78436b166"
+
+[[files]]
+path = "interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md"
+digest = "sha256:a965209b37117245a4b51d0b2295028a85fef47af0afd83b4f43072acc5d0547"
 
 [[files]]
 path = "interfaces/rest/openapi-driven-mock-http-service.md"
 digest = "sha256:cdab86df29caf5314c40eaa98261e9a69a8db4ff3012b777f88627516100b63f"
+
+[[files]]
+path = "logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md"
+digest = "sha256:c7c4e3c55c2d1f1028328ae0931775d6b37c1cd7aca88b211eee934c1d9b157e"
 
 [[files]]
 path = "logic/built-in-cloud-storage-gcs-emulator.md"
@@ -47,6 +71,22 @@ digest = "sha256:03f5e44c52b7fd23ce6a32d547cc5237ec9597cb4c4e60bf59f7a863682b20f
 [[files]]
 path = "logic/local-agent-test-runner-protocol.md"
 digest = "sha256:6e75ee6e7b66af7a71ce54249890db1a99e2f16ebde081c773991ee6b7f7084e"
+
+[[files]]
+path = "logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md"
+digest = "sha256:27327f2024aedef1147ce601827250a71c180025189c4cb8408af0493ae5289d"
+
+[[files]]
+path = "logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md"
+digest = "sha256:910eb2c2dedcbc7af9283987a49d594d864e0e1393de322d3cd686d99f407239"
+
+[[files]]
+path = "logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md"
+digest = "sha256:b8ae0cc8d3efe9b408c193522789908667deee2941b5437a9e66024d57e05cda"
+
+[[files]]
+path = "logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md"
+digest = "sha256:32d471e70d68063d9d1d7a53cfc929e259f6e28e05f674ce5291290898ba152b"
 
 [[files]]
 path = "semantic/source/projects-vat-src-cli-rs.md"
