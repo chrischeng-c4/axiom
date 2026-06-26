@@ -6,8 +6,8 @@
 //! map) feeds a per-language emitter under [`emit`]. The target language is
 //! [`GenOptions::lang`]:
 //! - [`Lang::Ts`]  → TypeScript: types + fetch/axios client + TanStack Query hooks
-//! - [`Lang::Py`]  → Python: pydantic models + httpx client (planned)
-//! - [`Lang::Rust`]→ Rust: serde models + reqwest client (planned)
+//! - [`Lang::Py`]  → Python: pydantic models + generated sync/async HTTP/2 runtime
+//! - [`Lang::Rust`]→ Rust: serde models + reqwest client
 //!
 //! [`generate`] is the pure core (spec text → in-memory files, no I/O); [`run`]
 //! is the filesystem-writing CLI entry.
@@ -26,9 +26,9 @@ pub enum Lang {
     /// TypeScript: types + a typed fetch/axios client + TanStack Query hooks.
     #[default]
     Ts,
-    /// Python: pydantic models + an httpx client. (planned)
+    /// Python: pydantic models + a generated sync/async HTTP/2 runtime.
     Py,
-    /// Rust: serde models + a reqwest client. (planned)
+    /// Rust: serde models + a reqwest client.
     Rust,
 }
 
