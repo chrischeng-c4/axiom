@@ -1,16 +1,56 @@
 version = 1
 project = "lumen"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-06-23T13:50:08.642052+00:00"
-digest = "sha256:02644de01ab03a27f0b1c000655063b7c4c794cad882fba52aa7a8cee38700d4"
+generated_at = "2026-06-26T08:46:49.023158+00:00"
+digest = "sha256:b25bd6b0554b9cd90d8d6db094ae9271196821892da2ed0ea3ee409573f7a354"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-consolidation-single-binary-serve-spec-llm-k8s-operato.md"
 digest = "sha256:40a230638a3f6107dcfbea515a75c594d6432e1897c4682263511e53193a5a6a"
 
 [[files]]
+path = "interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md"
+digest = "sha256:1f28c8b9dd27642683917571ac5527cc01eb462895b1ff9f118fe1d46b12e17f"
+
+[[files]]
+path = "interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md"
+digest = "sha256:0688f4bfafb9384b16737ed32867b1006c7fb4abb11bd4e378dca20d5b35e0ad"
+
+[[files]]
+path = "interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md"
+digest = "sha256:6ac023b05675fb96f0a5281910179a1a0c1cf79d411ecef9cddba29cc5711ea6"
+
+[[files]]
+path = "interfaces/rest/lumen-openapi-define-4-dangling-ref-schemas-fix-servers-port-808.md"
+digest = "sha256:60da4e56d6d48fd7b961e0c4fb0de121b745bf907f94d347d1dd600b1e523dd6"
+
+[[files]]
 path = "interfaces/rest/relay-wal.md"
 digest = "sha256:7ad4548f1188260d5462d24682e57789506652e0d6b4cff7a3509d484c430835"
+
+[[files]]
+path = "logic/allow-has-child-to-combine-with-sort-by-materializing-parent-bit.md"
+digest = "sha256:9e41021172859045eabf5689a0d8f29c45feec4b69ba932b42158d701eb8b298"
+
+[[files]]
+path = "logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md"
+digest = "sha256:359150d1af2651b523f14b8b99c360fec1845ae34fdde512f6270a4e2ef55a79"
+
+[[files]]
+path = "logic/native-ids-query-node-filter-by-external-id-set.md"
+digest = "sha256:67a471b9ee1bc6e25201ff5f2597c22df462775387eee27edc854d10d4ae9bd5"
+
+[[files]]
+path = "logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.md"
+digest = "sha256:908af0bccd4aee217edca6d1ceb1e118067ec914d9d663c107833c157ae377be"
+
+[[files]]
+path = "logic/raise-multi-key-sort-cap-beyond-2-keys.md"
+digest = "sha256:05b91aa72c3c1d98884efaf1d4ddf7eabb06e8bce4d52679e58ed0994dd633d1"
+
+[[files]]
+path = "logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md"
+digest = "sha256:e70f1d1c9e943f2d4de028ec04904fdd91d1bb1b66c9c6d0effe2fab70989e1a"
 
 [[files]]
 path = "semantic/lumen-benches.md"
@@ -70,7 +110,7 @@ digest = "sha256:88b2aeb813978bbe539608937219b8d11567dc8c1e100f921ac9209717c36f5
 
 [[files]]
 path = "semantic/lumen-runtime-image.md"
-digest = "sha256:0f7d3f48e5558bb6b3cb98f5f84044a7b6569827ff70810a2d06182d32cb9a26"
+digest = "sha256:169955f006a137b58ec3653446033c5b64c19e55bd01b573ee5d251a96b211d4"
 
 [[files]]
 path = "semantic/lumen-scripts.md"
@@ -138,7 +178,7 @@ digest = "sha256:ae03f45011f5853e756d77a906a2d7aa29962b53dae798d15e48849233a6528
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-lease-rs.md"
-digest = "sha256:59fa06e230bc947cc04c0927c6342b2b5c468abcf2ceeffcfbd5927ad26fce4b"
+digest = "sha256:43f1e84ec25af2ad1b0df0b234ed62ffa5a56742451c0c6de32955045361220e"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-mod-rs.md"
@@ -146,7 +186,7 @@ digest = "sha256:2649a9b007bab98bdd52c0c93bc815e972c96c042fa493fed27011a079acae4
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-reconcile-rs.md"
-digest = "sha256:24cf7a01d7d6c6b923aa67d650e2318c1c035aaf0af4ee06f05ab1ed11e35e7c"
+digest = "sha256:dcb28e22fb51335310d672e88af73fa6e8d5b4aaf4b83d81e899bada9b9a518c"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-render-rs.md"
