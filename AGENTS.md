@@ -91,10 +91,16 @@ branches are:
 - `main`
 - `project-{name}` — persistent work-area branches such as `project-mamba` or
   `project-agentic-workflow`
+- `lib-{name}` — persistent work-area branches for `libs/` internal libraries,
+  such as `lib-compass` or `lib-raft-host`
 
-One `project-{name}` maps to one dedicated worktree and one agent session. Do
-not delete or force-overwrite `main` or `project-*` without explicit user
-confirmation. Prefer non-destructive convergence for stale `project-*` refs.
+One `project-{name}` (or `lib-{name}`) maps to one dedicated worktree and one
+agent session. Do not delete or force-overwrite `main`, `project-*`, or
+`lib-*` without explicit user confirmation. Prefer non-destructive convergence
+for stale `project-*` / `lib-*` refs. `project-*` and `lib-*` branches are
+deletion-protected on GitHub via the `protect-persistent-branches` repository
+ruleset (force-push is intentionally left unprotected so rebase-based landing
+still works).
 
 WI never creates or switches git branches. TD lifecycle branches
 (`td-<id>`) are short-lived and may be created only when launched
