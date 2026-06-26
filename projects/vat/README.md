@@ -172,6 +172,8 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 | `vat run <runner-id>` | Run a specific `vat.toml` runner. |
 | `vat run -- <cmd>` | Clone a base, run one direct command, record the result. `--base DIR`, `--from VAT`, `--isolation none\|seatbelt`, `--gpu auto\|required\|none`, `--json`. |
 | `vat llm` | Print the compact LLM/agent usage guide: when to use `vat.toml`, direct runs, evidence commands, retention, and non-Docker boundaries. |
+| `vat upgrade` | Self-update to the latest `vat@*` GitHub release (`--check` to report only, `--version <tag>` to pin). One of the three mandatory CLI-convention verbs (`llm`/`upgrade`/`report-issue`), via the shared `cli-std` crate. |
+| `vat report-issue` | File a diagnostics-rich GitHub issue (version + target + OS/arch auto-attached); `--dry-run` to preview, `--title`/`--message`/`--label`. |
 | `vat ls` | List vats (one line each, or `--json` array of full states). |
 | `vat state <id>` | Full agent-legible state as JSON (`--compact` for one line). |
 | `vat diff <id>` | Every filesystem change vs. the vat's base (`--json`). |
@@ -248,10 +250,10 @@ preferred**:
   firebase-tools / Docker**. `pubsub` is a google.pubsub.v1 gRPC server
   (topics/subscriptions, Publish, Pull, StreamingPull, Acknowledge);
   `firebase-auth` is a Firebase Auth (Identity Toolkit) REST server;
-  `cloud-tasks` is a Cloud Tasks v2 REST server that delivers each task's
-  httpRequest to its target at scheduleTime (or `tasks/{t}:run`);
-  `cloud-scheduler` is a Cloud Scheduler v1 REST server that fires a job's
-  httpTarget on its cron schedule (or `jobs/{j}:run`); `cloud-workflows` is a
+  `cloud-tasks` serves **both the Cloud Tasks v2 gRPC service and the v2 REST API
+  on one port** and delivers each task's httpRequest to its target at scheduleTime
+  (or `tasks/{t}:run`); `cloud-scheduler` likewise serves **gRPC + v1 REST** and
+  fires a job's httpTarget on its cron schedule (or `jobs/{j}:run`); `cloud-workflows` is a
   Cloud Workflows v1 REST server (createWorkflow → createExecution →
   getExecution) running a **subset Workflows interpreter** (assign / call http.* /
   switch / for / try-retry-except / subworkflow + `${...}` expressions) whose
@@ -280,17 +282,15 @@ preferred**:
   (gcloud) / `runtime = docker` (the cloud-cli image) as a full-fidelity fallback;
   the others are built-in only (no official emulator exists). The async emulator
   stack sits behind a default-on `emulator` Cargo feature (`--no-default-features`
-  drops it). **Wiring a `cloud-tasks` / `cloud-scheduler` client:** unlike
-  `pubsub` / `firestore` / GCS — whose SDKs auto-read their host var — the official
-  Cloud Tasks / Cloud Scheduler SDKs do **not** read `CLOUD_TASKS_EMULATOR_HOST` /
-  `CLOUD_SCHEDULER_EMULATOR_HOST` (Google ships no emulator) and default to gRPC
-  while vat serves REST, so an env/DNS host redirect won't connect. Build the
-  client through one factory that, when the host var is set, forces the **REST
-  transport**, an `http://$HOST` endpoint, and **anonymous credentials** (Python:
-  `CloudTasksClient(transport="rest", credentials=AnonymousCredentials(),
-  client_options={"api_endpoint": f"http://{host}"})`; Node: `new
-  CloudTasksClient({fallback:'rest', apiEndpoint, port, protocol:'http'})`) — or
-  skip the SDK and POST the v2 REST API directly (see `tests/vat_emulator_tasks.rs`).
+  drops it). **Wiring a `cloud-tasks` / `cloud-scheduler` client:** these SDKs don't
+  read `CLOUD_TASKS_EMULATOR_HOST` / `CLOUD_SCHEDULER_EMULATOR_HOST` (Google ships no
+  emulator). Since the emulators now serve **both gRPC and REST**, point the stock
+  gRPC client at the host var with an insecure endpoint override (Python:
+  `CloudTasksClient(client_options={"api_endpoint": host})`), or use `transport="rest"`
+  + `http://$HOST`, or POST the v2 REST API directly. For **zero app config**, add an
+  `http-mock` service + a `[network]` route (see *Network sandbox* below): vat then
+  transparently routes the real `cloudtasks.googleapis.com` host — REST *and* gRPC —
+  to the local emulator.
   ```toml
   [[services]]
   id = "ps"
@@ -327,5 +327,48 @@ untouched. Either way vat auto-allocates ports, exports runner env vars, and
 reports only a few JSONL checkpoints unless the agent asks for logs/state/diff.
 A Docker-backed service with no reachable daemon fails with a structured
 `docker_unavailable` error rather than a panic.
+
+## Network sandbox
+
+An optional `[network]` block turns a run into a confined, hermetic environment —
+on macOS with **no VM** (Apple Seatbelt + the http-mock proxy), so the host GPU
+stays untouched.
+
+```toml
+[network]
+egress = "localhost-only"   # open (default) | localhost-only | deny
+
+# Transparent service routing: a real host → a local target. Auto-derived for
+# declared GCP emulator presets, so you usually don't write these by hand.
+[[network.routes]]
+host = "cloudtasks.googleapis.com"
+target = "http://127.0.0.1:8123"   # or a local emulator's host:port
+```
+
+- **Transparent routing** (`[network].routes`, needs an `http-mock` service):
+  an outbound request to a known host is served by a local emulator/mock instead
+  of the real service, with **zero app code change**. Works for **HTTP/REST**
+  (resolution `route > stub > openapi > cassette > forward`) **and gRPC** (the
+  CONNECT MITM negotiates ALPN h2 and stream-reverse-proxies routed gRPC, trailers
+  preserved, to the emulator's h2c port). Declaring a GCP emulator preset
+  (`cloud-tasks`, `cloud-scheduler`, …) plus an `http-mock` service auto-adds the
+  route from its real `*.googleapis.com` host to the local emulator.
+- **Egress policy** (`[network].egress`, enforced under `--isolation seatbelt`):
+  `localhost-only` denies outbound network except loopback (so the run reaches
+  only vat's local emulators/proxy); `deny` blocks all outbound; `open` (default)
+  is unrestricted. Reads stay open and the GPU is untouched. Applies to both
+  direct (`vat run -- cmd`) and runner (`vat run <runner>`) commands; vat-spawned
+  services keep their network. With `--isolation none` a non-`open` policy warns
+  that confinement needs seatbelt.
+- **Fully hermetic**: when `egress` is `localhost-only`/`deny`, vat also runs the
+  `http-mock` proxy in **no-forward** mode — an unmatched request returns
+  `502 hermetic: … forwarding disabled` instead of reaching the internet. Net:
+  the runner is confined to localhost *and* the proxy refuses upstream, so the run
+  is fail-closed (routes/stubs/OpenAPI/cassette-replays still serve).
+
+> Seatbelt enforcement uses `sandbox-exec` (Apple-deprecated but functional; the
+> [`Sandbox`] trait keeps a future Endpoint Security backend local). Routing/egress
+> only catch proxy-honoring / loopback-confined clients — non-cooperating egress is
+> *blocked* (fail-closed), not transparently rerouted.
 
 [`Sandbox`]: src/sandbox/mod.rs
