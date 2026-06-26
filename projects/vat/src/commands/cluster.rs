@@ -233,3 +233,7 @@ fn load_record(name: &str) -> Result<ClusterRecord> {
     serde_json::from_slice(&bytes).with_context(|| format!("parse registry for `{name}`"))
 }
 // CODEGEN-END
+// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
+// CODEGEN-BEGIN
+
+// CODEGEN-END
