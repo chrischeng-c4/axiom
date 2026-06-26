@@ -1,8 +1,8 @@
 version = 1
 project = "rig"
 td_path = "projects/rig/tech-design"
-generated_at = "2026-06-14T08:01:44.470639+00:00"
-digest = "sha256:57574eb38545379439a0739a620557418bb264e520e8367123ffce98e0adc570"
+generated_at = "2026-06-26T10:18:19.870657+00:00"
+digest = "sha256:a8285405fbb168f32452b62e36aa2b2b111421715abd25c3dd2bf177007a7f1f"
 
 [[files]]
 path = "logic/external-contracts.md"
@@ -13,12 +13,24 @@ path = "semantic/rig-build-script.md"
 digest = "sha256:1318645027c455d7900815d9fc7598ebc1a994423e85f8848a714d6ca79034a1"
 
 [[files]]
+path = "semantic/rig-engine.md"
+digest = "sha256:a865f5a2844e2d20011be07afa568f7743c47e0812c8f109f22fa05434ff52f7"
+
+[[files]]
 path = "semantic/rig-install-script.md"
 digest = "sha256:8db97c82bb4e2778b7ea20fc8d0571151e1027c8ccd9ff99f35319896dcc11b1"
 
 [[files]]
 path = "semantic/rig-projects-rig.md"
 digest = "sha256:31e4316eb0a1be8cb424cd4f3aead0a88d6a0bc41cdb7160a6fba31380c29dbb"
+
+[[files]]
+path = "semantic/rig-scenario.md"
+digest = "sha256:696b0076297cd344e6fc2f19853617a174374dec5e4acf7d4b4e5c9d5a791c09"
+
+[[files]]
+path = "semantic/rig-src.md"
+digest = "sha256:e2a5cbaa5d3fee503f17db2513374c67b0174eec014301d1b35b03cc9378b345"
 
 [[files]]
 path = "semantic/source/projects-rig-rig-cli-src-bin-rig-rs.md"
@@ -58,7 +70,7 @@ digest = "sha256:7c0c9894a15e35a0ca51e6cfc8c558fbc47a62e4869acf25046a3bb46805656
 
 [[files]]
 path = "semantic/source/projects-rig-src-engine-rss-rs.md"
-digest = "sha256:68ed63e94ac1543038835eb5aa0725713d89dbf3f424728df0c7705af0102f59"
+digest = "sha256:fe7dd9a41eb0a50f57dc688c1558f5f15c25410adca8c3a98e647001f9ec589a"
 
 [[files]]
 path = "semantic/source/projects-rig-src-engine-sample-rs.md"
