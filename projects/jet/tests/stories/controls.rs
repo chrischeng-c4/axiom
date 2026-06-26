@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:16a93e6f" tracker="pending-tracker" reason="Tests: prop-type extraction for a typed component; control inference for bool/string/number/string-literal-union; meta.argTypes override wins; the Controls panel HTML seeds current arg values; editing posts new args."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:16a93e6f" tracker="standardize-gap-projects-jet-tests-stories-controls-rs" reason="Tests: prop-type extraction for a typed component; control inference for bool/string/number/string-literal-union; meta.argTypes override wins; the Controls panel HTML seeds current arg values; editing posts new args."
 //! Integration tests for B3: the `jet stories` Controls panel.
 //!
 //! Covers the full B3 surface:
