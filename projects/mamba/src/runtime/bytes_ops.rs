@@ -558,11 +558,11 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
         };
         let enc = enc_orig.to_ascii_lowercase();
         let err = encoding_errors_kind(errors);
-        let s = match enc.as_str() {
+        let value = match enc.as_str() {
             "utf-8" | "utf8" | "u8" => {
                 if matches!(err, ErrorsKind::Strict) {
                     match std::str::from_utf8(&data) {
-                        Ok(s) => s.to_string(),
+                        Ok(s) => MbValue::from_ptr(MbObject::new_str(s.to_string())),
                         Err(e) => {
                             let pos = e.valid_up_to();
                             raise_unicode_decode_error("utf-8", &data, pos, "invalid start byte");
@@ -570,54 +570,71 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                         }
                     }
                 } else {
-                    decode_utf8(&data, err)
+                    decode_utf8_value(&data, err)
                 }
             }
             "ascii" | "us-ascii" => {
                 if matches!(err, ErrorsKind::Strict) {
                     if let Some(pos) = data.iter().position(|b| *b >= 0x80) {
-                        raise_unicode_decode_error("ascii", &data, pos, "ordinal not in range(128)");
+                        raise_unicode_decode_error(
+                            "ascii",
+                            &data,
+                            pos,
+                            "ordinal not in range(128)",
+                        );
                         return MbValue::none();
                     }
-                    String::from_utf8_lossy(&data).into_owned()
+                    MbValue::from_ptr(MbObject::new_str(
+                        String::from_utf8_lossy(&data).into_owned(),
+                    ))
                 } else {
-                    decode_ascii(&data, err)
+                    decode_ascii_value(&data, err)
                 }
             }
-            "latin-1" | "latin_1" | "iso-8859-1" | "8859" => decode_latin1(&data),
-            "utf-16be" | "utf-16-be" | "utf_16_be" => decode_utf16(&data, true),
-            "utf-16le" | "utf-16-le" | "utf_16_le" => decode_utf16(&data, false),
+            "latin-1" | "latin_1" | "iso-8859-1" | "8859" => {
+                MbValue::from_ptr(MbObject::new_str(decode_latin1(&data)))
+            }
+            "utf-16be" | "utf-16-be" | "utf_16_be" => {
+                MbValue::from_ptr(MbObject::new_str(decode_utf16(&data, true)))
+            }
+            "utf-16le" | "utf-16-le" | "utf_16_le" => {
+                MbValue::from_ptr(MbObject::new_str(decode_utf16(&data, false)))
+            }
             // Bare "utf-16": consume a leading BOM to pick endianness (LE
             // default, matching CPython). Used by test_xml_encodings.
             "utf-16" | "utf16" => {
                 if data.len() >= 2 && data[0] == 0xFE && data[1] == 0xFF {
-                    decode_utf16(&data[2..], true)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf16(&data[2..], true)))
                 } else if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xFE {
-                    decode_utf16(&data[2..], false)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf16(&data[2..], false)))
                 } else {
-                    decode_utf16(&data, false)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf16(&data, false)))
                 }
             }
-            "utf-32be" | "utf-32-be" | "utf_32_be" => decode_utf32(&data, true),
-            "utf-32le" | "utf-32-le" | "utf_32_le" => decode_utf32(&data, false),
+            "utf-32be" | "utf-32-be" | "utf_32_be" => {
+                MbValue::from_ptr(MbObject::new_str(decode_utf32(&data, true)))
+            }
+            "utf-32le" | "utf-32-le" | "utf_32_le" => {
+                MbValue::from_ptr(MbObject::new_str(decode_utf32(&data, false)))
+            }
             "utf-32" | "utf32" => {
                 if data.len() >= 4 && data[..4] == [0x00, 0x00, 0xFE, 0xFF] {
-                    decode_utf32(&data[4..], true)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf32(&data[4..], true)))
                 } else if data.len() >= 4 && data[..4] == [0xFF, 0xFE, 0x00, 0x00] {
-                    decode_utf32(&data[4..], false)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf32(&data[4..], false)))
                 } else {
-                    decode_utf32(&data, false)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf32(&data, false)))
                 }
             }
             "idna" => match super::stdlib::codecs_mod::idna_decode_string(&data) {
-                Some(out) => out,
+                Some(out) => MbValue::from_ptr(MbObject::new_str(out)),
                 None => {
                     raise_unicode_decode_error("idna", &data, 0, "invalid input");
                     return MbValue::none();
                 }
             },
             "punycode" => match super::stdlib::codecs_mod::punycode_decode_string(&data) {
-                Some(out) => out,
+                Some(out) => MbValue::from_ptr(MbObject::new_str(out)),
                 None => {
                     raise_unicode_decode_error("punycode", &data, 0, "invalid input");
                     return MbValue::none();
@@ -647,10 +664,10 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                     );
                     return MbValue::none();
                 }
-                decode_utf8(&data, err)
+                decode_utf8_value(&data, err)
             }
         };
-        MbValue::from_ptr(MbObject::new_str(s))
+        value
     }
 }
 
@@ -664,6 +681,8 @@ fn encoding_errors_kind(errors: MbValue) -> ErrorsKind {
     match raw {
         Some("ignore") => ErrorsKind::Ignore,
         Some("replace") => ErrorsKind::Replace,
+        Some("surrogateescape") => ErrorsKind::SurrogateEscape,
+        Some("surrogatepass") => ErrorsKind::SurrogatePass,
         _ => ErrorsKind::Strict,
     }
 }
@@ -673,9 +692,95 @@ enum ErrorsKind {
     Strict,
     Ignore,
     Replace,
+    SurrogateEscape,
+    SurrogatePass,
 }
 
-fn decode_utf8(data: &[u8], err: ErrorsKind) -> String {
+fn codepoints_to_string_value(codepoints: Vec<u32>) -> MbValue {
+    let has_surrogate = codepoints.iter().any(|cp| (0xD800..=0xDFFF).contains(cp));
+    if has_surrogate {
+        return super::string_ops::new_surrogate_codepoints_str(codepoints);
+    }
+    let s: String = codepoints.into_iter().filter_map(char::from_u32).collect();
+    MbValue::from_ptr(MbObject::new_str(s))
+}
+
+fn decode_utf8_surrogateescape_value(data: &[u8]) -> MbValue {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        match std::str::from_utf8(&data[i..]) {
+            Ok(rest) => {
+                out.extend(rest.chars().map(|c| c as u32));
+                break;
+            }
+            Err(e) => {
+                let valid = e.valid_up_to();
+                if valid > 0 {
+                    if let Ok(prefix) = std::str::from_utf8(&data[i..i + valid]) {
+                        out.extend(prefix.chars().map(|c| c as u32));
+                    }
+                    i += valid;
+                    continue;
+                }
+                out.push(0xDC00 + data[i] as u32);
+                i += 1;
+            }
+        }
+    }
+    codepoints_to_string_value(out)
+}
+
+fn decode_utf8_surrogatepass_value(data: &[u8]) -> Result<MbValue, usize> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        match std::str::from_utf8(&data[i..]) {
+            Ok(rest) => {
+                out.extend(rest.chars().map(|c| c as u32));
+                break;
+            }
+            Err(e) => {
+                let valid = e.valid_up_to();
+                if valid > 0 {
+                    if let Ok(prefix) = std::str::from_utf8(&data[i..i + valid]) {
+                        out.extend(prefix.chars().map(|c| c as u32));
+                    }
+                    i += valid;
+                    continue;
+                }
+                if i + 2 < data.len()
+                    && data[i] == 0xED
+                    && (0xA0..=0xBF).contains(&data[i + 1])
+                    && (0x80..=0xBF).contains(&data[i + 2])
+                {
+                    let cp = (((data[i] & 0x0F) as u32) << 12)
+                        | (((data[i + 1] & 0x3F) as u32) << 6)
+                        | ((data[i + 2] & 0x3F) as u32);
+                    out.push(cp);
+                    i += 3;
+                } else {
+                    return Err(i);
+                }
+            }
+        }
+    }
+    Ok(codepoints_to_string_value(out))
+}
+
+fn decode_utf8_value(data: &[u8], err: ErrorsKind) -> MbValue {
+    if matches!(err, ErrorsKind::SurrogateEscape) {
+        return decode_utf8_surrogateescape_value(data);
+    }
+    if matches!(err, ErrorsKind::SurrogatePass) {
+        return match decode_utf8_surrogatepass_value(data) {
+            Ok(value) => value,
+            Err(pos) => {
+                raise_unicode_decode_error("utf-8", data, pos, "invalid start byte");
+                MbValue::none()
+            }
+        };
+    }
     // Walk the buffer one UTF-8 sequence at a time. On invalid bytes:
     //   - ignore → drop them
     //   - replace / strict → emit a single U+FFFD per *failure* (CPython
@@ -696,27 +801,46 @@ fn decode_utf8(data: &[u8], err: ErrorsKind) -> String {
                 match err {
                     ErrorsKind::Ignore => {}
                     ErrorsKind::Replace | ErrorsKind::Strict => out.push('\u{FFFD}'),
+                    ErrorsKind::SurrogateEscape | ErrorsKind::SurrogatePass => unreachable!(),
                 }
                 i += valid + bad_len.max(1);
             }
         }
     }
-    out
+    MbValue::from_ptr(MbObject::new_str(out))
 }
 
-fn decode_ascii(data: &[u8], err: ErrorsKind) -> String {
+fn decode_ascii_value(data: &[u8], err: ErrorsKind) -> MbValue {
+    if matches!(err, ErrorsKind::SurrogateEscape) {
+        let codepoints = data
+            .iter()
+            .map(|&b| {
+                if b < 0x80 {
+                    b as u32
+                } else {
+                    0xDC00 + b as u32
+                }
+            })
+            .collect();
+        return codepoints_to_string_value(codepoints);
+    }
     let mut out = String::with_capacity(data.len());
-    for &b in data {
+    for (i, &b) in data.iter().enumerate() {
         if b < 0x80 {
             out.push(b as char);
         } else {
             match err {
                 ErrorsKind::Ignore => {}
                 ErrorsKind::Replace | ErrorsKind::Strict => out.push('\u{FFFD}'),
+                ErrorsKind::SurrogateEscape => unreachable!(),
+                ErrorsKind::SurrogatePass => {
+                    raise_unicode_decode_error("ascii", data, i, "ordinal not in range(128)");
+                    return MbValue::none();
+                }
             }
         }
     }
-    out
+    MbValue::from_ptr(MbObject::new_str(out))
 }
 
 fn decode_latin1(data: &[u8]) -> String {
