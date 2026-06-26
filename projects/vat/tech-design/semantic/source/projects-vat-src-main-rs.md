@@ -1,30 +1,27 @@
 ---
 id: vat-source-projects-vat-src-main-rs
-summary: Source replay payload for projects/vat/src/main.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/main.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/main.rs
+# Standardized projects/vat/src/main.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/src/main.rs` generated from AST during Score force-regeneration standardization.
+Rust source-unit TD for `projects/vat/src/main.rs`, captured during #39 vat migration onto td_ast lossless source generation.
 
-### Symbols
-
-No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -38,21 +35,17 @@ fn main() -> ExitCode {
         }
     }
 }
-`````
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/main.rs"
+  - path: projects/vat/src/main.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-src.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-main-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/main.rs` captured during #39 vat standardization.
 ```

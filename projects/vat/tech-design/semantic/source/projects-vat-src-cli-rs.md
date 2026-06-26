@@ -1,32 +1,27 @@
 ---
 id: vat-source-projects-vat-src-cli-rs
-summary: Source replay payload for projects/vat/src/cli.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/cli.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/cli.rs
+# Standardized projects/vat/src/cli.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/src/cli.rs` generated from AST during Score force-regeneration standardization.
+Rust source-unit TD for `projects/vat/src/cli.rs`, captured during #39 vat migration onto td_ast lossless source generation.
 
-### Symbols
-
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `run` | projects/vat/src/cli.rs | function | pub | 106 | run() -> Result<ExitCode> |
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
 //! CLI surface.
 //!
 //! Verbs are deliberately few and composable, because the operator is an
@@ -42,6 +37,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands;
+use crate::config::ClusterBackend;
 use crate::spec::{GpuRequest, Isolation};
 
 #[derive(Parser)]
@@ -122,8 +118,131 @@ enum Cmd {
     Logs { id: String, source: Option<String> },
     /// Print the compact LLM/agent usage guide.
     Llm,
+    /// Self-update vat to the latest `vat@*` GitHub release.
+    Upgrade {
+        /// Report the current and latest version without changing the binary.
+        #[arg(long)]
+        check: bool,
+        /// Install this exact version (`0.3.62` or `vat@0.3.62`) instead of the latest.
+        #[arg(long)]
+        version: Option<String>,
+        /// Reinstall even when already on the selected version.
+        #[arg(long)]
+        force: bool,
+        /// Skip the confirmation prompt.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// File a diagnostics-rich GitHub issue against the axiom repo.
+    #[command(name = "report-issue")]
+    ReportIssue {
+        /// Issue title.
+        #[arg(short = 't', long)]
+        title: String,
+        /// Description placed above the auto-attached diagnostics block.
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+        /// Target repository (`owner/name`); defaults to vat's release repo.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Add a label (repeatable).
+        #[arg(long)]
+        label: Vec<String>,
+        /// Assemble and print the report without submitting anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the confirmation prompt.
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Free-text message (used as the description when `--message` is absent).
+        #[arg(trailing_var_arg = true)]
+        rest: Vec<String>,
+    },
     /// Report the GPU every vat on this host can reach.
     Gpu {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manage standalone local Kubernetes clusters (independent of runs).
+    Cluster {
+        #[command(subcommand)]
+        cmd: ClusterCmd,
+    },
+    /// Internal: run a built-in emulator. vat spawns itself for an emulator
+    /// preset service; not intended for direct human use.
+    #[command(hide = true)]
+    Emulator {
+        #[arg(value_enum)]
+        kind: EmulatorKind,
+        /// host:port to bind, e.g. 127.0.0.1:8085.
+        #[arg(long)]
+        host_port: String,
+        /// CA pem path (http-mock only).
+        #[arg(long)]
+        ca_path: Option<String>,
+        /// Cassette dir (http-mock only).
+        #[arg(long)]
+        cassette_dir: Option<String>,
+        /// OpenAPI spec path (openapi only).
+        #[arg(long)]
+        spec: Option<String>,
+        /// Seed a host route (http-mock only), repeatable: `--route host=base`.
+        #[arg(long)]
+        route: Vec<String>,
+    },
+}
+
+/// Which built-in emulator to run.
+/// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#cli
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum EmulatorKind {
+    Pubsub,
+    FirebaseAuth,
+    CloudTasks,
+    CloudScheduler,
+    CloudWorkflows,
+    CloudStorage,
+    HttpMock,
+    Openapi,
+}
+
+/// Standalone `vat cluster` verbs. Clusters created here outlive a single run;
+/// vat creates/lists/deletes them on explicit command but does not supervise
+/// them.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
+#[derive(Subcommand)]
+enum ClusterCmd {
+    /// Create a local Kubernetes cluster.
+    Create {
+        /// Cluster name (auto-generated when omitted).
+        #[arg(long)]
+        name: Option<String>,
+        /// Backend to use; `auto` prefers kind → k3d → minikube.
+        #[arg(long, value_enum, default_value = "auto")]
+        backend: ClusterBackend,
+        /// Kubernetes version for the node image (e.g. 1.30).
+        #[arg(long)]
+        k8s_version: Option<String>,
+        /// Node count.
+        #[arg(long, default_value_t = 1)]
+        nodes: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List vat-managed clusters.
+    Ls {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the kubeconfig path (or record) for a cluster.
+    Kubeconfig {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a cluster by name.
+    Delete {
+        name: String,
         #[arg(long)]
         json: bool,
     },
@@ -174,24 +293,156 @@ pub fn run() -> Result<ExitCode> {
         Cmd::Rm { id } => commands::rm::exec(id),
         Cmd::Logs { id, source } => commands::logs::exec(id, source),
         Cmd::Llm => commands::llm::exec(),
+        Cmd::Upgrade {
+            check,
+            version,
+            force,
+            yes,
+        } => upgrade_cmd(check, version, force, yes),
+        Cmd::ReportIssue {
+            title,
+            message,
+            repo,
+            label,
+            dry_run,
+            yes,
+            rest,
+        } => report_issue_cmd(title, message, repo, label, dry_run, yes, rest),
         Cmd::Gpu { json } => commands::gpu::exec(json),
+        Cmd::Cluster { cmd } => match cmd {
+            ClusterCmd::Create {
+                name,
+                backend,
+                k8s_version,
+                nodes,
+                json,
+            } => commands::cluster::create(name, backend, k8s_version, nodes, json),
+            ClusterCmd::Ls { json } => commands::cluster::ls(json),
+            ClusterCmd::Kubeconfig { name, json } => commands::cluster::kubeconfig(name, json),
+            ClusterCmd::Delete { name, json } => commands::cluster::delete(name, json),
+        },
+        Cmd::Emulator {
+            kind,
+            host_port,
+            ca_path,
+            cassette_dir,
+            spec,
+            route,
+        } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir, spec, route),
     }
 }
-`````
+
+/// vat's identity + build provenance for the shared CLI-convention verbs
+/// (`upgrade` / `report-issue`), per CONTRIBUTING.md. Stamps come from `build.rs`.
+/// @spec projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#cli
+// Used by the feature-gated upgrade/report-issue dispatch; unused in a lean build.
+#[cfg_attr(
+    not(any(feature = "self-update", feature = "report-issue")),
+    allow(dead_code)
+)]
+const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
+    project: "vat",
+    repo: "chrischeng-c4/axiom",
+    target: env!("VAT_TARGET"),
+    version: env!("CARGO_PKG_VERSION"),
+    git_sha: env!("VAT_GIT_SHA"),
+    built_at: env!("VAT_BUILT_AT"),
+};
+
+/// `vat upgrade` → `cli_std::upgrade::run` on a tokio runtime. Without the
+/// `self-update` feature the HTTP client + runtime are absent, so it bails
+/// cleanly (the shipped binary includes the feature).
+#[cfg(feature = "self-update")]
+fn upgrade_cmd(check: bool, version: Option<String>, force: bool, yes: bool) -> Result<ExitCode> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(cli_std::upgrade::run(
+        &TOOL,
+        cli_std::upgrade::Options {
+            check,
+            tag: version,
+            force,
+            yes,
+        },
+    ))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(not(feature = "self-update"))]
+fn upgrade_cmd(
+    _check: bool,
+    _version: Option<String>,
+    _force: bool,
+    _yes: bool,
+) -> Result<ExitCode> {
+    anyhow::bail!(
+        "this vat build was compiled without self-update support; rebuild with \
+         default features (the published binary includes it)"
+    )
+}
+
+/// `vat report-issue` → `cli_std::report_issue::run` on a tokio runtime, tagging
+/// the issue with `project:vat`. Without the `report-issue` feature it bails.
+#[cfg(feature = "report-issue")]
+#[allow(clippy::too_many_arguments)]
+fn report_issue_cmd(
+    title: String,
+    message: Option<String>,
+    repo: Option<String>,
+    label: Vec<String>,
+    dry_run: bool,
+    yes: bool,
+    rest: Vec<String>,
+) -> Result<ExitCode> {
+    let message = message.or_else(|| (!rest.is_empty()).then(|| rest.join(" ")));
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(cli_std::report_issue::run(
+        &TOOL,
+        cli_std::report_issue::Options {
+            title,
+            message,
+            url: None,
+            repo,
+            label: std::iter::once("project:vat".to_string())
+                .chain(label)
+                .collect(),
+            dry_run,
+            yes,
+        },
+    ))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(not(feature = "report-issue"))]
+#[allow(clippy::too_many_arguments)]
+fn report_issue_cmd(
+    _title: String,
+    _message: Option<String>,
+    _repo: Option<String>,
+    _label: Vec<String>,
+    _dry_run: bool,
+    _yes: bool,
+    _rest: Vec<String>,
+) -> Result<ExitCode> {
+    anyhow::bail!(
+        "this vat build was compiled without report-issue support; rebuild with \
+         default features (the published binary includes it)"
+    )
+}
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/cli.rs"
+  - path: projects/vat/src/cli.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-src.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-cli-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/cli.rs` captured during #39 vat standardization.
 ```

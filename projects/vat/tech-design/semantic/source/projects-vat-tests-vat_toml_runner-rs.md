@@ -1,30 +1,27 @@
 ---
 id: vat-source-projects-vat-tests-vat-toml-runner-rs
-summary: Source replay payload for projects/vat/tests/vat_toml_runner.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/tests/vat_toml_runner.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: agent-legible-state-and-diff-surface
-    claim: agent-legible-state-and-diff-surface
-    coverage: full
-    rationale: "This source replay TD preserves vat.toml runner evidence, local service orchestration, and agent-legible run state."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/tests/vat_toml_runner.rs
+# Standardized projects/vat/tests/vat_toml_runner.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/tests/vat_toml_runner.rs` generated from AST during Score force-regeneration standardization.
+Rust source-unit TD for `projects/vat/tests/vat_toml_runner.rs`, captured during #39 vat migration onto td_ast lossless source generation.
 
-### Symbols
-
-No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
 use std::net::TcpListener;
 use std::process::Command;
 
@@ -47,6 +44,21 @@ fn free_port() -> Option<u16> {
     Some(listener.local_addr().ok()?.port())
 }
 
+fn jsonl(stdout: &[u8]) -> Vec<Value> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+fn result_event(events: &[Value]) -> &Value {
+    events
+        .iter()
+        .find(|event| event["type"] == "result")
+        .expect("missing result event")
+}
+
 #[test]
 fn vat_toml_runner_starts_service_and_returns_json_evidence() {
     if !python3_available() {
@@ -64,11 +76,12 @@ fn vat_toml_runner_starts_service_and_returns_json_evidence() {
             r#"
 version = 1
 name = "smoke"
+default_runner = "e2e"
 
 [workspace]
 base = "."
 workdir = "."
-keep = "failed"
+keep = "always"
 
 [env]
 VAT_TEST_MODE = "runner"
@@ -92,7 +105,7 @@ artifacts = ["runner-artifact.txt"]
     let output = Command::new(vat_bin())
         .current_dir(project.path())
         .env("VAT_HOME", vat_home.path())
-        .args(["run", "e2e", "--json"])
+        .arg("run")
         .output()
         .unwrap();
 
@@ -102,7 +115,23 @@ artifacts = ["runner-artifact.txt"]
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let events = jsonl(&output.stdout);
+    assert_eq!(events[0]["type"], "select");
+    assert_eq!(events[0]["runner"], "e2e");
+    assert_eq!(events[0]["reason"], "default_runner");
+    assert!(events.iter().any(|event| event["type"] == "ready"));
+    let result = result_event(&events);
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["state"], "kept");
+    let id = result["id"].as_str().unwrap();
+
+    let state_output = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["state", id, "--compact"])
+        .output()
+        .unwrap();
+    assert!(state_output.status.success());
+    let json: Value = serde_json::from_slice(&state_output.stdout).unwrap();
     assert_eq!(json["test_run"]["runner_id"], "e2e");
     assert_eq!(json["test_run"]["runner"]["exit_code"], 0);
     assert_eq!(json["test_run"]["services"][0]["status"], "exited");
@@ -110,10 +139,9 @@ artifacts = ["runner-artifact.txt"]
         json["test_run"]["artifacts"][0]["path"],
         "runner-artifact.txt"
     );
-    let id = json["id"].as_str().unwrap();
     assert!(
-        !vat_home.path().join("vats").join(id).exists(),
-        "successful failed-only runs should be cleaned after JSON is emitted"
+        vat_home.path().join("vats").join(id).exists(),
+        "always-retained run should stay inspectable"
     );
 }
 
@@ -139,13 +167,17 @@ cmd = ["sh", "-c", "echo before-fail; exit 7"]
     let output = Command::new(vat_bin())
         .current_dir(project.path())
         .env("VAT_HOME", vat_home.path())
-        .args(["run", "fail", "--json"])
+        .args(["run", "fail"])
         .output()
         .unwrap();
 
     assert_eq!(output.status.code(), Some(7));
-    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    let id = json["id"].as_str().unwrap();
+    let events = jsonl(&output.stdout);
+    let result = result_event(&events);
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["exit_code"], 7);
+    assert_eq!(result["state"], "kept");
+    let id = result["id"].as_str().unwrap();
     assert!(vat_home.path().join("vats").join(id).exists());
 
     let logs = Command::new(vat_bin())
@@ -155,6 +187,123 @@ cmd = ["sh", "-c", "echo before-fail; exit 7"]
         .unwrap();
     assert!(logs.status.success());
     assert!(String::from_utf8_lossy(&logs.stdout).contains("before-fail"));
+}
+
+#[test]
+fn ambiguous_vat_run_requires_default_runner() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+
+[[runners]]
+id = "unit"
+cmd = ["sh", "-c", "true"]
+
+[[runners]]
+id = "e2e"
+cmd = ["sh", "-c", "true"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .arg("run")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let events = jsonl(&output.stdout);
+    assert_eq!(events[0]["type"], "error");
+    assert_eq!(events[0]["code"], "runner_required");
+    assert_eq!(events[0]["runners"][0], "unit");
+    assert_eq!(events[0]["runners"][1], "e2e");
+}
+
+#[test]
+fn missing_preset_binary_reports_jsonl_error() {
+    // `runtime = "native"` forbids the Docker fallback, so a missing binary is a
+    // hard error — the structured `missing_service_binary` envelope, not a panic.
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+
+[[services]]
+id = "redis"
+preset = "redis"
+runtime = "native"
+
+[[runners]]
+id = "test"
+requires = ["redis"]
+cmd = ["sh", "-c", "true"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .env("PATH", project.path())
+        .arg("run")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let events = jsonl(&output.stdout);
+    assert!(events.iter().any(|event| {
+        event["type"] == "error"
+            && event["code"] == "missing_service_binary"
+            && event["service"] == "redis"
+    }));
+}
+
+#[test]
+fn auto_runtime_without_native_or_docker_reports_unavailable() {
+    // Default `runtime = "auto"` prefers the native binary and falls back to
+    // Docker. With an empty PATH neither is present, so vat must emit the
+    // structured `service_runtime_unavailable` envelope and fail (no panic).
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+
+[[services]]
+id = "redis"
+preset = "redis"
+
+[[runners]]
+id = "test"
+requires = ["redis"]
+cmd = ["sh", "-c", "true"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .env("PATH", project.path())
+        .arg("run")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let events = jsonl(&output.stdout);
+    assert!(events.iter().any(|event| {
+        event["type"] == "error"
+            && event["code"] == "service_runtime_unavailable"
+            && event["service"] == "redis"
+    }));
 }
 
 #[test]
@@ -177,14 +326,25 @@ fn llm_guide_mentions_core_agent_contract() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     for expected in [
-        "vat run <runner-id> --json",
+        "vat run",
+        "vat run <runner-id>",
         "vat run -- <command>",
         "vat state <id>",
         "vat diff <id>",
         "vat logs <id>",
         "vat.toml",
-        "not Docker",
-        "not Docker, OCI, Compose, a Linux runtime, a VM, a daemon",
+        // Boundaries: vat is not a Docker replacement and never containerizes
+        // the runner, even though dependency services may be containers.
+        "not a Docker/OCI/Compose replacement",
+        "never containerized",
+        // Native-or-Docker service contract is discoverable.
+        "native or Docker",
+        "runtime = \"docker\"",
+        // Cloud Tasks / Cloud Scheduler clients need an explicit REST/factory
+        // override (the SDKs don't auto-read the host var and default to gRPC).
+        "Pointing a client at",
+        "default to gRPC, while vat serves REST",
+        "forces the REST transport",
     ] {
         assert!(
             stdout.contains(expected),
@@ -192,22 +352,17 @@ fn llm_guide_mentions_core_agent_contract() {
         );
     }
 }
-
-`````
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/tests/vat_toml_runner.rs"
+  - path: projects/vat/tests/vat_toml_runner.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-tests.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-tests-vat_toml_runner-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/tests/vat_toml_runner.rs` captured during #39 vat standardization.
 ```

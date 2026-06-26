@@ -1,48 +1,27 @@
 ---
 id: vat-source-projects-vat-src-state-rs
-summary: Source replay payload for projects/vat/src/state.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/state.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/state.rs
+# Standardized projects/vat/src/state.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/src/state.rs` generated from AST during Score force-regeneration standardization.
+Rust source-unit TD for `projects/vat/src/state.rs`, captured during #39 vat migration onto td_ast lossless source generation.
 
-### Symbols
-
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `ArtifactRecord` | projects/vat/src/state.rs | struct | pub | 133 |  |
-| `ChangeSet` | projects/vat/src/state.rs | struct | pub | 157 |  |
-| `ChangeSummary` | projects/vat/src/state.rs | struct | pub | 203 |  |
-| `ConfigRef` | projects/vat/src/state.rs | struct | pub | 80 |  |
-| `ProcessStatus` | projects/vat/src/state.rs | enum | pub | 121 |  |
-| `RunRecord` | projects/vat/src/state.rs | struct | pub | 44 |  |
-| `RunnerRunRecord` | projects/vat/src/state.rs | struct | pub | 105 |  |
-| `ServiceRunRecord` | projects/vat/src/state.rs | struct | pub | 88 |  |
-| `Status` | projects/vat/src/state.rs | enum | pub | 30 |  |
-| `TestRunEvidence` | projects/vat/src/state.rs | struct | pub | 142 |  |
-| `VatMeta` | projects/vat/src/state.rs | struct | pub | 59 |  |
-| `VatState` | projects/vat/src/state.rs | struct | pub | 228 |  |
-| `WorkspaceInfo` | projects/vat/src/state.rs | struct | pub | 218 |  |
-| `is_empty` | projects/vat/src/state.rs | function | pub | 169 | is_empty(&self) -> bool |
-| `oneline` | projects/vat/src/state.rs | function | pub | 174 | oneline(&self) -> String |
-| `summary` | projects/vat/src/state.rs | function | pub | 185 | summary(&self, sample: usize) -> ChangeSummary |
-| `total` | projects/vat/src/state.rs | function | pub | 165 | total(&self) -> usize |
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
 //! The state model — vat's reason to exist.
 //!
 //! Two shapes live here:
@@ -125,6 +104,23 @@ pub struct ConfigRef {
     pub digest: String,
 }
 
+/// Captured state of a local Kubernetes cluster backing a `cluster` service.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterRunRecord {
+    /// Backend that provisioned the cluster: "kind", "k3d", or "minikube".
+    pub backend: String,
+    /// Cluster name as known to the backend.
+    pub name: String,
+    /// Path to the isolated kubeconfig exported to the runner.
+    pub kubeconfig: String,
+    /// Number of nodes requested for the cluster.
+    pub node_count: u32,
+    /// Time from create to first readiness, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_ms: Option<u64>,
+}
+
 /// Captured service state for one run-scoped dependency process.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +148,9 @@ pub struct ServiceRunRecord {
     pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_http: Option<String>,
+    /// Present when this service is a local Kubernetes cluster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<ClusterRunRecord>,
     pub stdout_log: String,
     pub stderr_log: String,
 }
@@ -306,21 +305,17 @@ pub struct VatState {
     pub gpu: GpuInfo,
     pub events_tail: Vec<Event>,
 }
-`````
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/state.rs"
+  - path: projects/vat/src/state.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-src.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-state-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/state.rs` captured during #39 vat standardization.
 ```

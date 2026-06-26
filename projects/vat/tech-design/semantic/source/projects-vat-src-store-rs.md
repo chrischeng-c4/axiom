@@ -1,45 +1,27 @@
 ---
 id: vat-source-projects-vat-src-store-rs
-summary: Source replay payload for projects/vat/src/store.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/store.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/store.rs
+# Standardized projects/vat/src/store.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/src/store.rs` generated from AST during Score force-regeneration standardization.
+Rust source-unit TD for `projects/vat/src/store.rs`, captured during #39 vat migration onto td_ast lossless source generation.
 
-### Symbols
-
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `Vat` | projects/vat/src/store.rs | struct | pub | 26 |  |
-| `base_manifest` | projects/vat/src/store.rs | function | pub | 64 | base_manifest(&self) -> Result<Manifest> |
-| `base_manifest_path` | projects/vat/src/store.rs | function | pub | 44 | base_manifest_path(&self) -> PathBuf |
-| `changes` | projects/vat/src/store.rs | function | pub | 71 | changes(&self) -> Result<ChangeSet> |
-| `create` | projects/vat/src/store.rs | function | pub | 115 | create(     id: &str,     name: Option<String>,     spec: EnvSpec,     rootfs_source: Option<&std::path::Path>,     lineage: Vec<String>, ) -> Result<Vat> |
-| `events_path` | projects/vat/src/store.rs | function | pub | 41 | events_path(&self) -> PathBuf |
-| `list` | projects/vat/src/store.rs | function | pub | 175 | list() -> Result<Vec<Vat>> |
-| `load` | projects/vat/src/store.rs | function | pub | 161 | load(id: &str) -> Result<Vat> |
-| `log` | projects/vat/src/store.rs | function | pub | 60 | log(&self, ev: Event) -> Result<()> |
-| `meta_path` | projects/vat/src/store.rs | function | pub | 38 | meta_path(&self) -> PathBuf |
-| `project` | projects/vat/src/store.rs | function | pub | 78 | project(&self) -> Result<VatState> |
-| `remove` | projects/vat/src/store.rs | function | pub | 198 | remove(id: &str) -> Result<()> |
-| `rootfs` | projects/vat/src/store.rs | function | pub | 35 | rootfs(&self) -> PathBuf |
-| `save` | projects/vat/src/store.rs | function | pub | 51 | save(&mut self) -> Result<()> |
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
 //! The vat store: create, load, list, and remove vats on disk, and project a
 //! [`VatState`] from persisted [`VatMeta`] plus live computation.
 
@@ -243,22 +225,17 @@ pub fn remove(id: &str) -> Result<()> {
     std::fs::remove_dir_all(&dir).with_context(|| format!("remove {}", dir.display()))?;
     Ok(())
 }
-
-`````
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/store.rs"
+  - path: projects/vat/src/store.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-src.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-store-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/store.rs` captured during #39 vat standardization.
 ```

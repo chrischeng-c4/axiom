@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-gpu-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! GPU visibility — the reason vat exists for ML agents.
 //!

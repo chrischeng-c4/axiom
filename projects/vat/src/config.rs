@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! vat.toml project contract for ephemeral local agent test runs.
 //!
@@ -222,6 +222,7 @@ pub enum ServicePreset {
     Openapi,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#source
 impl ServicePreset {
     /// Whether this preset is a GCP/Firebase emulator (vs a datastore/broker).
     /// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
