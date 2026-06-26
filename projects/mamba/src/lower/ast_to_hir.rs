@@ -3188,6 +3188,7 @@ impl<'a> AstLowerer<'a> {
                         keyword_args,
                         stmt.span,
                         true,
+                        false,
                     );
                     self.module_unbound_annotation_names.remove(name);
                 }
@@ -3608,6 +3609,7 @@ impl<'a> AstLowerer<'a> {
         keyword_args: &[(String, Spanned<ast::Expr>)],
         span: crate::source::span::Span,
         placeholder_to_top: bool,
+        force_textual_registration: bool,
     ) -> Option<SymbolId> {
         let placeholder_sym: std::cell::Cell<Option<SymbolId>> = std::cell::Cell::new(None);
         let stmt_span = span;
@@ -3817,6 +3819,7 @@ impl<'a> AstLowerer<'a> {
                 }
                 placeholder_sym.set(Some(cls.name));
             }
+            cls.force_textual_registration = force_textual_registration;
             self.result.classes.push(cls);
         }
         placeholder_sym.get()
@@ -3982,6 +3985,7 @@ impl<'a> AstLowerer<'a> {
                 }
                 ast::Stmt::FnDef {
                     name: mname,
+                    type_params: method_type_params,
                     params,
                     return_ty,
                     body: mbody,
@@ -3990,6 +3994,7 @@ impl<'a> AstLowerer<'a> {
                 }
                 | ast::Stmt::AsyncFnDef {
                     name: mname,
+                    type_params: method_type_params,
                     params,
                     return_ty,
                     body: mbody,
@@ -4010,7 +4015,23 @@ impl<'a> AstLowerer<'a> {
                     };
                     method_name_map.push((mname.to_string(), method_sym));
                     let method_is_decorated = !decorators.is_empty();
-                    if let Some(mut m) = self.lower_fn_inner(
+                    if self.in_function_body {
+                        for param in method_type_params {
+                            let sym = self.define_local(&param.name, self.checker.tcx.any());
+                            self.result
+                                .sym_names
+                                .entry(sym)
+                                .or_insert_with(|| param.name.clone());
+                        }
+                    }
+                    let saved_tps = std::mem::replace(
+                        &mut self.active_type_params,
+                        method_type_params
+                            .iter()
+                            .map(|param| param.name.clone())
+                            .collect(),
+                    );
+                    let lowered_method = self.lower_fn_inner(
                         mname,
                         params,
                         return_ty,
@@ -4018,7 +4039,9 @@ impl<'a> AstLowerer<'a> {
                         stmt.span,
                         true,
                         method_is_decorated,
-                    ) {
+                    );
+                    self.active_type_params = saved_tps;
+                    if let Some(mut m) = lowered_method {
                         self.result
                             .func_sigs
                             .insert(m.name.0, func_sig_meta(params, return_ty));
@@ -4044,6 +4067,9 @@ impl<'a> AstLowerer<'a> {
                             .iter()
                             .filter_map(|d| self.lower_expr(d))
                             .collect();
+                        for sym in &m.captures {
+                            self.cell_override_syms.insert(*sym);
+                        }
                         methods.push(m);
                     }
                 }
@@ -4071,6 +4097,7 @@ impl<'a> AstLowerer<'a> {
                         nested_type_params,
                         nested_keyword_args,
                         stmt.span,
+                        false,
                         false,
                     );
                     class_attr_assigns.push((
@@ -4225,6 +4252,7 @@ impl<'a> AstLowerer<'a> {
             all_bases: Vec::new(),
             runtime_base_exprs: Vec::new(),
             runtime_base_list_expr: None,
+            force_textual_registration: false,
             namedtuple_base: None,
             fields,
             methods,
@@ -4256,7 +4284,14 @@ impl<'a> AstLowerer<'a> {
                 keyword_args,
                 ..
             } => {
-                let sym = self.collect_class_stmt(
+                let sym = self
+                    .resolve_name(name, stmt.span)
+                    .unwrap_or_else(|| self.define_local(name, self.checker.tcx.any()));
+                self.result
+                    .sym_names
+                    .entry(sym)
+                    .or_insert_with(|| name.clone());
+                let _ = self.collect_class_stmt(
                     name,
                     body,
                     bases,
@@ -4265,9 +4300,10 @@ impl<'a> AstLowerer<'a> {
                     keyword_args,
                     stmt.span,
                     false,
+                    true,
                 );
-                return sym.map(|name| HirStmt::ClassDefPlaceholder {
-                    name,
+                return Some(HirStmt::ClassDefPlaceholder {
+                    name: sym,
                     span: stmt.span,
                 });
             }
@@ -5215,7 +5251,7 @@ impl<'a> AstLowerer<'a> {
                 Some(HirExpr::Var(sym, self.checker.tcx.any()))
             }
             ast::Expr::Ident(name) => {
-                let sym = if let Some(id) = self.resolve_name(name, expr.span) {
+                let sym = if let Some(&id) = self.local_names.get(name.as_str()) {
                     id
                 } else if let Some(&outer_id) = self.outer_scope_names.get(name.as_str()) {
                     // Implicit capture: inner function reads outer function's variable
@@ -5225,6 +5261,8 @@ impl<'a> AstLowerer<'a> {
                     self.local_names.insert(name.to_string(), outer_id);
                     self.cell_override_syms.insert(outer_id);
                     outer_id
+                } else if let Some(id) = self.checker.symbols.lookup(name) {
+                    id
                 } else {
                     return None;
                 };
