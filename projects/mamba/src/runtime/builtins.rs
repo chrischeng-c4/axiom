@@ -752,6 +752,13 @@ fn print_repr(val: MbValue) {
         // Class-body enum member inside a container: "<Color.RED: 1>".
         mb_out!("{s}");
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(codepoints) = super::string_ops::surrogate_codepoints(val) {
+            mb_out!(
+                "{}",
+                super::string_ops::repr_string_from_codepoints(&codepoints)
+            );
+            return;
+        }
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => {
@@ -1054,6 +1061,9 @@ pub fn mb_len(val: MbValue) -> MbValue {
             match &(*ptr).data {
                 // Python 3 `len(str)` is the number of Unicode code points, not bytes.
                 ObjData::Str(s) => {
+                    if let Some(n) = super::string_ops::surrogate_len(val) {
+                        return MbValue::from_int(n as i64);
+                    }
                     // Class-body enum classes: len(Color) is the canonical
                     // member count, not the class-name string length.
                     if let Some(n) = super::stdlib::enum_class::class_member_count(s) {
@@ -1656,6 +1666,9 @@ pub fn mb_bool(val: MbValue) -> MbValue {
     } else if let Some(b) = val.as_bool() {
         b
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(n) = super::string_ops::surrogate_len(val) {
+            return MbValue::from_bool(n != 0);
+        }
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => !s.is_empty(),
@@ -1789,6 +1802,9 @@ pub fn mb_str(val: MbValue) -> MbValue {
     } else if val.is_ellipsis() {
         "Ellipsis".to_string()
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(codepoints) = super::string_ops::surrogate_codepoints(val) {
+            return super::string_ops::new_surrogate_codepoints_str(codepoints);
+        }
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => {
@@ -4603,7 +4619,9 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                 (ObjData::Tuple(a), ObjData::Tuple(b)) => {
                     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
                 }
-                (ObjData::Str(a), ObjData::Str(b)) => a == b,
+                (ObjData::Str(sa), ObjData::Str(sb)) => {
+                    super::string_ops::string_values_equal_if_surrogate(a, b).unwrap_or(sa == sb)
+                }
                 (ObjData::Set(la), ObjData::Set(lb)) => {
                     let a = la.read().unwrap();
                     let b = lb.read().unwrap();
@@ -5808,6 +5826,11 @@ pub fn mb_repr(val: MbValue) -> MbValue {
         };
         format!("<function {name} at 0x{addr:x}>")
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(codepoints) = super::string_ops::surrogate_codepoints(val) {
+            return MbValue::from_ptr(MbObject::new_str(
+                super::string_ops::repr_string_from_codepoints(&codepoints),
+            ));
+        }
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => {
@@ -6504,9 +6527,7 @@ pub fn mb_chr(val: MbValue) -> MbValue {
         if let Some(c) = char::from_u32(i as u32) {
             return MbValue::from_ptr(MbObject::new_str(c.to_string()));
         }
-        // Lone surrogate (valid in CPython, unrepresentable in a Rust
-        // String) — keep the legacy silent None rather than a wrong raise.
-        return MbValue::none();
+        return super::string_ops::new_lone_surrogate_str(i as u32);
     }
     // BigInt code points are always out of the 0x110000 range.
     if unsafe { super::bigint_ops::extract_bigint(val).is_some() } {
@@ -6519,6 +6540,15 @@ pub fn mb_chr(val: MbValue) -> MbValue {
 
 /// ord(c) — return Unicode code point for a single character.
 pub fn mb_ord(val: MbValue) -> MbValue {
+    if let Some(codepoint) = super::string_ops::surrogate_single_codepoint(val) {
+        return MbValue::from_int(codepoint as i64);
+    }
+    if let Some(n) = super::string_ops::surrogate_len(val) {
+        raise_type_error(format!(
+            "ord() expected a character, but string of length {n} found"
+        ));
+        return MbValue::none();
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match (*ptr).data {
@@ -7901,6 +7931,9 @@ fn ascii_repr(val: MbValue) -> String {
     } else if val.is_none() {
         "None".to_string()
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(codepoints) = super::string_ops::surrogate_codepoints(val) {
+            return super::string_ops::ascii_string_from_codepoints(&codepoints);
+        }
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => {
@@ -12888,6 +12921,41 @@ mod tests {
         // 0x110000 is beyond the valid Unicode range
         let c = mb_chr(MbValue::from_int(0x110000));
         assert!(c.is_none());
+    }
+
+    #[test]
+    fn test_chr_lone_surrogate_roundtrip() {
+        let c = mb_chr(MbValue::from_int(0xD800));
+        assert_eq!(mb_len(c).as_int(), Some(1));
+        assert_eq!(mb_ord(c).as_int(), Some(0xD800));
+        assert!(mb_richcmp_eq(c, mb_chr(MbValue::from_int(0xD800))));
+        assert_eq!(
+            mb_hash(c).as_int(),
+            mb_hash(mb_chr(MbValue::from_int(0xD800))).as_int()
+        );
+
+        let r = mb_repr(c);
+        let a = mb_ascii(c);
+        unsafe {
+            if let ObjData::Str(ref s) = (*r.as_ptr().unwrap()).data {
+                assert_eq!(s, "'\\ud800'");
+            } else {
+                panic!("expected repr str");
+            }
+            if let ObjData::Str(ref s) = (*a.as_ptr().unwrap()).data {
+                assert_eq!(s, "'\\ud800'");
+            } else {
+                panic!("expected ascii str");
+            }
+        }
+
+        let dict = MbValue::from_ptr(MbObject::new_dict());
+        super::super::dict_ops::mb_dict_setitem(dict, c, MbValue::from_int(42));
+        assert_eq!(
+            super::super::dict_ops::mb_dict_getitem(dict, mb_chr(MbValue::from_int(0xD800)))
+                .as_int(),
+            Some(42)
+        );
     }
 
     #[test]

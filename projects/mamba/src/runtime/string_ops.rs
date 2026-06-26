@@ -4,6 +4,14 @@ use super::rc::{MbObject, ObjData};
 /// Implements Python-compatible string methods as extern-callable functions.
 /// All functions operate on MbValue (NaN-boxed) and return MbValue.
 use super::value::MbValue;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+const SURROGATE_SENTINEL: &str = "\u{e000}";
+
+thread_local! {
+    static SURROGATE_STRINGS: RefCell<HashMap<usize, Vec<u32>>> = RefCell::new(HashMap::new());
+}
 
 /// Helper: extract string reference from a MbValue pointer.
 unsafe fn as_str(val: MbValue) -> Option<&'static str> {
@@ -19,6 +27,137 @@ unsafe fn as_str(val: MbValue) -> Option<&'static str> {
 /// Helper: create a new string MbValue from a Rust String.
 fn new_str(s: String) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(s))
+}
+
+pub(crate) fn new_surrogate_codepoints_str(codepoints: Vec<u32>) -> MbValue {
+    let val = new_str(SURROGATE_SENTINEL.to_string());
+    if let Some(ptr) = val.as_ptr() {
+        SURROGATE_STRINGS.with(|strings| {
+            strings.borrow_mut().insert(ptr as usize, codepoints);
+        });
+    }
+    val
+}
+
+pub(crate) fn new_lone_surrogate_str(codepoint: u32) -> MbValue {
+    debug_assert!((0xD800..=0xDFFF).contains(&codepoint));
+    new_surrogate_codepoints_str(vec![codepoint])
+}
+
+pub(crate) fn cleanup_all_surrogate_strings() {
+    SURROGATE_STRINGS.with(|strings| strings.borrow_mut().clear());
+}
+
+pub(crate) fn surrogate_codepoints(val: MbValue) -> Option<Vec<u32>> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if !matches!(&(*ptr).data, ObjData::Str(s) if s == SURROGATE_SENTINEL) {
+            return None;
+        }
+    }
+    SURROGATE_STRINGS.with(|strings| strings.borrow().get(&(ptr as usize)).cloned())
+}
+
+pub(crate) fn surrogate_single_codepoint(val: MbValue) -> Option<u32> {
+    let codepoints = surrogate_codepoints(val)?;
+    if codepoints.len() == 1 {
+        Some(codepoints[0])
+    } else {
+        None
+    }
+}
+
+pub(crate) fn surrogate_len(val: MbValue) -> Option<usize> {
+    surrogate_codepoints(val).map(|codepoints| codepoints.len())
+}
+
+pub(crate) fn string_values_equal_if_surrogate(a: MbValue, b: MbValue) -> Option<bool> {
+    let a_surrogate = surrogate_codepoints(a);
+    let b_surrogate = surrogate_codepoints(b);
+    if a_surrogate.is_none() && b_surrogate.is_none() {
+        return None;
+    }
+    let a_codepoints = a_surrogate.or_else(|| string_codepoints(a))?;
+    let b_codepoints = b_surrogate.or_else(|| string_codepoints(b))?;
+    Some(a_codepoints == b_codepoints)
+}
+
+fn string_codepoints(val: MbValue) -> Option<Vec<u32>> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Str(s) => Some(s.chars().map(|c| c as u32).collect()),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn repr_string_from_codepoints(codepoints: &[u32]) -> String {
+    let has_single = codepoints.iter().any(|cp| *cp == '\'' as u32);
+    let has_double = codepoints.iter().any(|cp| *cp == '"' as u32);
+    let use_double = has_single && !has_double;
+    let quote_char = if use_double { '"' } else { '\'' };
+    let mut escaped = String::new();
+    for &codepoint in codepoints {
+        push_escaped_codepoint(&mut escaped, codepoint, quote_char, use_double, false);
+    }
+    format!("{quote_char}{escaped}{quote_char}")
+}
+
+pub(crate) fn ascii_string_from_codepoints(codepoints: &[u32]) -> String {
+    format!("'{}'", escape_codepoints_non_ascii(codepoints))
+}
+
+pub(crate) fn escape_codepoints_non_ascii(codepoints: &[u32]) -> String {
+    let mut escaped = String::new();
+    for &codepoint in codepoints {
+        push_escaped_codepoint(&mut escaped, codepoint, '\'', false, true);
+    }
+    escaped
+}
+
+fn push_escaped_codepoint(
+    out: &mut String,
+    codepoint: u32,
+    quote_char: char,
+    use_double: bool,
+    ascii_only: bool,
+) {
+    match codepoint {
+        cp if cp == '\\' as u32 => out.push_str("\\\\"),
+        cp if cp == '\'' as u32 && !use_double => out.push_str("\\'"),
+        cp if cp == '"' as u32 && use_double => out.push_str("\\\""),
+        0x0A => out.push_str("\\n"),
+        0x0D => out.push_str("\\r"),
+        0x09 => out.push_str("\\t"),
+        0x07 => out.push_str("\\a"),
+        0x08 => out.push_str("\\b"),
+        0x0C => out.push_str("\\f"),
+        0x0B => out.push_str("\\v"),
+        0xD800..=0xDFFF => out.push_str(&format!("\\u{codepoint:04x}")),
+        cp if ascii_only && cp >= 0x80 => push_codepoint_escape(out, cp),
+        cp if cp < 0x20 || (0x7F..=0x9F).contains(&cp) => push_codepoint_escape(out, cp),
+        cp => {
+            if let Some(c) = char::from_u32(cp) {
+                if c == quote_char && !use_double {
+                    out.push('\\');
+                }
+                out.push(c);
+            } else {
+                push_codepoint_escape(out, cp);
+            }
+        }
+    }
+}
+
+fn push_codepoint_escape(out: &mut String, codepoint: u32) {
+    if codepoint < 0x100 {
+        out.push_str(&format!("\\x{codepoint:02x}"));
+    } else if codepoint < 0x10000 {
+        out.push_str(&format!("\\u{codepoint:04x}"));
+    } else {
+        out.push_str(&format!("\\U{codepoint:08x}"));
+    }
 }
 
 fn raise_exception(kind: &str, msg: String) -> MbValue {
@@ -1438,6 +1577,12 @@ pub fn mb_str_hash(s: MbValue) -> MbValue {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     unsafe {
+        if let Some(codepoints) = surrogate_codepoints(s) {
+            let mut hasher = DefaultHasher::new();
+            codepoints.hash(&mut hasher);
+            let h = (hasher.finish() >> 17) as i64;
+            return MbValue::from_int(h);
+        }
         if let Some(st) = as_str(s) {
             // CPython: hash of the empty string is 0.
             if st.is_empty() {
