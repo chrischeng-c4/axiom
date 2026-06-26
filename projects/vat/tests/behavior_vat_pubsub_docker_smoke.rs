@@ -7,7 +7,7 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat pubsub_emulator_docker_fallback -- --nocapture --ignored
+// @command cargo test -p vat --test vat_emulators -- --nocapture --include-ignored
 // AW-EC-END
 
 // Contract: without the pubsub gcloud component, runtime=auto resolves to docker, exports PUBSUB_EMULATOR_HOST, and removes the container at teardown.
@@ -15,7 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_pubsub_docker_smoke() {
-    let command = "cargo test -p vat pubsub_emulator_docker_fallback -- --nocapture --ignored";
+    let command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored";
     let id = "vat-pubsub-docker-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

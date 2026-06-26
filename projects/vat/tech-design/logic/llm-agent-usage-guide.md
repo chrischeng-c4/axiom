@@ -67,7 +67,7 @@ e2e_tests:
     claim_id: agent-legible-state-and-diff-surface
     contract_id: agent-legible-state-and-diff-surface
     category: behavior
-    command: "cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture"
+    command: "cargo test -p vat --test vat_toml_runner -- --nocapture"
     assertions:
       - "`vat llm` exits successfully."
       - "The guide mentions vat.toml runner mode and direct command mode."

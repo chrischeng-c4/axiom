@@ -14,7 +14,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "vat"
-generated_from_td_digest = "sha256:15c9feb322eea7abfb906ad9e6b38728d771fda1c35686d5b5143c919cd12e59"
+generated_from_td_digest = "sha256:f9bfa738673232211d47ad554c35087c22b36a0a5ab3c53c4c44f8e1c0033e2c"
 
 [[aw.ec.generated.cases]]
 id = "vat-agent-state-and-diff-surface"
@@ -39,7 +39,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-builtin-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_builtin_preset_run_smoke.rs"
-command = "cargo test -p vat builtin_preset_exports_host -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_emulator_pubsub -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ['a `preset = "firebase-auth"` or `preset = "pubsub"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
 
@@ -51,7 +51,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md#vat-cli-convention-help-lists-all-three"
 test_path = "projects/vat/tests/behavior_vat_cli_convention_help_lists_all_three.rs"
-command = "cargo test -p vat cli_convention -- --nocapture"
+command = "cargo test -p vat --test vat_cli_convention -- --nocapture"
 required_for_production = true
 assertions = [
     "`vat --help` output contains `llm`, `upgrade`, and `report-issue`.",
@@ -91,7 +91,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#vat-cli-std-parity"
 test_path = "projects/vat/tests/behavior_vat_cli_std_parity.rs"
-command = "cargo test -p vat cli_convention -- --nocapture"
+command = "cargo test -p vat --test vat_cli_convention -- --nocapture"
 required_for_production = true
 assertions = [
     "vat --help lists llm, upgrade, report-issue.",
@@ -107,7 +107,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-builtin-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_builtin_preset_run_smoke.rs"
-command = "cargo test -p vat cloud_builtin_preset_exports_host -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_emulator_tasks -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ['a `preset = "cloud-tasks"` / `preset = "cloud-scheduler"` vat.toml run exports CLOUD_TASKS_EMULATOR_HOST / CLOUD_SCHEDULER_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
 
@@ -182,7 +182,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_storage_preset_run_smoke.rs"
-command = "cargo test -p vat cloud_storage_preset_exports_host -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_emulator_storage -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ["a preset = cloud-storage vat.toml run exports STORAGE_EMULATOR_HOST and the runner uploads then downloads an object byte-identical; nothing remains after teardown."]
 
@@ -267,7 +267,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-orchestrates-sibling"
 test_path = "projects/vat/tests/behavior_vat_cloud_workflows_orchestrates_sibling.rs"
-command = "cargo test -p vat cloud_workflows_orchestrates_sibling -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_emulator_workflows -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ["a vat.toml with preset = cloud-workflows alongside another emulator preset runs a workflow whose http step targets that sibling emulator's exported host, end to end."]
 
@@ -279,7 +279,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-backend-unavailable-smoke"
 test_path = "projects/vat/tests/behavior_vat_cluster_backend_unavailable_smoke.rs"
-command = "cargo test -p vat cluster_backend_unavailable_reports_jsonl_error -- --nocapture"
+command = "cargo test -p vat --test vat_cluster -- --nocapture"
 required_for_production = true
 assertions = [
     "a cluster service with no backend on PATH emits a cluster_backend_unavailable JSONL error and a non-zero exit.",
@@ -294,7 +294,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-runscoped-smoke"
 test_path = "projects/vat/tests/behavior_vat_cluster_runscoped_smoke.rs"
-command = "cargo test -p vat vat_cluster_create_exports_kubeconfig -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_cluster -- --nocapture --include-ignored"
 required_for_production = true
 assertions = [
     "with a real backend and Docker available, vat creates the cluster, the runner reaches the cluster via KUBECONFIG, and vat state shows services[].cluster.backend.",
@@ -309,7 +309,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-standalone-smoke"
 test_path = "projects/vat/tests/behavior_vat_cluster_standalone_smoke.rs"
-command = "cargo test -p vat vat_cluster_standalone_lifecycle -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_cluster -- --nocapture --include-ignored"
 required_for_production = true
 assertions = [
     "vat cluster create then ls --json lists the cluster, kubeconfig prints a usable path, and delete removes it from the registry and the backend.",
@@ -381,7 +381,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-emulator-unavailable-smoke"
 test_path = "projects/vat/tests/behavior_vat_emulator_unavailable_smoke.rs"
-command = "cargo test -p vat gcloud_emulator_unavailable_reports_jsonl_error -- --nocapture"
+command = "cargo test -p vat --test vat_emulators -- --nocapture"
 required_for_production = true
 assertions = [
     "a firestore preset with an empty PATH (no gcloud, no docker) emits a structured service_runtime_unavailable JSONL error and a non-zero exit.",
@@ -396,7 +396,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firebase-bundle-smoke"
 test_path = "projects/vat/tests/behavior_vat_firebase_bundle_smoke.rs"
-command = "cargo test -p vat firebase_bundle_exports_hosts -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
 required_for_production = true
 assertions = [
     "a firebase preset with a firebase.json starts the suite and exports the configured *_EMULATOR_HOST vars.",
@@ -411,7 +411,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firestore-native-smoke"
 test_path = "projects/vat/tests/behavior_vat_firestore_native_smoke.rs"
-command = "cargo test -p vat firestore_emulator_exports_host -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
 required_for_production = true
 assertions = [
     "with gcloud + Java + the firestore component, vat starts the emulator, the runner sees FIRESTORE_EMULATOR_HOST, and vat state shows the service ready with the var in exported_env.",
@@ -543,7 +543,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_http_mock_preset_run_smoke.rs"
-command = "cargo test -p vat http_mock_preset_exports_proxy_env -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_emulator_httpmock -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ["a preset = http-mock vat.toml run exports HTTP(S)_PROXY + NO_PROXY + the CA-trust vars; the runner curls a stubbed https URL with no code change and gets the stub."]
 
@@ -583,7 +583,7 @@ contract_id = "agent-legible-state-and-diff-surface"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/llm-agent-usage-guide.md#vat-llm-agent-usage-guide"
 test_path = "projects/vat/tests/behavior_vat_llm_agent_usage_guide.rs"
-command = "cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner -- --nocapture"
 required_for_production = true
 assertions = [
     "`vat llm` exits successfully.",
@@ -600,7 +600,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md#vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke"
 test_path = "projects/vat/tests/behavior_vat_llm_guide_cloud_tasks_scheduler_client_wiring_smoke.rs"
-command = "cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner -- --nocapture"
 required_for_production = true
 assertions = [
     "`vat llm` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands.",
@@ -627,7 +627,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_openapi_preset_run_smoke.rs"
-command = "cargo test -p vat openapi_preset_serves_spec -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_emulator_openapi -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ["a preset = openapi vat.toml run exports OPENAPI_MOCK_HOST and the runner curls a documented operation, getting the spec-derived response with no app code change."]
 
@@ -654,7 +654,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-pubsub-docker-smoke"
 test_path = "projects/vat/tests/behavior_vat_pubsub_docker_smoke.rs"
-command = "cargo test -p vat pubsub_emulator_docker_fallback -- --nocapture --ignored"
+command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
 required_for_production = true
 assertions = [
     "without the pubsub gcloud component, runtime=auto resolves to docker, exports PUBSUB_EMULATOR_HOST, and removes the container at teardown.",
@@ -732,7 +732,7 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#vat-toml-runner-local-service-smoke"
 test_path = "projects/vat/tests/behavior_vat_toml_runner_local_service_smoke.rs"
-command = "cargo test -p vat vat_toml_runner -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner -- --nocapture"
 required_for_production = true
 assertions = [
     "vat run <runner-id> starts a local readiness service, runs the runner, captures logs, records artifacts, and returns JSON evidence.",

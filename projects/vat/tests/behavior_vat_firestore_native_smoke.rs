@@ -7,7 +7,7 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat firestore_emulator_exports_host -- --nocapture --ignored
+// @command cargo test -p vat --test vat_emulators -- --nocapture --include-ignored
 // AW-EC-END
 
 // Contract: with gcloud + Java + the firestore component, vat starts the emulator, the runner sees FIRESTORE_EMULATOR_HOST, and vat state shows the service ready with the var in exported_env.
@@ -15,7 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_firestore_native_smoke() {
-    let command = "cargo test -p vat firestore_emulator_exports_host -- --nocapture --ignored";
+    let command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored";
     let id = "vat-firestore-native-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

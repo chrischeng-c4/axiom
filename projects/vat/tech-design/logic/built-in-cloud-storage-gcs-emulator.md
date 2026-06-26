@@ -235,7 +235,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat cloud_storage_preset_exports_host -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulator_storage -- --nocapture --include-ignored"
     assertions:
       - "a preset = cloud-storage vat.toml run exports STORAGE_EMULATOR_HOST and the runner uploads then downloads an object byte-identical; nothing remains after teardown."
   - id: vat-cloud-storage-lean-build

@@ -239,7 +239,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat cloud_builtin_preset_exports_host -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulator_tasks -- --nocapture --include-ignored"
     assertions:
       - "a `preset = \"cloud-tasks\"` / `preset = \"cloud-scheduler\"` vat.toml run exports CLOUD_TASKS_EMULATOR_HOST / CLOUD_SCHEDULER_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown."
   - id: vat-cloud-emulator-lean-build

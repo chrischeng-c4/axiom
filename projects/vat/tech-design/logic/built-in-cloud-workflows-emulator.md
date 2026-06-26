@@ -252,7 +252,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat cloud_workflows_orchestrates_sibling -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulator_workflows -- --nocapture --include-ignored"
     assertions:
       - "a vat.toml with preset = cloud-workflows alongside another emulator preset runs a workflow whose http step targets that sibling emulator's exported host, end to end."
   - id: vat-cloud-workflows-lean-build
