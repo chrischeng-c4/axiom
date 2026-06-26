@@ -140,7 +140,6 @@ e2e_tests:
     assertions:
       - "vat compiles with and without default features."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
