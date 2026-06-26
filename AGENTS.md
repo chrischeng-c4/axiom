@@ -215,13 +215,13 @@ To add a new subcommand:
 
 Both steps in (3) are required — missing either will silently fail to register.
 
-## CLI Convention: every CLI ships `llm`, `upgrade`, `report-issue`
+## CLI Convention: every CLI ships `llm`, `upgrade`, `issue`
 
 Every CLI surface (`mamba`, `jet`, `lumen`, `vat`, `aw`/`cclab`, and any new
 tool) MUST expose three agent-facing subcommands; a CLI is not done until all
-three appear in `--help`. Positionals name **subcommands** only; structured
-parameters (topic/title/version/tag) are flags — the lone exception is
-`report-issue`'s free-text `[message...]`.
+three appear in `--help`. Positionals name **subcommands** or a verb's one
+primary object (id/query/prose, e.g. `issue view <n>`, `issue create [msg…]`);
+structured parameters (topic/title/version/tag/state) are flags.
 
 - `llm [--topic <t>] [--format md|json]` — offline self-documentation that
   teaches an agent to drive the tool (topic via the `--topic` flag, default
@@ -232,14 +232,15 @@ parameters (topic/title/version/tag) are flags — the lone exception is
   `<project>@*` GitHub release; the in-binary form of
   `projects/<project>/install.sh` (detect target → download tarball → verify
   sha256 → atomic replace).
-- `report-issue [--title <t>] [message...]` — file a structured **issue** report
-  (GitHub issues / Agentic Workflow), auto-attaching `--version` + OS/arch +
-  failing context and tagging it with the `project:<name>` label. Named
-  `report-issue`, not `report`, so it never collides with domain `report` verbs
-  (e.g. `jet report` = HTML test reports).
+- `issue search [query]` · `view <n>` · `create [--title <t>] [message...]` —
+  read **and** write the tool's issues via `cli_std::issue::{search,view,create}`.
+  `search`/`view` are read-only (tokenless on public repos), filtered to
+  `project:<name>`; `create` files a structured issue (diagnostics + the
+  `project:<name>` label). Named `issue` (not `report`), leaving domain `report`
+  verbs (`jet report` = HTML test reports) untouched.
 
 Full spec: **`CONTRIBUTING.md` → "CLI convention: every CLI ships `llm`,
-`upgrade`, `report-issue`"**.
+`upgrade`, `issue`"**.
 
 ## Constraints
 

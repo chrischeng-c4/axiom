@@ -226,7 +226,7 @@ A service is not "done" until it satisfies every row:
 | **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); StatefulSet identity/peers from the **downward API**; an `HA.md`. | `keep/k8s`, `lumen/k8s` (+ `operator` feature). `loom` currently ships only a flat `deploy/k8s.yaml` — that's the un-grown form, not the target. |
 | **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
 | **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
-| **CLI** | The bin ships `llm` / `upgrade` / `report-issue`. | see the *CLI convention* below. |
+| **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
 
 ### Transport — h2c + OpenAPI on one port
 
@@ -290,11 +290,12 @@ A breach is a non-zero-exit finding that blocks the `aw td merge` gate. Keep
 these files `SPEC-MANAGED` — regenerate them from their contract; do not
 hand-edit the `AW-EC-TOOL` block.
 
-## CLI convention: every CLI ships `llm`, `upgrade`, `report-issue`
+## CLI convention: every CLI ships `llm`, `upgrade`, `issue`
 
 > Every binary a human or agent runs must answer three questions without prior
 > knowledge: *how do I drive this?* (`llm`), *am I current?* (`upgrade`), and
-> *this is broken — how do I file it?* (`report-issue`). These three are
+> *what's broken — what's already reported, and how do I file it?* (`issue`).
+> These three are
 > **mandatory** on every CLI surface in the ecosystem (`mamba`, `jet`, `lumen`,
 > `vat`, `aw`/`cclab`, and any new tool) — the agent-facing contract that lets a
 > tool an agent has never seen self-onboard, self-update, and file a structured
@@ -302,18 +303,19 @@ hand-edit the `AW-EC-TOOL` block.
 
 A new CLI is not "done" until all three appear in `--help`.
 
-**Positionals are for subcommands, parameters are flags.** A positional argument
-names a *subcommand* (`jet build`, `jet llm`), never a structured parameter
-value — a topic, title, version, or tag is always a named flag (`--topic`,
-`--title`, `--version`), so the grammar stays unambiguous as the surface grows.
-The only positional payload allowed is free-form trailing prose, e.g.
-`report-issue`'s `[msg…]`.
+**Positionals are for subcommands and a verb's one primary object; structured
+parameters are flags.** A positional names a *subcommand* (`jet build`, `jet
+issue search`) or the verb's single natural object — an id, a query, or free-form
+prose (`issue view <n>`, `issue search [query]`, `issue create [msg…]`). Anything
+the command *selects or configures* — a topic, title, version, tag, state — is a
+named flag (`--topic`, `--title`, `--version`, `--state`), so the grammar stays
+unambiguous as the surface grows.
 
 | Subcommand | Signature | Contract |
 |------------|-----------|----------|
 | `llm` | `<cli> llm [--topic <topic>] [--format md\|json]` | Offline (no server/network) docs that teach an agent to drive the tool. Topic via `--topic` (not positional); default `outline` (a topic map); per-tool topics follow its domain. Markdown default, `--format json` for machine-readable. |
 | `upgrade` | `<cli> upgrade [--version <tag>] [--check]` | Self-update to the latest `<project>@*` GitHub release. `--check` = report whether newer exists, no install; `--version` = pin a tag. |
-| `report-issue` | `<cli> report-issue [--title <t>] [msg…]` | File a structured issue on the tracker, auto-attaching `--version` + OS/arch + the failing command/context, tagged with the `project:<name>` label. |
+| `issue` | `<cli> issue search [query]` · `view <n>` · `create [--title <t>] [msg…]` | Read **and** write the tool's issues on the tracker. `search` finds this tool's issues (filtered to `project:<name>`; omit the query to list recent), `view <n>` prints one, `create` files a structured issue (auto-attaching `--version` + OS/arch + context, tagged with the `project:<name>` label). |
 
 Implementation notes not obvious from the signature:
 
@@ -323,9 +325,10 @@ the convention's flag shape (`--topic`, not a positional) — and delegates the
 behavior to the crate, parameterized by a `cli_std::ToolInfo` it fills from its
 own `build.rs` stamps (project, repo, target triple, version, git sha). A tool
 provides only its clap surface, that `ToolInfo`, and (for `llm`) its topic list;
-the crate does the rest. The network paths (`upgrade` install, `report-issue`
-submit) sit behind cli-std's `online` feature — enable it in release builds.
-Reference adopters: `projects/jet`, `projects/lumen`, `projects/keep`.
+the crate does the rest. The network paths (`upgrade` install, `issue`
+search/view/create) sit behind cli-std's `online` feature — enable it in release
+builds. Reference adopter: `projects/jet` (keep/loom/lumen still on the
+deprecated `report-issue` shim, migrating to `issue`).
 
 - **`llm`** — `cli_std::llm::render(project, version, topics, topic, format)`. The
   tool supplies `&[cli_std::llm::Topic]` (`id`/`summary`/`body` — the one in-code
@@ -335,13 +338,13 @@ Reference adopters: `projects/jet`, `projects/lumen`, `projects/keep`.
   `projects/<project>/install.sh` — detect target (`<arch>-<os>`) → download the
   matching `*.tar.gz` → verify `.sha256` → **atomically** replace the binary.
   Fail loudly on checksum mismatch; never leave a half-written binary.
-- **`report-issue`** — `cli_std::report_issue::run(&tool, opts)`: submit via the
-  GitHub API when `GITHUB_TOKEN` is set, else print a pre-filled `issues/new`
-  URL. Pass the tracker's `project:<name>` label in `opts.label` so it is applied
-  on submit **and** carried into the URL fallback's `&labels=`. Named
-  `report-issue`, **not** `report`, because several CLIs use `report` for a domain
-  concept (`jet report` = HTML **test** reports); the unambiguous name leaves
-  those verbs untouched.
+- **`issue`** — `cli_std::issue::{search, view, create}`. `search`/`view` are
+  read-only GitHub API GETs (tokenless on public repos); `create` submits via the
+  API when `GITHUB_TOKEN` is set, else prints a pre-filled `issues/new` URL. Pass
+  the tracker's `project:<name>` label in `CreateOptions.label` so it is applied
+  on submit **and** carried into the URL fallback's `&labels=`; `search` filters
+  to that same label. The group is named `issue` (**not** `report`), leaving
+  domain `report` verbs (`jet report` = HTML **test** reports) untouched.
 
 ## Releasing: each project owns its version and `<project>@X.Y.Z` tag
 
