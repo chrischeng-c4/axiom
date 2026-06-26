@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-src-css-scss-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! SCSS / Sass compilation.
 //!
 //! Compiles `.scss` (SCSS syntax) and `.sass` (indented syntax) sources to
@@ -130,3 +131,5 @@ mod tests {
         );
     }
 }
+
+// </HANDWRITE>
