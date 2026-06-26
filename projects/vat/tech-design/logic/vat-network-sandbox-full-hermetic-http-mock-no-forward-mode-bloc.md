@@ -36,7 +36,6 @@ edges:
   - { from: fwd, to: upstream, label: "on" }
   - { from: fwd, to: block, label: "off hermetic" }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
