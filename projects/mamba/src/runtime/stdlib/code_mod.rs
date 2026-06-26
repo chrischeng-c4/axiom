@@ -318,6 +318,7 @@ fn interp_func_id(v: MbValue) -> Option<i64> {
 fn eval_expr(expr: &Spanned<ast::Expr>, env: &mut Env) -> Result<MbValue, ExecErr> {
     match &expr.node {
         ast::Expr::IntLit(i) => Ok(MbValue::from_int(*i)),
+        ast::Expr::BigIntLit(s) => Ok(super::super::bigint_ops::bigint_from_literal(s)),
         ast::Expr::FloatLit(f) => Ok(MbValue::from_float(*f)),
         ast::Expr::StrLit(s) => Ok(new_str(s)),
         ast::Expr::BoolLit(b) => Ok(MbValue::from_bool(*b)),

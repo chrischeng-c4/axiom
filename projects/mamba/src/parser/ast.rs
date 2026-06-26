@@ -316,6 +316,8 @@ pub enum Pattern {
 pub enum Expr {
     /// Integer literal
     IntLit(i64),
+    /// Integer literal larger than the compiler's i64 literal path.
+    BigIntLit(String),
     /// Float literal
     FloatLit(f64),
     /// Complex literal (imaginary part, e.g. 2j)

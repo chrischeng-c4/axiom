@@ -1,7 +1,7 @@
 use super::ast::*;
 use super::Parser;
 use crate::error::MambaError;
-use crate::lexer::token::TokenKind;
+use crate::lexer::token::{TokenKind, BIG_INT_LITERAL_SENTINEL};
 use crate::source::span::{Span, Spanned};
 
 impl<'a> Parser<'a> {
@@ -418,8 +418,16 @@ impl<'a> Parser<'a> {
         match &token.kind {
             TokenKind::Int(v) => {
                 let v = *v;
-                self.advance();
-                Ok(Spanned::new(Expr::IntLit(v), self.span_from(start)))
+                let (_tok_start, tok_end) = self.advance();
+                let span = self.span_from(start);
+                if v == BIG_INT_LITERAL_SENTINEL {
+                    Ok(Spanned::new(
+                        Expr::BigIntLit(self.text_at(start, tok_end).to_string()),
+                        span,
+                    ))
+                } else {
+                    Ok(Spanned::new(Expr::IntLit(v), span))
+                }
             }
             TokenKind::Float(v) => {
                 let v = *v;
