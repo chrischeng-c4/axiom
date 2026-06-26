@@ -1181,4 +1181,11 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/jet/tests/wasm/wasm_dom_parity_gate.rs"
+    action: verify
+    section: unit-test
+    description: |
+      Preserve the observed WASM source-test evidence graph while semantic
+      coverage is promoted toward deterministic generator primitives.
+    impl_mode: hand-written
 ```

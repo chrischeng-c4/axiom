@@ -95,4 +95,11 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-jet-tests-codegen-openapi-golden-rs>"
+  - path: "projects/jet/tests/codegen/openapi_golden.rs"
+    action: verify
+    section: unit-test
+    description: |
+      Preserve the observed codegen source-test evidence graph while semantic
+      coverage is promoted toward deterministic generator primitives.
+    impl_mode: hand-written
 ```

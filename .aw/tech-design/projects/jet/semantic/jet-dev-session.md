@@ -1,7 +1,7 @@
 ---
 id: semantic-jet-dev-session
 summary: Semantic coverage for "projects/jet/src/dev_session.rs"
-fill_sections: [schema, tests, changes]
+fill_sections: [schema, e2e-test, changes]
 capability_refs:
   - id: rust-native-frontend-toolchain
     role: primary
@@ -69,8 +69,8 @@ semantic_domain:
           domain: "projects/jet/src/dev_session.rs"
 ```
 
-## Tests
-<!-- type: tests lang: yaml -->
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
 
 ```yaml
 tests:
@@ -100,7 +100,7 @@ changes:
       Persistent dev-server lifecycle session state and shutdown request helpers.
   - path: "projects/jet/tests/install_dev_build_browser_lifecycle.rs"
     action: add
-    section: tests
+    section: e2e-test
     impl_mode: hand-written
     description: |
       CLI lifecycle matrix evidence for install, build, dev, browser, screenshot, and graceful shutdown flows.

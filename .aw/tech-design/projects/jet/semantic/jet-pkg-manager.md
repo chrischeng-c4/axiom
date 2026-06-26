@@ -1,7 +1,7 @@
 ---
 id: semantic-jet-pkg-manager
 summary: Semantic coverage for "projects/jet/src/pkg_manager"
-fill_sections: [schema, tests, changes]
+fill_sections: [schema, e2e-test, changes]
 capability_refs:
   - id: rust-native-frontend-toolchain
     role: primary
@@ -1064,8 +1064,8 @@ semantic_domain:
           domain: "projects/jet/src/pkg_manager"
 ```
 
-## Tests
-<!-- type: tests lang: yaml -->
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
 
 ```yaml
 tests:
@@ -1167,7 +1167,7 @@ changes:
     impl_mode: hand-written
   - path: ".aw/tech-design/projects/jet/semantic/jet-pkg-manager.md"
     action: verify
-    section: unit-test
+    section: e2e-test
     impl_mode: hand-written
     description: |
       Traceability repair: hand-written TD section retained as the implementation edge during AW standardization.

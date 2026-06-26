@@ -95,4 +95,11 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:jet-tests-harness>"
+  - path: "projects/jet/tests/harness/mod.rs"
+    action: verify
+    section: unit-test
+    description: |
+      Preserve the observed test-harness source-test evidence graph while
+      semantic coverage is promoted toward deterministic generator primitives.
+    impl_mode: hand-written
 ```
