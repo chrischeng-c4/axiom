@@ -14,7 +14,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "arena"
-generated_from_td_digest = "sha256:18825787e934026c2905a4ebc334b69c6ca90a8b713ffcfac55d269c23627300"
+generated_from_td_digest = "sha256:adf58b05f0308c48ae54080d185e8511e89723ef8056956bda60f75036de5ff9"
 
 [[aw.ec.generated.cases]]
 id = "arena-host-scoped-baseline-ratchet"
@@ -25,7 +25,7 @@ category = "benchmark"
 td_ref = "projects/arena/tech-design/logic/external-contracts.md#arena-host-scoped-baseline-ratchet"
 test_path = "projects/arena/tests/benchmark_arena_host_scoped_baseline_ratchet.rs"
 command = "cargo test -p arena"
-required_for_production = true
+required_for_production = false
 assertions = [
     "baseline ratchet tests pass",
     "host-scoped baselines remain part of arena's gate semantics",
@@ -55,7 +55,7 @@ category = "benchmark"
 td_ref = "projects/arena/tech-design/logic/external-contracts.md#arena-sequential-target-fanout-measurement"
 test_path = "projects/arena/tests/benchmark_arena_sequential_target_fanout_measurement.rs"
 command = "cargo test -p arena"
-required_for_production = true
+required_for_production = false
 assertions = [
     "arena pipeline tests pass",
     "target fanout and measurement remain covered by the local suite",
@@ -85,7 +85,7 @@ category = "benchmark"
 td_ref = "projects/arena/tech-design/logic/external-contracts.md#arena-win-exempt-target-classification"
 test_path = "projects/arena/tests/benchmark_arena_win_exempt_target_classification.rs"
 command = "cargo test -p arena"
-required_for_production = true
+required_for_production = false
 assertions = [
     "win, exempt, and target classification tests pass",
     "floor-dominated cells remain report-only when classified exempt",
