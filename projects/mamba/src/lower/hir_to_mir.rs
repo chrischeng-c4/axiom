@@ -914,7 +914,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
         // (not eagerly), so the base class's property is already set when the
         // decorator reads it. Mark it so the eager `None` registration pass
         // skips it and the placeholder's `Some(sym)` pass handles it.
-        if methods.iter().any(|m| m.6.is_some()) {
+        if cls.force_textual_registration || methods.iter().any(|m| m.6.is_some()) {
             lowerer.classes_needing_textual_registration.insert(cls.name.0);
         }
         lowerer.pending_classes.push((
