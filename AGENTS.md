@@ -225,8 +225,9 @@ parameters (topic/title/version/tag) are flags — the lone exception is
 
 - `llm [--topic <t>] [--format md|json]` — offline self-documentation that
   teaches an agent to drive the tool (topic via the `--topic` flag, default
-  `outline`). Keep content in one in-code source of truth; reference:
-  `projects/lumen/src/bin/lumen.rs` + `src/spec.rs`.
+  `outline`). Logic is the shared `libs/cli-std` crate (`cli_std::llm::render`);
+  each tool supplies its `&[cli_std::llm::Topic]` list (the in-code source of
+  truth) + a `ToolInfo`.
 - `upgrade [--version <tag>] [--check]` — self-update to the latest
   `<project>@*` GitHub release; the in-binary form of
   `projects/<project>/install.sh` (detect target → download tarball → verify

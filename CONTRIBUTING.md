@@ -317,20 +317,31 @@ The only positional payload allowed is free-form trailing prose, e.g.
 
 Implementation notes not obvious from the signature:
 
-- **`llm`** — keep the content in **one in-code source of truth** that also feeds
-  spec/help output, so docs cannot drift from behavior. Reference:
-  `projects/lumen/src/bin/lumen.rs` (`Llm`/`LlmTopic`/`LlmFormat`) + `src/spec.rs`.
-- **`upgrade`** — the in-binary form of `projects/<project>/install.sh`: detect
-  target (`<arch>-<os>`) → download the matching `*.tar.gz` → verify `.sha256` →
-  **atomically** replace the binary. Fail loudly on checksum mismatch; never
-  leave a half-written binary.
-- **`report-issue`** — prefer `gh issue create`, else print a pre-filled issue
-  URL (routed through Agentic Workflow where configured). Tag the issue with the
-  tracker's `project:<name>` label (`gh issue create --label project:<name>`, and
-  `&labels=project:<name>` on the URL fallback) so reports route automatically.
-  Named `report-issue`, **not** `report`, because several CLIs use `report` for a
-  domain concept (`jet report` = HTML **test** reports); the unambiguous name
-  leaves those verbs untouched.
+The logic for all three lives in the shared **`libs/cli-std`** crate (`cli_std`),
+which is **clap-agnostic**: each CLI keeps its own clap registration — so it owns
+the convention's flag shape (`--topic`, not a positional) — and delegates the
+behavior to the crate, parameterized by a `cli_std::ToolInfo` it fills from its
+own `build.rs` stamps (project, repo, target triple, version, git sha). A tool
+provides only its clap surface, that `ToolInfo`, and (for `llm`) its topic list;
+the crate does the rest. The network paths (`upgrade` install, `report-issue`
+submit) sit behind cli-std's `online` feature — enable it in release builds.
+Reference adopters: `projects/jet`, `projects/lumen`, `projects/keep`.
+
+- **`llm`** — `cli_std::llm::render(project, version, topics, topic, format)`. The
+  tool supplies `&[cli_std::llm::Topic]` (`id`/`summary`/`body` — the one in-code
+  source of truth) and cli-std renders the `outline` topic map + the
+  standard-command footer. Pure offline; always builds.
+- **`upgrade`** — `cli_std::upgrade::run(&tool, opts)`: the in-binary form of
+  `projects/<project>/install.sh` — detect target (`<arch>-<os>`) → download the
+  matching `*.tar.gz` → verify `.sha256` → **atomically** replace the binary.
+  Fail loudly on checksum mismatch; never leave a half-written binary.
+- **`report-issue`** — `cli_std::report_issue::run(&tool, opts)`: submit via the
+  GitHub API when `GITHUB_TOKEN` is set, else print a pre-filled `issues/new`
+  URL. Pass the tracker's `project:<name>` label in `opts.label` so it is applied
+  on submit **and** carried into the URL fallback's `&labels=`. Named
+  `report-issue`, **not** `report`, because several CLIs use `report` for a domain
+  concept (`jet report` = HTML **test** reports); the unambiguous name leaves
+  those verbs untouched.
 
 ## Releasing: each project owns its version and `<project>@X.Y.Z` tag
 
