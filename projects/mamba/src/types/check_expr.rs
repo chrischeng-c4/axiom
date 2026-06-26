@@ -257,18 +257,6 @@ impl TypeChecker {
                                             ),
                                         );
                                     }
-                                    if func_name.as_deref() == Some("len")
-                                        && param_idx == 0
-                                        && !self.len_accepts_static_type(at)
-                                    {
-                                        self.error(
-                                            a.span,
-                                            format!(
-                                                "object of type `{}` has no len()",
-                                                self.ty_name(at),
-                                            ),
-                                        );
-                                    }
                                     if let Some(&expected) = params.get(param_idx) {
                                         // chr/hex/oct/bin accept any class
                                         // defining __index__ (SupportsIndex
@@ -687,15 +675,6 @@ impl TypeChecker {
                 }
                 self.tcx.error()
             }
-        }
-    }
-
-    fn len_accepts_static_type(&self, ty: TypeId) -> bool {
-        match self.tcx.get(ty) {
-            Ty::Any | Ty::Error => true,
-            Ty::Str | Ty::List(_) | Ty::Dict(_, _) | Ty::Tuple(_) => true,
-            Ty::Class { .. } => true,
-            _ => false,
         }
     }
 
