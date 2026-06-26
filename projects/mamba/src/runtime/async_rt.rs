@@ -47,6 +47,7 @@ pub struct MbTask {
     pub name: String,
     pub coroutine_id: u64,
     pub done: bool,
+    pub cancelled: bool,
     pub result: MbValue,
 }
 
