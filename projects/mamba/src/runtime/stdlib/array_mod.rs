@@ -700,17 +700,15 @@ fn mb_array_init_extend(handle: MbValue, init: MbValue) {
                 }
                 ObjData::List(lock) => {
                     let items = lock.read().unwrap().clone();
-                    mutate_store(handle, |s| {
-                        for v in items {
-                            if !s.push_value(v) {
-                                break;
-                            }
-                        }
-                    });
+                    extend_values(handle, items.to_vec());
                 }
-                _ => {}
+                _ => {
+                    extend_general_iterable(handle, init);
+                }
             }
         }
+    } else {
+        extend_general_iterable(handle, init);
     }
 }
 
@@ -861,6 +859,33 @@ fn extend_unicode_from_str(handle: MbValue, text: &str) -> MbValue {
     MbValue::none()
 }
 
+fn extend_values(handle: MbValue, items: Vec<MbValue>) {
+    mutate_store(handle, |s| {
+        for v in items {
+            if !s.push_value(v) {
+                break;
+            }
+        }
+    });
+}
+
+fn extend_general_iterable(handle: MbValue, iterable: MbValue) -> bool {
+    let iter_handle = super::super::iter::mb_iter(iterable);
+    if iter_handle.is_none() {
+        return false;
+    }
+    if let Some(items) = super::super::iter::drain_iter_to_vec(iter_handle) {
+        extend_values(handle, items);
+        return true;
+    }
+    let mut items = Vec::new();
+    while super::super::iter::mb_has_next(iter_handle).as_bool() == Some(true) {
+        items.push(super::super::iter::mb_next(iter_handle));
+    }
+    extend_values(handle, items);
+    true
+}
+
 /// `a.append(v)`
 pub fn mb_array_append(handle: MbValue, v: MbValue) -> MbValue {
     mutate_store(handle, |s| {
@@ -876,13 +901,7 @@ pub fn mb_array_extend(handle: MbValue, iterable: MbValue) -> MbValue {
             match &(*ptr).data {
                 ObjData::List(lock) => {
                     let items = lock.read().unwrap().clone();
-                    mutate_store(handle, |s| {
-                        for v in items {
-                            if !s.push_value(v) {
-                                break;
-                            }
-                        }
-                    });
+                    extend_values(handle, items.to_vec());
                     return MbValue::none();
                 }
                 ObjData::Bytes(b) => {
@@ -916,8 +935,10 @@ pub fn mb_array_extend(handle: MbValue, iterable: MbValue) -> MbValue {
                     }
                 }
             });
+            return MbValue::none();
         }
     }
+    extend_general_iterable(handle, iterable);
     MbValue::none()
 }
 
