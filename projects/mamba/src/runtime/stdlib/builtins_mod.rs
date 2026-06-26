@@ -147,6 +147,9 @@ unsafe extern "C" fn dispatch_print(args_ptr: *const MbValue, nargs: usize) -> M
 
 unsafe extern "C" fn dispatch_len(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs != 1 {
+        return raise_type_error(&format!("len() takes exactly one argument ({nargs} given)"));
+    }
     super::super::builtins::mb_len(args.first().copied().unwrap_or_else(MbValue::none))
 }
 
@@ -168,7 +171,8 @@ unsafe extern "C" fn dispatch_range(args_ptr: *const MbValue, nargs: usize) -> M
         0 => raise_type_error("range expected at least 1 argument, got 0"),
         1 => super::super::builtins::mb_range(args[0]),
         2 => super::super::builtins::mb_range_2(args[0], args[1]),
-        _ => super::super::builtins::mb_range_3(args[0], args[1], args[2]),
+        3 => super::super::builtins::mb_range_3(args[0], args[1], args[2]),
+        _ => raise_type_error(&format!("range expected at most 3 arguments, got {nargs}")),
     }
 }
 
@@ -177,7 +181,9 @@ unsafe extern "C" fn dispatch_int(args_ptr: *const MbValue, nargs: usize) -> MbV
         return MbValue::from_int(0);
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    if nargs >= 2 {
+    if nargs > 2 {
+        raise_type_error(&format!("int() takes at most 2 arguments ({nargs} given)"))
+    } else if nargs == 2 {
         super::super::builtins::mb_int_base(args[0], args[1])
     } else {
         super::super::builtins::mb_int(args[0])
@@ -189,6 +195,9 @@ unsafe extern "C" fn dispatch_float(args_ptr: *const MbValue, nargs: usize) -> M
         return MbValue::from_float(0.0);
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 1 {
+        return raise_type_error(&format!("float expected at most 1 argument, got {nargs}"));
+    }
     super::super::builtins::mb_float(args[0])
 }
 
@@ -197,6 +206,9 @@ unsafe extern "C" fn dispatch_str(args_ptr: *const MbValue, nargs: usize) -> MbV
         return MbValue::from_ptr(MbObject::new_str(String::new()));
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 3 {
+        return raise_type_error(&format!("str() takes at most 3 arguments ({nargs} given)"));
+    }
     super::super::builtins::mb_str(args[0])
 }
 
@@ -205,6 +217,9 @@ unsafe extern "C" fn dispatch_bool(args_ptr: *const MbValue, nargs: usize) -> Mb
         return MbValue::from_bool(false);
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 1 {
+        return raise_type_error(&format!("bool expected at most 1 argument, got {nargs}"));
+    }
     super::super::builtins::mb_bool(args[0])
 }
 
@@ -256,11 +271,22 @@ unsafe extern "C" fn dispatch_sorted(args_ptr: *const MbValue, nargs: usize) -> 
 
 unsafe extern "C" fn dispatch_reversed(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs != 1 {
+        return raise_type_error(&format!("reversed expected 1 argument, got {nargs}"));
+    }
     super::super::iter::mb_reversed(args.first().copied().unwrap_or_else(MbValue::none))
 }
 
 unsafe extern "C" fn dispatch_enumerate(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs == 0 {
+        return raise_type_error("enumerate() missing required argument 'iterable' (pos 1)");
+    }
+    if nargs > 2 {
+        return raise_type_error(&format!(
+            "enumerate() takes at most 2 arguments ({nargs} given)"
+        ));
+    }
     let iterable = args.first().copied().unwrap_or_else(MbValue::none);
     let start = if nargs >= 2 {
         args[1]
@@ -289,6 +315,9 @@ unsafe extern "C" fn dispatch_map(args_ptr: *const MbValue, nargs: usize) -> MbV
 
 unsafe extern "C" fn dispatch_filter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs != 2 {
+        return raise_type_error(&format!("filter expected 2 arguments, got {nargs}"));
+    }
     let func = args.first().copied().unwrap_or_else(MbValue::none);
     let iterable = args.get(1).copied().unwrap_or_else(MbValue::none);
     super::super::builtins::mb_filter(func, iterable)
@@ -537,6 +566,9 @@ unsafe extern "C" fn dispatch_list(args_ptr: *const MbValue, nargs: usize) -> Mb
         return super::super::list_ops::mb_list_new();
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 1 {
+        return raise_type_error(&format!("list expected at most 1 argument, got {nargs}"));
+    }
     super::super::list_ops::mb_list_from_iterable(args[0])
 }
 
@@ -545,6 +577,9 @@ unsafe extern "C" fn dispatch_dict(args_ptr: *const MbValue, nargs: usize) -> Mb
         return super::super::dict_ops::mb_dict_new();
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 1 {
+        return raise_type_error(&format!("dict expected at most 1 argument, got {nargs}"));
+    }
     super::super::dict_ops::mb_dict_from_pairs(args[0])
 }
 
@@ -553,6 +588,9 @@ unsafe extern "C" fn dispatch_set(args_ptr: *const MbValue, nargs: usize) -> MbV
         return super::super::set_ops::mb_set_new();
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 1 {
+        return raise_type_error(&format!("set expected at most 1 argument, got {nargs}"));
+    }
     super::super::builtins::mb_set_from_iterable(args[0])
 }
 
@@ -561,6 +599,9 @@ unsafe extern "C" fn dispatch_tuple(args_ptr: *const MbValue, nargs: usize) -> M
         return super::super::tuple_ops::mb_tuple_new();
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 1 {
+        return raise_type_error(&format!("tuple expected at most 1 argument, got {nargs}"));
+    }
     super::super::tuple_ops::mb_tuple_from_iterable(args[0])
 }
 
@@ -569,11 +610,21 @@ unsafe extern "C" fn dispatch_frozenset(args_ptr: *const MbValue, nargs: usize) 
         return super::super::builtins::mb_frozenset_new(MbValue::none());
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 1 {
+        return raise_type_error(&format!(
+            "frozenset expected at most 1 argument, got {nargs}"
+        ));
+    }
     super::super::builtins::mb_frozenset_new(args[0])
 }
 
 unsafe extern "C" fn dispatch_complex(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 2 {
+        return raise_type_error(&format!(
+            "complex() takes at most 2 arguments ({nargs} given)"
+        ));
+    }
     let real = args
         .first()
         .copied()
@@ -587,6 +638,11 @@ unsafe extern "C" fn dispatch_bytes(args_ptr: *const MbValue, nargs: usize) -> M
         return super::super::bytes_ops::mb_bytes_new_checked(MbValue::none());
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 3 {
+        return raise_type_error(&format!(
+            "bytes() takes at most 3 arguments ({nargs} given)"
+        ));
+    }
     if let Some(encoding) = args.get(1).copied() {
         return super::super::bytes_ops::mb_bytes_new_encoded(args[0], encoding);
     }
@@ -598,6 +654,11 @@ unsafe extern "C" fn dispatch_bytearray(args_ptr: *const MbValue, nargs: usize) 
         return super::super::bytes_ops::mb_bytearray_new_checked(MbValue::none());
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 3 {
+        return raise_type_error(&format!(
+            "bytearray() takes at most 3 arguments ({nargs} given)"
+        ));
+    }
     if let Some(encoding) = args.get(1).copied() {
         return super::super::bytes_ops::mb_bytearray_new_encoded(args[0], encoding);
     }
@@ -606,6 +667,11 @@ unsafe extern "C" fn dispatch_bytearray(args_ptr: *const MbValue, nargs: usize) 
 
 unsafe extern "C" fn dispatch_memoryview(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs > 1 {
+        return raise_type_error(&format!(
+            "memoryview() takes at most 1 argument ({nargs} given)"
+        ));
+    }
     super::super::builtins::mb_memoryview(args.first().copied().unwrap_or_else(MbValue::none))
 }
 
@@ -617,11 +683,15 @@ unsafe extern "C" fn dispatch_slice(args_ptr: *const MbValue, nargs: usize) -> M
     match nargs {
         1 => super::super::builtins::mb_slice(MbValue::none(), args[0], MbValue::none()),
         2 => super::super::builtins::mb_slice(args[0], args[1], MbValue::none()),
-        _ => super::super::builtins::mb_slice(args[0], args[1], args[2]),
+        3 => super::super::builtins::mb_slice(args[0], args[1], args[2]),
+        _ => raise_type_error(&format!("slice expected at most 3 arguments, got {nargs}")),
     }
 }
 
-unsafe extern "C" fn dispatch_object(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_object(_args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 0 {
+        return raise_type_error("object() takes no arguments");
+    }
     // object() returns a featureless object -- stub as None
     MbValue::none()
 }
@@ -643,11 +713,17 @@ unsafe extern "C" fn dispatch_property(args_ptr: *const MbValue, nargs: usize) -
 
 unsafe extern "C" fn dispatch_classmethod(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs != 1 {
+        return raise_type_error(&format!("classmethod expected 1 argument, got {nargs}"));
+    }
     super::super::class::mb_classmethod_new(args.first().copied().unwrap_or_else(MbValue::none))
 }
 
 unsafe extern "C" fn dispatch_staticmethod(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs != 1 {
+        return raise_type_error(&format!("staticmethod expected 1 argument, got {nargs}"));
+    }
     super::super::class::mb_staticmethod_new(args.first().copied().unwrap_or_else(MbValue::none))
 }
 

@@ -1335,6 +1335,11 @@ pub(crate) fn raise_type_error(msg: String) {
     );
 }
 
+fn type_error_value(msg: impl Into<String>) -> MbValue {
+    raise_type_error(msg.into());
+    MbValue::none()
+}
+
 /// Raise a ValueError with the given message through the runtime exception
 /// machinery so it is catchable from user code.
 pub(crate) fn raise_value_error(msg: String) {
@@ -8400,7 +8405,6 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     // Builtin type constructors: int(), str(), bool(), float(), etc.
                     // Route to the real constructor rather than creating a stub Instance.
                     {
-                        let arg0 = items.first().copied().unwrap_or_else(MbValue::none);
                         let result = match name.as_str() {
                             // Singleton types: `type(None)()` / `type(...)()` /
                             // `type(NotImplemented)()` with no args return the
@@ -8424,15 +8428,70 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                     })
                                 }
                             }
-                            "int" => Some(mb_int(arg0)),
-                            "float" => Some(mb_float(arg0)),
-                            "str" => Some(mb_str(arg0)),
-                            "bool" => Some(mb_bool(arg0)),
-                            "list" => Some(super::list_ops::mb_list_from_iterable(arg0)),
-                            "tuple" => Some(super::tuple_ops::mb_tuple_from_iterable(arg0)),
-                            "dict" => Some(super::dict_ops::mb_dict_from_pairs(arg0)),
-                            "set" => Some(mb_set_from_iterable(arg0)),
-                            "frozenset" => Some(mb_frozenset_new(arg0)),
+                            "int" => Some(match items.len() {
+                                0 => MbValue::from_int(0),
+                                1 => mb_int(items[0]),
+                                2 => mb_int_base(items[0], items[1]),
+                                n => type_error_value(format!(
+                                    "int() takes at most 2 arguments ({n} given)"
+                                )),
+                            }),
+                            "float" => Some(match items.len() {
+                                0 => MbValue::from_float(0.0),
+                                1 => mb_float(items[0]),
+                                n => type_error_value(format!(
+                                    "float expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "str" => Some(match items.len() {
+                                0 => MbValue::from_ptr(MbObject::new_str(String::new())),
+                                1..=3 => mb_str(items[0]),
+                                n => type_error_value(format!(
+                                    "str() takes at most 3 arguments ({n} given)"
+                                )),
+                            }),
+                            "bool" => Some(match items.len() {
+                                0 => MbValue::from_bool(false),
+                                1 => mb_bool(items[0]),
+                                n => type_error_value(format!(
+                                    "bool expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "list" => Some(match items.len() {
+                                0 => super::list_ops::mb_list_new(),
+                                1 => super::list_ops::mb_list_from_iterable(items[0]),
+                                n => type_error_value(format!(
+                                    "list expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "tuple" => Some(match items.len() {
+                                0 => super::tuple_ops::mb_tuple_new(),
+                                1 => super::tuple_ops::mb_tuple_from_iterable(items[0]),
+                                n => type_error_value(format!(
+                                    "tuple expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "dict" => Some(match items.len() {
+                                0 => super::dict_ops::mb_dict_new(),
+                                1 => super::dict_ops::mb_dict_from_pairs(items[0]),
+                                n => type_error_value(format!(
+                                    "dict expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "set" => Some(match items.len() {
+                                0 => super::set_ops::mb_set_new(),
+                                1 => mb_set_from_iterable(items[0]),
+                                n => type_error_value(format!(
+                                    "set expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "frozenset" => Some(match items.len() {
+                                0 => mb_frozenset_new(MbValue::none()),
+                                1 => mb_frozenset_new(items[0]),
+                                n => type_error_value(format!(
+                                    "frozenset expected at most 1 argument, got {n}"
+                                )),
+                            }),
                             "mappingproxy" => {
                                 if items.len() != 1 {
                                     super::exception::mb_raise(
@@ -8459,16 +8518,14 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                     Some(MbValue::from_ptr(Box::into_raw(obj)))
                                 }
                             }
-                            "complex" => Some(mb_complex(
-                                items
-                                    .first()
-                                    .copied()
-                                    .unwrap_or_else(|| MbValue::from_int(0)),
-                                items
-                                    .get(1)
-                                    .copied()
-                                    .unwrap_or_else(|| MbValue::from_int(0)),
-                            )),
+                            "complex" => Some(match items.len() {
+                                0 => mb_complex(MbValue::from_int(0), MbValue::from_int(0)),
+                                1 => mb_complex(items[0], MbValue::from_int(0)),
+                                2 => mb_complex(items[0], items[1]),
+                                n => type_error_value(format!(
+                                    "complex() takes at most 2 arguments ({n} given)"
+                                )),
+                            }),
                             // types.CodeType(...) — the 18-arg 3.12 positional
                             // constructor; zips positionals onto the co_* field
                             // order and returns a real code object.
@@ -8524,15 +8581,21 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                 }
                                 1 => mb_range(items[0]),
                                 2 => mb_range_2(items[0], items[1]),
-                                _ => mb_range_3(items[0], items[1], items[2]),
+                                3 => mb_range_3(items[0], items[1], items[2]),
+                                n => type_error_value(format!(
+                                    "range expected at most 3 arguments, got {n}"
+                                )),
                             }),
-                            "enumerate" => Some(super::iter::mb_enumerate(
-                                items.first().copied().unwrap_or_else(MbValue::none),
-                                items
-                                    .get(1)
-                                    .copied()
-                                    .unwrap_or_else(|| MbValue::from_int(0)),
-                            )),
+                            "enumerate" => Some(match items.len() {
+                                0 => type_error_value(
+                                    "enumerate() missing required argument 'iterable' (pos 1)",
+                                ),
+                                1 => super::iter::mb_enumerate(items[0], MbValue::from_int(0)),
+                                2 => super::iter::mb_enumerate(items[0], items[1]),
+                                n => type_error_value(format!(
+                                    "enumerate() takes at most 2 arguments ({n} given)"
+                                )),
+                            }),
                             "zip" => Some(if items.len() == 2 {
                                 super::iter::mb_zip(items[0], items[1])
                             } else {
@@ -8544,36 +8607,70 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                 items.first().copied().unwrap_or_else(MbValue::none),
                                 items.get(1).copied().unwrap_or_else(MbValue::none),
                             )),
-                            "filter" => Some(mb_filter(
-                                items.first().copied().unwrap_or_else(MbValue::none),
-                                items.get(1).copied().unwrap_or_else(MbValue::none),
-                            )),
-                            "reversed" => Some(super::iter::mb_reversed(
-                                items.first().copied().unwrap_or_else(MbValue::none),
-                            )),
-                            "memoryview" => Some(mb_memoryview(arg0)),
+                            "filter" => Some(match items.len() {
+                                2 => mb_filter(items[0], items[1]),
+                                n => type_error_value(format!("filter expected 2 arguments, got {n}")),
+                            }),
+                            "reversed" => Some(match items.len() {
+                                1 => super::iter::mb_reversed(items[0]),
+                                n => type_error_value(format!(
+                                    "reversed expected 1 argument, got {n}"
+                                )),
+                            }),
+                            "memoryview" => Some(match items.len() {
+                                1 => mb_memoryview(items[0]),
+                                n if n > 1 => type_error_value(format!(
+                                    "memoryview() takes at most 1 argument ({n} given)"
+                                )),
+                                _ => mb_memoryview(MbValue::none()),
+                            }),
                             "slice" => Some(match items.len() {
                                 0 => mb_slice_no_args(),
                                 1 => mb_slice(MbValue::none(), items[0], MbValue::none()),
                                 2 => mb_slice(items[0], items[1], MbValue::none()),
-                                _ => mb_slice(items[0], items[1], items[2]),
+                                3 => mb_slice(items[0], items[1], items[2]),
+                                n => type_error_value(format!(
+                                    "slice expected at most 3 arguments, got {n}"
+                                )),
                             }),
-                            "object" => Some(super::class::mb_instance_new(
-                                MbValue::from_ptr(MbObject::new_str("object".to_string())),
-                                MbValue::none(),
-                            )),
+                            "object" => Some(if items.is_empty() {
+                                super::class::mb_instance_new(
+                                    MbValue::from_ptr(MbObject::new_str("object".to_string())),
+                                    MbValue::none(),
+                                )
+                            } else {
+                                type_error_value("object() takes no arguments")
+                            }),
                             "property" => Some(super::class::mb_property_construct(&items)),
-                            "classmethod" => Some(super::class::mb_classmethod_new(arg0)),
-                            "staticmethod" => Some(super::class::mb_staticmethod_new(arg0)),
-                            "bytes" => Some(if let Some(enc) = items.get(1).copied() {
-                                super::bytes_ops::mb_bytes_new_encoded(arg0, enc)
-                            } else {
-                                super::bytes_ops::mb_bytes_new_checked(arg0)
+                            "classmethod" => Some(match items.len() {
+                                1 => super::class::mb_classmethod_new(items[0]),
+                                n => type_error_value(format!(
+                                    "classmethod expected 1 argument, got {n}"
+                                )),
                             }),
-                            "bytearray" => Some(if let Some(enc) = items.get(1).copied() {
-                                super::bytes_ops::mb_bytearray_new_encoded(arg0, enc)
-                            } else {
-                                super::bytes_ops::mb_bytearray_new_checked(arg0)
+                            "staticmethod" => Some(match items.len() {
+                                1 => super::class::mb_staticmethod_new(items[0]),
+                                n => type_error_value(format!(
+                                    "staticmethod expected 1 argument, got {n}"
+                                )),
+                            }),
+                            "bytes" => Some(match items.len() {
+                                0 => super::bytes_ops::mb_bytes_new_checked(MbValue::none()),
+                                1 => super::bytes_ops::mb_bytes_new_checked(items[0]),
+                                2 | 3 => super::bytes_ops::mb_bytes_new_encoded(items[0], items[1]),
+                                n => type_error_value(format!(
+                                    "bytes() takes at most 3 arguments ({n} given)"
+                                )),
+                            }),
+                            "bytearray" => Some(match items.len() {
+                                0 => super::bytes_ops::mb_bytearray_new_checked(MbValue::none()),
+                                1 => super::bytes_ops::mb_bytearray_new_checked(items[0]),
+                                2 | 3 => {
+                                    super::bytes_ops::mb_bytearray_new_encoded(items[0], items[1])
+                                }
+                                n => type_error_value(format!(
+                                    "bytearray() takes at most 3 arguments ({n} given)"
+                                )),
                             }),
                             _ => None,
                         };
