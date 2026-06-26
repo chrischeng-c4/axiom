@@ -20,14 +20,14 @@
 //!
 //! Scope honesty: TypeVar bindings for parameters declared on methods or on
 //! class-body aliases are hoisted to the nearest enclosing non-class scope
-//! (class-body bindings are invisible to method bodies). This makes the
-//! params *visible* in a wider scope than CPython's dedicated type-param
-//! scope; PEP 695's scope-isolation corner cases (out-of-scope NameError) are
-//! out of scope here.
+//! (class-body bindings are invisible to method bodies). Generic classes also
+//! delete their temporary module-scope type-param bindings after attaching
+//! `__type_params__`, and class-body lazy aliases read class params back from
+//! that tuple to preserve CPython's out-of-scope `NameError` behavior.
 
 use crate::parser::ast::{CallArg, Expr, Module, Stmt, TypeParam, TypeParamKind};
 use crate::source::span::{Span, Spanned};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Name of the TypeVar-construction intrinsic (see `runtime::pep695`).
 pub const TYPEVAR_INTRINSIC: &str = "__mb_pep695_typevar__";
@@ -36,7 +36,7 @@ pub const TYPE_ALIAS_INTRINSIC: &str = "__mb_pep695_type_alias__";
 
 /// Desugar all PEP 695 constructs in a module (in place).
 pub fn desugar_module(module: &mut Module) {
-    let hoist = desugar_block(&mut module.stmts, false, &[], None);
+    let hoist = desugar_block(&mut module.stmts, false, &[], None, None);
     // Module scope absorbs everything; nothing can hoist past it.
     debug_assert!(hoist.before.is_empty() && hoist.after.is_empty());
 }
@@ -154,6 +154,20 @@ fn class_attr_expr(path: &[Name], attr: &str, span: Span) -> Spanned<Expr> {
         },
         span,
     )
+}
+
+fn class_type_param_expr(path: &[Name], index: usize, span: Span) -> Spanned<Expr> {
+    sp(
+        Expr::Index {
+            object: Box::new(class_attr_expr(path, "__type_params__", span)),
+            index: Box::new(sp(Expr::IntLit(index as i64), span)),
+        },
+        span,
+    )
+}
+
+fn del_ident(name: &str, span: Span) -> Spanned<Stmt> {
+    Spanned::new(Stmt::Del(sp(Expr::Ident(name.to_string()), span)), span)
 }
 
 fn collect_target_names(expr: &Expr, out: &mut HashSet<Name>) {
@@ -287,67 +301,80 @@ fn collect_class_local_names(stmts: &[Spanned<Stmt>]) -> HashSet<Name> {
     names
 }
 
-fn rewrite_class_alias_value(
-    expr: &mut Spanned<Expr>,
-    class_path: &[Name],
-    class_locals: &HashSet<Name>,
+fn collect_runtime_type_param_uses_in_params(
+    params: &[crate::parser::ast::Param],
+    type_param_names: &HashSet<Name>,
+    out: &mut HashSet<Name>,
     shadowed: &mut HashSet<Name>,
 ) {
-    match &mut expr.node {
-        Expr::Ident(name) if class_locals.contains(name) && !shadowed.contains(name) => {
-            *expr = class_attr_expr(class_path, name, expr.span);
+    for param in params {
+        if let Some(default) = &param.default {
+            collect_runtime_type_param_uses_expr(default, type_param_names, out, shadowed);
+        }
+    }
+}
+
+fn collect_runtime_type_param_uses_expr(
+    expr: &Spanned<Expr>,
+    type_param_names: &HashSet<Name>,
+    out: &mut HashSet<Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    match &expr.node {
+        Expr::Ident(name) if type_param_names.contains(name) && !shadowed.contains(name) => {
+            out.insert(name.clone());
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            rewrite_class_alias_value(lhs, class_path, class_locals, shadowed);
-            rewrite_class_alias_value(rhs, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_expr(lhs, type_param_names, out, shadowed);
+            collect_runtime_type_param_uses_expr(rhs, type_param_names, out, shadowed);
         }
         Expr::UnaryOp { operand, .. }
         | Expr::Starred(operand)
         | Expr::YieldFrom(operand)
         | Expr::Await(operand) => {
-            rewrite_class_alias_value(operand, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_expr(operand, type_param_names, out, shadowed);
         }
         Expr::Call { func, args } => {
-            rewrite_class_alias_value(func, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_expr(func, type_param_names, out, shadowed);
             for arg in args {
                 match arg {
                     CallArg::Positional(value)
                     | CallArg::StarArg(value)
                     | CallArg::DoubleStarArg(value)
                     | CallArg::Keyword { value, .. } => {
-                        rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+                        collect_runtime_type_param_uses_expr(
+                            value,
+                            type_param_names,
+                            out,
+                            shadowed,
+                        );
                     }
                 }
             }
         }
         Expr::Attr { object, .. } => {
-            rewrite_class_alias_value(object, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_expr(object, type_param_names, out, shadowed);
         }
         Expr::Index { object, index } => {
-            rewrite_class_alias_value(object, class_path, class_locals, shadowed);
-            rewrite_class_alias_value(index, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_expr(object, type_param_names, out, shadowed);
+            collect_runtime_type_param_uses_expr(index, type_param_names, out, shadowed);
         }
         Expr::Slice { start, stop, step } => {
-            for part in [start, stop, step] {
-                if let Some(part) = part {
-                    rewrite_class_alias_value(part, class_path, class_locals, shadowed);
-                }
+            for part in [start, stop, step].into_iter().flatten() {
+                collect_runtime_type_param_uses_expr(part, type_param_names, out, shadowed);
             }
         }
-        Expr::ListLit(items)
-        | Expr::SetLit(items)
-        | Expr::TupleLit(items)
-        | Expr::UnpackTarget(items) => {
+        Expr::ListLit(items) | Expr::SetLit(items) | Expr::TupleLit(items) => {
             for item in items {
-                rewrite_class_alias_value(item, class_path, class_locals, shadowed);
+                collect_runtime_type_param_uses_expr(item, type_param_names, out, shadowed);
             }
         }
         Expr::DictLit(entries) => {
             for (key, value) in entries {
                 if let Some(key) = key {
-                    rewrite_class_alias_value(key, class_path, class_locals, shadowed);
+                    collect_runtime_type_param_uses_expr(key, type_param_names, out, shadowed);
                 }
-                rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+                collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
             }
         }
         Expr::IfExpr {
@@ -355,16 +382,12 @@ fn rewrite_class_alias_value(
             condition,
             else_body,
         } => {
-            rewrite_class_alias_value(body, class_path, class_locals, shadowed);
-            rewrite_class_alias_value(condition, class_path, class_locals, shadowed);
-            rewrite_class_alias_value(else_body, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_expr(body, type_param_names, out, shadowed);
+            collect_runtime_type_param_uses_expr(condition, type_param_names, out, shadowed);
+            collect_runtime_type_param_uses_expr(else_body, type_param_names, out, shadowed);
         }
         Expr::Lambda { params, body } => {
-            for param in params.iter_mut() {
-                if let Some(default) = &mut param.default {
-                    rewrite_class_alias_value(default, class_path, class_locals, shadowed);
-                }
-            }
+            collect_runtime_type_param_uses_in_params(params, type_param_names, out, shadowed);
             let added: Vec<Name> = params
                 .iter()
                 .filter_map(|param| {
@@ -375,7 +398,7 @@ fn rewrite_class_alias_value(
                     }
                 })
                 .collect();
-            rewrite_class_alias_value(body, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_expr(body, type_param_names, out, shadowed);
             for name in added {
                 shadowed.remove(&name);
             }
@@ -392,27 +415,39 @@ fn rewrite_class_alias_value(
             element,
             generators,
         } => {
-            rewrite_comprehension(element, generators, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_comprehension(
+                element,
+                generators,
+                type_param_names,
+                out,
+                shadowed,
+            );
         }
         Expr::DictComp {
             key,
             value,
             generators,
         } => {
-            rewrite_comprehension(key, generators, class_path, class_locals, shadowed);
-            rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_comprehension(
+                key,
+                generators,
+                type_param_names,
+                out,
+                shadowed,
+            );
+            collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
         }
         Expr::FString(parts) => {
             for part in parts {
                 if let crate::parser::ast::FStringPart::Expr(value, format) = part {
-                    rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+                    collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
                     if let Some(format) = format {
                         for part in format {
                             if let crate::parser::ast::FStringPart::Expr(value, _) = part {
-                                rewrite_class_alias_value(
+                                collect_runtime_type_param_uses_expr(
                                     value,
-                                    class_path,
-                                    class_locals,
+                                    type_param_names,
+                                    out,
                                     shadowed,
                                 );
                             }
@@ -423,16 +458,532 @@ fn rewrite_class_alias_value(
         }
         Expr::Yield(value) => {
             if let Some(value) = value {
-                rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+                collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
             }
         }
         Expr::Walrus { target, value } => {
-            rewrite_class_alias_value(value, class_path, class_locals, shadowed);
+            collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
             shadowed.insert(target.clone());
         }
         Expr::ChainedCompare { operands, .. } => {
             for operand in operands {
-                rewrite_class_alias_value(operand, class_path, class_locals, shadowed);
+                collect_runtime_type_param_uses_expr(operand, type_param_names, out, shadowed);
+            }
+        }
+        Expr::UnpackTarget(items) => {
+            for item in items {
+                collect_runtime_type_param_uses_expr(item, type_param_names, out, shadowed);
+            }
+        }
+        Expr::IntLit(_)
+        | Expr::BigIntLit(_)
+        | Expr::FloatLit(_)
+        | Expr::ComplexLit(_)
+        | Expr::StrLit(_)
+        | Expr::BytesLit(_)
+        | Expr::BoolLit(_)
+        | Expr::NoneLit
+        | Expr::Ellipsis
+        | Expr::Ident(_) => {}
+    }
+}
+
+fn collect_runtime_type_param_uses_comprehension(
+    element: &Spanned<Expr>,
+    generators: &[crate::parser::ast::Comprehension],
+    type_param_names: &HashSet<Name>,
+    out: &mut HashSet<Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    let mut added = Vec::new();
+    for generator in generators {
+        collect_runtime_type_param_uses_expr(&generator.iter, type_param_names, out, shadowed);
+        for target in &generator.targets {
+            if shadowed.insert(target.clone()) {
+                added.push(target.clone());
+            }
+        }
+        for condition in &generator.conditions {
+            collect_runtime_type_param_uses_expr(condition, type_param_names, out, shadowed);
+        }
+    }
+    collect_runtime_type_param_uses_expr(element, type_param_names, out, shadowed);
+    for name in added {
+        shadowed.remove(&name);
+    }
+}
+
+fn collect_runtime_type_param_uses_stmt(
+    stmt: &Spanned<Stmt>,
+    type_param_names: &HashSet<Name>,
+    out: &mut HashSet<Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    match &stmt.node {
+        Stmt::VarDecl { value, .. } => {
+            collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
+        }
+        Stmt::Assign { target, value } | Stmt::AugAssign { target, value, .. } => {
+            collect_runtime_type_param_uses_expr(target, type_param_names, out, shadowed);
+            collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
+        }
+        Stmt::FnDef {
+            decorators,
+            type_params,
+            params,
+            body,
+            ..
+        }
+        | Stmt::AsyncFnDef {
+            decorators,
+            type_params,
+            params,
+            body,
+            ..
+        } => {
+            for decorator in decorators {
+                collect_runtime_type_param_uses_expr(decorator, type_param_names, out, shadowed);
+            }
+            collect_runtime_type_param_uses_in_params(params, type_param_names, out, shadowed);
+            let added: Vec<Name> = params
+                .iter()
+                .map(|param| param.name.clone())
+                .chain(type_params.iter().map(|param| param.name.clone()))
+                .filter_map(|name| {
+                    if shadowed.insert(name.clone()) {
+                        Some(name)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            for name in added {
+                shadowed.remove(&name);
+            }
+        }
+        Stmt::ClassDef {
+            decorators,
+            type_params,
+            bases,
+            keyword_args,
+            body,
+            ..
+        } => {
+            for decorator in decorators {
+                collect_runtime_type_param_uses_expr(decorator, type_param_names, out, shadowed);
+            }
+            for base in bases {
+                collect_runtime_type_param_uses_expr(base, type_param_names, out, shadowed);
+            }
+            for (_, value) in keyword_args {
+                collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
+            }
+            let added: Vec<Name> = type_params
+                .iter()
+                .filter_map(|param| {
+                    if shadowed.insert(param.name.clone()) {
+                        Some(param.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            for name in added {
+                shadowed.remove(&name);
+            }
+        }
+        Stmt::If {
+            condition,
+            body,
+            elif_clauses,
+            else_body,
+        } => {
+            collect_runtime_type_param_uses_expr(condition, type_param_names, out, shadowed);
+            collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            for (condition, body) in elif_clauses {
+                collect_runtime_type_param_uses_expr(condition, type_param_names, out, shadowed);
+                collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            }
+            if let Some(body) = else_body {
+                collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            }
+        }
+        Stmt::While {
+            condition,
+            body,
+            else_body,
+        } => {
+            collect_runtime_type_param_uses_expr(condition, type_param_names, out, shadowed);
+            collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            if let Some(body) = else_body {
+                collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            }
+        }
+        Stmt::For {
+            iter,
+            body,
+            else_body,
+            ..
+        }
+        | Stmt::AsyncFor {
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
+            collect_runtime_type_param_uses_expr(iter, type_param_names, out, shadowed);
+            collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            if let Some(body) = else_body {
+                collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            }
+        }
+        Stmt::Match { expr, arms } => {
+            collect_runtime_type_param_uses_expr(expr, type_param_names, out, shadowed);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_runtime_type_param_uses_expr(guard, type_param_names, out, shadowed);
+                }
+                collect_runtime_type_param_uses_block(&arm.body, type_param_names, out, shadowed);
+            }
+        }
+        Stmt::Return(value) => {
+            if let Some(value) = value {
+                collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
+            }
+        }
+        Stmt::Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+        } => {
+            collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            for handler in handlers {
+                if let Some(exc_type) = &handler.exc_type {
+                    collect_runtime_type_param_uses_expr(
+                        exc_type,
+                        type_param_names,
+                        out,
+                        shadowed,
+                    );
+                }
+                collect_runtime_type_param_uses_block(
+                    &handler.body,
+                    type_param_names,
+                    out,
+                    shadowed,
+                );
+            }
+            if let Some(body) = else_body {
+                collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            }
+            if let Some(body) = finally_body {
+                collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+            }
+        }
+        Stmt::Raise { value, from } => {
+            if let Some(value) = value {
+                collect_runtime_type_param_uses_expr(value, type_param_names, out, shadowed);
+            }
+            if let Some(from) = from {
+                collect_runtime_type_param_uses_expr(from, type_param_names, out, shadowed);
+            }
+        }
+        Stmt::With { items, body } | Stmt::AsyncWith { items, body } => {
+            for item in items {
+                collect_runtime_type_param_uses_expr(
+                    &item.context,
+                    type_param_names,
+                    out,
+                    shadowed,
+                );
+            }
+            collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
+        }
+        Stmt::Assert { test, msg } => {
+            collect_runtime_type_param_uses_expr(test, type_param_names, out, shadowed);
+            if let Some(msg) = msg {
+                collect_runtime_type_param_uses_expr(msg, type_param_names, out, shadowed);
+            }
+        }
+        Stmt::Del(target) | Stmt::ExprStmt(target) => {
+            collect_runtime_type_param_uses_expr(target, type_param_names, out, shadowed);
+        }
+        Stmt::TypeAlias { .. }
+        | Stmt::EnumDef { .. }
+        | Stmt::BareAnnotation { .. }
+        | Stmt::Import { .. }
+        | Stmt::Pass
+        | Stmt::Break
+        | Stmt::Continue
+        | Stmt::Global(_)
+        | Stmt::Nonlocal(_) => {}
+    }
+}
+
+fn collect_runtime_type_param_uses_block(
+    stmts: &[Spanned<Stmt>],
+    type_param_names: &HashSet<Name>,
+    out: &mut HashSet<Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    for stmt in stmts {
+        collect_runtime_type_param_uses_stmt(stmt, type_param_names, out, shadowed);
+    }
+}
+
+fn rewrite_class_alias_value(
+    expr: &mut Spanned<Expr>,
+    class_path: &[Name],
+    class_locals: &HashSet<Name>,
+    class_type_params: &HashMap<Name, usize>,
+    shadowed: &mut HashSet<Name>,
+) {
+    match &mut expr.node {
+        Expr::Ident(name) if class_type_params.contains_key(name) && !shadowed.contains(name) => {
+            let index = class_type_params[name];
+            *expr = class_type_param_expr(class_path, index, expr.span);
+        }
+        Expr::Ident(name) if class_locals.contains(name) && !shadowed.contains(name) => {
+            *expr = class_attr_expr(class_path, name, expr.span);
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            rewrite_class_alias_value(lhs, class_path, class_locals, class_type_params, shadowed);
+            rewrite_class_alias_value(rhs, class_path, class_locals, class_type_params, shadowed);
+        }
+        Expr::UnaryOp { operand, .. }
+        | Expr::Starred(operand)
+        | Expr::YieldFrom(operand)
+        | Expr::Await(operand) => {
+            rewrite_class_alias_value(
+                operand,
+                class_path,
+                class_locals,
+                class_type_params,
+                shadowed,
+            );
+        }
+        Expr::Call { func, args } => {
+            rewrite_class_alias_value(func, class_path, class_locals, class_type_params, shadowed);
+            for arg in args {
+                match arg {
+                    CallArg::Positional(value)
+                    | CallArg::StarArg(value)
+                    | CallArg::DoubleStarArg(value)
+                    | CallArg::Keyword { value, .. } => {
+                        rewrite_class_alias_value(
+                            value,
+                            class_path,
+                            class_locals,
+                            class_type_params,
+                            shadowed,
+                        );
+                    }
+                }
+            }
+        }
+        Expr::Attr { object, .. } => {
+            rewrite_class_alias_value(
+                object,
+                class_path,
+                class_locals,
+                class_type_params,
+                shadowed,
+            );
+        }
+        Expr::Index { object, index } => {
+            rewrite_class_alias_value(
+                object,
+                class_path,
+                class_locals,
+                class_type_params,
+                shadowed,
+            );
+            rewrite_class_alias_value(index, class_path, class_locals, class_type_params, shadowed);
+        }
+        Expr::Slice { start, stop, step } => {
+            for part in [start, stop, step] {
+                if let Some(part) = part {
+                    rewrite_class_alias_value(
+                        part,
+                        class_path,
+                        class_locals,
+                        class_type_params,
+                        shadowed,
+                    );
+                }
+            }
+        }
+        Expr::ListLit(items)
+        | Expr::SetLit(items)
+        | Expr::TupleLit(items)
+        | Expr::UnpackTarget(items) => {
+            for item in items {
+                rewrite_class_alias_value(
+                    item,
+                    class_path,
+                    class_locals,
+                    class_type_params,
+                    shadowed,
+                );
+            }
+        }
+        Expr::DictLit(entries) => {
+            for (key, value) in entries {
+                if let Some(key) = key {
+                    rewrite_class_alias_value(
+                        key,
+                        class_path,
+                        class_locals,
+                        class_type_params,
+                        shadowed,
+                    );
+                }
+                rewrite_class_alias_value(
+                    value,
+                    class_path,
+                    class_locals,
+                    class_type_params,
+                    shadowed,
+                );
+            }
+        }
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            rewrite_class_alias_value(body, class_path, class_locals, class_type_params, shadowed);
+            rewrite_class_alias_value(
+                condition,
+                class_path,
+                class_locals,
+                class_type_params,
+                shadowed,
+            );
+            rewrite_class_alias_value(
+                else_body,
+                class_path,
+                class_locals,
+                class_type_params,
+                shadowed,
+            );
+        }
+        Expr::Lambda { params, body } => {
+            for param in params.iter_mut() {
+                if let Some(default) = &mut param.default {
+                    rewrite_class_alias_value(
+                        default,
+                        class_path,
+                        class_locals,
+                        class_type_params,
+                        shadowed,
+                    );
+                }
+            }
+            let added: Vec<Name> = params
+                .iter()
+                .filter_map(|param| {
+                    if shadowed.insert(param.name.clone()) {
+                        Some(param.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            rewrite_class_alias_value(body, class_path, class_locals, class_type_params, shadowed);
+            for name in added {
+                shadowed.remove(&name);
+            }
+        }
+        Expr::ListComp {
+            element,
+            generators,
+        }
+        | Expr::SetComp {
+            element,
+            generators,
+        }
+        | Expr::GeneratorExpr {
+            element,
+            generators,
+        } => {
+            rewrite_comprehension(
+                element,
+                generators,
+                class_path,
+                class_locals,
+                class_type_params,
+                shadowed,
+            );
+        }
+        Expr::DictComp {
+            key,
+            value,
+            generators,
+        } => {
+            rewrite_comprehension(
+                key,
+                generators,
+                class_path,
+                class_locals,
+                class_type_params,
+                shadowed,
+            );
+            rewrite_class_alias_value(value, class_path, class_locals, class_type_params, shadowed);
+        }
+        Expr::FString(parts) => {
+            for part in parts {
+                if let crate::parser::ast::FStringPart::Expr(value, format) = part {
+                    rewrite_class_alias_value(
+                        value,
+                        class_path,
+                        class_locals,
+                        class_type_params,
+                        shadowed,
+                    );
+                    if let Some(format) = format {
+                        for part in format {
+                            if let crate::parser::ast::FStringPart::Expr(value, _) = part {
+                                rewrite_class_alias_value(
+                                    value,
+                                    class_path,
+                                    class_locals,
+                                    class_type_params,
+                                    shadowed,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Expr::Yield(value) => {
+            if let Some(value) = value {
+                rewrite_class_alias_value(
+                    value,
+                    class_path,
+                    class_locals,
+                    class_type_params,
+                    shadowed,
+                );
+            }
+        }
+        Expr::Walrus { target, value } => {
+            rewrite_class_alias_value(value, class_path, class_locals, class_type_params, shadowed);
+            shadowed.insert(target.clone());
+        }
+        Expr::ChainedCompare { operands, .. } => {
+            for operand in operands {
+                rewrite_class_alias_value(
+                    operand,
+                    class_path,
+                    class_locals,
+                    class_type_params,
+                    shadowed,
+                );
             }
         }
         Expr::IntLit(_)
@@ -453,21 +1004,40 @@ fn rewrite_comprehension(
     generators: &mut [crate::parser::ast::Comprehension],
     class_path: &[Name],
     class_locals: &HashSet<Name>,
+    class_type_params: &HashMap<Name, usize>,
     shadowed: &mut HashSet<Name>,
 ) {
     let mut added = Vec::new();
     for generator in generators {
-        rewrite_class_alias_value(&mut generator.iter, class_path, class_locals, shadowed);
+        rewrite_class_alias_value(
+            &mut generator.iter,
+            class_path,
+            class_locals,
+            class_type_params,
+            shadowed,
+        );
         for target in &generator.targets {
             if shadowed.insert(target.clone()) {
                 added.push(target.clone());
             }
         }
         for condition in &mut generator.conditions {
-            rewrite_class_alias_value(condition, class_path, class_locals, shadowed);
+            rewrite_class_alias_value(
+                condition,
+                class_path,
+                class_locals,
+                class_type_params,
+                shadowed,
+            );
         }
     }
-    rewrite_class_alias_value(element, class_path, class_locals, shadowed);
+    rewrite_class_alias_value(
+        element,
+        class_path,
+        class_locals,
+        class_type_params,
+        shadowed,
+    );
     for name in added {
         shadowed.remove(&name);
     }
@@ -512,6 +1082,7 @@ fn desugar_block(
     in_class: bool,
     class_path: &[Name],
     class_locals: Option<&HashSet<Name>>,
+    class_type_params: Option<&HashMap<Name, usize>>,
 ) -> ClassHoists {
     let old = std::mem::take(stmts);
     let mut out: Vec<Spanned<Stmt>> = Vec::new();
@@ -540,10 +1111,30 @@ fn desugar_block(
             } => {
                 let name = name.clone();
                 let tps = type_params.clone();
+                let type_param_names: HashSet<Name> =
+                    tps.iter().map(|param| param.name.clone()).collect();
+                let mut runtime_type_param_uses = HashSet::new();
+                collect_runtime_type_param_uses_block(
+                    body,
+                    &type_param_names,
+                    &mut runtime_type_param_uses,
+                    &mut HashSet::new(),
+                );
                 let mut nested_path = class_path.to_vec();
                 nested_path.push(name.clone());
                 let nested_locals = collect_class_local_names(body);
-                let mut h = desugar_block(body, true, &nested_path, Some(&nested_locals));
+                let nested_type_params: HashMap<Name, usize> = tps
+                    .iter()
+                    .enumerate()
+                    .map(|(index, param)| (param.name.clone(), index))
+                    .collect();
+                let mut h = desugar_block(
+                    body,
+                    true,
+                    &nested_path,
+                    Some(&nested_locals),
+                    Some(&nested_type_params),
+                );
                 // Items leaving this class body gain its name as path prefix.
                 for item in &mut h.after {
                     item.path.insert(0, name.clone());
@@ -556,7 +1147,7 @@ fn desugar_block(
                     vec![
                         ("__type_params__".to_string(), tps.clone()),
                         // Generic classes also expose a matching __parameters__.
-                        ("__parameters__".to_string(), tps),
+                        ("__parameters__".to_string(), tps.clone()),
                     ]
                 };
                 if in_class {
@@ -582,6 +1173,11 @@ fn desugar_block(
                     for (attr, ps) in &attrs {
                         out.push(attr_tuple_assign(&[name.clone()], attr, ps, span));
                     }
+                    for param in &tps {
+                        if !runtime_type_param_uses.contains(&param.name) {
+                            out.push(del_ident(&param.name, span));
+                        }
+                    }
                     for item in h.after {
                         emit_after(&mut out, item);
                     }
@@ -602,7 +1198,7 @@ fn desugar_block(
             } => {
                 let name = name.clone();
                 let tps = type_params.clone();
-                let _ = desugar_block(body, false, &[], None);
+                let _ = desugar_block(body, false, &[], None, None);
                 if tps.is_empty() {
                     out.push(st);
                 } else {
@@ -635,12 +1231,15 @@ fn desugar_block(
                 let name = name.clone();
                 let tps = type_params.clone();
                 let mut value = value.clone();
-                if let (true, Some(locals)) = (in_class, class_locals) {
+                if let (true, Some(locals), Some(type_params)) =
+                    (in_class, class_locals, class_type_params)
+                {
                     if !class_path.is_empty() {
                         rewrite_class_alias_value(
                             &mut value,
                             class_path,
                             locals,
+                            type_params,
                             &mut HashSet::new(),
                         );
                     }
@@ -724,14 +1323,32 @@ fn desugar_block(
                         else_body,
                         ..
                     } => {
-                        let h = desugar_block(body, in_class, class_path, class_locals);
+                        let h = desugar_block(
+                            body,
+                            in_class,
+                            class_path,
+                            class_locals,
+                            class_type_params,
+                        );
                         route(h, &mut out, &mut hoist_up);
                         for (_, b) in elif_clauses {
-                            let h = desugar_block(b, in_class, class_path, class_locals);
+                            let h = desugar_block(
+                                b,
+                                in_class,
+                                class_path,
+                                class_locals,
+                                class_type_params,
+                            );
                             route(h, &mut out, &mut hoist_up);
                         }
                         if let Some(b) = else_body {
-                            let h = desugar_block(b, in_class, class_path, class_locals);
+                            let h = desugar_block(
+                                b,
+                                in_class,
+                                class_path,
+                                class_locals,
+                                class_type_params,
+                            );
                             route(h, &mut out, &mut hoist_up);
                         }
                     }
@@ -744,15 +1361,33 @@ fn desugar_block(
                     | Stmt::AsyncFor {
                         body, else_body, ..
                     } => {
-                        let h = desugar_block(body, in_class, class_path, class_locals);
+                        let h = desugar_block(
+                            body,
+                            in_class,
+                            class_path,
+                            class_locals,
+                            class_type_params,
+                        );
                         route(h, &mut out, &mut hoist_up);
                         if let Some(b) = else_body {
-                            let h = desugar_block(b, in_class, class_path, class_locals);
+                            let h = desugar_block(
+                                b,
+                                in_class,
+                                class_path,
+                                class_locals,
+                                class_type_params,
+                            );
                             route(h, &mut out, &mut hoist_up);
                         }
                     }
                     Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
-                        let h = desugar_block(body, in_class, class_path, class_locals);
+                        let h = desugar_block(
+                            body,
+                            in_class,
+                            class_path,
+                            class_locals,
+                            class_type_params,
+                        );
                         route(h, &mut out, &mut hoist_up);
                     }
                     Stmt::Try {
@@ -761,7 +1396,13 @@ fn desugar_block(
                         else_body,
                         finally_body,
                     } => {
-                        let h = desugar_block(body, in_class, class_path, class_locals);
+                        let h = desugar_block(
+                            body,
+                            in_class,
+                            class_path,
+                            class_locals,
+                            class_type_params,
+                        );
                         route(h, &mut out, &mut hoist_up);
                         for handler in handlers {
                             let h = desugar_block(
@@ -769,22 +1410,40 @@ fn desugar_block(
                                 in_class,
                                 class_path,
                                 class_locals,
+                                class_type_params,
                             );
                             route(h, &mut out, &mut hoist_up);
                         }
                         if let Some(b) = else_body {
-                            let h = desugar_block(b, in_class, class_path, class_locals);
+                            let h = desugar_block(
+                                b,
+                                in_class,
+                                class_path,
+                                class_locals,
+                                class_type_params,
+                            );
                             route(h, &mut out, &mut hoist_up);
                         }
                         if let Some(b) = finally_body {
-                            let h = desugar_block(b, in_class, class_path, class_locals);
+                            let h = desugar_block(
+                                b,
+                                in_class,
+                                class_path,
+                                class_locals,
+                                class_type_params,
+                            );
                             route(h, &mut out, &mut hoist_up);
                         }
                     }
                     Stmt::Match { arms, .. } => {
                         for arm in arms {
-                            let h =
-                                desugar_block(&mut arm.body, in_class, class_path, class_locals);
+                            let h = desugar_block(
+                                &mut arm.body,
+                                in_class,
+                                class_path,
+                                class_locals,
+                                class_type_params,
+                            );
                             route(h, &mut out, &mut hoist_up);
                         }
                     }
@@ -832,7 +1491,7 @@ mod tests {
     #[test]
     fn generic_class_injects_parameters_too() {
         let m = desugared("class C[T]:\n    pass\n");
-        assert_eq!(m.stmts.len(), 4);
+        assert_eq!(m.stmts.len(), 5);
         assert!(matches!(&m.stmts[1].node, Stmt::ClassDef { .. }));
         let attrs: Vec<&str> = m.stmts[2..]
             .iter()
@@ -845,6 +1504,21 @@ mod tests {
             })
             .collect();
         assert_eq!(attrs, vec!["__type_params__", "__parameters__"]);
+        assert!(matches!(
+            &m.stmts[4].node,
+            Stmt::Del(target) if matches!(&target.node, Expr::Ident(name) if name == "T")
+        ));
+    }
+
+    #[test]
+    fn generic_class_keeps_type_param_used_by_runtime_body() {
+        let m = desugared("class C[T]:\n    def f(self):\n        return T\n");
+        assert_eq!(m.stmts.len(), 4);
+        assert!(m
+            .stmts
+            .iter()
+            .all(|stmt| !matches!(&stmt.node, Stmt::Del(target)
+                if matches!(&target.node, Expr::Ident(name) if name == "T"))));
     }
 
     #[test]
@@ -963,7 +1637,7 @@ mod tests {
     }
 
     #[test]
-    fn class_body_type_alias_keeps_type_param_name_unqualified() {
+    fn class_body_type_alias_reads_type_param_from_class_tuple() {
         let m = desugared("class Holder[T]:\n    type Inner = T\n");
         let Stmt::ClassDef { body, .. } = &m.stmts[1].node else {
             panic!("expected class definition after typevar binding");
@@ -980,6 +1654,16 @@ mod tests {
         let Expr::Lambda { body, .. } = &thunk.node else {
             panic!("expected lambda thunk");
         };
-        assert!(matches!(&body.node, Expr::Ident(name) if name == "T"));
+        assert!(matches!(
+            &body.node,
+            Expr::Index { object, index }
+                if matches!(
+                    &object.node,
+                    Expr::Attr { object: cls, attr }
+                        if attr == "__type_params__"
+                            && matches!(&cls.node, Expr::Ident(name) if name == "Holder")
+                )
+                    && matches!(&index.node, Expr::IntLit(0))
+        ));
     }
 }
