@@ -1216,6 +1216,12 @@ fn lru_encode_value_key(v: MbValue, out: &mut String) {
             out.push_str(s);
             out.push('"');
         }
+        DictKey::StrCodepoints(codepoints) => {
+            out.push('u');
+            out.push('"');
+            out.push_str(&super::super::string_ops::escape_codepoints_non_ascii(codepoints));
+            out.push('"');
+        }
         DictKey::Bytes(b) => {
             out.push('b');
             out.push_str(&b.len().to_string());
