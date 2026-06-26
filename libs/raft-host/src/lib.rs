@@ -10,11 +10,13 @@
 //! [`RaftStateMachine`] (`apply`/`snapshot`/`restore`/`applied_index`) and gets
 //! HA + the backup layer for free, instead of hand-rolling a driver.
 
+pub mod cluster;
 mod config;
 mod host;
 mod state_machine;
 mod store;
 
+pub use cluster::{replica_mode, ClusterTopology};
 pub use config::{HostConfig, SnapshotPolicy};
 pub use host::RaftHost;
 pub use state_machine::{Command, RaftStateMachine};
