@@ -402,18 +402,22 @@ jet:
 changes:
   - path: .aw/tech-design/crates/jet/architecture.md
     action: delete
+    section: doc
     impl_mode: hand-written
     description: "Remove the old root loose architecture spec."
   - path: .aw/tech-design/crates/jet/logic/architecture.md
     action: add
+    section: doc
     impl_mode: hand-written
     description: "Rehome and normalize the architecture spec under logic/ with typed sections."
   - path: crates/jet/src/lib.rs
     action: reference
+    section: doc
     impl_mode: hand-written
     description: "Defines the crate module surface used by the subsystem map."
   - path: crates/jet/src/cli.rs
     action: reference
+    section: doc
     impl_mode: hand-written
     description: "Defines the CLI command tree."
 ```
