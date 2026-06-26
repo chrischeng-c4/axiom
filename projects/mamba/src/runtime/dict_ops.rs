@@ -2196,18 +2196,20 @@ mod tests {
         MbValue::from_ptr(MbObject::new_list(vals))
     }
 
-    fn userdict_with_backing(backing: MbValue) -> MbValue {
-        let userdict = MbValue::from_ptr(MbObject::new_instance(
-            "collections.UserDict".to_string(),
-        ));
+    fn dictlike_with_backing(class_name: &str, backing: MbValue) -> MbValue {
+        let dictlike = MbValue::from_ptr(MbObject::new_instance(class_name.to_string()));
         unsafe {
-            if let Some(ptr) = userdict.as_ptr() {
+            if let Some(ptr) = dictlike.as_ptr() {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     fields.write().unwrap().insert("_data".to_string(), backing);
                 }
             }
         }
-        userdict
+        dictlike
+    }
+
+    fn userdict_with_backing(backing: MbValue) -> MbValue {
+        dictlike_with_backing("collections.UserDict", backing)
     }
 
     // ── new ──
@@ -2374,6 +2376,19 @@ mod tests {
             mb_dict_contains(backing, MbValue::from_int(2)).as_bool(),
             Some(true)
         );
+    }
+
+    #[test]
+    fn test_dict_eq_accepts_defaultdict_backing() {
+        let backing = mb_dict_new();
+        let defaultdict = dictlike_with_backing("collections.defaultdict", backing);
+        let expected = mb_dict_new();
+        assert_eq!(mb_dict_eq(defaultdict, expected).as_bool(), Some(true));
+
+        mb_dict_setitem(backing, MbValue::from_int(0), MbValue::from_int(0));
+        assert_eq!(mb_dict_eq(defaultdict, expected).as_bool(), Some(false));
+        mb_dict_setitem(expected, MbValue::from_int(0), MbValue::from_int(0));
+        assert_eq!(mb_dict_eq(defaultdict, expected).as_bool(), Some(true));
     }
 
     // ── len ──
