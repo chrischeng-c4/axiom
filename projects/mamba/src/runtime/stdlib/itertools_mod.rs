@@ -144,17 +144,7 @@ unsafe extern "C" fn dispatch_chain_from_iterable(
         ));
         return MbValue::none();
     }
-    let mut items: Vec<MbValue> = Vec::new();
-    for sub in extract_list(source) {
-        if real_exception_pending() {
-            return MbValue::none();
-        }
-        items.extend(extract_list(sub));
-        if real_exception_pending() {
-            return MbValue::none();
-        }
-    }
-    MbValue::from_ptr(MbObject::new_list(items))
+    super::super::iter::mb_chain_from_iterable_iter(source)
 }
 
 unsafe extern "C" fn dispatch_islice(args_ptr: *const MbValue, nargs: usize) -> MbValue {
