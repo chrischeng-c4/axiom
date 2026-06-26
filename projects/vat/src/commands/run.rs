@@ -435,6 +435,13 @@ fn run_configured(
     let cwd = rootfs.join(&vat.meta.spec.workdir);
     std::fs::create_dir_all(&cwd).with_context(|| format!("create {}", cwd.display()))?;
 
+    // Runner + setup-step commands run under the run's isolation backend
+    // (seatbelt wraps them in sandbox-exec with the [network].egress policy; the
+    // process backend is a passthrough). Picked once so any isolation/egress
+    // warning prints once. Services below are spawned RAW — they keep network.
+    let sandbox_spec = vat.meta.spec.clone();
+    let sandbox_backend = sandbox::pick(&sandbox_spec);
+
     // Services: the UNION of every runner's requires, order-preserving and
     // deduplicated — one shared instance set serves all concurrent runners.
     let mut service_ids: Vec<&str> = Vec::new();
@@ -467,7 +474,15 @@ fn run_configured(
         if !config::should_run_setup(&rootfs, step) {
             continue;
         }
-        run_setup_step(vat, step, &cwd, logs_dir, &run_env)?;
+        run_setup_step(
+            vat,
+            step,
+            &cwd,
+            logs_dir,
+            &run_env,
+            sandbox_backend.as_ref(),
+            &rootfs,
+        )?;
     }
 
     let mut services = Vec::new();
@@ -507,7 +522,15 @@ fn run_configured(
             "id": runner.id.as_str(),
             "state": "started",
         }))?;
-        match spawn_runner_process(runner, &cwd, logs_dir, &run_env, single) {
+        match spawn_runner_process(
+            runner,
+            &cwd,
+            logs_dir,
+            &run_env,
+            single,
+            sandbox_backend.as_ref(),
+            &rootfs,
+        ) {
             Ok(proc) => procs.push(proc),
             Err(err) => {
                 kill_runner_processes(&mut procs);
@@ -612,15 +635,35 @@ struct RunnerProc {
     stderr_log: String,
 }
 
+/// Wrap a runner/step command in the run's isolation backend: seatbelt rewrites
+/// it as `sandbox-exec -p <profile> -- <cmd>` (confining writes to `rootfs` and
+/// applying the `[network].egress` policy), while the process backend is a
+/// passthrough (returns the command verbatim). Services are spawned RAW (not via
+/// this) so they keep the network needed to serve/forward.
+pub(crate) fn sandbox_wrap(
+    backend: &dyn sandbox::Sandbox,
+    rootfs: &Path,
+    cmd: &[String],
+) -> Vec<String> {
+    if cmd.is_empty() {
+        return cmd.to_vec();
+    }
+    let (prog, argv) = backend.resolve(rootfs, &cmd[0], &cmd[1..]);
+    std::iter::once(prog).chain(argv).collect()
+}
+
 /// Spawn one runner child with per-runner log files. A single runner keeps
 /// the legacy `runner.{stdout,stderr}.log` names; a concurrent set
 /// disambiguates as `runner-<id>.{stdout,stderr}.log`.
+#[allow(clippy::too_many_arguments)]
 fn spawn_runner_process(
     runner: &RunnerConfig,
     cwd: &Path,
     logs_dir: &Path,
     env: &BTreeMap<String, String>,
     single: bool,
+    backend: &dyn sandbox::Sandbox,
+    rootfs: &Path,
 ) -> Result<RunnerProc> {
     let (stdout, stderr) = if single {
         (
@@ -634,7 +677,8 @@ fn spawn_runner_process(
         )
     };
     let started = Instant::now();
-    let child = command_with_logs(&runner.cmd, cwd, env, &stdout, &stderr)
+    let cmd = sandbox_wrap(backend, rootfs, &runner.cmd);
+    let child = command_with_logs(&cmd, cwd, env, &stdout, &stderr)
         .with_context(|| format!("spawn runner `{}`", runner.id))?;
     Ok(RunnerProc {
         runner: runner.clone(),
@@ -702,10 +746,13 @@ fn run_setup_step(
     cwd: &Path,
     logs_dir: &Path,
     env: &BTreeMap<String, String>,
+    backend: &dyn sandbox::Sandbox,
+    rootfs: &Path,
 ) -> Result<()> {
     let stdout = logs_dir.join(format!("setup-{}.stdout.log", step.id));
     let stderr = logs_dir.join(format!("setup-{}.stderr.log", step.id));
-    let status = command_with_logs(&step.cmd, cwd, env, &stdout, &stderr)?
+    let cmd = sandbox_wrap(backend, rootfs, &step.cmd);
+    let status = command_with_logs(&cmd, cwd, env, &stdout, &stderr)?
         .wait()
         .with_context(|| format!("wait setup `{}`", step.id))?;
     if !status.success() {
@@ -1843,9 +1890,12 @@ fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path)
             .with_context(|| format!("remove stale {}", sock_dir.display()))?;
     }
     std::fs::create_dir_all(&sock_dir).with_context(|| format!("create {}", sock_dir.display()))?;
-    let sock_dir_abs = sock_dir
-        .canonicalize()
-        .with_context(|| format!("canonicalize postgres seed socket dir {}", sock_dir.display()))?;
+    let sock_dir_abs = sock_dir.canonicalize().with_context(|| {
+        format!(
+            "canonicalize postgres seed socket dir {}",
+            sock_dir.display()
+        )
+    })?;
     let sock_arg = format!(
         "-h '' -k {} -p 5432",
         shell_single_quote(&sock_dir_abs.to_string_lossy())
@@ -2662,6 +2712,42 @@ fn should_delete_clusters(keep: &RetentionPolicy, code: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sandbox_wrap_wraps_runner_under_seatbelt_passthrough_under_none() {
+        let cmd = vec!["echo".to_string(), "hi".to_string()];
+
+        // isolation=none → process backend → byte-identical passthrough (the
+        // shape services keep, since they bypass sandbox_wrap entirely).
+        let none = sandbox::pick(&EnvSpec {
+            isolation: Isolation::None,
+            ..EnvSpec::default()
+        });
+        assert_eq!(
+            sandbox_wrap(none.as_ref(), Path::new("/tmp/vat-x"), &cmd),
+            cmd
+        );
+        // empty command is a no-op.
+        assert!(sandbox_wrap(none.as_ref(), Path::new("/tmp/vat-x"), &[]).is_empty());
+
+        // isolation=seatbelt → runner cmd is wrapped in `sandbox-exec -p <profile>`
+        // (the same profile #518 proves denies external egress). Asserted only
+        // when the seatbelt backend is active (macOS + sandbox-exec).
+        let sb = sandbox::pick(&EnvSpec {
+            isolation: Isolation::Seatbelt,
+            egress: crate::spec::EgressPolicy::LocalhostOnly,
+            ..EnvSpec::default()
+        });
+        let wrapped = sandbox_wrap(sb.as_ref(), Path::new("/tmp/vat-x"), &cmd);
+        if sb.name() == "seatbelt" {
+            assert_eq!(wrapped[0], "sandbox-exec");
+            assert_eq!(wrapped[1], "-p");
+            // the original command is appended verbatim after the profile.
+            assert_eq!(&wrapped[wrapped.len() - 2..], cmd.as_slice());
+        } else {
+            assert_eq!(wrapped, cmd); // process fallback off-macOS
+        }
+    }
 
     #[test]
     fn stop_services_stops_in_reverse_start_order() {
