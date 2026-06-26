@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-commands.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-llm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat llm` — compact agent-facing usage contract.
 

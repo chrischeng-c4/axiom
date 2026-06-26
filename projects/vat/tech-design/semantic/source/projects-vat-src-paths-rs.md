@@ -1,43 +1,35 @@
 ---
 id: vat-source-projects-vat-src-paths-rs
-summary: Source replay payload for projects/vat/src/paths.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/paths.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/paths.rs
+# Standardized projects/vat/src/paths.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/src/paths.rs` generated from AST during Score force-regeneration standardization.
+Rust source-unit TD for `projects/vat/src/paths.rs`, captured during #39 vat migration onto td_ast lossless source generation.
 
-### Symbols
-
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `file` | projects/vat/src/paths.rs | module | pub | 48 |  |
-| `root` | projects/vat/src/paths.rs | function | pub | 26 | root() -> Result<PathBuf> |
-| `vat_dir` | projects/vat/src/paths.rs | function | pub | 42 | vat_dir(id: &str) -> Result<PathBuf> |
-| `vats_dir` | projects/vat/src/paths.rs | function | pub | 36 | vats_dir() -> Result<PathBuf> |
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
 //! On-disk layout for vat state.
 //!
-//! Everything lives under a single root (default `~/.vat`, override with
+//! Everything lives under a single root (default `<repo>/.vat`, override with
 //! `$VAT_HOME`). One directory per vat keeps the store trivially inspectable
 //! by a human *or* an agent with nothing but `ls`:
 //!
 //! ```text
-//! ~/.vat/
+//! .vat/
 //!   vats/
 //!     vat-7f3k1q9/
 //!       meta.json          persisted VatMeta (id, status, spec, lineage, last_run)
@@ -49,16 +41,28 @@ Public API manifest for `projects/vat/src/paths.rs` generated from AST during Sc
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
-/// Root of all vat state. Honors `$VAT_HOME`, else `~/.vat`.
+/// Root of all vat state. Honors `$VAT_HOME`, else `<repo>/.vat`, else `./.vat`.
 /// @spec projects/vat/tech-design/semantic/source/projects-vat-src-paths-rs.md#source
 pub fn root() -> Result<PathBuf> {
     if let Some(custom) = std::env::var_os("VAT_HOME") {
         return Ok(PathBuf::from(custom));
     }
-    let home = dirs::home_dir().context("could not determine home directory (set $VAT_HOME)")?;
-    Ok(home.join(".vat"))
+    let cwd = std::env::current_dir()?;
+    Ok(repo_root_from(&cwd).unwrap_or(cwd).join(".vat"))
+}
+
+fn repo_root_from(start: &std::path::Path) -> Option<PathBuf> {
+    let mut dir = start.to_path_buf();
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
 }
 
 /// Directory holding every vat (`<root>/vats`).
@@ -73,6 +77,20 @@ pub fn vat_dir(id: &str) -> Result<PathBuf> {
     Ok(vats_dir()?.join(id))
 }
 
+/// Directory holding standalone `vat cluster` registry entries
+/// (`<root>/clusters`). Standalone clusters are not vats, so they live in a
+/// sibling tree, one directory per cluster.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
+pub fn clusters_dir() -> Result<PathBuf> {
+    Ok(root()?.join("clusters"))
+}
+
+/// Directory for a single standalone cluster (`<root>/clusters/<name>`).
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
+pub fn cluster_dir(name: &str) -> Result<PathBuf> {
+    Ok(clusters_dir()?.join(name))
+}
+
 /// Filenames within a vat directory. Centralized so the layout has one source
 /// of truth.
 pub mod file {
@@ -82,21 +100,17 @@ pub mod file {
     pub const ROOTFS: &str = "rootfs";
     pub const LOGS: &str = "logs";
 }
-`````
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/paths.rs"
+  - path: projects/vat/src/paths.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-src.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-paths-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/paths.rs` captured during #39 vat standardization.
 ```
