@@ -1,23 +1,23 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/external-contracts.md#vat-resource-isolation-boundary
+// SPEC-MANAGED: projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-emulator-unavailable-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-resource-isolation-boundary
+// @ec vat-emulator-unavailable-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim resource-isolation-boundary
-// @contract resource-isolation-boundary
+// @claim vat-emulator-unavailable-smoke
+// @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox
+// @command cargo test -p vat gcloud_emulator_unavailable_reports_jsonl_error -- --nocapture
 // AW-EC-END
 
-// Contract: vat documents resource isolation as its responsibility
-// Contract: sandbox and seatbelt isolation remain visible implementation surfaces
+// Contract: a firestore preset with an empty PATH (no gcloud, no docker) emits a structured service_runtime_unavailable JSONL error and a non-zero exit.
+// Contract: vat never panics on the unavailable path.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_resource_isolation_boundary() {
+fn vat_emulator_unavailable_smoke() {
     let command =
-        "rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox";
-    let id = "vat-resource-isolation-boundary";
+        "cargo test -p vat gcloud_emulator_unavailable_reports_jsonl_error -- --nocapture";
+    let id = "vat-emulator-unavailable-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

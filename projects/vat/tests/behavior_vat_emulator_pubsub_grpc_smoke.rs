@@ -1,23 +1,22 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/external-contracts.md#vat-resource-isolation-boundary
+// SPEC-MANAGED: projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-pubsub-grpc-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-resource-isolation-boundary
+// @ec vat-emulator-pubsub-grpc-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim resource-isolation-boundary
-// @contract resource-isolation-boundary
+// @claim vat-emulator-pubsub-grpc-smoke
+// @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox
+// @command cargo test -p vat --test vat_emulator_pubsub -- --nocapture
 // AW-EC-END
 
-// Contract: vat documents resource isolation as its responsibility
-// Contract: sandbox and seatbelt isolation remain visible implementation surfaces
+// Contract: a tonic client generated from the same proto can CreateTopic -> CreateSubscription -> Publish -> Pull -> Acknowledge against `vat emulator pubsub`.
+// Contract: no gcloud / Java required.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_resource_isolation_boundary() {
-    let command =
-        "rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox";
-    let id = "vat-resource-isolation-boundary";
+fn vat_emulator_pubsub_grpc_smoke() {
+    let command = "cargo test -p vat --test vat_emulator_pubsub -- --nocapture";
+    let id = "vat-emulator-pubsub-grpc-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

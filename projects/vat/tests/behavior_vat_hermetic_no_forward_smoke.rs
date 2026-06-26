@@ -1,23 +1,21 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/external-contracts.md#vat-resource-isolation-boundary
+// SPEC-MANAGED: projects/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md#vat-hermetic-no-forward-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-resource-isolation-boundary
+// @ec vat-hermetic-no-forward-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim resource-isolation-boundary
-// @contract resource-isolation-boundary
+// @claim vat-hermetic-no-forward-smoke
+// @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox
+// @command cargo test -p vat --test vat_emulator_httpmock_hermetic -- --nocapture
 // AW-EC-END
 
-// Contract: vat documents resource isolation as its responsibility
-// Contract: sandbox and seatbelt isolation remain visible implementation surfaces
+// Contract: a proxy started with --no-forward returns 502 hermetic for an unmatched host (no upstream reached) while a registered stub on the same proxy returns 200; an unmatched request on a default (forwarding) proxy still forwards.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_resource_isolation_boundary() {
-    let command =
-        "rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox";
-    let id = "vat-resource-isolation-boundary";
+fn vat_hermetic_no_forward_smoke() {
+    let command = "cargo test -p vat --test vat_emulator_httpmock_hermetic -- --nocapture";
+    let id = "vat-hermetic-no-forward-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

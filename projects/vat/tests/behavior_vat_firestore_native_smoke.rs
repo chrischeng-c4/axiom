@@ -1,23 +1,22 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/external-contracts.md#vat-resource-isolation-boundary
+// SPEC-MANAGED: projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firestore-native-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-resource-isolation-boundary
+// @ec vat-firestore-native-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim resource-isolation-boundary
-// @contract resource-isolation-boundary
+// @claim vat-firestore-native-smoke
+// @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox
+// @command cargo test -p vat firestore_emulator_exports_host -- --nocapture --ignored
 // AW-EC-END
 
-// Contract: vat documents resource isolation as its responsibility
-// Contract: sandbox and seatbelt isolation remain visible implementation surfaces
+// Contract: with gcloud + Java + the firestore component, vat starts the emulator, the runner sees FIRESTORE_EMULATOR_HOST, and vat state shows the service ready with the var in exported_env.
+// Contract: the test skips gracefully when the native firestore emulator is unavailable.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_resource_isolation_boundary() {
-    let command =
-        "rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox";
-    let id = "vat-resource-isolation-boundary";
+fn vat_firestore_native_smoke() {
+    let command = "cargo test -p vat firestore_emulator_exports_host -- --nocapture --ignored";
+    let id = "vat-firestore-native-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
