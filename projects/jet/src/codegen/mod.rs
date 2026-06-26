@@ -1,5 +1,5 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
-// HANDWRITE-BEGIN
+// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-mod-rs" tracker="pending-tracker" reason="Existing hand-written code in projects/jet/src/codegen/mod.rs requires tracked generator coverage."
 //! `jet codegen` — generate frontend code from API specs.
 //!
 //! Currently supports `jet codegen openapi`: read an OpenAPI 3.0/3.1 document
