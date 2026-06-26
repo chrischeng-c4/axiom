@@ -19,7 +19,9 @@
 //!     CPython-shaped arrival index 0..parties-1 instead of raising.
 //!     `Thread.start` runs the target synchronously on the calling thread
 //!     (delivering `target(*args, **kwargs)`) and flips `started` / `alive`,
-//!     but does not spawn an OS thread.
+//!     but does not spawn an OS thread. The synchronous target gets a fresh
+//!     `contextvars` context and restored `threading.local` fields to preserve
+//!     the common per-thread isolation contracts.
 //!   - `Timer` returns a Thread-shaped Instance with `interval` /
 //!     `function` fields; it never fires.
 //!   - `local` returns a fresh dict — thread-local semantics collapse
@@ -654,6 +656,8 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                     id
                 });
                 let snapshot = snapshot_locals();
+                let context_snapshot =
+                    super::contextvars_mod::replace_current_context(FxHashMap::default());
                 // Make `threading.get_ident()` inside the target observe THIS
                 // thread's distinct ident, then restore the caller's ident so
                 // nested/sequential starts each see their own (sync model).
@@ -671,6 +675,8 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                 }
                 CURRENT_THREAD_OBJ.with(|c| c.set(prev_obj));
                 CURRENT_IDENT.with(|c| c.set(prev_ident));
+                let _worker_context =
+                    super::contextvars_mod::replace_current_context(context_snapshot);
                 restore_locals(snapshot);
                 // An exception escaping run() is delivered to
                 // threading.excepthook, NOT re-raised in the starter/joiner.
@@ -694,6 +700,8 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                     )
                 };
                 let snapshot = snapshot_locals();
+                let context_snapshot =
+                    super::contextvars_mod::replace_current_context(FxHashMap::default());
                 let prev_ident = CURRENT_IDENT.with(|c| c.get());
                 if let Some(id) = ident {
                     CURRENT_IDENT.with(|c| c.set(id));
@@ -705,6 +713,8 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                     );
                 }
                 CURRENT_IDENT.with(|c| c.set(prev_ident));
+                let _worker_context =
+                    super::contextvars_mod::replace_current_context(context_snapshot);
                 restore_locals(snapshot);
                 let mut map = lock.write().unwrap();
                 map.insert("started".into(), MbValue::from_bool(true));
