@@ -21,6 +21,7 @@ pub(crate) const INT_SUBCLASS_VALUE_FIELD: &str = "__mamba_int_value__";
 pub(crate) const STR_SUBCLASS_VALUE_FIELD: &str = "__mamba_str_value__";
 pub(crate) const LIST_SUBCLASS_VALUE_FIELD: &str = "__mamba_list_value__";
 pub(crate) const DICT_SUBCLASS_VALUE_FIELD: &str = "__mamba_dict_value__";
+pub(crate) const TUPLE_SUBCLASS_VALUE_FIELD: &str = "__mamba_tuple_value__";
 
 /// A class definition stored at runtime.
 pub struct MbClass {
@@ -3208,6 +3209,7 @@ fn builtin_data_payload_base(class_name: &str) -> Option<&'static str> {
             "str" => return Some("str"),
             "list" => return Some("list"),
             "dict" => return Some("dict"),
+            "tuple" => return Some("tuple"),
             _ => {}
         }
     }
@@ -3219,6 +3221,7 @@ fn payload_field_for_base(base: &str) -> &'static str {
         "str" => STR_SUBCLASS_VALUE_FIELD,
         "list" => LIST_SUBCLASS_VALUE_FIELD,
         "dict" => DICT_SUBCLASS_VALUE_FIELD,
+        "tuple" => TUPLE_SUBCLASS_VALUE_FIELD,
         _ => "",
     }
 }
@@ -3226,7 +3229,10 @@ fn payload_field_for_base(base: &str) -> &'static str {
 pub(crate) fn is_builtin_data_payload_field(name: &str) -> bool {
     matches!(
         name,
-        STR_SUBCLASS_VALUE_FIELD | LIST_SUBCLASS_VALUE_FIELD | DICT_SUBCLASS_VALUE_FIELD
+        STR_SUBCLASS_VALUE_FIELD
+            | LIST_SUBCLASS_VALUE_FIELD
+            | DICT_SUBCLASS_VALUE_FIELD
+            | TUPLE_SUBCLASS_VALUE_FIELD
     )
 }
 
@@ -3299,6 +3305,20 @@ fn seed_builtin_data_subclass_value(instance: MbValue, args_list: MbValue, base:
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(format!(
                         "dict expected at most 1 argument, got {}",
+                        args.len()
+                    ))),
+                );
+                return false;
+            }
+        },
+        "tuple" => match args.len() {
+            0 => super::tuple_ops::mb_tuple_new(),
+            1 => super::tuple_ops::mb_tuple_from_iterable(args[0]),
+            _ => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "tuple expected at most 1 argument, got {}",
                         args.len()
                     ))),
                 );
@@ -10512,12 +10532,51 @@ pub fn mb_super_getattr(proxy: MbValue, attr: MbValue) -> MbValue {
                 };
 
                 let val = lookup_method_after(&instance_class, &super_class, &attr_name);
-                super::rc::retain_if_ptr(val);
-                return val;
+                if !val.is_none() {
+                    super::rc::retain_if_ptr(val);
+                    return val;
+                }
+                if let Some(native) = super_builtin_native_method(
+                    &instance_class,
+                    &super_class,
+                    &attr_name,
+                    super_self,
+                ) {
+                    return native;
+                }
             }
         }
     }
     MbValue::none()
+}
+
+fn super_builtin_native_method(
+    instance_class: &str,
+    skip_class: &str,
+    method_name: &str,
+    super_self: MbValue,
+) -> Option<MbValue> {
+    let mut skip = true;
+    for mro_class in class_mro_list(instance_class) {
+        if skip {
+            if mro_class == skip_class {
+                skip = false;
+            }
+            continue;
+        }
+        if !builtin_type_method_names_by_name(&mro_class)
+            .iter()
+            .any(|method| *method == method_name)
+        {
+            continue;
+        }
+        let receiver = match builtin_data_payload(super_self) {
+            Some((base, payload)) if base == mro_class.as_str() => payload,
+            _ => super_self,
+        };
+        return Some(make_bound_native_method(receiver, method_name));
+    }
+    None
 }
 
 /// Look up a method in MRO, starting after `skip_class`.
@@ -16272,6 +16331,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             }
                             return method;
                         }
+                        if let Some(native) = super_builtin_native_method(
+                            &instance_class,
+                            &super_class,
+                            &name,
+                            super_self,
+                        ) {
+                            return super::builtins::mb_call_spread(native, args);
+                        }
                         // Built-in __init__ fallback for Exception base classes:
                         // sets message, __type__, and args on the instance.
                         if name == "__init__" {
@@ -18475,6 +18542,112 @@ mod tests {
             result.as_int(),
             Some(777),
             "super().__init__() must find parent's __init__"
+        );
+    }
+
+    #[test]
+    fn test_super_builtin_dict_setitem_binds_hidden_payload() {
+        mb_class_register(
+            "SuperDictPayload001",
+            vec!["dict".to_string()],
+            HashMap::new(),
+        );
+        let inst = mb_instance_new_with_init(
+            MbValue::from_ptr(MbObject::new_str("SuperDictPayload001".to_string())),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        let payload = builtin_data_payload(inst)
+            .map(|(_, payload)| payload)
+            .expect("dict subclass should carry a hidden dict payload");
+
+        let proxy = mb_super(
+            MbValue::from_ptr(MbObject::new_str("SuperDictPayload001".to_string())),
+            inst,
+        );
+        let method = mb_super_getattr(
+            proxy,
+            MbValue::from_ptr(MbObject::new_str("__setitem__".to_string())),
+        );
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("bar".to_string())),
+            MbValue::from_int(1),
+        ]));
+        crate::runtime::builtins::mb_call_spread(method, args);
+
+        let proxy_call = mb_super(
+            MbValue::from_ptr(MbObject::new_str("SuperDictPayload001".to_string())),
+            inst,
+        );
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("baz".to_string())),
+            MbValue::from_int(2),
+        ]));
+        mb_call_method(
+            proxy_call,
+            MbValue::from_ptr(MbObject::new_str("__setitem__".to_string())),
+            args,
+        );
+
+        let got = crate::runtime::dict_ops::mb_dict_getitem(
+            payload,
+            MbValue::from_ptr(MbObject::new_str("bar".to_string())),
+        );
+        assert_eq!(
+            got.as_int(),
+            Some(1),
+            "super().__setitem__ on a dict subclass must mutate the hidden dict payload"
+        );
+        let got = crate::runtime::dict_ops::mb_dict_getitem(
+            payload,
+            MbValue::from_ptr(MbObject::new_str("baz".to_string())),
+        );
+        assert_eq!(
+            got.as_int(),
+            Some(2),
+            "mb_call_method(super_proxy, __setitem__, args) must mutate the hidden payload"
+        );
+    }
+
+    #[test]
+    fn test_tuple_subclass_hidden_payload_sequence_surface() {
+        mb_class_register(
+            "TuplePayload001",
+            vec!["tuple".to_string()],
+            HashMap::new(),
+        );
+        let source = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(10),
+            MbValue::from_int(20),
+        ]));
+        let inst = mb_instance_new_with_init(
+            MbValue::from_ptr(MbObject::new_str("TuplePayload001".to_string())),
+            MbValue::from_ptr(MbObject::new_list(vec![source])),
+        );
+        let (base, payload) =
+            builtin_data_payload(inst).expect("tuple subclass should carry a hidden tuple payload");
+
+        assert_eq!(base, "tuple");
+        assert_eq!(
+            crate::runtime::tuple_ops::mb_tuple_len(payload).as_int(),
+            Some(2),
+            "tuple subclass payload should preserve constructor elements"
+        );
+        assert_eq!(
+            crate::runtime::builtins::mb_len(inst).as_int(),
+            Some(2),
+            "len(tuple_subclass) should delegate to the hidden tuple payload"
+        );
+        assert_eq!(
+            mb_obj_getitem(inst, MbValue::from_int(0)).as_int(),
+            Some(10),
+            "getitem on a tuple subclass should delegate to the hidden tuple payload"
+        );
+        let materialized = crate::runtime::tuple_ops::mb_tuple_from_iterable(inst);
+        assert_eq!(
+            crate::runtime::tuple_ops::mb_tuple_getitem(materialized, MbValue::from_int(1))
+                .as_int(),
+            Some(20),
+            "tuple(tuple_subclass) should iterate over the hidden tuple payload"
         );
     }
 
