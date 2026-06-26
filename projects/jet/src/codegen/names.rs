@@ -1,5 +1,5 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
-// HANDWRITE-BEGIN
+// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-names-rs" tracker="pending-tracker" reason="Existing hand-written code in projects/jet/src/codegen/names.rs requires tracked generator coverage."
 //! Identifier casing and collision-safe naming for generated TypeScript.
 
 use std::collections::BTreeSet;
