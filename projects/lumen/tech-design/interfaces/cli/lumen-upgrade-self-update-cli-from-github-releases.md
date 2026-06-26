@@ -155,3 +155,20 @@ flowchart TD
 
 - [logic] Contract pins the binding behavior: `current_exe()` install path, compile-time target triple, GitHub releases listing with UA/optional token, semver selection with `--tag` override, and the fail-safe ordering — download to a temp file in the install dir, verify sha256, untar the inner `lumen-<target>/lumen`, then a single atomic `rename` over the running binary so a permission failure leaves it intact. Exit codes (0 success/check/no-op, 1 on no-asset/sha-mismatch/permission) are explicit.
 - [unit-test] R1–R6 isolate the pure, unit-testable seams (`asset_name`/`sha_name`, `select_version`, tag→semver parse, `verify_sha256`, `extract_binary`, `decide_action`) so behavior is verified without network or filesystem mutation; consistent with scope_control=strict and testability=required.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Wire the lumen upgrade command and ToolInfo into the shared cli_std upgrade implementation."
+  - path: libs/cli-std/src/upgrade.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Shared upgrade asset naming, version selection, checksum, extraction, and decision pure tests."
+```

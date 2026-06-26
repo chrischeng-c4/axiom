@@ -126,3 +126,25 @@ requirementDiagram
 
 - [logic] Correct contract matching the implementation.
 - [unit-test] Requirements bound to concrete tests.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/types.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add the native ids query node to the request/query model."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Evaluate ids queries through the external-id interner and compose them with predicates and sort."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Cover ids set matching, composition under AND, and sort compatibility."
+```

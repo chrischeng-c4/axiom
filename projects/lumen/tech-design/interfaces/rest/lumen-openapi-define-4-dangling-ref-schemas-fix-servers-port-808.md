@@ -108,3 +108,20 @@ requirementDiagram
 
 - [logic] Correct contract matching the implementation.
 - [unit-test] Requirements bound to concrete tests.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/spec.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Render lumen's OpenAPI document with complete schemas and server metadata."
+  - path: projects/lumen/tests/spec_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Validate OpenAPI self-completeness and CLI spec output shape."
+```
