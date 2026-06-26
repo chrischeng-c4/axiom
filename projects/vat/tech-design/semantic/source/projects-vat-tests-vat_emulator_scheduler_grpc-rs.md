@@ -1,5 +1,38 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_scheduler_grpc-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-vat-tests-vat_emulator_scheduler_grpc-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat e2e test source behavior for the local agent test runner protocol."
+---
+
+# Standardized projects/vat/tests/vat_emulator_scheduler_grpc.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/vat/tests/vat_emulator_scheduler_grpc.rs`, captured as a rust-source-unit (td_ast) item-tree
+during vat standardization onto the codegen ladder.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `vat_bin` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 16 | fn vat_bin() -> &'static str |
+| `free_port` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 20 | fn free_port() -> u16 |
+| `wait_for_port` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 28 | fn wait_for_port(addr: &str) |
+| `drop` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 41 | fn drop(&mut self) |
+| `spawn_sink` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 47 | fn spawn_sink() -> (u16, mpsc::Receiver<String>) |
+| `cloud_scheduler_grpc_fires_job_on_run` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 65 | async fn cloud_scheduler_grpc_fires_job_on_run() |
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 //! Integration test for the Cloud Scheduler emulator's gRPC front-end. Spawns
 //! `vat emulator cloud-scheduler`, drives the GENERATED gRPC client to
 //! CreateJob + RunJob with an httpTarget pointing at a local sink, and asserts
@@ -39,7 +72,6 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
-/// @spec projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_scheduler_grpc-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -117,4 +149,17 @@ async fn cloud_scheduler_grpc_fires_job_on_run() {
     assert!(got.contains("POST /fire"), "wrong request line: {got}");
     assert!(got.contains("hello-grpc-job"), "missing job body: {got}");
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tests/vat_emulator_scheduler_grpc.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/vat/tests/vat_emulator_scheduler_grpc.rs` captured during vat standardization.
+```

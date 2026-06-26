@@ -1,5 +1,40 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_grpc_mitm_routing-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-vat-tests-vat_emulator_grpc_mitm_routing-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat e2e test source behavior for the local agent test runner protocol."
+---
+
+# Standardized projects/vat/tests/vat_emulator_grpc_mitm_routing.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/vat/tests/vat_emulator_grpc_mitm_routing.rs`, captured as a rust-source-unit (td_ast) item-tree
+during vat standardization onto the codegen ladder.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `vat_bin` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 28 | fn vat_bin() -> &'static str |
+| `free_port` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 32 | fn free_port() -> u16 |
+| `wait_for_port` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 40 | fn wait_for_port(addr: &str) |
+| `drop` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 53 | fn drop(&mut self) |
+| `spawn_sink` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 60 | fn spawn_sink() -> (u16, mpsc::Receiver<String>) |
+| `connect_tunnel` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 79 | async fn connect_tunnel(proxy_addr: &str, target: &str) -> tokio::net::TcpStream |
+| `grpc_frame` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 105 | fn grpc_frame(msg: &[u8]) -> Bytes |
+| `grpc_routed_through_mitm_reaches_emulator` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 114 | async fn grpc_routed_through_mitm_reaches_emulator() |
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 //! Integration test for network sandbox v2: transparent gRPC routing.
 //!
 //! Drives a real gRPC call to `https://cloudtasks.googleapis.com` THROUGH the
@@ -51,7 +86,6 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
-/// @spec projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_grpc_mitm_routing-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -289,4 +323,17 @@ async fn grpc_routed_through_mitm_reaches_emulator() {
         "missing task body (reuse): {got2}"
     );
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tests/vat_emulator_grpc_mitm_routing.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/vat/tests/vat_emulator_grpc_mitm_routing.rs` captured during vat standardization.
+```
