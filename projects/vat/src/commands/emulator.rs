@@ -23,6 +23,7 @@ pub fn exec(
     cassette_dir: Option<String>,
     spec: Option<String>,
     route: Vec<String>,
+    no_forward: bool,
 ) -> Result<ExitCode> {
     let kind = match kind {
         EmulatorKind::Pubsub => crate::emulator::Kind::Pubsub,
@@ -35,6 +36,7 @@ pub fn exec(
             ca_path: ca_path.unwrap_or_else(|| "vat-http-mock-ca.pem".to_string()),
             cassette_dir: cassette_dir.unwrap_or_else(|| "vat-http-mock-cassettes".to_string()),
             routes: parse_routes(&route),
+            forward: !no_forward,
         },
         EmulatorKind::Openapi => crate::emulator::Kind::Openapi {
             spec: spec.unwrap_or_else(|| "openapi.yaml".to_string()),
@@ -71,6 +73,7 @@ pub fn exec(
     _cassette_dir: Option<String>,
     _spec: Option<String>,
     _route: Vec<String>,
+    _no_forward: bool,
 ) -> Result<ExitCode> {
     anyhow::bail!(
         "this vat was built without the `emulator` feature; rebuild with default features to use `vat emulator`"
