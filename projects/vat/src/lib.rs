@@ -51,3 +51,7 @@ pub mod cli;
 /// Crate version, surfaced by `vat --version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // CODEGEN-END
+// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
+// CODEGEN-BEGIN
+
+// CODEGEN-END

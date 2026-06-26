@@ -139,3 +139,7 @@ pub struct Limits {
     pub timeout_s: Option<u64>,
 }
 // CODEGEN-END
+// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
+// CODEGEN-BEGIN
+
+// CODEGEN-END
