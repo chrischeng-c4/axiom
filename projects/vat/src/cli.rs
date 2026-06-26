@@ -167,6 +167,10 @@ enum Cmd {
         /// Seed a host route (http-mock only), repeatable: `--route host=base`.
         #[arg(long)]
         route: Vec<String>,
+        /// Hermetic mode (http-mock only): block unmatched requests instead of
+        /// forwarding them to the real upstream.
+        #[arg(long)]
+        no_forward: bool,
     },
 }
 
@@ -306,7 +310,16 @@ pub fn run() -> Result<ExitCode> {
             cassette_dir,
             spec,
             route,
-        } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir, spec, route),
+            no_forward,
+        } => commands::emulator::exec(
+            kind,
+            host_port,
+            ca_path,
+            cassette_dir,
+            spec,
+            route,
+            no_forward,
+        ),
     }
 }
 
