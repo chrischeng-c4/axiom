@@ -39,7 +39,6 @@ edges:
   - { from: exec, to: effect }
   - { from: svc, to: effect }
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
