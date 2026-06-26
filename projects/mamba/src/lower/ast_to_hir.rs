@@ -3951,6 +3951,37 @@ impl<'a> AstLowerer<'a> {
                         methods.push(m);
                     }
                 }
+                ast::Stmt::ClassDef {
+                    name: nested_name,
+                    body: nested_body,
+                    bases: nested_bases,
+                    decorators: nested_decorators,
+                    type_params: nested_type_params,
+                    keyword_args: nested_keyword_args,
+                    ..
+                } => {
+                    let nested_sym = self
+                        .resolve_name(nested_name, stmt.span)
+                        .unwrap_or_else(|| self.define_local(nested_name, self.checker.tcx.any()));
+                    self.result
+                        .sym_names
+                        .entry(nested_sym)
+                        .or_insert_with(|| nested_name.clone());
+                    self.collect_class_stmt(
+                        nested_name,
+                        nested_body,
+                        nested_bases,
+                        nested_decorators,
+                        nested_type_params,
+                        nested_keyword_args,
+                        stmt.span,
+                        false,
+                    );
+                    class_attr_assigns.push((
+                        nested_name.clone(),
+                        HirExpr::Var(nested_sym, self.checker.tcx.any()),
+                    ));
+                }
                 // `__match_args__ = ("x", "y")` — explicit tuple assignment (#827)
                 // `__slots__ = ['x', 'y']` or `__slots__ = ('x', 'y')` — R14
                 // Other assignments → class-level attribute init (P2-R3)
@@ -8665,6 +8696,35 @@ mod tests {
         let hir = lower_module(&module, &checker).unwrap();
         assert_eq!(hir.classes.len(), 1);
         assert_eq!(hir.classes[0].fields.len(), 1);
+    }
+
+    #[test]
+    fn test_lower_nested_class_as_class_attr() {
+        let hir = helper_lower_with_classes(
+            vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "Outer".to_string(),
+                type_params: vec![],
+                bases: vec![],
+                keyword_args: vec![],
+                body: vec![sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Inner".to_string(),
+                    type_params: vec![],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Pass)],
+                })],
+            })],
+            &["Outer"],
+        );
+        assert_eq!(hir.classes.len(), 2);
+        assert!(hir.classes.iter().any(|class| {
+            class
+                .class_attr_assigns
+                .iter()
+                .any(|(name, value)| name == "Inner" && matches!(value, HirExpr::Var(..)))
+        }));
     }
 
     #[test]
