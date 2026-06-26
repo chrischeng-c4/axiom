@@ -1,7 +1,8 @@
 use super::super::async_task::{
-    mb_async_wait as rt_async_wait, mb_await as rt_await, mb_create_task as rt_create_task,
-    mb_drive_pending_tasks_until, mb_gather as rt_gather, mb_run_until_complete,
-    mb_sleep as rt_sleep,
+    mb_async_wait as rt_async_wait, mb_await as rt_await, mb_cancel_task as rt_cancel_task,
+    mb_create_task as rt_create_task, mb_drive_pending_tasks_until, mb_gather as rt_gather,
+    mb_run_until_complete, mb_sleep as rt_sleep, mb_task_cancelled as rt_task_cancelled,
+    mb_task_done as rt_task_done, mb_task_result as rt_task_result,
 };
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
@@ -35,10 +36,18 @@ macro_rules! dispatch_variadic {
 
 dispatch_unary!(dispatch_run, mb_asyncio_run);
 dispatch_unary!(dispatch_sleep, rt_sleep);
-dispatch_unary!(dispatch_create_task, rt_create_task);
-dispatch_unary!(dispatch_ensure_future, rt_create_task);
 dispatch_unary!(dispatch_shield, mb_asyncio_shield);
 dispatch_variadic!(dispatch_gather, rt_gather);
+
+unsafe extern "C" fn dispatch_create_task(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    make_task(a.first().copied().unwrap_or_else(MbValue::none))
+}
+
+unsafe extern "C" fn dispatch_ensure_future(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    make_task(a.first().copied().unwrap_or_else(MbValue::none))
+}
 
 unsafe extern "C" fn dispatch_get_event_loop(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     make_event_loop()
@@ -124,6 +133,7 @@ pub fn register() {
 
     register_event_class();
     register_queue_class();
+    register_task_class();
     let queue_addr = dispatch_queue as *const () as usize;
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         m.borrow_mut()
@@ -497,6 +507,54 @@ fn register_event_class() {
     super::super::class::mb_class_register("asyncio.Event", vec!["object".to_string()], methods);
 }
 
+fn make_task(coro: MbValue) -> MbValue {
+    let task_id = rt_create_task(coro);
+    let inst = MbValue::from_ptr(MbObject::new_instance("asyncio.Task".to_string()));
+    set_field(inst, "_task_id", task_id);
+    set_field(inst, "_coro_id", coro);
+    inst
+}
+
+fn task_id(this: MbValue) -> MbValue {
+    get_field(this, "_task_id").unwrap_or_else(MbValue::none)
+}
+
+extern "C" fn task_cancel(this: MbValue) -> MbValue {
+    rt_cancel_task(task_id(this))
+}
+
+extern "C" fn task_cancelled(this: MbValue) -> MbValue {
+    rt_task_cancelled(task_id(this))
+}
+
+extern "C" fn task_done(this: MbValue) -> MbValue {
+    rt_task_done(task_id(this))
+}
+
+extern "C" fn task_result(this: MbValue) -> MbValue {
+    if rt_task_cancelled(task_id(this)).as_bool() == Some(true) {
+        return raise_asyncio("CancelledError", "");
+    }
+    rt_task_result(task_id(this))
+}
+
+fn register_task_class() {
+    let mut methods: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("cancel", task_cancel as *const () as usize),
+        ("cancelled", task_cancelled as *const () as usize),
+        ("done", task_done as *const () as usize),
+        ("result", task_result as *const () as usize),
+    ] {
+        methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register(
+        "asyncio.Task",
+        vec!["asyncio.Future".to_string()],
+        methods,
+    );
+}
+
 fn make_queue() -> MbValue {
     let inst = MbValue::from_ptr(MbObject::new_instance("asyncio.Queue".to_string()));
     set_field(
@@ -650,5 +708,28 @@ mod tests {
             Some("InvalidStateError")
         );
         exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_task_cancel_marks_cancelled_and_await_raises() {
+        crate::runtime::async_rt::cleanup_all_async();
+        exception::mb_clear_exception();
+        let name = MbValue::from_ptr(MbObject::new_str("test-task".to_string()));
+        let locals = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+        let coro = crate::runtime::async_rt::mb_coroutine_new(name, locals);
+        let task = make_task(coro);
+
+        assert_eq!(task_cancelled(task).as_bool(), Some(false));
+        assert_eq!(task_cancel(task).as_bool(), Some(true));
+        assert_eq!(task_done(task).as_bool(), Some(true));
+        assert_eq!(task_cancelled(task).as_bool(), Some(true));
+
+        let _ = crate::runtime::async_task::mb_await(task);
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("CancelledError")
+        );
+        exception::mb_clear_exception();
+        crate::runtime::async_rt::cleanup_all_async();
     }
 }

@@ -20,6 +20,7 @@ pub fn mb_tokio_spawn(coro: MbValue) -> MbValue {
         name: format!("tokio-task-{coro_id}"),
         coroutine_id: coro_id,
         done: false,
+        cancelled: false,
         result: MbValue::none(),
     };
     let task_id = alloc_task_id();
@@ -55,6 +56,7 @@ pub fn mb_tokio_spawn(coro: MbValue) -> MbValue {
             .unwrap_or(MbValue::none());
         if let Some(task) = TASKS.write().unwrap().get_mut(&task_id) {
             task.done = true;
+            task.cancelled = false;
             task.result = result;
         }
     });
@@ -94,6 +96,7 @@ pub fn mb_tokio_gather(coros: MbValue) -> MbValue {
             name: format!("tokio-gather-{coro_id}"),
             coroutine_id: coro_id,
             done: false,
+            cancelled: false,
             result: MbValue::none(),
         };
         let task_id = alloc_task_id();
@@ -136,6 +139,7 @@ pub fn mb_tokio_gather(coros: MbValue) -> MbValue {
             // Update task state
             if let Some(task) = TASKS.write().unwrap().get_mut(&task_ids[i]) {
                 task.done = true;
+                task.cancelled = false;
                 task.result = result;
             }
             results.push(result);
