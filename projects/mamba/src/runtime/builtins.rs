@@ -6476,6 +6476,9 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                     let hash_method = super::class::lookup_method(class_name, "__hash__");
                     if !hash_method.is_none() {
                         let result = super::class::mb_call_method1(hash_method, val);
+                        if super::exception::current_exception_type().is_some() {
+                            return MbValue::none();
+                        }
                         if let Some(i) = result.as_int() {
                             return MbValue::from_int(if i == -1 { -2 } else { i });
                         }
