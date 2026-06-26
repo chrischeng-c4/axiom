@@ -1,5 +1,6 @@
 use super::super::async_task::{
-    mb_async_wait as rt_async_wait, mb_await as rt_await, mb_cancel_task as rt_cancel_task,
+    mb_async_wait as rt_async_wait, mb_await as rt_await,
+    mb_await_with_timeout as rt_await_with_timeout, mb_cancel_task as rt_cancel_task,
     mb_create_task as rt_create_task, mb_drive_pending_tasks_until, mb_gather as rt_gather,
     mb_run_until_complete, mb_sleep as rt_sleep, mb_task_cancelled as rt_task_cancelled,
     mb_task_done as rt_task_done, mb_task_result as rt_task_result,
@@ -74,8 +75,14 @@ unsafe extern "C" fn dispatch_wait(args_ptr: *const MbValue, nargs: usize) -> Mb
 
 unsafe extern "C" fn dispatch_wait_for(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let coro = a.get(0).copied().unwrap_or_else(MbValue::none);
-    rt_await(coro)
+    let (pos, kw) = split_kwargs(a);
+    let coro = pos.first().copied().unwrap_or_else(MbValue::none);
+    let timeout = pos
+        .get(1)
+        .copied()
+        .or_else(|| kwarg(kw, "timeout"))
+        .unwrap_or_else(MbValue::none);
+    wait_for(coro, timeout)
 }
 
 /// Generic callable shell for top-level asyncio classes/functions that have no
@@ -295,6 +302,63 @@ fn set_field(inst: MbValue, key: &str, val: MbValue) {
             }
         }
     }
+}
+
+#[inline]
+fn kwarg(val: MbValue, key: &str) -> Option<MbValue> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let dk = super::super::dict_ops::DictKey::Str(key.to_string());
+            return map.get(&dk).copied();
+        }
+    }
+    None
+}
+
+#[inline]
+fn is_dict(val: MbValue) -> bool {
+    match val.as_ptr() {
+        Some(ptr) => unsafe { matches!(&(*ptr).data, ObjData::Dict(_)) },
+        None => false,
+    }
+}
+
+#[inline]
+fn split_kwargs(a: &[MbValue]) -> (&[MbValue], MbValue) {
+    if let Some(&last) = a.last() {
+        if is_dict(last) {
+            return (&a[..a.len() - 1], last);
+        }
+    }
+    (a, MbValue::none())
+}
+
+fn timeout_duration(timeout: MbValue) -> Option<std::time::Duration> {
+    if timeout.is_none() {
+        return None;
+    }
+    let seconds = timeout
+        .as_float()
+        .or_else(|| timeout.as_int().map(|i| i as f64))?;
+    if seconds.is_nan() {
+        return None;
+    }
+    if seconds <= 0.0 {
+        Some(std::time::Duration::ZERO)
+    } else if seconds.is_infinite() {
+        None
+    } else {
+        Some(std::time::Duration::from_secs_f64(seconds))
+    }
+}
+
+fn wait_for(awaitable: MbValue, timeout: MbValue) -> MbValue {
+    let Some(duration) = timeout_duration(timeout) else {
+        return rt_await(awaitable);
+    };
+    rt_await_with_timeout(awaitable, duration)
 }
 
 fn make_event_loop() -> MbValue {
