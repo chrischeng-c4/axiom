@@ -263,6 +263,11 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
                     raise_count_overflow();
                     return MbValue::none();
                 }
+                ObjData::Instance { ref class_name, .. } if class_name == "memoryview" => {
+                    if let Some(data) = super::builtins::try_bytes_like(source) {
+                        return MbValue::from_ptr(MbObject::new_bytes(data));
+                    }
+                }
                 ObjData::Instance { ref class_name, .. } => {
                     // User __bytes__ dunder; a class without one cannot
                     // convert (CPython TypeError, not a silent b'').
@@ -364,6 +369,11 @@ pub fn mb_bytearray_new(source: MbValue) -> MbValue {
                         Some(d) => MbValue::from_ptr(MbObject::new_bytearray(d)),
                         None => MbValue::none(),
                     };
+                }
+                ObjData::Instance { ref class_name, .. } if class_name == "memoryview" => {
+                    if let Some(data) = super::builtins::try_bytes_like(source) {
+                        return MbValue::from_ptr(MbObject::new_bytearray(data));
+                    }
                 }
                 ObjData::BigInt(_) => {
                     raise_count_overflow();
