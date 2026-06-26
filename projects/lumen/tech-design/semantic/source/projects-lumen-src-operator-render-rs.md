@@ -49,6 +49,7 @@ Public API manifest for `projects/lumen/src/operator/render.rs` generated from A
 use serde_json::{json, Value};
 
 use super::crd::Lumen;
+use operator::render::RenderCtx;
 
 const APP: &str = "lumen";
 const API_VERSION: &str = "lumen.dev/v1alpha1";
@@ -85,26 +86,29 @@ pub fn broker_url(lumen: &Lumen) -> String {
     }
 }
 
-/// Recommended labels common to every child object.
+/// lumen's render identity for the shared [`operator::render`] helpers.
+fn ctx(name: &str) -> RenderCtx<'_> {
+    RenderCtx {
+        app: APP,
+        manager: "lumen-operator",
+        api_version: API_VERSION,
+        kind: KIND,
+        name,
+        ns: "",
+        owner: None,
+    }
+}
+
+/// Recommended labels common to every child object (via the shared toolkit).
 fn labels(name: &str, component: &str) -> Value {
-    json!({
-        "app.kubernetes.io/name": APP,
-        "app.kubernetes.io/instance": name,
-        "app.kubernetes.io/component": component,
-        "app.kubernetes.io/managed-by": "lumen-operator",
-        "app.kubernetes.io/part-of": APP,
-    })
+    ctx(name).labels(component)
 }
 
 /// Minimal, immutable selector labels (a subset of [`labels`]). Workload and
 /// Service selectors are pinned to these so re-applies never hit a
 /// selector-immutability error.
 fn selector(name: &str, component: &str) -> Value {
-    json!({
-        "app.kubernetes.io/name": APP,
-        "app.kubernetes.io/instance": name,
-        "app.kubernetes.io/component": component,
-    })
+    ctx(name).selector(component)
 }
 
 /// The owner reference that ties a child to its `Lumen` CR, enabling
@@ -113,14 +117,7 @@ fn selector(name: &str, component: &str) -> Value {
 fn owner_ref(lumen: &Lumen) -> Option<Value> {
     let uid = lumen.metadata.uid.clone()?;
     let name = lumen.metadata.name.clone()?;
-    Some(json!({
-        "apiVersion": API_VERSION,
-        "kind": KIND,
-        "name": name,
-        "uid": uid,
-        "controller": true,
-        "blockOwnerDeletion": true,
-    }))
+    Some(operator::render::owner_ref(API_VERSION, KIND, &name, &uid))
 }
 
 /// Assemble an object's `metadata` block.
