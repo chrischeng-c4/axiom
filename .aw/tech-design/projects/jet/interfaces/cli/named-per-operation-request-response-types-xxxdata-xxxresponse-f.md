@@ -1,6 +1,13 @@
 ---
 id: jet-codegen-openapi-named-types
 summary: Emit named per-operation XxxData (grouped path/query/headers/body) and XxxResponse type aliases for jet codegen openapi; client and hooks take a grouped data argument. No runtime classes.
+capability_refs:
+  - id: rust-native-frontend-toolchain
+    role: primary
+    gap: production-replacement-readiness
+    claim: full-toolchain-dogfood-flow
+    coverage: partial
+    rationale: "jet codegen openapi is part of the Rust-native frontend toolchain surface for generating typed frontend API clients."
 fill_sections: [logic, unit-test]
 ---
 
@@ -97,6 +104,50 @@ requirement R4 {
   risk: Medium
   verifymethod: Test
 }
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/codegen/plan.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Build one OperationPlan per OpenAPI operation with grouped
+      path/query/header/body inputs, collision-safe XxxData names, and
+      XxxResponse aliases shared by type/client/hook emitters.
+  - path: "projects/jet/src/codegen/types_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Emit per-operation XxxData and XxxResponse TypeScript types alongside
+      component schema types.
+  - path: "projects/jet/src/codegen/client_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Emit generated client functions that accept the grouped data argument
+      when an operation has inputs and return Promise<XxxResponse>.
+  - path: "projects/jet/src/codegen/hooks_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Emit React Query hook types using XxxData and XxxResponse without adding
+      runtime classes.
+  - path: "projects/jet/tests/codegen/openapi_golden.rs"
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: |
+      Golden snapshot and TypeScript smoke coverage for named data/response
+      codegen output.
 ```
 
 # Reviews

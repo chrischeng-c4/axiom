@@ -1,6 +1,13 @@
 ---
 id: jet-codegen-openapi-http-client
 summary: Select the generated client's HTTP runtime (fetch or axios) for jet codegen openapi via a --http flag; only runtime.ts changes between backends.
+capability_refs:
+  - id: rust-native-frontend-toolchain
+    role: primary
+    gap: production-replacement-readiness
+    claim: full-toolchain-dogfood-flow
+    coverage: partial
+    rationale: "The OpenAPI codegen HTTP backend selector is part of the Jet frontend toolchain surface for generated client integration."
 fill_sections: [logic, unit-test]
 ---
 
@@ -91,6 +98,42 @@ requirement R4 {
   risk: Medium
   verifymethod: Test
 }
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/cli.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Add and parse `jet codegen openapi --http fetch|axios`, defaulting to
+      fetch and passing the selected backend into GenOptions.
+  - path: "projects/jet/src/codegen/mod.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Carry the HttpClient backend choice through generation while keeping
+      non-runtime generated files backend-invariant.
+  - path: "projects/jet/src/codegen/client_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Emit either the fetch runtime or axios runtime from the selected
+      HttpClient without changing client.ts or hooks.ts.
+  - path: "projects/jet/tests/codegen/openapi_golden.rs"
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: |
+      Assert axios runtime output matches its golden snapshot and that
+      types/client/hooks/index are byte-identical across fetch and axios.
 ```
 
 # Reviews
