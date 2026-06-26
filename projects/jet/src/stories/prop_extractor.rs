@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:962dae38" tracker="pending-tracker" reason="Tree-sitter walk of a component file: locate the component's props type (interface or type alias referenced by the component's first param) and return an ordered list of (prop name, type text, optional flag)."
+// HANDWRITE-BEGIN gap="missing-generator:logic:962dae38" tracker="standardize-gap-projects-jet-src-stories-prop-extractor-rs" reason="Tree-sitter walk of a component file: locate the component's props type (interface or type alias referenced by the component's first param) and return an ordered list of (prop name, type text, optional flag)."
 //! Component prop-type extraction for `jet stories` controls (B3).
 //!
 //! Given the source of a component file and the component's name, this module
