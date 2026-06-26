@@ -1,8 +1,8 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-27T06:59:16.950182+00:00"
-digest = "sha256:66226fe4fe6cec6b057a4ff6aad024e4afd0ebc6a0da8bbae2702c9d258500c6"
+generated_at = "2026-06-27T07:00:02.420306+00:00"
+digest = "sha256:b53f3a116e4adaf561ef95be68ac3efad12a726eda5c485684d1b50701cce310"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -135,6 +135,10 @@ digest = "sha256:82a16459cc75d4f8bf07244db5f8ba21531fad2d1c3e6c1a81af729bc73a996
 [[files]]
 path = "semantic/source/projects-vat-src-config-rs.md"
 digest = "sha256:6312d74bda5f6a6b5022818cf9a92e1438bfa20dfd4bd29ef70fc1e1b399f2e1"
+
+[[files]]
+path = "semantic/source/projects-vat-src-emulator-grpc_mux-rs.md"
+digest = "sha256:29cdc8c315c1e6b51b3e6eeb74389ad3dc62f53aeee844c2e30687163f6c27fc"
 
 [[files]]
 path = "semantic/source/projects-vat-src-event-rs.md"
