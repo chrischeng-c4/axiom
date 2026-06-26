@@ -7,7 +7,7 @@
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat vat_cluster_create_exports_kubeconfig -- --nocapture --ignored
+// @command cargo test -p vat --test vat_cluster -- --nocapture --include-ignored
 // AW-EC-END
 
 // Contract: with a real backend and Docker available, vat creates the cluster, the runner reaches the cluster via KUBECONFIG, and vat state shows services[].cluster.backend.
@@ -15,8 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_cluster_runscoped_smoke() {
-    let command =
-        "cargo test -p vat vat_cluster_create_exports_kubeconfig -- --nocapture --ignored";
+    let command = "cargo test -p vat --test vat_cluster -- --nocapture --include-ignored";
     let id = "vat-cluster-runscoped-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

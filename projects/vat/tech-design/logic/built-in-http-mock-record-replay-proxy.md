@@ -269,7 +269,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat http_mock_preset_exports_proxy_env -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulator_httpmock -- --nocapture --include-ignored"
     assertions:
       - "a preset = http-mock vat.toml run exports HTTP(S)_PROXY + NO_PROXY + the CA-trust vars; the runner curls a stubbed https URL with no code change and gets the stub."
   - id: vat-http-mock-lean-build

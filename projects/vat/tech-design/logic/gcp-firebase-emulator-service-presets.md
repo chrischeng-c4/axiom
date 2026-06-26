@@ -217,7 +217,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat gcloud_emulator_unavailable_reports_jsonl_error -- --nocapture"
+    command: "cargo test -p vat --test vat_emulators -- --nocapture"
     assertions:
       - "a firestore preset with an empty PATH (no gcloud, no docker) emits a structured service_runtime_unavailable JSONL error and a non-zero exit."
       - "vat never panics on the unavailable path."
@@ -226,7 +226,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat firestore_emulator_exports_host -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
     assertions:
       - "with gcloud + Java + the firestore component, vat starts the emulator, the runner sees FIRESTORE_EMULATOR_HOST, and vat state shows the service ready with the var in exported_env."
       - "the test skips gracefully when the native firestore emulator is unavailable."
@@ -235,7 +235,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat pubsub_emulator_docker_fallback -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
     assertions:
       - "without the pubsub gcloud component, runtime=auto resolves to docker, exports PUBSUB_EMULATOR_HOST, and removes the container at teardown."
       - "the test skips gracefully when docker is unavailable."
@@ -244,7 +244,7 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat firebase_bundle_exports_hosts -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
     assertions:
       - "a firebase preset with a firebase.json starts the suite and exports the configured *_EMULATOR_HOST vars."
       - "the test skips gracefully when firebase-tools and docker are both unavailable."
