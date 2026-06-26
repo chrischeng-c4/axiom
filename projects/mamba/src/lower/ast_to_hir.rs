@@ -7139,40 +7139,36 @@ impl<'a> AstLowerer<'a> {
                 generators,
             } => {
                 let walrus_targets = genexpr_walrus_targets(element, generators);
-                if !walrus_targets.is_empty() {
-                    let any_ty = self.checker.tcx.any();
-                    for target in &walrus_targets {
-                        if !self.local_names.contains_key(target) {
-                            self.define_local(target, any_ty);
-                        }
+                let any_ty = self.checker.tcx.any();
+                for target in &walrus_targets {
+                    if !self.local_names.contains_key(target) {
+                        self.define_local(target, any_ty);
                     }
+                }
 
-                    let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
-                    let fn_sym = self.define_local(&fn_name, any_ty);
-                    let body = genexpr_body_from_comprehensions(
-                        element,
-                        generators,
-                        &walrus_targets,
-                        expr.span,
-                    );
-                    let return_ty: Option<Spanned<ast::TypeExpr>> = None;
-                    if let Some(mut func) =
-                        self.lower_fn(&fn_name, &[], &return_ty, &body, expr.span)
-                    {
-                        let int_ty = self.checker.tcx.int();
-                        func.is_generator = true;
-                        func.return_ty = int_ty;
-                        self.func_return_tys.insert(func.name, int_ty);
-                        for sym in &func.captures {
-                            self.cell_override_syms.insert(*sym);
-                        }
-                        self.result.functions.push(func);
-                        return Some(HirExpr::Call {
-                            func: Box::new(HirExpr::Var(fn_sym, any_ty)),
-                            args: Vec::new(),
-                            ty: int_ty,
-                        });
+                let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
+                let fn_sym = self.define_local(&fn_name, any_ty);
+                let body = genexpr_body_from_comprehensions(
+                    element,
+                    generators,
+                    &walrus_targets,
+                    expr.span,
+                );
+                let return_ty: Option<Spanned<ast::TypeExpr>> = None;
+                if let Some(mut func) = self.lower_fn(&fn_name, &[], &return_ty, &body, expr.span) {
+                    let int_ty = self.checker.tcx.int();
+                    func.is_generator = true;
+                    func.return_ty = int_ty;
+                    self.func_return_tys.insert(func.name, int_ty);
+                    for sym in &func.captures {
+                        self.cell_override_syms.insert(*sym);
                     }
+                    self.result.functions.push(func);
+                    return Some(HirExpr::Call {
+                        func: Box::new(HirExpr::Var(fn_sym, any_ty)),
+                        args: Vec::new(),
+                        ty: int_ty,
+                    });
                 }
 
                 // Desugar generator expression to an ITERATOR over an eager list
@@ -9530,10 +9526,9 @@ mod tests {
     }
 
     #[test]
-    fn test_lower_generator_expr_desugared_to_list_comp() {
-        // GeneratorExpr is desugared to mb_iter(<ListComp>): the eager list
-        // comprehension is wrapped in an iterator so the genexpr keeps
-        // single-use iterator identity (next() works, no len()/indexing).
+    fn test_lower_generator_expr_to_synthetic_generator() {
+        // GeneratorExpr lowers to a real generator wrapper so generator
+        // protocol methods such as .send/.throw/.close are available.
         let gen = Comprehension {
             targets: vec!["g".to_string()],
             unpack_target: false,
@@ -9545,18 +9540,17 @@ mod tests {
             element: Box::new(sp(Expr::IntLit(0))),
             generators: vec![gen],
         })))]);
+        assert_eq!(hir.functions.len(), 1);
+        assert!(hir.functions[0].is_generator);
         match &hir.top_level[0] {
             HirStmt::Expr {
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert!(
-                    matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"),
-                    "genexpr must lower to an mb_iter call"
-                );
-                assert!(matches!(args.first(), Some(HirExpr::ListComp { .. })));
+                assert!(args.is_empty());
+                assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
             }
-            other => panic!("expected mb_iter(ListComp) call, got {other:?}"),
+            other => panic!("expected synthetic generator call, got {other:?}"),
         }
     }
 
