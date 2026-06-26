@@ -301,16 +301,19 @@ cargo test -p jet hmr_manager_broadcast_receive
 files:
   - path: .aw/tech-design/crates/jet/logic/hmr.md
     action: MODIFY
+    section: doc
     impl_mode: hand-written
     desc: Replace old TODO-heavy HMR coverage spec with this checkable current-state contract.
 
   - path: crates/jet/src/dev_server/module_graph.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing tests cover boundary traversal, cycles, diamond graphs, deep chains, stale edges, and orphan removal.
 
   - path: crates/jet/src/dev_server/hmr.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing tests cover HmrUpdateResult bridging, HmrMessage serialization, and HmrManager broadcast.
 ```

@@ -726,6 +726,7 @@ requirementDiagram
 changes:
   - path: crates/jet/src/reporters/html.rs
     action: create
+    section: doc
     impl_mode: hand-written
     description: >-
       HtmlReporter struct implementing the Reporter trait. Consumes testEnd
@@ -735,6 +736,7 @@ changes:
 
   - path: crates/jet/src/reporters/html/templates/index.html.tera
     action: create
+    section: doc
     impl_mode: hand-written
     description: >-
       Tera template for the top-level HTML page. Renders the stats header,
@@ -742,6 +744,7 @@ changes:
 
   - path: crates/jet/src/reporters/open_browser.rs
     action: create
+    section: doc
     impl_mode: hand-written
     description: >-
       Cross-platform browser auto-open helper. Uses `open` on macOS,
@@ -751,6 +754,7 @@ changes:
 
   - path: crates/jet/src/reporters/mod.rs
     action: modify
+    section: doc
     impl_mode: hand-written
     description: >-
       Register HtmlReporter with the reporter registry. Add html variant
@@ -759,6 +763,7 @@ changes:
 
   - path: crates/jet/src/runner/config.rs
     action: modify
+    section: doc
     impl_mode: hand-written
     description: >-
       Add HtmlReporterOpts { output_folder: String, open: OpenMode } and
@@ -767,6 +772,7 @@ changes:
 
   - path: crates/jet/src/cli.rs
     action: modify
+    section: doc
     impl_mode: hand-written
     description: >-
       Accept --reporter=html and --reporter-output=<dir> CLI flags.
@@ -774,6 +780,7 @@ changes:
 
   - path: crates/jet/src/cli/report.rs
     action: create
+    section: doc
     impl_mode: hand-written
     description: >-
       Subcommand handler for `jet report`. Registers the `jet report view`
@@ -783,6 +790,7 @@ changes:
 
   - path: crates/jet/runtime/test/reporters/html/assets/app.js
     action: create
+    section: doc
     impl_mode: hand-written
     description: >-
       Client-side bundle (~500 LOC). Implements: filter UI (by status / tag /
@@ -793,6 +801,7 @@ changes:
 
   - path: crates/jet/runtime/test/reporters/html/assets/app.css
     action: create
+    section: doc
     impl_mode: hand-written
     description: >-
       Stylesheet (~300 LOC) using CSS custom properties for light/dark theme
@@ -800,6 +809,7 @@ changes:
 
   - path: crates/jet/runtime/test/reporters/html/assets/data.js
     action: create
+    section: doc
     impl_mode: hand-written
     description: >-
       Generated per run (variable LOC). Inlines the serialised ReportData
@@ -808,6 +818,7 @@ changes:
 
   - path: crates/jet/tests/html_reporter_smoke.rs
     action: create
+    section: doc
     impl_mode: hand-written
     description: >-
       Integration tests (~250 LOC): report generated from canned NDJSON
