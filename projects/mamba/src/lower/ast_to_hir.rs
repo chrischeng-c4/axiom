@@ -2325,6 +2325,15 @@ fn is_typing_namedtuple_base(expr: &ast::Expr) -> bool {
     }
 }
 
+fn class_base_is_typing_generic(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(name) => name == "Generic" || name == "typing.Generic",
+        ast::Expr::Attr { attr, .. } => attr == "Generic",
+        ast::Expr::Index { object, .. } => class_base_is_typing_generic(&object.node),
+        _ => false,
+    }
+}
+
 fn class_body_namedtuple_fields(body: &[Spanned<ast::Stmt>]) -> Vec<String> {
     body.iter()
         .filter_map(|stmt| match &stmt.node {
@@ -3652,7 +3661,16 @@ impl<'a> AstLowerer<'a> {
                 .iter()
                 .any(|b| self.class_base_needs_runtime_eval(&b.node));
             if has_runtime_bases {
-                cls.runtime_base_exprs = bases.iter().filter_map(|b| self.lower_expr(b)).collect();
+                if bases
+                    .iter()
+                    .any(|base| matches!(base.node, ast::Expr::Starred(_)))
+                {
+                    cls.runtime_base_list_expr =
+                        self.lower_runtime_class_base_list(bases, type_params, stmt_span);
+                } else {
+                    cls.runtime_base_exprs =
+                        bases.iter().filter_map(|b| self.lower_expr(b)).collect();
+                }
             }
             cls.namedtuple_base = bases
                 .iter()
@@ -3732,6 +3750,7 @@ impl<'a> AstLowerer<'a> {
             if !cls.decorators.is_empty()
                 || !cls.class_attr_assigns.is_empty()
                 || !cls.runtime_base_exprs.is_empty()
+                || cls.runtime_base_list_expr.is_some()
                 || !cls.class_kwargs.is_empty()
                 || has_cross_class_property_decorator
             {
@@ -3751,6 +3770,7 @@ impl<'a> AstLowerer<'a> {
     fn class_base_needs_runtime_eval(&mut self, expr: &ast::Expr) -> bool {
         match expr {
             ast::Expr::Ident(name) => self.runtime_class_base_names.iter().any(|n| n == name),
+            ast::Expr::Starred(_) => true,
             ast::Expr::Index { object, .. } => match &object.node {
                 ast::Expr::Ident(name) => name == "Generic",
                 ast::Expr::Attr { attr, .. } => attr == "Generic",
@@ -3758,6 +3778,26 @@ impl<'a> AstLowerer<'a> {
             },
             _ => false,
         }
+    }
+
+    fn lower_runtime_class_base_list(
+        &mut self,
+        bases: &[Spanned<ast::Expr>],
+        type_params: &[ast::TypeParam],
+        span: Span,
+    ) -> Option<HirExpr> {
+        let mut elems: Vec<Spanned<ast::Expr>> = bases.to_vec();
+        if !type_params.is_empty()
+            && !bases
+                .iter()
+                .any(|base| class_base_is_typing_generic(&base.node))
+        {
+            elems.push(Spanned::new(
+                ast::Expr::StrLit("typing.Generic".to_string()),
+                span,
+            ));
+        }
+        self.lower_starred_display(&elems, None)
     }
 
     fn lower_class(
@@ -4125,6 +4165,7 @@ impl<'a> AstLowerer<'a> {
             base: None,
             all_bases: Vec::new(),
             runtime_base_exprs: Vec::new(),
+            runtime_base_list_expr: None,
             namedtuple_base: None,
             fields,
             methods,
@@ -8725,6 +8766,41 @@ mod tests {
                 .iter()
                 .any(|(name, value)| name == "Inner" && matches!(value, HirExpr::Var(..)))
         }));
+    }
+
+    #[test]
+    fn test_lower_starred_generic_class_bases_as_runtime_list() {
+        let hir = helper_lower_with_classes(
+            vec![
+                sp(Stmt::VarDecl {
+                    name: "bases".to_string(),
+                    ty: sp(TypeExpr::Named("Any".to_string())),
+                    value: sp(Expr::ListLit(vec![sp(Expr::Ident("Base".to_string()))])),
+                }),
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Starred".to_string(),
+                    type_params: vec![TypeParam::plain("T")],
+                    bases: vec![sp(Expr::Starred(Box::new(sp(Expr::Ident(
+                        "bases".to_string(),
+                    )))))],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Pass)],
+                }),
+            ],
+            &["Base", "Starred"],
+        );
+        let class = hir
+            .classes
+            .iter()
+            .find(|class| class.runtime_base_list_expr.is_some())
+            .expect("Starred class should lower with a runtime base list");
+        assert!(
+            hir.top_level
+                .iter()
+                .any(|stmt| matches!(stmt, HirStmt::ClassDefPlaceholder { name, .. } if *name == class.name)),
+            "starred class bases require a textual class placeholder"
+        );
     }
 
     #[test]
