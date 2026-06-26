@@ -1,23 +1,22 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/external-contracts.md#vat-resource-isolation-boundary
+// SPEC-MANAGED: projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-roundtrip-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-resource-isolation-boundary
+// @ec vat-cloud-storage-roundtrip-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim resource-isolation-boundary
-// @contract resource-isolation-boundary
+// @claim vat-cloud-storage-roundtrip-smoke
+// @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
-// @command rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox
+// @command cargo test -p vat --test vat_emulator_storage -- --nocapture
 // AW-EC-END
 
-// Contract: vat documents resource isolation as its responsibility
-// Contract: sandbox and seatbelt isolation remain visible implementation surfaces
+// Contract: a media upload then download (alt=media) returns the same bytes; a multipart upload round-trips; list with a prefix finds the object; delete removes it (404 after).
+// Contract: object names with slashes work; no gcloud / Java / Docker required; the emulator starts in well under a second.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_resource_isolation_boundary() {
-    let command =
-        "rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox";
-    let id = "vat-resource-isolation-boundary";
+fn vat_cloud_storage_roundtrip_smoke() {
+    let command = "cargo test -p vat --test vat_emulator_storage -- --nocapture";
+    let id = "vat-cloud-storage-roundtrip-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

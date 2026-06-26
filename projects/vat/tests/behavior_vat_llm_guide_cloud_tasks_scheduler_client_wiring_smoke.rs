@@ -1,24 +1,22 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/llm-agent-usage-guide.md#vat-llm-agent-usage-guide
+// SPEC-MANAGED: projects/vat/tech-design/logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md#vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-llm-agent-usage-guide
+// @ec vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim agent-legible-state-and-diff-surface
-// @contract agent-legible-state-and-diff-surface
+// @claim vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke
+// @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
 // @command cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture
 // AW-EC-END
 
-// Contract: `vat llm` exits successfully.
-// Contract: The guide mentions vat.toml runner mode and direct command mode.
-// Contract: The guide mentions state, diff, and logs evidence commands.
-// Contract: The guide preserves non-Docker and non-daemon boundaries.
+// Contract: `vat llm` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands.
+// Contract: the guide mentions the cloud-tasks / cloud-scheduler client-wiring factory (REST transport + http endpoint + anonymous credentials) and the direct-REST alternative.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_llm_agent_usage_guide() {
+fn vat_llm_guide_cloud_tasks_scheduler_client_wiring_smoke() {
     let command = "cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture";
-    let id = "vat-llm-agent-usage-guide";
+    let id = "vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
