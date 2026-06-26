@@ -40,10 +40,9 @@
 //!   through shortest-repr parsing.
 //!
 //! - Known carve-outs: exponents outside rust_decimal's 0..=28 scale
-//!   window (e.g. `1E-100`, quantize/round targets above E+0) collapse
-//!   toward zero or stay unrepresented; `Decimal(float)` uses
-//!   shortest-repr conversion rather than the exact binary expansion;
-//!   context objects (getcontext/localcontext) remain presence stubs.
+//!   window (e.g. `1E-100`) collapse toward zero or stay unrepresented;
+//!   context objects cover the fixture-backed subset of precision, flags,
+//!   and localcontext routing, not the full CPython decimal context model.
 
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
@@ -62,6 +61,18 @@ const PREC: usize = 28;
 
 /// Maximum scale representable by `rust_decimal`.
 const MAX_SCALE: i64 = 28;
+
+const DECIMAL_CONTEXT_FLAGS: &[&str] = &[
+    "Clamped",
+    "InvalidOperation",
+    "DivisionByZero",
+    "Inexact",
+    "Rounded",
+    "Subnormal",
+    "Overflow",
+    "Underflow",
+    "FloatOperation",
+];
 
 /// Special-value classification for one Decimal handle.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -497,6 +508,24 @@ fn coeff_scale(d: &Decimal) -> (BigInt, i64) {
     (BigInt::from(d.mantissa()), d.scale() as i64)
 }
 
+fn state_coeff_scale(st: &MbDecimal) -> (BigInt, i64) {
+    if let Some(idx) = st.exact {
+        exact_value(idx)
+    } else {
+        coeff_scale(&st.value)
+    }
+}
+
+fn finite_from_coeff_scale_preserve(c: BigInt, s: i64) -> Option<MbDecimal> {
+    if s >= 0 {
+        return finite_from_coeff_scale(c, s).ok();
+    }
+    let value_coeff = &c * pow10((-s) as u32);
+    let mut st = finite_from_coeff_scale(value_coeff, 0).ok()?;
+    st.exact = Some(intern_exact(c, s));
+    Some(st)
+}
+
 // ── Operand classification (shared with the builtins comparison hooks) ──
 
 /// Numeric operand normal form for exact comparison.
@@ -592,12 +621,18 @@ fn classify_numeric(v: MbValue) -> Option<NumOperand> {
             DecClass::Finite => {
                 // Exact float payloads compare on their full expansion so
                 // `Decimal(0.1) != Decimal('0.1')` and equals the exact string.
-                let (c, s) = if let Some(idx) = st.exact {
+                let (mut c, s) = if let Some(idx) = st.exact {
                     exact_value(idx)
                 } else {
                     coeff_scale(&st.value)
                 };
-                NumOperand::Rational(c, pow10(s as u32))
+                let den = if s < 0 {
+                    c *= pow10((-s) as u32);
+                    BigInt::from(1u32)
+                } else {
+                    pow10(s as u32)
+                };
+                NumOperand::Rational(c, den)
             }
             DecClass::Inf => NumOperand::Inf(st.neg),
             DecClass::QNan | DecClass::SNan => NumOperand::Nan,
@@ -1322,6 +1357,11 @@ fn state_to_string(st: &MbDecimal) -> String {
                 return to_sci_string(neg, &digits, -scale);
             }
             let neg = d.is_sign_negative();
+            if d.is_zero() {
+                if let Some(exp) = st.tuple_exp {
+                    return to_sci_string(st.neg || neg, "0", exp);
+                }
+            }
             let digits = d.mantissa().unsigned_abs().to_string();
             to_sci_string(neg, &digits, -(d.scale() as i64))
         }
@@ -1515,6 +1555,19 @@ fn quantize_to_scale(st: &MbDecimal, target_scale: i64, mode: Rounding) -> Optio
     };
     if digit_count(&rounded_abs) > PREC {
         return None;
+    }
+    if target_scale < 0 {
+        let signed = if neg { -rounded_abs } else { rounded_abs };
+        let mut s2 = finite_from_coeff_scale_preserve(signed, target_scale)?;
+        if neg && s2.value.is_zero() {
+            s2.value.set_sign_negative(true);
+            s2.neg = true;
+            s2.tuple_exp = Some(-target_scale);
+        }
+        if s2.value.is_zero() && target_scale < 0 {
+            s2.tuple_exp = Some(-target_scale);
+        }
+        return Some(s2);
     }
     let clamped = target_scale.clamp(0, MAX_SCALE);
     let adjusted_abs = if clamped > target_scale {
@@ -1828,6 +1881,106 @@ fn extract_context_arg(args: &[MbValue]) -> Option<MbValue> {
         }
     }
     None
+}
+
+fn ctx_int(ctx: MbValue, key: &str) -> Option<i64> {
+    ctx_field(ctx, key).and_then(|v| v.as_int())
+}
+
+fn context_precision(ctx: MbValue) -> i64 {
+    ctx_int(ctx, "prec").unwrap_or(PREC as i64).clamp(1, PREC as i64)
+}
+
+fn round_state_to_context(st: &MbDecimal, ctx: MbValue) -> Option<MbDecimal> {
+    if st.class != DecClass::Finite {
+        return Some(*st);
+    }
+    let prec = context_precision(ctx);
+    let (c, s) = state_coeff_scale(st);
+    let neg = c.is_negative() || (st.value.is_zero() && st.value.is_sign_negative());
+    let c_abs: BigInt = c.magnitude().to_owned().into();
+    let digits = digit_count(&c_abs) as i64;
+    if digits <= prec {
+        return Some(*st);
+    }
+    let drop = digits - prec;
+    let rounded_abs = round_abs_with_mode(&c_abs, drop as u32, Rounding::HalfEven, neg);
+    let signed = if neg { -rounded_abs } else { rounded_abs };
+    let mut out = finite_from_coeff_scale_preserve(signed, s - drop)?;
+    if neg && out.value.is_zero() {
+        out.value.set_sign_negative(true);
+        out.neg = true;
+    }
+    Some(out)
+}
+
+fn normalize_state_with_context(st: &MbDecimal, context: Option<MbValue>) -> Option<MbDecimal> {
+    if st.class != DecClass::Finite {
+        return Some(*st);
+    }
+    let rounded = if let Some(ctx) = context {
+        round_state_to_context(st, ctx)?
+    } else {
+        *st
+    };
+    let (mut c, mut s) = state_coeff_scale(&rounded);
+    if c.is_zero() {
+        let mut zero = finite_from_coeff_scale(BigInt::from(0u32), 0).ok()?;
+        if rounded.neg || rounded.value.is_sign_negative() {
+            zero.value.set_sign_negative(true);
+            zero.neg = true;
+        }
+        return Some(zero);
+    }
+    while (&c % 10u32).is_zero() {
+        c /= 10u32;
+        s -= 1;
+    }
+    finite_from_coeff_scale_preserve(c, s)
+}
+
+fn decimal_sqrt_with_context(st: &MbDecimal, args: &[MbValue]) -> MbValue {
+    let result = decimal_sqrt(st);
+    let Some(ctx) = extract_context_arg(args) else {
+        return result;
+    };
+    let Some(result_st) = get_state(result) else {
+        return result;
+    };
+    round_state_to_context(&result_st, ctx)
+        .map(make_state_handle)
+        .unwrap_or_else(overflow_result)
+}
+
+fn decimal_exp_with_context(st: &MbDecimal, args: &[MbValue]) -> MbValue {
+    match st.class {
+        DecClass::QNan | DecClass::SNan => return make_state_handle(MbDecimal::qnan()),
+        DecClass::Inf => {
+            if st.neg {
+                return make_handle(Decimal::ZERO);
+            }
+            return overflow_result();
+        }
+        DecClass::Finite => {}
+    }
+    let ctx = extract_context_arg(args).unwrap_or_else(current_ctx);
+    let approx = st.value.to_f64().unwrap_or(0.0).exp();
+    let emax = ctx_int(ctx, "Emax").unwrap_or(999_999);
+    let adjusted = if approx == 0.0 {
+        i64::MIN
+    } else {
+        approx.abs().log10().floor() as i64
+    };
+    if !approx.is_finite() || adjusted > emax {
+        set_context_flag(ctx, "Overflow");
+        return raise_overflow("above Emax");
+    }
+    let mut d = Decimal::try_from(approx).unwrap_or(Decimal::ZERO);
+    d = d.normalize();
+    let st = MbDecimal::finite(d);
+    round_state_to_context(&st, ctx)
+        .map(make_state_handle)
+        .unwrap_or_else(overflow_result)
 }
 
 fn decimal_number_class(st: &MbDecimal, context: Option<MbValue>) -> String {
@@ -2309,15 +2462,16 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
                 Err(()) => overflow_result(),
             }
         }
-        "sqrt" => decimal_sqrt(&st),
+        "sqrt" => decimal_sqrt_with_context(&st, args),
         "normalize" => {
             if st.class != DecClass::Finite {
                 return Some(make_state_handle(st));
             }
-            let mut d = st.value;
-            d = d.normalize();
-            make_handle(d)
+            normalize_state_with_context(&st, extract_context_arg(args))
+                .map(make_state_handle)
+                .unwrap_or_else(overflow_result)
         }
+        "exp" => decimal_exp_with_context(&st, args),
         "conjugate" | "real" => make_state_handle(st),
         "imag" => make_handle(Decimal::ZERO),
         "radix" => make_handle(Decimal::from(10)),
@@ -2726,12 +2880,9 @@ unsafe extern "C" fn dispatch_Decimal(args_ptr: *const MbValue, nargs: usize) ->
     mb_decimal_new_argc(val, provided)
 }
 
-/// `getcontext()` / `setcontext(c)` / `localcontext(...)` / `Context(...)`
-/// surface stubs. They exist only so the module exposes a callable
-/// `decimal.getcontext` / `decimal.Context` etc. — the conformance surface
-/// fixtures check `callable(...)` and `hasattr(...)`. Full context-object
-/// behaviour is not modelled by this shim (would require class.rs handle
-/// routing); these return `None` rather than a real context object.
+// `getcontext()` / `setcontext(c)` / `localcontext(...)` context state. The
+// shim models the fixture-backed subset: precision, core exponent fields,
+// clearable flags, and scoped localcontext identity.
 thread_local! {
     /// The active `localcontext()` stack (top = current). Empty → the default.
     static CTX_STACK: RefCell<Vec<MbValue>> = const { RefCell::new(Vec::new()) };
@@ -2752,7 +2903,7 @@ fn new_context(prec: i64, rounding: &str, emin: i64, emax: i64) -> MbValue {
             m.insert("Emax".to_string(), int_val(emax));
             m.insert("capitals".to_string(), MbValue::from_int(1));
             m.insert("clamp".to_string(), MbValue::from_int(0));
-            m.insert("flags".to_string(), MbValue::from_ptr(MbObject::new_dict()));
+            m.insert("flags".to_string(), new_flags_dict());
         }
     }
     MbValue::from_ptr(inst)
@@ -2768,6 +2919,66 @@ fn ctx_field(ctx: MbValue, key: &str) -> Option<MbValue> {
     })
 }
 
+fn new_flags_dict() -> MbValue {
+    let dict = MbValue::from_ptr(MbObject::new_dict());
+    reset_flags_dict(dict);
+    dict
+}
+
+fn ensure_context_flags(ctx: MbValue) -> Option<MbValue> {
+    if let Some(flags) = ctx_field(ctx, "flags") {
+        return Some(flags);
+    }
+    let flags = new_flags_dict();
+    if let Some(ptr) = ctx.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.write().unwrap().insert("flags".to_string(), flags);
+                return Some(flags);
+            }
+        }
+    }
+    None
+}
+
+fn reset_flags_dict(flags: MbValue) {
+    if let Some(ptr) = flags.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let mut guard = lock.write().unwrap();
+                guard.clear();
+                for name in DECIMAL_CONTEXT_FLAGS {
+                    guard.insert(
+                        super::super::dict_ops::DictKey::Str((*name).to_string()),
+                        MbValue::from_bool(false),
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn clear_context_flags(ctx: MbValue) {
+    if let Some(flags) = ensure_context_flags(ctx) {
+        reset_flags_dict(flags);
+    }
+}
+
+fn set_context_flag(ctx: MbValue, name: &str) {
+    if let Some(flags) = ensure_context_flags(ctx) {
+        if let Some(ptr) = flags.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    lock.write().unwrap().insert(
+                        super::super::dict_ops::DictKey::Str(name.to_string()),
+                        MbValue::from_bool(true),
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// A new, independent `Context` copying `src`'s fields (flags become a fresh
 /// dict so the copy's flags never alias the source's).
 fn copy_context(src: MbValue) -> MbValue {
@@ -2779,7 +2990,7 @@ fn copy_context(src: MbValue) -> MbValue {
                 let mut m = fields.write().unwrap();
                 for (k, v) in s.iter() {
                     if k == "flags" {
-                        m.insert(k.clone(), MbValue::from_ptr(MbObject::new_dict()));
+                        m.insert(k.clone(), new_flags_dict());
                     } else {
                         super::super::rc::retain_if_ptr(*v);
                         m.insert(k.clone(), *v);
@@ -3041,8 +3252,8 @@ fn ctx_first_decimal(args: MbValue) -> MbValue {
 unsafe extern "C" fn ctx_to_eng_string(_self: MbValue, args: MbValue) -> MbValue {
     dispatch_method(ctx_first_decimal(args), "to_eng_string", &[]).unwrap_or_else(MbValue::none)
 }
-unsafe extern "C" fn ctx_normalize(_self: MbValue, args: MbValue) -> MbValue {
-    dispatch_method(ctx_first_decimal(args), "normalize", &[]).unwrap_or_else(MbValue::none)
+unsafe extern "C" fn ctx_normalize(self_v: MbValue, args: MbValue) -> MbValue {
+    dispatch_method(ctx_first_decimal(args), "normalize", &[self_v]).unwrap_or_else(MbValue::none)
 }
 unsafe extern "C" fn ctx_to_integral_value(_self: MbValue, args: MbValue) -> MbValue {
     dispatch_method(ctx_first_decimal(args), "to_integral_value", &[]).unwrap_or_else(MbValue::none)
@@ -3060,6 +3271,11 @@ unsafe extern "C" fn ctx_number_class(self_v: MbValue, args: MbValue) -> MbValue
     str_val(&cls)
 }
 
+unsafe extern "C" fn ctx_clear_flags(self_v: MbValue, _args: MbValue) -> MbValue {
+    clear_context_flags(self_v);
+    MbValue::none()
+}
+
 /// Register Context arithmetic/utility methods on the `Context` class.
 fn register_context_methods() {
     let mut m: HashMap<String, MbValue> = HashMap::new();
@@ -3069,6 +3285,7 @@ fn register_context_methods() {
         ("to_integral_value", ctx_to_integral_value as *const () as usize),
         ("copy_decimal",      ctx_copy_decimal      as *const () as usize),
         ("number_class",      ctx_number_class      as *const () as usize),
+        ("clear_flags",       ctx_clear_flags       as *const () as usize),
     ] {
         super::super::module::register_variadic_func(addr as u64);
         m.insert(name.to_string(), MbValue::from_func(addr));
@@ -3186,9 +3403,9 @@ pub fn register() {
         ),
     );
 
-    // Pre-built context singletons / the DecimalTuple namedtuple type. This
-    // shim has no real Context object model, so these are exposed as presence
-    // placeholders (surface fixtures only assert `hasattr`).
+    // Pre-built context singletons / the DecimalTuple namedtuple type. These
+    // remain presence placeholders; runtime-created Context instances carry
+    // their own fields and flags.
     for name in [
         "BasicContext",
         "ExtendedContext",
