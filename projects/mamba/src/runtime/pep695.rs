@@ -173,7 +173,12 @@ pub fn instance_lazy_attr_hook(obj: MbValue, class_name: &str, attr_name: &str) 
             }
             let thunk = fields.read().unwrap().get(thunk_field).copied()?;
             // Call outside any held lock — the thunk runs arbitrary user code.
+            let prev_missing_global = super::closure::set_missing_global_name_error_enabled(true);
             let value = super::class::mb_call0(thunk);
+            super::closure::restore_missing_global_name_error_enabled(prev_missing_global);
+            if super::exception::mb_has_exception().as_bool() == Some(true) {
+                return Some(value);
+            }
             instance_field_set(ptr as *mut MbObject, attr_name, value);
             super::rc::retain_if_ptr(value);
             return Some(value);

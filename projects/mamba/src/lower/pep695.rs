@@ -485,6 +485,45 @@ mod tests {
     }
 
     #[test]
+    fn typevar_bound_and_constraints_are_lazy_thunks() {
+        let m = desugared("class C[T: Undefined, U: (Undefined,)]:\n    pass\n");
+        match &m.stmts[0].node {
+            Stmt::Assign { target, value } => {
+                assert!(matches!(&target.node, Expr::Ident(n) if n == "T"));
+                match &value.node {
+                    Expr::Call { args, .. } => {
+                        assert!(
+                            matches!(args.get(2), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::Lambda { .. }))
+                        );
+                        assert!(
+                            matches!(args.get(3), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
+                        );
+                    }
+                    other => panic!("expected typevar call, got {other:?}"),
+                }
+            }
+            other => panic!("expected T assign, got {other:?}"),
+        }
+        match &m.stmts[1].node {
+            Stmt::Assign { target, value } => {
+                assert!(matches!(&target.node, Expr::Ident(n) if n == "U"));
+                match &value.node {
+                    Expr::Call { args, .. } => {
+                        assert!(
+                            matches!(args.get(2), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
+                        );
+                        assert!(
+                            matches!(args.get(3), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::Lambda { .. }))
+                        );
+                    }
+                    other => panic!("expected typevar call, got {other:?}"),
+                }
+            }
+            other => panic!("expected U assign, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn method_typevars_hoist_out_of_class_body() {
         let m = desugared("class C:\n    def meth[U](self):\n        return U\n");
         // Deferred wiring: class first, then U = typevar(...), then
