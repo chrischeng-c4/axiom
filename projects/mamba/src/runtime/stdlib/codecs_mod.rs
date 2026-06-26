@@ -612,14 +612,6 @@ fn make_codec_info(name: MbValue, encode: MbValue, decode: MbValue) -> MbValue {
     MbValue::from_ptr(inst)
 }
 
-/// True when `val` is the string "strict" or None/absent (the default handler).
-fn is_strict_errors(val: MbValue) -> bool {
-    match extract_str(val) {
-        Some(s) => s == "strict",
-        None => true, // absent / None → strict default
-    }
-}
-
 /// True for the well-known non-raising handlers we model exactly.
 fn known_error_handler(name: &str) -> bool {
     matches!(
@@ -633,33 +625,6 @@ fn known_error_handler(name: &str) -> bool {
             | "surrogateescape"
             | "surrogatepass"
     )
-}
-
-/// Replacement bytes for an unencodable char `c` under handler `name`, or
-/// None when the handler is 'strict' (the caller raises). Matches CPython:
-///   replace          → b'?'
-///   ignore           → b'' (drop)
-///   xmlcharrefreplace→ b'&#NNN;'
-///   backslashreplace → b'\\xHH'/b'\\uHHHH'/b'\\UHHHHHHHH'
-fn encode_error_repl(name: &str, c: char) -> Option<Vec<u8>> {
-    let cp = c as u32;
-    match name {
-        "replace" => Some(vec![b'?']),
-        "ignore" => Some(Vec::new()),
-        "xmlcharrefreplace" => Some(format!("&#{};", cp).into_bytes()),
-        "backslashreplace" => {
-            let s = if cp <= 0xFF {
-                format!("\\x{:02x}", cp)
-            } else if cp <= 0xFFFF {
-                format!("\\u{:04x}", cp)
-            } else {
-                format!("\\U{:08x}", cp)
-            };
-            Some(s.into_bytes())
-        }
-        "namereplace" => Some(format!("\\N{{U+{:04X}}}", cp).into_bytes()),
-        _ => None, // strict / surrogate* → caller raises
-    }
 }
 
 pub(crate) fn punycode_encode_bytes(s: &str) -> Option<Vec<u8>> {
@@ -731,14 +696,10 @@ pub fn mb_codecs_encode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             return b;
         }
     }
-    // D2′: borrow the payload; only allocate the output Bytes.
-    let s: &str = match unsafe { extract_str_ref(&obj) } {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    if unsafe { extract_str_ref(&obj) }.is_none() {
+        return MbValue::none();
+    }
     let enc = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
-    let enc_norm = normalize_encoding(&enc);
-    let _strict = is_strict_errors(errors);
     // Validate the error handler name (CPython resolves it eagerly).
     let handler = extract_str(errors).unwrap_or_else(|| "strict".to_string());
     if !known_error_handler(&handler) {
@@ -751,68 +712,7 @@ pub fn mb_codecs_encode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             "'undefined' codec can't encode character in position 0",
         );
     }
-    let bytes: Vec<u8> = match enc_norm {
-        "utf-8" => {
-            // Reject lone surrogates under strict (Rust &str can't hold them,
-            // so any well-formed str round-trips; kept for completeness).
-            s.as_bytes().to_vec()
-        }
-        "ascii" => {
-            let mut out = Vec::with_capacity(s.len());
-            for (i, c) in s.char_indices() {
-                if c.is_ascii() {
-                    out.push(c as u8);
-                } else if let Some(repl) = encode_error_repl(&handler, c) {
-                    out.extend_from_slice(&repl);
-                } else {
-                    return raise_unicode_encode_error(&format!(
-                        "'ascii' codec can't encode character '\\u{:04x}' in position {}: ordinal not in range(128)",
-                        c as u32, i));
-                }
-            }
-            out
-        }
-        "latin-1" => {
-            let mut out = Vec::with_capacity(s.len());
-            for (i, c) in s.char_indices() {
-                let n = c as u32;
-                if n <= 255 {
-                    out.push(n as u8);
-                } else if let Some(repl) = encode_error_repl(&handler, c) {
-                    out.extend_from_slice(&repl);
-                } else {
-                    return raise_unicode_encode_error(&format!(
-                        "'latin-1' codec can't encode character '\\u{:04x}' in position {}: ordinal not in range(256)",
-                        n, i));
-                }
-            }
-            out
-        }
-        "utf-16" => {
-            let mut b = vec![0xFF, 0xFE];
-            b.extend(encode_u16_units(s, true));
-            b
-        }
-        "utf-16-le" => encode_u16_units(s, true),
-        "utf-16-be" => encode_u16_units(s, false),
-        "utf-32" => {
-            let mut b = vec![0xFF, 0xFE, 0x00, 0x00];
-            b.extend(encode_u32_units(s, true));
-            b
-        }
-        "utf-32-le" => encode_u32_units(s, true),
-        "utf-32-be" => encode_u32_units(s, false),
-        "idna" => match idna_encode_bytes(s) {
-            Some(v) => v,
-            None => return raise_unicode_encode_error("'idna' codec can't encode input"),
-        },
-        "punycode" => match punycode_encode_bytes(s) {
-            Some(v) => v,
-            None => return raise_unicode_encode_error("'punycode' codec can't encode input"),
-        },
-        _ => return raise_lookup_error(&format!("unknown encoding: {}", enc)),
-    };
-    MbValue::from_ptr(MbObject::new_bytes(bytes))
+    super::super::string_ops::mb_str_encode_with(obj, encoding, errors)
 }
 
 /// codecs.decode(obj, encoding='utf-8') -> str  (strict errors)
@@ -833,20 +733,16 @@ pub fn mb_codecs_decode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             return b;
         }
     }
-    let bytes: &[u8] = match unsafe { extract_bytes_ref(&obj) } {
-        Some(b) => b,
-        None => {
-            // str passthrough (CPython coerces str→bytes via the default codec
-            // before decode; we model the identity case the fixtures use).
-            if let Some(s) = unsafe { extract_str_ref(&obj) } {
-                return MbValue::from_ptr(MbObject::new_str(s.to_owned()));
-            }
-            return MbValue::none();
+    if unsafe { extract_bytes_ref(&obj) }.is_none() {
+        // str passthrough (CPython coerces str→bytes via the default codec
+        // before decode; we model the identity case the fixtures use).
+        if let Some(s) = unsafe { extract_str_ref(&obj) } {
+            return MbValue::from_ptr(MbObject::new_str(s.to_owned()));
         }
-    };
+        return MbValue::none();
+    }
     let enc = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
     let enc_norm = normalize_encoding(&enc);
-    let strict = is_strict_errors(errors);
     if let Some(h) = extract_str(errors) {
         if !known_error_handler(&h) {
             return raise_lookup_error(&format!("unknown error handler name '{}'", h));
@@ -858,56 +754,7 @@ pub fn mb_codecs_decode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             "'undefined' codec can't decode byte 0x00 in position 0: undefined mapping",
         );
     }
-    let s = match enc_norm {
-        "utf-8" => {
-            if strict {
-                match std::str::from_utf8(bytes) {
-                    Ok(v) => v.to_owned(),
-                    Err(e) => {
-                        let pos = e.valid_up_to();
-                        let bad = bytes.get(pos).copied().unwrap_or(0);
-                        return raise_unicode_decode_error(&format!(
-                            "'utf-8' codec can't decode byte 0x{:02x} in position {}: invalid start byte",
-                            bad, pos));
-                    }
-                }
-            } else {
-                String::from_utf8_lossy(bytes).into_owned()
-            }
-        }
-        "ascii" => {
-            let mut out = String::with_capacity(bytes.len());
-            for (i, &b) in bytes.iter().enumerate() {
-                if b < 128 {
-                    out.push(b as char);
-                } else if strict {
-                    return raise_unicode_decode_error(&format!(
-                        "'ascii' codec can't decode byte 0x{:02x} in position {}: ordinal not in range(128)",
-                        b, i));
-                } else {
-                    out.push('\u{FFFD}');
-                }
-            }
-            out
-        }
-        "latin-1" => bytes.iter().map(|&b| b as char).collect(),
-        "utf-16" => return mb_codecs_utf_16_decode(obj),
-        "utf-16-le" => decode_u16_units(bytes, true),
-        "utf-16-be" => decode_u16_units(bytes, false),
-        "utf-32" => return mb_codecs_utf_32_decode(obj),
-        "utf-32-le" => decode_u32_units(bytes, true),
-        "utf-32-be" => decode_u32_units(bytes, false),
-        "idna" => match idna_decode_string(bytes) {
-            Some(v) => v,
-            None => return raise_unicode_decode_error("'idna' codec can't decode input"),
-        },
-        "punycode" => match punycode_decode_string(bytes) {
-            Some(v) => v,
-            None => return raise_unicode_decode_error("'punycode' codec can't decode input"),
-        },
-        _ => return raise_lookup_error(&format!("unknown encoding: {}", enc)),
-    };
-    MbValue::from_ptr(MbObject::new_str(s))
+    super::super::bytes_ops::mb_bytes_decode_with(obj, encoding, errors)
 }
 
 /// codecs.lookup(encoding) -> CodecInfo
