@@ -517,6 +517,20 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                     decode_utf32(&data, false)
                 }
             }
+            "idna" => match super::stdlib::codecs_mod::idna_decode_string(&data) {
+                Some(out) => out,
+                None => {
+                    raise_unicode_decode_error("idna", &data, 0, "invalid input");
+                    return MbValue::none();
+                }
+            },
+            "punycode" => match super::stdlib::codecs_mod::punycode_decode_string(&data) {
+                Some(out) => out,
+                None => {
+                    raise_unicode_decode_error("punycode", &data, 0, "invalid input");
+                    return MbValue::none();
+                }
+            },
             _ => {
                 // A known non-text codec (quopri, base64, ...) is a LookupError
                 // via bytes.decode ("not a text encoding").

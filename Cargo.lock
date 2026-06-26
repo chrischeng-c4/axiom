@@ -6492,6 +6492,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "hmac 0.12.1",
+ "idna",
  "indexmap 2.14.0",
  "libc",
  "logos",
