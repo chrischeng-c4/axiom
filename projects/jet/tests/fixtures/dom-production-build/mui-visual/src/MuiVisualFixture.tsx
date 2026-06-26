@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-fixtures-dom-production-build-mui-visual-src-muivisualfixture-tsx" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import React, { useState } from "react";
 import Alert from "@mui/material/Alert";
 import Avatar from "@mui/material/Avatar";
@@ -201,3 +202,5 @@ export function MuiVisualFixture() {
     </main>
   );
 }
+
+// </HANDWRITE>
