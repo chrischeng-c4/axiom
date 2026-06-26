@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-scripts-compare-basic-builds-mjs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import { brotliCompressSync, gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -1285,3 +1286,5 @@ console.log(JSON.stringify(evidence, null, 2));
 if (overallResult === "red") {
   process.exit(1);
 }
+
+// </HANDWRITE>
