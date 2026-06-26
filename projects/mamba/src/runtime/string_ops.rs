@@ -1542,6 +1542,20 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                 }
                 out
             }
+            "idna" => match super::stdlib::codecs_mod::idna_encode_bytes(st) {
+                Some(out) => out,
+                None => {
+                    raise_uee("idna", '\u{FFFD}', 0);
+                    return MbValue::none();
+                }
+            },
+            "punycode" => match super::stdlib::codecs_mod::punycode_encode_bytes(st) {
+                Some(out) => out,
+                None => {
+                    raise_uee("punycode", '\u{FFFD}', 0);
+                    return MbValue::none();
+                }
+            },
             _ => {
                 // A known non-text codec (rot_13, base64, ...) is a LookupError
                 // via str.encode ("not a text encoding").
