@@ -100,6 +100,7 @@ changes:
     purpose: "Add Page.pause() — 30-minute setTimeout-based hold."
   - path: .aw/tech-design/crates/jet/logic/inspector.md
     action: create
+    section: doc
     impl_mode: hand-written
     purpose: "This spec."
 ```
