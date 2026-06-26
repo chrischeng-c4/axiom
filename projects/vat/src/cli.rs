@@ -424,3 +424,29 @@ fn report_issue_cmd(
     )
 }
 // CODEGEN-END
+// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#logic
+// CODEGEN-BEGIN
+pub fn start() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // SPEC-REF: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#vat-rust-source-unit-promotion-inventory
+    // TODO: Implement process step: Collect group-level semantic schema markers in vat source/test/build files
+    todo!("process: Collect group-level semantic schema markers in vat source/test/build files");
+    // SPEC-REF: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#vat-rust-source-unit-promotion-spec
+    // TODO: Implement process step: Create or refresh rust-source-unit TD for each remaining target file
+    todo!("process: Create or refresh rust-source-unit TD for each remaining target file");
+    // SPEC-REF: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#vat-rust-source-unit-promotion-generate
+    // TODO: Implement process step: Run aw td gen-source --spec <source-unit-td> --target <file>
+    todo!("process: Run aw td gen-source --spec <source-unit-td> --target <file>");
+    // SPEC-REF: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#vat-rust-source-unit-promotion-verify
+    // TODO: Implement process step: Run gen-source dry-run, aw generator check, TD lock, and TD checks
+    todo!("process: Run gen-source dry-run, aw generator check, TD lock, and TD checks");
+    todo!("terminal: vat grouped source units are promoted to td_ast rust-source-unit ownership");
+    // Terminal: done -> vat grouped source units are promoted to td_ast rust-source-unit ownership
+    // SPEC-REF: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#vat-rust-source-unit-promotion-body
+    // TODO: Implement logic for start
+    todo!()
+}
+// CODEGEN-END
+// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
+// CODEGEN-BEGIN
+
+// CODEGEN-END

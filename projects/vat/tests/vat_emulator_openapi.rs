@@ -170,3 +170,7 @@ async fn openapi_standalone_and_http_mock_source() {
     assert_eq!(body["name"], "Rex");
 }
 // CODEGEN-END
+// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
+// CODEGEN-BEGIN
+
+// CODEGEN-END
