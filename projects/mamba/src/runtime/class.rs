@@ -1102,12 +1102,12 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
         let mut reg = reg.borrow_mut();
         for method in methods.values() {
             let (unwrapped, _dk) = unwrap_descriptor_method(*method);
-            let unwrapped_addr = extract_func_addr(unwrapped);
+            let unwrapped_addr = extract_registered_func_addr(unwrapped);
             if unwrapped_addr != 0 {
                 reg.insert(unwrapped_addr);
             }
             // Also register the raw method value addr for backward compat
-            let addr = extract_func_addr(*method);
+            let addr = extract_registered_func_addr(*method);
             if addr != 0 {
                 reg.insert(addr);
             }
@@ -1866,7 +1866,7 @@ fn unwrap_descriptor_method(method: MbValue) -> (MbValue, DescriptorKind) {
 /// `_missing_(cls, value)` classmethod hook.
 pub(crate) fn registered_callable_addr(method: MbValue) -> u64 {
     let (unwrapped, _kind) = unwrap_descriptor_method(method);
-    let addr = extract_func_addr(unwrapped);
+    let addr = extract_registered_func_addr(unwrapped);
     if addr != 0 && CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr)) {
         addr
     } else {
@@ -1894,6 +1894,131 @@ fn extract_func_addr(val: MbValue) -> u64 {
         return i as u64;
     }
     0
+}
+
+fn extract_registered_func_addr(val: MbValue) -> u64 {
+    if val.as_int().is_some() {
+        let closure_func = super::closure::mb_closure_get_func(val);
+        if let Some(addr) = closure_func.as_func() {
+            if addr > 4096 {
+                return addr as u64;
+            }
+        }
+        if !closure_func.is_none() {
+            return 0;
+        }
+        if let Some(i) = val.as_int() {
+            let addr = i as u64;
+            return if addr > 4096 { addr } else { 0 };
+        }
+    }
+    extract_func_addr(val)
+}
+
+fn method_args_with_receiver(receiver: Option<MbValue>, args: MbValue) -> MbValue {
+    let mut all_args = Vec::new();
+    if let Some(value) = receiver {
+        all_args.push(value);
+    }
+    if let Some(args_ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*args_ptr).data {
+                all_args.extend(lock.read().unwrap().iter());
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(all_args))
+}
+
+fn rebox_method_result(raw: MbValue, is_boxed: bool) -> MbValue {
+    if is_boxed {
+        return raw;
+    }
+    let bits = raw.to_bits();
+    const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
+    if bits & NAN_PREFIX == NAN_PREFIX {
+        raw
+    } else {
+        super::builtins::mb_box_int(bits as i64)
+    }
+}
+
+fn call_registered_method_addr(addr: u64, args: &[MbValue]) -> MbValue {
+    let raw: MbValue = unsafe {
+        match args.len() {
+            0 => {
+                let f: extern "C" fn() -> MbValue = std::mem::transmute(addr as usize);
+                f()
+            }
+            1 => {
+                let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr as usize);
+                f(args[0])
+            }
+            2 => {
+                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(addr as usize);
+                f(args[0], args[1])
+            }
+            3 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(addr as usize);
+                f(args[0], args[1], args[2])
+            }
+            4 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(addr as usize);
+                f(args[0], args[1], args[2], args[3])
+            }
+            5 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(addr as usize);
+                f(args[0], args[1], args[2], args[3], args[4])
+            }
+            6 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(addr as usize);
+                f(args[0], args[1], args[2], args[3], args[4], args[5])
+            }
+            7 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(addr as usize);
+                f(
+                    args[0], args[1], args[2], args[3], args[4], args[5], args[6],
+                )
+            }
+            8 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(addr as usize);
+                f(
+                    args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
+                )
+            }
+            _ => return MbValue::none(),
+        }
+    };
+    let is_boxed = super::module::is_boxed_return_func(addr);
+    rebox_method_result(raw, is_boxed)
 }
 
 fn memoryview_field(view: MbValue, name: &str) -> Option<MbValue> {
@@ -11788,14 +11913,16 @@ pub fn mb_obj_del(obj: MbValue) {
 pub fn mb_call_method1(method: MbValue, arg: MbValue) -> MbValue {
     // Safepoint poll at method call (R4)
     super::gc::gc_safepoint();
+    if method.as_int().is_some() && !super::closure::mb_closure_get_func(method).is_none() {
+        let args = MbValue::from_ptr(MbObject::new_list(vec![arg]));
+        return super::builtins::mb_call_spread(method, args);
+    }
     let addr = extract_func_addr(method);
     if addr != 0 {
         let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
         if is_registered {
             // REQ: JIT-compiled functions use SystemV/C calling convention.
-            let func: extern "C" fn(MbValue) -> MbValue =
-                unsafe { std::mem::transmute(addr as usize) };
-            return func(arg);
+            return call_registered_method_addr(addr, &[arg]);
         }
     }
     MbValue::none()
@@ -15380,45 +15507,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                             all_args.extend(items.iter());
                                         }
                                     }
-                                    // REQ: JIT-compiled functions use SystemV/C calling convention.
-                                    return match all_args.len() {
-                                        0 => {
-                                            let f: extern "C" fn() -> MbValue =
-                                                std::mem::transmute(addr as usize);
-                                            f()
-                                        }
-                                        1 => {
-                                            let f: extern "C" fn(MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
-                                            f(all_args[0])
-                                        }
-                                        2 => {
-                                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
-                                            f(all_args[0], all_args[1])
-                                        }
-                                        3 => {
-                                            let f: extern "C" fn(
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                            )
-                                                -> MbValue = std::mem::transmute(addr as usize);
-                                            f(all_args[0], all_args[1], all_args[2])
-                                        }
-                                        4 => {
-                                            let f: extern "C" fn(
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                            )
-                                                -> MbValue = std::mem::transmute(addr as usize);
-                                            f(all_args[0], all_args[1], all_args[2], all_args[3])
-                                        }
-                                        _ => MbValue::none(),
-                                    };
+                                    return call_registered_method_addr(addr, &all_args);
                                 }
+                            }
+                            if call_method.as_int().is_some() {
+                                let receiver_arg = match dk {
+                                    DescriptorKind::StaticMethod => None,
+                                    DescriptorKind::ClassMethod => Some(MbValue::from_ptr(
+                                        MbObject::new_str(class_name_str.clone()),
+                                    )),
+                                    DescriptorKind::Regular => Some(receiver),
+                                };
+                                let args_list = method_args_with_receiver(receiver_arg, args);
+                                return super::builtins::mb_call_spread(call_method, args_list);
                             }
                         }
                     }
@@ -15556,45 +15657,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                             all_args.extend(items.iter());
                                         }
                                     }
-                                    // REQ: JIT-compiled functions use SystemV/C calling convention.
-                                    match all_args.len() {
-                                        1 => {
-                                            let f: extern "C" fn(MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
-                                            return f(all_args[0]);
-                                        }
-                                        2 => {
-                                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
-                                            return f(all_args[0], all_args[1]);
-                                        }
-                                        3 => {
-                                            let f: extern "C" fn(
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                            )
-                                                -> MbValue = std::mem::transmute(addr as usize);
-                                            return f(all_args[0], all_args[1], all_args[2]);
-                                        }
-                                        4 => {
-                                            let f: extern "C" fn(
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                            )
-                                                -> MbValue = std::mem::transmute(addr as usize);
-                                            return f(
-                                                all_args[0],
-                                                all_args[1],
-                                                all_args[2],
-                                                all_args[3],
-                                            );
-                                        }
-                                        _ => {}
-                                    }
+                                    return call_registered_method_addr(addr, &all_args);
                                 }
+                            }
+                            if call_method.as_int().is_some() {
+                                let receiver_arg = match dk {
+                                    DescriptorKind::StaticMethod => None,
+                                    DescriptorKind::ClassMethod => Some(MbValue::from_ptr(
+                                        MbObject::new_str(instance_class.clone()),
+                                    )),
+                                    DescriptorKind::Regular => Some(super_self),
+                                };
+                                let args_list = method_args_with_receiver(receiver_arg, args);
+                                return super::builtins::mb_call_spread(call_method, args_list);
                             }
                             return method;
                         }
@@ -15792,48 +15867,21 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     }
                                     let _ = pos;
                                 }
-                                // REQ: JIT-compiled functions use SystemV/C calling convention.
-                                match all_args.len() {
-                                    1 => {
-                                        let f: extern "C" fn(MbValue) -> MbValue =
-                                            std::mem::transmute(addr as usize);
-                                        return f(all_args[0]);
-                                    }
-                                    2 => {
-                                        let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                            std::mem::transmute(addr as usize);
-                                        return f(all_args[0], all_args[1]);
-                                    }
-                                    3 => {
-                                        let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                                            std::mem::transmute(addr as usize);
-                                        return f(all_args[0], all_args[1], all_args[2]);
-                                    }
-                                    4 => {
-                                        let f: extern "C" fn(
-                                            MbValue,
-                                            MbValue,
-                                            MbValue,
-                                            MbValue,
-                                        )
-                                            -> MbValue = std::mem::transmute(addr as usize);
-                                        return f(
-                                            all_args[0],
-                                            all_args[1],
-                                            all_args[2],
-                                            all_args[3],
-                                        );
-                                    }
-                                    _ => {}
-                                }
-                                return MbValue::none(); // Fallback: too many args
+                                return call_registered_method_addr(addr, &all_args);
                             }
                         }
                         // Closure handle or other callable stored as class attr:
                         // call it with self as the first arg (bound method).
                         if call_method.as_int().is_some() {
-                            // Closure handle — call via mb_call1_val(method, self)
-                            return mb_call1_val(call_method, receiver);
+                            let receiver_arg = match dk {
+                                DescriptorKind::StaticMethod => None,
+                                DescriptorKind::ClassMethod => {
+                                    Some(MbValue::from_ptr(MbObject::new_str(class_name.clone())))
+                                }
+                                DescriptorKind::Regular => Some(receiver),
+                            };
+                            let args_list = method_args_with_receiver(receiver_arg, args);
+                            return super::builtins::mb_call_spread(call_method, args_list);
                         }
                         return method;
                     }
