@@ -75,7 +75,6 @@ properties:
     description: "vat run passes --no-forward to the http-mock spawn when [network].egress is localhost-only or deny; open keeps forwarding. No separate vat.toml key — one knob (egress) yields full hermeticity."
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
