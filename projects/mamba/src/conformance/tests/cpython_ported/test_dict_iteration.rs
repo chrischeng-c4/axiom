@@ -60,3 +60,18 @@ print(len(d))
     );
     assert_output(&out, "True\nFalse\n3\n");
 }
+
+#[test]
+fn test_dict_iteration_size_mutation_raises_runtime_error() {
+    let out = jit_capture(
+        r#"d = {1: 1, 2: 2, 3: 3}
+try:
+    for k in d:
+        d[k + 100] = 0
+    print("no_raise")
+except RuntimeError:
+    print("RuntimeError")
+"#,
+    );
+    assert_output(&out, "RuntimeError\n");
+}
