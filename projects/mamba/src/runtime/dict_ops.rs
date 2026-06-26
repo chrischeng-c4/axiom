@@ -61,6 +61,7 @@ pub enum DictKey {
     Bytes(Vec<u8>),
     Bool(bool),
     None,
+    StrCodepoints(Vec<u32>),
     /// User-class instance key: `hash_val` comes from `__hash__`, `ptr` holds
     /// the instance so `__eq__` can be dispatched when buckets collide.
     /// `ptr` is retained on construction and released on Drop/Clone-to-None.
@@ -102,6 +103,7 @@ impl Clone for DictKey {
             DictKey::Int(i) => DictKey::Int(*i),
             DictKey::Float(b) => DictKey::Float(*b),
             DictKey::Str(s) => DictKey::Str(s.clone()),
+            DictKey::StrCodepoints(codepoints) => DictKey::StrCodepoints(codepoints.clone()),
             DictKey::Bytes(b) => DictKey::Bytes(b.clone()),
             DictKey::Bool(b) => DictKey::Bool(*b),
             DictKey::None => DictKey::None,
@@ -179,6 +181,7 @@ impl std::hash::Hash for DictKey {
                     DictKey::Bytes(b) => b.hash(state),
                     DictKey::Bool(b) => b.hash(state),
                     DictKey::None => {}
+                    DictKey::StrCodepoints(codepoints) => codepoints.hash(state),
                     DictKey::Instance { hash_val, .. } => hash_val.hash(state),
                     DictKey::Other(s) => s.hash(state),
                     DictKey::Func(addr) => addr.hash(state),
@@ -197,6 +200,7 @@ impl PartialEq for DictKey {
             (DictKey::Int(a), DictKey::Int(b)) => a == b,
             (DictKey::Float(a), DictKey::Float(b)) => a == b,
             (DictKey::Str(a), DictKey::Str(b)) => a == b,
+            (DictKey::StrCodepoints(a), DictKey::StrCodepoints(b)) => a == b,
             (DictKey::Bytes(a), DictKey::Bytes(b)) => a == b,
             (DictKey::Bool(a), DictKey::Bool(b)) => a == b,
             (DictKey::None, DictKey::None) => true,
@@ -323,6 +327,9 @@ impl std::fmt::Display for DictKey {
             DictKey::Int(i) => write!(f, "{i}"),
             DictKey::Float(bits) => write!(f, "{}", dict_key_display(&DictKey::Float(*bits))),
             DictKey::Str(s) => write!(f, "{s}"),
+            DictKey::StrCodepoints(codepoints) => {
+                write!(f, "{}", super::string_ops::escape_codepoints_non_ascii(codepoints))
+            }
             DictKey::Bytes(b) => write!(f, "{}", format_bytes_key(b)),
             DictKey::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
             DictKey::None => write!(f, "None"),
@@ -434,7 +441,12 @@ pub fn to_dict_key(val: MbValue) -> DictKey {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::Str(ref s) => return DictKey::Str(s.clone()),
+                ObjData::Str(ref s) => {
+                    if let Some(codepoints) = super::string_ops::surrogate_codepoints(val) {
+                        return DictKey::StrCodepoints(codepoints);
+                    }
+                    return DictKey::Str(s.clone());
+                }
                 ObjData::Bytes(ref b) => return DictKey::Bytes(b.clone()),
                 ObjData::Tuple(_) => {
                     // Structural hash via mb_tuple_hash; retain the tuple object
@@ -484,6 +496,9 @@ pub fn dict_key_to_mbvalue(key: &DictKey) -> MbValue {
         DictKey::Int(i) => MbValue::from_int(*i),
         DictKey::Float(bits) => MbValue::from_float(f64::from_bits(*bits)),
         DictKey::Str(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
+        DictKey::StrCodepoints(codepoints) => {
+            super::string_ops::new_surrogate_codepoints_str(codepoints.clone())
+        }
         DictKey::Bytes(b) => MbValue::from_ptr(MbObject::new_bytes(b.clone())),
         DictKey::Bool(b) => MbValue::from_bool(*b),
         DictKey::None => MbValue::none(),
@@ -514,6 +529,9 @@ pub fn dict_key_raw_str(key: &DictKey) -> String {
     match key {
         DictKey::Int(i) => i.to_string(),
         DictKey::Str(s) => s.clone(),
+        DictKey::StrCodepoints(codepoints) => {
+            super::string_ops::escape_codepoints_non_ascii(codepoints)
+        }
         DictKey::Bytes(b) => format_bytes_key(b),
         DictKey::Bool(b) => {
             if *b {
@@ -547,6 +565,9 @@ pub fn dict_key_display(key: &DictKey) -> String {
                 .unwrap_or_default()
         }
         DictKey::Str(s) => format!("'{s}'"),
+        DictKey::StrCodepoints(codepoints) => {
+            super::string_ops::repr_string_from_codepoints(codepoints)
+        }
         DictKey::Bytes(b) => format_bytes_key(b),
         DictKey::Bool(b) => {
             if *b {
