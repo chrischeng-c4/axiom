@@ -10626,6 +10626,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "service-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "h2c",
+ "http-body-util",
+ "serde_json",
+ "tokio",
+ "tower 0.5.3",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
+]
+
+[[package]]
 name = "servo_arc"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
