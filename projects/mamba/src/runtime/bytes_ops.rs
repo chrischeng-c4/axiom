@@ -209,6 +209,46 @@ unsafe fn drain_handle_to_u8s(handle: MbValue) -> Option<Vec<u8>> {
     data
 }
 
+fn try_iterable_to_u8s(source: MbValue) -> Option<Option<Vec<u8>>> {
+    let iter = super::iter::mb_iter(source);
+    if iter.is_none() {
+        match super::exception::current_exception_type().as_deref() {
+            Some("TypeError") => {
+                super::exception::mb_clear_exception();
+                return Some(None);
+            }
+            Some(_) => return None,
+            None => return Some(None),
+        }
+    }
+    unsafe { drain_handle_to_u8s(iter).map(Some) }
+}
+
+fn try_sequence_getitem_to_u8s(source: MbValue, class_name: &str) -> Option<Option<Vec<u8>>> {
+    if super::class::lookup_method(class_name, "__getitem__").is_none() {
+        return Some(None);
+    }
+    let method = MbValue::from_ptr(MbObject::new_str("__getitem__".to_string()));
+    let mut items = Vec::new();
+    for i in 0..1_000_000i64 {
+        let args = MbValue::from_ptr(MbObject::new_list_borrowed(vec![MbValue::from_int(i)]));
+        let item = super::class::mb_call_method(source, method, args);
+        if let Some(t) = super::exception::current_exception_type() {
+            if t == "IndexError" {
+                super::exception::mb_clear_exception();
+                break;
+            }
+            return None;
+        }
+        items.push(item);
+    }
+    let data = validated_bytes_from_items(&items);
+    for &item in &items {
+        unsafe { super::rc::release_if_ptr(item); }
+    }
+    data.map(Some)
+}
+
 /// Create bytes from a string.
 pub fn mb_bytes_new(source: MbValue) -> MbValue {
     if source.is_none() {
@@ -258,6 +298,19 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
                         None => MbValue::none(),
                     };
                 }
+                ObjData::Set(ref lock) => {
+                    let items = lock.read().unwrap().to_vec();
+                    return match validated_bytes_from_items(&items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytes(d)),
+                        None => MbValue::none(),
+                    };
+                }
+                ObjData::FrozenSet(ref items) => {
+                    return match validated_bytes_from_items(items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytes(d)),
+                        None => MbValue::none(),
+                    };
+                }
                 // A BigInt count is too large for a size-sized integer.
                 ObjData::BigInt(_) => {
                     raise_count_overflow();
@@ -285,6 +338,16 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
                         if super::exception::mb_has_exception().as_bool() == Some(true) {
                             return MbValue::none();
                         }
+                    }
+                    match try_iterable_to_u8s(source) {
+                        Some(Some(data)) => return MbValue::from_ptr(MbObject::new_bytes(data)),
+                        Some(None) => {}
+                        None => return MbValue::none(),
+                    }
+                    match try_sequence_getitem_to_u8s(source, &cls) {
+                        Some(Some(data)) => return MbValue::from_ptr(MbObject::new_bytes(data)),
+                        Some(None) => {}
+                        None => return MbValue::none(),
                     }
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -370,9 +433,38 @@ pub fn mb_bytearray_new(source: MbValue) -> MbValue {
                         None => MbValue::none(),
                     };
                 }
+                ObjData::Set(ref lock) => {
+                    let items = lock.read().unwrap().to_vec();
+                    return match validated_bytes_from_items(&items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytearray(d)),
+                        None => MbValue::none(),
+                    };
+                }
+                ObjData::FrozenSet(ref items) => {
+                    return match validated_bytes_from_items(items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytearray(d)),
+                        None => MbValue::none(),
+                    };
+                }
                 ObjData::Instance { ref class_name, .. } if class_name == "memoryview" => {
                     if let Some(data) = super::builtins::try_bytes_like(source) {
                         return MbValue::from_ptr(MbObject::new_bytearray(data));
+                    }
+                }
+                ObjData::Instance { ref class_name, .. } => {
+                    match try_iterable_to_u8s(source) {
+                        Some(Some(data)) => {
+                            return MbValue::from_ptr(MbObject::new_bytearray(data));
+                        }
+                        Some(None) => {}
+                        None => return MbValue::none(),
+                    }
+                    match try_sequence_getitem_to_u8s(source, class_name) {
+                        Some(Some(data)) => {
+                            return MbValue::from_ptr(MbObject::new_bytearray(data));
+                        }
+                        Some(None) => {}
+                        None => return MbValue::none(),
                     }
                 }
                 ObjData::BigInt(_) => {
