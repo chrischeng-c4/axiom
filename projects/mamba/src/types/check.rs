@@ -84,6 +84,7 @@ fn is_exception_class_name(name: &str) -> bool {
             | "UnicodeError"
             | "UnicodeDecodeError"
             | "UnicodeEncodeError"
+            | "UnicodeTranslateError"
             | "AssertionError"
             | "BufferError"
             | "EOFError"

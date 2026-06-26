@@ -742,6 +742,11 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                             return MbValue::none();
                         }
                     } else {
+                        if let Some((_base, payload)) =
+                            class::builtin_data_payload_if_unoverridden(obj, "__iter__")
+                        {
+                            return mb_iter(payload);
+                        }
                         // R1: Look up __iter__ in class methods (not instance fields)
                         // using mb_lookup_dunder for safety (only returns valid fn ptrs)
                         let iter_method = class::mb_lookup_dunder(

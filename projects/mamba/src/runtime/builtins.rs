@@ -1171,6 +1171,11 @@ pub fn mb_len(val: MbValue) -> MbValue {
                             }
                         }
                     }
+                    if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__len__")
+                    {
+                        return mb_len(payload);
+                    }
                     // Plain Mock / AsyncMock have no __len__ (only MagicMock
                     // registers the magic table): len() raises TypeError.
                     if matches!(
@@ -1671,12 +1676,20 @@ pub fn mb_bool(val: MbValue) -> MbValue {
                     let bool_method = super::class::lookup_method(class_name, "__bool__");
                     if !bool_method.is_none() {
                         let result = super::class::mb_call_method1(bool_method, val);
+                        if super::exception::mb_has_exception().as_bool() == Some(true) {
+                            return MbValue::from_bool(false);
+                        }
                         if let Some(bv) = result.as_bool() {
                             return MbValue::from_bool(bv);
                         }
                         if let Some(iv) = result.as_int() {
                             return MbValue::from_bool(iv != 0);
                         }
+                        raise_type_error(format!(
+                            "__bool__ should return bool, returned {}",
+                            value_type_name(result)
+                        ));
+                        return MbValue::from_bool(false);
                     } else if super::class::class_bool_is_blocked(class_name) {
                         // `__bool__ = None` disables truth-testing; calling the
                         // None slot raises, even when __len__ exists.
@@ -1703,6 +1716,10 @@ pub fn mb_bool(val: MbValue) -> MbValue {
                         }
                         // validate_len_result raised: fall through with a
                         // pending exception (the value below is discarded).
+                    } else if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__len__")
+                    {
+                        return mb_bool(payload);
                     }
                     true
                 }
@@ -4562,6 +4579,18 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         }
     }
 
+    // DATA-payload builtin subclasses compare through their hidden str/list/dict
+    // payload only when neither side supplies an explicit __eq__ method.
+    {
+        let ap = super::class::builtin_data_payload_if_unoverridden(a, "__eq__")
+            .map(|(_, payload)| payload);
+        let bp = super::class::builtin_data_payload_if_unoverridden(b, "__eq__")
+            .map(|(_, payload)| payload);
+        if ap.is_some() || bp.is_some() {
+            return mb_values_eq(ap.unwrap_or(a), bp.unwrap_or(b));
+        }
+    }
+
     // Structural equality for heap objects
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
@@ -6002,6 +6031,11 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                                 return MbValue::from_ptr(MbObject::new_str(s.clone()));
                             }
                         }
+                    }
+                    if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__repr__")
+                    {
+                        return mb_repr(payload);
                     }
                     // PEP 557: dataclass synthesized __repr__ —
                     // `Cls(f1=v1, f2=v2)` over repr=True fields in declaration
