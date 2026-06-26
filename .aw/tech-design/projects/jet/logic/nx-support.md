@@ -259,22 +259,27 @@ flowchart TD
 changes:
   - path: .aw/tech-design/crates/jet/logic/nx-support.md
     action: create
+    section: doc
     purpose: Re-home and normalize the Nx support TD.
     impl_mode: hand-written
   - path: .aw/tech-design/crates/jet/nx-support.md
     action: delete
+    section: doc
     purpose: Remove duplicated loose root spec.
     impl_mode: hand-written
   - path: crates/jet/src/pkg_manager/nx.rs
     action: none
+    section: doc
     purpose: Existing Nx graph and workspace manager implementation described by this spec.
     impl_mode: hand-written
   - path: crates/jet/src/pkg_manager/workspace.rs
     action: none
+    section: doc
     purpose: Existing workspace detection priority described by this spec.
     impl_mode: hand-written
   - path: crates/jet/src/cli.rs
     action: none
+    section: doc
     purpose: Existing Nx CLI dispatch described by this spec.
     impl_mode: hand-written
 ```

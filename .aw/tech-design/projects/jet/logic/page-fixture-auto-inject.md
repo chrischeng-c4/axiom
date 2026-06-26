@@ -352,31 +352,37 @@ cargo test -p jet --test page_fixture_auto_inject
 files:
   - path: .aw/tech-design/crates/jet/logic/page-fixture-auto-inject.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home the page fixture TD as a checker-compliant current-state contract.
 
   - path: .aw/tech-design/crates/jet/testing/page-fixture-auto-inject.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove the unexpected top-level testing directory copy of this TD.
 
   - path: crates/jet/runtime/test/index.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing default fixture registry, fixture detection, fixture resolution, and cleanup flow.
 
   - path: crates/jet/runtime/test/page.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing CDP-backed Page proxy and baseURL resolution.
 
   - path: crates/jet/src/test_runner/worker.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing lazy browser launch and new_page request handling.
 
   - path: crates/jet/tests/page_fixture_auto_inject.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing integration tests for injection, cleanup, baseURL, override, and browser errors.
 ```
