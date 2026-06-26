@@ -935,6 +935,13 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 cls.runtime_base_exprs.clone(),
             ));
         }
+        if let Some(base_list_expr) = &cls.runtime_base_list_expr {
+            lowerer.pending_runtime_class_base_lists.push((
+                class_name.clone(),
+                cls.name,
+                base_list_expr.clone(),
+            ));
+        }
         // P2-R3: Store class-level attribute assignments for emission at the
         // class's ClassDefPlaceholder (its textual position in the module).
         for (attr_name, val_expr) in &cls.class_attr_assigns {
@@ -1141,6 +1148,9 @@ struct HirToMir<'a> {
     /// Class base expressions that must be evaluated at the class statement's
     /// textual runtime position, e.g. `class Derived(base):` inside a loop.
     pending_runtime_class_bases: Vec<(String, SymbolId, Vec<HirExpr>)>,
+    /// Materialized runtime base-list expressions for starred class bases,
+    /// e.g. `class Derived[T](*bases): ...`.
+    pending_runtime_class_base_lists: Vec<(String, SymbolId, HirExpr)>,
     /// P2-R3: Class-level attribute assignments to emit after class registration.
     /// (class_name, class_symbol_id, attr_name, value_expr)
     /// Emitted at the class's ClassDefPlaceholder position (textual order) so
@@ -1316,6 +1326,7 @@ impl<'a> HirToMir<'a> {
             pending_classes: Vec::new(),
             classes_needing_textual_registration: HashSet::new(),
             pending_runtime_class_bases: Vec::new(),
+            pending_runtime_class_base_lists: Vec::new(),
             pending_class_attrs: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
@@ -1380,6 +1391,7 @@ impl<'a> HirToMir<'a> {
             pending_classes: Vec::new(),
             classes_needing_textual_registration: HashSet::new(),
             pending_runtime_class_bases: Vec::new(),
+            pending_runtime_class_base_lists: Vec::new(),
             pending_class_attrs: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
@@ -4458,6 +4470,24 @@ impl<'a> HirToMir<'a> {
                 elements: base_vregs,
                 ty: self.tcx.any(),
             });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_update_bases".to_string(),
+                args: vec![cls_vreg, bases_list],
+                ty: self.tcx.none(),
+            });
+        }
+
+        let mut i = 0;
+        while i < self.pending_runtime_class_base_lists.len() {
+            if !cls_sym.map_or(true, |s| self.pending_runtime_class_base_lists[i].1 == s) {
+                i += 1;
+                continue;
+            }
+            let (class_name, _, base_list_expr) = self.pending_runtime_class_base_lists.remove(i);
+            let cls_vreg = self.emit_str_const(&class_name);
+            let raw = self.lower_expr(&base_list_expr);
+            let bases_list = self.box_operand(raw, base_list_expr.ty());
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
                 name: "mb_class_update_bases".to_string(),

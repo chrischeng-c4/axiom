@@ -104,6 +104,9 @@ pub struct HirClass {
     /// Base expressions that must be evaluated at the class statement's
     /// runtime position before the class registry's MRO is final.
     pub runtime_base_exprs: Vec<HirExpr>,
+    /// A fully materialized base list expression for class headers that use
+    /// starred base unpacking, e.g. `class C[T](*bases): ...`.
+    pub runtime_base_list_expr: Option<HirExpr>,
     /// Literal `namedtuple("T", [...])` base metadata for namedtuple subclasses.
     pub namedtuple_base: Option<NamedTupleBaseSpec>,
     pub fields: Vec<(SymbolId, TypeId)>,
@@ -838,6 +841,7 @@ mod tests {
             base: Some(SymbolId(1)),
             all_bases: vec![SymbolId(1)],
             runtime_base_exprs: Vec::new(),
+            runtime_base_list_expr: None,
             namedtuple_base: None,
             fields: vec![(SymbolId(2), int_ty)],
             methods: vec![],
