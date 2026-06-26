@@ -1,18 +1,18 @@
 //! `cli-std` — the standard agent-facing CLI commands every axiom tool
 //! ships, per the convention in `CONTRIBUTING.md` ("every CLI ships `llm`,
-//! `upgrade`, `report-issue`"):
+//! `upgrade`, `issue`"):
 //!
 //! - [`llm`] — offline self-documentation (how do I drive this?)
 //! - [`upgrade`] — self-update from the tool's GitHub releases (am I current?)
-//! - [`report_issue`] — file a diagnostics-rich GitHub issue (it's broken — how
-//!   do I file it?)
+//! - [`issue`] — search, view, and file diagnostics-rich GitHub issues (what is
+//!   already reported, and how do I file it?)
 //!
 //! The logic is parameterized by a [`ToolInfo`] the calling binary fills from
 //! its own build stamps, and is **clap-agnostic**: each CLI keeps its own clap
 //! registration (derive or builder) and calls these `run` functions. The
-//! network paths (`upgrade` install, `report-issue` submit) live behind the
+//! network paths (`upgrade` install, `issue` search/view/create) live behind the
 //! `online` feature; the offline paths (`llm`, `upgrade --check` messaging,
-//! `report-issue --dry-run` / pre-filled-URL fallback) always build.
+//! `issue create --dry-run` / pre-filled-URL fallback) always build.
 
 pub mod issue;
 pub mod llm;

@@ -1,6 +1,6 @@
 [package]
 name = "jet"
-version = "0.4.4"
+version = "0.4.5"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,7 +23,7 @@ tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 
-# Shared standard CLI ops (llm / upgrade / report-issue). `online` is on by
+# Shared standard CLI ops (llm / upgrade / issue). `online` is on by
 # default so released binaries can actually self-update + submit issues; jet
 # already pulls reqwest/flate2/tar, so this adds no new heavy deps.
 cli-std = { path = "../../libs/cli-std", features = ["online"] }
