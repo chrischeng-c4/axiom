@@ -558,14 +558,17 @@ flowchart TD
 changes:
   - path: .aw/tech-design/crates/jet/logic/locator-engine.md
     action: create
+    section: doc
     purpose: Re-home the current Rust locator engine TD under the logic spec directory.
     impl_mode: hand-written
   - path: .aw/tech-design/crates/jet/testing/locator-engine.md
     action: delete
+    section: doc
     purpose: Remove the stale testing-directory TD that described future behavior as current behavior.
     impl_mode: hand-written
   - path: crates/jet/src/browser/locator.rs
     action: none
+    section: doc
     purpose: Existing implementation remains the source described by this spec.
     impl_mode: hand-written
 ```
