@@ -47,6 +47,13 @@ unless `completion.workflow_complete=true`; `action=done` can mean only the
 current child root is complete and the envelope is asking you to inspect the
 parent.
 
+For Agentic Workflow itself (`agentic-workflow` / `aw`), do not turn
+`aw health` or `aw standardize` into a full AW takeover gate. Self-health only
+hard-gates capability contracts and EC claim closure. Managed/semantic/
+traceability, TD lock, CB verify, cold rebuild, and workspace test gates are
+advisory metrics for self-AW unless the README capability contract or EC
+inventory makes them explicit production obligations.
+
 Codex should translate Claude slash-command references such as `/aw:td` or
 `/aw:wi` to the equivalent `aw ...` CLI command unless the user
 explicitly asks for Claude-specific behavior.
