@@ -242,8 +242,10 @@ Because the OpenAPI doc is the source of truth, the typed clients adopters use
 are **generated from it**, never hand-written and never produced by an external
 tool. The shared `libs/openapi-codegen` (`cclab-openapi-codegen`) is the polyglot
 core — a language-neutral IR feeding per-language emitters (TypeScript: types +
-fetch/axios client + TanStack Query hooks; Python: pydantic + httpx; Rust: serde
-+ reqwest). A service **composes** it behind a CLI verb:
+fetch/axios client + TanStack Query hooks; Python: pydantic + generated
+sync/async HTTP/2 runtime that speaks h2c for `http://` and ALPN h2 for
+`https://`; Rust: serde + reqwest). A service **composes** it
+behind a CLI verb:
 
 ```
 <cli> spec gen --lang ts|py|rust --out <dir>

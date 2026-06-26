@@ -2,7 +2,7 @@
 //! client in its target language.
 //!
 //! - [`ts`]: TypeScript — types + fetch/axios client + TanStack Query hooks.
-//! - [`py`]: Python — pydantic models + httpx client.
+//! - [`py`]: Python — pydantic models + generated sync/async HTTP/2 runtime.
 //! - [`rust`]: Rust — serde models + reqwest client.
 
 pub mod py;
