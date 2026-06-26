@@ -520,6 +520,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
         "UnicodeError",
         "UnicodeDecodeError",
         "UnicodeEncodeError",
+        "UnicodeTranslateError",
         "AssertionError",
         "BufferError",
         "EOFError",
