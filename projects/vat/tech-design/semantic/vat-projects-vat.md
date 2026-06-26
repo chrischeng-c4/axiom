@@ -1,14 +1,13 @@
 ---
 id: semantic-vat-projects-vat
 summary: Semantic coverage for "projects/vat"
-fill_sections: [schema, changes]
 capability_refs:
-  - id: agent-native-gpu-native-dev-containers
+  - id: "agent-native-gpu-native-dev-containers"
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
-    coverage: full
-    rationale: "Project-root build, install, and LLM context artifacts keep vat usable by agents that rely on the local runner protocol."
+    claim: "host-process-execution-and-gpu-visibility"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/vat`."
+fill_sections: [schema, changes]
 ---
 
 # Semantic TD: vat/projects/vat
@@ -23,33 +22,26 @@ semantic_domain:
   coverage_kind: semantic
   evidence:
     source_units:
-      - path: "projects/vat/build.sh"
-        language: "shell"
+      - path: "projects/vat/build.rs"
+        language: "rust"
         ownership_state: "codegen"
-        generator_primitives: ["source_unit"]
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "main"
+            kind: "function"
+            public: false
+          - name: "stamp_provenance"
+            kind: "function"
+            public: false
+          - name: "short_sha"
+            kind: "function"
+            public: false
+          - name: "compile_pubsub_proto"
+            kind: "function"
+            public: false
         source_evidence_node:
-          layer: "project-root"
-          ecosystem: "shell"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/vat"
-      - path: "projects/vat/install.sh"
-        language: "shell"
-        ownership_state: "codegen"
-        generator_primitives: ["source_unit"]
-        source_evidence_node:
-          layer: "project-root"
-          ecosystem: "shell"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/vat"
-      - path: "projects/vat/llms.txt"
-        language: "llms"
-        ownership_state: "codegen"
-        generator_primitives: ["project_root_llms"]
-        source_evidence_node:
-          layer: "project-root"
-          ecosystem: "llms"
+          layer: "backend"
+          ecosystem: "rust"
           role: "source"
           section_type: "schema"
           domain: "projects/vat"
@@ -61,29 +53,10 @@ semantic_domain:
 ```yaml
 coverage_kind: semantic
 changes:
-  - path: "projects/vat/build.sh"
+  - path: "projects/vat/build.rs"
     action: modify
     section: schema
     description: |
-      Existing source behavior is delegated to the lossless build-script text source unit.
-    impl_mode: codegen
-    replaces:
-      - "<handwrite-tracker:#4158>"
-  - path: "projects/vat/install.sh"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is delegated to the lossless install-script text source unit.
-    impl_mode: codegen
-    replaces:
-      - "<handwrite-tracker:#4158>"
-  - path: "projects/vat/llms.txt"
-    action: modify
-    section: schema
-    description: |
-      Generated TD-first agent context map from project config, README capability map,
-      TD root, build/install scripts, and workspace test commands.
-    impl_mode: codegen
-    replaces:
-      - "<handwrite-tracker:#4158>"
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
 ```
