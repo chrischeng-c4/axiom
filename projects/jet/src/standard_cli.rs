@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-src-standard-cli-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! jet's adapter over the shared `cli-std` crate for the three standard
 //! agent-facing commands (`llm` / `upgrade` / `issue`), per the CLI
 //! convention in `CONTRIBUTING.md`.
@@ -275,3 +276,5 @@ pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
         _ => anyhow::bail!("unknown `jet issue` subcommand; try search / view / create"),
     }
 }
+
+// </HANDWRITE>
