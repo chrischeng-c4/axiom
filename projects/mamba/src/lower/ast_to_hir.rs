@@ -232,6 +232,206 @@ fn expr_has_yield(expr: &ast::Expr) -> bool {
     }
 }
 
+fn push_unique_name(out: &mut Vec<String>, name: &str) {
+    if !out.iter().any(|n| n == name) {
+        out.push(name.to_string());
+    }
+}
+
+fn collect_walrus_targets_expr(expr: &Spanned<ast::Expr>, out: &mut Vec<String>) {
+    match &expr.node {
+        ast::Expr::Walrus { target, value } => {
+            push_unique_name(out, target);
+            collect_walrus_targets_expr(value, out);
+        }
+        ast::Expr::BinOp { lhs, rhs, .. } => {
+            collect_walrus_targets_expr(lhs, out);
+            collect_walrus_targets_expr(rhs, out);
+        }
+        ast::Expr::UnaryOp { operand, .. } | ast::Expr::Starred(operand) => {
+            collect_walrus_targets_expr(operand, out);
+        }
+        ast::Expr::Call { func, args } => {
+            collect_walrus_targets_expr(func, out);
+            for arg in args {
+                match arg {
+                    ast::CallArg::Positional(e)
+                    | ast::CallArg::StarArg(e)
+                    | ast::CallArg::DoubleStarArg(e) => collect_walrus_targets_expr(e, out),
+                    ast::CallArg::Keyword { value, .. } => {
+                        collect_walrus_targets_expr(value, out);
+                    }
+                }
+            }
+        }
+        ast::Expr::Attr { object, .. } => collect_walrus_targets_expr(object, out),
+        ast::Expr::Index { object, index } => {
+            collect_walrus_targets_expr(object, out);
+            collect_walrus_targets_expr(index, out);
+        }
+        ast::Expr::Slice { start, stop, step } => {
+            for part in [start, stop, step].into_iter().flatten() {
+                collect_walrus_targets_expr(part, out);
+            }
+        }
+        ast::Expr::ListLit(elems) | ast::Expr::SetLit(elems) | ast::Expr::TupleLit(elems) => {
+            for elem in elems {
+                collect_walrus_targets_expr(elem, out);
+            }
+        }
+        ast::Expr::DictLit(pairs) => {
+            for (key, value) in pairs {
+                if let Some(key) = key {
+                    collect_walrus_targets_expr(key, out);
+                }
+                collect_walrus_targets_expr(value, out);
+            }
+        }
+        ast::Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            collect_walrus_targets_expr(condition, out);
+            collect_walrus_targets_expr(body, out);
+            collect_walrus_targets_expr(else_body, out);
+        }
+        ast::Expr::ListComp {
+            element,
+            generators,
+        }
+        | ast::Expr::SetComp {
+            element,
+            generators,
+        }
+        | ast::Expr::GeneratorExpr {
+            element,
+            generators,
+        } => {
+            collect_walrus_targets_expr(element, out);
+            for gen in generators {
+                for condition in &gen.conditions {
+                    collect_walrus_targets_expr(condition, out);
+                }
+            }
+        }
+        ast::Expr::DictComp {
+            key,
+            value,
+            generators,
+        } => {
+            collect_walrus_targets_expr(key, out);
+            collect_walrus_targets_expr(value, out);
+            for gen in generators {
+                for condition in &gen.conditions {
+                    collect_walrus_targets_expr(condition, out);
+                }
+            }
+        }
+        ast::Expr::FString(parts) => {
+            for part in parts {
+                collect_walrus_targets_fstring_part(part, out);
+            }
+        }
+        ast::Expr::ChainedCompare { operands, .. } => {
+            for operand in operands {
+                collect_walrus_targets_expr(operand, out);
+            }
+        }
+        ast::Expr::UnpackTarget(elems) => {
+            for elem in elems {
+                collect_walrus_targets_expr(elem, out);
+            }
+        }
+        ast::Expr::Await(value) | ast::Expr::YieldFrom(value) => {
+            collect_walrus_targets_expr(value, out);
+        }
+        ast::Expr::Yield(Some(value)) => collect_walrus_targets_expr(value, out),
+        _ => {}
+    }
+}
+
+fn collect_walrus_targets_fstring_part(part: &ast::FStringPart, out: &mut Vec<String>) {
+    match part {
+        ast::FStringPart::Expr(expr, spec) => {
+            collect_walrus_targets_expr(expr, out);
+            for spec_part in spec.iter().flatten() {
+                collect_walrus_targets_fstring_part(spec_part, out);
+            }
+        }
+        ast::FStringPart::Literal(_) => {}
+    }
+}
+
+fn genexpr_walrus_targets(
+    element: &Spanned<ast::Expr>,
+    generators: &[ast::Comprehension],
+) -> Vec<String> {
+    let mut targets = Vec::new();
+    collect_walrus_targets_expr(element, &mut targets);
+    for gen in generators {
+        for condition in &gen.conditions {
+            collect_walrus_targets_expr(condition, &mut targets);
+        }
+    }
+    targets
+}
+
+fn genexpr_body_from_comprehensions(
+    element: &Spanned<ast::Expr>,
+    generators: &[ast::Comprehension],
+    walrus_targets: &[String],
+    span: Span,
+) -> Vec<Spanned<ast::Stmt>> {
+    let yield_expr = Spanned::new(
+        ast::Expr::Yield(Some(Box::new(element.clone()))),
+        element.span,
+    );
+    let mut body = vec![Spanned::new(ast::Stmt::ExprStmt(yield_expr), element.span)];
+
+    for gen in generators.iter().rev() {
+        for condition in gen.conditions.iter().rev() {
+            body = vec![Spanned::new(
+                ast::Stmt::If {
+                    condition: condition.clone(),
+                    body,
+                    elif_clauses: Vec::new(),
+                    else_body: None,
+                },
+                condition.span,
+            )];
+        }
+
+        let stmt = if gen.is_async {
+            ast::Stmt::AsyncFor {
+                targets: gen.targets.clone(),
+                var_ty: None,
+                iter: gen.iter.clone(),
+                body,
+                else_body: None,
+            }
+        } else {
+            ast::Stmt::For {
+                targets: gen.targets.clone(),
+                var_ty: None,
+                iter: gen.iter.clone(),
+                body,
+                else_body: None,
+            }
+        };
+        body = vec![Spanned::new(stmt, gen.iter.span)];
+    }
+
+    if !walrus_targets.is_empty() {
+        body.insert(
+            0,
+            Spanned::new(ast::Stmt::Nonlocal(walrus_targets.to_vec()), span),
+        );
+    }
+
+    body
+}
+
 /// Coarse float/int classification of an AST expression used purely to soundly
 /// infer an unannotated function's return type. `Unknown` means "could be either"
 /// and is treated conservatively (the caller does not force a primitive type).
@@ -6656,6 +6856,43 @@ impl<'a> AstLowerer<'a> {
                 element,
                 generators,
             } => {
+                let walrus_targets = genexpr_walrus_targets(element, generators);
+                if !walrus_targets.is_empty() {
+                    let any_ty = self.checker.tcx.any();
+                    for target in &walrus_targets {
+                        if !self.local_names.contains_key(target) {
+                            self.define_local(target, any_ty);
+                        }
+                    }
+
+                    let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
+                    let fn_sym = self.define_local(&fn_name, any_ty);
+                    let body = genexpr_body_from_comprehensions(
+                        element,
+                        generators,
+                        &walrus_targets,
+                        expr.span,
+                    );
+                    let return_ty: Option<Spanned<ast::TypeExpr>> = None;
+                    if let Some(mut func) =
+                        self.lower_fn(&fn_name, &[], &return_ty, &body, expr.span)
+                    {
+                        let int_ty = self.checker.tcx.int();
+                        func.is_generator = true;
+                        func.return_ty = int_ty;
+                        self.func_return_tys.insert(func.name, int_ty);
+                        for sym in &func.captures {
+                            self.cell_override_syms.insert(*sym);
+                        }
+                        self.result.functions.push(func);
+                        return Some(HirExpr::Call {
+                            func: Box::new(HirExpr::Var(fn_sym, any_ty)),
+                            args: Vec::new(),
+                            ty: int_ty,
+                        });
+                    }
+                }
+
                 // Desugar generator expression to an ITERATOR over an eager list
                 // comprehension. A genexpr is a single-use iterator in CPython, so
                 // `next(genexpr)` must work and the value must not be reusable/
@@ -8964,6 +9201,37 @@ mod tests {
                 assert!(matches!(args.first(), Some(HirExpr::ListComp { .. })));
             }
             other => panic!("expected mb_iter(ListComp) call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_lower_walrus_generator_expr_to_synthetic_generator() {
+        let gen = Comprehension {
+            targets: vec!["g".to_string()],
+            unpack_target: false,
+            iter: sp(Expr::ListLit(vec![sp(Expr::IntLit(1))])),
+            conditions: vec![],
+            is_async: false,
+        };
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::GeneratorExpr {
+            element: Box::new(sp(Expr::Walrus {
+                target: "seen".to_string(),
+                value: Box::new(sp(Expr::Ident("g".to_string()))),
+            })),
+            generators: vec![gen],
+        })))]);
+        assert_eq!(hir.functions.len(), 1);
+        assert!(hir.functions[0].is_generator);
+        assert_eq!(hir.functions[0].captures.len(), 1);
+        match &hir.top_level[0] {
+            HirStmt::Expr {
+                expr: HirExpr::Call { func, args, .. },
+                ..
+            } => {
+                assert!(args.is_empty());
+                assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
+            }
+            other => panic!("expected synthetic generator call, got {other:?}"),
         }
     }
 

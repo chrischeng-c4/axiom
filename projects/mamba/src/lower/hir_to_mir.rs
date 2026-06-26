@@ -1603,6 +1603,7 @@ impl<'a> HirToMir<'a> {
 
         // ── Phase 1: Generate body function ──
         self.reset();
+        self.cell_override = func.captures.iter().map(|s| s.0).collect();
         self.is_gen_body = true; // Enable return-value boxing for generator bodies
         let entry = self.fresh_block();
         self.current_block_id = Some(entry);
@@ -10160,6 +10161,57 @@ mod tests {
         assert!(all_stmts.iter().any(|s| matches!(
             s, MirInst::CallExtern { name, .. } if name == "mb_generator_yield_from"
         )));
+    }
+
+    #[test]
+    fn test_generator_body_walrus_stores_captured_target() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let target = SymbolId(99);
+        let hir = HirModule {
+            functions: vec![HirFunction {
+                name: SymbolId(10),
+                params: Vec::new(),
+                return_ty: int_ty,
+                body: vec![HirStmt::Expr {
+                    expr: HirExpr::Yield {
+                        value: Some(Box::new(HirExpr::Walrus {
+                            target,
+                            value: Box::new(HirExpr::IntLit(5, int_ty)),
+                            ty: int_ty,
+                        })),
+                        ty: int_ty,
+                    },
+                    span: Span::dummy(),
+                }],
+                span: Span::dummy(),
+                captures: vec![target],
+                is_async: false,
+                is_generator: true,
+                decorators: Vec::new(),
+                has_star_args: false,
+                star_param_pos: None,
+                has_kwargs: false,
+            }],
+            classes: Vec::new(),
+            top_level: Vec::new(),
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+        };
+
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        let body = mir
+            .bodies
+            .iter()
+            .find(|body| body.name == SymbolId(3_000_010))
+            .expect("synthetic generator body should be lowered");
+        let all_stmts: Vec<_> = body.blocks.iter().flat_map(|b| b.stmts.iter()).collect();
+        assert!(all_stmts
+            .iter()
+            .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == target)));
     }
 
     // ── P0-R4: CallExtern return propagation tests ──────────────────────
