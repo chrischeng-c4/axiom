@@ -35,7 +35,11 @@ pub enum TdCommand {
     Create(CreateArgs),
     /// Validate legacy slug lifecycle state or run the read-only TD checker.
     Validate(ValidateArgs),
-    /// Merge an approved tech-design spec back to main.
+    /// Complete a tech-design spec's lifecycle by merging it into the target
+    /// branch — the CURRENT branch by default (detached HEAD falls back to the
+    /// configured default branch). On a `project-*` branch this is local
+    /// lifecycle completion, not a default-branch merge; pass
+    /// `--target-branch main` to merge into the default branch.
     Merge(MergeArgs),
     /// Read-only rule-registry check against `.aw/tech-design/` files.
     /// Accepts a slug (resolved in the current checkout), a single file path, or
