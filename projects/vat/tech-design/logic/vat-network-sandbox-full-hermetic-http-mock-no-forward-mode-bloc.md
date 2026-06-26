@@ -89,7 +89,6 @@ commands:
     behavior:
       - "Spawns the http-mock proxy with --no-forward when [network].egress is localhost-only or deny — so the runner (seatbelt-confined to localhost) plus a non-forwarding proxy make the run hermetic. egress=open keeps the proxy forwarding."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
