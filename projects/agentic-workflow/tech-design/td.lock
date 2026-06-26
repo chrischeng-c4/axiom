@@ -1,8 +1,8 @@
 version = 1
 project = "agentic-workflow"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-06-25T08:08:27.106192+00:00"
-digest = "sha256:6e3d72ca50b13fe750ad77e7c8ac1fb2912d3f1213ca74c1929a4e145d1098f4"
+generated_at = "2026-06-26T04:03:19.598886+00:00"
+digest = "sha256:add65f907060a5cc313c7e0d8fec98a7259665e87ecc607da44ad3b4edf44df4"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -3582,7 +3582,7 @@ digest = "sha256:2cdc9d93a110b8bf3503d7e70219c883a4a0666e77a9e9b9ab7a5b62fcabb71
 
 [[files]]
 path = "surface/interfaces/src/td.md"
-digest = "sha256:111eedcc773e519f1330f80436829f7f206cc8785422665c14208668fd04319b"
+digest = "sha256:602aa59727814265d9bd1603e1a9f2c43c14ce7a1fb4a531860b48f10cd0721b"
 
 [[files]]
 path = "surface/interfaces/src/td_check_section_type.md"
