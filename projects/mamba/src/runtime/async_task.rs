@@ -13,6 +13,11 @@ use super::value::MbValue;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+thread_local! {
+    static AWAIT_DEADLINE: std::cell::Cell<Option<std::time::Instant>> =
+        const { std::cell::Cell::new(None) };
+}
+
 // ── Task Creation (asyncio.create_task equivalent) ──
 
 /// Create an async task from a coroutine.
@@ -106,6 +111,21 @@ pub fn mb_task_cancelled(task_handle: MbValue) -> MbValue {
     } else {
         MbValue::from_bool(false)
     }
+}
+
+fn await_deadline_expired() -> bool {
+    AWAIT_DEADLINE.with(|deadline| {
+        deadline
+            .get()
+            .is_some_and(|d| std::time::Instant::now() >= d)
+    })
+}
+
+fn raise_timeout_error() {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TimeoutError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+    );
 }
 
 // ── Event Loop ──
@@ -358,8 +378,15 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
 
         let max_iterations = 100_000;
         let mut completed = false;
+        let mut timed_out = false;
         for _ in 0..max_iterations {
             super::gc::gc_safepoint();
+            if await_deadline_expired() {
+                timed_out = true;
+                mb_cancel_task(task_handle);
+                raise_timeout_error();
+                break;
+            }
             let done = COROUTINES
                 .read()
                 .unwrap()
@@ -372,11 +399,15 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
             }
             event_loop.tick();
         }
-        if !completed {
+        if !completed && !timed_out && super::exception::current_exception_type().is_none() {
             eprintln!("mamba: mb_await: iteration limit reached, coroutine may be incomplete");
         }
 
         WAKERS.write().unwrap().remove(&(id as u64));
+
+        if timed_out {
+            return MbValue::none();
+        }
 
         let result = COROUTINES
             .read()
@@ -397,6 +428,22 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         // pass through unchanged so users can `await asyncio.gather(...)`.
         awaitable
     }
+}
+
+pub fn mb_await_with_timeout(awaitable: MbValue, duration: std::time::Duration) -> MbValue {
+    let deadline = std::time::Instant::now() + duration;
+    let previous = AWAIT_DEADLINE.with(|cell| {
+        let previous = cell.get();
+        let next = match previous {
+            Some(existing) if existing < deadline => Some(existing),
+            _ => Some(deadline),
+        };
+        cell.set(next);
+        previous
+    });
+    let result = mb_await(awaitable);
+    AWAIT_DEADLINE.with(|cell| cell.set(previous));
+    result
 }
 
 fn raise_cancelled_error() {
