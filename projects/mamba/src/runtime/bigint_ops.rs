@@ -43,6 +43,49 @@ pub fn bigint_from_big(v: BigInt) -> MbValue {
     MbValue::from_ptr(obj)
 }
 
+fn parse_literal_to_bigint(src: &str) -> Option<BigInt> {
+    let normalized = src.replace('_', "");
+    let (radix, digits) = if let Some(rest) = normalized
+        .strip_prefix("0x")
+        .or_else(|| normalized.strip_prefix("0X"))
+    {
+        (16, rest)
+    } else if let Some(rest) = normalized
+        .strip_prefix("0o")
+        .or_else(|| normalized.strip_prefix("0O"))
+    {
+        (8, rest)
+    } else if let Some(rest) = normalized
+        .strip_prefix("0b")
+        .or_else(|| normalized.strip_prefix("0B"))
+    {
+        (2, rest)
+    } else {
+        (10, normalized.as_str())
+    };
+    BigInt::parse_bytes(digits.as_bytes(), radix)
+}
+
+/// Allocate an integer literal that exceeded the compiler's i64 literal path.
+pub fn bigint_from_literal(src: &str) -> MbValue {
+    parse_literal_to_bigint(src)
+        .map(normalize_bigint)
+        .unwrap_or_else(|| MbValue::from_int(0))
+}
+
+/// Allocate an immortal BigInt literal for compile-time constants embedded in JIT code.
+pub fn bigint_immortal_from_literal(src: &str) -> MbValue {
+    let Some(big) = parse_literal_to_bigint(src) else {
+        return MbValue::from_int(0);
+    };
+    if let Some(small) = big.to_i64() {
+        if fits_inline(small) {
+            return MbValue::from_int(small);
+        }
+    }
+    MbValue::from_ptr(MbObject::new_bigint_immortal(big))
+}
+
 /// Extract the `BigInt` from a pointer MbValue.
 /// Returns `None` if the value is not a BigInt heap object.
 ///

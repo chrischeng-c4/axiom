@@ -437,6 +437,10 @@ impl CraneliftBackend {
                 let var = vars.get(*dest, builder, cl_type);
                 let val = match value {
                     MirConst::Int(v) => builder.ins().iconst(cl_types::I64, *v),
+                    MirConst::BigInt(s) => {
+                        let val = crate::runtime::bigint_ops::bigint_immortal_from_literal(s);
+                        builder.ins().iconst(cl_types::I64, val.to_bits() as i64)
+                    }
                     MirConst::Float(v) => builder.ins().f64const(*v),
                     MirConst::Bool(v) => builder.ins().iconst(cl_types::I64, *v as i64),
                     MirConst::None => builder.ins().iconst(cl_types::I64, 0),
