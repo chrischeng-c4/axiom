@@ -45,6 +45,16 @@ fn bump_dict_version(dict: MbValue) {
     *entry = entry.wrapping_add(1);
 }
 
+fn dictlike_backing_data(value: MbValue) -> Option<MbValue> {
+    let ptr = value.as_ptr()?;
+    unsafe {
+        if matches!((*ptr).data, ObjData::Dict(_)) {
+            return None;
+        }
+    }
+    super::class::unwrap_dictlike_data(value)
+}
+
 /// Type-preserving dict key. Distinguishes int from string keys so that
 /// `d[1]` and `d["1"]` are distinct entries (matching CPython semantics).
 #[derive(Debug)]
@@ -773,6 +783,9 @@ pub fn mb_dict_getitem(dict: MbValue, key: MbValue) -> MbValue {
             return super::list_ops::mb_list_getitem(children, key);
         }
     }
+    if let Some(backing) = dictlike_backing_data(dict) {
+        return mb_dict_getitem(backing, key);
+    }
     let Some(dk) = to_dict_key_checked(key) else {
         return MbValue::none();
     };
@@ -957,6 +970,9 @@ pub fn mb_dict_delitem(dict: MbValue, key: MbValue) {
 
 /// key in dict -> bool
 pub fn mb_dict_contains(dict: MbValue, key: MbValue) -> MbValue {
+    if let Some(backing) = dictlike_backing_data(dict) {
+        return mb_dict_contains(backing, key);
+    }
     let Some(dk) = to_dict_key_checked(key) else {
         return MbValue::none();
     };
@@ -982,10 +998,12 @@ pub fn mb_dict_contains(dict: MbValue, key: MbValue) -> MbValue {
 pub fn mb_is_mapping(val: MbValue) -> MbValue {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
-            return MbValue::from_bool(matches!((*ptr).data, ObjData::Dict(_)));
+            if matches!((*ptr).data, ObjData::Dict(_)) {
+                return MbValue::from_bool(true);
+            }
         }
     }
-    MbValue::from_bool(false)
+    MbValue::from_bool(super::class::unwrap_dictlike_data(val).is_some())
 }
 
 /// len(dict) -> int
@@ -999,6 +1017,9 @@ pub fn mb_dict_len(dict: MbValue) -> MbValue {
                 }
             }
         }
+    }
+    if let Some(backing) = dictlike_backing_data(dict) {
+        return mb_dict_len(backing);
     }
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
@@ -1604,6 +1625,9 @@ pub fn mb_dict_clear(dict: MbValue) {
 
 /// dict.copy() -> shallow copy
 pub fn mb_dict_copy(dict: MbValue) -> MbValue {
+    if let Some(backing) = dictlike_backing_data(dict) {
+        return mb_dict_copy(backing);
+    }
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -2172,6 +2196,20 @@ mod tests {
         MbValue::from_ptr(MbObject::new_list(vals))
     }
 
+    fn userdict_with_backing(backing: MbValue) -> MbValue {
+        let userdict = MbValue::from_ptr(MbObject::new_instance(
+            "collections.UserDict".to_string(),
+        ));
+        unsafe {
+            if let Some(ptr) = userdict.as_ptr() {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    fields.write().unwrap().insert("_data".to_string(), backing);
+                }
+            }
+        }
+        userdict
+    }
+
     // ── new ──
 
     #[test]
@@ -2308,6 +2346,33 @@ mod tests {
         assert_eq!(
             mb_dict_contains(MbValue::from_int(0), str_val("k")).as_bool(),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn test_mapping_helpers_accept_userdict_backing() {
+        let backing = mb_dict_new();
+        mb_dict_setitem(backing, MbValue::from_int(0), MbValue::from_int(1));
+        mb_dict_setitem(backing, MbValue::from_int(2), MbValue::from_int(3));
+        let userdict = userdict_with_backing(backing);
+
+        assert_eq!(mb_is_mapping(userdict).as_bool(), Some(true));
+        assert_eq!(mb_dict_len(userdict).as_int(), Some(2));
+        assert_eq!(
+            mb_dict_contains(userdict, MbValue::from_int(2)).as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            mb_dict_getitem(userdict, MbValue::from_int(2)).as_int(),
+            Some(3)
+        );
+
+        let rest = mb_dict_copy(userdict);
+        mb_dict_delitem(rest, MbValue::from_int(2));
+        assert_eq!(mb_dict_len(rest).as_int(), Some(1));
+        assert_eq!(
+            mb_dict_contains(backing, MbValue::from_int(2)).as_bool(),
+            Some(true)
         );
     }
 
