@@ -38,6 +38,7 @@ members = [
     "libs/raft-host",
     "libs/operator",
     "libs/service-http",
+    "libs/service-auth",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",

@@ -1,0 +1,22 @@
+[package]
+name = "service-auth"
+version = "0.1.0"
+edition = "2021"
+description = "Shared request-auth middleware for the ecosystem's HTTP services: the generic extract -> verify -> reject -> inject plumbing plus a `Verifier` trait each service implements. Token crypto lives in `libs/claimtoken`; per-resource authorization (RBAC, scope-vs-key) stays in the service handlers. The common shape lumen/keep/relay/loom each hand-roll today."
+
+[lib]
+name = "service_auth"
+path = "src/lib.rs"
+
+[dependencies]
+# Inherit the workspace pins so the lock stays single-versioned.
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+# tokio drives the `#[tokio::test]` oneshot middleware tests.
+tokio = { workspace = true, features = ["macros", "rt"] }
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"
