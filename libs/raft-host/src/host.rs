@@ -1,4 +1,4 @@
-//! `RaftHost` — drives a [`raftcore::RaftNode`] for a [`RaftStateMachine`] over
+//! `RaftHost` — drives a [`raft_core::RaftNode`] for a [`RaftStateMachine`] over
 //! an h2c peer transport, with read-your-write `propose` and snapshot/compaction.
 //!
 //! Generalizes the per-service drivers (relay/lumen/keep each hand-rolled this):
@@ -17,7 +17,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use raftcore::{
+use raft_core::{
     AppendReq, AppendResp, Index, InstallSnapshotReq, InstallSnapshotResp, Membership, NodeId,
     RaftMsg, RaftNode, VoteReq, VoteResp,
 };
@@ -29,7 +29,7 @@ use crate::config::{HostConfig, SnapshotPolicy};
 use crate::state_machine::{Command, RaftStateMachine};
 use crate::store::RaftStore;
 
-// --- peer RPC envelopes (the `from` id rides alongside the raftcore message) ---
+// --- peer RPC envelopes (the `from` id rides alongside the raft_core message) ---
 
 #[derive(Serialize, Deserialize)]
 struct VoteEnvelope {

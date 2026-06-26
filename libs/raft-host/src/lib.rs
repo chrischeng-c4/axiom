@@ -1,12 +1,12 @@
 //! `raft-host` — the ecosystem's shared raft driver.
 //!
-//! `libs/raftcore` is the step-driven consensus core; this crate is the **host**
+//! `libs/raft-core` is the step-driven consensus core; this crate is the **host**
 //! that drives it for a [`RaftStateMachine`]: a tick/pump loop, the h2c peer
 //! transport (Vote / Append / InstallSnapshot), the single apply loop, snapshot
 //! + log compaction, a read-your-write [`RaftHost::propose`], and a peer
 //! [`RaftHost::router`] to merge into the service's h2c port.
 //!
-//! Every raftcore service (lumen, keep, relay, loom) supplies a
+//! Every raft_core service (lumen, keep, relay, loom) supplies a
 //! [`RaftStateMachine`] (`apply`/`snapshot`/`restore`/`applied_index`) and gets
 //! HA + the backup layer for free, instead of hand-rolling a driver.
 
@@ -22,8 +22,8 @@ pub use host::RaftHost;
 pub use state_machine::{Command, RaftStateMachine};
 pub use store::{FsyncPolicy, RaftStore};
 
-// Re-export the raftcore surface a host consumer needs (membership, ids).
-pub use raftcore::{auto_membership, Index, Membership, NodeId, Term};
+// Re-export the raft_core surface a host consumer needs (membership, ids).
+pub use raft_core::{auto_membership, Index, Membership, NodeId, Term};
 
 #[cfg(test)]
 mod tests {

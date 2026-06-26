@@ -5766,7 +5766,7 @@ dependencies = [
  "hyper 1.9.0",
  "hyper-util",
  "parking_lot",
- "raftcore",
+ "raft-core",
  "redis",
  "reqwest 0.12.28",
  "rust_decimal",
@@ -6246,7 +6246,7 @@ dependencies = [
  "futures",
  "hyper 1.9.0",
  "hyper-util",
- "raftcore",
+ "raft-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -6316,8 +6316,8 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "proptest",
+ "raft-core",
  "raft-host",
- "raftcore",
  "rand 0.8.6",
  "rayon",
  "relay",
@@ -9236,6 +9236,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "raft-core"
+version = "0.4.3"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "raft-host"
 version = "0.1.0"
 dependencies = [
@@ -9243,20 +9251,12 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "h2c",
- "raftcore",
+ "raft-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "raftcore"
-version = "0.4.3"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -9642,7 +9642,7 @@ dependencies = [
  "criterion",
  "futures",
  "h2c",
- "raftcore",
+ "raft-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

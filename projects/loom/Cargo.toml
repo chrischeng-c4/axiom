@@ -37,7 +37,7 @@ async-stream = { workspace = true }
 # relay/keep clients (h2c, no TLS — same as lumen's relay client).
 reqwest = { workspace = true }
 # Shared Raft consensus engine for replicated workflow state (#110).
-raftcore = { path = "../../libs/raftcore" }
+raft-core = { path = "../../libs/raft-core" }
 # Scoped claim-check tokens the schema layer signs for workers (#444).
 claimtoken = { path = "../../libs/claimtoken" }
 # Standard agent-facing CLI ops — llm/upgrade/report-issue (#475). Offline paths

@@ -30,7 +30,7 @@ members = [
     "projects/jet/wasm",
     "projects/agentic-workflow",
     "libs/compass",
-    "libs/raftcore",
+    "libs/raft-core",
     "libs/claimtoken",
     "libs/openapi-codegen",
     "libs/h2c",

@@ -4,7 +4,7 @@
 //!
 //! v1 ships the configuration surface — paths to cert / key / CA bundle
 //! and an `is_required` flag — so deployments can declare their TLS
-//! posture today. The rustls binding is wired in alongside the raftcore-backed
+//! posture today. The rustls binding is wired in alongside the raft_core-backed
 //! peer transport.
 //!
 //! ## Env contract

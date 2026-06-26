@@ -10,7 +10,7 @@ use std::fs::{create_dir_all, File};
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use raftcore::{NodeId, PersistedState};
+use raft_core::{NodeId, PersistedState};
 
 /// How aggressively hard state is flushed to disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

@@ -1,4 +1,4 @@
-//! raftcore-backed consensus (HA phase C). Only compiles/runs with
+//! raft_core-backed consensus (HA phase C). Only compiles/runs with
 //! `--features raft`. Proves a write goes through the Raft log (propose →
 //! commit → apply) onto the engine, survives a snapshot/compaction, and that
 //! per-shard groups route writes by key.

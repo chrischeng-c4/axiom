@@ -8,7 +8,7 @@
 //! materialized index and accepts writes by publishing them to the
 //! configured write log. In single-node mode that log is local; in explicit
 //! broker mode it is Relay/NATS; in primary-replica mode Lumen owns ordering
-//! and replication via raftcore. Apply happens in the background subscribe
+//! and replication via raft_core. Apply happens in the background subscribe
 //! loop — see `coordinator` / `wal`.
 //!
 //! ```text
@@ -184,7 +184,7 @@ enum WalBackend {
     /// relay broadcast (#124). Explicit external broker mode.
     #[cfg(feature = "relay-wal")]
     Relay,
-    /// Lumen-owned raftcore replication (#515). HA without an external broker.
+    /// Lumen-owned raft_core replication (#515). HA without an external broker.
     #[cfg(feature = "raft-wal")]
     Raft,
 }
@@ -625,7 +625,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 voters = ?topo.membership.voters,
                 peers = ?topo.peers.keys().collect::<Vec<_>>(),
                 data_dir = %args.raft_data_dir,
-                "wal=raft (raftcore; multi-pod)"
+                "wal=raft (raft_core; multi-pod)"
             );
             let store = raft_host::RaftStore::open(
                 &args.raft_data_dir,

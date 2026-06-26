@@ -5,7 +5,7 @@
 //! This module currently carries the public cluster-state DTOs — readiness,
 //! peer DNS map, role inspection, read-consistency parsing, and the wire shape
 //! of `/debug/cluster`. The next implementation slice wires this surface to
-//! `libs/raftcore` so multi-pod Lumen owns write ordering and primary/replica
+//! `libs/raft-core` so multi-pod Lumen owns write ordering and primary/replica
 //! synchronization itself.
 //!
 //! The old broker-owned framing is stale: Relay remains an explicit external

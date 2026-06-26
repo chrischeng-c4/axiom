@@ -49,9 +49,9 @@ h2c = { path = "../../libs/h2c", features = ["server"] }
 # always build; the HTTPS paths are pulled in by lumen's `self-update` /
 # `report-issue` features via `cli-std/online`.
 cli-std = { path = "../../libs/cli-std", default-features = false }
-# Lumen-owned HA: writes replicated through the shared raftcore engine (behind
+# Lumen-owned HA: writes replicated through the shared raft-core engine (behind
 # the `raft-wal` feature). Peer RPCs ride the same h2c transport.
-raftcore = { path = "../../libs/raftcore", optional = true }
+raft-core = { path = "../../libs/raft-core", optional = true }
 raft-host = { path = "../../libs/raft-host", optional = true }
 # `lumen spec gen` — generate a typed client from lumen's own OpenAPI.
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
@@ -97,9 +97,9 @@ default = []
 jieba = ["dep:jieba-rs"]
 # relay-wal — tail relay's broadcast as the WAL backend (#124), instead of NATS.
 relay-wal = ["dep:relay", "dep:reqwest"]
-# raft-wal — lumen owns write ordering + replication via libs/raftcore (HA),
+# raft-wal — lumen owns write ordering + replication via libs/raft-core (HA),
 # instead of an external broker. Peer RPCs use the h2c client. (#515)
-raft-wal = ["dep:raftcore", "dep:raft-host", "dep:reqwest"]
+raft-wal = ["dep:raft-core", "dep:raft-host", "dep:reqwest"]
 # self-update / report-issue — enable the online (HTTPS) paths of the shared
 # CLI-ops lib. Offline builds still ship both commands (upgrade --check / the
 # report-issue dry-run + pre-filled-URL fallback). The published binary enables

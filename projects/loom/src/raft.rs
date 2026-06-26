@@ -1,5 +1,5 @@
 //! Raft-replicated workflow state (#110) — the replicated state machine over
-//! `raftcore`.
+//! `raft_core`.
 //!
 //! loom's durable state is its run map. A raft group replicates it: each `put`
 //! is a [`Command::PutRun`] proposed to the leader; once committed (majority),
@@ -7,7 +7,7 @@
 //! is the HA tier of the durability ADR (`docs/adr/0001`); the single-node
 //! tier is [`crate::store::FileStore`].
 //!
-//! `raftcore` is **step-driven** (no timers/threads), so consensus is tested
+//! `raft_core` is **step-driven** (no timers/threads), so consensus is tested
 //! in-process here (a message-routing cluster). The production driver — a tick
 //! loop + h2c transport + a `RaftStore` for `PersistedState`, modelled on
 //! relay's `raft_driver` — is the remaining wiring to expose this as a
@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use raftcore::RaftEntry;
+use raft_core::RaftEntry;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{WorkflowRun, WorkflowRunId};
@@ -108,7 +108,7 @@ pub struct RaftRunStore {
 }
 
 struct RaftInner {
-    node: raftcore::RaftNode,
+    node: raft_core::RaftNode,
     sm: LoomStateMachine,
 }
 
@@ -119,10 +119,10 @@ impl RaftRunStore {
         std::fs::create_dir_all(dir)?;
         let path = dir.join("raft.json");
         let snap_path = dir.join("runs.snapshot.json");
-        let membership = raftcore::auto_membership(1);
+        let membership = raft_core::auto_membership(1);
         let node = match std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
-            Some(state) => raftcore::RaftNode::from_persisted(node_id, &membership, state),
-            None => raftcore::RaftNode::new(node_id, &membership),
+            Some(state) => raft_core::RaftNode::from_persisted(node_id, &membership, state),
+            None => raft_core::RaftNode::new(node_id, &membership),
         };
         let mut sm = LoomStateMachine::new();
         // Durable recovery: restore the materialized state from the snapshot
@@ -207,7 +207,7 @@ impl crate::store::RunStore for RaftRunStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raftcore::{auto_membership, NodeId, RaftNode};
+    use raft_core::{auto_membership, NodeId, RaftNode};
 
     /// An in-process raft cluster with a loom state machine per node.
     struct Cluster {
@@ -229,7 +229,7 @@ mod tests {
                 node.tick();
             }
             // route outgoing messages
-            let mut bus: Vec<(NodeId, raftcore::Outgoing)> = Vec::new();
+            let mut bus: Vec<(NodeId, raft_core::Outgoing)> = Vec::new();
             for (id, node) in self.nodes.iter_mut() {
                 for out in node.take_outgoing() {
                     bus.push((*id, out));

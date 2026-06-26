@@ -41,8 +41,8 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 ciborium = "0.2"
 crc32fast = "1.4"
 
-# Shared Raft consensus engine (extracted to libs/raftcore; serde-only).
-raftcore = { path = "../../libs/raftcore" }
+# Shared Raft consensus engine (extracted to libs/raft-core; serde-only).
+raft-core = { path = "../../libs/raft-core" }
 
 # HA: the follower is an HTTP/2 client tailing the leader (#135).
 reqwest = { workspace = true }

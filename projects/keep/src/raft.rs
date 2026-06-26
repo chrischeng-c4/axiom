@@ -1,6 +1,6 @@
-//! raftcore-backed consensus (HA phase C). keep's engine is wired as a Raft
+//! raft_core-backed consensus (HA phase C). keep's engine is wired as a Raft
 //! state machine so writes go through the log (propose → commit → apply) using
-//! the shared [`raftcore`] crate (`libs/raftcore`) — the same verified engine
+//! the shared [`raft_core`] crate (`libs/raft-core`) — the same verified engine
 //! relay uses, replacing the earlier openraft integration.
 //!
 //! - [`RaftKv`] is **one** Raft group fronting the engine. For a single node it
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use raftcore::{Membership, NodeId, RaftNode};
+use raft_core::{Membership, NodeId, RaftNode};
 use serde::{Deserialize, Serialize};
 
 use crate::cluster::ClusterConfig;
@@ -69,7 +69,7 @@ fn apply(node: &mut RaftNode, engine: &KvEngine) {
     }
 }
 
-/// A single raftcore group fronting a keep engine; writes go through consensus.
+/// A single raft_core group fronting a keep engine; writes go through consensus.
 pub struct RaftKv {
     node: Mutex<RaftNode>,
     pub engine: Arc<KvEngine>,
