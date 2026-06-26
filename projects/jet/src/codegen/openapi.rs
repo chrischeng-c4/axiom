@@ -1,5 +1,5 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
-// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-openapi-rs" tracker="pending-tracker" reason="Existing hand-written code in projects/jet/src/codegen/openapi.rs requires tracked generator coverage."
+// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-openapi-rs" tracker="standardize-gap-projects-jet-src-codegen-openapi-rs" reason="Existing hand-written code in projects/jet/src/codegen/openapi.rs requires tracked generator coverage."
 //! OpenAPI 3.0 / 3.1 document model.
 //!
 //! A pragmatic deserialization subset: only the keywords the TypeScript
