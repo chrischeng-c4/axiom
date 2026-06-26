@@ -161,3 +161,7 @@ async fn pubsub_emulator_publish_pull_ack_and_stream() {
     drop(tx);
 }
 // CODEGEN-END
+// SPEC-MANAGED: projects/vat/tech-design/logic/vat-td-ast-promote-remaining-grouped-source-units.md#rust-source-unit
+// CODEGEN-BEGIN
+
+// CODEGEN-END
