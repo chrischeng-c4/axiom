@@ -1,5 +1,5 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
-// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-hooks-emit-rs" tracker="pending-tracker" reason="Existing hand-written code in projects/jet/src/codegen/hooks_emit.rs requires tracked generator coverage."
+// HANDWRITE-BEGIN gap="standardize:projects-jet-src-codegen-hooks-emit-rs" tracker="standardize-gap-projects-jet-src-codegen-hooks-emit-rs" reason="Existing hand-written code in projects/jet/src/codegen/hooks_emit.rs requires tracked generator coverage."
 //! Emits `hooks.ts`: TanStack Query (React Query) hooks bound to the client,
 //! using the per-operation `XxxData` / `XxxResponse` types.
 //!
