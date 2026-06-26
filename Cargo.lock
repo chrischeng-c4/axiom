@@ -111,6 +111,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
+ "cli-std",
  "colored",
  "dialoguer",
  "dirs",

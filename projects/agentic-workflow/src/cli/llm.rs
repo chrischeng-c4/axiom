@@ -10,7 +10,9 @@
 //! @spec projects/agentic-workflow/tech-design/logic/aw-llm-offline-agent-orientation-command.md
 
 use crate::Result;
-use clap::{Args, Command, Subcommand, ValueEnum};
+use clap::{Args, ValueEnum};
+#[cfg(test)]
+use clap::{Command, Subcommand};
 
 /// Which agent-orientation topic to print.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -33,19 +35,19 @@ pub enum LlmTopic {
 pub enum LlmFormat {
     /// Human/agent-readable Markdown (default).
     Md,
-    /// Machine-readable `{ "topic", "markdown" }` object.
+    /// Machine-readable JSON topic or outline object.
     Json,
 }
 
 /// Print agent-facing orientation topics -- offline, no server, no model.
 /// `outline` maps the topics; `capability` / `td` / `ec` are the three
-/// pillars; `loop` is how to operate aw. Markdown by default; `--format
+/// pillars; `wi` is how to operate aw. Markdown by default; `--format
 /// json` for a machine-readable form. For exact flags of any verb, run
 /// `aw <verb> --help` -- this surface is orientation, not reference.
 #[derive(Debug, Args, Clone)]
 pub struct LlmArgs {
     /// Which topic to print.
-    #[arg(value_enum, default_value_t = LlmTopic::Outline)]
+    #[arg(long, value_enum, default_value_t = LlmTopic::Outline)]
     pub topic: LlmTopic,
 
     /// Output format.
@@ -53,19 +55,46 @@ pub struct LlmArgs {
     pub format: LlmFormat,
 }
 
+const TOPICS: &[cli_std::llm::Topic] = &[
+    cli_std::llm::Topic {
+        id: "capability",
+        summary: "the goal: what to build and whether it is ready",
+        body: CAPABILITY_MD,
+    },
+    cli_std::llm::Topic {
+        id: "td",
+        summary: "the artifact: how the implementation is authored and generated",
+        body: TD_MD,
+    },
+    cli_std::llm::Topic {
+        id: "ec",
+        summary: "the verifier: what gets tested and what decides done",
+        body: EC_MD,
+    },
+    cli_std::llm::Topic {
+        id: "wi",
+        summary: "the loop state and how to operate the aw run envelope",
+        body: WI_MD,
+    },
+];
+
 pub fn run(args: LlmArgs) -> Result<()> {
-    let markdown = topic_markdown(args.topic);
-    match args.format {
-        LlmFormat::Md => println!("{markdown}"),
-        LlmFormat::Json => {
-            let value = serde_json::json!({
-                "topic": topic_name(args.topic),
-                "markdown": markdown,
-            });
-            println!("{}", serde_json::to_string_pretty(&value)?);
-        }
-    }
+    let out = cli_std::llm::render(
+        "aw",
+        env!("AW_BUILD_VERSION"),
+        TOPICS,
+        topic_name(args.topic),
+        cli_std_format(args.format),
+    )?;
+    println!("{out}");
     Ok(())
+}
+
+fn cli_std_format(format: LlmFormat) -> cli_std::llm::Format {
+    match format {
+        LlmFormat::Md => cli_std::llm::Format::Md,
+        LlmFormat::Json => cli_std::llm::Format::Json,
+    }
 }
 
 /// The stable string name of a topic (matches the CLI value).
@@ -79,18 +108,9 @@ fn topic_name(topic: LlmTopic) -> &'static str {
     }
 }
 
-fn topic_markdown(topic: LlmTopic) -> String {
-    match topic {
-        LlmTopic::Outline => outline_md(),
-        LlmTopic::Capability => capability_md(),
-        LlmTopic::Td => td_md(),
-        LlmTopic::Ec => ec_md(),
-        LlmTopic::Wi => wi_md(),
-    }
-}
-
 /// The registered top-level verbs, sourced from the `Commands` enum itself so
 /// the outline can never drift from the actual CLI. Sorted for determinism.
+#[cfg(test)]
 fn registered_verbs() -> Vec<String> {
     let cmd = crate::cli::Commands::augment_subcommands(Command::new("aw"));
     let mut verbs: Vec<String> = cmd
@@ -102,62 +122,7 @@ fn registered_verbs() -> Vec<String> {
     verbs
 }
 
-fn outline_md() -> String {
-    let verbs = registered_verbs().join(" ");
-    format!(
-        r#"# aw -- agent orientation
-
-aw is a loop. You operate it by reading one JSON envelope (schema `aw.cli.v1`)
-and running the single command it hands back, until the loop converges:
-
-    read wi (state) -> do td (act) -> run ec (verify) -> write result to wi -> repeat
-
-aw is mechanical: it never calls a model. The loop terminates on the VERIFIER
-(ec), not on a review.
-
-## The model: capability -> ec -> td
-
-    capability  --derive what to test-->  ec  --gates-->  td
-      (goal:          (human + agent)    (verifier:      (artifact:
-       what)                              the only gate)  how + code)
-
-                    ec green  =>  capability achieved
-
-- ec sits BETWEEN the goal and the implementation: it guards td on behalf of
-  capability.
-- td is caps-agnostic -- it only has to pass ec; passing ec == achieving caps,
-  so td may be any shape (beauty irrelevant).
-- the one judgment point is deriving ec from capability (human + agent); that
-  is the only place a review belongs. See `aw llm ec`.
-
-The loop runs over that chain -- `aw` is the engine, `aw wi` is the state:
-
-    aw (loop) reads wi (state+target) -> does td (act) -> runs ec (verify)
-    -> writes the result to wi -> repeats until ec is green.
-
-No review -- you terminate on the verifier.
-
-## Topics -- read the smallest one you need
-
-| topic             | read it when ...                                        |
-|-------------------|---------------------------------------------------------|
-| aw llm capability | you need the goal: what to build and whether it's ready |
-| aw llm ec         | you are defining/guarding what gets tested (the gate)   |
-| aw llm td         | you are authoring/generating the implementation         |
-| aw llm wi         | you need to operate the loop: state, next_action, HITL  |
-
-## Registered verbs
-
-{verbs}
-
-For exact flags/args of any verb, run `aw <verb> --help`. This surface is
-orientation, not reference -- it never restates flag syntax.
-"#
-    )
-}
-
-fn capability_md() -> String {
-    r#"# aw llm capability -- the WHAT pillar
+const CAPABILITY_MD: &str = r#"# aw llm --topic capability -- the WHAT pillar
 
 A capability is the unit of "what should exist and be production-ready". The
 product surface is declared as Markdown capability roots in the project
@@ -185,12 +150,9 @@ validation inventories and external contracts.
 Aggregate readiness across all dimensions lives in `aw health`.
 
 For exact flags, run `aw capability --help`.
-"#
-    .to_string()
-}
+"#;
 
-fn td_md() -> String {
-    r#"# aw llm td -- the artifact (how + the running code)
+const TD_MD: &str = r#"# aw llm --topic td -- the artifact (how + the running code)
 
 Spec defines how; `td` code is the artifact that runs. Implementation is
 generated from the tech-design, and the tree is regenerable. td is
@@ -216,12 +178,9 @@ ec. Passing ec verify == achieving caps, so td chases ec green, in any shape.
   markers tying it back to its TD.
 
 For exact flags, run `aw td --help`.
-"#
-    .to_string()
-}
+"#;
 
-fn ec_md() -> String {
-    r#"# aw llm ec -- the verifier (the only gate)
+const EC_MD: &str = r#"# aw llm --topic ec -- the verifier (the only gate)
 
 EC is what everything trusts. The loop terminates on ec; caps is "achieved"
 iff ec is green; td chases ec green. So ec is the one artifact that decides
@@ -250,12 +209,9 @@ iff ec is green; td chases ec green. So ec is the one artifact that decides
 - `aw health --verify-ec` evaluates the dimensions required for production.
 
 For exact flags, run `aw ec --help`.
-"#
-    .to_string()
-}
+"#;
 
-fn wi_md() -> String {
-    r#"# aw llm wi -- the loop state + how to operate the loop
+const WI_MD: &str = r#"# aw llm --topic wi -- the loop state + how to operate the loop
 
 A work-item IS the loop's durable state. You operate aw by reading one JSON
 envelope (schema `aw.cli.v1`) and running the command it hands back, until the
@@ -287,9 +243,7 @@ Drive it: `aw run --wi <id>` (or `--project` / `--capability`); the linear
 forward path is `wi -> td -> merge`.
 
 For exact flags, run `aw run --help` or `aw wi --help`.
-"#
-    .to_string()
-}
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -297,19 +251,26 @@ mod tests {
 
     // @spec aw-llm-offline-agent-orientation-command.md R1
     #[test]
-    fn llm_outline_lists_registered_verbs() {
+    fn llm_outline_uses_cli_std_and_standard_commands() {
         let verbs = registered_verbs();
         assert!(
-            verbs.iter().any(|v| v == "td") && verbs.iter().any(|v| v == "ec"),
-            "registered verbs should include td and ec, got {verbs:?}"
+            ["llm", "upgrade", "report-issue"]
+                .iter()
+                .all(|want| verbs.iter().any(|verb| verb == want)),
+            "registered verbs should include standard CLI commands, got {verbs:?}"
         );
-        let outline = outline_md();
-        for verb in &verbs {
-            assert!(
-                outline.contains(verb.as_str()),
-                "outline must list registered verb `{verb}` so it cannot drift"
-            );
-        }
+        let outline = cli_std::llm::render(
+            "aw",
+            env!("AW_BUILD_VERSION"),
+            TOPICS,
+            "outline",
+            cli_std::llm::Format::Md,
+        )
+        .unwrap();
+
+        assert!(outline.contains("aw upgrade"));
+        assert!(outline.contains("aw report-issue"));
+        assert!(outline.contains("`capability`"));
     }
 
     // @spec aw-llm-offline-agent-orientation-command.md R2
@@ -322,7 +283,14 @@ mod tests {
             LlmTopic::Ec,
             LlmTopic::Wi,
         ] {
-            let md = topic_markdown(topic);
+            let md = cli_std::llm::render(
+                "aw",
+                env!("AW_BUILD_VERSION"),
+                TOPICS,
+                topic_name(topic),
+                cli_std::llm::Format::Md,
+            )
+            .unwrap();
             assert!(
                 md.trim_start().starts_with("# aw"),
                 "{} topic must emit an orientation heading",
@@ -338,17 +306,35 @@ mod tests {
 
     // @spec aw-llm-offline-agent-orientation-command.md R3
     #[test]
-    fn llm_format_json_wraps_markdown() {
-        let markdown = topic_markdown(LlmTopic::Outline);
-        let value = serde_json::json!({
-            "topic": topic_name(LlmTopic::Outline),
-            "markdown": markdown,
-        });
-        assert_eq!(value["topic"], "outline");
-        assert!(value["markdown"]
-            .as_str()
+    fn llm_format_json_uses_cli_std_shape() {
+        let outline = cli_std::llm::render(
+            "aw",
+            env!("AW_BUILD_VERSION"),
+            TOPICS,
+            "outline",
+            cli_std::llm::Format::Json,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&outline).unwrap();
+
+        assert_eq!(value["project"], "aw");
+        assert!(value["topics"]
+            .as_array()
             .unwrap()
-            .contains("agent orientation"));
+            .iter()
+            .any(|topic| topic["id"] == "capability"));
+
+        let topic = cli_std::llm::render(
+            "aw",
+            env!("AW_BUILD_VERSION"),
+            TOPICS,
+            "wi",
+            cli_std::llm::Format::Json,
+        )
+        .unwrap();
+        let topic_value: serde_json::Value = serde_json::from_str(&topic).unwrap();
+        assert_eq!(topic_value["topic"], "wi");
+        assert!(topic_value["body"].as_str().unwrap().contains("loop state"));
     }
 
     // @spec aw-llm-offline-agent-orientation-command.md R4
@@ -362,8 +348,22 @@ mod tests {
             LlmTopic::Wi,
         ] {
             assert_eq!(
-                topic_markdown(topic),
-                topic_markdown(topic),
+                cli_std::llm::render(
+                    "aw",
+                    env!("AW_BUILD_VERSION"),
+                    TOPICS,
+                    topic_name(topic),
+                    cli_std::llm::Format::Md,
+                )
+                .unwrap(),
+                cli_std::llm::render(
+                    "aw",
+                    env!("AW_BUILD_VERSION"),
+                    TOPICS,
+                    topic_name(topic),
+                    cli_std::llm::Format::Md,
+                )
+                .unwrap(),
                 "{} topic must be pure and deterministic",
                 topic_name(topic)
             );
