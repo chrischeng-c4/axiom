@@ -692,7 +692,7 @@ async fn search(
     let _consistency = read_consistency_from(&headers);
     // Standalone and explicit-broker builds satisfy this locally. Primary-
     // replica mode will enforce leader/bounded/any against the live cluster
-    // state once the raftcore-backed surface is wired.
+    // state once the raft_core-backed surface is wired.
     Ok(Json(
         state
             .search_backend

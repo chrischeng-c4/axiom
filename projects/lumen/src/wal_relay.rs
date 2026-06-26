@@ -5,7 +5,7 @@
 //!
 //! lumen is a log-tailing derived index (see HA.md): a write is published to the
 //! broker and every pod folds the ordered log into its own index. This backend
-//! makes that broker `relay` (itself HA via `libs/raftcore`): `publish` POSTs to
+//! makes that broker `relay` (itself HA via `libs/raft-core`): `publish` POSTs to
 //! relay, `subscribe` tails relay's broadcast — the loop `relay::spawn_follower`
 //! proved, mapped onto [`WalRecord`].
 //!

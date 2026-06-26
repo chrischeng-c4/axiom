@@ -1,10 +1,10 @@
-//! Deterministic in-process simulation of the raftcore consensus engine — no
+//! Deterministic in-process simulation of the raft_core consensus engine — no
 //! network, no clock, commands are opaque bytes. A bus pumps every node's outbox
 //! into its target's handler until quiescent.
 
 use std::collections::{HashMap, HashSet};
 
-use raftcore::{auto_membership, AppendResp, NodeId, RaftMsg, RaftNode, Role};
+use raft_core::{auto_membership, AppendResp, NodeId, RaftMsg, RaftNode, Role};
 
 struct Cluster {
     nodes: HashMap<NodeId, RaftNode>,

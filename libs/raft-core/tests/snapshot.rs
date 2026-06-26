@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use raftcore::{auto_membership, NodeId, RaftNode};
+use raft_core::{auto_membership, NodeId, RaftNode};
 
 /// State machine = the ordered list of applied commands. A snapshot is the
 /// serialized prefix; installing one replaces the baseline, then committed

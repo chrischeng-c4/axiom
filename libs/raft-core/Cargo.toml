@@ -1,5 +1,5 @@
 [package]
-name = "raftcore"
+name = "raft-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 description = "Self-contained, step-driven Raft consensus core — transport- and storage-agnostic. Consumers (relay, keep) supply the network, persistence, and state machine."
 
 [lib]
-name = "raftcore"
+name = "raft_core"
 path = "src/lib.rs"
 
 [dependencies]

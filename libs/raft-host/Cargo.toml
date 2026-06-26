@@ -2,14 +2,14 @@
 name = "raft-host"
 version = "0.1.0"
 edition = "2021"
-description = "Shared raft host: drives libs/raftcore for a RaftStateMachine over an h2c peer transport, with snapshot/compaction and read-your-write propose. The ecosystem's one raft driver — lumen/keep/relay/loom each supply a state machine."
+description = "Shared raft host: drives libs/raft-core for a RaftStateMachine over an h2c peer transport, with snapshot/compaction and read-your-write propose. The ecosystem's one raft driver — lumen/keep/relay/loom each supply a state machine."
 
 [lib]
 name = "raft_host"
 path = "src/lib.rs"
 
 [dependencies]
-raftcore = { path = "../raftcore" }
+raft-core = { path = "../raft-core" }
 h2c = { path = "../h2c" }
 anyhow = { workspace = true }
 async-trait = { workspace = true }

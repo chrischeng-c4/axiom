@@ -8,7 +8,7 @@
 //! the node). Committed [`Command`]s apply to a [`LoomStateMachine`]; `put`
 //! proposes on the leader (a follower forwards to it), then waits for commit.
 //!
-//! Consensus correctness is raftcore's (verified in-process across a 3-node
+//! Consensus correctness is raft_core's (verified in-process across a 3-node
 //! group in `crate::raft`); this module is the transport + store plumbing,
 //! verified live across 3 loom processes (`scripts/cluster-e2e.sh`).
 
@@ -23,7 +23,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use raftcore::{
+use raft_core::{
     auto_membership, AppendReq, AppendResp, NodeId, RaftMsg, RaftNode, VoteReq, VoteResp,
 };
 use serde::{Deserialize, Serialize};

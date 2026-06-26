@@ -1,8 +1,8 @@
 //! The `RaftStateMachine` a consumer supplies to [`crate::RaftHost`].
 
-use raftcore::Index;
+use raft_core::Index;
 
-/// Opaque committed-entry bytes (raftcore's `RaftEntry.command`). The host never
+/// Opaque committed-entry bytes (raft_core's `RaftEntry.command`). The host never
 /// looks inside — the state machine encodes/decodes its own commands.
 pub type Command = Vec<u8>;
 

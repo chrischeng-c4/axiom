@@ -58,8 +58,8 @@ h2c = { path = "../../libs/h2c", optional = true }
 cli-std = { path = "../../libs/cli-std", default-features = false }
 # Error glue for the binary dispatch + the raft module.
 anyhow = { workspace = true }
-# Shared Raft consensus engine (libs/raftcore, serde-only) — replaces openraft.
-raftcore = { path = "../../libs/raftcore", optional = true }
+# Shared Raft consensus engine (libs/raft-core, serde-only) — replaces openraft.
+raft-core = { path = "../../libs/raft-core", optional = true }
 
 # Config
 clap = { workspace = true, features = ["env"] }
@@ -69,8 +69,8 @@ default = []
 # keep::client — a convenience HTTP/2 client for in-tree Rust callers migrating
 # off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
 client = ["dep:reqwest", "dep:h2c"]
-# raft — raftcore-backed consensus (HA phase C; see HA.md).
-raft = ["dep:raftcore"]
+# raft — raft-core-backed consensus (HA phase C; see HA.md).
+raft = ["dep:raft-core"]
 # Online (HTTPS) paths of the standard CLI ops (#471): `upgrade` self-install +
 # `report-issue` submit. Offline paths (llm, `upgrade --check`, `report-issue
 # --dry-run`) always build; release builds enable these.
