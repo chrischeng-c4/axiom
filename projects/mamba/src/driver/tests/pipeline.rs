@@ -1425,6 +1425,35 @@ fn test_async_function_body_reads_locals() {
     );
 }
 
+#[test]
+fn test_nested_async_function_captures_outer_local() {
+    let mir = pipeline(
+        "async def outer():\n    xs = []\n    async def inner():\n        xs.append(1)\n    await inner()\n",
+    );
+    let has_store_global = mir.bodies.iter().any(|body| {
+        body.blocks.iter().any(|b| {
+            b.stmts
+                .iter()
+                .any(|s| matches!(s, MirInst::StoreGlobal { .. }))
+        })
+    });
+    let has_load_global = mir.bodies.iter().any(|body| {
+        body.blocks.iter().any(|b| {
+            b.stmts
+                .iter()
+                .any(|s| matches!(s, MirInst::LoadGlobal { .. }))
+        })
+    });
+    assert!(
+        has_store_global,
+        "outer async body should store captured locals for nested async functions"
+    );
+    assert!(
+        has_load_global,
+        "nested async body should load captured outer locals"
+    );
+}
+
 // ── string-ops: Str + Str lowers to mb_str_concat ──
 
 #[test]

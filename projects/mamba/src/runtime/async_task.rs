@@ -212,6 +212,48 @@ impl EventLoop {
     }
 }
 
+/// Drive not-yet-started pending tasks until `done` becomes true.
+///
+/// The current async lowering calls `mb_await` synchronously from inside the
+/// running coroutine body, so a primitive such as `asyncio.Event.wait()` needs a
+/// narrow way to let sibling tasks make progress while the current coroutine is
+/// blocked in that call. We only schedule coroutines with state 0, which avoids
+/// recursively stepping the coroutine currently on the stack.
+pub fn mb_drive_pending_tasks_until<F>(mut done: F, max_iterations: usize) -> bool
+where
+    F: FnMut() -> bool,
+{
+    let mut event_loop = EventLoop::new();
+    for _ in 0..max_iterations {
+        if done() {
+            return true;
+        }
+        let pending: Vec<u64> = {
+            let tasks = TASKS.read().unwrap();
+            let coros = COROUTINES.read().unwrap();
+            tasks
+                .iter()
+                .filter(|(_, task)| !task.done)
+                .filter(|(_, task)| {
+                    coros
+                        .get(&task.coroutine_id)
+                        .is_some_and(|coro| !coro.exhausted && coro.state == 0)
+                })
+                .map(|(&task_id, _)| task_id)
+                .collect()
+        };
+        if pending.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        } else {
+            for task_id in pending {
+                event_loop.schedule(task_id);
+            }
+        }
+        event_loop.tick();
+    }
+    done()
+}
+
 // ── Orbit Bridge (#313 R2) ──
 
 /// Schedule a coroutine on the Orbit event loop.
