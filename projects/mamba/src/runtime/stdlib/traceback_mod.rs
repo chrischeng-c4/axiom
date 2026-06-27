@@ -174,6 +174,10 @@ pub fn register() {
             MbValue::from_func(dispatch_ss_extract as *const () as usize),
         );
         ss.insert("format".into(), var(ss_format as *const () as usize));
+        ss.insert(
+            "format_frame_summary".into(),
+            var(ss_format_frame_summary as *const () as usize),
+        );
         ss.insert("__getitem__".into(), var(ss_getitem as *const () as usize));
         ss.insert("__setitem__".into(), var(ss_setitem as *const () as usize));
         ss.insert("__len__".into(), var(ss_len as *const () as usize));
@@ -588,6 +592,31 @@ pub fn mb_traceback_walk_stack() -> MbValue {
     MbValue::from_ptr(MbObject::new_list(Vec::new()))
 }
 
+pub fn mb_traceback_walk_stack_frame(filename: MbValue, lineno: MbValue, name: MbValue) -> MbValue {
+    let filename_s = extract_str(filename).unwrap_or_else(|| "None".to_string());
+    let name_s = extract_str(name).unwrap_or_else(|| "<module>".to_string());
+    let lineno_v = if lineno.as_int().is_some() {
+        lineno
+    } else {
+        MbValue::from_int(1)
+    };
+    let frame = make_instance(
+        "frame",
+        vec![
+            ("f_lineno", lineno_v),
+            ("f_locals", MbValue::from_ptr(MbObject::new_dict())),
+            ("f_globals", MbValue::from_ptr(MbObject::new_dict())),
+            (
+                "f_filename",
+                MbValue::from_ptr(MbObject::new_str(filename_s)),
+            ),
+            ("f_name", MbValue::from_ptr(MbObject::new_str(name_s))),
+        ],
+    );
+    let pair = MbValue::from_ptr(MbObject::new_tuple(vec![frame, lineno_v]));
+    MbValue::from_ptr(MbObject::new_list(vec![pair]))
+}
+
 // ── Class shells ──
 
 /// Build a passive Instance with the given class_name and named fields.
@@ -645,15 +674,37 @@ unsafe extern "C" fn fs_len(_self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 fn make_stack_summary(entries: Vec<MbValue>) -> MbValue {
+    make_stack_summary_of("StackSummary", entries)
+}
+
+fn make_stack_summary_of(class_name: &str, entries: Vec<MbValue>) -> MbValue {
     let list = MbValue::from_ptr(MbObject::new_list(entries));
-    make_instance("StackSummary", vec![("entries", list)])
+    make_instance(class_name, vec![("entries", list)])
+}
+
+fn stack_summary_class_receiver(value: MbValue) -> Option<String> {
+    let class_name = super::super::class::resolve_class_name(value)?;
+    if class_name == "StackSummary"
+        || super::super::class::class_mro_any(&class_name, |name| name == "StackSummary")
+    {
+        Some(class_name)
+    } else {
+        None
+    }
 }
 
 /// `StackSummary.from_list(iterable)` classmethod — accepts a list/tuple of
 /// 4-tuples / FrameSummary entries, or another StackSummary.
 unsafe extern "C" fn dispatch_ss_from_list(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let src = a.first().copied().unwrap_or_else(MbValue::none);
+    let pos = positional(a);
+    let (class_name, src_index) = pos
+        .first()
+        .copied()
+        .and_then(stack_summary_class_receiver)
+        .map(|name| (name, 1usize))
+        .unwrap_or_else(|| ("StackSummary".to_string(), 0usize));
+    let src = pos.get(src_index).copied().unwrap_or_else(MbValue::none);
     let entries: Vec<MbValue> = if let Some(ptr) = src.as_ptr() {
         match &(*ptr).data {
             ObjData::Instance { class_name, .. } if class_name == "StackSummary" => {
@@ -666,7 +717,7 @@ unsafe extern "C" fn dispatch_ss_from_list(args_ptr: *const MbValue, nargs: usiz
     } else {
         Vec::new()
     };
-    make_stack_summary(entries)
+    make_stack_summary_of(&class_name, entries)
 }
 
 /// `StackSummary.extract(frame_gen, *, capture_locals=False, ...)`.
@@ -677,7 +728,13 @@ unsafe extern "C" fn dispatch_ss_from_list(args_ptr: *const MbValue, nargs: usiz
 unsafe extern "C" fn dispatch_ss_extract(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let pos = positional(a);
-    let src = pos.first().copied().unwrap_or_else(MbValue::none);
+    let (class_name, src_index) = pos
+        .first()
+        .copied()
+        .and_then(stack_summary_class_receiver)
+        .map(|name| (name, 1usize))
+        .unwrap_or_else(|| ("StackSummary".to_string(), 0usize));
+    let src = pos.get(src_index).copied().unwrap_or_else(MbValue::none);
     let capture_locals = kwarg(a, "capture_locals")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
@@ -695,30 +752,41 @@ unsafe extern "C" fn dispatch_ss_extract(args_ptr: *const MbValue, nargs: usize)
         } else {
             MbValue::none()
         };
+        let filename = frame_filename(frame).unwrap_or_else(|| "<mamba>.py".to_string());
+        let name = frame_name(frame).unwrap_or_else(|| "<module>".to_string());
         entries.push(make_instance(
             "FrameSummary",
             vec![
-                (
-                    "filename",
-                    MbValue::from_ptr(MbObject::new_str("<mamba>.py".to_string())),
-                ),
+                ("filename", MbValue::from_ptr(MbObject::new_str(filename))),
                 ("lineno", lineno),
-                (
-                    "name",
-                    MbValue::from_ptr(MbObject::new_str("<module>".to_string())),
-                ),
+                ("name", MbValue::from_ptr(MbObject::new_str(name))),
                 ("locals", locals),
                 ("line", MbValue::none()),
             ],
         ));
     }
-    make_stack_summary(entries)
+    make_stack_summary_of(&class_name, entries)
 }
 
 unsafe extern "C" fn ss_format(self_v: MbValue, _args: MbValue) -> MbValue {
     let mut lines: Vec<MbValue> = Vec::new();
+    let hook = stack_summary_format_hook(self_v);
     for entry in stack_entries(self_v) {
-        match format_frame_entry(entry) {
+        let formatted = if hook {
+            let args = MbValue::from_ptr(MbObject::new_list(vec![entry]));
+            let method = MbValue::from_ptr(MbObject::new_str("format_frame_summary".to_string()));
+            let value = super::super::class::mb_call_method(self_v, method, args);
+            if super::super::exception::current_exception_type().is_some() {
+                return MbValue::none();
+            }
+            if value.is_none() {
+                continue;
+            }
+            extract_str(value)
+        } else {
+            format_frame_entry(entry)
+        };
+        match formatted {
             Some(s) => lines.push(MbValue::from_ptr(MbObject::new_str(s))),
             None => {
                 super::super::exception::mb_raise(
@@ -732,6 +800,13 @@ unsafe extern "C" fn ss_format(self_v: MbValue, _args: MbValue) -> MbValue {
         }
     }
     MbValue::from_ptr(MbObject::new_list(lines))
+}
+
+unsafe extern "C" fn ss_format_frame_summary(_self_v: MbValue, args: MbValue) -> MbValue {
+    match format_frame_entry(first_arg_of(args)) {
+        Some(s) => MbValue::from_ptr(MbObject::new_str(s)),
+        None => MbValue::none(),
+    }
 }
 
 unsafe extern "C" fn ss_getitem(self_v: MbValue, args: MbValue) -> MbValue {
@@ -991,6 +1066,41 @@ fn instance_field(instance: MbValue, name: &str) -> Option<MbValue> {
             None
         }
     })
+}
+
+fn frame_filename(frame: MbValue) -> Option<String> {
+    instance_field(frame, "f_filename")
+        .and_then(extract_str)
+        .or_else(|| {
+            instance_field(frame, "f_code")
+                .and_then(|code| instance_field(code, "co_filename"))
+                .and_then(extract_str)
+        })
+}
+
+fn frame_name(frame: MbValue) -> Option<String> {
+    instance_field(frame, "f_name")
+        .and_then(extract_str)
+        .or_else(|| {
+            instance_field(frame, "f_code")
+                .and_then(|code| instance_field(code, "co_name"))
+                .and_then(extract_str)
+        })
+}
+
+fn stack_summary_format_hook(self_v: MbValue) -> bool {
+    self_v
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .is_some_and(|class_name| {
+            !super::super::class::lookup_method(&class_name, "format_frame_summary").is_none()
+        })
 }
 
 fn clear_frame_locals(frame: MbValue) {

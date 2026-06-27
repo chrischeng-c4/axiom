@@ -44,6 +44,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
     use super::pep695;
     use super::set_ops;
     use super::stdlib::functools_mod;
+    use super::stdlib::traceback_mod;
     use super::string_ops;
     use super::tokio_exec;
     use super::tuple_ops;
@@ -1971,6 +1972,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             closure::mb_func_set_srcinfo as fn(super::MbValue, super::MbValue, super::MbValue),
             [I64, I64, I64],
             Void
+        ),
+        rt_sym!(
+            "mb_traceback_walk_stack_frame",
+            traceback_mod::mb_traceback_walk_stack_frame
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
         ),
         rt_sym!(
             "mb_singledispatch_register_annotation",
