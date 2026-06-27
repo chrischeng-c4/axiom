@@ -5882,7 +5882,7 @@ impl<'a> AstLowerer<'a> {
                             }
                         }
                     }
-                    if matches!(name.as_str(), "AttributeError" | "NameError")
+                    if matches!(name.as_str(), "AttributeError" | "NameError" | "ImportError")
                         && args.iter().any(|a| {
                             matches!(
                                 a,

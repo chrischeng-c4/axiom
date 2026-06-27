@@ -16497,8 +16497,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         ) {
                             return super::builtins::mb_call_spread(native, args);
                         }
-                        // Built-in __init__ fallback for Exception base classes:
-                        // sets message, __type__, and args on the instance.
+                        // Built-in __init__ fallback for Exception base classes.
                         if name == "__init__" {
                             let mro = CLASS_REGISTRY.with(|reg| {
                                 reg.borrow()
@@ -16509,35 +16508,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             let is_exc =
                                 mro.iter().any(|c| c == "Exception" || c == "BaseException");
                             if is_exc {
-                                // Extract args from the args list
-                                let mut arg_items = Vec::new();
-                                if let Some(args_ptr) = args.as_ptr() {
-                                    if let ObjData::List(ref lock) = (*args_ptr).data {
-                                        arg_items = lock.read().unwrap().to_vec();
-                                    }
-                                }
-                                // Set message from first arg
-                                if let Some(first) = arg_items.first() {
-                                    mb_setattr(
-                                        super_self,
-                                        MbValue::from_ptr(MbObject::new_str("message".to_string())),
-                                        *first,
-                                    );
-                                }
-                                // Set __type__
-                                mb_setattr(
-                                    super_self,
-                                    MbValue::from_ptr(MbObject::new_str("__type__".to_string())),
-                                    MbValue::from_ptr(MbObject::new_str(instance_class.clone())),
-                                );
-                                // Set args as tuple
-                                let args_tuple = MbValue::from_ptr(MbObject::new_tuple(arg_items));
-                                mb_setattr(
-                                    super_self,
-                                    MbValue::from_ptr(MbObject::new_str("args".to_string())),
-                                    args_tuple,
-                                );
-                                return MbValue::none();
+                                return super::exception::mb_exception_init_instance(super_self, args);
                             }
                         }
                         return MbValue::none();
@@ -16547,6 +16518,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     if !method.is_none() && is_data_descriptor(method) {
                         let callable = invoke_descriptor_get(method, receiver);
                         return super::builtins::mb_call_spread(callable, args);
+                    }
+                    if name == "__init__"
+                        && method.is_none()
+                        && (class_name == "BaseException"
+                            || super::exception::is_subclass_of(class_name, "BaseException")
+                            || check_class_hierarchy(class_name, "BaseException"))
+                    {
+                        return super::exception::mb_exception_init_instance(receiver, args);
                     }
                     // Instance-dict callables shadow non-data class attrs.
                     // `obj.attr()` lowers directly here, so mirror

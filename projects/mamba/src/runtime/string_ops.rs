@@ -4481,6 +4481,9 @@ pub fn value_to_string(val: MbValue) -> String {
                     {
                         return value_to_string(payload);
                     }
+                    if let Some(s) = super::exception::unicode_error_str(class_name, val) {
+                        return s;
+                    }
                     // PEP 654 ExceptionGroup str: "message (N sub-exceptions)".
                     if super::exception::is_subclass_of(class_name, "BaseExceptionGroup")
                         || super::exception::is_subclass_of(class_name, "ExceptionGroup")

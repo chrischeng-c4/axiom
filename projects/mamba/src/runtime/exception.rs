@@ -155,11 +155,11 @@ pub fn mb_exception_new(exc_type: MbValue, message: MbValue) -> MbValue {
     store_exception_as_value(exc)
 }
 
-/// Create a new exception instance preserving all constructor arguments in the `args` tuple.
-/// Used for `ExcType(arg1, arg2, ...)` expressions so `e.args` returns all arguments.
-pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbValue {
-    let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    // Extract all args from the list
+fn new_str_value(s: impl Into<String>) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.into()))
+}
+
+fn list_items(args_list: MbValue) -> Vec<MbValue> {
     let mut arg_items: Vec<MbValue> = Vec::new();
     if let Some(ptr) = args_list.as_ptr() {
         unsafe {
@@ -168,44 +168,149 @@ pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbVa
             }
         }
     }
-    // First arg is the message (as str); rest are additional args
+    arg_items
+}
+
+fn tuple_items(value: MbValue) -> Option<Vec<MbValue>> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Tuple(ref items) = (*ptr).data {
+            Some(items.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn value_as_i64(value: MbValue) -> Option<i64> {
+    value.as_int_pyint()
+}
+
+fn value_as_bytes(value: MbValue) -> Option<Vec<u8>> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Bytes(data) => Some(data.clone()),
+            ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
+            _ => None,
+        }
+    })
+}
+
+fn insert_borrowed_field(fields: &mut FxHashMap<String, MbValue>, key: &str, value: MbValue) {
+    unsafe {
+        super::rc::retain_if_ptr(value);
+    }
+    fields.insert(key.to_string(), value);
+}
+
+fn raise_type_error_message(message: impl Into<String>) {
+    mb_raise(new_str_value("TypeError"), new_str_value(message.into()));
+}
+
+fn populate_import_error_fields(fields: &mut FxHashMap<String, MbValue>, arg_items: &[MbValue]) {
+    let msg = arg_items.first().copied().unwrap_or_else(MbValue::none);
+    insert_borrowed_field(fields, "msg", msg);
+    fields.insert("name".to_string(), MbValue::none());
+    fields.insert("path".to_string(), MbValue::none());
+}
+
+fn populate_syntax_error_fields(fields: &mut FxHashMap<String, MbValue>, arg_items: &[MbValue]) -> bool {
+    let msg = arg_items.first().copied().unwrap_or_else(MbValue::none);
+    insert_borrowed_field(fields, "msg", msg);
+    fields.insert("filename".to_string(), MbValue::none());
+    fields.insert("lineno".to_string(), MbValue::none());
+    fields.insert("offset".to_string(), MbValue::none());
+    fields.insert("text".to_string(), MbValue::none());
+    fields.insert("end_lineno".to_string(), MbValue::none());
+    fields.insert("end_offset".to_string(), MbValue::none());
+
+    let Some(details) = arg_items.get(1).copied() else {
+        return true;
+    };
+    let Some(items) = tuple_items(details) else {
+        raise_type_error_message("SyntaxError() argument 2 must be a tuple");
+        return false;
+    };
+    if items.len() != 4 && items.len() != 6 {
+        raise_type_error_message("SyntaxError() argument 2 must be a 4-item or 6-item tuple");
+        return false;
+    }
+    insert_borrowed_field(fields, "filename", items[0]);
+    insert_borrowed_field(fields, "lineno", items[1]);
+    insert_borrowed_field(fields, "offset", items[2]);
+    insert_borrowed_field(fields, "text", items[3]);
+    if items.len() == 6 {
+        insert_borrowed_field(fields, "end_lineno", items[4]);
+        insert_borrowed_field(fields, "end_offset", items[5]);
+    }
+    true
+}
+
+fn populate_unicode_error_fields(
+    fields: &mut FxHashMap<String, MbValue>,
+    type_name: &str,
+    arg_items: &[MbValue],
+) {
+    let slots: &[&str] = match type_name {
+        "UnicodeEncodeError" | "UnicodeDecodeError" => &["encoding", "object", "start", "end", "reason"],
+        "UnicodeTranslateError" => &["object", "start", "end", "reason"],
+        _ => return,
+    };
+    for (idx, key) in slots.iter().enumerate() {
+        let value = arg_items.get(idx).copied().unwrap_or_else(MbValue::none);
+        insert_borrowed_field(fields, key, value);
+    }
+}
+
+fn populate_exception_fields(
+    fields: &mut FxHashMap<String, MbValue>,
+    type_name: &str,
+    arg_items: &[MbValue],
+    include_chain_fields: bool,
+) -> bool {
     let msg = if let Some(first) = arg_items.first() {
         extract_str(*first).unwrap_or_default()
     } else {
         String::new()
     };
-    // Build instance fields directly (avoids circular dep with class.rs)
-    let mut fields = FxHashMap::default();
-    fields.insert(
-        "message".to_string(),
-        MbValue::from_ptr(MbObject::new_str(msg.clone())),
-    );
-    fields.insert(
-        "__type__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(type_name.clone())),
-    );
-    fields.insert("__cause__".to_string(), MbValue::none());
-    fields.insert("__context__".to_string(), MbValue::none());
-    fields.insert(
-        "__suppress_context__".to_string(),
-        MbValue::from_bool(false),
-    );
-    // StopIteration stores the first arg as `.value` (CPython semantics).
+    fields.insert("message".to_string(), new_str_value(msg));
+    fields.insert("__type__".to_string(), new_str_value(type_name.to_string()));
+    if include_chain_fields {
+        fields.insert("__cause__".to_string(), MbValue::none());
+        fields.insert("__context__".to_string(), MbValue::none());
+        fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
+    }
     if type_name == "StopIteration" {
         let value_val = arg_items.first().copied().unwrap_or_else(MbValue::none);
-        unsafe {
-            super::rc::retain_if_ptr(value_val);
-        }
-        fields.insert("value".to_string(), value_val);
+        insert_borrowed_field(fields, "value", value_val);
     }
-    // args = tuple of all constructor arguments (preserves all args, including non-string ones)
-    let args_tuple = MbValue::from_ptr(MbObject::new_tuple(arg_items));
-    fields.insert("args".to_string(), args_tuple);
     if type_name == "AttributeError" {
         fields.insert("name".to_string(), MbValue::none());
         fields.insert("obj".to_string(), MbValue::none());
     } else if type_name == "NameError" {
         fields.insert("name".to_string(), MbValue::none());
+    } else if type_name == "ImportError" || type_name == "ModuleNotFoundError" {
+        populate_import_error_fields(fields, arg_items);
+    } else if type_name == "SyntaxError" || type_name == "IndentationError" || type_name == "TabError" {
+        if !populate_syntax_error_fields(fields, arg_items) {
+            return false;
+        }
+    } else if matches!(type_name, "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError") {
+        populate_unicode_error_fields(fields, type_name, arg_items);
+    }
+    let args_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(arg_items.to_vec()));
+    fields.insert("args".to_string(), args_tuple);
+    true
+}
+
+/// Create a new exception instance preserving all constructor arguments in the `args` tuple.
+/// Used for `ExcType(arg1, arg2, ...)` expressions so `e.args` returns all arguments.
+pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbValue {
+    let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
+    let arg_items = list_items(args_list);
+    // Build instance fields directly (avoids circular dep with class.rs)
+    let mut fields = FxHashMap::default();
+    if !populate_exception_fields(&mut fields, &type_name, &arg_items, true) {
+        return MbValue::none();
     }
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
@@ -220,6 +325,38 @@ pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbVa
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+pub fn mb_exception_init_instance(instance: MbValue, args_list: MbValue) -> MbValue {
+    let type_name = instance
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "Exception".to_string());
+    let arg_items = list_items(args_list);
+    let mut new_fields = FxHashMap::default();
+    if !populate_exception_fields(&mut new_fields, &type_name, &arg_items, false) {
+        return MbValue::none();
+    }
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut guard = fields.write().unwrap();
+                for (key, value) in new_fields {
+                    let old = guard.insert(key, value);
+                    if let Some(prev) = old {
+                        super::rc::release_if_ptr(prev);
+                    }
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
 fn dict_get_str(dict: MbValue, key: &str) -> Option<MbValue> {
     dict.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -230,19 +367,130 @@ fn dict_get_str(dict: MbValue, key: &str) -> Option<MbValue> {
     })
 }
 
+fn dict_string_keys(dict: MbValue) -> Vec<String> {
+    dict.as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                Some(
+                    lock.read()
+                        .unwrap()
+                        .keys()
+                        .filter_map(|key| match key {
+                            super::dict_ops::DictKey::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
 fn set_exception_field(instance: MbValue, key: &str, value: MbValue) {
     if let Some(ptr) = instance.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 super::rc::retain_if_ptr(value);
-                fields.write().unwrap().insert(key.to_string(), value);
+                let old = fields.write().unwrap().insert(key.to_string(), value);
+                if let Some(prev) = old {
+                    super::rc::release_if_ptr(prev);
+                }
             }
         }
     }
 }
 
+fn instance_field(instance: MbValue, key: &str) -> Option<MbValue> {
+    instance.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn stringish_value(value: MbValue) -> String {
+    extract_str(value).unwrap_or_else(|| super::string_ops::value_to_string(value))
+}
+
+fn unicode_char_escape(ch: char) -> String {
+    let cp = ch as u32;
+    if cp <= 0xff {
+        format!("\\x{cp:02x}")
+    } else if cp <= 0xffff {
+        format!("\\u{cp:04x}")
+    } else {
+        format!("\\U{cp:08x}")
+    }
+}
+
+fn unicode_char_at(value: MbValue, index: i64) -> Option<char> {
+    if index < 0 {
+        return None;
+    }
+    extract_str(value)?.chars().nth(index as usize)
+}
+
+fn unicode_range_fields(instance: MbValue) -> Option<(i64, i64, String)> {
+    let start = value_as_i64(instance_field(instance, "start")?)?;
+    let end = value_as_i64(instance_field(instance, "end")?)?;
+    let reason = stringish_value(instance_field(instance, "reason").unwrap_or_else(MbValue::none));
+    Some((start, end, reason))
+}
+
+pub fn unicode_error_str(class_name: &str, instance: MbValue) -> Option<String> {
+    if !matches!(class_name, "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError") {
+        return None;
+    }
+    let object = instance_field(instance, "object").unwrap_or_else(MbValue::none);
+    if object.is_none() {
+        return Some(String::new());
+    }
+    let (start, end, reason) = match unicode_range_fields(instance) {
+        Some(parts) => parts,
+        None => return Some(String::new()),
+    };
+    let range_end = end.saturating_sub(1);
+    match class_name {
+        "UnicodeEncodeError" => {
+            let encoding = stringish_value(instance_field(instance, "encoding").unwrap_or_else(MbValue::none));
+            if end == start + 1 {
+                let ch = unicode_char_at(object, start).map(unicode_char_escape).unwrap_or_default();
+                Some(format!("'{encoding}' codec can't encode character '{ch}' in position {start}: {reason}"))
+            } else {
+                Some(format!("'{encoding}' codec can't encode characters in position {start}-{range_end}: {reason}"))
+            }
+        }
+        "UnicodeDecodeError" => {
+            let encoding = stringish_value(instance_field(instance, "encoding").unwrap_or_else(MbValue::none));
+            let bytes = match value_as_bytes(object) {
+                Some(bytes) => bytes,
+                None => return Some(String::new()),
+            };
+            if end == start + 1 {
+                let byte = bytes.get(start as usize).copied().unwrap_or_default();
+                Some(format!("'{encoding}' codec can't decode byte 0x{byte:02x} in position {start}: {reason}"))
+            } else {
+                Some(format!("'{encoding}' codec can't decode bytes in position {start}-{range_end}: {reason}"))
+            }
+        }
+        "UnicodeTranslateError" => {
+            if end == start + 1 {
+                let ch = unicode_char_at(object, start).map(unicode_char_escape).unwrap_or_default();
+                Some(format!("can't translate character '{ch}' in position {start}: {reason}"))
+            } else {
+                Some(format!("can't translate characters in position {start}-{range_end}: {reason}"))
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Create an exception instance from positional args plus keyword metadata.
-/// Currently only AttributeError consumes CPython's keyword-only `name`/`obj`.
+/// Consumes CPython's small set of built-in exception keyword-only attrs.
 pub fn mb_exception_new_with_args_and_kwargs(
     exc_type: MbValue,
     args_list: MbValue,
@@ -251,16 +499,42 @@ pub fn mb_exception_new_with_args_and_kwargs(
     let type_name = super::class::resolve_class_name(exc_type)
         .or_else(|| extract_str(exc_type))
         .unwrap_or_else(|| "Exception".to_string());
+    let allowed: &[&str] = match type_name.as_str() {
+        "AttributeError" => &["name", "obj"],
+        "NameError" | "UnboundLocalError" => &["name"],
+        "ImportError" | "ModuleNotFoundError" => &["name", "path"],
+        _ => &[],
+    };
+    for key in dict_string_keys(kwargs_dict) {
+        if !allowed.contains(&key.as_str()) {
+            raise_type_error_message(format!("'{key}' is an invalid keyword argument for {type_name}()"));
+            return MbValue::none();
+        }
+    }
     let instance = mb_exception_new_with_args(
         MbValue::from_ptr(MbObject::new_str(type_name.clone())),
         args_list,
     );
+    if instance.is_none() {
+        return instance;
+    }
     if type_name == "AttributeError" {
         if let Some(name) = dict_get_str(kwargs_dict, "name") {
             set_exception_field(instance, "name", name);
         }
         if let Some(obj) = dict_get_str(kwargs_dict, "obj") {
             set_exception_field(instance, "obj", obj);
+        }
+    } else if type_name == "NameError" || type_name == "UnboundLocalError" {
+        if let Some(name) = dict_get_str(kwargs_dict, "name") {
+            set_exception_field(instance, "name", name);
+        }
+    } else if type_name == "ImportError" || type_name == "ModuleNotFoundError" {
+        if let Some(name) = dict_get_str(kwargs_dict, "name") {
+            set_exception_field(instance, "name", name);
+        }
+        if let Some(path) = dict_get_str(kwargs_dict, "path") {
+            set_exception_field(instance, "path", path);
         }
     }
     instance
