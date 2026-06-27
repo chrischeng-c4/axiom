@@ -142,6 +142,28 @@ impl ArrayStore {
         }
     }
 
+    fn set_value(&mut self, idx: usize, v: MbValue) -> bool {
+        match self {
+            Self::I8(buf) => {
+                set_int_checked(buf, idx, v, i8::MIN as i64, i8::MAX as i64, |i| i as i8)
+            }
+            Self::U8(buf) => set_int_checked(buf, idx, v, 0, u8::MAX as i64, |i| i as u8),
+            Self::Unicode(buf) => set_unicode_checked(buf, idx, v),
+            Self::I16(buf) => {
+                set_int_checked(buf, idx, v, i16::MIN as i64, i16::MAX as i64, |i| i as i16)
+            }
+            Self::U16(buf) => set_int_checked(buf, idx, v, 0, u16::MAX as i64, |i| i as u16),
+            Self::I32(buf) => {
+                set_int_checked(buf, idx, v, i32::MIN as i64, i32::MAX as i64, |i| i as i32)
+            }
+            Self::U32(buf) => set_int_checked(buf, idx, v, 0, u32::MAX as i64, |i| i as u32),
+            Self::I64(buf) => set_int_checked(buf, idx, v, i64::MIN, i64::MAX, |i| i),
+            Self::U64(buf) => set_int_checked(buf, idx, v, 0, i64::MAX, |i| i as u64),
+            Self::F32(buf) => set_float_checked(buf, idx, v, |f| f as f32),
+            Self::F64(buf) => set_float_checked(buf, idx, v, |f| f),
+        }
+    }
+
     fn get_as_value(&self, idx: usize) -> MbValue {
         match self {
             Self::I8(v) => v
@@ -416,6 +438,45 @@ fn push_unicode_checked(out: &mut Vec<char>, value: MbValue) -> bool {
     }
     raise_type_error("array item must be unicode character");
     false
+}
+
+fn set_int_checked<T: Copy>(
+    out: &mut [T],
+    idx: usize,
+    value: MbValue,
+    min: i64,
+    max: i64,
+    cast: impl FnOnce(i64) -> T,
+) -> bool {
+    let mut tmp = Vec::with_capacity(1);
+    if !push_int_checked(&mut tmp, value, min, max, cast) {
+        return false;
+    }
+    out[idx] = tmp[0];
+    true
+}
+
+fn set_float_checked<T: Copy>(
+    out: &mut [T],
+    idx: usize,
+    value: MbValue,
+    cast: impl FnOnce(f64) -> T,
+) -> bool {
+    let mut tmp = Vec::with_capacity(1);
+    if !push_float_checked(&mut tmp, value, cast) {
+        return false;
+    }
+    out[idx] = tmp[0];
+    true
+}
+
+fn set_unicode_checked(out: &mut [char], idx: usize, value: MbValue) -> bool {
+    let mut tmp = Vec::with_capacity(1);
+    if !push_unicode_checked(&mut tmp, value) {
+        return false;
+    }
+    out[idx] = tmp[0];
+    true
 }
 
 fn raise_type_error(msg: &str) -> MbValue {
@@ -1493,6 +1554,30 @@ pub fn mb_array_setitem(handle: MbValue, key: MbValue, value: MbValue) -> MbValu
         if !replaced.into_inner() {
             return raise_type_error("can only assign array of same kind");
         }
+        return MbValue::none();
+    }
+
+    let Some(raw_i) = key.as_int_pyint() else {
+        return raise_type_error("array indices must be integers");
+    };
+    let mut invalid = false;
+    let mut failed = false;
+    mutate_store(handle, |s| {
+        let n = s.len() as i64;
+        let i = if raw_i < 0 { n + raw_i } else { raw_i };
+        if i < 0 || i >= n {
+            invalid = true;
+            return;
+        }
+        if !s.set_value(i as usize, value) {
+            failed = true;
+        }
+    });
+    if invalid {
+        return raise_index_error("array index out of range");
+    }
+    if failed {
+        return MbValue::none();
     }
     MbValue::none()
 }
@@ -1757,6 +1842,22 @@ mod tests {
         mb_array_append(h, MbValue::from_int(3));
         assert_eq!(mb_array_count(h, MbValue::from_int(7)).as_int(), Some(2));
         assert_eq!(mb_array_count(h, MbValue::from_int(99)).as_int(), Some(0));
+    }
+
+    #[test]
+    fn test_single_index_setitem_updates_store() {
+        let h = mb_array_new(
+            s("i"),
+            MbValue::from_ptr(MbObject::new_list(vec![
+                MbValue::from_int(1),
+                MbValue::from_int(2),
+                MbValue::from_int(3),
+            ])),
+        );
+
+        mb_array_setitem(h, MbValue::from_int(1), MbValue::from_int(12));
+
+        assert_eq!(mb_array_getitem(h, MbValue::from_int(1)).as_int(), Some(12));
     }
 
     #[test]
