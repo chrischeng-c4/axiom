@@ -475,7 +475,12 @@ pub fn lower_hir_to_mir_with_symbols_src(
     symbols: &SymbolTable,
     src: Option<(&str, &str)>,
 ) -> MirModule {
-    let user_funcs: HashSet<u32> = hir.functions.iter().map(|f| f.name.0).collect();
+    let mut user_funcs: HashSet<u32> = hir.functions.iter().map(|f| f.name.0).collect();
+    for cls in &hir.classes {
+        for method in &cls.methods {
+            user_funcs.insert(method.name.0);
+        }
+    }
     let extern_map = builtin_extern_map();
     let mut builtin_syms: HashMap<u32, String> = HashMap::new();
     for (&py_name, &mb_name) in &extern_map {
@@ -10398,6 +10403,101 @@ mod tests {
                 .any(|s| matches!(s, MirInst::CallExtern { name, .. } if name == "mb_builtin_get")),
             "assigned builtin name must read the assigned value, not the builtin object"
         );
+    }
+
+    #[test]
+    fn test_class_attr_method_reference_lowers_as_func_ref() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let mut symbols = SymbolTable::new();
+        let class_sym = symbols.define("Adder".to_string(), SymbolKind::Class);
+        let method_sym = SymbolId(1_000_100);
+        let self_sym = SymbolId(1_000_101);
+
+        let mut sym_names = HashMap::new();
+        sym_names.insert(class_sym, "Adder".to_string());
+        sym_names.insert(method_sym, "add".to_string());
+        sym_names.insert(self_sym, "self".to_string());
+
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: vec![HirClass {
+                name: class_sym,
+                base: None,
+                all_bases: Vec::new(),
+                runtime_base_exprs: Vec::new(),
+                runtime_base_list_expr: None,
+                force_textual_registration: false,
+                namedtuple_base: None,
+                fields: Vec::new(),
+                methods: vec![HirFunction {
+                    name: method_sym,
+                    params: vec![(self_sym, any_ty)],
+                    return_ty: any_ty,
+                    body: vec![HirStmt::Return {
+                        value: Some(HirExpr::NoneLit(tcx.none())),
+                        span: Span::dummy(),
+                    }],
+                    span: Span::dummy(),
+                    captures: Vec::new(),
+                    is_async: false,
+                    is_generator: false,
+                    decorators: Vec::new(),
+                    has_star_args: false,
+                    star_param_pos: None,
+                    has_kwargs: false,
+                }],
+                span: Span::dummy(),
+                decorators: Vec::new(),
+                explicit_match_args: None,
+                metaclass: None,
+                class_attr_assigns: vec![(
+                    "add_one".to_string(),
+                    HirExpr::Call {
+                        func: Box::new(HirExpr::StrLit(
+                            "mb_partialmethod_probe".to_string(),
+                            any_ty,
+                        )),
+                        args: vec![HirExpr::Var(method_sym, any_ty)],
+                        ty: any_ty,
+                    },
+                )],
+                slots: None,
+                class_kwargs: Vec::new(),
+                dataclass_fields: Vec::new(),
+                doc: None,
+            }],
+            top_level: vec![HirStmt::ClassDefPlaceholder {
+                name: class_sym,
+                span: Span::dummy(),
+            }],
+            imports: Vec::new(),
+            sym_names,
+            sym_types: HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let all_stmts: Vec<_> = mir
+            .bodies
+            .iter()
+            .flat_map(|body| body.blocks.iter())
+            .flat_map(|block| block.stmts.iter())
+            .collect();
+        assert!(all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::LoadConst {
+                value: MirConst::FuncRef(sym),
+                ..
+            } if *sym == method_sym
+        )));
+        assert!(!all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::LoadGlobal { name, .. } if *name == method_sym
+        )));
     }
 
     // ── P0-R4: CallExtern return propagation tests ──────────────────────

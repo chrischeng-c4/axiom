@@ -4251,6 +4251,15 @@ impl<'a> AstLowerer<'a> {
                         method_is_decorated,
                     );
                     self.active_type_params = saved_tps;
+                    // lower_fn_inner enters/leaves function-local scopes and clears
+                    // local_names. Re-publish the method immediately so later class
+                    // body RHS expressions can reference earlier methods
+                    // (`alias = functools.partialmethod(method, ...)`).
+                    self.local_names.insert(mname.to_string(), method_sym);
+                    self.result
+                        .sym_names
+                        .entry(method_sym)
+                        .or_insert_with(|| mname.to_string());
                     if let Some(mut m) = lowered_method {
                         self.result
                             .func_sigs
@@ -9127,6 +9136,66 @@ mod tests {
         );
         assert_eq!(hir.classes.len(), 1);
         assert_eq!(hir.classes[0].methods.len(), 1);
+    }
+
+    #[test]
+    fn test_lower_class_attr_call_can_reference_prior_method() {
+        let mut checker = TypeChecker::new();
+        checker
+            .symbols
+            .define("Adder".to_string(), crate::resolve::SymbolKind::Class);
+        checker.symbols.define(
+            "functools".to_string(),
+            crate::resolve::SymbolKind::Variable,
+        );
+        let module = Module {
+            stmts: vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "Adder".to_string(),
+                type_params: vec![],
+                bases: vec![],
+                keyword_args: vec![],
+                body: vec![
+                    sp(Stmt::FnDef {
+                        decorators: vec![],
+                        name: "add".to_string(),
+                        type_params: vec![],
+                        params: vec![make_param("self"), make_param("a"), make_param("b")],
+                        return_ty: None,
+                        body: vec![sp(Stmt::Return(Some(sp(Expr::BinOp {
+                            op: BinOp::Add,
+                            lhs: Box::new(sp(Expr::Ident("a".to_string()))),
+                            rhs: Box::new(sp(Expr::Ident("b".to_string()))),
+                        }))))],
+                    }),
+                    sp(Stmt::Assign {
+                        target: sp(Expr::Ident("add_one".to_string())),
+                        value: sp(Expr::Call {
+                            func: Box::new(sp(Expr::Attr {
+                                object: Box::new(sp(Expr::Ident("functools".to_string()))),
+                                attr: "partialmethod".to_string(),
+                            })),
+                            args: vec![
+                                CallArg::Positional(sp(Expr::Ident("add".to_string()))),
+                                CallArg::Positional(sp(Expr::IntLit(1))),
+                            ],
+                        }),
+                    }),
+                ],
+            })],
+        };
+        let hir = lower_module(&module, &checker).unwrap();
+        let class = &hir.classes[0];
+        let method_sym = class.methods[0].name;
+        let (_, attr_expr) = class
+            .class_attr_assigns
+            .iter()
+            .find(|(name, _)| name == "add_one")
+            .expect("missing add_one class attr");
+        let HirExpr::Call { args, .. } = attr_expr else {
+            panic!("add_one must lower to a partialmethod call");
+        };
+        assert!(matches!(&args[0], HirExpr::Var(sym, _) if *sym == method_sym));
     }
 
     #[test]
