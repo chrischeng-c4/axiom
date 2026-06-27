@@ -346,6 +346,15 @@ disp_unary!(d_isclass, mb_inspect_isclass);
 disp_unary!(d_ismethod, mb_inspect_ismethod);
 disp_unary!(d_signature, mb_inspect_signature);
 
+unsafe extern "C" fn d_iscoroutine(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    MbValue::from_bool(
+        args.first()
+            .copied()
+            .is_some_and(super::super::async_rt::is_known_coroutine),
+    )
+}
+
 unsafe extern "C" fn d_getmembers(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let members = mb_inspect_getmembers(args.get(0).copied().unwrap_or_else(MbValue::none));
@@ -401,6 +410,7 @@ pub fn register() {
         ("ismodule", d_ismodule as *const () as usize),
         ("isgeneratorfunction", d_isfunction as *const () as usize),
         ("iscoroutinefunction", d_isfunction as *const () as usize),
+        ("iscoroutine", d_iscoroutine as *const () as usize),
         ("isawaitable", d_isfunction as *const () as usize),
         ("isasyncgenfunction", d_isfunction as *const () as usize),
         ("getmembers", d_getmembers as *const () as usize),
@@ -548,7 +558,6 @@ pub fn register() {
     let predicate_fns: &[&str] = &[
         "isasyncgen",
         "iscode",
-        "iscoroutine",
         "isgenerator",
         "isgetsetdescriptor",
         "iskeyword",
