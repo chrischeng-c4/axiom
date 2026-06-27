@@ -504,8 +504,8 @@ pub fn unregister_generator_iter(gen_handle: MbValue) {
 /// Returns None if the handle is not a valid iterator (caller should fall back).
 pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
     let id = handle.as_int()? as u64;
-    if let Some(items) = range_iter_to_vec(handle) {
-        return Some(items);
+    if is_range_handle(handle) && !is_range_iterator_id(id) {
+        return range_iter_to_vec(handle);
     }
     // Remove the iterator from storage to avoid borrowing issues.
     let iter = ITERATORS.with(|iters| iters.borrow_mut().remove(&id))?;
