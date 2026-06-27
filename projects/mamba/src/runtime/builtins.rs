@@ -5137,6 +5137,16 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
     if a.to_bits() == b.to_bits() {
         return true;
     }
+    let user_iter_a = super::iter::mb_userdefined_iterator_target(a);
+    let user_iter_b = super::iter::mb_userdefined_iterator_target(b);
+    if user_iter_a.is_some_and(|target| target.to_bits() == b.to_bits())
+        || user_iter_b.is_some_and(|target| target.to_bits() == a.to_bits())
+        || user_iter_a
+            .zip(user_iter_b)
+            .is_some_and(|(target_a, target_b)| target_a.to_bits() == target_b.to_bits())
+    {
+        return true;
+    }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
             let str_value = |v: MbValue| -> Option<String> {
