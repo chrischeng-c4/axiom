@@ -1924,7 +1924,7 @@ impl<'a> HirToMir<'a> {
             })
             .collect();
 
-        // Create generator: mb_generator_create(name, body_fn_addr)
+        // Create generator: mb_generator_create(name, body_fn_addr, origin_func)
         let name_vreg = self.fresh_vreg();
         self.current_stmts.push(MirInst::LoadConst {
             dest: name_vreg,
@@ -1937,11 +1937,17 @@ impl<'a> HirToMir<'a> {
             value: MirConst::FuncRef(body_sym),
             ty: int_ty,
         });
+        let origin_fn_ptr = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: origin_fn_ptr,
+            value: MirConst::FuncRef(func.name),
+            ty: any_ty,
+        });
         let gen_handle = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(gen_handle),
             name: "mb_generator_create".to_string(),
-            args: vec![name_vreg, body_fn_ptr],
+            args: vec![name_vreg, body_fn_ptr, origin_fn_ptr],
             ty: int_ty,
         });
 
