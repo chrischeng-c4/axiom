@@ -1169,8 +1169,52 @@ fn infer_return_type_from_ast(
     env: &HashMap<String, FloatHint>,
     func_ret_float: &HashMap<String, FloatHint>,
 ) -> Option<TypeId> {
+    let mut heap_locals = HashSet::new();
+    infer_return_type_from_ast_inner(body, tc, env, func_ret_float, &mut heap_locals)
+}
+
+fn expr_produces_heap_any(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::ListLit(_)
+        | ast::Expr::SetLit(_)
+        | ast::Expr::DictLit(_)
+        | ast::Expr::TupleLit(_) => true,
+        ast::Expr::Call { func, .. } => matches!(
+            &func.node,
+            ast::Expr::Ident(n) if matches!(
+                n.as_str(),
+                "set" | "frozenset" | "dict" | "list" | "tuple" | "sorted"
+            )
+        ),
+        _ => false,
+    }
+}
+
+fn infer_return_type_from_ast_inner(
+    body: &[Spanned<ast::Stmt>],
+    tc: &TypeChecker,
+    env: &HashMap<String, FloatHint>,
+    func_ret_float: &HashMap<String, FloatHint>,
+    heap_locals: &mut HashSet<String>,
+) -> Option<TypeId> {
     for stmt in body {
         match &stmt.node {
+            ast::Stmt::Assign { target, value } => {
+                if let ast::Expr::Ident(name) = &target.node {
+                    if expr_produces_heap_any(&value.node) {
+                        heap_locals.insert(name.clone());
+                    } else {
+                        heap_locals.remove(name);
+                    }
+                }
+            }
+            ast::Stmt::VarDecl { name, value, .. } => {
+                if expr_produces_heap_any(&value.node) {
+                    heap_locals.insert(name.clone());
+                } else {
+                    heap_locals.remove(name);
+                }
+            }
             ast::Stmt::Return(Some(expr)) => {
                 return match &expr.node {
                     ast::Expr::FloatLit(_) => Some(tc.tcx.float()),
@@ -1197,6 +1241,7 @@ fn infer_return_type_from_ast(
                     {
                         Some(tc.tcx.any())
                     }
+                    ast::Expr::Ident(name) if heap_locals.contains(name) => Some(tc.tcx.any()),
                     ast::Expr::BinOp {
                         op: ast::BinOp::Add,
                         lhs,
@@ -1239,17 +1284,37 @@ fn infer_return_type_from_ast(
                 else_body,
                 ..
             } => {
-                if let Some(ty) = infer_return_type_from_ast(if_body, tc, env, func_ret_float) {
+                let mut branch_locals = heap_locals.clone();
+                if let Some(ty) = infer_return_type_from_ast_inner(
+                    if_body,
+                    tc,
+                    env,
+                    func_ret_float,
+                    &mut branch_locals,
+                ) {
                     return Some(ty);
                 }
                 for (_, elif_body) in elif_clauses {
-                    if let Some(ty) = infer_return_type_from_ast(elif_body, tc, env, func_ret_float)
-                    {
+                    let mut branch_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        elif_body,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut branch_locals,
+                    ) {
                         return Some(ty);
                     }
                 }
                 if let Some(els) = else_body {
-                    if let Some(ty) = infer_return_type_from_ast(els, tc, env, func_ret_float) {
+                    let mut branch_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        els,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut branch_locals,
+                    ) {
                         return Some(ty);
                     }
                 }
@@ -1263,17 +1328,38 @@ fn infer_return_type_from_ast(
             | ast::Stmt::AsyncFor {
                 body, else_body, ..
             } => {
-                if let Some(ty) = infer_return_type_from_ast(body, tc, env, func_ret_float) {
+                let mut body_locals = heap_locals.clone();
+                if let Some(ty) = infer_return_type_from_ast_inner(
+                    body,
+                    tc,
+                    env,
+                    func_ret_float,
+                    &mut body_locals,
+                ) {
                     return Some(ty);
                 }
                 if let Some(els) = else_body {
-                    if let Some(ty) = infer_return_type_from_ast(els, tc, env, func_ret_float) {
+                    let mut else_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        els,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut else_locals,
+                    ) {
                         return Some(ty);
                     }
                 }
             }
             ast::Stmt::With { body, .. } | ast::Stmt::AsyncWith { body, .. } => {
-                if let Some(ty) = infer_return_type_from_ast(body, tc, env, func_ret_float) {
+                let mut body_locals = heap_locals.clone();
+                if let Some(ty) = infer_return_type_from_ast_inner(
+                    body,
+                    tc,
+                    env,
+                    func_ret_float,
+                    &mut body_locals,
+                ) {
                     return Some(ty);
                 }
             }
@@ -1283,30 +1369,63 @@ fn infer_return_type_from_ast(
                 else_body,
                 finally_body,
             } => {
-                if let Some(ty) = infer_return_type_from_ast(body, tc, env, func_ret_float) {
+                let mut body_locals = heap_locals.clone();
+                if let Some(ty) = infer_return_type_from_ast_inner(
+                    body,
+                    tc,
+                    env,
+                    func_ret_float,
+                    &mut body_locals,
+                ) {
                     return Some(ty);
                 }
                 for handler in handlers {
-                    if let Some(ty) =
-                        infer_return_type_from_ast(&handler.body, tc, env, func_ret_float)
-                    {
+                    let mut handler_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        &handler.body,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut handler_locals,
+                    ) {
                         return Some(ty);
                     }
                 }
                 if let Some(els) = else_body {
-                    if let Some(ty) = infer_return_type_from_ast(els, tc, env, func_ret_float) {
+                    let mut else_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        els,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut else_locals,
+                    ) {
                         return Some(ty);
                     }
                 }
                 if let Some(fin) = finally_body {
-                    if let Some(ty) = infer_return_type_from_ast(fin, tc, env, func_ret_float) {
+                    let mut finally_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        fin,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut finally_locals,
+                    ) {
                         return Some(ty);
                     }
                 }
             }
             ast::Stmt::Match { arms, .. } => {
                 for arm in arms {
-                    if let Some(ty) = infer_return_type_from_ast(&arm.body, tc, env, func_ret_float)
+                    let mut arm_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        &arm.body,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut arm_locals,
+                    )
                     {
                         return Some(ty);
                     }
@@ -8979,6 +9098,33 @@ mod tests {
         // return_ty should be the int TypeId, not fallback any
         let int_ty = checker.tcx.int();
         assert_eq!(hir.functions[0].return_ty, int_ty);
+    }
+
+    #[test]
+    fn test_lower_fn_returning_local_heap_value_is_any() {
+        let mut checker = TypeChecker::new();
+        checker
+            .symbols
+            .define("groups".to_string(), crate::resolve::SymbolKind::Function);
+        let module = Module {
+            stmts: vec![sp(Stmt::FnDef {
+                decorators: vec![],
+                name: "groups".to_string(),
+                type_params: vec![],
+                params: vec![],
+                return_ty: None,
+                body: vec![
+                    sp(Stmt::Assign {
+                        target: sp(Expr::Ident("out".to_string())),
+                        value: sp(Expr::ListLit(vec![])),
+                    }),
+                    sp(Stmt::Return(Some(sp(Expr::Ident("out".to_string()))))),
+                ],
+            })],
+        };
+        let hir = lower_module(&module, &checker).unwrap();
+        assert_eq!(hir.functions.len(), 1);
+        assert_eq!(hir.functions[0].return_ty, checker.tcx.any());
     }
 
     #[test]
