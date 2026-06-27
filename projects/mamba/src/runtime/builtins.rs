@@ -11047,10 +11047,14 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>) -> MbValue {
     parser.skip_newlines();
     let module = match parser.parse_module() {
         Ok(module) => module,
-        Err(_) => {
+        Err(err) => {
+            let message = match err {
+                crate::error::MambaError::Syntax { message, .. } => message,
+                _ => "exec(): invalid syntax".to_string(),
+            };
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
-                MbValue::from_ptr(MbObject::new_str("exec(): invalid syntax".to_string())),
+                MbValue::from_ptr(MbObject::new_str(message)),
             );
             return MbValue::none();
         }
