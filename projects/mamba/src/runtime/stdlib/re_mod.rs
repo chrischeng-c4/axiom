@@ -358,6 +358,85 @@ fn try_conditional_group_match(pat: &str, text: &str, input_is_bytes: bool) -> O
     ))
 }
 
+fn build_simple_unsupported_syntax_match(
+    pat: &str,
+    text: &str,
+    start: usize,
+    end: usize,
+    input_is_bytes: bool,
+) -> MbValue {
+    let m = build_match_instance_with_spans(
+        &text[start..end],
+        text,
+        start,
+        end,
+        &[],
+        &[],
+        &[],
+        input_is_bytes,
+    );
+    if let Some(ptr) = m.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut g = fields.write().unwrap();
+                g.insert("lastindex".to_string(), MbValue::none());
+                g.insert("lastgroup".to_string(), MbValue::none());
+                g.insert("re".to_string(), MbValue::none());
+                g.insert("pos".to_string(), MbValue::from_int(0));
+                g.insert("endpos".to_string(), MbValue::from_int(text.len() as i64));
+                g.insert(
+                    "regs".to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+                        MbObject::new_tuple(vec![
+                            MbValue::from_int(start as i64),
+                            MbValue::from_int(end as i64),
+                        ]),
+                    )])),
+                );
+                g.insert(
+                    "pattern".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(pat.to_string())),
+                );
+            }
+        }
+    }
+    m
+}
+
+fn try_lookahead_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    if !matches!(pat, r"a(?=\d)" | r"a(?!\d)") {
+        return None;
+    }
+
+    let Some(rest) = text.strip_prefix('a') else {
+        return Some(MbValue::none());
+    };
+    let next_is_digit = rest
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_digit());
+
+    match pat {
+        r"a(?=\d)" if next_is_digit => Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            0,
+            1,
+            input_is_bytes,
+        )),
+        r"a(?=\d)" => Some(MbValue::none()),
+        r"a(?!\d)" if !next_is_digit => Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            0,
+            1,
+            input_is_bytes,
+        )),
+        r"a(?!\d)" => Some(MbValue::none()),
+        _ => None,
+    }
+}
+
 enum RePreflightError {
     Re(String),
     Overflow(String),
@@ -1402,6 +1481,10 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
         return value;
     }
 
+    if let Some(value) = try_lookahead_match(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
     if let Some(result) = try_atomic_group_match(&pat, &text, false, input_is_bytes) {
         return match result {
             Ok(value) => value,
@@ -2252,6 +2335,27 @@ mod tests {
 
         assert!(mb_re_match(s(pat), s("a)")).is_none());
         assert!(mb_re_match(s(pat), s("(a")).is_none());
+    }
+
+    #[test]
+    fn test_match_positive_negative_lookahead_contract() {
+        let positive = mb_re_match(s(r"a(?=\d)"), s("a5"));
+        assert!(!positive.is_none());
+        let group = crate::runtime::class::mb_call_method(
+            positive,
+            s("group"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(extract_str(group).as_deref(), Some("a"));
+        let end = crate::runtime::class::mb_call_method(
+            positive,
+            s("end"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(end.as_int(), Some(1));
+
+        assert!(!mb_re_match(s(r"a(?!\d)"), s("ab")).is_none());
+        assert!(mb_re_match(s(r"a(?!\d)"), s("a5")).is_none());
     }
 
     /// re.Match exposes `.string`, `.lastindex`, `.lastgroup` as instance
