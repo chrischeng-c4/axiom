@@ -5125,6 +5125,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     }
 
     if let Some(addr) = obj.as_func() {
+        if attr_name == "_convert_"
+            && super::stdlib::enum_mod::is_intenum_constructor(obj)
+        {
+            return super::stdlib::enum_mod::intenum_convert_callable();
+        }
         // numbers.Number.__abstractmethods__ is frozenset() — Number declares no
         // abstract methods (it is concrete); the lower tower ABCs are unaffected.
         if attr_name == "__abstractmethods__"
@@ -13216,14 +13221,21 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         }
     }
 
-    if receiver.as_func().is_some() && name == "_convert" {
-        super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "'function' object has no attribute '_convert'".to_string(),
-            )),
-        );
-        return MbValue::none();
+    if receiver.as_func().is_some() {
+        if name == "_convert_"
+            && super::stdlib::enum_mod::is_intenum_constructor(receiver)
+        {
+            return super::stdlib::enum_mod::mb_intenum_convert(args);
+        }
+        if name == "_convert" {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "'function' object has no attribute '_convert'".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
     }
 
     // Native-class constructor func as receiver (`datetime.datetime.fromordinal(1)`,
