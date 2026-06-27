@@ -221,9 +221,14 @@ fn resolve_lib_entries(
         .iter()
         .any(|e| resolve_entry_path(&options.project_root, &e.source).is_err());
     if entries.is_empty() || any_missing {
-        if let Some(conv) = ["src/index.tsx", "src/index.ts", "src/index.jsx", "src/index.js"]
-            .iter()
-            .find(|p| options.project_root.join(p).exists())
+        if let Some(conv) = [
+            "src/index.tsx",
+            "src/index.ts",
+            "src/index.jsx",
+            "src/index.js",
+        ]
+        .iter()
+        .find(|p| options.project_root.join(p).exists())
         {
             entries = vec![LibraryEntry {
                 subpath: ".".to_string(),
@@ -451,11 +456,7 @@ fn copy_raw_assets(options: &LibBuildOptions) -> Result<Vec<AssetOutput>> {
                     .with_context(|| format!("creating {}", parent.display()))?;
             }
             std::fs::copy(entry.path(), &dest).with_context(|| {
-                format!(
-                    "copying {} → {}",
-                    entry.path().display(),
-                    dest.display()
-                )
+                format!("copying {} → {}", entry.path().display(), dest.display())
             })?;
             copied.push(AssetOutput {
                 path: dest,
@@ -514,7 +515,12 @@ pub(crate) fn derive_global_name(pkg_name: &str) -> String {
         return "lib".to_string();
     }
     // A JS identifier must not start with a digit.
-    if out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+    if out
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+    {
         out.insert(0, '_');
     }
     out
@@ -901,7 +907,8 @@ fn common_source_root(modules: &[PathBuf]) -> PathBuf {
         .map(|p| p.iter().collect())
         .unwrap_or_default();
     for m in iter {
-        let comps: Vec<&std::ffi::OsStr> = m.parent().map(|p| p.iter().collect()).unwrap_or_default();
+        let comps: Vec<&std::ffi::OsStr> =
+            m.parent().map(|p| p.iter().collect()).unwrap_or_default();
         let common = prefix
             .iter()
             .zip(comps.iter())
@@ -1610,8 +1617,14 @@ mod tests {
         assert_eq!(output_file_name(".", &OutputFormat::Esm), "index.js");
         assert_eq!(output_file_name(".", &OutputFormat::Cjs), "index.cjs");
         assert_eq!(output_file_name(".", &OutputFormat::Iife), "index.iife.js");
-        assert_eq!(output_file_name("./client", &OutputFormat::Esm), "client.js");
-        assert_eq!(output_file_name("./client", &OutputFormat::Cjs), "client.cjs");
+        assert_eq!(
+            output_file_name("./client", &OutputFormat::Esm),
+            "client.js"
+        );
+        assert_eq!(
+            output_file_name("./client", &OutputFormat::Cjs),
+            "client.cjs"
+        );
         assert_eq!(
             output_file_name("./client", &OutputFormat::Iife),
             "client.iife.js"
@@ -1637,7 +1650,10 @@ mod tests {
         assert_eq!(rewrite_relative_specifier("./util"), "./util.js");
         assert_eq!(rewrite_relative_specifier("./util.ts"), "./util.js");
         assert_eq!(rewrite_relative_specifier("./util.js"), "./util.js");
-        assert_eq!(rewrite_relative_specifier("../sub/mod.tsx"), "../sub/mod.js");
+        assert_eq!(
+            rewrite_relative_specifier("../sub/mod.tsx"),
+            "../sub/mod.js"
+        );
     }
 
     #[test]
@@ -1729,7 +1745,10 @@ mod tests {
         let out = esm_to_cjs("export * from \"./util.js\";\n");
         assert!(out.contains("Object.keys(require(\"./util.js\"))"), "{out}");
         assert!(out.contains("if (k !== \"default\")"), "{out}");
-        assert!(out.contains("exports[k] = require(\"./util.js\")[k]"), "{out}");
+        assert!(
+            out.contains("exports[k] = require(\"./util.js\")[k]"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -1787,7 +1806,10 @@ mod tests {
         // The bare named-export clause is dropped wholesale.
         assert!(!out.contains("export {"), "{out}");
         // Indented `export`-looking text inside a block is left untouched.
-        assert!(out.contains("  export;"), "indented export preserved: {out}");
+        assert!(
+            out.contains("  export;"),
+            "indented export preserved: {out}"
+        );
     }
 
     #[test]

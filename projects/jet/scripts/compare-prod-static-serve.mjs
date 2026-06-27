@@ -303,6 +303,16 @@ function check(condition, name, details = {}) {
   return { name, ok: Boolean(condition), ...details };
 }
 
+function markNginxBaselineSkipped(evidence, reason, error = null) {
+  evidence.nginx_baseline = {
+    result: "skipped",
+    reason,
+  };
+  if (error) evidence.nginx_baseline.error = error.stack || error.message;
+  evidence.result = evidence.jet_protocol?.ok ? "gray" : "red";
+  evidence.reason = reason;
+}
+
 async function protocolChecks(server) {
   const checks = [];
   const index = await request(server.baseUrl, "GET", "/");
@@ -411,33 +421,42 @@ async function main() {
     evidence.jet_benchmark = await benchmark(jet);
 
     progress("start nginx");
-    nginx = await startNginx(fixture, dist);
-    if (!nginx) {
-      evidence.result = requireNginx ? "red" : "gray";
-      evidence.reason = "nginx baseline not found; install nginx or docker, or pass --allow-missing-nginx";
-      await writeFile(evidencePath, JSON.stringify(evidence, null, 2));
-      process.exit(requireNginx ? 1 : 0);
+    try {
+      nginx = await startNginx(fixture, dist);
+    } catch (err) {
+      if (requireNginx) throw err;
+      markNginxBaselineSkipped(evidence, "nginx baseline unavailable", err);
+      nginx = null;
     }
-    evidence.nginx_source = nginx.name;
-    evidence.nginx_protocol = await protocolChecks(nginx);
-    evidence.nginx_benchmark = await benchmark(nginx);
+    if (!nginx) {
+      if (requireNginx) {
+        evidence.result = "red";
+        evidence.reason = "nginx baseline not found; install nginx or docker, or pass --allow-missing-nginx";
+      } else if (!evidence.nginx_baseline) {
+        markNginxBaselineSkipped(evidence, "nginx baseline not found; install nginx or docker to compare throughput");
+      }
+    } else {
+      evidence.nginx_source = nginx.name;
+      evidence.nginx_protocol = await protocolChecks(nginx);
+      evidence.nginx_benchmark = await benchmark(nginx);
 
-    const firstByteOk =
-      evidence.jet_benchmark.first_byte_p95_ms <= evidence.nginx_benchmark.first_byte_p95_ms * 1.1;
-    const throughputOk =
-      evidence.jet_benchmark.throughput_rps >= evidence.nginx_benchmark.throughput_rps;
-    evidence.comparison = {
-      first_byte_p95_ratio:
-        evidence.jet_benchmark.first_byte_p95_ms / evidence.nginx_benchmark.first_byte_p95_ms,
-      throughput_ratio:
-        evidence.jet_benchmark.throughput_rps / evidence.nginx_benchmark.throughput_rps,
-      first_byte_ok: firstByteOk,
-      throughput_ok: throughputOk,
-    };
-    evidence.result =
-      evidence.jet_protocol.ok && evidence.nginx_protocol.ok && firstByteOk && throughputOk
-        ? "green"
-        : "red";
+      const firstByteOk =
+        evidence.jet_benchmark.first_byte_p95_ms <= evidence.nginx_benchmark.first_byte_p95_ms * 1.1;
+      const throughputOk =
+        evidence.jet_benchmark.throughput_rps >= evidence.nginx_benchmark.throughput_rps;
+      evidence.comparison = {
+        first_byte_p95_ratio:
+          evidence.jet_benchmark.first_byte_p95_ms / evidence.nginx_benchmark.first_byte_p95_ms,
+        throughput_ratio:
+          evidence.jet_benchmark.throughput_rps / evidence.nginx_benchmark.throughput_rps,
+        first_byte_ok: firstByteOk,
+        throughput_ok: throughputOk,
+      };
+      evidence.result =
+        evidence.jet_protocol.ok && evidence.nginx_protocol.ok && firstByteOk && throughputOk
+          ? "green"
+          : "red";
+    }
   } catch (err) {
     evidence.result = "red";
     evidence.error = err.stack || err.message;
@@ -447,7 +466,7 @@ async function main() {
     await writeFile(evidencePath, JSON.stringify(evidence, null, 2));
   }
   progress(`result=${evidence.result} evidence=${evidencePath}`);
-  process.exit(evidence.result === "green" ? 0 : 1);
+  process.exit(evidence.result === "green" || evidence.result === "gray" ? 0 : 1);
 }
 
 await main();

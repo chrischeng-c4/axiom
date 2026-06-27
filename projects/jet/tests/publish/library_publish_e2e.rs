@@ -353,9 +353,7 @@ export function makeWidget(n: number): Widget {
     let registry_host = base_url.trim_start_matches("http://");
     std::fs::write(
         root.join(".npmrc"),
-        format!(
-            "@acme:registry={base_url}/\n//{registry_host}/:_authToken=secret-token-xyz\n"
-        ),
+        format!("@acme:registry={base_url}/\n//{registry_host}/:_authToken=secret-token-xyz\n"),
     )
     .unwrap();
 
@@ -425,8 +423,8 @@ export function makeWidget(n: number): Widget {
     );
 
     // no_cache=true so we don't touch the user's real disk cache.
-    let client = RegistryClient::new_with_options(registry_url, &npmrc, true)
-        .expect("registry client");
+    let client =
+        RegistryClient::new_with_options(registry_url, &npmrc, true).expect("registry client");
 
     let metadata = client
         .get_package_metadata(pkg_name)

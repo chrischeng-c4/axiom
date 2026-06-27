@@ -113,6 +113,7 @@ fn page_request_screenshot_serializes() {
         req_id: 4,
         page_id: "t1".to_string(),
         path: None,
+        timeout_ms: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("\"kind\":\"screenshot\""), "json={json}");

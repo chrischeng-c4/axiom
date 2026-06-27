@@ -79,6 +79,12 @@ pub struct JetConfig {
     /// (Slice 2 of #1233).
     #[serde(default)]
     pub wasm: Option<WasmConfig>,
+
+    /// Code-generation settings. These hints let generators choose output
+    /// compatible with the frontend stack declared by `jet.toml` and
+    /// `package.json` instead of hard-coding one framework runtime.
+    #[serde(default)]
+    pub codegen: CodegenConfig,
 }
 
 /// `[test]` section of `jet.toml`.
@@ -234,6 +240,66 @@ pub struct LibConfig {
     pub raw_copy: Option<Vec<RawCopy>>,
 }
 
+/// `[codegen]` settings.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodegenConfig {
+    /// OpenAPI generator settings.
+    #[serde(default)]
+    pub openapi: OpenApiCodegenConfig,
+}
+
+/// `[codegen.openapi]` settings.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenApiCodegenConfig {
+    /// Frontend stack hint. `auto` uses `package.json` dependencies.
+    pub stack: Option<OpenApiCodegenStack>,
+
+    /// HTTP client backend for `runtime.ts`.
+    pub http: Option<OpenApiCodegenHttpClient>,
+
+    /// Hook runtime to emit. `auto` emits React Query hooks only for a React
+    /// stack that declares `@tanstack/react-query`.
+    pub hooks: Option<OpenApiCodegenHooks>,
+}
+
+/// Frontend stack selector for OpenAPI codegen.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OpenApiCodegenStack {
+    Auto,
+    React,
+    Typescript,
+}
+
+/// HTTP backend selector for OpenAPI codegen.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/select-http-client-backend-fetch-axios-for-openapi-codegen.md#logic
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OpenApiCodegenHttpClient {
+    Fetch,
+    Axios,
+}
+
+/// Hook runtime selector for OpenAPI codegen.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OpenApiCodegenHooks {
+    Auto,
+    ReactQuery,
+    None,
+}
+
 /// One raw-asset directory copy directive within `[lib].raw_copy`.
 ///
 /// Example:
@@ -303,7 +369,7 @@ fn default_true() -> bool {
 /// the did-you-mean suggestion when a typo lands at section level.
 /// Keep in lockstep with the struct fields above.
 const JET_TOP_LEVEL_KEYS: &[&str] = &[
-    "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib",
+    "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib", "codegen",
 ];
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema
@@ -421,7 +487,7 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
         for expected in [
-            "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib",
+            "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib", "codegen",
         ] {
             assert!(
                 props.iter().any(|p| p == expected),

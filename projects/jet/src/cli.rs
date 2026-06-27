@@ -608,8 +608,28 @@ pub fn command() -> Command {
                             Arg::new("no-hooks")
                                 .long("no-hooks")
                                 .action(ArgAction::SetTrue)
-                                .conflicts_with("types-only")
+                                .conflicts_with_all(["types-only", "hooks"])
                                 .help("Skip React Query hooks (still emit types + client)."),
+                        )
+                        .arg(
+                            Arg::new("stack")
+                                .long("stack")
+                                .value_parser(["auto", "react", "typescript"])
+                                .help(
+                                    "Frontend stack for generated output. \
+                                     Default: [codegen.openapi].stack or \
+                                     package.json auto-detection.",
+                                ),
+                        )
+                        .arg(
+                            Arg::new("hooks")
+                                .long("hooks")
+                                .value_parser(["auto", "react-query", "none"])
+                                .help(
+                                    "Hook runtime to emit. Default: \
+                                     [codegen.openapi].hooks or auto-detect \
+                                     from package.json.",
+                                ),
                         )
                         .arg(
                             Arg::new("client-name")
@@ -621,11 +641,12 @@ pub fn command() -> Command {
                             Arg::new("http")
                                 .long("http")
                                 .value_parser(["fetch", "axios"])
-                                .default_value("fetch")
                                 .help(
                                     "HTTP runtime for the generated client: \
-                                     native `fetch` (default) or `axios` (peer \
-                                     dependency of the generated output).",
+                                     native `fetch` or `axios` (peer dependency \
+                                     of the generated output). Default: \
+                                     [codegen.openapi].http or package.json \
+                                     auto-detection.",
                                 ),
                         ),
                 ),
@@ -1866,18 +1887,27 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     root_dir.join(out_arg)
                 };
                 let types_only = om.get_flag("types-only");
-                let http_client = match om.get_one::<String>("http").map(String::as_str) {
-                    Some("axios") => crate::codegen::HttpClient::Axios,
-                    _ => crate::codegen::HttpClient::Fetch,
+                let jet_config = crate::task_runner::config::JetConfig::load(&root_dir)?;
+                let cli_hooks = if om.get_flag("no-hooks") {
+                    Some("none")
+                } else {
+                    om.get_one::<String>("hooks").map(String::as_str)
                 };
+                let resolved_stack = crate::codegen::resolve_openapi_stack(
+                    &root_dir,
+                    &jet_config,
+                    om.get_one::<String>("stack").map(String::as_str),
+                    om.get_one::<String>("http").map(String::as_str),
+                    cli_hooks,
+                )?;
                 let opts = crate::codegen::GenOptions {
                     spec_path,
                     out_dir,
                     client_name: om.get_one::<String>("client-name").cloned().unwrap(),
-                    http_client,
+                    http_client: resolved_stack.http_client,
                     emit_types: true,
                     emit_client: !types_only,
-                    emit_hooks: !types_only && !om.get_flag("no-hooks"),
+                    emit_hooks: !types_only && resolved_stack.emit_hooks,
                 };
                 let exit = crate::codegen::run(&opts);
                 std::process::exit(exit);
@@ -3735,9 +3765,7 @@ fn run_library_build(
     let preserve_modules = if m.get_flag("preserve-modules") {
         true
     } else {
-        lib_config
-            .and_then(|c| c.preserve_modules)
-            .unwrap_or(false)
+        lib_config.and_then(|c| c.preserve_modules).unwrap_or(false)
     };
 
     // Global name for IIFE output: --global-name flag wins, else [lib]
@@ -3766,9 +3794,7 @@ fn run_library_build(
         preserve_modules,
         declaration,
         library_global_name,
-        entry: lib_config
-            .and_then(|c| c.entry.clone())
-            .unwrap_or_default(),
+        entry: lib_config.and_then(|c| c.entry.clone()).unwrap_or_default(),
         // CSS cascade-merge + raw-asset copy from [lib] of jet.toml. Both
         // default to empty (no-op) so a build without them is unchanged.
         css_merge: lib_config
@@ -3802,7 +3828,10 @@ fn run_library_build(
             .strip_prefix(root_dir)
             .unwrap_or(&entry.path)
             .display();
-        println!("  {} ({:?}) → {} ({:.1} KB)", entry.subpath, entry.format, rel, size_kb);
+        println!(
+            "  {} ({:?}) → {} ({:.1} KB)",
+            entry.subpath, entry.format, rel, size_kb
+        );
     }
     for types in &result.types {
         let rel = types

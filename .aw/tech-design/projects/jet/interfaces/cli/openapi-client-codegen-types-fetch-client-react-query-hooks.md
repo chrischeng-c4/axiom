@@ -1,6 +1,6 @@
 ---
 id: jet-codegen-openapi
-summary: Standalone jet codegen openapi command reading an OpenAPI 3.0/3.1 spec and emitting TypeScript types, a typed fetch client, and TanStack Query hooks.
+summary: Standalone jet codegen openapi command reading an OpenAPI 3.0/3.1 spec and emitting stack-aware TypeScript types, a typed client, and optional React Query hooks.
 capability_refs:
   - id: rust-native-frontend-toolchain
     role: primary
@@ -8,7 +8,13 @@ capability_refs:
     claim: full-toolchain-dogfood-flow
     coverage: partial
     rationale: "jet codegen openapi is part of the Rust-native frontend toolchain surface for generating typed frontend API clients."
-fill_sections: [logic, unit-test]
+  - id: rust-native-frontend-toolchain
+    role: primary
+    gap: production-replacement-readiness
+    claim: stack-aware-openapi-codegen
+    coverage: full
+    rationale: "This TD owns the stack-aware OpenAPI codegen claim and its golden tests."
+fill_sections: [logic, unit-test, e2e-test]
 ---
 
 # TD: jet/codegen-openapi
@@ -22,6 +28,7 @@ id: jet-codegen-openapi-logic
 entry: start
 nodes:
   start: { kind: start, label: "jet codegen openapi <spec> --out <dir>" }
+  read_project: { kind: process, label: "Read package.json + jet.toml [codegen.openapi]; resolve stack/http/hooks with CLI override" }
   read: { kind: process, label: "Read spec file from disk" }
   parse: { kind: process, label: "Parse JSON into OpenAPI Spec model (serde, tolerate unknown keys)" }
   parse_ok: { kind: decision, label: "Parse succeeded?" }
@@ -31,12 +38,13 @@ nodes:
   emit_types: { kind: process, label: "Emit types.ts from component and inline schemas" }
   client_dec: { kind: decision, label: "Emit client? (not --types-only)" }
   emit_client: { kind: process, label: "Emit runtime.ts + client.ts (createClient, one fn per operation)" }
-  hooks_dec: { kind: decision, label: "Emit hooks? (not --types-only and not --no-hooks)" }
-  emit_hooks: { kind: process, label: "Emit hooks.ts (createHooks, useQuery/useMutation)" }
+  hooks_dec: { kind: decision, label: "Emit hooks? (resolved hook runtime is react-query and not --types-only)" }
+  emit_hooks: { kind: process, label: "Emit hooks.ts for React Query (createHooks, useQuery/useMutation)" }
   write: { kind: process, label: "Write generated files to out dir + index.ts barrel" }
   done: { kind: terminal, label: "Ok (exit 0)" }
 edges:
-  - { from: start, to: read }
+  - { from: start, to: read_project }
+  - { from: read_project, to: read }
   - { from: read, to: parse }
   - { from: parse, to: parse_ok }
   - { from: parse_ok, to: err_parse, label: "no" }
@@ -53,7 +61,8 @@ edges:
   - { from: write, to: done }
 ---
 flowchart TD
-    start([jet codegen openapi spec --out dir]) --> read[Read spec file from disk]
+    start([jet codegen openapi spec --out dir]) --> read_project[Read package json and jet toml codegen openapi; resolve stack http hooks]
+    read_project --> read[Read spec file from disk]
     read --> parse[Parse JSON into OpenAPI Spec model]
     parse --> parse_ok{Parse succeeded?}
     parse_ok -->|no| err_parse([Err: invalid spec exit 2])
@@ -65,7 +74,7 @@ flowchart TD
     client_dec -->|yes| emit_client[Emit runtime.ts and client.ts]
     emit_client --> hooks_dec
     hooks_dec -->|no| write[Write generated files to out dir]
-    hooks_dec -->|yes| emit_hooks[Emit hooks.ts createHooks useQuery useMutation]
+    hooks_dec -->|yes| emit_hooks[Emit hooks.ts React Query createHooks useQuery useMutation]
     emit_hooks --> write
     write --> done([Ok exit 0])
 ```
@@ -89,13 +98,17 @@ requirements:
     risk: high
     verify: unit
   R4:
-    text: "Hooks emit useQuery for GET and useMutation for write methods."
+    text: "Hooks emit useQuery for GET and useMutation for write methods only when the resolved hook runtime is React Query."
     risk: medium
     verify: unit
   R5:
     text: "Generated output is deterministic and matches committed golden snapshots."
     risk: high
     verify: command
+  R6:
+    text: "CLI flags override jet.toml [codegen.openapi], which overrides package.json auto-detection for stack/http/hooks."
+    risk: high
+    verify: unit
 ---
 requirementDiagram
 requirement R1 {
@@ -118,13 +131,19 @@ requirement R3 {
 }
 requirement R4 {
   id: R4
-  text: "React Query hooks"
+  text: "Stack-aware React Query hooks"
   risk: Medium
   verifymethod: Test
 }
 requirement R5 {
   id: R5
   text: "Deterministic golden output"
+  risk: High
+  verifymethod: Test
+}
+requirement R6 {
+  id: R6
+  text: "Stack resolution precedence"
   risk: High
   verifymethod: Test
 }
@@ -136,14 +155,30 @@ requirement R5 {
 ```yaml
 coverage_kind: semantic
 changes:
+  - path: "projects/jet/src/cli.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Add stack-aware OpenAPI codegen CLI resolution: flags override
+      [codegen.openapi] in jet.toml, which overrides package.json
+      auto-detection for frontend stack, hook runtime, and HTTP backend.
+  - path: "projects/jet/src/task_runner/config.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      Add typed jet.toml schema support for [codegen.openapi] stack/http/hooks
+      so generators can resolve output from project configuration.
   - path: "projects/jet/src/codegen/mod.rs"
     action: modify
     section: logic
     impl_mode: hand-written
     description: |
       Own the pure OpenAPI generation pipeline and CLI-facing run path:
-      parse spec JSON, build type map and operation plans, emit selected files,
-      and write deterministic output.
+      parse spec JSON, resolve stack/http/hooks from project files, build type
+      map and operation plans, emit selected files, and write deterministic
+      output.
   - path: "projects/jet/src/codegen/openapi.rs"
     action: modify
     section: logic
@@ -185,7 +220,7 @@ changes:
     impl_mode: hand-written
     description: |
       Emit TanStack Query hooks for GET operations and mutations for write
-      operations.
+      operations only when stack resolution selects React Query hooks.
   - path: "projects/jet/tests/codegen/openapi_golden.rs"
     action: modify
     section: unit-test
@@ -193,6 +228,19 @@ changes:
     description: |
       Golden snapshots, deterministic output checks, nullable/composition
       assertions, and TypeScript smoke coverage for jet codegen openapi.
+```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: stack_aware_openapi_codegen
+    capability_id: rust-native-frontend-toolchain
+    claim_id: stack-aware-openapi-codegen
+    name: "Stack-aware OpenAPI codegen"
+    command: "cargo test -p jet --test openapi_golden"
+    proves: "OpenAPI codegen resolves stack, HTTP backend, and hooks from CLI flags, jet.toml, and package.json."
 ```
 
 # Reviews

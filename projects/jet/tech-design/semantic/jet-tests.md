@@ -36,6 +36,20 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/jet/tests"
+      - path: "projects/jet/tests/wasm_dom_parity_gate.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "wasm_dom_parity_gate"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/jet/tests"
       - path: "projects/jet/tests/behavior_multi_fixture_dom_wasm_screenshot_pixel_parity.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -99,6 +113,34 @@ semantic_domain:
         symbols:
           - name: "phase_3_build_gate"
             kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/jet/tests"
+      - path: "projects/jet/tests/renderer_layout.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "renderer_layout"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/jet/tests"
+      - path: "projects/jet/tests/openapi_golden.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "codegen_openapi_golden"
+            kind: "module"
             public: false
         source_evidence_node:
           layer: "backend"
@@ -245,11 +287,14 @@ strategy: preserve observed source behavior while semantic coverage is promoted 
 evidence:
   source_tests:
     - path: "projects/jet/tests/react_dom_oracle_conformance.rs"
+    - path: "projects/jet/tests/wasm_dom_parity_gate.rs"
     - path: "projects/jet/tests/behavior_multi_fixture_dom_wasm_screenshot_pixel_parity.rs"
     - path: "projects/jet/tests/browser_cli_smoke.rs"
     - path: "projects/jet/tests/behavior_multi_fixture_dom_wasm_layout_parity.rs"
     - path: "projects/jet/tests/behavior_counter_dom_wasm_parity_after_click.rs"
     - path: "projects/jet/tests/behavior_phase_3_build_gate.rs"
+    - path: "projects/jet/tests/renderer_layout.rs"
+    - path: "projects/jet/tests/openapi_golden.rs"
     - path: "projects/jet/tests/behavior_multi_fixture_dom_wasm_parity.rs"
     - path: "projects/jet/tests/behavior_library_dom_wasm_parity.rs"
     - path: "projects/jet/tests/behavior_live_wasm_capture_after_click.rs"
@@ -281,6 +326,14 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-jet-tests-react-dom-oracle-conformance-rs>"
+  - path: "projects/jet/tests/wasm_dom_parity_gate.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-jet-tests-wasm-dom-parity-gate-rs>"
   - path: "projects/jet/tests/behavior_multi_fixture_dom_wasm_screenshot_pixel_parity.rs"
     action: modify
     section: schema
@@ -313,6 +366,22 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/jet/tests/renderer_layout.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-jet-tests-renderer-layout-rs>"
+  - path: "projects/jet/tests/openapi_golden.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-jet-tests-openapi-golden-rs>"
   - path: "projects/jet/tests/behavior_multi_fixture_dom_wasm_parity.rs"
     action: modify
     section: schema
@@ -366,5 +435,19 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/renderer_layout.rs"
+    action: verify
+    section: unit-test
+    description: |
+      Preserve the observed Jet source-test evidence graph while semantic
+      coverage is promoted toward deterministic generator primitives.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/openapi_golden.rs"
+    action: verify
+    section: unit-test
+    description: |
+      Preserve the observed Jet codegen golden wrapper evidence graph while
+      semantic coverage is promoted toward deterministic generator primitives.
     impl_mode: hand-written
 ```
