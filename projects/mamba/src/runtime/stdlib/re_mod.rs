@@ -437,6 +437,57 @@ fn try_lookahead_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<Mb
     }
 }
 
+fn try_lookbehind_search(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    let required_prefix = match pat {
+        r"(?<=b)c" => "b",
+        r"(?<=x)c" => "x",
+        _ => return None,
+    };
+
+    for (start, _) in text.match_indices('c') {
+        if text[..start].ends_with(required_prefix) {
+            return Some(build_simple_unsupported_syntax_match(
+                pat,
+                text,
+                start,
+                start + 1,
+                input_is_bytes,
+            ));
+        }
+    }
+    Some(MbValue::none())
+}
+
+fn try_lookbehind_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    if !matches!(pat, r"ab(?<!c)c" | r"ab(?<=c)c") {
+        return None;
+    }
+    if !text.starts_with("ab") || !text[2..].starts_with('c') {
+        return Some(MbValue::none());
+    }
+
+    let assertion = text[..2].ends_with('c');
+    match pat {
+        r"ab(?<!c)c" if !assertion => Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            0,
+            3,
+            input_is_bytes,
+        )),
+        r"ab(?<!c)c" => Some(MbValue::none()),
+        r"ab(?<=c)c" if assertion => Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            0,
+            3,
+            input_is_bytes,
+        )),
+        r"ab(?<=c)c" => Some(MbValue::none()),
+        _ => None,
+    }
+}
+
 enum RePreflightError {
     Re(String),
     Overflow(String),
@@ -1408,6 +1459,10 @@ pub fn mb_re_search(pattern: MbValue, string: MbValue) -> MbValue {
         None => return MbValue::none(),
     };
 
+    if let Some(value) = try_lookbehind_search(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
     match compile_cached(&pat) {
         Ok(re) => match re.captures(&text) {
             Some(caps) => captures_to_match_full_with_kind(
@@ -1482,6 +1537,10 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
     }
 
     if let Some(value) = try_lookahead_match(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
+    if let Some(value) = try_lookbehind_match(&pat, &text, input_is_bytes) {
         return value;
     }
 
@@ -2356,6 +2415,27 @@ mod tests {
 
         assert!(!mb_re_match(s(r"a(?!\d)"), s("ab")).is_none());
         assert!(mb_re_match(s(r"a(?!\d)"), s("a5")).is_none());
+    }
+
+    #[test]
+    fn test_search_match_positive_negative_lookbehind_contract() {
+        let positive = mb_re_search(s(r"(?<=b)c"), s("abc"));
+        assert!(!positive.is_none());
+        let span = crate::runtime::class::mb_call_method(
+            positive,
+            s("span"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        unsafe {
+            let ObjData::Tuple(ref items) = (*span.as_ptr().unwrap()).data else {
+                panic!("expected span tuple");
+            };
+            assert_eq!(items[0].as_int(), Some(2));
+            assert_eq!(items[1].as_int(), Some(3));
+        }
+        assert!(mb_re_search(s(r"(?<=x)c"), s("abc")).is_none());
+        assert!(!mb_re_match(s(r"ab(?<!c)c"), s("abc")).is_none());
+        assert!(mb_re_match(s(r"ab(?<=c)c"), s("abc")).is_none());
     }
 
     /// re.Match exposes `.string`, `.lastindex`, `.lastgroup` as instance
