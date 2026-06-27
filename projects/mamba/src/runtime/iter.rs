@@ -82,8 +82,17 @@ pub enum IterKind {
     /// Each inner iterator is a separate ITERATORS entry (same reentrancy
     /// rationale as Map/Filter).
     MapN { func: MbValue, inner_ids: Vec<u64> },
-    /// Iterating over reversed(seq)
-    Reversed { items: Vec<MbValue>, index: usize },
+    /// Iterating over reversed(seq).
+    ///
+    /// Plain sequences use a materialized snapshot. `reversed(list)` also keeps
+    /// the original list and initial length so live-list cursor semantics match
+    /// CPython: appends past the original tail are ignored, while truncation
+    /// before the current cursor exhausts the iterator.
+    Reversed {
+        items: Vec<MbValue>,
+        index: usize,
+        list_source: Option<(MbValue, usize)>,
+    },
     /// User-defined iterator: object with __next__ dunder
     UserDefined(MbValue),
     /// Generator iterator: wraps a generator handle
@@ -207,6 +216,68 @@ fn dict_current_len(source: MbValue) -> Option<usize> {
 fn dict_iter_changed(source: MbValue, expected_len: usize, expected_version: u64) -> bool {
     dict_current_len(source).map_or(true, |len| len != expected_len)
         || super::dict_ops::dict_version(source) != expected_version
+}
+
+fn list_current_len(source: MbValue) -> Option<usize> {
+    let ptr = source.as_ptr()?;
+    unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            Some(lock.read().unwrap().len())
+        } else {
+            None
+        }
+    }
+}
+
+fn list_item_at(source: MbValue, index: usize) -> Option<MbValue> {
+    let ptr = source.as_ptr()?;
+    unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            lock.read().unwrap().get(index).copied()
+        } else {
+            None
+        }
+    }
+}
+
+fn reversed_list_cursor(original_len: usize, consumed: usize) -> Option<usize> {
+    if consumed < original_len {
+        Some(original_len - consumed - 1)
+    } else {
+        None
+    }
+}
+
+fn reversed_list_remaining_len(source: MbValue, original_len: usize, consumed: usize) -> usize {
+    let Some(cursor) = reversed_list_cursor(original_len, consumed) else {
+        return 0;
+    };
+    if list_current_len(source).is_some_and(|len| len > cursor) {
+        cursor + 1
+    } else {
+        0
+    }
+}
+
+fn reversed_list_next(source: MbValue, original_len: usize, consumed: &mut usize) -> Option<MbValue> {
+    let cursor = reversed_list_cursor(original_len, *consumed)?;
+    if !list_current_len(source).is_some_and(|len| len > cursor) {
+        return None;
+    }
+    let value = list_item_at(source, cursor)?;
+    *consumed += 1;
+    Some(value)
+}
+
+fn drain_reversed_list(source: MbValue, original_len: usize, mut consumed: usize) -> Vec<MbValue> {
+    let mut out = Vec::new();
+    while let Some(value) = reversed_list_next(source, original_len, &mut consumed) {
+        unsafe {
+            super::rc::retain_if_ptr(value);
+        }
+        out.push(value);
+    }
+    out
 }
 
 fn dict_keys_iter_kind(source: MbValue) -> IterKind {
@@ -507,10 +578,22 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             }
             Some(out)
         }
-        IterKind::Reversed { items, index } => {
-            // Remaining items from the reversed iterator.
-            let start = index.min(items.len());
-            Some(items[start..].to_vec())
+        IterKind::Reversed {
+            items,
+            index,
+            list_source,
+        } => {
+            if let Some((source, original_len)) = list_source {
+                let out = drain_reversed_list(source, original_len, index);
+                unsafe {
+                    super::rc::release_if_ptr(source);
+                }
+                Some(out)
+            } else {
+                // Remaining items from the reversed iterator.
+                let start = index.min(items.len());
+                Some(items[start..].to_vec())
+            }
         }
         IterKind::DictKeys {
             source,
@@ -1063,8 +1146,16 @@ pub fn mb_iter_length_hint(handle: MbValue) -> Option<i64> {
                 })?;
                 Some((total as i64 - it.index as i64).max(0))
             }
-            IterKind::Reversed { items, index } => {
-                Some((items.len() as i64 - *index as i64).max(0))
+            IterKind::Reversed {
+                items,
+                index,
+                list_source,
+            } => {
+                if let Some((source, original_len)) = list_source {
+                    Some(reversed_list_remaining_len(*source, *original_len, *index) as i64)
+                } else {
+                    Some((items.len() as i64 - *index as i64).max(0))
+                }
             }
             IterKind::Repeat { remaining, .. } => remaining.map(|r| r as i64),
             _ => None,
@@ -1109,9 +1200,22 @@ pub fn mb_iter_setstate(handle: MbValue, state: MbValue) -> Option<MbValue> {
                 }
                 Some(MbValue::none())
             }
-            IterKind::Reversed { items, index: pos } => {
-                *pos = bigint_to_saturating_usize(&index).min(items.len());
-                if *pos >= items.len() {
+            IterKind::Reversed {
+                items,
+                index: pos,
+                list_source,
+            } => {
+                let limit = list_source
+                    .as_ref()
+                    .map(|(_, original_len)| *original_len)
+                    .unwrap_or(items.len());
+                *pos = bigint_to_saturating_usize(&index).min(limit);
+                let remaining = if let Some((source, original_len)) = list_source.as_ref() {
+                    reversed_list_remaining_len(*source, *original_len, *pos)
+                } else {
+                    items.len().saturating_sub(*pos)
+                };
+                if remaining == 0 {
                     iter.exhausted = true;
                 }
                 Some(MbValue::none())
@@ -1676,12 +1780,16 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
             let mut items = range_iter_to_vec(seq).unwrap_or_default();
             items.reverse();
             if !preserve_source {
-            ITERATORS.with(|iters| {
-                iters.borrow_mut().remove(&(id as u64));
-            });
+                ITERATORS.with(|iters| {
+                    iters.borrow_mut().remove(&(id as u64));
+                });
             }
             let iter = MbIterator {
-                kind: IterKind::Reversed { items, index: 0 },
+                kind: IterKind::Reversed {
+                    items,
+                    index: 0,
+                    list_source: None,
+                },
                 index: 0,
                 exhausted: false,
                 peeked: None,
@@ -1695,9 +1803,12 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
     }
     if let Some(ptr) = seq.as_ptr() {
         unsafe {
+            let mut list_source = None;
             let items: Vec<MbValue> = match &(*ptr).data {
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
+                    list_source = Some((seq, items.len()));
+                    super::rc::retain_if_ptr(seq);
                     items.iter().rev().copied().collect()
                 }
                 ObjData::Tuple(items) => items.iter().rev().copied().collect(),
@@ -1764,7 +1875,11 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
                 _ => return MbValue::none(),
             };
             let iter = MbIterator {
-                kind: IterKind::Reversed { items, index: 0 },
+                kind: IterKind::Reversed {
+                    items,
+                    index: 0,
+                    list_source,
+                },
                 index: 0,
                 exhausted: false,
                 peeked: None,
@@ -3101,6 +3216,12 @@ fn release_iter(iter: &MbIterator) {
             super::rc::release_if_ptr(*source);
             super::rc::release_if_ptr(*items);
         },
+        IterKind::Reversed {
+            list_source: Some((source, _)),
+            ..
+        } => unsafe {
+            super::rc::release_if_ptr(*source);
+        },
         // Enumerate/Zip: inner iterator(s) are separate ITERATORS entries
         // identified by id. Release each by removing and dropping via release_iter.
         IterKind::Enumerate { inner_id, .. } => {
@@ -4143,7 +4264,18 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
             iter.exhausted = true;
             MbValue::none()
         }
-        IterKind::Reversed { items, index } => {
+        IterKind::Reversed {
+            items,
+            index,
+            list_source,
+        } => {
+            if let Some((source, original_len)) = list_source {
+                if let Some(val) = reversed_list_next(*source, *original_len, index) {
+                    return val;
+                }
+                iter.exhausted = true;
+                return MbValue::none();
+            }
             if *index < items.len() {
                 let val = items[*index];
                 *index += 1;
