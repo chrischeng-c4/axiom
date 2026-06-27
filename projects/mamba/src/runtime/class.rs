@@ -13347,6 +13347,13 @@ pub fn mb_call_method_kwargs(
         if method_val.is_none() {
             return None;
         }
+        let method_addr = extract_func_addr(method_val);
+        if method_addr != 0
+            && (super::module::is_variadic_func(method_addr as u64)
+                || super::module::is_kwargs_func(method_addr as u64))
+        {
+            return None;
+        }
         let argcount = super::closure::mb_func_get_argcount(method_val).as_int()?;
         if argcount <= 1 {
             return None; // only `self` (or unknown) — nothing to bind

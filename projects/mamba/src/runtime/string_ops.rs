@@ -4084,7 +4084,14 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
     unsafe {
         let template = match as_str(s) {
             Some(t) => t,
-            None => return MbValue::none(),
+            None => {
+                return super::class::mb_call_method_kwargs(
+                    s,
+                    new_str("format".to_string()),
+                    pos_args,
+                    kwargs,
+                );
+            }
         };
         let pos_list: Vec<MbValue> = match pos_args.as_ptr() {
             Some(ptr) => match &(*ptr).data {

@@ -794,6 +794,66 @@ unsafe extern "C" fn traceback_repr(self_v: MbValue, _args: MbValue) -> MbValue 
     }
 }
 
+unsafe extern "C" fn traceback_format(self_v: MbValue, args: MbValue, kwargs: MbValue) -> MbValue {
+    let items = list_items(args);
+    let kw = if kwargs.is_none() {
+        items
+            .iter()
+            .copied()
+            .find(|v| is_dict_value(*v))
+            .unwrap_or_else(MbValue::none)
+    } else {
+        kwargs
+    };
+    let pos: Vec<MbValue> = items
+        .iter()
+        .copied()
+        .filter(|v| !is_dict_value(*v))
+        .collect();
+    let limit = kwarg(kw, "limit")
+        .or_else(|| pos.first().copied())
+        .filter(|v| !v.is_none())
+        .and_then(|v| v.as_int());
+    let most_recent_first = kwarg(kw, "most_recent_first")
+        .or_else(|| pos.get(1).copied())
+        .map(|v| super::super::builtins::mb_is_truthy(v) != 0)
+        .unwrap_or(false);
+
+    let mut frames = get_field(self_v, "_entries")
+        .map(list_items)
+        .unwrap_or_default();
+    if let Some(limit) = limit {
+        let len = frames.len();
+        if limit >= 0 {
+            let keep = limit as usize;
+            if keep < len {
+                frames = frames[len - keep..].to_vec();
+            }
+        } else {
+            let drop_oldest = limit.checked_abs().unwrap_or(i64::MAX) as usize;
+            let keep = len.saturating_sub(drop_oldest);
+            frames.truncate(keep);
+        }
+    }
+    if most_recent_first {
+        frames.reverse();
+    }
+
+    let lines: Vec<MbValue> = frames
+        .into_iter()
+        .map(|frame| {
+            let file = get_field(frame, "filename")
+                .and_then(extract_str)
+                .unwrap_or_default();
+            let line = get_field(frame, "lineno")
+                .and_then(|v| v.as_int())
+                .unwrap_or(0);
+            new_str(&format!("  File \"{file}\", line {line}"))
+        })
+        .collect();
+    MbValue::from_ptr(MbObject::new_list(lines))
+}
+
 unsafe extern "C" fn trace_str(self_v: MbValue, _args: MbValue) -> MbValue {
     let tb = get_field(self_v, "traceback").unwrap_or_else(MbValue::none);
     let size = get_field(self_v, "size")
@@ -820,6 +880,11 @@ fn register_tracemalloc_classes() {
         super::super::module::register_variadic_func(addr as u64);
         MbValue::from_func(addr)
     };
+    let var_kwargs = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        super::super::module::register_kwargs_func(addr as u64);
+        MbValue::from_func(addr)
+    };
     // Sequence behavior (len / index / slice→tuple) for Traceback and Traces.
     super::sys_mod::register_struct_seq_class("tracemalloc._Traces");
 
@@ -828,6 +893,10 @@ fn register_tracemalloc_classes() {
         let mut m: Map<String, MbValue> = Map::new();
         m.insert("__str__".into(), var(traceback_str as *const () as usize));
         m.insert("__repr__".into(), var(traceback_repr as *const () as usize));
+        m.insert(
+            "format".into(),
+            var_kwargs(traceback_format as *const () as usize),
+        );
         super::sys_mod::register_struct_seq_class_with("tracemalloc.Traceback", m);
     }
     {
