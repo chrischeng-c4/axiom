@@ -10093,22 +10093,9 @@ pub fn mb_set_from_iterable(args: MbValue) -> MbValue {
 /// assert statement failure — raise AssertionError via exception system.
 pub fn mb_assertion_error(msg: MbValue) {
     let exc_type = MbValue::from_ptr(MbObject::new_str("AssertionError".to_string()));
-    let message = if msg.is_none() || msg == MbValue::from_int(0) {
-        MbValue::from_ptr(MbObject::new_str(String::new()))
-    } else if let Some(ptr) = msg.as_ptr() {
-        let s = unsafe {
-            match &(*ptr).data {
-                ObjData::Str(s) => s.clone(),
-                _ => format!("{:?}", msg),
-            }
-        };
-        MbValue::from_ptr(MbObject::new_str(s))
-    } else if let Some(i) = msg.as_int() {
-        MbValue::from_ptr(MbObject::new_str(format!("{i}")))
-    } else {
-        MbValue::from_ptr(MbObject::new_str(String::new()))
-    };
-    super::exception::mb_raise(exc_type, message);
+    let args = MbValue::from_ptr(MbObject::new_list(vec![msg]));
+    let instance = super::exception::mb_exception_new_with_args(exc_type, args);
+    super::class::mb_raise_instance(instance);
 }
 
 /// assert statement failure — no message variant.
