@@ -2870,6 +2870,14 @@ impl<'a> AstLowerer<'a> {
         id
     }
 
+    fn fresh_function_impl_symbol(&mut self, display_name: &str, ty: TypeId) -> SymbolId {
+        let id = SymbolId(self.next_local_sym);
+        self.next_local_sym += 1;
+        self.result.sym_names.insert(id, display_name.to_string());
+        self.result.sym_types.insert(id, ty);
+        id
+    }
+
     /// Get the type of a symbol (local first, then checker).
     fn get_type(&self, sym: SymbolId) -> TypeId {
         if let Some(&ty) = self.local_types.get(&sym) {
@@ -3222,12 +3230,7 @@ impl<'a> AstLowerer<'a> {
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
-                        // Introspection: record the declared signature shape so
-                        // module init can prime the runtime FUNC_PARAMS registry
-                        // (inspect.signature / getfullargspec).
-                        self.result
-                            .func_sigs
-                            .insert(func.name.0, func_sig_meta(params, return_ty));
+                        let declared_sig = func_sig_meta(params, return_ty);
                         func.is_generator = contains_yield(body);
                         func.decorators = decorators
                             .iter()
@@ -3239,25 +3242,32 @@ impl<'a> AstLowerer<'a> {
                             // type to any_ty as well so call sites treat the dispatch
                             // result uniformly.
                             let any_ty = self.checker.tcx.any();
+                            let bind_sym = func.name;
+                            let impl_sym = self.fresh_function_impl_symbol(name, any_ty);
+                            func.name = impl_sym;
+                            func.bind_name = Some(bind_sym);
                             func.return_ty = any_ty;
                             // Update func_return_tys so call-site lookup at
                             // ast_to_hir.rs:2053 reads `any` instead of the body-inferred
                             // primitive type — otherwise `add_one(5) == 6` (decorated)
                             // routes through native int compare on NaN-boxed bits and
                             // returns False even though both sides are 6.
+                            self.func_return_tys.insert(bind_sym, any_ty);
                             self.func_return_tys.insert(func.name, any_ty);
                             // Emit a placeholder so decorator application happens at the
                             // correct position in the module execution order (#decorder).
                             self.result.top_level.push(HirStmt::FuncDefPlaceholder {
                                 name: func.name,
+                                bind_name: Some(bind_sym),
                                 span: stmt.span,
                                 redef: false,
+                                func_sig: Some(declared_sig.clone()),
                             });
                             // Remember this name was bound by a decorated def so a
                             // later non-decorated redefinition re-stores the global.
                             // Record overload-ness so the impl can lower dynamically.
                             self.decorated_top_level_names
-                                .insert(name.clone(), (func.name, overload_decorated));
+                                .insert(name.clone(), (bind_sym, overload_decorated));
                         } else if self.decorated_top_level_names.remove(name).is_some() {
                             // A non-decorated def redefining a name previously bound
                             // by a DECORATED def: emit a placeholder flagged as a
@@ -3266,10 +3276,19 @@ impl<'a> AstLowerer<'a> {
                             // the earlier decorator's wrapper/dummy).
                             self.result.top_level.push(HirStmt::FuncDefPlaceholder {
                                 name: func.name,
+                                bind_name: None,
                                 span: stmt.span,
                                 redef: true,
+                                func_sig: Some(declared_sig.clone()),
                             });
                         }
+                        // Introspection: record the declared signature shape so
+                        // module init can prime the runtime FUNC_PARAMS registry
+                        // (inspect.signature / getfullargspec).
+                        self.result
+                            .func_sigs
+                            .insert(func.name.0, declared_sig.clone());
+                        func.func_sig = Some(declared_sig);
                         self.result.functions.push(func);
                     }
                     self.module_unbound_annotation_names.remove(name);
@@ -3320,10 +3339,7 @@ impl<'a> AstLowerer<'a> {
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
-                        // Introspection: same FUNC_PARAMS priming as sync defs.
-                        self.result
-                            .func_sigs
-                            .insert(func.name.0, func_sig_meta(params, return_ty));
+                        let declared_sig = func_sig_meta(params, return_ty);
                         let has_yield = contains_yield(body);
                         // `async def f(): yield` is an async generator — CPython
                         // returns an async-generator object, not a coroutine.
@@ -3351,24 +3367,38 @@ impl<'a> AstLowerer<'a> {
                             .collect();
                         if !func.decorators.is_empty() {
                             let any_ty = self.checker.tcx.any();
+                            let bind_sym = func.name;
+                            let impl_sym = self.fresh_function_impl_symbol(name, any_ty);
+                            func.name = impl_sym;
+                            func.bind_name = Some(bind_sym);
                             func.return_ty = any_ty;
+                            self.func_return_tys.insert(bind_sym, any_ty);
                             self.func_return_tys.insert(func.name, any_ty);
                             self.result.top_level.push(HirStmt::FuncDefPlaceholder {
                                 name: func.name,
+                                bind_name: Some(bind_sym),
                                 span: stmt.span,
                                 redef: false,
+                                func_sig: Some(declared_sig.clone()),
                             });
                             self.decorated_top_level_names
-                                .insert(name.clone(), (func.name, overload_decorated));
+                                .insert(name.clone(), (bind_sym, overload_decorated));
                         } else if self.decorated_top_level_names.remove(name).is_some() {
                             // Non-decorated async def redefining a decorated name —
                             // re-store the global (see sync FnDef arm).
                             self.result.top_level.push(HirStmt::FuncDefPlaceholder {
                                 name: func.name,
+                                bind_name: None,
                                 span: stmt.span,
                                 redef: true,
+                                func_sig: Some(declared_sig.clone()),
                             });
                         }
+                        // Introspection: same FUNC_PARAMS priming as sync defs.
+                        self.result
+                            .func_sigs
+                            .insert(func.name.0, declared_sig.clone());
+                        func.func_sig = Some(declared_sig);
                         self.result.functions.push(func);
                     }
                     self.module_unbound_annotation_names.remove(name);
@@ -3782,6 +3812,8 @@ impl<'a> AstLowerer<'a> {
             name: name_id,
             params: hir_params,
             return_ty: ret_ty,
+            func_sig: Some(func_sig_meta(params, _return_ty)),
+            bind_name: None,
             body: hir_body,
             span,
             captures,
@@ -5347,8 +5379,10 @@ impl<'a> AstLowerer<'a> {
                 let _ = fn_sym;
                 let placeholder = HirStmt::FuncDefPlaceholder {
                     name: fn_sym,
+                    bind_name: None,
                     span: stmt.span,
                     redef: false,
+                    func_sig: Some(func_sig_meta(params, return_ty)),
                 };
                 Some(placeholder)
             }
@@ -5397,8 +5431,10 @@ impl<'a> AstLowerer<'a> {
                 let _ = fn_sym;
                 Some(HirStmt::FuncDefPlaceholder {
                     name: fn_sym,
+                    bind_name: None,
                     span: stmt.span,
                     redef: false,
+                    func_sig: Some(func_sig_meta(params, return_ty)),
                 })
             }
             _ => None,
