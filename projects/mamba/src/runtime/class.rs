@@ -5459,9 +5459,17 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             // (lookup_method → CLASS_REGISTRY, the same registry
                             // the func->method bridge uses) so ONLY a real method
                             // bridges; a miss falls through and stays absent.
-                            if class_is_registered(&type_name_str)
-                                && !lookup_method(&type_name_str, &attr_name).is_none()
-                            {
+                            let method = lookup_method(&type_name_str, &attr_name);
+                            if super::stdlib::functools_mod::is_singledispatchmethod_descriptor(
+                                method,
+                            ) {
+                                let cls_val =
+                                    MbValue::from_ptr(MbObject::new_str(type_name_str.clone()));
+                                return super::stdlib::functools_mod::mb_singledispatchmethod_get(
+                                    method, cls_val,
+                                );
+                            }
+                            if class_is_registered(&type_name_str) && !method.is_none() {
                                 return make_unbound_method(&type_name_str, &attr_name);
                             }
                             if let Some(method) =
@@ -5998,6 +6006,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 // Class methods and class attributes via MRO
                                 let method = lookup_method(s, &attr_name);
                                 if !method.is_none() {
+                                    if super::stdlib::functools_mod::is_singledispatchmethod_descriptor(
+                                        method,
+                                    ) {
+                                        let cls_val = MbValue::from_ptr(MbObject::new_str(s.clone()));
+                                        return super::stdlib::functools_mod::mb_singledispatchmethod_get(
+                                            method, cls_val,
+                                        );
+                                    }
                                     // Unwrap staticmethod/classmethod descriptors
                                     let (unwrapped, _dk) = unwrap_descriptor_method(method);
                                     super::rc::retain_if_ptr(unwrapped);
@@ -6662,6 +6678,7 @@ fn is_descriptor(val: MbValue) -> bool {
                     || class_name == "__staticmethod__"
                     || class_name == "__cached_property__"
                     || class_name == "functools.partialmethod"
+                    || class_name == "functools.singledispatchmethod"
                     || !lookup_method(class_name, "__get__").is_none();
             }
         }
@@ -6699,6 +6716,11 @@ fn invoke_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
                 }
                 if class_name == "functools.partialmethod" {
                     return partialmethod_get(desc, instance);
+                }
+                if class_name == "functools.singledispatchmethod" {
+                    return super::stdlib::functools_mod::mb_singledispatchmethod_get(
+                        desc, instance,
+                    );
                 }
             }
         }
@@ -13154,6 +13176,39 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         }
     }
 
+    if let (Some(recv_ptr), Some(name_ptr)) = (receiver.as_ptr(), method_name.as_ptr()) {
+        let sdm_desc = unsafe {
+            if let (
+                ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                },
+                ObjData::Str(ref name_s),
+            ) = (&(*recv_ptr).data, &(*name_ptr).data)
+            {
+                let shadowed = fields.read().unwrap().contains_key(name_s.as_str());
+                if shadowed {
+                    None
+                } else {
+                    let method = lookup_method(class_name, name_s.as_str());
+                    if super::stdlib::functools_mod::is_singledispatchmethod_descriptor(method) {
+                        Some(method)
+                    } else {
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(desc) = sdm_desc {
+            let items = super::builtins::extract_items(args);
+            return super::stdlib::functools_mod::mb_singledispatchmethod_call(
+                desc, receiver, items,
+            );
+        }
+    }
+
     // Issue #2097 fast path — module / plain-dict method dispatch is the
     // single hottest CALL_METHOD shape in idiomatic Python (`keyword.iskeyword(w)`
     // inside a for-loop). The JIT bakes the method name as an immortal
@@ -14277,6 +14332,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         };
 
         if let Some(ref s) = type_name_opt {
+            if class_is_registered(s) {
+                let method = lookup_method(s, &name);
+                if super::stdlib::functools_mod::is_singledispatchmethod_descriptor(method) {
+                    let cls_recv = MbValue::from_ptr(MbObject::new_str(s.clone()));
+                    let items = super::builtins::extract_items(args);
+                    return super::stdlib::functools_mod::mb_singledispatchmethod_call(
+                        method, cls_recv, items,
+                    );
+                }
+            }
             // complex.__eq__/__ne__/__lt__/… called directly on the type object
             // (`complex.__eq__(a, b)`). Lowered as a method call, so it bypasses
             // the getattr unbound-method wrapper; compute via the shared helper.
@@ -16165,6 +16230,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         }
                         let method = lookup_method(&class_name_str, &name);
                         if !method.is_none() {
+                            if super::stdlib::functools_mod::is_singledispatchmethod_descriptor(
+                                method,
+                            ) {
+                                let items = super::builtins::extract_items(args);
+                                return super::stdlib::functools_mod::mb_singledispatchmethod_call(
+                                    method, receiver, items,
+                                );
+                            }
                             let (actual_method, dk) = unwrap_descriptor_method(method);
                             let call_method = if actual_method.as_func().is_some()
                                 || actual_method.as_int().is_some()

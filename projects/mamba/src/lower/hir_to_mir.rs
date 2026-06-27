@@ -32,6 +32,12 @@ type MethodEntry = (
     // value, e.g. a cross-class `@Base.prop.setter`. None for plain or
     // descriptor-folded methods. (#82)
     Option<HirExpr>,
+    // True when the method's outer decorator is functools.singledispatchmethod.
+    // The regular MethodDecorKind still represents the inner descriptor shape
+    // (`@classmethod` / `@staticmethod`) that singledispatchmethod wraps.
+    bool,
+    // `@target.register(type_expr)` on a sibling singledispatchmethod.
+    Option<(SymbolId, HirExpr)>,
 );
 
 type PendingClassRegistration = (
@@ -776,6 +782,8 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 // This is a generic runtime decorator, applied to the method
                 // value rather than folded into an in-class property. (#82)
                 generic_decorator: Option<HirExpr>,
+                singledispatchmethod: bool,
+                sdm_register: Option<(SymbolId, HirExpr)>,
             }
             impl Raw {
                 fn new(sym: SymbolId, marker_attrs: Vec<&'static str>) -> Self {
@@ -786,6 +794,8 @@ pub fn lower_hir_to_mir_with_symbols_src(
                         deleter_target: None,
                         marker_attrs,
                         generic_decorator: None,
+                        singledispatchmethod: false,
+                        sdm_register: None,
                     }
                 }
             }
@@ -822,7 +832,19 @@ pub fn lower_hir_to_mir_with_symbols_src(
                                     "cached_property" => {
                                         r.kind = MethodDecorKind::CachedProperty;
                                     }
+                                    "singledispatchmethod" => {
+                                        r.singledispatchmethod = true;
+                                    }
                                     _ => {}
+                                }
+                            }
+                        }
+                        HirExpr::Call { func, args, .. } => {
+                            if let HirExpr::Attr { object, attr, .. } = func.as_ref() {
+                                if attr == "register" && args.len() == 1 {
+                                    if let HirExpr::Var(target_sym, _) = object.as_ref() {
+                                        r.sdm_register = Some((*target_sym, args[0].clone()));
+                                    }
                                 }
                             }
                         }
@@ -840,6 +862,10 @@ pub fn lower_hir_to_mir_with_symbols_src(
                                     // `@functools.cached_property` — same descriptor
                                     // as the bare `cached_property` import.
                                     r.kind = MethodDecorKind::CachedProperty;
+                                } else if attr == "singledispatchmethod"
+                                    && obj_name.as_deref() == Some("functools")
+                                {
+                                    r.singledispatchmethod = true;
                                 } else if let Some(prop_name) = obj_name {
                                     // `@<name>.setter` / `.deleter` — combine with
                                     // the existing property of that name.
@@ -896,6 +922,8 @@ pub fn lower_hir_to_mir_with_symbols_src(
                     deleter_sym,
                     r.marker_attrs.clone(),
                     r.generic_decorator.clone(),
+                    r.singledispatchmethod,
+                    r.sdm_register.clone(),
                 ));
             }
             out
@@ -4274,6 +4302,7 @@ impl<'a> HirToMir<'a> {
         let any_ty = self.tcx.any();
         let mut name_vregs = Vec::new();
         let mut value_vregs = Vec::new();
+        let mut method_value_vregs_by_sym: HashMap<SymbolId, VReg> = HashMap::new();
         for (
             method_name,
             method_sym,
@@ -4282,6 +4311,8 @@ impl<'a> HirToMir<'a> {
             deleter_sym,
             marker_attrs,
             generic_decorator,
+            singledispatchmethod,
+            sdm_register,
         ) in methods
         {
             let name_vreg = self.emit_str_const(method_name);
@@ -4308,7 +4339,7 @@ impl<'a> HirToMir<'a> {
                     ty: self.tcx.none(),
                 });
             }
-            let wrapped = match decor_kind {
+            let mut wrapped = match decor_kind {
                 MethodDecorKind::None => addr_vreg,
                 MethodDecorKind::Property => {
                     let mut w = self.fresh_vreg();
@@ -4388,6 +4419,16 @@ impl<'a> HirToMir<'a> {
                     w
                 }
             };
+            if *singledispatchmethod {
+                let w = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(w),
+                    name: "mb_functools_singledispatchmethod".to_string(),
+                    args: vec![wrapped],
+                    ty: any_ty,
+                });
+                wrapped = w;
+            }
             // Apply a generic cross-class chained decorator (`@Base.x.setter`):
             // evaluate the descriptor-bound method (`Base.x.setter`) and call it
             // on the wrapped method value; the result (a NEW property sharing the
@@ -4407,6 +4448,18 @@ impl<'a> HirToMir<'a> {
             } else {
                 wrapped
             };
+            method_value_vregs_by_sym.insert(*method_sym, wrapped);
+            if let Some((target_sym, type_expr)) = sdm_register {
+                if let Some(target_vreg) = method_value_vregs_by_sym.get(&target_sym).copied() {
+                    let type_vreg = self.lower_expr(&type_expr);
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: None,
+                        name: "mb_singledispatchmethod_register_value".to_string(),
+                        args: vec![target_vreg, type_vreg, wrapped],
+                        ty: self.tcx.none(),
+                    });
+                }
+            }
             value_vregs.push(wrapped);
         }
         let names_list = self.fresh_vreg();

@@ -8,7 +8,8 @@ use rustc_hash::FxHashMap;
 ///   singledispatchmethod.
 /// Note: reduce and partial are stubs — full function-call dispatch
 /// is not yet wired in. lru_cache is an identity passthrough.
-/// cached_property, singledispatch, singledispatchmethod are MVP stubs.
+/// cached_property is an MVP stub; singledispatch and singledispatchmethod
+/// carry runtime dispatch registries.
 use std::collections::HashMap;
 
 /// Extract a String from an MbValue that wraps a heap Str.
@@ -2225,12 +2226,199 @@ pub fn mb_singledispatch_call(inst: MbValue, args: Vec<MbValue>) -> MbValue {
     super::super::builtins::mb_call_spread(impl_val, args_list)
 }
 
-/// functools.singledispatchmethod(func) -> func  (R10)
+/// functools.singledispatchmethod(func) -> descriptor  (R10)
 ///
-/// MVP: identity passthrough matching the total_ordering pattern.
-/// Returns the first argument unchanged.
+/// The descriptor owns an inner singledispatch registry but dispatches on the
+/// first non-self/non-cls argument when the method is invoked.
 pub fn mb_functools_singledispatchmethod(func: MbValue) -> MbValue {
-    func
+    let mut fields = FxHashMap::default();
+    fields.insert("_sd".to_string(), mb_functools_singledispatch(func));
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "functools.singledispatchmethod".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+fn sdm_field(inst: MbValue, name: &str) -> MbValue {
+    inst.as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields.read().unwrap().get(name).copied()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none)
+}
+
+pub fn is_singledispatchmethod_descriptor(val: MbValue) -> bool {
+    val.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if class_name == "functools.singledispatchmethod"
+        )
+    })
+}
+
+pub fn is_singledispatchmethod_bound(val: MbValue) -> bool {
+    val.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if class_name == "functools._singledispatchmethod_bound"
+        )
+    })
+}
+
+pub fn mb_singledispatchmethod_register_value(desc: MbValue, type_val: MbValue, impl_val: MbValue) {
+    let sd = sdm_field(desc, "_sd");
+    if sd.is_none() {
+        return;
+    }
+    sd_registry_insert(sd, type_val, impl_val);
+}
+
+pub fn mb_singledispatchmethod_get(desc: MbValue, receiver: MbValue) -> MbValue {
+    let mut fields = FxHashMap::default();
+    unsafe {
+        super::super::rc::retain_if_ptr(desc);
+        super::super::rc::retain_if_ptr(receiver);
+    }
+    fields.insert("_sdm".to_string(), desc);
+    fields.insert("_receiver".to_string(), receiver);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "functools._singledispatchmethod_bound".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SdmImplKind {
+    Regular,
+    ClassMethod,
+    StaticMethod,
+}
+
+fn sdm_unwrap_impl(impl_val: MbValue) -> (MbValue, SdmImplKind) {
+    if let Some(ptr) = impl_val.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+                let kind = match class_name.as_str() {
+                    "__classmethod__" => Some(SdmImplKind::ClassMethod),
+                    "__staticmethod__" => Some(SdmImplKind::StaticMethod),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    let func = fields
+                        .read()
+                        .unwrap()
+                        .get("__func__")
+                        .copied()
+                        .unwrap_or_else(MbValue::none);
+                    return (func, kind);
+                }
+            }
+        }
+    }
+    (impl_val, SdmImplKind::Regular)
+}
+
+fn sdm_receiver_class(receiver: MbValue) -> MbValue {
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Instance { class_name, .. } => {
+                    return MbValue::from_ptr(MbObject::new_str(class_name.clone()));
+                }
+                ObjData::Str(s) if super::super::class::class_is_registered(s) => {
+                    super::super::rc::retain_if_ptr(receiver);
+                    return receiver;
+                }
+                _ => {}
+            }
+        }
+    }
+    MbValue::none()
+}
+
+fn sdm_dispatch_index(receiver: MbValue, kind: SdmImplKind, args: &[MbValue]) -> usize {
+    if kind == SdmImplKind::Regular && args.len() > 1 {
+        if let Some(ptr) = receiver.as_ptr() {
+            unsafe {
+                if matches!(&(*ptr).data, ObjData::Str(s) if super::super::class::class_is_registered(s))
+                {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+pub fn mb_singledispatchmethod_call_bound(bound: MbValue, args: Vec<MbValue>) -> MbValue {
+    let desc = sdm_field(bound, "_sdm");
+    let receiver = sdm_field(bound, "_receiver");
+    mb_singledispatchmethod_call(desc, receiver, args)
+}
+
+pub fn mb_singledispatchmethod_call(
+    desc: MbValue,
+    receiver: MbValue,
+    args: Vec<MbValue>,
+) -> MbValue {
+    let sd = sdm_field(desc, "_sd");
+    let base = sd_field(sd, "_func");
+    let (_, base_kind) = sdm_unwrap_impl(base);
+    let dispatch_idx = sdm_dispatch_index(receiver, base_kind, &args);
+    let Some(dispatch_arg) = args.get(dispatch_idx).copied() else {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "singledispatchmethod requires an argument to dispatch on".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    let type_name = super::super::builtins::value_type_name(dispatch_arg);
+    let impl_val = sd_lookup_impl(sd, &type_name);
+    let (callable, kind) = sdm_unwrap_impl(impl_val);
+    let mut call_args = Vec::with_capacity(args.len() + 1);
+    match kind {
+        SdmImplKind::Regular => {
+            if receiver.as_ptr().is_some_and(|ptr| unsafe {
+                matches!(&(*ptr).data, ObjData::Str(s) if super::super::class::class_is_registered(s))
+            }) {
+                call_args.extend(args);
+            } else {
+                call_args.push(receiver);
+                call_args.extend(args);
+            }
+        }
+        SdmImplKind::ClassMethod => {
+            call_args.push(sdm_receiver_class(receiver));
+            call_args.extend(args);
+        }
+        SdmImplKind::StaticMethod => {
+            call_args.extend(args);
+        }
+    }
+    let args_list = MbValue::from_ptr(MbObject::new_list(call_args));
+    super::super::builtins::mb_call_spread(callable, args_list)
 }
 
 #[cfg(test)]
@@ -2446,11 +2634,27 @@ mod tests {
 
     // REQ: R10
     #[test]
-    fn test_singledispatchmethod_passthrough() {
-        // singledispatchmethod is an identity passthrough at MVP.
+    fn test_singledispatchmethod_creates_descriptor() {
         let func = MbValue::from_int(77);
         let result = mb_functools_singledispatchmethod(func);
-        assert_eq!(result.as_int(), Some(77));
+        unsafe {
+            let ptr = result.as_ptr().expect("expected descriptor instance");
+            if let ObjData::Instance { class_name, .. } = &(*ptr).data {
+                assert_eq!(class_name, "functools.singledispatchmethod");
+            } else {
+                panic!("expected functools.singledispatchmethod Instance");
+            }
+        }
+        let sd = sdm_field(result, "_sd");
+        assert_eq!(sd_field(sd, "_func").as_int(), Some(77));
+    }
+
+    #[test]
+    fn test_singledispatchmethod_registers_inner_dispatcher() {
+        let desc = mb_functools_singledispatchmethod(MbValue::from_int(1));
+        mb_singledispatchmethod_register_value(desc, s("int"), MbValue::from_int(2));
+        let sd = sdm_field(desc, "_sd");
+        assert_eq!(sd_lookup_impl(sd, "int").as_int(), Some(2));
     }
 
     // -- recursive_repr / get_cache_token / GenericAlias stubs
