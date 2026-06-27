@@ -5209,6 +5209,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     .unwrap_or(true);
                 return if exhausted { MbValue::none() } else { obj };
             }
+            "send" | "throw" | "close" | "__iter__" | "__next__" => {
+                return make_bound_native_method(obj, &attr_name);
+            }
             _ => {}
         }
     }
@@ -8861,6 +8864,15 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
             return MbValue::from_bool(true);
         }
     }
+    if obj.is_int()
+        && super::generator::is_known_generator(obj)
+        && matches!(
+            attr_name.as_str(),
+            "send" | "throw" | "close" | "__iter__" | "__next__" | "gi_frame"
+        )
+    {
+        return MbValue::from_bool(true);
+    }
     // File handles are stored as integer IDs in the file table (not heap
     // objects), with their method surface dispatched structurally in
     // mb_call_method. `hasattr(file, 'read'/'write'/...)` must report True to
@@ -9733,7 +9745,7 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
         if super::generator::is_known_generator(obj) {
             return MbValue::from_bool(matches!(
                 target.as_str(),
-                "Generator" | "Iterator" | "Iterable" | "object"
+                "generator" | "Generator" | "Iterator" | "Iterable" | "object"
             ));
         }
         let id = obj.as_int().unwrap_or(0) as u64;
