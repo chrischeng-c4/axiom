@@ -63,18 +63,40 @@ unsafe extern "C" fn d_socket_type_stub(_a: *const MbValue, _n: usize) -> MbValu
     MbValue::none()
 }
 
+const ADDRESS_FAMILY_MEMBERS: &[(&str, i64)] = &[
+    ("AF_UNSPEC", 0),
+    ("AF_UNIX", 1),
+    ("AF_INET", 2),
+    ("AF_INET6", libc::AF_INET6 as i64),
+    ("AF_SNA", 11),
+    ("AF_DECnet", 12),
+    ("AF_APPLETALK", 16),
+    ("AF_ROUTE", 17),
+    ("AF_LINK", 18),
+    ("AF_IPX", 23),
+    ("AF_SYSTEM", 32),
+];
+
+const SOCKET_KIND_MEMBERS: &[(&str, i64)] = &[
+    ("SOCK_STREAM", 1),
+    ("SOCK_DGRAM", 2),
+    ("SOCK_RAW", 3),
+    ("SOCK_RDM", 4),
+    ("SOCK_SEQPACKET", 5),
+];
+
 /// Register the socket module.
 pub fn register() {
     let mut attrs = HashMap::new();
 
-    // Address families
-    attrs.insert("AF_INET".into(), MbValue::from_int(2));
-    attrs.insert("AF_INET6".into(), MbValue::from_int(libc::AF_INET6 as i64));
-    attrs.insert("AF_UNIX".into(), MbValue::from_int(1));
-
-    // Socket types
-    attrs.insert("SOCK_STREAM".into(), MbValue::from_int(1));
-    attrs.insert("SOCK_DGRAM".into(), MbValue::from_int(2));
+    let families = super::enum_class::register_int_enum("AddressFamily", ADDRESS_FAMILY_MEMBERS);
+    for ((name, _), member) in ADDRESS_FAMILY_MEMBERS.iter().zip(families) {
+        attrs.insert((*name).to_string(), member);
+    }
+    let kinds = super::enum_class::register_int_enum("SocketKind", SOCKET_KIND_MEMBERS);
+    for ((name, _), member) in SOCKET_KIND_MEMBERS.iter().zip(kinds) {
+        attrs.insert((*name).to_string(), member);
+    }
 
     let dispatchers: Vec<(&str, usize)> = vec![
         ("socket", d_socket_new as *const () as usize),
@@ -99,14 +121,6 @@ pub fn register() {
     }
 
     // surface: missing CPython module constants (auto-added)
-    attrs.insert("AF_APPLETALK".into(), MbValue::from_int(16));
-    attrs.insert("AF_DECnet".into(), MbValue::from_int(12));
-    attrs.insert("AF_IPX".into(), MbValue::from_int(23));
-    attrs.insert("AF_LINK".into(), MbValue::from_int(18));
-    attrs.insert("AF_ROUTE".into(), MbValue::from_int(17));
-    attrs.insert("AF_SNA".into(), MbValue::from_int(11));
-    attrs.insert("AF_SYSTEM".into(), MbValue::from_int(32));
-    attrs.insert("AF_UNSPEC".into(), MbValue::from_int(0));
     attrs.insert("AI_ADDRCONFIG".into(), MbValue::from_int(1024));
     attrs.insert("AI_ALL".into(), MbValue::from_int(256));
     attrs.insert("AI_CANONNAME".into(), MbValue::from_int(2));
@@ -259,9 +273,6 @@ pub fn register() {
     attrs.insert("SHUT_RD".into(), MbValue::from_int(0));
     attrs.insert("SHUT_RDWR".into(), MbValue::from_int(2));
     attrs.insert("SHUT_WR".into(), MbValue::from_int(1));
-    attrs.insert("SOCK_RAW".into(), MbValue::from_int(3));
-    attrs.insert("SOCK_RDM".into(), MbValue::from_int(4));
-    attrs.insert("SOCK_SEQPACKET".into(), MbValue::from_int(5));
     attrs.insert("SOL_IP".into(), MbValue::from_int(0));
     attrs.insert("SOL_SOCKET".into(), MbValue::from_int(65535));
     attrs.insert("SOL_TCP".into(), MbValue::from_int(6));
@@ -452,8 +463,47 @@ fn raise_type_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+fn socket_int_like(value: MbValue) -> Option<i64> {
+    value
+        .as_int()
+        .or_else(|| value.as_bool().map(|b| b as i64))
+        .or_else(|| super::enum_class::int_member_value(value).and_then(|raw| raw.as_int()))
+}
+
+fn socket_int_param(value: Option<MbValue>, default: i64, name: &str) -> Result<i64, MbValue> {
+    match value {
+        None => Ok(default),
+        Some(v) if v.is_none() => Ok(default),
+        Some(v) => socket_int_like(v).ok_or_else(|| {
+            raise(
+                "TypeError",
+                &format!("{name} must be an integer (got {})", type_label(v)),
+            )
+        }),
+    }
+}
+
+fn socket_enum_member(class_name: &str, members: &[(&str, i64)], value: i64) -> MbValue {
+    if !members
+        .iter()
+        .any(|(_, member_value)| *member_value == value)
+    {
+        return MbValue::from_int(value);
+    }
+    let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(value)]));
+    super::enum_class::enum_class_call(class_name, args).unwrap_or_else(|| MbValue::from_int(value))
+}
+
+fn socket_family_member(value: i64) -> MbValue {
+    socket_enum_member("AddressFamily", ADDRESS_FAMILY_MEMBERS, value)
+}
+
+fn socket_kind_member(value: i64) -> MbValue {
+    socket_enum_member("SocketKind", SOCKET_KIND_MEMBERS, value)
+}
+
 fn socket_int_arg(value: MbValue, fn_name: &str) -> Option<i64> {
-    match value.as_int() {
+    match socket_int_like(value) {
         Some(n) => Some(n),
         None => {
             raise_type_error(&format!("{fn_name}() argument must be an integer"));
@@ -474,11 +524,11 @@ pub fn mb_socket_new(family: MbValue, stype: MbValue) -> MbValue {
             );
             map.insert(
                 "family".into(),
-                MbValue::from_int(family.as_int().unwrap_or(2)),
+                MbValue::from_int(socket_int_like(family).unwrap_or(2)),
             );
             map.insert(
                 "type".into(),
-                MbValue::from_int(stype.as_int().unwrap_or(1)),
+                MbValue::from_int(socket_int_like(stype).unwrap_or(1)),
             );
             map.insert("connected".into(), MbValue::from_bool(false));
             map.insert("closed".into(), MbValue::from_bool(false));
@@ -1024,8 +1074,8 @@ fn sock_instance(fd: i64, family: i64, stype: i64, proto: i64) -> MbValue {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
             let mut f = fields.write().unwrap();
             f.insert("_fd".into(), MbValue::from_int(fd));
-            f.insert("family".into(), MbValue::from_int(family));
-            f.insert("type".into(), MbValue::from_int(stype));
+            f.insert("family".into(), socket_family_member(family));
+            f.insert("type".into(), socket_kind_member(stype));
             f.insert("proto".into(), MbValue::from_int(proto));
             f.insert("_timeout".into(), MbValue::none());
         }
@@ -1041,6 +1091,12 @@ fn sock_field(self_v: MbValue, name: &str) -> Option<MbValue> {
         }
     }
     None
+}
+
+fn sock_field_int(self_v: MbValue, name: &str, default: i64) -> i64 {
+    sock_field(self_v, name)
+        .and_then(socket_int_like)
+        .unwrap_or(default)
 }
 
 fn sock_set_field(self_v: MbValue, name: &str, val: MbValue) {
@@ -1360,12 +1416,8 @@ unsafe extern "C" fn m_accept(self_v: MbValue, _args: MbValue) -> MbValue {
         return raise_os_errno("accept");
     }
     set_cloexec(newfd as i64, true);
-    let family = sock_field(self_v, "family")
-        .and_then(|v| v.as_int())
-        .unwrap_or(2);
-    let stype = sock_field(self_v, "type")
-        .and_then(|v| v.as_int())
-        .unwrap_or(1);
+    let family = sock_field_int(self_v, "family", 2);
+    let stype = sock_field_int(self_v, "type", 1);
     let conn = sock_instance(newfd as i64, family, stype, 0);
     MbValue::from_ptr(MbObject::new_tuple(vec![conn, addr_tuple_v4(&sin)]))
 }
@@ -1702,15 +1754,9 @@ unsafe extern "C" fn m_dup(self_v: MbValue, _args: MbValue) -> MbValue {
         return raise_os_errno("dup");
     }
     set_cloexec(newfd as i64, true);
-    let family = sock_field(self_v, "family")
-        .and_then(|v| v.as_int())
-        .unwrap_or(2);
-    let stype = sock_field(self_v, "type")
-        .and_then(|v| v.as_int())
-        .unwrap_or(1);
-    let proto = sock_field(self_v, "proto")
-        .and_then(|v| v.as_int())
-        .unwrap_or(0);
+    let family = sock_field_int(self_v, "family", 2);
+    let stype = sock_field_int(self_v, "type", 1);
+    let proto = sock_field_int(self_v, "proto", 0);
     sock_instance(newfd as i64, family, stype, proto)
 }
 
@@ -1894,15 +1940,9 @@ unsafe extern "C" fn m_repr(self_v: MbValue, _args: MbValue) -> MbValue {
     let fd = sock_field(self_v, "_fd")
         .and_then(|v| v.as_int())
         .unwrap_or(-1);
-    let family = sock_field(self_v, "family")
-        .and_then(|v| v.as_int())
-        .unwrap_or(2);
-    let stype = sock_field(self_v, "type")
-        .and_then(|v| v.as_int())
-        .unwrap_or(1);
-    let proto = sock_field(self_v, "proto")
-        .and_then(|v| v.as_int())
-        .unwrap_or(0);
+    let family = sock_field_int(self_v, "family", 2);
+    let stype = sock_field_int(self_v, "type", 1);
+    let proto = sock_field_int(self_v, "proto", 0);
     let mut s = if fd < 0 {
         format!("<socket.socket [closed] fd=-1, family={family}, type={stype}, proto={proto}>")
     } else {
@@ -1968,22 +2008,7 @@ unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> Mb
         raw
     };
 
-    // Validate the int-typed parameters: bool is an int subclass; float/str
-    // raise TypeError per CPython.
-    let int_param = |v: Option<MbValue>, def: i64, name: &str| -> Result<i64, MbValue> {
-        match v {
-            None => Ok(def),
-            Some(x) if x.is_none() => Ok(def),
-            Some(x) => match x.as_int_pyint() {
-                Some(i) => Ok(i),
-                None => Err(raise(
-                    "TypeError",
-                    &format!("{name} must be an integer (got {})", type_label(x)),
-                )),
-            },
-        }
-    };
-    let family = match int_param(
+    let family = match socket_int_param(
         positional
             .first()
             .copied()
@@ -1994,7 +2019,7 @@ unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> Mb
         Ok(v) => v,
         Err(e) => return e,
     };
-    let stype = match int_param(
+    let stype = match socket_int_param(
         positional
             .get(1)
             .copied()
@@ -2005,7 +2030,7 @@ unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> Mb
         Ok(v) => v,
         Err(e) => return e,
     };
-    let proto = match int_param(
+    let proto = match socket_int_param(
         positional
             .get(2)
             .copied()
@@ -2058,20 +2083,7 @@ unsafe extern "C" fn d_socketpair_real(args_ptr: *const MbValue, nargs: usize) -
     } else {
         raw
     };
-    let int_param = |v: Option<MbValue>, def: i64, name: &str| -> Result<i64, MbValue> {
-        match v {
-            None => Ok(def),
-            Some(x) if x.is_none() => Ok(def),
-            Some(x) => match x.as_int_pyint() {
-                Some(i) => Ok(i),
-                None => Err(raise(
-                    "TypeError",
-                    &format!("{name} must be an integer (got {})", type_label(x)),
-                )),
-            },
-        }
-    };
-    let family = match int_param(
+    let family = match socket_int_param(
         positional
             .first()
             .copied()
@@ -2082,7 +2094,7 @@ unsafe extern "C" fn d_socketpair_real(args_ptr: *const MbValue, nargs: usize) -
         Ok(v) => v,
         Err(e) => return e,
     };
-    let stype = match int_param(
+    let stype = match socket_int_param(
         positional
             .get(1)
             .copied()
@@ -2093,7 +2105,7 @@ unsafe extern "C" fn d_socketpair_real(args_ptr: *const MbValue, nargs: usize) -
         Ok(v) => v,
         Err(e) => return e,
     };
-    let proto = match int_param(
+    let proto = match socket_int_param(
         positional
             .get(2)
             .copied()
@@ -2338,10 +2350,10 @@ unsafe extern "C" fn d_getaddrinfo_real(args_ptr: *const MbValue, nargs: usize) 
         .map(|s| std::ffi::CString::new(s).unwrap_or_default());
 
     let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
-    hints.ai_family = raw.get(2).and_then(|v| v.as_int()).unwrap_or(0) as c_int;
-    hints.ai_socktype = raw.get(3).and_then(|v| v.as_int()).unwrap_or(0) as c_int;
-    hints.ai_protocol = raw.get(4).and_then(|v| v.as_int()).unwrap_or(0) as c_int;
-    hints.ai_flags = raw.get(5).and_then(|v| v.as_int()).unwrap_or(0) as c_int;
+    hints.ai_family = raw.get(2).copied().and_then(socket_int_like).unwrap_or(0) as c_int;
+    hints.ai_socktype = raw.get(3).copied().and_then(socket_int_like).unwrap_or(0) as c_int;
+    hints.ai_protocol = raw.get(4).copied().and_then(socket_int_like).unwrap_or(0) as c_int;
+    hints.ai_flags = raw.get(5).copied().and_then(socket_int_like).unwrap_or(0) as c_int;
 
     let mut res: *mut libc::addrinfo = std::ptr::null_mut();
     let rc = unsafe {
