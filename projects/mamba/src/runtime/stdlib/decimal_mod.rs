@@ -1015,8 +1015,13 @@ fn lhs_sign(d: &MbDecimal) -> bool {
 
 /// Exact division core on (coeff, scale) pairs implementing the spec's
 /// divide: exact results take the exponent closest to the ideal exponent
-/// (ea - eb); inexact results round half-even to 28 significant digits.
-fn divide_finite(lhs: &Decimal, rhs: &Decimal) -> Result<MbDecimal, ()> {
+/// (ea - eb); inexact results round half-even to the active context precision.
+fn divide_finite_with_prec(
+    lhs: &Decimal,
+    rhs: &Decimal,
+    precision: usize,
+) -> Result<MbDecimal, ()> {
+    let precision = precision.clamp(1, PREC);
     let (ca, sa) = coeff_scale(lhs);
     let (cb, sb) = coeff_scale(rhs);
     let neg = (ca.is_negative()) != (cb.is_negative());
@@ -1034,10 +1039,10 @@ fn divide_finite(lhs: &Decimal, rhs: &Decimal) -> Result<MbDecimal, ()> {
         }
         return Ok(st);
     }
-    // Scale the dividend so the integer quotient has at least PREC+1 digits.
+    // Scale the dividend so the integer quotient has at least precision+1 digits.
     let da = digit_count(&ca_abs) as i64;
     let db = digit_count(&cb_abs) as i64;
-    let k = (db + PREC as i64 + 1 - da).max(0);
+    let k = (db + precision as i64 + 1 - da).max(0);
     let scaled = &ca_abs * pow10(k as u32);
     let mut q = &scaled / &cb_abs;
     let r = &scaled % &cb_abs;
@@ -1051,17 +1056,17 @@ fn divide_finite(lhs: &Decimal, rhs: &Decimal) -> Result<MbDecimal, ()> {
             exp += 1;
         }
         // Pad toward the ideal exponent while staying within precision.
-        while exp > ideal_exp && digit_count(&q) < PREC {
+        while exp > ideal_exp && digit_count(&q) < precision {
             q *= 10u32;
             exp -= 1;
         }
         let signed = if neg { -q } else { q };
         return finite_from_coeff_scale(signed, -exp);
     }
-    // Inexact: round half-even at PREC digits. The live remainder `r` is
+    // Inexact: round half-even at context precision. The live remainder `r` is
     // nonzero (sticky), so an exact midpoint cannot occur: dropped digits
     // at exactly half round up, anything below half stays down.
-    let extra = (digit_count(&q) as i64 - PREC as i64).max(0) as u32;
+    let extra = (digit_count(&q) as i64 - precision as i64).max(0) as u32;
     let mut exp = -sa - k + sb + extra as i64;
     let mut rounded = if extra > 0 {
         let p = pow10(extra);
@@ -1076,13 +1081,17 @@ fn divide_finite(lhs: &Decimal, rhs: &Decimal) -> Result<MbDecimal, ()> {
     } else {
         q
     };
-    // Re-normalize if rounding produced PREC+1 digits (999..9 → 1000..0).
-    if digit_count(&rounded) > PREC {
+    // Re-normalize if rounding produced precision+1 digits (999..9 -> 1000..0).
+    if digit_count(&rounded) > precision {
         rounded = round_half_even_abs(&rounded, 1);
         exp += 1;
     }
     let signed = if neg { -rounded } else { rounded };
     finite_from_coeff_scale(signed, -exp)
+}
+
+fn divide_finite(lhs: &Decimal, rhs: &Decimal) -> Result<MbDecimal, ()> {
+    divide_finite_with_prec(lhs, rhs, PREC)
 }
 
 /// `a / b`. Raises `DivisionByZero` on zero divisor (CPython default
@@ -1106,7 +1115,10 @@ pub fn mb_decimal_truediv(a: MbValue, b: MbValue) -> MbValue {
                 }
                 return raise_division_by_zero("x / 0");
             }
-            match divide_finite(&lhs.value, &rhs.value) {
+            let ctx = current_ctx();
+            let precision = context_precision(ctx) as usize;
+            unsafe { super::super::rc::release_if_ptr(ctx); }
+            match divide_finite_with_prec(&lhs.value, &rhs.value, precision) {
                 Ok(st) => make_state_handle(st),
                 Err(()) => overflow_result(),
             }
@@ -3610,6 +3622,14 @@ mod tests {
             read_str(mb_decimal_str(mb_decimal_truediv(c, d))),
             "0.6666666666666666666666666667"
         );
+    }
+
+    #[test]
+    fn test_decimal_divide_finite_uses_context_precision() {
+        let one = Decimal::from_str("1").unwrap();
+        let three = Decimal::from_str("3").unwrap();
+        let st = divide_finite_with_prec(&one, &three, 4).unwrap();
+        assert_eq!(read_str(mb_decimal_str(make_state_handle(st))), "0.3333");
     }
 
     #[test]
