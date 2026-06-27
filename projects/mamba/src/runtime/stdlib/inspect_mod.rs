@@ -545,7 +545,6 @@ pub fn register() {
         "isasyncgen",
         "iscode",
         "iscoroutine",
-        "isframe",
         "isgenerator",
         "isgetsetdescriptor",
         "iskeyword",
@@ -557,6 +556,13 @@ pub fn register() {
     for name in predicate_fns {
         let addr = d_false as *const () as usize;
         attrs.insert((*name).to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+    {
+        let addr = d_isframe as *const () as usize;
+        attrs.insert("isframe".to_string(), MbValue::from_func(addr));
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
@@ -668,6 +674,15 @@ pub fn register() {
 /// Predicate stub: returns False for arbitrary surface objects.
 unsafe extern "C" fn d_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
+}
+
+unsafe extern "C" fn d_isframe(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    mb_inspect_isframe(a.first().copied().unwrap_or_else(MbValue::none))
 }
 
 /// Plain function stub: callable, returns None.
@@ -1134,8 +1149,38 @@ unsafe extern "C" fn d_isdatadescriptor(args_ptr: *const MbValue, nargs: usize) 
     MbValue::from_bool(result)
 }
 
+fn make_current_frame() -> MbValue {
+    let frame = MbObject::new_instance("frame".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*frame).data {
+            let mut g = fields.write().unwrap();
+            g.insert(
+                "f_code".to_string(),
+                super::super::class::make_module_code_object("<unknown>", ""),
+            );
+            g.insert(
+                "f_locals".to_string(),
+                MbValue::from_ptr(MbObject::new_dict()),
+            );
+            g.insert(
+                "f_globals".to_string(),
+                MbValue::from_ptr(MbObject::new_dict()),
+            );
+            g.insert(
+                "f_builtins".to_string(),
+                MbValue::from_ptr(MbObject::new_dict()),
+            );
+            g.insert("f_lineno".to_string(), MbValue::from_int(1));
+            g.insert("f_lasti".to_string(), MbValue::from_int(0));
+            g.insert("f_back".to_string(), MbValue::none());
+            g.insert("f_trace".to_string(), MbValue::none());
+        }
+    }
+    MbValue::from_ptr(frame)
+}
+
 unsafe extern "C" fn d_currentframe(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::none()
+    make_current_frame()
 }
 
 unsafe extern "C" fn d_empty_list(_a: *const MbValue, _n: usize) -> MbValue {
@@ -1253,6 +1298,11 @@ pub fn mb_inspect_isroutine(obj: MbValue) -> MbValue {
         }
     }
     MbValue::from_bool(false)
+}
+
+/// inspect.isframe(obj) -> bool.
+pub fn mb_inspect_isframe(obj: MbValue) -> MbValue {
+    MbValue::from_bool(inst_class_name(obj).as_deref() == Some("frame"))
 }
 
 /// inspect.getclasstree(classes) -> nested [(cls, bases), [children...]] tree
@@ -2486,6 +2536,15 @@ mod tests {
 
         let not_class = MbValue::from_ptr(MbObject::new_str("my_function".to_string()));
         assert_eq!(mb_inspect_isclass(not_class).as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_currentframe_returns_frame_fields() {
+        let frame = make_current_frame();
+        assert_eq!(mb_inspect_isframe(frame).as_bool(), Some(true));
+        assert!(inst_field(frame, "f_code").is_some());
+        assert!(inst_field(frame, "f_locals").is_some());
+        assert_eq!(inst_field(frame, "f_lineno").and_then(MbValue::as_int), Some(1));
     }
 
     #[test]
