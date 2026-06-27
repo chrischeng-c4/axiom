@@ -724,6 +724,7 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                     super::super::rc::retain_if_ptr(args);
                     super::super::rc::retain_if_ptr(kwargs);
                     let handle = std::thread::spawn(move || {
+                        clear_locals(&locals_snapshot);
                         let worker_globals = run_thread_target(
                             thread,
                             ident,
@@ -760,6 +761,7 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                 if let Some(id) = ident {
                     CURRENT_IDENT.with(|c| c.set(id));
                 }
+                clear_locals(&snapshot);
                 if !target.is_none() {
                     let _ = super::super::builtins::mb_call_spread(
                         target,
@@ -1084,8 +1086,9 @@ pub fn mb_threading_local() -> MbValue {
     val
 }
 
-/// Snapshot every registered threading.local() instance's field map. Used
-/// by Thread.start() to restore state after running a target synchronously.
+/// Snapshot every registered threading.local() instance's main-thread field
+/// map. Thread.start() clears those fields while the worker target runs, then
+/// restores this snapshot when the worker exits.
 fn snapshot_locals() -> Vec<(MbValue, FxHashMap<String, MbValue>)> {
     LOCAL_INSTANCES.with(|v| {
         v.borrow()
@@ -1101,6 +1104,18 @@ fn snapshot_locals() -> Vec<(MbValue, FxHashMap<String, MbValue>)> {
             })
             .collect()
     })
+}
+
+fn clear_locals(snapshot: &[(MbValue, FxHashMap<String, MbValue>)]) {
+    for (val, _) in snapshot {
+        if let Some(ptr) = val.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    fields.write().unwrap().clear();
+                }
+            }
+        }
+    }
 }
 
 fn restore_locals(snapshot: Vec<(MbValue, FxHashMap<String, MbValue>)>) {
