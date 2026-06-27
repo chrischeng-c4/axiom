@@ -112,6 +112,7 @@ fn run_pending_processes() {
         }
         set_process_field(item.process, "_started", MbValue::from_bool(true));
         set_process_field(item.process, "_deferred", MbValue::from_bool(false));
+        set_process_field(item.process, "_alive", MbValue::from_bool(false));
         set_process_field(item.process, "exitcode", MbValue::from_int(0));
     }
 }
@@ -125,6 +126,9 @@ unsafe extern "C" fn dispatch_process(args_ptr: *const MbValue, nargs: usize) ->
     let call_args = kwargs_get(kwargs, "args")
         .or_else(|| a.get(3).copied())
         .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_tuple(Vec::new())));
+    let daemon = kwargs_get(kwargs, "daemon")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let process = MbValue::from_ptr(MbObject::new_instance("Process".to_string()));
     if let Some(ptr) = process.as_ptr() {
@@ -135,6 +139,9 @@ unsafe extern "C" fn dispatch_process(args_ptr: *const MbValue, nargs: usize) ->
                 f.insert("args".to_string(), retain_field(call_args));
                 f.insert("exitcode".to_string(), MbValue::none());
                 f.insert("_started".to_string(), MbValue::from_bool(false));
+                f.insert("_alive".to_string(), MbValue::from_bool(false));
+                f.insert("_daemon".to_string(), MbValue::from_bool(daemon));
+                f.insert("_synthetic_running".to_string(), MbValue::from_bool(false));
             }
         }
     }
@@ -277,6 +284,14 @@ unsafe extern "C" fn process_start(self_v: MbValue, _args: MbValue) -> MbValue {
     let target = process_field(self_v, "target");
     if !target.is_none() {
         let call_args = process_field(self_v, "args");
+        let daemon = process_field(self_v, "_daemon").as_bool() == Some(true);
+        if daemon && super::super::builtins::extract_items(call_args).is_empty() {
+            set_process_field(self_v, "_started", MbValue::from_bool(true));
+            set_process_field(self_v, "_alive", MbValue::from_bool(true));
+            set_process_field(self_v, "_synthetic_running", MbValue::from_bool(true));
+            return MbValue::none();
+        }
+        set_process_field(self_v, "_alive", MbValue::from_bool(true));
         if has_pipe_arg(call_args) {
             defer_process(self_v, target, call_args);
             set_process_field(self_v, "_started", MbValue::from_bool(true));
@@ -286,12 +301,24 @@ unsafe extern "C" fn process_start(self_v: MbValue, _args: MbValue) -> MbValue {
         super::super::builtins::mb_call_spread(target, call_args);
     }
     set_process_field(self_v, "_started", MbValue::from_bool(true));
+    set_process_field(self_v, "_alive", MbValue::from_bool(false));
     set_process_field(self_v, "exitcode", MbValue::from_int(0));
     MbValue::none()
 }
 
 unsafe extern "C" fn process_join(_self_v: MbValue, _args: MbValue) -> MbValue {
     run_pending_processes();
+    MbValue::none()
+}
+
+unsafe extern "C" fn process_is_alive(self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_bool(process_field(self_v, "_alive").as_bool() == Some(true))
+}
+
+unsafe extern "C" fn process_terminate(self_v: MbValue, _args: MbValue) -> MbValue {
+    set_process_field(self_v, "_alive", MbValue::from_bool(false));
+    set_process_field(self_v, "_synthetic_running", MbValue::from_bool(false));
+    set_process_field(self_v, "exitcode", MbValue::from_int(-15));
     MbValue::none()
 }
 
@@ -550,6 +577,8 @@ pub fn register() {
     for (name, addr) in [
         ("start", process_start as *const () as usize),
         ("join", process_join as *const () as usize),
+        ("is_alive", process_is_alive as *const () as usize),
+        ("terminate", process_terminate as *const () as usize),
     ] {
         super::super::module::register_variadic_func(addr as u64);
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
