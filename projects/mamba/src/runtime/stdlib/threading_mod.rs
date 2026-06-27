@@ -475,23 +475,7 @@ fn deliver_to_excepthook(thread: MbValue) {
         }
         MbValue::from_ptr(inst)
     };
-    // The hook is whatever threading.excepthook currently is (assignable).
-    let hook = {
-        let module = super::super::module::mb_import(MbValue::from_ptr(MbObject::new_str(
-            "threading".to_string(),
-        )));
-        let sentinel = MbValue::from_bits(u64::MAX);
-        let h = super::super::dict_ops::mb_dict_get(
-            module,
-            MbValue::from_ptr(MbObject::new_str("excepthook".to_string())),
-            sentinel,
-        );
-        if h.to_bits() == u64::MAX {
-            MbValue::none()
-        } else {
-            h
-        }
-    };
+    let hook = thread_excepthook(thread);
     if !hook.is_none() {
         let call_args = MbValue::from_ptr(MbObject::new_list(vec![args_inst]));
         let _ = super::super::builtins::mb_call_spread(hook, call_args);
@@ -504,6 +488,54 @@ fn deliver_to_excepthook(thread: MbValue) {
         let _ = msg;
         eprintln!("Exception in thread: {type_name}");
     }
+}
+
+fn current_excepthook() -> MbValue {
+    let module = super::super::module::mb_import(MbValue::from_ptr(MbObject::new_str(
+        "threading".to_string(),
+    )));
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let hook = super::super::dict_ops::mb_dict_get(
+        module,
+        MbValue::from_ptr(MbObject::new_str("excepthook".to_string())),
+        sentinel,
+    );
+    if hook.to_bits() == u64::MAX {
+        MbValue::none()
+    } else {
+        hook
+    }
+}
+
+fn snapshot_excepthook_for_thread(thread: MbValue) {
+    let hook = current_excepthook();
+    if let Some(ptr) = thread.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::super::rc::retain_if_ptr(hook);
+                let old = fields
+                    .write()
+                    .unwrap()
+                    .insert("__mamba_excepthook__".to_string(), hook);
+                if let Some(prev) = old {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+}
+
+fn thread_excepthook(thread: MbValue) -> MbValue {
+    if let Some(ptr) = thread.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(hook) = fields.read().unwrap().get("__mamba_excepthook__").copied() {
+                    return hook;
+                }
+            }
+        }
+    }
+    current_excepthook()
 }
 
 /// CPython-style Thread repr with lifecycle marker.
@@ -681,7 +713,9 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                     f.insert("alive".into(), MbValue::from_bool(true));
                 }
                 live_threads_add(thread);
-                if !target.is_none() {
+                let call_run_override = target.is_none() && thread_run_override_needed(thread);
+                if !target.is_none() || call_run_override {
+                    snapshot_excepthook_for_thread(thread);
                     let locals_snapshot = snapshot_locals();
                     let globals_snapshot = super::super::closure::snapshot_global_id_namespace();
                     let class_snapshot = super::super::class::snapshot_thread_class_state();
@@ -696,13 +730,11 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                             target,
                             args,
                             kwargs,
+                            call_run_override,
                             globals_snapshot,
                             class_snapshot,
                         );
                         restore_locals(locals_snapshot);
-                        // An exception escaping run() is delivered to
-                        // threading.excepthook, NOT re-raised in the starter/joiner.
-                        deliver_to_excepthook(thread);
                         release_thread_target_values(thread, target, args, kwargs);
                         worker_globals
                     });
@@ -1089,6 +1121,7 @@ fn run_thread_target(
     target: MbValue,
     args: MbValue,
     kwargs: MbValue,
+    call_run_override: bool,
     globals_snapshot: HashMap<i64, MbValue>,
     class_snapshot: super::super::class::ThreadClassState,
 ) -> HashMap<i64, MbValue> {
@@ -1101,11 +1134,34 @@ fn run_thread_target(
     CURRENT_THREAD_OBJ.with(|c| c.set(thread.to_bits()));
     if !target.is_none() {
         let _ = super::super::builtins::mb_call_spread(target, build_call_args(args, kwargs));
+    } else if call_run_override {
+        let method = MbValue::from_ptr(MbObject::new_str("run".to_string()));
+        let empty = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let _ = super::super::class::mb_call_method(thread, method, empty);
     }
+    // An exception escaping the target/run override is delivered while the
+    // worker still has the target's globals/classes installed. Running the
+    // hook after restoring that context loses access to user-defined hooks.
+    deliver_to_excepthook(thread);
     CURRENT_THREAD_OBJ.with(|c| c.set(prev_obj));
     CURRENT_IDENT.with(|c| c.set(prev_ident));
     super::super::class::replace_thread_class_state(previous_classes);
     super::super::closure::replace_global_id_namespace(previous_globals)
+}
+
+fn thread_run_override_needed(thread: MbValue) -> bool {
+    let Some(ptr) = thread.as_ptr() else {
+        return false;
+    };
+    let class_name = unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, .. } => class_name.clone(),
+            _ => return false,
+        }
+    };
+    class_name != "Thread"
+        && super::super::class::class_mro_any(&class_name, |name| name == "Thread")
+        && !super::super::class::lookup_method(&class_name, "run").is_none()
 }
 
 fn release_thread_target_values(thread: MbValue, target: MbValue, args: MbValue, kwargs: MbValue) {
