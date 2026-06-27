@@ -669,6 +669,7 @@ fn message_display(message: MbValue) -> String {
 pub fn mb_raise(exc_type: MbValue, message: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = message_display(message);
+    super::class::clear_last_raised_instance();
     // Also signal StopIteration via the iterator flag for user-defined __next__
     if type_name == "StopIteration" {
         super::iter::signal_stop_iteration();
@@ -720,6 +721,7 @@ fn mbvalue_to_mbexception(exc: MbValue, depth: u32) -> Option<MbException> {
 pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = message_display(message);
+    super::class::clear_last_raised_instance();
     let mut exc = MbException::new(&type_name, &msg);
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
@@ -738,6 +740,7 @@ pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
 pub fn mb_raise_with_context(exc_type: MbValue, message: MbValue, context: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = message_display(message);
+    super::class::clear_last_raised_instance();
     let mut exc = MbException::new(&type_name, &msg);
     if !context.is_none() {
         exc.context = mbvalue_to_mbexception(context, 0).map(Box::new);
@@ -757,6 +760,7 @@ pub fn mb_raise_from_with_context(
 ) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = message_display(message);
+    super::class::clear_last_raised_instance();
     let mut exc = MbException::new(&type_name, &msg);
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
@@ -868,6 +872,7 @@ fn collect_matcher_targets(exc_type: MbValue, out: &mut Vec<String>) -> Result<(
 
 /// Clear the current exception (used after successful except handling).
 pub fn mb_clear_exception() {
+    super::class::clear_last_raised_instance();
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = None;
     });
@@ -875,6 +880,7 @@ pub fn mb_clear_exception() {
 
 /// Set the current exception directly (for use by class.rs raise_instance).
 pub fn set_current_exception(exc: MbException) {
+    super::class::clear_last_raised_instance();
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
     });
@@ -882,6 +888,7 @@ pub fn set_current_exception(exc: MbException) {
 
 /// Clear the current exception state (for use by class.rs catch_exception_instance).
 pub fn clear_current_exception() {
+    super::class::clear_last_raised_instance();
     CURRENT_EXCEPTION.with(|cell| {
         if cell.borrow().is_some() {
             *cell.borrow_mut() = None;
@@ -1745,8 +1752,11 @@ pub fn register_builtin_exceptions() {
 /// Retrieve the current exception without clearing the pending state.
 /// Returns `MbValue::none()` if no exception is pending.
 pub fn mb_get_exception() -> MbValue {
-    if let Some(instance) = super::class::peek_last_raised_instance() {
-        return instance;
+    let has_current = CURRENT_EXCEPTION.with(|cell| cell.borrow().is_some());
+    if has_current {
+        if let Some(instance) = super::class::peek_last_raised_instance() {
+            return instance;
+        }
     }
     CURRENT_EXCEPTION.with(|cell| match cell.borrow().as_ref() {
         Some(exc) => {

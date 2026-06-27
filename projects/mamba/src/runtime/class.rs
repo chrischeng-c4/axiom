@@ -3766,6 +3766,12 @@ pub fn peek_last_raised_instance() -> Option<MbValue> {
     })
 }
 
+pub fn clear_last_raised_instance() {
+    LAST_RAISED_INSTANCE.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
+}
+
 /// Retrieve the last raised instance (preserves custom fields).
 /// Falls back to mb_catch_exception if no instance was stored.
 pub fn mb_catch_exception_instance() -> MbValue {
