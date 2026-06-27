@@ -7948,6 +7948,15 @@ impl<'a> HirToMir<'a> {
                         args: boxed_args,
                         ty: *ty,
                     });
+                    if matches!(
+                        extern_name.as_str(),
+                        "mb_exception_new_with_args"
+                            | "mb_exception_new_with_args_and_kwargs"
+                            | "mb_exception_group_construct"
+                            | "mb_arg_bind_error"
+                    ) {
+                        self.emit_exception_propagate();
+                    }
                     return dest;
                 }
                 // Regular function call
@@ -8069,6 +8078,7 @@ impl<'a> HirToMir<'a> {
                                 args: vec![args_list, cn_vreg],
                                 ty: *ty,
                             });
+                            self.emit_exception_propagate();
                             return dest;
                         }
                         // Regular exception: ExcType(args...) → mb_exception_new_with_args(type_str, args_list)
@@ -8091,6 +8101,7 @@ impl<'a> HirToMir<'a> {
                             args: vec![type_vreg, exc_args_list],
                             ty: *ty,
                         });
+                        self.emit_exception_propagate();
                         return dest;
                     }
                 }
