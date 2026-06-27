@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:604ec8f4" tracker="pending-tracker" reason="Map a prop type to a control kind (bool->toggle, string->text, number->number, string-literal union->select with options, else text), then apply meta.argTypes overrides (control type/options/disable). Returns the resolved control descriptors for a story."
+// <HANDWRITE gap="missing-generator:logic:604ec8f4" tracker="standardize-gap-projects-jet-src-stories-controls-rs" reason="Map a prop type to a control kind (bool->toggle, string->text, number->number, string-literal union->select with options, else text), then apply meta.argTypes overrides (control type/options/disable). Returns the resolved control descriptors for a story.">
 //! Control inference + resolution for `jet stories` (B3).
 //!
 //! This module is pure (no I/O, no AST) so it is trivially unit-testable. It
@@ -276,9 +276,18 @@ mod tests {
 
     #[test]
     fn infers_basic_kinds() {
-        assert_eq!(infer_control(&prop("p", "boolean", false)), ControlKind::Toggle);
-        assert_eq!(infer_control(&prop("p", "string", false)), ControlKind::Text);
-        assert_eq!(infer_control(&prop("p", "number", false)), ControlKind::Number);
+        assert_eq!(
+            infer_control(&prop("p", "boolean", false)),
+            ControlKind::Toggle
+        );
+        assert_eq!(
+            infer_control(&prop("p", "string", false)),
+            ControlKind::Text
+        );
+        assert_eq!(
+            infer_control(&prop("p", "number", false)),
+            ControlKind::Number
+        );
     }
 
     #[test]
@@ -294,8 +303,14 @@ mod tests {
 
     #[test]
     fn mixed_union_falls_back_to_text() {
-        assert_eq!(infer_control(&prop("p", "string | number", false)), ControlKind::Text);
-        assert_eq!(infer_control(&prop("p", "\"a\" | number", false)), ControlKind::Text);
+        assert_eq!(
+            infer_control(&prop("p", "string | number", false)),
+            ControlKind::Text
+        );
+        assert_eq!(
+            infer_control(&prop("p", "\"a\" | number", false)),
+            ControlKind::Text
+        );
     }
 
     #[test]
@@ -343,7 +358,10 @@ mod tests {
 
     #[test]
     fn arg_type_control_false_disables() {
-        let props = vec![prop("hidden", "boolean", false), prop("shown", "string", false)];
+        let props = vec![
+            prop("hidden", "boolean", false),
+            prop("shown", "string", false),
+        ];
         let mut arg_types = BTreeMap::new();
         arg_types.insert(
             "hidden".to_string(),
@@ -358,4 +376,4 @@ mod tests {
         assert_eq!(controls[0].name, "shown");
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:de93f93a" tracker="pending-tracker" reason="Fixtures (Button.stories.tsx, Card.stories.tsx, malformed) + tests: glob finds both, meta+named stories parsed with merged args, title hierarchy + stable ids, malformed file -> diagnostic without aborting discovery."
+// <HANDWRITE gap="missing-generator:unit-test:de93f93a" tracker="standardize-gap-projects-jet-tests-stories-csf-discovery-rs" reason="Fixtures (Button.stories.tsx, Card.stories.tsx, malformed) + tests: glob finds both, meta+named stories parsed with merged args, title hierarchy + stable ids, malformed file -> diagnostic without aborting discovery.">
 //! Integration tests for B1: CSF story discovery + parse (`jet stories`).
 //!
 //! Fixtures are written into a temp dir so the WalkDir/globset discovery path
@@ -110,12 +110,18 @@ fn write_fixtures() -> TempDir {
     let dir = TempDir::new().expect("temp dir");
     let root = dir.path();
 
-    write(root.join("src/components/Button.stories.tsx"), BUTTON_STORIES);
+    write(
+        root.join("src/components/Button.stories.tsx"),
+        BUTTON_STORIES,
+    );
     write(root.join("src/surfaces/Card.stories.tsx"), CARD_STORIES);
     write(root.join("src/broken/Broken.stories.tsx"), BROKEN_STORIES);
 
     // A decoy that must NOT match the story globs.
-    write(root.join("src/components/Button.tsx"), "export const Button = () => null;\n");
+    write(
+        root.join("src/components/Button.tsx"),
+        "export const Button = () => null;\n",
+    );
     // node_modules must be skipped entirely.
     write(
         root.join("node_modules/dep/Vendor.stories.tsx"),
@@ -134,7 +140,10 @@ fn write_followup_fixtures() -> TempDir {
     let dir = TempDir::new().expect("temp dir");
     let root = dir.path();
 
-    write(root.join("src/legacy/LegacyToggle.stories.tsx"), LEGACY_STORIES);
+    write(
+        root.join("src/legacy/LegacyToggle.stories.tsx"),
+        LEGACY_STORIES,
+    );
     write(root.join("src/layout/Panel.stories.tsx"), SPREAD_STORIES);
     write(root.join("src/legacy/Barrel.stories.tsx"), REEXPORT_STORIES);
 
@@ -228,10 +237,7 @@ fn button_meta_and_stories_parsed_with_merged_args() {
         .iter()
         .find(|s| s.name == "Disabled")
         .expect("Disabled story");
-    assert_eq!(
-        disabled.args.get("disabled"),
-        Some(&CsfValue::Bool(true))
-    );
+    assert_eq!(disabled.args.get("disabled"), Some(&CsfValue::Bool(true)));
     assert!(disabled.has_render, "Disabled declares a render fn");
 }
 
@@ -310,7 +316,10 @@ fn csf2_template_bind_surfaces_story_with_args() {
     );
     assert_eq!(primary.args.get("on"), Some(&CsfValue::Bool(true)));
     // The bound template supplies the render.
-    assert!(primary.has_render, "bound-template story renders via template");
+    assert!(
+        primary.has_render,
+        "bound-template story renders via template"
+    );
     assert_eq!(primary.id, "legacy-toggle--primary");
 }
 
@@ -322,9 +331,7 @@ fn re_exported_stories_are_resolved_from_sibling() {
     let dir = write_followup_fixtures();
     let index = index_of(dir.path());
 
-    let barrel = dir
-        .path()
-        .join("src/legacy/Barrel.stories.tsx");
+    let barrel = dir.path().join("src/legacy/Barrel.stories.tsx");
 
     let from_barrel: Vec<_> = index.stories.iter().filter(|s| s.file == barrel).collect();
     let names: Vec<_> = from_barrel.iter().map(|s| s.name.as_str()).collect();
@@ -380,10 +387,13 @@ fn spread_args_merge_static_base() {
         .iter()
         .find(|s| s.name == "Dynamic")
         .expect("Dynamic story discovered");
-    assert_eq!(dynamic.args.get("only"), Some(&CsfValue::Number("9".into())));
+    assert_eq!(
+        dynamic.args.get("only"),
+        Some(&CsfValue::Number("9".into()))
+    );
     assert!(
         !dynamic.args.contains_key("x"),
         "imported-base spread must not leak resolved keys"
     );
 }
-// HANDWRITE-END
+// </HANDWRITE>

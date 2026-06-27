@@ -381,6 +381,7 @@ flowchart TD
 changes:
   - path: .aw/tech-design/crates/jet/logic/wasm-renderer-subset.md
     action: modify
+    section: doc
     impl_mode: hand-written
     description: >
       Add ast_node_kinds and disambiguation_predicate fields to each
@@ -392,6 +393,7 @@ changes:
 
   - path: .aw/tech-design/crates/jet/wasm-renderer/conformance.yaml
     action: create
+    section: doc
     impl_mode: hand-written
     description: >
       New machine-readable manifest replacing the §Verified Features
@@ -402,6 +404,7 @@ changes:
 
   - path: .aw/tech-design/crates/jet/wasm-renderer/conformance.yaml.schema.json
     action: create
+    section: doc
     impl_mode: hand-written
     description: >
       JSON Schema file (JSON Schema 2020-12) for conformance.yaml entries.
@@ -411,6 +414,7 @@ changes:
 
   - path: .aw/tech-design/crates/jet/logic/wasm-renderer-conformance.md
     action: modify
+    section: doc
     impl_mode: hand-written
     description: >
       Add a §CI Validation section referencing the new
@@ -420,6 +424,7 @@ changes:
 
   - path: crates/jet-conformance-cli/Cargo.toml
     action: create
+    section: doc
     impl_mode: hand-written
     description: >
       New companion crate manifest for the jet-conformance-cli crate.
@@ -429,6 +434,7 @@ changes:
 
   - path: crates/jet-conformance-cli/src/lib.rs
     action: create
+    section: doc
     impl_mode: hand-written
     description: >
       Implementation of the check-conformance-manifest CLI subcommand.
@@ -441,6 +447,7 @@ changes:
 
   - path: crates/cclab-cli/Cargo.toml
     action: modify
+    section: doc
     impl_mode: hand-written
     description: >
       Add jet-conformance-cli as a dependency and add
@@ -449,6 +456,7 @@ changes:
 
   - path: crates/cclab-cli/src/main.rs
     action: modify
+    section: doc
     impl_mode: hand-written
     description: >
       Add `use jet_conformance_cli as _;` to force-link the

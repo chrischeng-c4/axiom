@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:d172c696" tracker="pending-tracker" reason="New isolatedDeclarations-style declaration emitter: parse a library entry with tree-sitter-typescript, walk top-level exported declarations, emit type/interface/enum decls verbatim and `export declare` signatures for explicitly-typed exported values, error on untyped exports, and return the assembled `<entry>.d.ts` text (external type imports preserved)."
+// <HANDWRITE gap="missing-generator:logic:d172c696" tracker="standardize-gap-projects-jet-src-bundler-dts-rs" reason="New isolatedDeclarations-style declaration emitter: parse a library entry with tree-sitter-typescript, walk top-level exported declarations, emit type/interface/enum decls verbatim and `export declare` signatures for explicitly-typed exported values, error on untyped exports, and return the assembled `<entry>.d.ts` text (external type imports preserved).">
 //! isolatedDeclarations-style `.d.ts` emission for `jet build --lib`.
 //!
 //! Mirrors the TypeScript 5.5 `isolatedDeclarations` model: declarations are
@@ -158,9 +158,7 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
             // satisfies Type)` — the annotation makes the declared type
             // statically determinable. Emit a synthetic `_default` of that
             // type and re-export it as the default.
-            "as_expression" | "satisfies_expression" | "parenthesized_expression"
-                if is_default =>
-            {
+            "as_expression" | "satisfies_expression" | "parenthesized_expression" if is_default => {
                 if let Some(ty) = default_export_annotated_type(child, source) {
                     push_line(out, &format!("declare const _default: {ty};"));
                     push_line(out, "export default _default;");
@@ -376,7 +374,10 @@ fn reduce_class_member(node: Node, source: &str) -> Option<String> {
         "method_definition" => reduce_method(node, source),
         "public_field_definition" => reduce_field(node, source),
         // index signatures (`[key: string]: T;`) are already declaration-only.
-        "index_signature" => Some(format!("{};", node_text(node, source).trim_end_matches(';'))),
+        "index_signature" => Some(format!(
+            "{};",
+            node_text(node, source).trim_end_matches(';')
+        )),
         // Static initialization blocks, decorators-only members, etc. carry no
         // public type surface — drop them.
         _ => None,
@@ -807,4 +808,4 @@ mod tests {
         assert!(dts.contains("export declare const VALUE: number;"));
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

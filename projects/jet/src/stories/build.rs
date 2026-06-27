@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:8c2e58b8" tracker="pending-tracker" reason="Static exporter: build_stories_static(root, out_dir) -> discover StoryIndex, clean out_dir, write manager index.html (reuse manager::render_manager_html), and per story write preview/{id}.html (render_preview_html) + transform and emit each imported module to out_dir with relative URLs; copy referenced assets. Output is servable by any static host with no jet process."
+// <HANDWRITE gap="missing-generator:logic:8c2e58b8" tracker="standardize-gap-projects-jet-src-stories-build-rs" reason="Static exporter: build_stories_static(root, out_dir) -> discover StoryIndex, clean out_dir, write manager index.html (reuse manager::render_manager_html), and per story write preview/{id}.html (render_preview_html) + transform and emit each imported module to out_dir with relative URLs; copy referenced assets. Output is servable by any static host with no jet process.">
 //! Static export of the `jet stories` workbench (B4 / #190).
 //!
 //! [`build_stories_static`] turns a project's discovered stories into a static,
@@ -81,7 +81,10 @@ pub fn build_stories_static(root: &Path, out_dir: &Path) -> Result<BuildStaticRe
     // case), a previous build's emitted `*.stories.js` modules live inside it
     // and the discover walk re-picks them up as stories. Drop anything under
     // `out_dir` so a rebuild is stable and never compounds on its own output.
-    if let Ok(out_abs) = out_dir.canonicalize().or_else(|_| Ok::<_, std::io::Error>(out_dir.to_path_buf())) {
+    if let Ok(out_abs) = out_dir
+        .canonicalize()
+        .or_else(|_| Ok::<_, std::io::Error>(out_dir.to_path_buf()))
+    {
         index
             .stories
             .retain(|s| !s.file.starts_with(&out_abs) && !s.file.starts_with(out_dir));
@@ -119,7 +122,13 @@ pub fn build_stories_static(root: &Path, out_dir: &Path) -> Result<BuildStaticRe
 
         // Emit the story module + everything it transitively imports (local
         // relative modules only; bare specifiers stay for the importmap/browser).
-        emit_module_graph(root, &module_url, out_dir, &mut emitted_modules, &mut result);
+        emit_module_graph(
+            root,
+            &module_url,
+            out_dir,
+            &mut emitted_modules,
+            &mut result,
+        );
     }
 
     result.emitted.sort();
@@ -386,8 +395,14 @@ fn path_has_node_modules(path: &Path) -> bool {
 /// `out_dir`, so this is a plain relative path between two emitted positions —
 /// it crosses the `modules/` ↔ `deps/` boundary as needed.
 fn relative_emitted_specifier(importer_emitted: &str, target_emitted: &str) -> String {
-    let importer_segs: Vec<&str> = importer_emitted.split('/').filter(|s| !s.is_empty()).collect();
-    let target_segs: Vec<&str> = target_emitted.split('/').filter(|s| !s.is_empty()).collect();
+    let importer_segs: Vec<&str> = importer_emitted
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let target_segs: Vec<&str> = target_emitted
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
 
     // Drop the importer's own filename — relativity is from its directory.
     let importer_dir = &importer_segs[..importer_segs.len().saturating_sub(1)];
@@ -461,7 +476,11 @@ fn resolve_url_to_file(root: &Path, rel: &str) -> Option<PathBuf> {
 fn file_to_root_url(root: &Path, file: &Path) -> String {
     let rel = file.strip_prefix(root).unwrap_or(file);
     let mut url = String::from("/");
-    url.push_str(rel.to_string_lossy().replace('\\', "/").trim_start_matches('/'));
+    url.push_str(
+        rel.to_string_lossy()
+            .replace('\\', "/")
+            .trim_start_matches('/'),
+    );
     url
 }
 
@@ -515,9 +534,7 @@ fn clean_out_dir(out_dir: &Path) -> Result<()> {
     match std::fs::remove_dir_all(out_dir) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => {
-            Err(err).with_context(|| format!("cleaning out_dir {}", out_dir.display()))
-        }
+        Err(err) => Err(err).with_context(|| format!("cleaning out_dir {}", out_dir.display())),
     }
 }
 
@@ -578,4 +595,4 @@ mod tests {
         assert!(clean_out_dir(Path::new("/")).is_err());
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

@@ -388,21 +388,25 @@ cargo test -p jet --test locator_js_api
 files:
   - path: .aw/tech-design/crates/jet/logic/locator-js-api.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home the Locator JS API TD as a checker-compliant current-state contract.
 
   - path: .aw/tech-design/crates/jet/testing/locator-js-api.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove the unexpected top-level testing directory copy of this TD.
 
   - path: crates/jet/runtime/test/page.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing Page, Locator, NthLocator, auto-wait, pseudo selector, and action/read implementation.
 
   - path: crates/jet/tests/locator_js_api.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing integration tests for locator chaining, filtering, actionability, and nth behavior.
 ```

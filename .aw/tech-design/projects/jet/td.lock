@@ -1,0 +1,1805 @@
+version = 1
+project = "jet"
+td_path = ".aw/tech-design/projects/jet"
+generated_at = "2026-06-26T21:01:57.959481+00:00"
+digest = "sha256:59d589e023f1fb3781116667c4ad4ef2e013ff1bba3144a1b366ae4b688c89ac"
+
+[[files]]
+path = "config/jet-config-validation.md"
+digest = "sha256:bcb9b27a79e5e25828452e682592b0916eeb64d1f227731db64c4fd3e65e0881"
+
+[[files]]
+path = "interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md"
+digest = "sha256:5f7535812a7b3beb97e16eb0962e1dd552c23cc4341b4e0eda272750bc4d107b"
+
+[[files]]
+path = "interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md"
+digest = "sha256:f165b34589eed37f8afeda56c0f44aadaaa06119d699317226a80cbbbf7d1871"
+
+[[files]]
+path = "interfaces/cli/select-http-client-backend-fetch-axios-for-openapi-codegen.md"
+digest = "sha256:c174faeed4c1c2e1a4147f4c3d7b52517d8a352b146a333cadb0c23011533239"
+
+[[files]]
+path = "interfaces/trace/format.md"
+digest = "sha256:d5413670cb51c4107a2dd34f6c73cc4a7912d087b4292775e4648c9a539cce84"
+
+[[files]]
+path = "interfaces/wasm-renderer/binding-manifest.md"
+digest = "sha256:9f090f0bcbde3344a8c4303e70e33bcfe1325269b6efef9fcf31418d20895e34"
+
+[[files]]
+path = "interfaces/wasm-renderer/debug-bridge.md"
+digest = "sha256:36de41f46fc60877e7742277a3b337bb3ec49e95be1652e76da21e3f91513efa"
+
+[[files]]
+path = "logic/aot-build.md"
+digest = "sha256:044e5ee8a275dd92b0450c84036d6e64899f8a31f40abd445d21256460b24d28"
+
+[[files]]
+path = "logic/architecture.md"
+digest = "sha256:9706832b41db812d9e493f77aa90c0991adab73e0ca6be3791d429e8597c5eb6"
+
+[[files]]
+path = "logic/assets/html-reporter/report.md"
+digest = "sha256:7dec69aee40bf9192022dbfcd169715eab0cebef90c3e492a4713a3cfa4e1c70"
+
+[[files]]
+path = "logic/assets/trace-viewer/viewer.md"
+digest = "sha256:f2a003bdbbf089446423fceabc9f21f20cf66c914af7fcc2d3ba2b0dfc841c62"
+
+[[files]]
+path = "logic/auto-artifacts.md"
+digest = "sha256:a6ef6db26ce3416ede27703cedaddd3354fb68f1a8d44f4fca87dfa70652833d"
+
+[[files]]
+path = "logic/browser-driver.md"
+digest = "sha256:221718d1fdb6acf31c09ecf6dfeb0a15987d7a673b63c643901e0a105eaed4e6"
+
+[[files]]
+path = "logic/bundler-incremental-rebuild.md"
+digest = "sha256:642bbf66ddb0d6492fce544ee28376c57841620b80c582f24aa43eee5066ff90"
+
+[[files]]
+path = "logic/bundler-splitting-tests.md"
+digest = "sha256:202cbde4bad9cf353976a77e094feae8470401563aa2fbfbaf4ee4aafc7ead69"
+
+[[files]]
+path = "logic/bundler-tree-shake-validation.md"
+digest = "sha256:ea067b020ac39d1641fb262f0ce3b53e9e8f96091454a8ad32a6296fed14c31d"
+
+[[files]]
+path = "logic/bundler.md"
+digest = "sha256:2cd3fa2fd790c2e62a64540c2f6ebdaf2994a6754bed93edfdf519c0b39ffae1"
+
+[[files]]
+path = "logic/conformance-cli/src/lib.md"
+digest = "sha256:087483d1b207801dbead2b69e2ff65a40e49c997a0850c43cb7ff02c06df9e46"
+
+[[files]]
+path = "logic/console-error-relay.md"
+digest = "sha256:9827ca560b98bccfddcc4e3be28aaf8a5a3fe69e87224ce2ecc2a775bfdf9b83"
+
+[[files]]
+path = "logic/css/postcss-tailwind-foundation.md"
+digest = "sha256:58f10908c47a0b05f6afe6d751c7574e2bc1bdc22e596f9ad5a86c428946e7a4"
+
+[[files]]
+path = "logic/dev-server.md"
+digest = "sha256:5c8afefc11e9dc5584e1352e4f1b3491c3ba5d278c053bd2baf31797708dcf79"
+
+[[files]]
+path = "logic/e2e-test-infrastructure.md"
+digest = "sha256:5d34a4c3fdfb9286eb16a10721bab9d6da13c03e5fae15765ca5b23b9c119a53"
+
+[[files]]
+path = "logic/examples/dev_server.md"
+digest = "sha256:be3bde990140bc7837f464d7635496be5585027203a56cce0fdd3d8a8a1cd1f4"
+
+[[files]]
+path = "logic/examples/full_pipeline.md"
+digest = "sha256:30eb164d01400bc9313a9f21aa9926f2162a37b848cd07cab84f9f2ddbf212c2"
+
+[[files]]
+path = "logic/examples/test-specs/page-object-pattern.spec.md"
+digest = "sha256:1c48dec355aec0cf7c30a3700b791221335756bab8eaf54024252905fb8bf8ac"
+
+[[files]]
+path = "logic/fixture-di.md"
+digest = "sha256:37fa259360b710cc65974d4efbca7f3510873fa591af21810a4027d4e9c567f1"
+
+[[files]]
+path = "logic/hmr.md"
+digest = "sha256:fcb7306ce2bf4d558e38d3461b13582a50286e77eb8f8d6195f21b34055788b2"
+
+[[files]]
+path = "logic/html-reporter.md"
+digest = "sha256:e6fea7ce64798246a8acea38077ea3c32eb9005fc1adc0763f73303ea3b9468e"
+
+[[files]]
+path = "logic/inspector.md"
+digest = "sha256:3d3d312f20f585aca0d265f1292d9485f399051c163900cb3eb607e01a2bc056"
+
+[[files]]
+path = "logic/jet-browser-observation-bundle.md"
+digest = "sha256:c572867c42c6a79dbbbf6cc63f91b511910d14ab7d691bf7b0056de1b48fcc02"
+
+[[files]]
+path = "logic/jet-build-lib-cjs-re-export-and-renamed-alias-edge-cases.md"
+digest = "sha256:2f73025b737c72b4acdd445578481ad3c08eef843b5939754f32b3e2842ac99e"
+
+[[files]]
+path = "logic/jet-build-lib-css-cascade-merge-across-dependent-packages-raw-as.md"
+digest = "sha256:2dea34708c96c621ded4172e67115b83dc88f0e54a309c51fe2619a3254d6be8"
+
+[[files]]
+path = "logic/jet-build-lib-d-ts-class-member-signature-reduction-remaining-ex.md"
+digest = "sha256:c5219ea54b64635689e6bb2b8f5edba37f2ad0132d56348eecb85640236ec072"
+
+[[files]]
+path = "logic/jet-build-lib-dts-emission.md"
+digest = "sha256:28fb2684a699e482560c810ef17586fe5db4201932dd5aef3d723e54251fe69c"
+
+[[files]]
+path = "logic/jet-build-lib-inline-barrel-re-exports-export-from-x-in-single-f.md"
+digest = "sha256:24a14796b44f249d5c0eba6a91ad44c0e5208bc395eab216b5a56a279a8f5a50"
+
+[[files]]
+path = "logic/jet-build-lib-library-build-mode-esm-cjs-externalize-deps-peerde.md"
+digest = "sha256:75132646810455186d78eeaeca53455742fc98674ebf4ff2ca4106f80d9495b5"
+
+[[files]]
+path = "logic/jet-build-lib-preserve-modules-iife-library-output-modes.md"
+digest = "sha256:c4ec343be259977b0805768fee97d7b64f2bbde98dcd058a232a116894fbb106"
+
+[[files]]
+path = "logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md"
+digest = "sha256:0223c3bc4b61aade6f4e9af917b0b9a429fa8f392ea6b6a3523464a403eaa66e"
+
+[[files]]
+path = "logic/jet-publish-library-and-private-registry.md"
+digest = "sha256:c686a168208f7f7998eba19b74853096e849f05a55390897b2cd0a920ecad639"
+
+[[files]]
+path = "logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md"
+digest = "sha256:097864422c2fe89d8172156f741894c40ea0986905a991d84265ce5d048348f4"
+
+[[files]]
+path = "logic/jet-stories-build-static-export-of-the-component-workbench-for-h.md"
+digest = "sha256:50ab15eef7f8c360e4d3e0c37bb4e12a985f1ed3217d205f3baf76efa951b503"
+
+[[files]]
+path = "logic/jet-stories-controls-args-panel-derived-from-ts-prop-types-argty.md"
+digest = "sha256:2601cf6874498d7afc9d7625e9135eea1244dab53263fbf5a1777e51d8e107ed"
+
+[[files]]
+path = "logic/jet-stories-controls-generic-cross-file-and-intersection-prop-ty.md"
+digest = "sha256:2730df02bba893238b4611b309c5362873261be824ba11c4ede3e7d1f70f4378"
+
+[[files]]
+path = "logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md"
+digest = "sha256:16529bdefc58565ff73b4325966b517eec4baa2d2253c248db46e1481a82884d"
+
+[[files]]
+path = "logic/jet-stories-discover-and-parse-csf-stories-tsx-into-a-story-inde.md"
+digest = "sha256:1d356b6f1f4f014be60b63875ec1a15a26bd18ae433ceb5bc3cfab5679c43fe2"
+
+[[files]]
+path = "logic/jet-stories-discovery-csf2-template-bind-re-exported-stories-and.md"
+digest = "sha256:624ada408660bcd5764327c02653dd56c9359c53d8550f5383282ed7c5b62fbc"
+
+[[files]]
+path = "logic/jet-stories-hmr-state-preserving-react-refresh-for-the-story-pre.md"
+digest = "sha256:8acd6d0566680fc7a81aeacbf9f99f3b3cc2567e9e38da6ef32c16a0af1883f3"
+
+[[files]]
+path = "logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md"
+digest = "sha256:1f3edc5de9137d27bf291b8bd1ee35c43bb5c26e95feff31cc8dc94e884c5bbe"
+
+[[files]]
+path = "logic/jit-runner.md"
+digest = "sha256:5dbec5c713d9ebbb1d11f523887573f606ce20fb494e106169edfc2a0d6273e1"
+
+[[files]]
+path = "logic/legacy/pnpm-parity.md"
+digest = "sha256:818637e93ecc48fec92a2ba9df6a6854cbf55f6aafe9822f02af63e919cc650a"
+
+[[files]]
+path = "logic/locator-engine.md"
+digest = "sha256:13026e4fbb1f771df763fc6c0b994597a7559bb10d1b27678f72baefce3160d1"
+
+[[files]]
+path = "logic/locator-js-api.md"
+digest = "sha256:5f216a67c461b3f00e760f2236a34d1072ea08860123439826247a58ce976e5e"
+
+[[files]]
+path = "logic/manifest-cli/src/lib.md"
+digest = "sha256:ce01c316d1d37f3a01d01a4c63162bcd516966433c70d15719f462f60e01dc1e"
+
+[[files]]
+path = "logic/matchers-state-value-a11y.md"
+digest = "sha256:56d00e41b205c9bbd88083a21943766207e0bf88d81350df215b0fbcda2a2d20"
+
+[[files]]
+path = "logic/multi-target/README.md"
+digest = "sha256:21a0cb104a50d023191edf01b28509826724fc2f6584c349e367afb6be6f0c3a"
+
+[[files]]
+path = "logic/multi-target/build-targets.md"
+digest = "sha256:fbde2c2836ef015291ce387cbce60f92077be1393f39cf38c7dfba8957acfa4d"
+
+[[files]]
+path = "logic/multi-target/desktop-runtime.md"
+digest = "sha256:43303826b702afebe46179dab76eec83920636e7df5a032a9cce4c4a40a431d5"
+
+[[files]]
+path = "logic/multi-target/element-contract.md"
+digest = "sha256:0f825a65fa03ef6ab674d5a315f0580c5a11ff31a7643b825b8a255b8cc7ca71"
+
+[[files]]
+path = "logic/multi-target/src/event.md"
+digest = "sha256:ca794cf50246d37cf0963d878d8a4c4b5c15aa3d3154c9d792d607c49a116fd8"
+
+[[files]]
+path = "logic/multi-target/src/hook.md"
+digest = "sha256:9efc65c1faab984a584a9bd19ba351602ffba478fc791b8dbdf20c2664ec449d"
+
+[[files]]
+path = "logic/multi-target/src/lib.md"
+digest = "sha256:9d1427315725b67ccfded078702a83d828229385e13a991fc99897a0045c9898"
+
+[[files]]
+path = "logic/multi-target/src/profile.md"
+digest = "sha256:b68fe49816407d276743b0f4b3e8784dc526ea62bfe70ed49f6e574ba7722737"
+
+[[files]]
+path = "logic/multi-target/src/renderer.md"
+digest = "sha256:3fddc925b9641c1601c7825a8f80749011b6140d0b8bec8d6a936d9694dd520a"
+
+[[files]]
+path = "logic/multi-target/src/web.md"
+digest = "sha256:8ea5fde605723e02aca6b84b67d5791b1f63b3414c02435be808bac7a675d875"
+
+[[files]]
+path = "logic/multi-target/target-profiles.md"
+digest = "sha256:879904f983096467fbb2d19e0a4669f4120b5b7058c77b4da2ab31a7598eb3b3"
+
+[[files]]
+path = "logic/multi-target/target-profiles.yaml"
+digest = "sha256:bce51a3b0305a38fec033f9a2bfe81ef26d3afdc4e44887a91ee998ec08fbc63"
+
+[[files]]
+path = "logic/multi-target/target-profiles.yaml.schema.json"
+digest = "sha256:aaa1cb51443eac37293d507485dc6b5e63253f23d38a9b9069ede8b8c73ec283"
+
+[[files]]
+path = "logic/multi-target/tui-renderer.md"
+digest = "sha256:9da96c6d711bd5d9e979f35b7526d123516e59d3fe04fd17eef68ad9ff423c71"
+
+[[files]]
+path = "logic/nx-support.md"
+digest = "sha256:98688605033952c6b91e02e20f57996bfb287344467a32062faa7435a2d294ed"
+
+[[files]]
+path = "logic/page-api-parity.md"
+digest = "sha256:dc0eb61b5c75a952cf78a4f84e3a4ec8caa01f829af466451cc082e2208f6ec9"
+
+[[files]]
+path = "logic/page-fixture-auto-inject.md"
+digest = "sha256:b2c3b7cea351e03475420a7a266e99cea025403e2f120d30ea5f6782bc530f76"
+
+[[files]]
+path = "logic/parity-dom-reference-runner.md"
+digest = "sha256:c8cf65ac6d12ada02893d1ad75bc31e98e5a2caf10bc8b82abcd541598e3800d"
+
+[[files]]
+path = "logic/pkg-manager.md"
+digest = "sha256:226151270f324f27adf8011b185fd33fa425bd9730048a0ed8d5221e1d83d701"
+
+[[files]]
+path = "logic/playwright-compat-shim-reexport.md"
+digest = "sha256:acfb5221a93b19baa5b1d333147b353dd7046ef3f5c54f236285903d32fdc6ca"
+
+[[files]]
+path = "logic/playwright-compat-shim.md"
+digest = "sha256:86991c503fb570f7f1a1037600d471027e94dbb334347e86d7ccfbd4ab44b149"
+
+[[files]]
+path = "logic/postcss-tailwind.md"
+digest = "sha256:939c4488861c5537dd5248ef06a61b72732d607826df15a827b0b99f13de69f7"
+
+[[files]]
+path = "logic/remove-optional-esbuild-from-phase-3-production-build-gate.md"
+digest = "sha256:144f0b4e787c8a1d0f5d3a24b6003ef999d153a0b6dec41330de5e226ed74cc8"
+
+[[files]]
+path = "logic/resolver.md"
+digest = "sha256:d060051aac878b3a973e5abe5d653fce93f1e1a5112637f4b10c2cf37a28a822"
+
+[[files]]
+path = "logic/route-intercept.md"
+digest = "sha256:2eb5fbf41d14205446282292b804c71d140a6d65023f32c3a8b2f2997cc54e7f"
+
+[[files]]
+path = "logic/scope-hoisting.md"
+digest = "sha256:9fa3d7ea78c70f8eba794363745fc3b7c8221b3a5c9727f467607f21bbb69ef3"
+
+[[files]]
+path = "logic/scss-sass-compilation-in-the-build-lib-css-pipeline.md"
+digest = "sha256:b05546741bd511ba100418aa031968996893b27f6095df4a6f00c36843110d0e"
+
+[[files]]
+path = "logic/src/asset/image_processor.md"
+digest = "sha256:faefc33b99073703fab89b6012d97cc22ef1d0f1a4703433deff067b102b1fc0"
+
+[[files]]
+path = "logic/src/asset/mod.md"
+digest = "sha256:d04cb68087cdc9f4ae0ba5c4055a0ae4e04bb5f24f0c4ffed4e12d98c9d28423"
+
+[[files]]
+path = "logic/src/asset/types.md"
+digest = "sha256:dd4c9e2646f7c2cb7dc7f42c75d921d58b58f286358e791180ceb4c36ee54ad9"
+
+[[files]]
+path = "logic/src/browser/cdp.md"
+digest = "sha256:465fedccbd228c2b5be785d6343e3927e3ba44a89a6468fe1a6eceefcaff285f"
+
+[[files]]
+path = "logic/src/browser/context.md"
+digest = "sha256:3e140eeb145646741c265774056280dae2800ed38a7381e262da95948aa7cb7c"
+
+[[files]]
+path = "logic/src/browser/install.md"
+digest = "sha256:6d4f8b203a5117f0a7c6170526cec4fe21d2419f877a802e944365ae08b93788"
+
+[[files]]
+path = "logic/src/browser/launcher.md"
+digest = "sha256:a1437533efdbf1fccc2f9c564938de485fffc7195541089086425c9a5ef8db6f"
+
+[[files]]
+path = "logic/src/browser/locator.md"
+digest = "sha256:1b38f1bb434d04d3d0fbb326a3ab86df96e03f4bfffd351dd21727ad4f840589"
+
+[[files]]
+path = "logic/src/browser/mod.md"
+digest = "sha256:0f38d532d03335135f0a72ad1bfbfee64ba4a90cf8656e5266c0a43090b9a229"
+
+[[files]]
+path = "logic/src/browser_cli/pretty.md"
+digest = "sha256:7a9cc2a86742121e9c3c8d27b6822b0cc3be7dbbed0d71bfbca68d2d0c95d321"
+
+[[files]]
+path = "logic/src/browser_cli/session.md"
+digest = "sha256:e9f098b0843e382e76177fdf066ff641f555d6e0a7442d591aa5a1f2d5aef513"
+
+[[files]]
+path = "logic/src/build_target.md"
+digest = "sha256:2f311dbfce698199520e43e730981ba2207ca01c8403a253ea1b2e35e88dff2a"
+
+[[files]]
+path = "logic/src/bundler/css_bundle.md"
+digest = "sha256:3d4fce67115e82efe4a99c0a84f41425203638eb496753011903817ffa1d2e77"
+
+[[files]]
+path = "logic/src/bundler/dce.md"
+digest = "sha256:ee6bd0c20fc50473a8d3450148430e4785c60f46255d8ddb1174e10513c7f6da"
+
+[[files]]
+path = "logic/src/bundler/define.md"
+digest = "sha256:788afe8d8579de9d0497b947eb22732abcdb82d0fbe87f6ceca4ff49eaed03e0"
+
+[[files]]
+path = "logic/src/bundler/fold.md"
+digest = "sha256:4ced15dc5210cd65eb8063a15d8d13dcd4bf50579ef60e58d9bb52281272a256"
+
+[[files]]
+path = "logic/src/bundler/graph.md"
+digest = "sha256:517312f5a1ab94685d5696debfcfa434b68bbfeec4618ef345a1ed45c2276231"
+
+[[files]]
+path = "logic/src/bundler/html_minify.md"
+digest = "sha256:329252981fc42fbd691780aa052fc7d9b202aa62e7b8ec3c346c9efc51f07926"
+
+[[files]]
+path = "logic/src/bundler/imports.md"
+digest = "sha256:f14c8c41f93185fd6f064317f43221500c61fa783250a81ab59c3d48e730f945"
+
+[[files]]
+path = "logic/src/bundler/json_shake.md"
+digest = "sha256:c2cc89ddcb11d2abe4619d291da21a08c1c4066a57c16944e3f4492663d6ca26"
+
+[[files]]
+path = "logic/src/bundler/mangle.md"
+digest = "sha256:a68cf9814689de2da429e73eee7ed601adba3743240af9883a30917aed18aef3"
+
+[[files]]
+path = "logic/src/bundler/minify.md"
+digest = "sha256:0338cd301a1667070f2b19b829a7e554fa4c8f167e3d8b6624944d0d55230c6e"
+
+[[files]]
+path = "logic/src/bundler/mod.md"
+digest = "sha256:e0543f2e8d3b6a11a12eec8aacaaf86ed6a2436227280d01b640b158cc42cd3e"
+
+[[files]]
+path = "logic/src/bundler/scope_hoist.md"
+digest = "sha256:2bf1b51311f138f32be86a21e88c3c138a0fa88e08e532d6d6c036b6c4c97241"
+
+[[files]]
+path = "logic/src/bundler/scope_hoist_opt.md"
+digest = "sha256:f3b18fcf658f3d800bfc114f56aa4105f7b68be3f01469570f7b423a22205c93"
+
+[[files]]
+path = "logic/src/bundler/sourcemap.md"
+digest = "sha256:3529218ef5c474628e3aeafe4de1b6161384e718316a72ca90780518201eb402"
+
+[[files]]
+path = "logic/src/bundler/splitting.md"
+digest = "sha256:fc96eecd743dbab994a89df67393e21ddc78eb9e214a93137dcade8d9334221c"
+
+[[files]]
+path = "logic/src/bundler/tree_shake.md"
+digest = "sha256:71070cc225f793700c14b555b614dee1e513e4d961f1c4cf1823f0dea91074f6"
+
+[[files]]
+path = "logic/src/bundler/types.md"
+digest = "sha256:ab906d7b7e978ac2af647e70f87679ba0cb496bbd9b1efa2a74e1367339fc8e5"
+
+[[files]]
+path = "logic/src/cdp_driver/mod.md"
+digest = "sha256:ddf638c66d7378c74e762d1866bf1edad9899a46a9f82f211efcabdd37b2b06b"
+
+[[files]]
+path = "logic/src/cdp_driver/page_binding.md"
+digest = "sha256:e8dc11c95da0d5a16d250a200b9b53bfcb470d80e98175d9ca35a4286dc0c6de"
+
+[[files]]
+path = "logic/src/cli.md"
+digest = "sha256:b8214ba569112f0ce888091037a03f357afcea4e7724c3d8b307c37bfeab29b5"
+
+[[files]]
+path = "logic/src/css/directives.md"
+digest = "sha256:dcb2a69a9b51a252981050c1a85ab4999b54bc20de5b9ece7cd6847da805903c"
+
+[[files]]
+path = "logic/src/css/mod.md"
+digest = "sha256:0deb987511caf13f1f0cc3aa436ac9e5e6319440d0bf937ff802caa4c2f96340"
+
+[[files]]
+path = "logic/src/css/output.md"
+digest = "sha256:f01f4c5382ac4d4fe4482204bc53bc7ab6ae9077826a4e49fdcc10bac1f4393a"
+
+[[files]]
+path = "logic/src/css/plugins/animate.md"
+digest = "sha256:55eaadb54e67e1419cc4db2914220042c8a6a7c94ba4b2cc88629451bda0f6d6"
+
+[[files]]
+path = "logic/src/css/plugins/mod.md"
+digest = "sha256:f14305c73b1d42d4b4efbb2d7f3ad2edfaf56e2ca507e7a719ff6fa6c30408e0"
+
+[[files]]
+path = "logic/src/css/plugins/typography.md"
+digest = "sha256:ce7666b2bf868ad29989e027565a514e8aabb9ce23feb01e4317022501d38267"
+
+[[files]]
+path = "logic/src/css/tailwind/config.md"
+digest = "sha256:76e5b7429ada5f4a675a0816940a0773ec799dca640f6aa2e78f9d1ef3607f15"
+
+[[files]]
+path = "logic/src/css/tailwind/mod.md"
+digest = "sha256:38e9e24f81f52a4619b246fa535d5060e1d08bfe28b63c428e02bb2bc466cc13"
+
+[[files]]
+path = "logic/src/css/tailwind/preflight.md"
+digest = "sha256:c46765da5b67b755ae06ba56e573757dedbbb6783f876e0394209703c1e917b9"
+
+[[files]]
+path = "logic/src/css/tailwind/scanner.md"
+digest = "sha256:3b1f5546594f5d3ff2f86cb8516676405a1b7f61b68dd89340037270b9a0af96"
+
+[[files]]
+path = "logic/src/dev_server/hmr.md"
+digest = "sha256:72a6043b7e30b926a14bdae2c3a00dc7bf476b4e57577afd04ac67ca3ab33db9"
+
+[[files]]
+path = "logic/src/dev_server/hmr_client.md"
+digest = "sha256:ed450c230b68caf1bb43d768d77c2a8643d94b100a7f36094e5a8f7310ac7869"
+
+[[files]]
+path = "logic/src/dev_server/importmap.md"
+digest = "sha256:e3af88d7eef8d1d9a299bf4d1d22b5be30c3c614d9eda3a58cfc2db75b8d8a32"
+
+[[files]]
+path = "logic/src/dev_server/incremental_rebuilder.md"
+digest = "sha256:f485aa6a73788e6821a888e6a734a6eeaeebe3369e1a4173d0d865fa3c82116b"
+
+[[files]]
+path = "logic/src/dev_server/mod.md"
+digest = "sha256:49c32345c914251f7de61335c70f3a481d7ed177db72cb722ef0b464eccf0576"
+
+[[files]]
+path = "logic/src/dev_server/module_graph.md"
+digest = "sha256:7889f39fc1e60abcf139e910e4d8c62c6d7a60ca9713573d472e22d97b970329"
+
+[[files]]
+path = "logic/src/dev_server/polyfills.md"
+digest = "sha256:df3483c16bad421b1f9706cb8a89729a951f6a58447f273df9c476ee9bda6f20"
+
+[[files]]
+path = "logic/src/dev_server/polyfills_tests.md"
+digest = "sha256:3c1fe05a1e9db1138690b88e158dd911bc3e3f3ca8c0fe1d1fef02f4493790ef"
+
+[[files]]
+path = "logic/src/dev_server/prebundle_tests.md"
+digest = "sha256:6aad48794806993050d8993eab5b1eb878ace30f89fed0861aa88f908b97c06e"
+
+[[files]]
+path = "logic/src/dev_server/proxy.md"
+digest = "sha256:220f0b14e13f780365d840a21d615e96cc5443cb0e72fe76b8a69de0608c315e"
+
+[[files]]
+path = "logic/src/dev_server/react_refresh.md"
+digest = "sha256:d614e4ae47809fe3dde9c575e574bec85eada6fdaec4497c62029602c2386467"
+
+[[files]]
+path = "logic/src/dev_server/source_analysis.md"
+digest = "sha256:b64cecda70bffa9e1fb652c5fd9bb46d6353b64481f42367ce81cf1050255a9d"
+
+[[files]]
+path = "logic/src/dev_server/watcher.md"
+digest = "sha256:4dfbe0555e1c3e3eb67a6d1dc1820fdd6c40e86e8d1db86427be714ae7cb65cd"
+
+[[files]]
+path = "logic/src/lib.md"
+digest = "sha256:ba1cae3a08da7a46d5cad224610161a6148c796947121b44ede595a813e2746f"
+
+[[files]]
+path = "logic/src/main.md"
+digest = "sha256:58519826e900eaa6812eecf0d5c902da86151cad452d58a347a5cef16aae8f24"
+
+[[files]]
+path = "logic/src/pkg_manager/audit.md"
+digest = "sha256:595d2a3a3c4b906e346071ffdb551bb7f8f4ad16af278fc408b23a3c106576be"
+
+[[files]]
+path = "logic/src/pkg_manager/gc.md"
+digest = "sha256:0d5d9622e7d0e25b27c1c54fe7839fe1192c0620b4e56b8e9999100265d237e7"
+
+[[files]]
+path = "logic/src/pkg_manager/npmrc.md"
+digest = "sha256:b1373d01daaab4058faf9b51d3630de3d99d07014dd96c6fc91c9e92a8162934"
+
+[[files]]
+path = "logic/src/pkg_manager/nx.md"
+digest = "sha256:0bea27669df3efacabf580ade37cc12e902635ee9e8b0127f550ba0880222424"
+
+[[files]]
+path = "logic/src/pkg_manager/nx_test.md"
+digest = "sha256:2ce0e970a79dbac80a8588c703ca2dd0cc0f8524e7efd03b569b34a6a8650eb7"
+
+[[files]]
+path = "logic/src/pkg_manager/patch.md"
+digest = "sha256:d9dc6f766e857793b7c3cb3d64665c759a8acd8a029f8c2a9086699902660856"
+
+[[files]]
+path = "logic/src/pkg_manager/platform.md"
+digest = "sha256:abf5d528f3b20366ffabff8b12e3f2d93d042ba4f90e4f494b891080800c598d"
+
+[[files]]
+path = "logic/src/pkg_manager/publish.md"
+digest = "sha256:862b8361c2405f138214868781f054167f4c222679745ec7208ab4e726e364a9"
+
+[[files]]
+path = "logic/src/pkg_manager/registry.md"
+digest = "sha256:6fb5b0d6c03f2564451cbb0fcc27a64688499711943bc78feffc839093594f24"
+
+[[files]]
+path = "logic/src/pkg_manager/resolver.md"
+digest = "sha256:6094faba548b29865d367886075bbba4a8c5cb417b1cdd58d12370bdfac6c93c"
+
+[[files]]
+path = "logic/src/pkg_manager/store.md"
+digest = "sha256:9b34aa6c15940d677740223bd379b0bc1aea18e11a168e59304edc2cb5a3745c"
+
+[[files]]
+path = "logic/src/pkg_manager/workspace.md"
+digest = "sha256:17a1c6b000f746fd8dbf2620b104d219d316ebe09e222993b327b1d253da4112"
+
+[[files]]
+path = "logic/src/playwright_shim.md"
+digest = "sha256:ae79951aeaa764e964b90bf1939a900012b62bb9a3a6eed90a51c8885163e529"
+
+[[files]]
+path = "logic/src/reporter/html.md"
+digest = "sha256:4ac5dbd8027f21c0d59ed9db6f1c72c12cfbcb499beb18f7371f2fbb660e1aa4"
+
+[[files]]
+path = "logic/src/reporter/merge.md"
+digest = "sha256:d37a93e717a09b2ac0e555f1fce4aab95ad81c8d9712a574e5069856d2f3f1a7"
+
+[[files]]
+path = "logic/src/reporter/mod.md"
+digest = "sha256:3c18458fe3eebfcde8b38a3308a15876f0a53cb6a0b38655935d545e7cc4bfe4"
+
+[[files]]
+path = "logic/src/reporter/parser.md"
+digest = "sha256:c22b894b6ff5ce7693fab862bde3a16656a14adf40089f210a27dbb03a9c093c"
+
+[[files]]
+path = "logic/src/resolver/alias.md"
+digest = "sha256:7c7c2005495e6e74b3093b94cca5ed9732fe716fe0a6fed38aa7697a59a78760"
+
+[[files]]
+path = "logic/src/resolver/mod.md"
+digest = "sha256:15f9bf681cbb995fb36eb9d4c01756c0762b408187de2c31260fa50efc4d59f4"
+
+[[files]]
+path = "logic/src/resolver/package.md"
+digest = "sha256:99cf6f0e3ba3ec1b7751ec7febdd7dc05bdc88792816ad529f4397ded965fce5"
+
+[[files]]
+path = "logic/src/runner/env.md"
+digest = "sha256:ff258c3d2f6495e6adb52968753a4ff52c57d4b6a743f12fc7ec9fae29b45aee"
+
+[[files]]
+path = "logic/src/runner/jit.md"
+digest = "sha256:5f73e4840201afc1238663fdbe2e18be3fd35a14d8c3422a631eae9fba912a23"
+
+[[files]]
+path = "logic/src/runner/mod.md"
+digest = "sha256:2e93f6e7b427b08ee46dd0fcd2c37152c607660cc6364b39f2cb7e0d5f76e2ee"
+
+[[files]]
+path = "logic/src/runner/source_map.md"
+digest = "sha256:0ba321975bc4d2cd3cf07b20e69ded71afc27069747a5ffe3609cf662769abec"
+
+[[files]]
+path = "logic/src/runner/watcher.md"
+digest = "sha256:66340eb0d435c2ebd2ca9db864043aa5e1cb7725eb0acb13afeb60cf3f1c7dad"
+
+[[files]]
+path = "logic/src/task_runner/cache.md"
+digest = "sha256:a45ae2cb2f09c17e45f89108bd9348bebdda02281b3411d71d8f1247fe10a355"
+
+[[files]]
+path = "logic/src/task_runner/graph.md"
+digest = "sha256:1ddc5e73f89d80c2725f0e0b2d18f91117ca82b7b7c77b3edc4ce7fe2dcd8092"
+
+[[files]]
+path = "logic/src/task_runner/hash.md"
+digest = "sha256:be281e8b287c62b43c77c5592b3656263161370a0995baad83ba75bb5a16947c"
+
+[[files]]
+path = "logic/src/task_runner/mod.md"
+digest = "sha256:1b77cf920524563291f9ccd0721146383b8efec521536c89230c703f0acbf571"
+
+[[files]]
+path = "logic/src/trace/mod.md"
+digest = "sha256:8216a294859a5ce47217bb4b7b34d485fc2edbecaa620c948d80fe90503fbd87"
+
+[[files]]
+path = "logic/src/trace/server.md"
+digest = "sha256:589e3e84eb2a0d739524b3bce76035d5af56b1916aca81798c58915a06c9d9b2"
+
+[[files]]
+path = "logic/src/trace/view.md"
+digest = "sha256:b9f864e91630c876674960a115e6c11c3b23eb99c5c9b2c880feb9679d6a7404"
+
+[[files]]
+path = "logic/src/transform/css.md"
+digest = "sha256:31efadcd3cd366a52d0a6b164c2017787fed11b08b9aef0ae6c4dd15b8d347ba"
+
+[[files]]
+path = "logic/src/transform/incremental.md"
+digest = "sha256:d57cf6bbcbf6467db4974a0317f0e80bfe154f648367ce075df1597eab120a5f"
+
+[[files]]
+path = "logic/src/transform/jsx.md"
+digest = "sha256:eba4a160df0711d9d9b1de99bbf17b673b86816b2e3898c61143f4ce1f578f53"
+
+[[files]]
+path = "logic/src/transform/mod.md"
+digest = "sha256:cd8057660edce3f69551f4b7f253e00dfe86d672b0f4c4c66a7a344d1d51ec1f"
+
+[[files]]
+path = "logic/src/transform/modules.md"
+digest = "sha256:cc51a5776c7bd2c0004ade2edbbefeea1d63bed34638d91dcd73804b9d9405d3"
+
+[[files]]
+path = "logic/src/transform/react_refresh.md"
+digest = "sha256:7b7e76460bdeaed00f5df437c80e77e512679b541ba570033c19b7be45250fe8"
+
+[[files]]
+path = "logic/src/transform/transform_tsx.md"
+digest = "sha256:3f7719816a0f70604e026683bee6eac2c73fac7d8264cf7243aa85980dc19860"
+
+[[files]]
+path = "logic/src/transform/transform_tsx_tests.md"
+digest = "sha256:fb085c5b40d2197cd0ba25c9d1f99ecfd27fe25d618dcc51e348c506d5ff05e7"
+
+[[files]]
+path = "logic/src/transform/type_strip.md"
+digest = "sha256:47f686580016988b9798412ef6160dfdadce2216d28b7d7fb678d3634a624f47"
+
+[[files]]
+path = "logic/src/transform/typescript.md"
+digest = "sha256:4c8ef67db9468a9240a4e829d123de440465daa351f11f0efd64e3df30c0898c"
+
+[[files]]
+path = "logic/src/tsx_to_rust/emit.md"
+digest = "sha256:032b6939e79a5b56f3ebca3baaaab6ecd21e07e5271a06f7fa6056931590b151"
+
+[[files]]
+path = "logic/src/tsx_to_rust/mod.md"
+digest = "sha256:f214422c446677e285ea5e722542c0e3aeab80a245d14d4bc4805931e71fe82c"
+
+[[files]]
+path = "logic/src/wasm_build/config.md"
+digest = "sha256:dd68eaf7cb05cf94752ccef40e8010332f5ec47e7e7caa33a9d295498102be6a"
+
+[[files]]
+path = "logic/src/wasm_build/lint.md"
+digest = "sha256:74a04edc4fbb5e352518dad20e6e2591d220afb59ee106d283b2274c8cf6fc21"
+
+[[files]]
+path = "logic/src/wasm_build/manifest.md"
+digest = "sha256:9bb756705429c874a6b0e14784af191a1299a787e467061dede8c9518b7eb133"
+
+[[files]]
+path = "logic/src/wasm_build/mod.md"
+digest = "sha256:c26fd23d7436c146e75de1a4f65b0642365bd35ff8aa75af01933918d009dfe0"
+
+[[files]]
+path = "logic/src/wasm_build/schema.md"
+digest = "sha256:9ad80be08741bc9dd2faca216451f26da18f31947beee8962c77ac9d48c99dfe"
+
+[[files]]
+path = "logic/src/wasm_dev/mod.md"
+digest = "sha256:318cc51054d9e720291435d437ba5920459a88e104f097f4a09f2aa21af07972"
+
+[[files]]
+path = "logic/storage-state.md"
+digest = "sha256:b860214da216234fb0f70996c43c61272b9c4c303f0c25e98b7f71567c234ef3"
+
+[[files]]
+path = "logic/svgr-import-svg-as-a-react-component-named-default-export.md"
+digest = "sha256:fd3c3c687f987256b5b968052fcb9cbe8b33e30f54cf3151b18dfc1066ff3eaf"
+
+[[files]]
+path = "logic/tauri-shell/src/bridge.md"
+digest = "sha256:121ce0ecccd1d4781068ea318176e9d31dfcb8f31bb86085abfd03a46da73e44"
+
+[[files]]
+path = "logic/tauri-shell/src/lib.md"
+digest = "sha256:f1221b56344dca76bcc4e10d3b8730a3fa13f2ede32aa457edca6426fa695466"
+
+[[files]]
+path = "logic/tauri-shell/src/lifecycle.md"
+digest = "sha256:a04fbaae0c3931881ed7c1f7090827e9f571c40f0bfb686f2f58a4448dffe548"
+
+[[files]]
+path = "logic/tauri-shell/src/packager.md"
+digest = "sha256:5fdca7ecb2d8aad5e78db460fade8b8104d11b20fe991448bf7be1cc9d191690"
+
+[[files]]
+path = "logic/test-runner.md"
+digest = "sha256:178247a60eb5d96eb01a718a06f502f83f580bdf12b8392f7dabe36024937f97"
+
+[[files]]
+path = "logic/to-have-screenshot.md"
+digest = "sha256:ad9f975452f12bd784e941e7b8443b7f5516a55cd81396a5c95d3c02a2e25e55"
+
+[[files]]
+path = "logic/trace-capture.md"
+digest = "sha256:323f340e7fb7bfe9dc85d70eae00b3b738e0dd1bec859bf815dae5414a5a8862"
+
+[[files]]
+path = "logic/trace-viewer.md"
+digest = "sha256:b31d1c88a73060c76f3c6fd8ff1f92883523074ffef571196aaaafffe43749f6"
+
+[[files]]
+path = "logic/tree-shaking.md"
+digest = "sha256:befbe60ee2e0da2b955371dc1b22c525eff1a7eac640cac5b25f3697452a326c"
+
+[[files]]
+path = "logic/tui-renderer/src/event_in.md"
+digest = "sha256:ddf4f2daf5425d580ca7625c79a26b04134edd2cfc11ea0cd9845ffba780363b"
+
+[[files]]
+path = "logic/tui-renderer/src/lib.md"
+digest = "sha256:15c96728a0e4895e078e86b355452c4086280fe92bd1ae11d40e3cecf90d3cf2"
+
+[[files]]
+path = "logic/tui-renderer/src/runtime.md"
+digest = "sha256:0c96376b9450da40c4ffb43ce6fc99bd3bbbd729a27adf802b98002226973cc0"
+
+[[files]]
+path = "logic/tui-renderer/src/style.md"
+digest = "sha256:f6e846ebd3d766d81f6b898304a68a958f239ceb415d3eb6ce3fa14e61590615"
+
+[[files]]
+path = "logic/variable-mangling.md"
+digest = "sha256:ae32fd4c068880814adf56ca3b4f87f3ae8b7421b2fe6ce9f5c0dfef4def9584"
+
+[[files]]
+path = "logic/wasm-renderer-architecture.md"
+digest = "sha256:d0cfa2579f961b1e81ed6e4ee103f9db70ad27d85883b777746dfb4da58ad34d"
+
+[[files]]
+path = "logic/wasm-renderer-conformance.md"
+digest = "sha256:db0abc8665134b8b9b71f910d8bfa85abf8a5ce76e8f676e42cac5afe4e418ba"
+
+[[files]]
+path = "logic/wasm-renderer-event-pipeline.md"
+digest = "sha256:98efe383c3869471bbe2e1ce4fca4856840198241093dd252a3fe8b09ede4beb"
+
+[[files]]
+path = "logic/wasm-renderer-hooks-runtime.md"
+digest = "sha256:2ae8bf80df063f11d74721fb7a1022a1ec8c82849b2de890a71498128e08d416"
+
+[[files]]
+path = "logic/wasm-renderer-layout-bridge.md"
+digest = "sha256:7db800010364e72ffd01bc3299685f966c59fb0b12083ce8341765439e6aaebf"
+
+[[files]]
+path = "logic/wasm-renderer-layout-runtime.md"
+digest = "sha256:e9ff2a34f79001ee1b07752285dcf79e094501f433b60c68ce5df08fef75b99b"
+
+[[files]]
+path = "logic/wasm-renderer-line-bidi.md"
+digest = "sha256:489f7bf030b8dc77349131468e221a09c70764b869bd7ff18fba374edad734ba"
+
+[[files]]
+path = "logic/wasm-renderer-paint-runtime.md"
+digest = "sha256:1ed2d523cb7ad4dbc55f46818b65339b14f16c94286a41ccff4a8b9a5341776d"
+
+[[files]]
+path = "logic/wasm-renderer-poc/bench/bench.md"
+digest = "sha256:1db69a5cbc796b86c6c7e1046519710a73f80db15034b5778e1cd586f67c4c37"
+
+[[files]]
+path = "logic/wasm-renderer-poc/src/lib.md"
+digest = "sha256:e471eb3e7afc73ae0fc3e784a986bde51b4a272c0ff2fd602a84b93328f882d3"
+
+[[files]]
+path = "logic/wasm-renderer-subset.md"
+digest = "sha256:bc4e40fc874d3e91b20c373a7d31ceb3097974a5d0bc545af903f52b7a6b2b35"
+
+[[files]]
+path = "logic/wasm-renderer-text-shaping.md"
+digest = "sha256:56cb4a940f21d5b0029781561a89872de3338403a87589552f9d7a369fc0b8f0"
+
+[[files]]
+path = "logic/wasm-renderer-transpiler.md"
+digest = "sha256:59310f3f27e6bee7944d846a0f348074615f25fc97c0d489fe2db5dbf190523c"
+
+[[files]]
+path = "logic/wasm-renderer-wasm-dev-server.md"
+digest = "sha256:73bef71bbf96f23d513c2494265a58e4254aa1d23c4ce27145988eac8b9524a7"
+
+[[files]]
+path = "logic/wasm-renderer-webgpu-backend.md"
+digest = "sha256:81f01c140e60ee9dc714933cb7e87407485a8c87823ed1a7dc4b7ec31247fa2b"
+
+[[files]]
+path = "logic/wasm-renderer-webgpu-strokerect.md"
+digest = "sha256:4938e6f4eed5960982180f56308257f5a8e894c3c9ab93ec71743bfcbd0b02e8"
+
+[[files]]
+path = "logic/wasm/src/debug/mod.md"
+digest = "sha256:9bce585165384098be28a807f80efa085f5a5921f9aecd7786a3eef6a8acaef1"
+
+[[files]]
+path = "logic/wasm/src/lib.md"
+digest = "sha256:eb920a91273a02daa28a170212e0d673d21841678904b879fdd9ee2490864629"
+
+[[files]]
+path = "logic/wasm/src/manifest/defaults.md"
+digest = "sha256:c403048e9d31c842e7ad2c2e5b83cb58b819c9a93ce99952b85f8d2eddccf264"
+
+[[files]]
+path = "logic/wasm/src/manifest/mod.md"
+digest = "sha256:6a322ce086d8bd7f4a8d033a0ea8fd2b6249eb7b1e6dc3584367230bf583ddbf"
+
+[[files]]
+path = "logic/wasm/src/manifest/parser.md"
+digest = "sha256:3787ef8ebf16335de772097fdec6c4cf2992ebe1e14b2ec9cd28a4a61ee1fab5"
+
+[[files]]
+path = "logic/wasm/src/react/canvas_app.md"
+digest = "sha256:2b73532b7072b72053b83681dcfd9e9a07f654ccd5e615ec8b73fe8f4166eb43"
+
+[[files]]
+path = "logic/wasm/src/react/mod.md"
+digest = "sha256:06e23615fbd635a529d459f44cf8d40f168e30ea65d8fbc3c3963069fbfe713d"
+
+[[files]]
+path = "logic/wasm/src/renderer/canvas.md"
+digest = "sha256:82dad177bb9d481d07dc05e8c1296c676d17efd80e91dbaf539c26c52198dc09"
+
+[[files]]
+path = "logic/wasm/src/renderer/layout/dirty.md"
+digest = "sha256:a4f46619b1be36145675a04a11a204194652a034cffa6056103c4d6ed21192e5"
+
+[[files]]
+path = "logic/wasm/src/renderer/layout/mod.md"
+digest = "sha256:7ee5428849bc627caae60f83315a623537154ada8b7b4080ca06c3ab0885cc8a"
+
+[[files]]
+path = "logic/wasm/src/renderer/layout/style_parser.md"
+digest = "sha256:e20aa54a2f5d260d80f82416af1614cb6a9b6d6b11f584a96d1351f9efc997ab"
+
+[[files]]
+path = "logic/wasm/src/renderer/mod.md"
+digest = "sha256:6142c83837cac4a96316e281709db0ce9a7b2cb43eade2ef90d5abae43b6780d"
+
+[[files]]
+path = "logic/wasm/src/text/bidi.md"
+digest = "sha256:dee4bff5162160deeaa0066db7ee75583f029bfe3740a7e11468b9cc05a98a43"
+
+[[files]]
+path = "logic/wasm/src/text/cache.md"
+digest = "sha256:ca4fe60e70300e76121b260c44f7a9815e606e46616d030aff08b9d14475e8f7"
+
+[[files]]
+path = "logic/wasm/src/text/font_face.md"
+digest = "sha256:b23d7bed90ffbab4a9cc0c923b3e93af005a129d939460b632156f69b96efc96"
+
+[[files]]
+path = "logic/wasm/src/text/line_break.md"
+digest = "sha256:b01a01c28faafd210821847d2a0e0baf45ec28f15bd71780bdc6cdfa7ddd6011"
+
+[[files]]
+path = "logic/wasm/src/text/mod.md"
+digest = "sha256:f599e0dc4f57608551f4e6087348a1dbc06aa764cbb1774e8b07f14acf6a2457"
+
+[[files]]
+path = "logic/wasm/src/text/paint_bridge.md"
+digest = "sha256:1ebd22ec944dfdbada639f8bd5d5dc4070fd251e1cbc5f5811e34f5579619e52"
+
+[[files]]
+path = "logic/wasm/src/text/paragraph.md"
+digest = "sha256:7bf4d755c2681542a332a528944ad4d81993b172d0fc225525cab0d006b59935"
+
+[[files]]
+path = "logic/wasm/src/text/script_run.md"
+digest = "sha256:85410c6852d1d30708fc78fd01cb9b6539471dc0430451cc91a0fe5a51624da5"
+
+[[files]]
+path = "logic/wasm/src/text/shaped.md"
+digest = "sha256:a7eb5cc381d4ff8ee17669353457fd6ffbe7da721705897ad14f446306dc9151"
+
+[[files]]
+path = "logic/wasm/src/text/shaper.md"
+digest = "sha256:bf3bae424e2f9db62258e4019f18653b88145eeddaac58bb8e9ce467de204b4a"
+
+[[files]]
+path = "logic/watch-mode.md"
+digest = "sha256:5dbcee78aa3aac47eb9bb13c31eddd6797dcf3c61ec9253ff6651b175afa36cf"
+
+[[files]]
+path = "logic/web-server.md"
+digest = "sha256:5e70174da2cf00f78efbfbd103d7c1d4d7f02bf6a63bea4ff019f9547bcf4770"
+
+[[files]]
+path = "logic/worker-pool.md"
+digest = "sha256:929be9f29f6e5906481c379dbdc1ccfd694aed1883ddbfd780d9fa7c0ad0f5c7"
+
+[[files]]
+path = "logic/workspace-protocol.md"
+digest = "sha256:1f9d0d01f94bf2bf4622ae879645ce9f37fdaffba5e9b98bb694c7fd77a8d4fa"
+
+[[files]]
+path = "semantic/jet-agent.md"
+digest = "sha256:33501d9162e8e3c395f944aaf5d07b5be83bbf611d1dcd3f647e3a7b3e218fd5"
+
+[[files]]
+path = "semantic/jet-asset.md"
+digest = "sha256:1aec541b2ac7651d9932368083ac1c36dc5ba3692e09488f1c030ab5939ee7a3"
+
+[[files]]
+path = "semantic/jet-assets-html-reporter.md"
+digest = "sha256:92b1f0b6f0047de2cb4dd26601d46d1f36b7770a7b5411cf31924c56401ddff7"
+
+[[files]]
+path = "semantic/jet-assets-trace-viewer.md"
+digest = "sha256:ed52eba01075c1701025aa217b13ac844fbfe71c9d01d724444011c2a34c8153"
+
+[[files]]
+path = "semantic/jet-browser-cli.md"
+digest = "sha256:fddce565acab3ae9a5cd8f1b2e093c2f171fd5c36d2080fd49f81a72c9a9378e"
+
+[[files]]
+path = "semantic/jet-browser.md"
+digest = "sha256:dfe3f47cadcc9b61b8a245b148663d3a4e33c60503bbf50a44bcf26d6d83cda1"
+
+[[files]]
+path = "semantic/jet-bundler.md"
+digest = "sha256:0b97cc97de20aa2110cd8f6d1efe793bccd0682c52381b9560c17b463d9e7bdc"
+
+[[files]]
+path = "semantic/jet-cdp-driver.md"
+digest = "sha256:4ac25f5c1656943fb13e33a21b996f81fe0f0d228459d315457fd10c7d0008ec"
+
+[[files]]
+path = "semantic/jet-css-plugins.md"
+digest = "sha256:04a4acd6708298c6d90da8cc85563798778283152cbfc56fa75a53e6fa9e59cb"
+
+[[files]]
+path = "semantic/jet-css-tailwind.md"
+digest = "sha256:9a7ba38d539abbe714196b66f4b3ebc7a1dd2c6802e6a9819d35b18c88e74054"
+
+[[files]]
+path = "semantic/jet-css.md"
+digest = "sha256:2bc6199ef43bf7db55350c3cfeba13848bd0c6ece67626ef2fe696e37a523702"
+
+[[files]]
+path = "semantic/jet-data-runtime-test.md"
+digest = "sha256:d82a5c3ad1956777c4f63ed5794e2d3cf0c273f72a4a9dfd9b7fd59bcf5a2752"
+
+[[files]]
+path = "semantic/jet-dev-server.md"
+digest = "sha256:1b8971c3b28c9efa0b8bee22ec8a95f156f421c847108b88c75f8333941d9558"
+
+[[files]]
+path = "semantic/jet-dev-session.md"
+digest = "sha256:deae2a6c04226e228e599f04e703c24b79d92ad06a688225b9723b951f2b58d1"
+
+[[files]]
+path = "semantic/jet-e2e.md"
+digest = "sha256:477bd031fae1bb244b2c84a55a2904fa84e345c0274aa42f38bdf14021f14450"
+
+[[files]]
+path = "semantic/jet-evidence.md"
+digest = "sha256:22d7a4d31db037e01267a86a15ca292322e8306b6a49686ca895693361e2256a"
+
+[[files]]
+path = "semantic/jet-examples-jet-test-dogfood-src.md"
+digest = "sha256:f4a76378412ae11314e32b2bcf35e79ee80781885d3ab144cfd5a51d6dc4722b"
+
+[[files]]
+path = "semantic/jet-examples-test-specs.md"
+digest = "sha256:2debc9f1c7b48856be924a7d94bdc2d8f880c508f2a5dcfadef7515221dae5c2"
+
+[[files]]
+path = "semantic/jet-examples.md"
+digest = "sha256:5b66c48ac6fdd028726547848d359306d07f060e994c105c66ae9bff2d22ecdf"
+
+[[files]]
+path = "semantic/jet-parity-corpus-src.md"
+digest = "sha256:52efda628f5f753f053d80a322e1ad7b9f41f9fff22aba54ff32bbd8b68b1c99"
+
+[[files]]
+path = "semantic/jet-parity-corpus-tests.md"
+digest = "sha256:3612c137483ccf41d44a5c38e462b93239fe539fee994f579dba18c0a2c8cc62"
+
+[[files]]
+path = "semantic/jet-parity-data-fixtures-libraries.md"
+digest = "sha256:a9d496088953b8f54184bb53e7761c43785ddce51fd459d10b60bd4c41edafae"
+
+[[files]]
+path = "semantic/jet-parity-data-fixtures-mui-mui-button-primary-v1.md"
+digest = "sha256:b5300fb03b70abb873bd73cd84187cbad7f952a1834a9c863cd932556ce58168"
+
+[[files]]
+path = "semantic/jet-parity-data-fixtures-mui-mui-checkbox-basic-v1.md"
+digest = "sha256:cc6d69a44dc7cbd6ec94d67bdf14fd413f8720d6bc996ee108b79d362ef5f3c0"
+
+[[files]]
+path = "semantic/jet-parity-data-fixtures-mui-mui-textfield-outlined-v1.md"
+digest = "sha256:9cab3babd2cd3f953464643f4ddfc8427a68248d2b84ac4fb46d420d54777006"
+
+[[files]]
+path = "semantic/jet-parity-data-fixtures-mui.md"
+digest = "sha256:dfcce580cf384852f504d72832675fc41bfc2679280ca6d91cda16f67c0033ed"
+
+[[files]]
+path = "semantic/jet-parity-data-fixtures-parity-grid.md"
+digest = "sha256:b2dd58ecec89954bef2926919f29db999c1c1fa10c16a0fece2bf8ca375ffcb3"
+
+[[files]]
+path = "semantic/jet-parity-gate-src.md"
+digest = "sha256:bafdfcc9f1b99fc1f5e0733cc49f25b720f81b722852b17a4a5f83bf0d7d0492"
+
+[[files]]
+path = "semantic/jet-parity-gate-tests.md"
+digest = "sha256:dd8cfa1b7351a8a39ae1648a5c83c6871c0f310e40a819d12c5d03b6ce5eb18b"
+
+[[files]]
+path = "semantic/jet-parity-oracle-fixtures-shell.md"
+digest = "sha256:28ce7dfe9d4088adf582ce65318a5dd0d28f6b43b75bf60e37a1ecd91f5713ae"
+
+[[files]]
+path = "semantic/jet-parity-oracle-fixtures.md"
+digest = "sha256:739af4d1f52496b1d9c8d0d6914fa0d70b982b0ae957910b791bcb5205087774"
+
+[[files]]
+path = "semantic/jet-parity-oracle-src-bin.md"
+digest = "sha256:acef226a92ab09cba6ac7c1603eaf4873ac1304b95bff0310f971e406fcb82d1"
+
+[[files]]
+path = "semantic/jet-parity-oracle-src-channels.md"
+digest = "sha256:ef29009ac9dcae506640083f629dfe83415cfccae98ce3145b24f7f838f49a65"
+
+[[files]]
+path = "semantic/jet-parity-oracle-src.md"
+digest = "sha256:23acab24cc44dd2922b7b207b29cc944571d39aebd8837f42085e3467bfcc699"
+
+[[files]]
+path = "semantic/jet-parity-oracle-tests.md"
+digest = "sha256:34d2bf9eaa45f570fefb7e639fff2fc258621cd7635301b5496de03bfd396536"
+
+[[files]]
+path = "semantic/jet-pkg-manager.md"
+digest = "sha256:d1e8a6df2b2d6ef515da948d766494694f08b7beb05415a988d96b644c35aea4"
+
+[[files]]
+path = "semantic/jet-pm-report.md"
+digest = "sha256:e911fb27aca124c2e143eeb72e71e4fac9ff88953fb2bf846b93e7960817d7b1"
+
+[[files]]
+path = "semantic/jet-reporter.md"
+digest = "sha256:a6b14a56558e8fcf7a5b5c13b8886a58c01d0b6f61187c05577e7ecc5e35d39a"
+
+[[files]]
+path = "semantic/jet-resolver.md"
+digest = "sha256:3fc0bc6c468d100eee707a847f386e14bcd8cee266340ae39286a38a5319c1e1"
+
+[[files]]
+path = "semantic/jet-runner.md"
+digest = "sha256:ff40801517f6268d0d9f941a7f37c1b59a7c73a1383d7ba81e731defbbb7757e"
+
+[[files]]
+path = "semantic/jet-src.md"
+digest = "sha256:968d341083a912e3ca149bb8dd8a668d6858b05c597f63f13b2b395d1cfa581a"
+
+[[files]]
+path = "semantic/jet-task-runner.md"
+digest = "sha256:65a055abbea6873bb2099e68a1a60b8837441f78354ca5cb3bd81e5bbf43442a"
+
+[[files]]
+path = "semantic/jet-tauri-shell-src.md"
+digest = "sha256:5eefaac998981e638c6996e96f8362cb704c673239b648d41dbdb4efb86b59c5"
+
+[[files]]
+path = "semantic/jet-test-runner.md"
+digest = "sha256:3078e52eac17c9f713f90bea5f278d6798667a6cc2cb22cd84aadbc7edb6da10"
+
+[[files]]
+path = "semantic/jet-tests-common.md"
+digest = "sha256:7bad457a37051bc17990058a9ba88d986b14b4327b66a0253327c4a78ff39d4b"
+
+[[files]]
+path = "semantic/jet-tests-fixtures-jet-test-api-compat.md"
+digest = "sha256:d8c7555735d5248002684cbbb40e2fa0bbc22ddfe64b679b2df0d67c1d42ac69"
+
+[[files]]
+path = "semantic/jet-tests-fixtures-playwright-compat.md"
+digest = "sha256:7057fcd709b73f6942203636f0ff6733cd710dbd4bb7c04c0e6ff296c4b7ad21"
+
+[[files]]
+path = "semantic/jet-tests-fixtures.md"
+digest = "sha256:92f9a4ab15721fb4aa9e214b6b7d0ff1a9f9791b65693691b6444c5f970a4f13"
+
+[[files]]
+path = "semantic/jet-tests.md"
+digest = "sha256:fd1b17b9ed863f290bbab914949b90064c3c7d61bdf1597e9763449819eeb65f"
+
+[[files]]
+path = "semantic/jet-tools-conformance-src.md"
+digest = "sha256:b744ed662669637c89b4da43cb7842c39cb4091bd2539d90cdf000338f4e04a8"
+
+[[files]]
+path = "semantic/jet-tools-conformance-tests.md"
+digest = "sha256:cf55811143d8f8ec847e0f7a3b2e259c1126ffb6d8ad335dc6bacf22301df4ec"
+
+[[files]]
+path = "semantic/jet-tools-manifest-src.md"
+digest = "sha256:0ad5566d6d31001858c6655d672b04d37d3cd0ed8463c5d6f097e69d4147e956"
+
+[[files]]
+path = "semantic/jet-trace.md"
+digest = "sha256:b7b2c643f4e20acb7b201eb8dc4ff8aa3a6365c6d627fbc3b9190f5df866f903"
+
+[[files]]
+path = "semantic/jet-transform.md"
+digest = "sha256:1feb6062e68e382d56c846b30a0be4539a7753c64763b4f4ad478001f0260293"
+
+[[files]]
+path = "semantic/jet-tsx-to-rust.md"
+digest = "sha256:6cf272f9a8eca4433b70da4d9a71179e6a7300af3a09d31f936a2b6b2a77f984"
+
+[[files]]
+path = "semantic/jet-wasm-build.md"
+digest = "sha256:317ec5d9102f9bf63ce549b3cf1df7ea92dc84c6eec76c2632fbf9c8932d9492"
+
+[[files]]
+path = "semantic/jet-wasm-dev.md"
+digest = "sha256:594cf7a85b2a44f432cd21550df3867a734d4e70ad634bb4b9267cdeb94d23e2"
+
+[[files]]
+path = "semantic/jet-wasm-src-debug.md"
+digest = "sha256:81417a83b0d1d3ce2bce30738eb3f4ccebe5dce6f7f1f61c3e4b3ceb160a8cf1"
+
+[[files]]
+path = "semantic/jet-wasm-src-manifest.md"
+digest = "sha256:51c85dda1d557f3a67eb98184445080208a93eb487cc64466e62e8c77b408a73"
+
+[[files]]
+path = "semantic/jet-wasm-src-react.md"
+digest = "sha256:17ce07d3c508ed4c88aa586079b69a5da6f80f68d1eb9b9e964299021fab54ec"
+
+[[files]]
+path = "semantic/jet-wasm-src-renderer-layout.md"
+digest = "sha256:0121799bba1db9e0edae2f1e4d557e384fd8d002c329b2acc822b523d427b57e"
+
+[[files]]
+path = "semantic/jet-wasm-src-renderer.md"
+digest = "sha256:8509510cfa36a9b960da2a19516bd6fb34c1d9e505c4851e26e2fe8ccf48ffe1"
+
+[[files]]
+path = "semantic/jet-wasm-src-text.md"
+digest = "sha256:6c7b3c11d788bc38b508ca23915aba83ce2db061b2c0b4502e66a2ab3474fdd4"
+
+[[files]]
+path = "semantic/jet-wasm-src.md"
+digest = "sha256:059e60325a58abe8aa12353628ce150b58cc6345b6fa1143329b7a00e93752ce"
+
+[[files]]
+path = "semantic/jet-wasm-tests.md"
+digest = "sha256:5a0fc0bfe1ccc879320dd3ba0c0d09d28c2f2dc0fd0e873be77a1d605ee966b0"
+
+[[files]]
+path = "specs/1235.md"
+digest = "sha256:c2b117a12cdce62fde746f276acb757135c9cc210e72b40a292a9201beac1fb8"
+
+[[files]]
+path = "specs/1236.md"
+digest = "sha256:457eda799b953dce134f47b6b30bf6858b913b7d0d4083f3d65c27a24c78782c"
+
+[[files]]
+path = "specs/1237.md"
+digest = "sha256:48b994cbed87383987766997e8c707d2efb7351429fcb3aa43d1f211fcd088aa"
+
+[[files]]
+path = "specs/1254.md"
+digest = "sha256:4678765b6da111733270cf1bb698a04f25f17dbdcfd70601c9bb195c29a294b9"
+
+[[files]]
+path = "specs/1268.md"
+digest = "sha256:78bb08d9f3dd80166f7554a131ea6c194c2ce4ebdc4048a7d9873e159a8f095f"
+
+[[files]]
+path = "specs/2114.md"
+digest = "sha256:78c964ab332d2e6a450161432b5be9a46f73be329f3060f848df45ed0fea0563"
+
+[[files]]
+path = "specs/2115.md"
+digest = "sha256:b283790221f58a5eeab8be369814fa3e2241c220469a7c4df77c4a31b2980078"
+
+[[files]]
+path = "specs/2133.md"
+digest = "sha256:f843caebfd1952817753f95b573c8330ce8325dc4eabcecf794807f25d92e864"
+
+[[files]]
+path = "specs/2134.md"
+digest = "sha256:e80aed1e153337c59c11fa9a6ad3906b531a0076dae5267589938b07ec54369b"
+
+[[files]]
+path = "specs/2135.md"
+digest = "sha256:2c0b5993f7cc0fb557781d0e2d2263a1fd986defe53ff94e6b6e9890d33b35b2"
+
+[[files]]
+path = "specs/2136.md"
+digest = "sha256:997434cb1a55f385b4ed272e9b6e1d77b32a1b2342803d64b5043b3b38867d46"
+
+[[files]]
+path = "specs/2137.md"
+digest = "sha256:4f4bbd1b0763567e04505d7565920e08b6c1d66eb0951a7308d3a57cab827455"
+
+[[files]]
+path = "specs/2138.md"
+digest = "sha256:070fcc27b4b758b23662ea6a8ea15694fa1d13dec5f81cf0072689afdb61c9d2"
+
+[[files]]
+path = "specs/2302.md"
+digest = "sha256:9386b13c1f248f8d9e80f673c64627eff9526cd6979df87a191b2a50c78e3bfa"
+
+[[files]]
+path = "specs/2303.md"
+digest = "sha256:042a2350ec1e31823e888be2391bd1b656d1fe46e85f22ddab1fce101d28dba2"
+
+[[files]]
+path = "specs/2304.md"
+digest = "sha256:8ec8a4ea2cf5fdb945f227de29af006e0039e4c54b589792519dbbef852b9d38"
+
+[[files]]
+path = "specs/2305.md"
+digest = "sha256:a52460aca6a9c20f2e0a9a57ba40f0b1f7336b6a52e42b86ff3c536dc4cc884f"
+
+[[files]]
+path = "specs/2306.md"
+digest = "sha256:712a872794b74bd4ce67e7d6a0bb03a6cfc2e5fb822ba1059d199d51bafa1268"
+
+[[files]]
+path = "specs/2307.md"
+digest = "sha256:05fe8a4dd3279905bbe026eae3c7779dc977956619461cb82d99272adce1f0f2"
+
+[[files]]
+path = "specs/2308.md"
+digest = "sha256:e16b6773ad50c80aa42063f83128dd8becdf3db0200e9f531b60b635d4e18337"
+
+[[files]]
+path = "specs/2310.md"
+digest = "sha256:53190d61210067c823b2428fe0bad7089725d70f7985a4a2cb6b8323c67ef5a9"
+
+[[files]]
+path = "specs/2311.md"
+digest = "sha256:1268924736c0836e4b629e6373a00752228ace383078fe3b899e9dc27ec3039e"
+
+[[files]]
+path = "specs/2312.md"
+digest = "sha256:41ac3aca5ee432ec38c919ac07102e4bfd878acee4663ba39f410470723c9763"
+
+[[files]]
+path = "specs/2313.md"
+digest = "sha256:4a4d041bced853e70c5a99b5f37ab385bbd151f3ceb30f9734d129acab0facb7"
+
+[[files]]
+path = "specs/2314.md"
+digest = "sha256:1b03c33ee310c40f3fe622b4c97642515131691bceede296c693a4995101b09d"
+
+[[files]]
+path = "specs/2315.md"
+digest = "sha256:89ab4458e2838f5a36c7baae64177f8c6e85bef4327b905e1991c7f5db673ec4"
+
+[[files]]
+path = "specs/2316.md"
+digest = "sha256:849d11a68a9fcb52d31977d6fcaa2321aec6726146695773fe7c95dc9a297f94"
+
+[[files]]
+path = "specs/2317.md"
+digest = "sha256:aee2bcdb1313f475c457ed18c92a84ff6ff3cf75e418fc85fe5b1995cd715d13"
+
+[[files]]
+path = "specs/2318.md"
+digest = "sha256:0449bde1533b0e12760e8a4c12e9275c8eea4b5f62d3944e7de5267893009fb9"
+
+[[files]]
+path = "specs/2385.md"
+digest = "sha256:afbcc2971e9a1e0da2ee70b90f7c5b83d0fa7d633ca79b6294f4395e94fd210a"
+
+[[files]]
+path = "specs/3778.md"
+digest = "sha256:232bae6b32bbd4c912dd1e7ab66f8f8f5fedd1c8e59f91dad32da42ad2bba295"
+
+[[files]]
+path = "specs/3779.md"
+digest = "sha256:2b426c956653053bed0a5c4510fe8c6194e11b0192c415b2af178073f0c959d8"
+
+[[files]]
+path = "specs/3780.md"
+digest = "sha256:498d78e60f0f00e2ceb8e8a35354ef8a866e677e3cd5aecd061a82b49ca65e3a"
+
+[[files]]
+path = "specs/3781.md"
+digest = "sha256:b551a653c1b1b94a7a6c8d51b9c971df09c160f83e13679e0e60e6930112c1c0"
+
+[[files]]
+path = "specs/3782.md"
+digest = "sha256:44d3a0da651a53ddd206bbbd38c4a3de84709783fa00762ff5653561b5da33fe"
+
+[[files]]
+path = "specs/3783.md"
+digest = "sha256:e0c606bd182f5ce1c9b61c36162c95ce05494fdac2328ddc2576de05e59595f6"
+
+[[files]]
+path = "specs/3784.md"
+digest = "sha256:0e45006eb7e4b186201c7eba71adcc21b390b206b293856dd773b7ff1fe3fc85"
+
+[[files]]
+path = "specs/3785.md"
+digest = "sha256:6b2a6adf1b706a422d374ee824e47ddee849e2f482aa337ebd0c23198e498597"
+
+[[files]]
+path = "specs/3786.md"
+digest = "sha256:464c13401ceaf8717f1f5bdda32b9dbea830cf1afc14626370c41afd611a0a5f"
+
+[[files]]
+path = "specs/3941.md"
+digest = "sha256:d6a8ea38370987717edb5e4bbebb083c6016af1f00da1a642d7a0ff88709a5ef"
+
+[[files]]
+path = "specs/3943.md"
+digest = "sha256:677718da2a5a322ebfac30cba5becccacb09547e4d2bc9f93cd0e6beb95221ff"
+
+[[files]]
+path = "specs/3944.md"
+digest = "sha256:5afccf4df1b663c994c03c85b3d7b7302da3d33caf286ba3f24cbce9b6083123"
+
+[[files]]
+path = "specs/3945.md"
+digest = "sha256:b78c06cff8ee1d6a65e533761db8cfc1d2ec0d4c38505b87b24c9106e1678f1d"
+
+[[files]]
+path = "specs/3958.md"
+digest = "sha256:625e0ad0fa99134ba2625bbf15ca5e519657354739c157f3c5659d0d42fa1550"
+
+[[files]]
+path = "specs/3972.md"
+digest = "sha256:58898c239da8ff83e09a3dca74ccaf83c17862766621e9c274c55d2ad6dca2b7"
+
+[[files]]
+path = "specs/4004.md"
+digest = "sha256:5c35a083cc77506c17423ac97869a7628d06c74bc97f89c1b8a4dc0f3da4f0b0"
+
+[[files]]
+path = "specs/4015.md"
+digest = "sha256:456f9f6d8a1eac90cc14858a39946005afc41ccd74c4acbcf895653f07b8c990"
+
+[[files]]
+path = "specs/4041.md"
+digest = "sha256:37a161e784c53780b2644e71176b71eaea410c9da58184d7f844ae13683cb39f"
+
+[[files]]
+path = "specs/4072.md"
+digest = "sha256:b67d6a9ca68de8479897532b78809d647208df1bd8aa2c88a9c1bbd8f62f022b"
+
+[[files]]
+path = "specs/jet-parity-fixture-corpus.md"
+digest = "sha256:9b41f17ee3ae1f0fe2a92171e431664097d633ac4924e6e7339e4cb9336d4e41"
+
+[[files]]
+path = "specs/parity-dom-reference-runner.md"
+digest = "sha256:b6f77fe6e77864f12d9b34e618a8bdd364c9ff098d160472353c92d01ae02b18"
+
+[[files]]
+path = "specs/webgpu-text-pass-encode.md"
+digest = "sha256:72f6a7245572b729ce83180ff7330b3e3ddb38d9ab15af21efdf201ddee48548"
+
+[[files]]
+path = "tools/wasm-renderer-browser-cli.md"
+digest = "sha256:218b4007c63cc1cf3cf8f2d179e14f767a26a9d7aff25636c4489b6a5af1e965"
+
+[[files]]
+path = "validate/complete-package-management-replacement-gate-before-build.md"
+digest = "sha256:a5d3011162a7669612b9b1e468c3b8e0291d0a3d0298e2dbb5436ad550a66f7d"
+
+[[files]]
+path = "validate/conformance-cli/tests/manifest_self_check.md"
+digest = "sha256:95bdafe87c5600cd170f3a2adc12aa2d108e789587c1ce3e3ba3263dff9c7868"
+
+[[files]]
+path = "validate/runtime/test/index.md"
+digest = "sha256:313628554f7386da238a05edf46aa2c0721d8edeb896a6033b49c685d0ff7a86"
+
+[[files]]
+path = "validate/runtime/test/matchers.md"
+digest = "sha256:f3a52f3a9f1137a76a9077834f65870772622159168d076607ea6e479a194e7a"
+
+[[files]]
+path = "validate/runtime/test/page.md"
+digest = "sha256:7a7c5b88b0aa20b34bb2fb48c473d64cff2f1eda4d20fddf45264ff6197e446e"
+
+[[files]]
+path = "validate/src/test_runner/expect.md"
+digest = "sha256:16fc26f5284e5e4f8d723f87b688b8f17b084b194c91148d4f0f411cfb7fd3bb"
+
+[[files]]
+path = "validate/src/test_runner/mod.md"
+digest = "sha256:2a20cd57b3c2a5ec53cc8236e4263d9dd019a0c16042aa6ef780812bdf35f71b"
+
+[[files]]
+path = "validate/tests/auto_artifacts_tests.md"
+digest = "sha256:70a9b547a607da9429a3de79952ba3c302289e67db81072324917e3a1b29c255"
+
+[[files]]
+path = "validate/tests/big_list_debug.md"
+digest = "sha256:a16e4977d92b0ba971fd5350c7b2b3f959396deaf3d96d08299f4895b8ebf227"
+
+[[files]]
+path = "validate/tests/browser_cli_smoke.md"
+digest = "sha256:a92609b7849b5e7996e6b21ea3cc29196aa8a9ee318fe190b9e9cf49357f1b97"
+
+[[files]]
+path = "validate/tests/browser_context.md"
+digest = "sha256:5deaeb07174afd017b547542a81c66d220123457326d8e44aa1692100db8f390"
+
+[[files]]
+path = "validate/tests/browser_install.md"
+digest = "sha256:2ac6d3581f1b4a1f580a8e7e2f3a28e8ef6a60ec9d9291a6c745af41c43701a4"
+
+[[files]]
+path = "validate/tests/bundler_monorepo.md"
+digest = "sha256:ea8273621860921bc93992055b15af45c7235d4387c60a2a39b3723ede7db365"
+
+[[files]]
+path = "validate/tests/classname_debug.md"
+digest = "sha256:c780337d76170b484951d437f562be060df90575d77de258495133d91a49afea"
+
+[[files]]
+path = "validate/tests/common/snapshot.md"
+digest = "sha256:6df9a718f7bf0fcbba1c63705237cbecdd2bc188bf664d03f8af7912fe910f3d"
+
+[[files]]
+path = "validate/tests/e2e_playwright_residue.md"
+digest = "sha256:2a39b6337d9843c8d75029153218ba8f9d8f78d054755a698c17f858e972f16f"
+
+[[files]]
+path = "validate/tests/fixture_di_tests.md"
+digest = "sha256:808f292973764c38d6d746a1bec78fdb425955426627e2fc24387ae72f261b53"
+
+[[files]]
+path = "validate/tests/fixtures/playwright-compat/basic.spec.md"
+digest = "sha256:fc0a59d76b3f1a6b86ee463c572ffef88dc2a65382e15ea5b79eef74a250cb29"
+
+[[files]]
+path = "validate/tests/fixtures/tsx_to_rust_boolean_literal_state.md"
+digest = "sha256:9f63c128f264348906539d8203583a6ab89246513b665098703ced418ad68246"
+
+[[files]]
+path = "validate/tests/fixtures/tsx_to_rust_counter.md"
+digest = "sha256:968fee2a4f7391b9d64ba423e40bdf962fd96ea8bd1e8d89397ad811fd3c0707"
+
+[[files]]
+path = "validate/tests/fixtures/tsx_to_rust_toggle.md"
+digest = "sha256:91ab449818a933160022e3756c185c997678aacf4e436c78c468c211d210cbce"
+
+[[files]]
+path = "validate/tests/html_reporter_tests.md"
+digest = "sha256:cd018ae8949c87afd2df29df37e075de95d90b8603b0a374e5891d5222133646"
+
+[[files]]
+path = "validate/tests/incremental_rebuild_bench.md"
+digest = "sha256:fd63a80af625b2358efad3d8b37e8f12462ddd18c7909f4ad2b9482f5c8d17ea"
+
+[[files]]
+path = "validate/tests/items_list_debug.md"
+digest = "sha256:28872535c187ced66d7ee9bc72d6f0324d4ae0d08f17dce88608fafee348556b"
+
+[[files]]
+path = "validate/tests/large_int_debug.md"
+digest = "sha256:e58b4f2bbe21dac5a4e97110f3f8593b7a3ff4f2ff8272096dae7fb2ff261a1d"
+
+[[files]]
+path = "validate/tests/list_render_debug.md"
+digest = "sha256:7645296438258bd3b5e92ca4d8b7efdf8f50c0dd32d4120c0678abb9c2e70d8b"
+
+[[files]]
+path = "validate/tests/locator_js_api.md"
+digest = "sha256:b7d58c87e3d54a668336c608be56f1194190ad473dbbf114ff52df4f187ef9f3"
+
+[[files]]
+path = "validate/tests/matchers_state_value_a11y.md"
+digest = "sha256:5e3efaa347c89f37d841960aa2d337df78af0310310be4defdf49ebebffc35fb"
+
+[[files]]
+path = "validate/tests/multi_handler_debug.md"
+digest = "sha256:b5dc3ff8ff371fc418f116b1c657d8dfab4a7757bbfb8904c92be6f9e7d3edee"
+
+[[files]]
+path = "validate/tests/nested_debug.md"
+digest = "sha256:4c32bd34e2d2f4bd3d388463caf09d2a377151f16827ed9478ee1ae5dce8a006"
+
+[[files]]
+path = "validate/tests/no_state_debug.md"
+digest = "sha256:b45e9ef2ef2fcf4ab78db06b0dca4e62b3299f275d412a698976bcaac9ea7682"
+
+[[files]]
+path = "validate/tests/nx_support.md"
+digest = "sha256:431e87c61fdcee9ab697e3ce62f87f1784f7a6004f6bd16427437e498c060efa"
+
+[[files]]
+path = "validate/tests/page_api_parity.md"
+digest = "sha256:5d96a89edf37bd33561ffea3c093079f5f4fee46dd73b6aa864bf575a1e96122"
+
+[[files]]
+path = "validate/tests/page_fixture_auto_inject.md"
+digest = "sha256:a7234c011295282f03b11c94698a60e516d951548f51dc303a60937ba8e0e6b9"
+
+[[files]]
+path = "validate/tests/playwright_compat_shim_tests.md"
+digest = "sha256:9b07bebdcbcb9aa7fe0d23bbbe37bd494b22b08e9eb1c8217fa7c7415872e334"
+
+[[files]]
+path = "validate/tests/playwright_compat_tests.md"
+digest = "sha256:681cc564351e82f59b146dbf1113d93c141e5028be9985f2bab5fc33928c7f1e"
+
+[[files]]
+path = "validate/tests/route_intercept_tests.md"
+digest = "sha256:8dc62bfa8f7a7470c8d86cba029b01cd3686ed570567ba8e363f150ea949a19c"
+
+[[files]]
+path = "validate/tests/self_closing_debug.md"
+digest = "sha256:1acbf555ac9e159572cdadb14fced83f36bba5d5b1f16d0f13b4d6405c2390c0"
+
+[[files]]
+path = "validate/tests/storage_state_tests.md"
+digest = "sha256:fc3344183b8267b6f088cf0e4b1289bf5c5cbb02d6041e28500a25fa1c8fe154"
+
+[[files]]
+path = "validate/tests/string_state_debug.md"
+digest = "sha256:eb2399a7f446d10d2f1e4c911f046d19a133fd1baa866bdeef4792ce42d96e64"
+
+[[files]]
+path = "validate/tests/test_runner_smoke.md"
+digest = "sha256:43f6e47178807952f16756f3857dddac7289363a4e7250e1dd983070e1db6e60"
+
+[[files]]
+path = "validate/tests/to_have_screenshot_tests.md"
+digest = "sha256:276b94e8e7fe691eacde01b0f0b63eb8a8ccbfb4d48376f0ed4767f7a3edaff4"
+
+[[files]]
+path = "validate/tests/toggle_debug.md"
+digest = "sha256:1deb88c4f1aa2fdcc275c9a90ffefa04f2f1bb89e501b7ab687371c581f2e384"
+
+[[files]]
+path = "validate/tests/trace_capture.md"
+digest = "sha256:91fed96638fc45fba797dfb634863eb16c1189e9d034ca2ec8a6f87855ed6195"
+
+[[files]]
+path = "validate/tests/trace_viewer.md"
+digest = "sha256:706889765406faf9fda61762b4ea043e00ea87819a122e05f171be8a0234d20a"
+
+[[files]]
+path = "validate/tests/tree_shaking.md"
+digest = "sha256:35c3e26e09755ed38b3cd0494e9b4398a754073061d8690086f62b482cd5a335"
+
+[[files]]
+path = "validate/tests/tsx_to_rust_ast_probe.md"
+digest = "sha256:e0b5e0a4b2dac4d7aa987a724795e51fe9fda699581ccc01a4b3ff4c434bc02b"
+
+[[files]]
+path = "validate/tests/tsx_to_rust_boolean_literal_state.md"
+digest = "sha256:91ffa4fda96bb2b89c75daeb284f1a163eb59f41982ad015dd579bac9974aca1"
+
+[[files]]
+path = "validate/tests/tsx_to_rust_counter.md"
+digest = "sha256:e8a5796dfb5e1f14aa216f86a4ae6f1fa7b2f9dc5704f617cf44c46d816b6bb2"
+
+[[files]]
+path = "validate/tests/tsx_to_rust_toggle.md"
+digest = "sha256:70dcd8127fd6c08a6be5eca059d8b2534ee15c559ed17d673b305f27bf0cc700"
+
+[[files]]
+path = "validate/tests/unicode_debug.md"
+digest = "sha256:42558de314858ab1b9578ac6ce79fd5976109b01a5a5b0feee25a6a1b89830d6"
+
+[[files]]
+path = "validate/tests/usememo_debug.md"
+digest = "sha256:d26c6e01e1ff23689506eba734f04132dc570a882ad311ecc46bb4224c83635c"
+
+[[files]]
+path = "validate/tests/wasm_build_end_to_end.md"
+digest = "sha256:68aae46e116f2d7220a368449f41b2071f8df1406a5a73440ee490357910576e"
+
+[[files]]
+path = "validate/tests/wasm_dev_smoke.md"
+digest = "sha256:7d566f0678cbf1969ed5e771be34f1968ec7e4063414928f3e03f39e35c3df81"
+
+[[files]]
+path = "validate/tests/web_server_tests.md"
+digest = "sha256:5a2ff8bd62aa327caeea8823785c40be74573ad8bfdfc63c2247ffed5d81df35"
+
+[[files]]
+path = "validate/tests/worker_pool_tests.md"
+digest = "sha256:b67f14fb88335a55aa355d54f722e47f89ec45c1e2a7f09da6972cf41bc0d8a0"
+
+[[files]]
+path = "validate/tests/workspace_protocol.md"
+digest = "sha256:8e93d3bbf5e15b6a75879510f526ac5a6a00867643a18269d064e1fc0eabbcbe"
+
+[[files]]
+path = "validate/tui-renderer/tests/cue_command_input_demo.md"
+digest = "sha256:3072c123410f0ede756d998d38e5082d05e55516a64381511c226ee4a138f17a"
+
+[[files]]
+path = "validate/tui-renderer/tests/cue_work_item_list_demo.md"
+digest = "sha256:8d4b6451dca94b7b49e9c6fb92fbd4a5df8367ef80847f8512d050a7b3f39874"
+
+[[files]]
+path = "validate/wasm-renderer-poc/tests/bench_runner.md"
+digest = "sha256:d0f24c934e95ea574893d72970be2ecb18804005d08e20dc638e52d012efd839"
+
+[[files]]
+path = "validate/wasm-renderer-react-dom-oracle-conformance.md"
+digest = "sha256:803fc5e9563845c300460a47538d2d0d11a7e0f82d529d8fb58839de22642fc0"
+
+[[files]]
+path = "validate/wasm-renderer-subset-rigor.md"
+digest = "sha256:a862c79cd125f9788150878558148ef6a88965ef2067a41bb428b91b4195e208"
+
+[[files]]
+path = "validate/wasm/tests/counter_integration.md"
+digest = "sha256:98305912f5da226cb5b459f56b46a9bae29bc5156f7c12b3ca8ca126526b6d08"
+
+[[files]]
+path = "validate/wasm/tests/layout_block.md"
+digest = "sha256:58128b4b1d1169cdbb900101a957f6b615951870c298ed1f800711d985daf3c4"
+
+[[files]]
+path = "validate/wasm/tests/layout_dirty.md"
+digest = "sha256:91371a10c39e7a872566fd9db04089ef08da6d93fb6dc395a031dafbe8bd60fe"
+
+[[files]]
+path = "validate/wasm/tests/layout_flex.md"
+digest = "sha256:4de59216b053ad750d32d3e70499a1364fb4ab5395c113569bc4e1ddbee1b592"
+
+[[files]]
+path = "validate/wasm/tests/line_bidi_s1.md"
+digest = "sha256:417cc7fe8076146bb0376fe59425cc42c7665894bb160b28a7838d15f6ca5b65"
+
+[[files]]
+path = "validate/wasm/tests/line_bidi_s2.md"
+digest = "sha256:e550646df98c040796a605f7c2fa6282837a01d94117811d3c6c20fd8dded793"
+
+[[files]]
+path = "validate/wasm/tests/line_bidi_s3.md"
+digest = "sha256:9d37feb9404613e7230c86d7cce96b485c642b2038b5e9e1160dff13706a739d"
+
+[[files]]
+path = "validate/wasm/tests/line_bidi_s4.md"
+digest = "sha256:3a9f663b1dfab8f59adb933948aaf7f96e3b451996cb540a639ef52a94b8a89a"
+
+[[files]]
+path = "validate/wasm/tests/line_bidi_s5.md"
+digest = "sha256:ef13e4a0f0f58dc204083f868af272e2d2b7e09073ca54bc23230016074f2fb2"
+
+[[files]]
+path = "validate/wasm/tests/line_bidi_s6.md"
+digest = "sha256:bb8e89d865486a2010d83a024c54cac8d3a1b747b10feaecb0dfb3c26b71c3d0"
+
+[[files]]
+path = "validate/wasm/tests/line_bidi_s7.md"
+digest = "sha256:d27d81ccce5235a4853036bc36ab5685606687ad5f277459873c9f86540b6303"
+
+[[files]]
+path = "validate/wasm/tests/reducer_ref_memo.md"
+digest = "sha256:1bfe38b1107abd33071e2bb286061af2202c23edab0affbcabe2a46e2e6ec9d8"
+
+[[files]]
+path = "validate/wasm/tests/renderer_integration_counter.md"
+digest = "sha256:5ac60707ddddbe272c8ed7cf0a1d23db3dacc917a9bd0f17c2802af93e67a2ee"
+
+[[files]]
+path = "validate/wasm/tests/renderer_layout.md"
+digest = "sha256:d23142862f3f76b3f8ea5f3f9d41bade9fe7ec6873ee9b31eeb3f509efd7bba9"
+
+[[files]]
+path = "validate/wasm/tests/renderer_paint.md"
+digest = "sha256:01d7584ec7f7b28fee069905ac5061433d8739fa0c2e97a3d4131781ee35264e"
+
+[[files]]
+path = "validate/wasm/tests/text_shaping_s1.md"
+digest = "sha256:a31bafe782edeeca855d32e5550d14e84302d94f457be2395473bcb55a0c772f"
+
+[[files]]
+path = "validate/wasm/tests/text_shaping_s2.md"
+digest = "sha256:1b0204623da0625fb8b11ceadd1f11df8706829e8c108c2e2bf8eedd96547ac8"
+
+[[files]]
+path = "validate/wasm/tests/text_shaping_s3.md"
+digest = "sha256:3d2088ecf540c3e46e9b648ae2ac52e856f4fccdff75288af7eec55c41819395"
+
+[[files]]
+path = "validate/wasm/tests/text_shaping_s4.md"
+digest = "sha256:d53411f32281283b7edb69cf8b1003d2877f80026bad4ac9f41e2f8edb2bdef0"
+
+[[files]]
+path = "wasm-renderer/binding-manifest.schema.json"
+digest = "sha256:3e16f0bbb5396c1a1c79069294dc254794ff81f907fff310289e8f809b9032d9"
+
+[[files]]
+path = "wasm-renderer/conformance.yaml"
+digest = "sha256:7b7c13c08a0afa8c55a83f015dc12949cc87da367c3e147ed33f19eed0619fd8"
+
+[[files]]
+path = "wasm-renderer/conformance.yaml.schema.json"
+digest = "sha256:b7f848b93833aa0aa53315e44bbb730a52aeed00df665cd0b2a58acb6192f93e"
+
+[[files]]
+path = "wasm-renderer/line-bidi.schema.json"
+digest = "sha256:0a1aeb1e31d5f31ed5f21067f160c957f80c87320a692e5d7a6f2f69854d9861"
+
+[[files]]
+path = "wasm-renderer/text-shaping.schema.json"
+digest = "sha256:fc403e9af79c491c3c001f8c994fd020f3c5611c484008f152e34c8970032e66"

@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:583d99f9" tracker="pending-tracker" reason="Manager UI: render the manager HTML shell (sidebar tree from StoryIndex, toolbar, preview iframe) and the isolated per-story preview HTML entry (mounts only the selected story component, no app router/shell)."
+// <HANDWRITE gap="missing-generator:logic:583d99f9" tracker="standardize-gap-projects-jet-src-stories-manager-rs" reason="Manager UI: render the manager HTML shell (sidebar tree from StoryIndex, toolbar, preview iframe) and the isolated per-story preview HTML entry (mounts only the selected story component, no app router/shell).">
 //! HTML rendering for the `jet stories` native workbench (B2).
 //!
 //! Two pure functions, no I/O and no server state, so they are trivially
@@ -862,17 +862,24 @@ mod tests {
     #[test]
     fn manager_lists_each_story_and_points_iframe_at_first() {
         let mut index = StoryIndex::default();
-        index
-            .stories
-            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
-        index
-            .stories
-            .push(entry("components-button--disabled", "Disabled", &["Components", "Button"]));
+        index.stories.push(entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        ));
+        index.stories.push(entry(
+            "components-button--disabled",
+            "Disabled",
+            &["Components", "Button"],
+        ));
 
         let html = render_manager_html(&index, None, &[]);
         assert!(html.contains("Primary"), "lists Primary");
         assert!(html.contains("Disabled"), "lists Disabled");
-        assert!(html.contains("Components / Button"), "shows the group title");
+        assert!(
+            html.contains("Components / Button"),
+            "shows the group title"
+        );
         // iframe defaults to the FIRST listed story.
         assert!(
             html.contains("src=\"/__jet_stories_preview/components-button--primary\"")
@@ -884,12 +891,16 @@ mod tests {
     #[test]
     fn manager_honors_explicit_selection() {
         let mut index = StoryIndex::default();
-        index
-            .stories
-            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
-        index
-            .stories
-            .push(entry("components-button--disabled", "Disabled", &["Components", "Button"]));
+        index.stories.push(entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        ));
+        index.stories.push(entry(
+            "components-button--disabled",
+            "Disabled",
+            &["Components", "Button"],
+        ));
 
         let html = render_manager_html(&index, Some("components-button--primary"), &[]);
         assert!(html.contains("src=\"/__jet_stories_preview/components-button--primary\""));
@@ -897,11 +908,18 @@ mod tests {
 
     #[test]
     fn preview_references_module_and_export() {
-        let e = entry("components-button--primary", "Primary", &["Components", "Button"]);
+        let e = entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        );
         let html = render_preview_html(&e, "/src/components/Button.stories.tsx");
         assert!(html.contains("import * as Story from \"/src/components/Button.stories.tsx\""));
         assert!(html.contains("const exportName = \"Primary\""));
-        assert!(html.contains("id=\"jet-root\""), "mounts into isolated root div");
+        assert!(
+            html.contains("id=\"jet-root\""),
+            "mounts into isolated root div"
+        );
         // No app shell / router markers — just the single root.
         assert_eq!(html.matches("id=\"jet-root\"").count(), 1);
     }
@@ -909,9 +927,18 @@ mod tests {
     #[test]
     fn args_serialize_to_json() {
         let mut args = BTreeMap::new();
-        args.insert("label".to_string(), super::super::csf::CsfValue::Str("Hi".into()));
-        args.insert("primary".to_string(), super::super::csf::CsfValue::Bool(true));
-        args.insert("count".to_string(), super::super::csf::CsfValue::Number("3".into()));
+        args.insert(
+            "label".to_string(),
+            super::super::csf::CsfValue::Str("Hi".into()),
+        );
+        args.insert(
+            "primary".to_string(),
+            super::super::csf::CsfValue::Bool(true),
+        );
+        args.insert(
+            "count".to_string(),
+            super::super::csf::CsfValue::Number("3".into()),
+        );
         let json = args_to_json(&args);
         assert!(json.contains("\"label\":\"Hi\""));
         assert!(json.contains("\"primary\":true"));
@@ -931,9 +958,11 @@ mod tests {
         use crate::stories::csf::CsfValue;
 
         let mut index = StoryIndex::default();
-        index
-            .stories
-            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
+        index.stories.push(entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        ));
 
         let controls = vec![
             Control {
@@ -957,38 +986,64 @@ mod tests {
 
         let html = render_manager_html(&index, None, &controls);
         // The panel renders a widget per control.
-        assert!(html.contains("id=\"jet-controls\""), "controls panel present");
+        assert!(
+            html.contains("id=\"jet-controls\""),
+            "controls panel present"
+        );
         assert!(html.contains("data-control=\"primary\""), "toggle wired");
         assert!(html.contains("data-control=\"label\""), "text wired");
         assert!(html.contains("data-control=\"size\""), "select wired");
         // Current values seed the widgets.
-        assert!(html.contains("data-kind=\"toggle\" checked"), "toggle seeded true");
-        assert!(html.contains("value=\"Click\""), "text seeded with current value");
-        assert!(html.contains("<option value=\"lg\" selected>"), "select seeds current option");
+        assert!(
+            html.contains("data-kind=\"toggle\" checked"),
+            "toggle seeded true"
+        );
+        assert!(
+            html.contains("value=\"Click\""),
+            "text seeded with current value"
+        );
+        assert!(
+            html.contains("<option value=\"lg\" selected>"),
+            "select seeds current option"
+        );
         // The seed args object carries the current values.
         assert!(html.contains("\"label\":\"Click\""), "jetArgs seeded");
         // Editing posts new args to the preview render hook.
-        assert!(html.contains("postMessage"), "controls post args to preview");
-        assert!(html.contains("jet-stories-args"), "uses the args-update message");
+        assert!(
+            html.contains("postMessage"),
+            "controls post args to preview"
+        );
+        assert!(
+            html.contains("jet-stories-args"),
+            "uses the args-update message"
+        );
     }
 
     #[test]
     fn preview_applies_args_update_message() {
-        let e = entry("components-button--primary", "Primary", &["Components", "Button"]);
+        let e = entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        );
         let html = render_preview_html(&e, "/src/Button.stories.tsx");
         // The preview listens for the manager's args message and re-renders via
         // the exposed render hook.
         assert!(html.contains("window.__jetStoriesRender = renderStory"));
-        assert!(html.contains("jet-stories-args"), "listens for control updates");
-        assert!(html.contains("liveArgs = data.args"), "swaps live args on update");
+        assert!(
+            html.contains("jet-stories-args"),
+            "listens for control updates"
+        );
+        assert!(
+            html.contains("liveArgs = data.args"),
+            "swaps live args on update"
+        );
     }
 
     #[test]
     fn no_controls_renders_placeholder() {
         let mut index = StoryIndex::default();
-        index
-            .stories
-            .push(entry("x--y", "Y", &["X"]));
+        index.stories.push(entry("x--y", "Y", &["X"]));
         let html = render_manager_html(&index, None, &[]);
         assert!(html.contains("No controls for this story."));
     }
@@ -996,9 +1051,11 @@ mod tests {
     #[test]
     fn dev_mode_is_the_default_and_emits_absolute_routes() {
         let mut index = StoryIndex::default();
-        index
-            .stories
-            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
+        index.stories.push(entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        ));
 
         // The default wrapper and the explicit Dev mode must be byte-identical
         // — no absolute→relative regression for the dev server.
@@ -1007,41 +1064,65 @@ mod tests {
         assert_eq!(default, dev);
         assert!(default.contains("src=\"/__jet_stories_preview/components-button--primary\""));
         // The preview likewise defaults to Dev (absolute module URL + HMR client).
-        let e = entry("components-button--primary", "Primary", &["Components", "Button"]);
+        let e = entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        );
         let p_default = render_preview_html(&e, "/src/Button.stories.tsx");
         let p_dev = render_preview_html_with_mode(&e, "/src/Button.stories.tsx", UrlMode::Dev);
         assert_eq!(p_default, p_dev);
-        assert!(p_default.contains("HMR connected"), "dev preview ships the HMR client");
+        assert!(
+            p_default.contains("HMR connected"),
+            "dev preview ships the HMR client"
+        );
     }
 
     #[test]
     fn static_mode_emits_relative_preview_links() {
         let mut index = StoryIndex::default();
-        index
-            .stories
-            .push(entry("components-button--primary", "Primary", &["Components", "Button"]));
+        index.stories.push(entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        ));
 
         let html = render_manager_html_with_mode(&index, None, &[], UrlMode::Static);
         // iframe + sidebar link the relative preview file, never an absolute route.
         assert!(html.contains("src=\"preview/components-button--primary.html\""));
         assert!(html.contains("data-preview=\"preview/components-button--primary.html\""));
-        assert!(!html.contains("/__jet_stories_preview"), "no dev routes in static mode");
+        assert!(
+            !html.contains("/__jet_stories_preview"),
+            "no dev routes in static mode"
+        );
     }
 
     #[test]
     fn static_mode_preview_imports_relative_and_drops_hmr() {
-        let e = entry("components-button--primary", "Primary", &["Components", "Button"]);
+        let e = entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        );
         let html = render_preview_html_with_mode(
             &e,
             "../modules/src/components/Button.stories.js",
             UrlMode::Static,
         );
-        assert!(html.contains("import * as Story from \"../modules/src/components/Button.stories.js\""));
+        assert!(
+            html.contains("import * as Story from \"../modules/src/components/Button.stories.js\"")
+        );
         // No HMR client / WebSocket wiring in the server-less static export.
-        assert!(!html.contains("HMR connected"), "static preview omits the HMR client");
-        assert!(!html.contains("WebSocket"), "no WebSocket in static preview");
+        assert!(
+            !html.contains("HMR connected"),
+            "static preview omits the HMR client"
+        );
+        assert!(
+            !html.contains("WebSocket"),
+            "no WebSocket in static preview"
+        );
         // Still an isolated single-root mount.
         assert_eq!(html.matches("id=\"jet-root\"").count(), 1);
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

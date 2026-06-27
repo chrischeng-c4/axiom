@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:99fe4be9" tracker="pending-tracker" reason="In-process mock npm registry (axum) e2e: jet publish a built library to the mock registry, then resolve+download it back (install round-trip), asserting the tarball contains the built JS/.d.ts and that scoped private-registry routing + Bearer auth are exercised. Plus metadata-validation unit tests (missing main/exports path -> error; auto-fill from build output)."
+// <HANDWRITE gap="missing-generator:unit-test:99fe4be9" tracker="standardize-gap-projects-jet-tests-publish-library-publish-e2e-rs" reason="In-process mock npm registry (axum) e2e: jet publish a built library to the mock registry, then resolve+download it back (install round-trip), asserting the tarball contains the built JS/.d.ts and that scoped private-registry routing + Bearer auth are exercised. Plus metadata-validation unit tests (missing main/exports path -> error; auto-fill from build output).">
 //! End-to-end `jet publish --build` against an in-process mock npm registry.
 //!
 //! What this exercises (all hermetic — no real network, no Verdaccio/npm):
@@ -353,9 +353,7 @@ export function makeWidget(n: number): Widget {
     let registry_host = base_url.trim_start_matches("http://");
     std::fs::write(
         root.join(".npmrc"),
-        format!(
-            "@acme:registry={base_url}/\n//{registry_host}/:_authToken=secret-token-xyz\n"
-        ),
+        format!("@acme:registry={base_url}/\n//{registry_host}/:_authToken=secret-token-xyz\n"),
     )
     .unwrap();
 
@@ -425,8 +423,8 @@ export function makeWidget(n: number): Widget {
     );
 
     // no_cache=true so we don't touch the user's real disk cache.
-    let client = RegistryClient::new_with_options(registry_url, &npmrc, true)
-        .expect("registry client");
+    let client =
+        RegistryClient::new_with_options(registry_url, &npmrc, true).expect("registry client");
 
     let metadata = client
         .get_package_metadata(pkg_name)
@@ -448,4 +446,4 @@ export function makeWidget(n: number): Widget {
         "downloaded tarball bytes must be byte-identical to what was published"
     );
 }
-// HANDWRITE-END
+// </HANDWRITE>

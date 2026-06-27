@@ -319,13 +319,15 @@ test_cmd = "cargo test -p agentkit-backend"
 name = "jet"
 path = "projects/jet"
 td_path = ".aw/tech-design/projects/jet"
+cap_path = "projects/jet/README.md"
 label = "project:jet"
 
 [[projects.workspaces]]
 name = "jet"
 paths = ["projects/jet/**"]
 target = "rust"
-test_cmd = "npm --cache /private/tmp/aw-npm-cache/react-bench --prefix examples/react-bench ci --ignore-scripts && cargo test -p jet -p jet-wasm"
+test_cmd = "projects/jet/scripts/verify-basic-dom-gates.sh --all"
+verify_cold = true
 
 
 [[projects]]
@@ -718,15 +720,6 @@ path = "projects/httpkit-demo"
 paths = ["projects/httpkit-demo/**"]
 target = "rust"
 test_cmd = "cargo test -p httpkit-demo"
-
-[[projects]]
-name = "jet"
-path = "projects/jet"
-
-[[projects.workspaces]]
-paths = ["projects/jet/**"]
-target = "rust"
-test_cmd = "cargo test -p jet"
 
 [[projects]]
 name = "lumen"

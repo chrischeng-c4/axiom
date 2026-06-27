@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-fixtures-dom-production-build-react-bench-package-json" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 {
   "name": "react-bench",
   "private": true,
@@ -30,3 +31,5 @@
     "webpack-cli": "^6.0.1"
   }
 }
+
+// </HANDWRITE>

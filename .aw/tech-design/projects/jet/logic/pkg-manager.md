@@ -358,26 +358,31 @@ cargo test -p jet pkg_manager::nx_test
 files:
   - path: .aw/tech-design/crates/jet/logic/pkg-manager.md
     action: MODIFY
+    section: doc
     impl_mode: hand-written
     desc: Replace legacy package-manager architecture prose with a checker-compliant current-state contract.
 
   - path: crates/jet/src/pkg_manager/mod.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns install orchestration and command surface.
 
   - path: crates/jet/src/pkg_manager/resolver.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns dependency resolution, metadata cache, aliases, and conflicts.
 
   - path: crates/jet/src/pkg_manager/store.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns global store extraction, verification, symlinks, and bins.
 
   - path: crates/jet/src/pkg_manager/workspace.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns Jet and pnpm workspace detection and local dependency links.
 ```

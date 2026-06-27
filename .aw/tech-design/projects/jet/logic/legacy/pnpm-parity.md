@@ -89,10 +89,12 @@ legacy_scope:
 changes:
   - path: .aw/tech-design/crates/jet/pkg-manager-pnpm-parity.md
     action: delete
+    section: doc
     impl_mode: hand-written
     description: "Remove the broad root loose parity snapshot."
   - path: .aw/tech-design/crates/jet/logic/legacy/pnpm-parity.md
     action: add
+    section: doc
     impl_mode: hand-written
     description: "Keep a short provenance pointer to active focused Jet package-manager specs."
 ```

@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:a764f528" tracker="pending-tracker" reason="New stories module root: StoryIndex/StoryEntry/StoryMeta types and discover(root) that globs *.stories.* and assembles the index + diagnostics."
+// <HANDWRITE gap="missing-generator:logic:a764f528" tracker="standardize-gap-projects-jet-src-stories-mod-rs" reason="New stories module root: StoryIndex/StoryEntry/StoryMeta types and discover(root) that globs *.stories.* and assembles the index + diagnostics.">
 //! Story discovery + CSF parsing for `jet stories`.
 //!
 //! This module is the foundation that the manager (B2) and controls (B3)
@@ -191,8 +191,10 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
             Ok(sibling) => {
                 // The re-export keeps THIS file's title, but adopts the sibling
                 // story's args; the local story is renamed to the exported name.
-                if let Some(src_story) =
-                    sibling.stories.iter().find(|s| s.export_name == re.local_name)
+                if let Some(src_story) = sibling
+                    .stories
+                    .iter()
+                    .find(|s| s.export_name == re.local_name)
                 {
                     let renamed = csf::CsfStory {
                         export_name: re.exported_name.clone(),
@@ -201,7 +203,14 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
                     };
                     // Story-level args still merge over the sibling meta args so
                     // an inherited default is not lost.
-                    push_story(index, file, &title_slug, &title_path, &sibling.meta.args, &renamed);
+                    push_story(
+                        index,
+                        file,
+                        &title_slug,
+                        &title_path,
+                        &sibling.meta.args,
+                        &renamed,
+                    );
                 } else {
                     index.diagnostics.push(format!(
                         "{}: re-export `{}` not found in `{}`",
@@ -361,11 +370,15 @@ fn slug(input: &str) -> String {
 /// Walk `root` and collect every file matching the story globs.
 fn discover_files(root: &Path, globset: &GlobSet, diagnostics: &mut Vec<String>) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for entry in WalkDir::new(root).follow_links(false).into_iter().filter_entry(|e| {
-        // Never filter the walk root (tempdir names start with a dot on macOS),
-        // and skip dot-dirs/node_modules so discovery stays cheap.
-        e.depth() == 0 || (!is_hidden(e) && !is_node_modules(e))
-    }) {
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            // Never filter the walk root (tempdir names start with a dot on macOS),
+            // and skip dot-dirs/node_modules so discovery stays cheap.
+            e.depth() == 0 || (!is_hidden(e) && !is_node_modules(e))
+        })
+    {
         let entry = match entry {
             Ok(e) => e,
             Err(err) => {
@@ -439,4 +452,4 @@ mod tests {
         assert_eq!(path, vec!["Widget".to_string()]);
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

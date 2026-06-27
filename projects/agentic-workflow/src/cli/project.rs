@@ -2967,12 +2967,26 @@ fn build_claim_closure_report(
         }
     }
 
-    let passed_ec_case_ids = ec_report
+    let passed_commands = ec_report
+        .commands
+        .iter()
+        .filter(|command| command.status == ProjectTestCommandStatus::Passed)
+        .map(|command| command.command.trim())
+        .filter(|command| !command.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    let mut passed_ec_case_ids = ec_report
         .commands
         .iter()
         .filter(|command| command.status == ProjectTestCommandStatus::Passed)
         .map(|command| command.case_id.clone())
         .collect::<BTreeSet<_>>();
+    for case in ec_cases.iter().filter(|case| case.required_for_production) {
+        let command = case.command.trim();
+        if !command.is_empty() && passed_commands.contains(command) {
+            passed_ec_case_ids.insert(case.id.clone());
+        }
+    }
     let mut claims = Vec::new();
 
     for capability in &document.capabilities {
@@ -4053,6 +4067,29 @@ mod tests {
         assert_eq!(report.claim_closure_percent, 100.0);
         assert!(report.blockers.is_empty());
         assert_eq!(report.claims[0].status, ProjectClaimClosureStatus::Closed);
+    }
+
+    #[test]
+    fn claim_closure_closes_duplicate_command_sibling_cases() {
+        let document = claim_document(true);
+        let mut case = ec_case("behavior");
+        case.id = "case-2".to_string();
+        let manifest = ec_manifest(vec![case]);
+        let mut ec_report = ec_report_for("case-1", ProjectTestCommandStatus::Passed);
+        ec_report.commands[0].command = "cargo test -p demo".to_string();
+
+        let report = build_claim_closure_report(
+            "demo",
+            &document,
+            &[td_claim_ref()],
+            Some(&manifest),
+            &ec_report,
+            true,
+        );
+
+        assert_eq!(report.closed_claim_count, 1);
+        assert_eq!(report.claims[0].passing_ec_case_ids, vec!["case-2"]);
+        assert!(report.blockers.is_empty());
     }
 
     #[test]

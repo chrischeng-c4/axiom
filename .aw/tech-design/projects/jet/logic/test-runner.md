@@ -424,46 +424,55 @@ cargo test -p jet test_runner::worker::tests
 files:
   - path: .aw/tech-design/crates/jet/logic/test-runner.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home the native test runner TD as a checker-compliant current-state contract.
 
   - path: .aw/tech-design/crates/jet/testing/test-runner.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove the unexpected top-level testing directory copy of this TD.
 
   - path: crates/jet/src/test_runner/mod.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing runner entry point discovers specs, boots optional web server, partitions shards, runs worker pool, and finishes reporters.
 
   - path: crates/jet/src/test_runner/config.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing resolved configuration model for spec matching, reporters, workers, trace, shard, browser, and artifact defaults.
 
   - path: crates/jet/src/test_runner/discovery.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing glob and explicit-file discovery implementation.
 
   - path: crates/jet/src/test_runner/worker_pool.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing serial, bounded parallel, and shard partition implementation.
 
   - path: crates/jet/src/test_runner/worker.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing Node worker, runtime shim, page request, expect request, and snapshot implementation.
 
   - path: crates/jet/src/test_runner/wire.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing NDJSON event, request, response, outcome, console, and trace wire types.
 
   - path: crates/jet/src/test_runner/reporter.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing terminal and JSON reporting implementation.
 ```

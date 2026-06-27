@@ -1706,14 +1706,35 @@ fn unique_force_regen_temp_root() -> std::path::PathBuf {
 }
 
 fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    let mut visited_dirs = BTreeSet::new();
+    copy_tree_inner(src, dst, &mut visited_dirs)
+}
+
+fn copy_tree_inner(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    visited_dirs: &mut BTreeSet<std::path::PathBuf>,
+) -> Result<()> {
     if !src.exists() {
         return Ok(());
     }
-    if src.is_file() {
+    let metadata = std::fs::symlink_metadata(src)?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Ok(());
+    }
+    if file_type.is_file() {
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::copy(src, dst)?;
+        return Ok(());
+    }
+    if !file_type.is_dir() {
+        return Ok(());
+    }
+    let canonical = std::fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf());
+    if !visited_dirs.insert(canonical) {
         return Ok(());
     }
     std::fs::create_dir_all(dst)?;
@@ -1721,9 +1742,16 @@ fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
         let entry = entry?;
         let child_src = entry.path();
         let child_dst = dst.join(entry.file_name());
-        if child_src.is_dir() {
-            copy_tree(&child_src, &child_dst)?;
-        } else if child_src.is_file() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if should_skip_force_regen_scan_dir(&child_src) {
+                continue;
+            }
+            copy_tree_inner(&child_src, &child_dst, visited_dirs)?;
+        } else if file_type.is_file() {
             std::fs::copy(&child_src, &child_dst)?;
         }
     }
@@ -2177,8 +2205,9 @@ fn has_handwrite_ownership_marker(content: &str) -> bool {
 
 fn collect_source_scope_files(scope: &ForceRegenScope) -> Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
+    let mut visited_dirs = BTreeSet::new();
     for root in &scope.source_roots {
-        collect_source_scope_files_inner(root, &mut files)?;
+        collect_source_scope_files_inner(root, &mut files, &mut visited_dirs)?;
     }
     files.sort();
     files.dedup();
@@ -2188,20 +2217,40 @@ fn collect_source_scope_files(scope: &ForceRegenScope) -> Result<Vec<std::path::
 fn collect_source_scope_files_inner(
     path: &std::path::Path,
     out: &mut Vec<std::path::PathBuf>,
+    visited_dirs: &mut BTreeSet<std::path::PathBuf>,
 ) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    if path.is_file() {
+    let metadata = std::fs::symlink_metadata(path)?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Ok(());
+    }
+    if file_type.is_file() {
         out.push(path.to_path_buf());
+        return Ok(());
+    }
+    if !file_type.is_dir() {
+        return Ok(());
+    }
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !visited_dirs.insert(canonical) {
         return Ok(());
     }
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
         let child = entry.path();
-        if child.is_dir() {
-            collect_source_scope_files_inner(&child, out)?;
-        } else if child.is_file() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if should_skip_force_regen_scan_dir(&child) {
+                continue;
+            }
+            collect_source_scope_files_inner(&child, out, visited_dirs)?;
+        } else if file_type.is_file() {
             out.push(child);
         }
     }
@@ -2815,7 +2864,8 @@ fn collect_tree_files(
     root: &std::path::Path,
 ) -> Result<std::collections::BTreeMap<std::path::PathBuf, std::path::PathBuf>> {
     let mut files = std::collections::BTreeMap::new();
-    collect_tree_files_inner(root, root, &mut files)?;
+    let mut visited_dirs = BTreeSet::new();
+    collect_tree_files_inner(root, root, &mut files, &mut visited_dirs)?;
     Ok(files)
 }
 
@@ -2823,21 +2873,41 @@ fn collect_tree_files_inner(
     root: &std::path::Path,
     dir: &std::path::Path,
     files: &mut std::collections::BTreeMap<std::path::PathBuf, std::path::PathBuf>,
+    visited_dirs: &mut BTreeSet<std::path::PathBuf>,
 ) -> Result<()> {
     if !dir.exists() {
         return Ok(());
     }
-    if dir.is_file() {
+    let metadata = std::fs::symlink_metadata(dir)?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Ok(());
+    }
+    if file_type.is_file() {
         let rel = dir.strip_prefix(root)?.to_path_buf();
         files.insert(rel, dir.to_path_buf());
+        return Ok(());
+    }
+    if !file_type.is_dir() {
+        return Ok(());
+    }
+    let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    if !visited_dirs.insert(canonical) {
         return Ok(());
     }
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
-            collect_tree_files_inner(root, &path, files)?;
-        } else if path.is_file() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if should_skip_force_regen_scan_dir(&path) {
+                continue;
+            }
+            collect_tree_files_inner(root, &path, files, visited_dirs)?;
+        } else if file_type.is_file() {
             let rel = path.strip_prefix(root)?.to_path_buf();
             files.insert(rel, path);
         }
@@ -2849,7 +2919,8 @@ fn collect_tree_files_inner(
 mod tests {
     use super::{
         cb_verify_summary_from_report, classify_codegen_origin_spec, collect_force_regen_specs,
-        commit_force_regen, compare_source_roots, extract_cold_rebuild_target_paths,
+        collect_source_scope_files, collect_tree_files, commit_force_regen, compare_source_roots,
+        copy_tree, extract_cold_rebuild_target_paths,
         extract_project_root_llms_target_paths, extract_spec_managed_ref,
         extract_spec_managed_refs, format_rust_files, has_handwrite_ownership_marker,
         is_minified_asset_file, resolve_project_force_regen_scope, run_force_regen_specs,
@@ -3951,6 +4022,44 @@ pub fn signature_only() -> Result<()>
         assert!(report.failures[0]
             .contains("1/2 source file(s) have CODEGEN or HANDWRITE ownership markers"));
         assert!(report.failures[0].contains("projects/agentic-workflow/src/generate/marker.rs"));
+    }
+
+    #[test]
+    fn cb_verify_source_scope_collection_skips_dependency_dirs_and_symlink_cycles() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_root = dir.path().join("projects/jet");
+        std::fs::create_dir_all(source_root.join("src")).unwrap();
+        std::fs::create_dir_all(source_root.join("node_modules/pkg")).unwrap();
+        std::fs::create_dir_all(source_root.join("target/debug")).unwrap();
+        std::fs::write(source_root.join("src/lib.rs"), "pub fn owned() {}\n").unwrap();
+        std::fs::write(source_root.join("node_modules/pkg/index.ts"), "export {}\n").unwrap();
+        std::fs::write(source_root.join("target/debug/build.rs"), "fn main() {}\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&source_root, source_root.join("cycle")).unwrap();
+
+        let scope = ForceRegenScope {
+            td_root: dir.path().join("tech-design"),
+            source_roots: vec![source_root.clone()],
+        };
+        let files = collect_source_scope_files(&scope).unwrap();
+        let rel_files = files
+            .iter()
+            .map(|path| path.strip_prefix(&source_root).unwrap().to_path_buf())
+            .collect::<Vec<_>>();
+
+        assert_eq!(rel_files, vec![std::path::PathBuf::from("src/lib.rs")]);
+
+        let copy_root = dir.path().join("copy");
+        copy_tree(&source_root, &copy_root).unwrap();
+        assert!(copy_root.join("src/lib.rs").is_file());
+        assert!(!copy_root.join("node_modules/pkg/index.ts").exists());
+        assert!(!copy_root.join("target/debug/build.rs").exists());
+
+        let tree_files = collect_tree_files(&source_root).unwrap();
+        assert_eq!(
+            tree_files.keys().cloned().collect::<Vec<_>>(),
+            vec![std::path::PathBuf::from("src/lib.rs")]
+        );
     }
 
     #[test]

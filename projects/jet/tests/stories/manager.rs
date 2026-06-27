@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:059f4bfc" tracker="pending-tracker" reason="Tests: manager route returns HTML listing discovered stories; preview route renders the selected story in isolation; switching stories swaps the preview."
+// <HANDWRITE gap="missing-generator:unit-test:059f4bfc" tracker="standardize-gap-projects-jet-tests-stories-manager-rs" reason="Tests: manager route returns HTML listing discovered stories; preview route renders the selected story in isolation; switching stories swaps the preview.">
 //! Integration tests for B2: the `jet stories` native workbench server.
 //!
 //! These exercise the real axum router ([`jet::stories::server::build_router`])
@@ -59,7 +59,10 @@ export const WithFooter = {
 fn write_fixtures() -> TempDir {
     let dir = TempDir::new().expect("temp dir");
     let root = dir.path();
-    write(root.join("src/components/Button.stories.tsx"), BUTTON_STORIES);
+    write(
+        root.join("src/components/Button.stories.tsx"),
+        BUTTON_STORIES,
+    );
     write(root.join("src/surfaces/Card.stories.tsx"), CARD_STORIES);
     write(
         root.join("src/components/Button.tsx"),
@@ -110,13 +113,19 @@ async fn manager_route_lists_discovered_stories() {
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("jet stories"), "manager shell title present");
     // Both story groups + their exports are listed in the sidebar.
-    assert!(html.contains("Components / Button"), "Button group listed: {html}");
+    assert!(
+        html.contains("Components / Button"),
+        "Button group listed: {html}"
+    );
     assert!(html.contains("Surfaces / Card"), "Card group listed");
     assert!(html.contains(">Primary<"), "Primary story listed");
     assert!(html.contains(">Disabled<"), "Disabled story listed");
     assert!(html.contains(">WithFooter<"), "WithFooter story listed");
     // It embeds a preview iframe.
-    assert!(html.contains("id=\"jet-preview\""), "preview iframe present");
+    assert!(
+        html.contains("id=\"jet-preview\""),
+        "preview iframe present"
+    );
     assert!(
         html.contains("/__jet_stories_preview/"),
         "links to preview routes"
@@ -170,7 +179,10 @@ async fn preview_route_unknown_id_is_404() {
 
     let (status, body) = get(&router, "/__jet_stories_preview/does-not-exist--nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(body.contains("unknown story id"), "error names the bad id: {body}");
+    assert!(
+        body.contains("unknown story id"),
+        "error names the bad id: {body}"
+    );
 }
 
 /// (d) the module route transforms + serves a fixture `.tsx` module as JS.
@@ -184,7 +196,10 @@ async fn module_route_transforms_and_serves_tsx() {
 
     // The exported story symbols survive the transform...
     assert!(js.contains("Primary"), "Primary export survives transform");
-    assert!(js.contains("Disabled"), "Disabled export survives transform");
+    assert!(
+        js.contains("Disabled"),
+        "Disabled export survives transform"
+    );
     // ...and TSX-specific syntax (the `satisfies Meta<...>` / type annotations)
     // does not leak through verbatim as a type annotation. The JSX in
     // `render: () => <Button disabled />` must be lowered (no raw `<Button`).
@@ -278,7 +293,10 @@ async fn module_route_resolves_and_serves_node_modules_dep() {
     // needing a rewrite.
     let (dep_status, dep_js) = get(&router, "/@dep/clsx/dist/clsx.mjs").await;
     assert_eq!(dep_status, StatusCode::OK, "dep served: {dep_js}");
-    assert!(dep_js.contains("function clsx"), "dep body present: {dep_js}");
+    assert!(
+        dep_js.contains("function clsx"),
+        "dep body present: {dep_js}"
+    );
     assert!(
         dep_js.contains("./chunk.mjs"),
         "dep's relative import stays relative (resolves under /@dep/): {dep_js}"
@@ -293,4 +311,4 @@ async fn module_route_resolves_and_serves_node_modules_dep() {
     let (missing, _) = get(&router, "/@dep/clsx/dist/nope.mjs").await;
     assert_eq!(missing, StatusCode::NOT_FOUND);
 }
-// HANDWRITE-END
+// </HANDWRITE>

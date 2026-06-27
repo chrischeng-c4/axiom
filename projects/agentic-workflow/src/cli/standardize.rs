@@ -2222,8 +2222,7 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
                 &configured,
                 target,
                 &td_content,
-            )
-            || semantic_td_needs_traceability_metadata_migration(&td_content);
+            );
         if !needs_migration {
             continue;
         }
@@ -3989,13 +3988,6 @@ fn semantic_td_needs_generated_capability_ref_migration(
         && !content.contains("capability_scope:")
         && semantic_capability_ref_for_group(project_root, configured, &semantic_group_key(target))
             .is_some()
-}
-
-fn semantic_td_needs_traceability_metadata_migration(content: &str) -> bool {
-    content.contains("coverage_kind: semantic")
-        && traceability_td_section_blockers("<semantic-td>", content)
-            .iter()
-            .any(|blocker| blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge)
 }
 
 fn source_spec_refs(abs: &Path, project_root: &Path) -> Vec<String> {
@@ -6265,7 +6257,7 @@ pub(crate) fn render_project_llms_txt(project_root: &Path, project: &str) -> Res
         .cap_path
         .clone()
         .unwrap_or_else(|| format!("{}/README.md", project_rel.trim_end_matches('/')));
-    let spec_ref = project_llms_semantic_spec_ref(&project, &project_rel, &td_path);
+    let spec_ref = project_llms_semantic_spec_ref(project_root, &project, &project_rel, &td_path);
     let title = project_agent_context_title(&project);
     let required_artifacts =
         required_project_root_artifact_names(project_root, &project, &project_rel)?;
@@ -6338,13 +6330,34 @@ pub(crate) fn render_project_llms_txt(project_root: &Path, project: &str) -> Res
     Ok(out)
 }
 
-fn project_llms_semantic_spec_ref(project: &str, project_rel: &str, td_path: &str) -> String {
-    format!(
+fn project_llms_semantic_spec_ref(
+    project_root: &Path,
+    project: &str,
+    project_rel: &str,
+    td_path: &str,
+) -> String {
+    let configured = format!(
         "{}/semantic/{}-{}.md",
         td_path.trim_end_matches('/'),
         slug_for_path(project),
         slug_for_path(project_rel)
-    )
+    );
+    if project_root.join(&configured).is_file() {
+        return configured;
+    }
+    let default_td_path = crate::services::project_registry::default_project_td_path(project_rel)
+        .to_string_lossy()
+        .into_owned();
+    let fallback = format!(
+        "{}/semantic/{}-{}.md",
+        default_td_path.trim_end_matches('/'),
+        slug_for_path(project),
+        slug_for_path(project_rel)
+    );
+    if fallback != configured && project_root.join(&fallback).is_file() {
+        return fallback;
+    }
+    configured
 }
 
 fn project_agent_context_title(project: &str) -> String {
@@ -11221,6 +11234,38 @@ test_cmd = "true"
         assert!(project_root_artifact_blockers_at(tmp.path(), "tool")
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn project_root_llms_spec_ref_uses_existing_project_local_semantic_td() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+td_path = ".aw/tech-design/projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "python"
+test_cmd = "true"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/tech-design/semantic/tool-projects-tool.md",
+            "---\nid: semantic-tool-projects-tool\ncapability_refs:\n  - id: tool\n    role: primary\n---\n",
+        );
+
+        let generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
+        assert!(generated.contains(
+            "<!-- SPEC-MANAGED: projects/tool/tech-design/semantic/tool-projects-tool.md#schema -->"
+        ));
     }
 
     #[test]
