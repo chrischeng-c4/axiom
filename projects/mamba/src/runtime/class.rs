@@ -6008,7 +6008,16 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 }
                             }
                             "__name__" => {
-                                return MbValue::from_ptr(super::rc::MbObject::new_str(s.clone()));
+                                let short_name = s.rsplit('.').next().unwrap_or(s);
+                                return MbValue::from_ptr(super::rc::MbObject::new_str(
+                                    short_name.to_string(),
+                                ));
+                            }
+                            "__qualname__" => {
+                                let short_name = s.rsplit('.').next().unwrap_or(s);
+                                return MbValue::from_ptr(super::rc::MbObject::new_str(
+                                    short_name.to_string(),
+                                ));
                             }
                             "__abstractmethods__" if is_user_abc(s) => {
                                 return user_abstractmethods_frozenset(s);
