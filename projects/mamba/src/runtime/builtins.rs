@@ -1057,7 +1057,8 @@ pub fn mb_len(val: MbValue) -> MbValue {
         if let Some(n) = super::iter::mb_iter_range_len(val) {
             // A range length can exceed 2^47 (e.g. `len(range(sys.maxsize))`),
             // which overflows a NaN-boxed int — promote to BigInt.
-            return super::bigint_ops::int_from_i64(n);
+            return super::iter::mb_iter_range_len_value(val)
+                .unwrap_or_else(|| super::bigint_ops::int_from_i64(n));
         }
         let id = val.as_int().unwrap_or(0) as u64;
         if super::stdlib::array_mod::is_array_handle(id) {
@@ -1678,8 +1679,8 @@ pub fn mb_bool(val: MbValue) -> MbValue {
         // `bool(range(5, 5)) == False`); other iterator kinds are objects,
         // truthy by identity.
         if super::iter::is_iter_handle(val) {
-            match super::iter::mb_iter_range_len(val) {
-                Some(n) => n != 0,
+            match super::iter::mb_iter_range_is_nonempty(val) {
+                Some(nonempty) => nonempty,
                 None => true,
             }
         } else {
@@ -5214,22 +5215,19 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
 /// `None` (caller falls through to default `false`). Used so that
 /// `range(0, 5) == range(5)` agrees while range(N) materialises to a list.
 fn list_vs_range_iter_eq(list_ptr: *mut MbObject, handle: MbValue) -> Option<bool> {
-    let (mut cur, stop, step) = super::iter::mb_iter_range_params(handle)?;
+    let range_items = super::iter::range_iter_to_vec(handle)?;
     unsafe {
         if let ObjData::List(ref lock) = (*list_ptr).data {
             let items = lock.read().unwrap();
-            for v in items.iter() {
-                let in_range = (step > 0 && cur < stop) || (step < 0 && cur > stop);
-                if !in_range {
-                    return Some(false);
-                }
-                if v.as_int() != Some(cur) {
-                    return Some(false);
-                }
-                cur += step;
+            if items.len() != range_items.len() {
+                return Some(false);
             }
-            let still_in_range = (step > 0 && cur < stop) || (step < 0 && cur > stop);
-            return Some(!still_in_range);
+            for (left, right) in items.iter().zip(range_items.iter()) {
+                if mb_eq(*left, *right).as_bool() != Some(true) {
+                    return Some(false);
+                }
+            }
+            return Some(true);
         }
     }
     None
@@ -6483,6 +6481,9 @@ pub fn mb_hash(val: MbValue) -> MbValue {
             return mb_hash(MbValue::from_float(f));
         }
         return super::string_ops::mb_str_hash(mb_str(val));
+    }
+    if let Some(hash) = super::iter::range_hash(val) {
+        return hash;
     }
     if let Some(i) = val.as_int() {
         // CPython remaps hash(-1) to -2 because -1 is used internally
