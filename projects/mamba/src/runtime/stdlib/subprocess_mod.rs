@@ -1299,6 +1299,24 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
         retain(stdin_pipe);
         fields.insert("stdin".into(), stdin_pipe);
         fields.insert("_stdin_pipe".into(), stdin_pipe);
+        fields.insert(
+            "stdout".into(),
+            pipe_stream_value(
+                Vec::new(),
+                opts.stdout_sel == -1,
+                opts.text,
+                opts.encoding.as_deref(),
+            ),
+        );
+        fields.insert(
+            "stderr".into(),
+            pipe_stream_value(
+                Vec::new(),
+                opts.stderr_sel == -1,
+                opts.text,
+                opts.encoding.as_deref(),
+            ),
+        );
         fields.insert("pid".into(), MbValue::from_int(0));
         return new_instance_with_fields("Popen", fields);
     }
