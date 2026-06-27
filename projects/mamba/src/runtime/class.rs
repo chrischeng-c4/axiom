@@ -3443,11 +3443,44 @@ pub fn mb_raise_instance(instance: MbValue) {
     super::exception::set_current_exception(exc);
 }
 
+fn instance_field_value(instance: MbValue, key: &str) -> Option<MbValue> {
+    instance.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn break_context_cycle(instance: MbValue, context: MbValue) {
+    let target = instance.to_bits();
+    let mut cur = context;
+    for _ in 0..64 {
+        if cur.is_none() || cur.to_bits() == target {
+            return;
+        }
+        let Some(next) = instance_field_value(cur, "__context__") else {
+            return;
+        };
+        if next.is_none() {
+            return;
+        }
+        if next.to_bits() == target {
+            let ctx_key = MbValue::from_ptr(MbObject::new_str("__context__".to_string()));
+            mb_setattr(cur, ctx_key, MbValue::none());
+            return;
+        }
+        cur = next;
+    }
+}
+
 /// Raise an existing instance with implicit context chaining.
 /// Used for `raise exc` (variable) inside an except handler body.
 pub fn mb_raise_instance_with_context(instance: MbValue, context: MbValue) {
     // Set __context__ on the instance's fields so it's visible via e.__context__
-    if !context.is_none() {
+    if !context.is_none() && context.to_bits() != instance.to_bits() {
+        break_context_cycle(instance, context);
         let ctx_key = MbValue::from_ptr(MbObject::new_str("__context__".to_string()));
         mb_setattr(instance, ctx_key, context);
     }
@@ -3639,6 +3672,21 @@ pub fn last_caught_value_bits() -> u64 {
 /// handled exception.
 pub fn set_last_caught_value_bits(bits: u64) {
     LAST_CAUGHT_VALUE.with(|c| c.set(bits));
+}
+
+/// Peek the most recently raised full exception instance without clearing it.
+/// Used when finally needs the pending exception as `__context__` while still
+/// executing the finally body with a clean pending-exception slot.
+pub fn peek_last_raised_instance() -> Option<MbValue> {
+    LAST_RAISED_INSTANCE.with(|cell| {
+        let val = cell.borrow().as_ref().copied();
+        if let Some(inst) = val {
+            unsafe {
+                super::rc::retain_if_ptr(inst);
+            }
+        }
+        val
+    })
 }
 
 /// Retrieve the last raised instance (preserves custom fields).

@@ -553,28 +553,43 @@ pub fn mb_catch_exception() -> MbValue {
 pub fn mb_exception_matches(exc: MbValue, exc_type: MbValue) -> MbValue {
     let actual_type = get_exception_type(exc).unwrap_or_default();
 
-    // Support tuple of exception types: except (ValueError, TypeError)
+    let mut targets = Vec::new();
+    if collect_matcher_targets(exc_type, &mut targets).is_err() {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "catching classes that do not inherit from BaseException is not allowed"
+                    .to_string(),
+            )),
+        );
+        return MbValue::from_bool(false);
+    }
+
+    let matches = targets
+        .iter()
+        .any(|target| actual_type == *target || is_subclass_of(&actual_type, target));
+    MbValue::from_bool(matches)
+}
+
+fn collect_matcher_targets(exc_type: MbValue, out: &mut Vec<String>) -> Result<(), ()> {
     if let Some(ptr) = exc_type.as_ptr() {
         unsafe {
             if let ObjData::Tuple(ref items) = (*ptr).data {
                 for item in items {
-                    // Resolve the handler type's name from a Str, a func value
-                    // (NATIVE_TYPE_NAMES — e.g. urllib.error.URLError), or a
-                    // type-object Instance (__name__), so `except SomeExc` works
-                    // regardless of how the exception class is exposed.
-                    let target = super::class::resolve_class_name(*item).unwrap_or_default();
-                    if actual_type == target || is_subclass_of(&actual_type, &target) {
-                        return MbValue::from_bool(true);
-                    }
+                    collect_matcher_targets(*item, out)?;
                 }
-                return MbValue::from_bool(false);
+                return Ok(());
             }
         }
     }
-
-    let target_type = super::class::resolve_class_name(exc_type).unwrap_or_default();
-    let matches = actual_type == target_type || is_subclass_of(&actual_type, &target_type);
-    MbValue::from_bool(matches)
+    let Some(target) = super::class::resolve_class_name(exc_type) else {
+        return Err(());
+    };
+    if !is_subclass_of(&target, "BaseException") {
+        return Err(());
+    }
+    out.push(target);
+    Ok(())
 }
 
 /// Clear the current exception (used after successful except handling).
@@ -1456,6 +1471,9 @@ pub fn register_builtin_exceptions() {
 /// Retrieve the current exception without clearing the pending state.
 /// Returns `MbValue::none()` if no exception is pending.
 pub fn mb_get_exception() -> MbValue {
+    if let Some(instance) = super::class::peek_last_raised_instance() {
+        return instance;
+    }
     CURRENT_EXCEPTION.with(|cell| match cell.borrow().as_ref() {
         Some(exc) => {
             let val = store_exception_as_value(MbException {
