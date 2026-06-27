@@ -1328,12 +1328,18 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
     match result {
         Ok(output) => {
             let code = returncode_of(&output.status);
+            let mut stdout = output.stdout;
+            let mut stderr = output.stderr;
+            if opts.stderr_sel == -2 {
+                stdout.extend_from_slice(&stderr);
+                stderr.clear();
+            }
             fields.insert("returncode".into(), MbValue::from_int(code as i64));
             fields.insert("pid".into(), MbValue::from_int(0));
             fields.insert(
                 "stdout".into(),
                 pipe_stream_value(
-                    output.stdout.clone(),
+                    stdout.clone(),
                     opts.stdout_sel == -1,
                     opts.text,
                     opts.encoding.as_deref(),
@@ -1342,7 +1348,7 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
             fields.insert(
                 "stderr".into(),
                 pipe_stream_value(
-                    output.stderr.clone(),
+                    stderr.clone(),
                     opts.stderr_sel == -1,
                     opts.text,
                     opts.encoding.as_deref(),
@@ -1352,11 +1358,11 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
             // runs the child synchronously, so they are fully available.
             fields.insert(
                 "_captured_stdout".into(),
-                MbValue::from_ptr(MbObject::new_bytes(output.stdout)),
+                MbValue::from_ptr(MbObject::new_bytes(stdout)),
             );
             fields.insert(
                 "_captured_stderr".into(),
-                MbValue::from_ptr(MbObject::new_bytes(output.stderr)),
+                MbValue::from_ptr(MbObject::new_bytes(stderr)),
             );
         }
         // A missing/unexecutable command raises the OSError family, matching
