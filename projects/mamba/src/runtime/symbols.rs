@@ -1930,6 +1930,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_func_set_freevars",
+            closure::mb_func_set_freevars as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
             "mb_func_set_params",
             closure::mb_func_set_params as fn(super::MbValue, super::MbValue),
             [I64, I64],
