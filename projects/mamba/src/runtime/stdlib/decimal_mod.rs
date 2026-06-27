@@ -304,6 +304,12 @@ fn parse_special_decimal_str(s: &str) -> Option<MbDecimal> {
     None
 }
 
+fn zero_scientific_literal_exp(s: &str) -> Option<i64> {
+    let body = s.trim().trim_start_matches(['+', '-']);
+    let (_, exp) = body.split_once(['e', 'E'])?;
+    exp.parse::<i64>().ok()
+}
+
 /// Raise `decimal.InvalidOperation` and return `None`. The JIT checks the
 /// pending-exception slot after the native call returns and unwinds into the
 /// caller's `except decimal.InvalidOperation` handler — the module-level
@@ -1791,9 +1797,20 @@ pub fn mb_decimal_new_argc(val: MbValue, provided: bool) -> MbValue {
                     if d.is_zero() && trimmed.starts_with('-') {
                         d.set_sign_negative(true);
                     }
-                    result = Some(make_handle(d));
-                } else if let Ok(d) = Decimal::from_scientific(trimmed) {
-                    result = Some(make_handle(d));
+                    let mut st = MbDecimal::finite(d);
+                    if st.value.is_zero() {
+                        st.tuple_exp = zero_scientific_literal_exp(trimmed);
+                    }
+                    result = Some(make_state_handle(st));
+                } else if let Ok(mut d) = Decimal::from_scientific(trimmed) {
+                    if d.is_zero() && trimmed.starts_with('-') {
+                        d.set_sign_negative(true);
+                    }
+                    let mut st = MbDecimal::finite(d);
+                    if st.value.is_zero() {
+                        st.tuple_exp = zero_scientific_literal_exp(trimmed);
+                    }
+                    result = Some(make_state_handle(st));
                 } else {
                     result = Some(raise_invalid_operation(
                         "[<class 'decimal.ConversionSyntax'>]",
@@ -2698,9 +2715,13 @@ fn format_decimal_state(st: &MbDecimal, spec: &FormatSpec) -> String {
     }
     let typ = spec.typ.unwrap_or('\0'); // '\0' = no presentation type
     let mut neg = neg0;
-    let (c, s) = coeff_scale(&st.value);
+    let (c, s) = state_coeff_scale(st);
     let mut c_abs: BigInt = c.magnitude().to_owned().into();
-    let mut exp = -s;
+    let mut exp = if c_abs.is_zero() {
+        st.tuple_exp.unwrap_or(-s)
+    } else {
+        -s
+    };
     if typ == '%' {
         exp += 2;
     }
@@ -3662,6 +3683,34 @@ mod tests {
         assert_eq!(
             read_str(mb_decimal_str(r2)),
             "1.414213562373095048801688724"
+        );
+    }
+
+    #[test]
+    fn test_decimal_format_general_preserves_zero_scientific_exponent() {
+        let pos = mb_decimal_new(s("0E1"));
+        assert_eq!(read_str(mb_decimal_str(pos)), "0E+1");
+        assert_eq!(
+            read_str(mb_numeric_handle_format(pos, "g").unwrap()),
+            "0e+1"
+        );
+        assert_eq!(
+            read_str(mb_numeric_handle_format(pos, ".5g").unwrap()),
+            "0e+1"
+        );
+
+        let frac = mb_decimal_new(s("0E-1"));
+        assert_eq!(read_str(mb_decimal_str(frac)), "0.0");
+        assert_eq!(
+            read_str(mb_numeric_handle_format(frac, "g").unwrap()),
+            "0.0"
+        );
+
+        let neg = mb_decimal_new(s("-0E1"));
+        assert_eq!(read_str(mb_decimal_str(neg)), "-0E+1");
+        assert_eq!(
+            read_str(mb_numeric_handle_format(neg, "g").unwrap()),
+            "-0e+1"
         );
     }
 }
