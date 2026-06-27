@@ -9,7 +9,7 @@ use super::value::MbValue;
 use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 /// Iterator state — stores the current position and source.
@@ -123,7 +123,11 @@ pub enum IterKind {
     /// itertools.groupby outer iterator.
     GroupByOuter { state: Rc<RefCell<GroupByState>> },
     /// Active group iterator yielded by itertools.groupby.
-    GroupByGroup { state: Rc<RefCell<GroupByState>>, group_index: usize, cursor: usize },
+    GroupByGroup {
+        state: Rc<RefCell<GroupByState>>,
+        group_index: usize,
+        cursor: usize,
+    },
 }
 
 pub struct GroupByGroupSpec {
@@ -146,6 +150,8 @@ const ITER_ID_BASE: u64 = 0x1_0000_0000;
 thread_local! {
     static ITERATORS: std::cell::RefCell<HashMap<u64, MbIterator>> =
         std::cell::RefCell::new(HashMap::new());
+    static RANGE_ITERATOR_IDS: std::cell::RefCell<HashSet<u64>> =
+        std::cell::RefCell::new(HashSet::new());
     /// Iterator IDs start at 0x1_0000_0000 to avoid collisions with generator
     /// handles (which start at 1 from NEXT_GEN_ID). Both live in the same
     /// thread-local address space, so dispatch in mb_next_raise / mb_has_next
@@ -154,6 +160,22 @@ thread_local! {
     /// StopIteration flag — set by __next__ to signal exhaustion.
     /// Separates "yielded None" from "iterator is done".
     static STOP_ITERATION: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+fn mark_range_iterator_id(id: u64) {
+    RANGE_ITERATOR_IDS.with(|ids| {
+        ids.borrow_mut().insert(id);
+    });
+}
+
+fn unmark_range_iterator_id(id: u64) {
+    RANGE_ITERATOR_IDS.with(|ids| {
+        ids.borrow_mut().remove(&id);
+    });
+}
+
+fn is_range_iterator_id(id: u64) -> bool {
+    RANGE_ITERATOR_IDS.with(|ids| ids.borrow().contains(&id))
 }
 
 fn raise_type_error(msg: &str) -> MbValue {
@@ -262,6 +284,19 @@ pub fn mb_is_iterator_handle(val: MbValue) -> bool {
     }
 }
 
+pub fn mb_iter_supports_setstate(val: MbValue) -> bool {
+    let Some(id) = val.as_int().map(|v| v as u64) else {
+        return false;
+    };
+    ITERATORS.with(|iters| {
+        iters.borrow().get(&id).is_some_and(|iter| match iter.kind {
+            IterKind::Range { .. } => is_range_iterator_id(id),
+            IterKind::Reversed { .. } => true,
+            _ => false,
+        })
+    })
+}
+
 /// Raise StopIteration — called by compiled __next__ when done.
 pub fn mb_stop_iteration(_dummy: MbValue) -> MbValue {
     STOP_ITERATION.with(|f| f.set(true));
@@ -316,7 +351,13 @@ pub fn mb_iter_type_name(v: MbValue) -> Option<&'static str> {
     let id = v.as_int()? as u64;
     ITERATORS.with(|iters| {
         iters.borrow().get(&id).map(|iter| match iter.kind {
-            IterKind::Range { .. } => "range",
+            IterKind::Range { .. } => {
+                if is_range_iterator_id(id) {
+                    "range_iterator"
+                } else {
+                    "range"
+                }
+            }
             IterKind::Enumerate { .. } => "enumerate",
             IterKind::Zip { .. } => "zip",
             IterKind::Map { .. } | IterKind::MapN { .. } => "map",
@@ -387,6 +428,7 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
     }
     // Remove the iterator from storage to avoid borrowing issues.
     let iter = ITERATORS.with(|iters| iters.borrow_mut().remove(&id))?;
+    unmark_range_iterator_id(id);
 
     let result = match iter.kind {
         IterKind::Range {
@@ -563,6 +605,9 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
     if let Some(id) = obj.as_int() {
         let is_iter = ITERATORS.with(|iters| iters.borrow().contains_key(&(id as u64)));
         if is_iter {
+            if is_range_handle(obj) && !is_range_iterator_id(id as u64) {
+                return clone_range_iterator(obj).unwrap_or(obj);
+            }
             return obj;
         }
         // Text file handles are bare ints; `for line in f` iterates their
@@ -662,7 +707,9 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     } else
                     // tempfile NamedTemporaryFile / SpooledTemporaryFile
                     // iterate their remaining lines, like a real file object.
-                    if let Some(lines) = super::stdlib::tempfile_mod::tempfile_iter_lines(obj) {
+                    if let Some(lines) =
+                        super::stdlib::tempfile_mod::tempfile_iter_lines(obj)
+                    {
                         IterKind::List(lines)
                     } else
                     // namedtuple instances iterate over declared field values
@@ -842,6 +889,35 @@ fn value_to_range_bigint(v: MbValue) -> Option<BigInt> {
     unsafe { super::bigint_ops::extract_bigint(v) }
 }
 
+fn value_to_range_index_bigint(v: MbValue) -> Option<BigInt> {
+    if let Some(i) = value_to_range_bigint(v) {
+        return Some(i);
+    }
+    let cls = v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })?;
+    let method = class::lookup_method(&cls, "__index__");
+    if method.is_none() {
+        return None;
+    }
+    let result = class::mb_call_method1(method, v);
+    if super::exception::current_exception_type().is_some() {
+        return None;
+    }
+    if let Some(i) = value_to_range_bigint(result) {
+        return Some(i);
+    }
+    super::builtins::raise_type_error(format!(
+        "__index__ returned non-int (type {})",
+        super::builtins::value_type_name(result)
+    ));
+    None
+}
+
 fn bigint_to_value(v: BigInt) -> MbValue {
     super::bigint_ops::normalize_bigint(v)
 }
@@ -866,6 +942,26 @@ fn range_state(handle: MbValue) -> Option<(BigInt, BigInt, BigInt)> {
 
 pub fn is_range_handle(handle: MbValue) -> bool {
     range_state(handle).is_some()
+}
+
+fn clone_range_iterator(handle: MbValue) -> Option<MbValue> {
+    let (current, stop, step) = range_state(handle)?;
+    let iter = MbIterator {
+        kind: IterKind::Range {
+            current,
+            stop,
+            step,
+        },
+        index: 0,
+        exhausted: false,
+        peeked: None,
+    };
+    let id = alloc_iter_id();
+    ITERATORS.with(|iters| {
+        iters.borrow_mut().insert(id, iter);
+    });
+    mark_range_iterator_id(id);
+    Some(MbValue::from_int(id as i64))
 }
 
 fn range_len_big(current: &BigInt, stop: &BigInt, step: &BigInt) -> BigInt {
@@ -966,6 +1062,55 @@ pub fn mb_iter_length_hint(handle: MbValue) -> Option<i64> {
     })
 }
 
+fn bigint_to_saturating_usize(v: &BigInt) -> usize {
+    if v.is_negative() {
+        0
+    } else {
+        v.to_usize().unwrap_or(usize::MAX)
+    }
+}
+
+/// CPython private iterator hook used by range/list reverse iterators.
+/// Returns Some when the handle is a supported iterator and None when the
+/// receiver is not in that method surface.
+pub fn mb_iter_setstate(handle: MbValue, state: MbValue) -> Option<MbValue> {
+    let id = handle.as_int()? as u64;
+    let mut index = value_to_range_index_bigint(state)?;
+    if index.is_negative() {
+        index = BigInt::zero();
+    }
+    ITERATORS.with(|iters| {
+        let mut borrowed = iters.borrow_mut();
+        let iter = borrowed.get_mut(&id)?;
+        iter.exhausted = false;
+        iter.peeked = None;
+        match &mut iter.kind {
+            IterKind::Range {
+                current,
+                stop,
+                step,
+            } => {
+                if !is_range_iterator_id(id) {
+                    return None;
+                }
+                *current += &*step * index;
+                if !range_has_next_big(current, stop, step) {
+                    iter.exhausted = true;
+                }
+                Some(MbValue::none())
+            }
+            IterKind::Reversed { items, index: pos } => {
+                *pos = bigint_to_saturating_usize(&index).min(items.len());
+                if *pos >= items.len() {
+                    iter.exhausted = true;
+                }
+                Some(MbValue::none())
+            }
+            _ => None,
+        }
+    })
+}
+
 /// If `handle` refers to an unexhausted Range iterator, return its exact
 /// `(current, stop, step)` Python integer values.
 pub fn mb_iter_range_params(handle: MbValue) -> Option<(MbValue, MbValue, MbValue)> {
@@ -1038,6 +1183,13 @@ pub fn range_contains_value(handle: MbValue, value: MbValue) -> Option<MbValue> 
         return Some(MbValue::from_bool(range_contains_big(
             &current, &stop, &step, &v,
         )));
+    }
+    let mut cur = current;
+    while range_has_next_big(&cur, &stop, &step) {
+        if super::builtins::mb_eq(value, bigint_to_value(cur.clone())).as_bool() == Some(true) {
+            return Some(MbValue::from_bool(true));
+        }
+        cur += &step;
     }
     Some(MbValue::from_bool(false))
 }
@@ -1121,7 +1273,7 @@ fn slice_index(v: MbValue, default: BigInt) -> Option<BigInt> {
     if v.is_none() {
         Some(default)
     } else {
-        value_to_range_bigint(v)
+        value_to_range_index_bigint(v)
     }
 }
 
@@ -1138,7 +1290,7 @@ pub fn range_iter_slice(
     let slice_step = if step_v.is_none() {
         BigInt::one()
     } else {
-        value_to_range_bigint(step_v).unwrap_or_else(BigInt::one)
+        value_to_range_index_bigint(step_v).unwrap_or_else(BigInt::one)
     };
     if slice_step.is_zero() {
         super::exception::mb_raise(
@@ -1184,7 +1336,9 @@ pub fn range_iter_slice(
         };
         clamp_big(i, &neg_one, &len_minus_one)
     };
-    let stop_idx = if slice_step.is_positive() {
+    let stop_idx = if slice_step.is_negative() && stop_v.is_none() {
+        neg_one.clone()
+    } else if slice_step.is_positive() {
         let i = if raw_stop.is_negative() {
             raw_stop + &len
         } else {
@@ -1292,33 +1446,43 @@ pub fn mb_count_iter(start: MbValue, step: MbValue) -> MbValue {
 
 /// Create a lazy `itertools.repeat(value[, times])` iterator handle.
 /// `times` of `None` (not an int) yields the infinite form.
-/// CPython-style repr for named itertools iterator handles. Returns None for
-/// any handle that is not a recognized named iterator (callers fall back to
-/// the default int formatting). Currently covers `repeat`.
-pub fn mb_iter_repr(handle: MbValue) -> Option<(String)> {
+/// CPython-style repr for named iterator handles. Returns None for any handle
+/// that is not a recognized iterator (callers fall back to default formatting).
+pub fn mb_iter_repr(handle: MbValue) -> Option<String> {
     let id = handle.as_int()? as u64;
-    let repeat = ITERATORS.with(|iters| {
+    ITERATORS.with(|iters| {
         let iters = iters.borrow();
         match iters.get(&id).map(|it| &it.kind) {
-            Some(IterKind::Repeat { val, remaining }) => Some((*val, *remaining)),
+            Some(IterKind::Range {
+                current,
+                stop,
+                step,
+            }) => {
+                if step == &BigInt::one() {
+                    Some(format!("range({current}, {stop})"))
+                } else {
+                    Some(format!("range({current}, {stop}, {step})"))
+                }
+            }
+            Some(IterKind::Repeat { val, remaining }) => {
+                let vr = super::builtins::mb_repr(*val);
+                let vr_s = vr
+                    .as_ptr()
+                    .and_then(|p| unsafe {
+                        if let ObjData::Str(ref s) = (*p).data {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                Some(match remaining {
+                    Some(n) => format!("repeat({vr_s}, {n})"),
+                    None => format!("repeat({vr_s})"),
+                })
+            }
             _ => None,
         }
-    })?;
-    let (val, remaining) = repeat;
-    let vr = super::builtins::mb_repr(val);
-    let vr_s = vr
-        .as_ptr()
-        .and_then(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    Some(match remaining {
-        Some(n) => format!("repeat({vr_s}, {n})"),
-        None => format!("repeat({vr_s})"),
     })
 }
 
@@ -1432,8 +1596,16 @@ pub fn mb_chain_from_iterable_iter(iterables: MbValue) -> MbValue {
 }
 
 pub fn mb_groupby_iter(items: Vec<MbValue>, groups: Vec<GroupByGroupSpec>) -> MbValue {
-    for &item in &items { unsafe { super::rc::retain_if_ptr(item); } }
-    for group in &groups { unsafe { super::rc::retain_if_ptr(group.key); } }
+    for &item in &items {
+        unsafe {
+            super::rc::retain_if_ptr(item);
+        }
+    }
+    for group in &groups {
+        unsafe {
+            super::rc::retain_if_ptr(group.key);
+        }
+    }
     let state = Rc::new(RefCell::new(GroupByState {
         items,
         groups,
@@ -1443,10 +1615,13 @@ pub fn mb_groupby_iter(items: Vec<MbValue>, groups: Vec<GroupByGroupSpec>) -> Mb
     let iter = MbIterator {
         kind: IterKind::GroupByOuter { state },
         index: 0,
-        exhausted: false, peeked: None,
+        exhausted: false,
+        peeked: None,
     };
     let id = alloc_iter_id();
-    ITERATORS.with(|iters| { iters.borrow_mut().insert(id, iter); });
+    ITERATORS.with(|iters| {
+        iters.borrow_mut().insert(id, iter);
+    });
     MbValue::from_int(id as i64)
 }
 
@@ -1487,11 +1662,14 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
     if let Some(id) = seq.as_int() {
         let is_iter = ITERATORS.with(|iters| iters.borrow().contains_key(&(id as u64)));
         if is_iter {
+            let preserve_source = is_range_handle(seq);
             let mut items = range_iter_to_vec(seq).unwrap_or_default();
             items.reverse();
+            if !preserve_source {
             ITERATORS.with(|iters| {
                 iters.borrow_mut().remove(&(id as u64));
             });
+            }
             let iter = MbIterator {
                 kind: IterKind::Reversed { items, index: 0 },
                 index: 0,
@@ -1979,7 +2157,9 @@ pub fn mb_next(iter_handle: MbValue) -> MbValue {
                 return val;
             }
             if let Some(val) = advance_groupby_if_applicable(id as u64) {
-                unsafe { super::rc::retain_if_ptr(val); }
+                unsafe {
+                    super::rc::retain_if_ptr(val);
+                }
                 return val;
             }
             let val = ITERATORS.with(|iters| {
@@ -2190,12 +2370,17 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
             // Out-of-line: callable and generator iterators
             if let Some(val) = advance_callable_if_applicable(id as u64) {
                 let exhausted = ITERATORS.with(|iters| {
-                    iters.borrow().get(&(id as u64)).map(|i| i.exhausted).unwrap_or(true)
+                    iters
+                        .borrow()
+                        .get(&(id as u64))
+                        .map(|i| i.exhausted)
+                        .unwrap_or(true)
                 });
                 if exhausted && val.is_none() {
-                    super::exception::set_current_exception(
-                        super::exception::MbException::new("StopIteration", ""),
-                    );
+                    super::exception::set_current_exception(super::exception::MbException::new(
+                        "StopIteration",
+                        "",
+                    ));
                 }
                 unsafe {
                     super::rc::retain_if_ptr(val);
@@ -2342,14 +2527,21 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
             }
             if let Some(val) = advance_groupby_if_applicable(id as u64) {
                 let exhausted = ITERATORS.with(|iters| {
-                    iters.borrow().get(&(id as u64)).map(|i| i.exhausted).unwrap_or(false)
+                    iters
+                        .borrow()
+                        .get(&(id as u64))
+                        .map(|i| i.exhausted)
+                        .unwrap_or(false)
                 });
                 if exhausted && val.is_none() {
-                    super::exception::set_current_exception(
-                        super::exception::MbException::new("StopIteration", ""),
-                    );
+                    super::exception::set_current_exception(super::exception::MbException::new(
+                        "StopIteration",
+                        "",
+                    ));
                 }
-                unsafe { super::rc::retain_if_ptr(val); }
+                unsafe {
+                    super::rc::retain_if_ptr(val);
+                }
                 return val;
             }
             let val = ITERATORS.with(|iters| {
@@ -2536,8 +2728,7 @@ pub fn mb_has_next(iter_handle: MbValue) -> MbValue {
                     return v;
                 }
                 // Otherwise advance once and cache as peeked.
-                let val = advance_callable_if_applicable(id as u64)
-                    .unwrap_or_else(MbValue::none);
+                let val = advance_callable_if_applicable(id as u64).unwrap_or_else(MbValue::none);
                 if let Some(t) = super::exception::current_exception_type() {
                     if t == "StopIteration" {
                         super::exception::mb_clear_exception();
@@ -2742,20 +2933,30 @@ pub fn mb_has_next(iter_handle: MbValue) -> MbValue {
         // Chain-from-iterable drives outer and inner iterators out-of-line.
         {
             let is_chain = ITERATORS.with(|iters| {
-                iters.borrow().get(&(id as u64))
+                iters
+                    .borrow()
+                    .get(&(id as u64))
                     .map(|it| matches!(it.kind, IterKind::ChainFromIterable { .. }))
                     .unwrap_or(false)
             });
             if is_chain {
                 let short = ITERATORS.with(|iters| {
                     let it = iters.borrow();
-                    it.get(&(id as u64)).map(|i| {
-                        if i.exhausted { Some(MbValue::from_bool(false)) }
-                        else if i.peeked.is_some() { Some(MbValue::from_bool(true)) }
-                        else { None }
-                    }).unwrap_or(None)
+                    it.get(&(id as u64))
+                        .map(|i| {
+                            if i.exhausted {
+                                Some(MbValue::from_bool(false))
+                            } else if i.peeked.is_some() {
+                                Some(MbValue::from_bool(true))
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(None)
                 });
-                if let Some(v) = short { return v; }
+                if let Some(v) = short {
+                    return v;
+                }
                 let val = advance_chain_from_iterable_if_applicable(id as u64)
                     .unwrap_or_else(MbValue::none);
                 return ITERATORS.with(|iters| {
@@ -2777,25 +2978,36 @@ pub fn mb_has_next(iter_handle: MbValue) -> MbValue {
         // iterators and cache the peeked value here.
         {
             let is_groupby = ITERATORS.with(|iters| {
-                iters.borrow().get(&(id as u64))
-                    .map(|it| matches!(
+                iters
+                    .borrow()
+                    .get(&(id as u64))
+                    .map(|it| {
+                        matches!(
                         it.kind,
                         IterKind::GroupByOuter { .. } | IterKind::GroupByGroup { .. }
-                    ))
+                        )
+                    })
                     .unwrap_or(false)
             });
             if is_groupby {
                 let short = ITERATORS.with(|iters| {
                     let it = iters.borrow();
-                    it.get(&(id as u64)).map(|i| {
-                        if i.exhausted { Some(MbValue::from_bool(false)) }
-                        else if i.peeked.is_some() { Some(MbValue::from_bool(true)) }
-                        else { None }
-                    }).unwrap_or(None)
+                    it.get(&(id as u64))
+                        .map(|i| {
+                            if i.exhausted {
+                                Some(MbValue::from_bool(false))
+                            } else if i.peeked.is_some() {
+                                Some(MbValue::from_bool(true))
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(None)
                 });
-                if let Some(v) = short { return v; }
-                let val = advance_groupby_if_applicable(id as u64)
-                    .unwrap_or_else(MbValue::none);
+                if let Some(v) = short {
+                    return v;
+                }
+                let val = advance_groupby_if_applicable(id as u64).unwrap_or_else(MbValue::none);
                 return ITERATORS.with(|iters| {
                     if let Some(iter) = iters.borrow_mut().get_mut(&(id as u64)) {
                         if iter.exhausted {
@@ -2932,6 +3144,7 @@ fn release_iter(iter: &MbIterator) {
 pub fn mb_iter_release(iter_handle: MbValue) {
     if let Some(id) = iter_handle.as_int() {
         let removed = ITERATORS.with(|iters| iters.borrow_mut().remove(&(id as u64)));
+        unmark_range_iterator_id(id as u64);
         if let Some(iter) = removed {
             release_iter(&iter);
         }
@@ -2976,7 +3189,11 @@ fn advance_callable_if_applicable(id: u64) -> Option<MbValue> {
     // The callable may re-enter and drain this same iterator. CPython conceals
     // that inner exhaustion from the outer next() and reports StopIteration.
     let exhausted_during_call = ITERATORS.with(|iters| {
-        iters.borrow().get(&id).map(|iter| iter.exhausted).unwrap_or(true)
+        iters
+            .borrow()
+            .get(&id)
+            .map(|iter| iter.exhausted)
+            .unwrap_or(true)
     });
     if exhausted_during_call {
         return Some(MbValue::none());
@@ -3667,7 +3884,10 @@ fn advance_chain_from_iterable_if_applicable(id: u64) -> Option<MbValue> {
 
 fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
     enum Info {
-        Outer { state: Rc<RefCell<GroupByState>>, peeked: Option<MbValue> },
+        Outer {
+            state: Rc<RefCell<GroupByState>>,
+            peeked: Option<MbValue>,
+        },
         Group {
             state: Rc<RefCell<GroupByState>>,
             group_index: usize,
@@ -3679,12 +3899,19 @@ fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
     let info = ITERATORS.with(|iters| {
         let mut iters = iters.borrow_mut();
         let iter = iters.get_mut(&id)?;
-        if iter.exhausted { return None; }
-        match &mut iter.kind {
-            IterKind::GroupByOuter { state } => {
-                Some(Info::Outer { state: Rc::clone(state), peeked: iter.peeked.take() })
+        if iter.exhausted {
+            return None;
             }
-            IterKind::GroupByGroup { state, group_index, cursor } => Some(Info::Group {
+        match &mut iter.kind {
+            IterKind::GroupByOuter { state } => Some(Info::Outer {
+                state: Rc::clone(state),
+                peeked: iter.peeked.take(),
+            }),
+            IterKind::GroupByGroup {
+                state,
+                group_index,
+                cursor,
+            } => Some(Info::Group {
                 state: Rc::clone(state),
                 group_index: *group_index,
                 cursor: *cursor,
@@ -3695,7 +3922,9 @@ fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
     })?;
 
     match info {
-        Info::Outer { peeked: Some(v), .. } => Some(v),
+        Info::Outer {
+            peeked: Some(v), ..
+        } => Some(v),
         Info::Outer { state, .. } => {
             let next = {
                 let mut state_ref = state.borrow_mut();
@@ -3726,17 +3955,27 @@ fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
                     cursor: 0,
                 },
                 index: 0,
-                exhausted: false, peeked: None,
+                exhausted: false,
+                peeked: None,
             };
             let group_id = alloc_iter_id();
-            ITERATORS.with(|iters| { iters.borrow_mut().insert(group_id, group_iter); });
+            ITERATORS.with(|iters| {
+                iters.borrow_mut().insert(group_id, group_iter);
+            });
             Some(MbValue::from_ptr(MbObject::new_tuple(vec![
                 key,
                 MbValue::from_int(group_id as i64),
             ])))
         }
-        Info::Group { peeked: Some(v), .. } => Some(v),
-        Info::Group { state, group_index, cursor, .. } => {
+        Info::Group {
+            peeked: Some(v), ..
+        } => Some(v),
+        Info::Group {
+            state,
+            group_index,
+            cursor,
+            ..
+        } => {
             let value = {
                 let state_ref = state.borrow();
                 if state_ref.active_group != Some(group_index) {
@@ -4085,6 +4324,7 @@ pub fn mb_list_from_iter(iter_handle: MbValue) -> MbValue {
 /// teardown reclaims the leaked objects.
 pub(crate) fn cleanup_all_iterators() {
     let _ = ITERATORS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = RANGE_ITERATOR_IDS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = NEXT_ITER_ID.with(|c| c.set(ITER_ID_BASE));
     let _ = STOP_ITERATION.with(|c| c.set(false));
 }

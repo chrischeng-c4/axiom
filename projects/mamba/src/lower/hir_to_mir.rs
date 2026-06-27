@@ -598,6 +598,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
         "bytes",
         "bytearray",
         "frozenset",
+        "range",
         "type",
         "object",
         // Descriptor types: `isinstance(x, property)` etc. compare against
@@ -2048,21 +2049,25 @@ impl<'a> HirToMir<'a> {
                 .iter()
                 .find_map(|(expr, _)| self.first_yield_var_in_expr(expr))
                 .or_else(|| self.first_yield_var_in_stmts(body)),
-            HirStmt::Assert { test, msg, .. } => self
-                .first_yield_var_in_expr(test)
-                .or_else(|| msg.as_ref().and_then(|expr| self.first_yield_var_in_expr(expr))),
+            HirStmt::Assert { test, msg, .. } => self.first_yield_var_in_expr(test).or_else(|| {
+                msg.as_ref()
+                    .and_then(|expr| self.first_yield_var_in_expr(expr))
+            }),
             HirStmt::Raise { value, from, .. } => value
                 .as_ref()
                 .and_then(|expr| self.first_yield_var_in_expr(expr))
-                .or_else(|| from.as_ref().and_then(|expr| self.first_yield_var_in_expr(expr))),
-            HirStmt::Del { target, .. } => self.first_yield_var_in_lvalue(target),
-            HirStmt::Match { subject, cases, .. } => self
-                .first_yield_var_in_expr(subject)
                 .or_else(|| {
+                    from.as_ref()
+                        .and_then(|expr| self.first_yield_var_in_expr(expr))
+                }),
+            HirStmt::Del { target, .. } => self.first_yield_var_in_lvalue(target),
+            HirStmt::Match { subject, cases, .. } => {
+                self.first_yield_var_in_expr(subject).or_else(|| {
                     cases
                         .iter()
                         .find_map(|case| self.first_yield_var_in_stmts(&case.body))
-                }),
+                })
+            }
             HirStmt::Break { .. }
             | HirStmt::Continue { .. }
             | HirStmt::Import { .. }
@@ -2087,8 +2092,7 @@ impl<'a> HirToMir<'a> {
     fn first_yield_var_in_expr(&self, expr: &HirExpr) -> Option<SymbolId> {
         match expr {
             HirExpr::Yield {
-                value: Some(value),
-                ..
+                value: Some(value), ..
             } => match &**value {
                 HirExpr::Var(sym, _) => Some(*sym),
                 other => self.first_yield_var_in_expr(other),
@@ -2101,9 +2105,10 @@ impl<'a> HirToMir<'a> {
                 .first_yield_var_in_expr(lhs)
                 .or_else(|| self.first_yield_var_in_expr(rhs)),
             HirExpr::UnaryOp { operand, .. } => self.first_yield_var_in_expr(operand),
-            HirExpr::Call { func, args, .. } => self
-                .first_yield_var_in_expr(func)
-                .or_else(|| args.iter().find_map(|arg| self.first_yield_var_in_expr(arg))),
+            HirExpr::Call { func, args, .. } => self.first_yield_var_in_expr(func).or_else(|| {
+                args.iter()
+                    .find_map(|arg| self.first_yield_var_in_expr(arg))
+            }),
             HirExpr::Attr { object, .. } => self.first_yield_var_in_expr(object),
             HirExpr::Index { object, index, .. } => self
                 .first_yield_var_in_expr(object)
@@ -2122,8 +2127,14 @@ impl<'a> HirToMir<'a> {
             } => start
                 .as_ref()
                 .and_then(|expr| self.first_yield_var_in_expr(expr))
-                .or_else(|| stop.as_ref().and_then(|expr| self.first_yield_var_in_expr(expr)))
-                .or_else(|| step.as_ref().and_then(|expr| self.first_yield_var_in_expr(expr))),
+                .or_else(|| {
+                    stop.as_ref()
+                        .and_then(|expr| self.first_yield_var_in_expr(expr))
+                })
+                .or_else(|| {
+                    step.as_ref()
+                        .and_then(|expr| self.first_yield_var_in_expr(expr))
+                }),
             HirExpr::IfExpr {
                 cond,
                 then_val,
@@ -2163,15 +2174,17 @@ impl<'a> HirToMir<'a> {
                 .first_yield_var_in_expr(element)
                 .or_else(|| self.first_yield_var_in_comprehensions(generators)),
             HirExpr::FString { parts, .. } => parts.iter().find_map(|part| match part {
-                crate::hir::HirFStringPart::Expr(expr, spec) => self
-                    .first_yield_var_in_expr(expr)
-                    .or_else(|| {
+                crate::hir::HirFStringPart::Expr(expr, spec) => {
+                    self.first_yield_var_in_expr(expr).or_else(|| {
                         spec.as_ref()
                             .and_then(|parts| self.first_yield_var_in_fstring_parts(parts))
-                    }),
+                    })
+                }
                 crate::hir::HirFStringPart::Literal(_) => None,
             }),
-            HirExpr::Walrus { target: _, value, .. } => self.first_yield_var_in_expr(value),
+            HirExpr::Walrus {
+                target: _, value, ..
+            } => self.first_yield_var_in_expr(value),
             HirExpr::IntLit(_, _)
             | HirExpr::BigIntLit(_, _)
             | HirExpr::FloatLit(_, _)
@@ -2188,8 +2201,7 @@ impl<'a> HirToMir<'a> {
         generators: &[crate::hir::HirComprehension],
     ) -> Option<SymbolId> {
         generators.iter().find_map(|gen| {
-            self.first_yield_var_in_expr(&gen.iter)
-                .or_else(|| {
+            self.first_yield_var_in_expr(&gen.iter).or_else(|| {
                     gen.conditions
                         .iter()
                         .find_map(|cond| self.first_yield_var_in_expr(cond))
@@ -2202,12 +2214,12 @@ impl<'a> HirToMir<'a> {
         parts: &[crate::hir::HirFStringPart],
     ) -> Option<SymbolId> {
         parts.iter().find_map(|part| match part {
-            crate::hir::HirFStringPart::Expr(expr, spec) => self
-                .first_yield_var_in_expr(expr)
-                .or_else(|| {
+            crate::hir::HirFStringPart::Expr(expr, spec) => {
+                self.first_yield_var_in_expr(expr).or_else(|| {
                     spec.as_ref()
                         .and_then(|parts| self.first_yield_var_in_fstring_parts(parts))
-                }),
+                })
+            }
             crate::hir::HirFStringPart::Literal(_) => None,
         })
     }
@@ -7287,6 +7299,7 @@ impl<'a> HirToMir<'a> {
                         "bytes",
                         "bytearray",
                         "frozenset",
+                        "range",
                         "type",
                         "object",
                     ];
@@ -8308,24 +8321,25 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
-                    // Special case: range(start, stop) → mb_range_iter(start, stop, step=1).
-                    // range(start, stop, step) → mb_range_iter(start, stop, step).
-                    if extern_name == "mb_range" && boxed_args.len() == 2 {
-                        let one_raw = self.emit_int_const(1);
-                        let one_boxed = self.box_operand(one_raw, self.tcx.int());
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(dest),
-                            name: "mb_range_iter".to_string(),
-                            args: vec![boxed_args[0], boxed_args[1], one_boxed],
-                            ty: *ty,
-                        });
-                        return dest;
+                    // Direct range(...) calls must route through the runtime
+                    // constructor wrappers so CPython arity, zero-step, and
+                    // SupportsIndex validation happen uniformly.
+                    if extern_name == "mb_range" {
+                        let (name, args) = match boxed_args.len() {
+                            0 => ("mb_range_no_args".to_string(), vec![]),
+                            1 => ("mb_range".to_string(), boxed_args),
+                            2 => ("mb_range_2".to_string(), boxed_args),
+                            3 => ("mb_range_3".to_string(), boxed_args),
+                            n => {
+                                let n_raw = self.emit_int_const(n as i64);
+                                let n_boxed = self.box_operand(n_raw, self.tcx.int());
+                                ("mb_range_too_many_args".to_string(), vec![n_boxed])
                     }
-                    if extern_name == "mb_range" && boxed_args.len() == 3 {
+                        };
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: Some(dest),
-                            name: "mb_range_iter".to_string(),
-                            args: boxed_args,
+                            name,
+                            args,
                             ty: *ty,
                         });
                         return dest;
