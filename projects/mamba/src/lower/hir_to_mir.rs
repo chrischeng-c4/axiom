@@ -435,6 +435,9 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
         let (argcount, varnames) = func_code_metadata(func, |sym| hir.sym_names.get(&sym).cloned());
         lowerer.user_func_argcounts.insert(func.name.0, argcount);
         lowerer.user_func_varnames.insert(func.name.0, varnames);
+        if func.is_async {
+            lowerer.user_func_flags.insert(func.name.0, 0x0100);
+        }
         let freevars: Vec<(SymbolId, String)> = func
             .captures
             .iter()
@@ -717,6 +720,9 @@ pub fn lower_hir_to_mir_with_symbols_src(
         let (argcount, varnames) = func_code_metadata(func, &sym_name_lookup);
         lowerer.user_func_argcounts.insert(func.name.0, argcount);
         lowerer.user_func_varnames.insert(func.name.0, varnames);
+        if func.is_async {
+            lowerer.user_func_flags.insert(func.name.0, 0x0100);
+        }
         let freevars: Vec<(SymbolId, String)> = func
             .captures
             .iter()
@@ -738,6 +744,9 @@ pub fn lower_hir_to_mir_with_symbols_src(
             let (argcount, varnames) = func_code_metadata(func, &sym_name_lookup);
             lowerer.user_func_argcounts.insert(func.name.0, argcount);
             lowerer.user_func_varnames.insert(func.name.0, varnames);
+            if func.is_async {
+                lowerer.user_func_flags.insert(func.name.0, 0x0100);
+            }
             let freevars: Vec<(SymbolId, String)> = func
                 .captures
                 .iter()
@@ -1356,6 +1365,8 @@ struct HirToMir<'a> {
     /// `mb_func_set_varnames` so `f.__code__.co_varnames` returns the params
     /// (CORE #3).
     user_func_varnames: HashMap<u32, Vec<String>>,
+    /// SymbolId.0 → extra CPython code-object flags (`CO_COROUTINE`, etc.).
+    user_func_flags: HashMap<u32, i64>,
     /// SymbolId.0 → captured free-variable `(SymbolId, name)` pairs for
     /// `inspect.getclosurevars`.
     user_func_freevars: HashMap<u32, Vec<(SymbolId, String)>>,
@@ -1450,6 +1461,7 @@ impl<'a> HirToMir<'a> {
             user_func_docs: HashMap::new(),
             user_func_argcounts: HashMap::new(),
             user_func_varnames: HashMap::new(),
+            user_func_flags: HashMap::new(),
             user_func_freevars: HashMap::new(),
             user_func_sigs: HashMap::new(),
             user_func_lines: HashMap::new(),
@@ -1613,6 +1625,7 @@ impl<'a> HirToMir<'a> {
             user_func_docs: HashMap::new(),
             user_func_argcounts: HashMap::new(),
             user_func_varnames: HashMap::new(),
+            user_func_flags: HashMap::new(),
             user_func_freevars: HashMap::new(),
             user_func_sigs: HashMap::new(),
             user_func_lines: HashMap::new(),
@@ -2532,6 +2545,33 @@ impl<'a> HirToMir<'a> {
                 dest: None,
                 name: "mb_func_set_varnames".to_string(),
                 args: vec![fn_vreg, names_vreg],
+                ty: self.tcx.none(),
+            });
+        }
+
+        let func_flag_pairs: Vec<(SymbolId, i64)> = self
+            .user_func_flags
+            .iter()
+            .map(|(sid, flags)| (SymbolId(*sid), *flags))
+            .collect();
+        for (func_sym, flags) in &func_flag_pairs {
+            let fn_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: fn_vreg,
+                value: MirConst::FuncRef(*func_sym),
+                ty: any_ty,
+            });
+            let flags_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: flags_raw,
+                value: MirConst::Int(*flags),
+                ty: self.tcx.int(),
+            });
+            let flags_boxed = self.box_operand(flags_raw, self.tcx.int());
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_func_set_flags".to_string(),
+                args: vec![fn_vreg, flags_boxed],
                 ty: self.tcx.none(),
             });
         }

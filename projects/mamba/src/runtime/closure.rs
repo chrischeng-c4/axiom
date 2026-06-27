@@ -328,6 +328,8 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     static FUNC_VARNAMES: std::cell::RefCell<HashMap<u64, Vec<String>>> =
         std::cell::RefCell::new(HashMap::new());
+    static FUNC_FLAGS: std::cell::RefCell<HashMap<u64, i64>> =
+        std::cell::RefCell::new(HashMap::new());
     static FUNC_FREEVARS: std::cell::RefCell<HashMap<u64, Vec<(String, i64)>>> =
         std::cell::RefCell::new(HashMap::new());
     // Declared-signature metadata for `inspect.signature` (FUNC_PARAMS) and
@@ -581,6 +583,18 @@ pub fn mb_func_get_varnames(func: MbValue) -> MbValue {
             })
             .unwrap_or(MbValue::none())
     })
+}
+
+/// Register extra code-object flags for a function (`CO_COROUTINE`, etc.).
+pub fn mb_func_set_flags(func: MbValue, flags: MbValue) {
+    let n = flags.as_int().unwrap_or(0);
+    let key = func.to_bits();
+    FUNC_FLAGS.with(|m| m.borrow_mut().insert(key, n));
+}
+
+pub fn func_flags(func: MbValue) -> i64 {
+    let key = func.to_bits();
+    FUNC_FLAGS.with(|m| *m.borrow().get(&key).unwrap_or(&0))
 }
 
 /// Register a function's free variables for inspect.getclosurevars.

@@ -5260,6 +5260,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     // Coroutine handles are int-tagged values. Handle coroutine-specific attributes.
     if obj.is_int() && super::async_rt::is_known_coroutine(obj) {
         match attr_name.as_str() {
+            "cr_code" => {
+                return MbValue::from_ptr(MbObject::new_instance("code".to_string()));
+            }
             "cr_frame" => return super::async_rt::mb_coroutine_frame(obj),
             "cr_running" => return super::async_rt::mb_coroutine_running(obj),
             "cr_await" => {
@@ -6828,7 +6831,7 @@ fn make_code_object(func: MbValue) -> MbValue {
             }
         };
     // CO_OPTIMIZED | CO_NEWLOCALS | CO_NOFREE plus the variadic bits.
-    let mut flags: i64 = 0x01 | 0x02 | 0x40;
+    let mut flags: i64 = 0x01 | 0x02 | 0x40 | super::closure::func_flags(func);
     if has_varargs {
         flags |= 0x04;
     }
@@ -7293,6 +7296,16 @@ pub fn mb_dir_mro_keys(class_name: &str) -> Vec<String> {
 /// methods as `dir("")`.
 fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
     match name {
+        "coroutine" => vec![
+            "__await__",
+            "send",
+            "throw",
+            "close",
+            "cr_code",
+            "cr_frame",
+            "cr_running",
+            "cr_await",
+        ],
         "list" => vec![
             "append",
             "extend",
@@ -7834,6 +7847,12 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
             for k in mb_dir_mro_keys(&nt) {
                 push(k, &mut names, &mut seen);
             }
+        }
+    }
+
+    if obj.is_int() && super::async_rt::is_known_coroutine(obj) {
+        for k in builtin_type_method_names_by_name("coroutine") {
+            push(k.to_string(), &mut names, &mut seen);
         }
     }
 
@@ -9805,6 +9824,12 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
             return MbValue::from_bool(matches!(
                 target.as_str(),
                 "generator" | "Generator" | "Iterator" | "Iterable" | "object"
+            ));
+        }
+        if super::async_rt::is_known_coroutine(obj) {
+            return MbValue::from_bool(matches!(
+                target.as_str(),
+                "coroutine" | "Coroutine" | "Awaitable" | "object"
             ));
         }
         let id = obj.as_int().unwrap_or(0) as u64;
