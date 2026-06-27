@@ -218,6 +218,8 @@ struct GenEntry {
     state: GenState,
     /// Body function address (NaN-boxed pointer bits).
     body_fn_addr: u64,
+    /// Original generator function value used for `gi_code` metadata.
+    origin_func: MbValue,
     /// Captured arguments.
     args: Vec<MbValue>,
     /// Argument names in declaration order for inspect.getgeneratorlocals.
@@ -462,7 +464,7 @@ pub fn flush_shared_capture() {
 // ── Generator Creation ──────────────────────────────────────────────────────
 
 /// Create a new generator. Called from compiled constructor wrapper.
-pub fn mb_generator_create(name: MbValue, body_fn_addr: MbValue) -> MbValue {
+pub fn mb_generator_create(name: MbValue, body_fn_addr: MbValue, origin_func: MbValue) -> MbValue {
     let gen_name = extract_str(name).unwrap_or_else(|| "<generator>".to_string());
     let fn_addr = body_fn_addr.to_bits();
     let id = alloc_gen_id();
@@ -472,6 +474,7 @@ pub fn mb_generator_create(name: MbValue, body_fn_addr: MbValue) -> MbValue {
         coro_stack: CoroStack::new(CORO_STACK_SIZE),
         state: GenState::Created,
         body_fn_addr: fn_addr,
+        origin_func,
         args: Vec::new(),
         arg_names: Vec::new(),
         yield_local_name: None,
@@ -1081,6 +1084,19 @@ pub fn is_known_generator(gen_handle: MbValue) -> bool {
     }
 }
 
+pub fn mb_generator_origin_func(gen_handle: MbValue) -> Option<MbValue> {
+    gen_handle.as_int().and_then(|id| {
+        GENERATORS.with(|gens| {
+            let origin = gens.borrow().get(&(id as u64))?.origin_func;
+            if origin.is_none() {
+                None
+            } else {
+                Some(origin)
+            }
+        })
+    })
+}
+
 /// Delete a variable: close if it's a generator, then release heap memory.
 ///
 /// Called by the JIT'd `del var` lowering.  Generator handles are stored as
@@ -1489,7 +1505,7 @@ mod tests {
     fn test_generator_create_and_is_exhausted() {
         let name = MbValue::from_ptr(MbObject::new_str("test_gen".to_string()));
         let body_fn = MbValue::none();
-        let gen = mb_generator_create(name, body_fn);
+        let gen = mb_generator_create(name, body_fn, MbValue::none());
         assert_eq!(mb_generator_is_exhausted(gen).as_bool(), Some(false));
         mb_generator_release(gen);
     }
@@ -1498,7 +1514,7 @@ mod tests {
     fn test_generator_release_cleans_up() {
         let name = MbValue::from_ptr(MbObject::new_str("release".into()));
         let body_fn = MbValue::none();
-        let gen = mb_generator_create(name, body_fn);
+        let gen = mb_generator_create(name, body_fn, MbValue::none());
         mb_generator_release(gen);
         assert_eq!(mb_generator_is_exhausted(gen).as_bool(), Some(true));
     }
@@ -1544,7 +1560,7 @@ mod tests {
         for i in 0..5 {
             let name = MbValue::from_ptr(MbObject::new_str(format!("cleanup_gen_{i}")));
             let body_fn = MbValue::none();
-            let gen = mb_generator_create(name, body_fn);
+            let gen = mb_generator_create(name, body_fn, MbValue::none());
             gen_ids.push(gen);
         }
 
@@ -1598,7 +1614,7 @@ mod tests {
     #[test]
     fn test_store_arg_appends_to_generator_args() {
         let name = MbValue::from_ptr(MbObject::new_str("arg_test".into()));
-        let gen = mb_generator_create(name, MbValue::none());
+        let gen = mb_generator_create(name, MbValue::none(), MbValue::none());
         let gen_id = gen.as_int().unwrap() as u64;
         mb_generator_store_arg(gen, MbValue::from_int(42));
         mb_generator_store_arg(gen, MbValue::from_int(99));

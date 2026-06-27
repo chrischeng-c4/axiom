@@ -128,7 +128,7 @@ mod cleanup_tests {
     #[test]
     fn test_cleanup_all_runtime_state_discards_generator_handles() {
         let name = MbValue::from_ptr(rc::MbObject::new_str("cleanup_gen".into()));
-        let gen = generator::mb_generator_create(name, MbValue::none());
+        let gen = generator::mb_generator_create(name, MbValue::none(), MbValue::none());
         assert!(
             generator::is_known_generator(gen),
             "generator should be registered"
