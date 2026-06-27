@@ -486,6 +486,11 @@ pub fn is_enum_class(name: &str) -> bool {
     have_enum_classes() && ENUM_CLASSES.with(|m| m.borrow().contains_key(name))
 }
 
+fn enum_class_name_for_value(value: MbValue) -> Option<String> {
+    let class_name = super::super::class::resolve_class_name(value)?;
+    is_enum_class(&class_name).then_some(class_name)
+}
+
 /// Kind of `v`'s enum class when `v` is a converted member.
 fn member_kind(v: MbValue) -> Option<EnumKind> {
     if !have_enum_classes() {
@@ -610,12 +615,22 @@ pub fn class_canonical_members(class_name: &str) -> Option<Vec<MbValue>> {
     ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.canonical.clone()))
 }
 
+pub fn class_canonical_members_for_value(value: MbValue) -> Option<Vec<MbValue>> {
+    let class_name = enum_class_name_for_value(value)?;
+    class_canonical_members(&class_name)
+}
+
 /// `len(Color)` — canonical member count.
 pub fn class_member_count(class_name: &str) -> Option<i64> {
     if !have_enum_classes() {
         return None;
     }
     ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.canonical.len() as i64))
+}
+
+pub fn class_member_count_for_value(value: MbValue) -> Option<i64> {
+    let class_name = enum_class_name_for_value(value)?;
+    class_member_count(&class_name)
 }
 
 /// `Color.__members__` — name→member mapping including aliases, in
@@ -633,6 +648,11 @@ pub fn members_map_dict(class_name: &str) -> Option<MbValue> {
         super::super::dict_ops::mb_dict_setitem(dict, key, member);
     }
     Some(dict)
+}
+
+pub fn members_map_dict_for_value(value: MbValue) -> Option<MbValue> {
+    let class_name = enum_class_name_for_value(value)?;
+    members_map_dict(&class_name)
 }
 
 /// Value→member lookup over named members (canonical first by construction)
@@ -762,6 +782,11 @@ pub fn enum_class_getitem(class_name: &str, key: MbValue) -> Option<MbValue> {
     Some(MbValue::none())
 }
 
+pub fn enum_class_getitem_for_value(value: MbValue, key: MbValue) -> Option<MbValue> {
+    let class_name = enum_class_name_for_value(value)?;
+    enum_class_getitem(&class_name, key)
+}
+
 /// `member in Color` / `value in Color` (CPython 3.12 value-contains).
 pub fn class_contains(class_name: &str, item: MbValue) -> Option<bool> {
     if !is_enum_class(class_name) {
@@ -781,6 +806,11 @@ pub fn class_contains(class_name: &str, item: MbValue) -> Option<bool> {
         }
     }
     Some(lookup_by_value(class_name, item).is_some())
+}
+
+pub fn class_contains_for_value(value: MbValue, item: MbValue) -> Option<bool> {
+    let class_name = enum_class_name_for_value(value)?;
+    class_contains(&class_name, item)
 }
 
 /// Flag containment: `Color.RED in (Color.RED | Color.BLUE)` — bit test on

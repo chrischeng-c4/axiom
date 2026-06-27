@@ -4781,6 +4781,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     }
     let attr_name = extract_str(attr).unwrap_or_default();
 
+    if attr_name == "__members__" {
+        if let Some(d) = super::stdlib::enum_class::members_map_dict_for_value(obj) {
+            return d;
+        }
+    }
+
     if attr_name == "mapping" {
         if let Some(proxy) = super::dict_ops::dict_view_mapping_proxy(obj) {
             return proxy;
@@ -11175,6 +11181,11 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     ref class_name,
                     ref fields,
                 } => {
+                    if let Some(member) =
+                        super::stdlib::enum_class::enum_class_getitem_for_value(obj, key)
+                    {
+                        return member;
+                    }
                     // Functional-API enum classes: Color['RED'] is a
                     // name lookup; a missing name raises KeyError.
                     if class_name == "_MambaFunctionalEnum" {
@@ -12272,14 +12283,8 @@ pub fn mb_obj_contains(obj: MbValue, item: MbValue) -> MbValue {
         return MbValue::from_bool(false);
     }
     // Class-body enum class: `member in Color` / `value in Color`.
-    if let Some(p) = obj.as_ptr() {
-        unsafe {
-            if let ObjData::Str(ref s) = (*p).data {
-                if let Some(found) = super::stdlib::enum_class::class_contains(s, item) {
-                    return MbValue::from_bool(found);
-                }
-            }
-        }
+    if let Some(found) = super::stdlib::enum_class::class_contains_for_value(obj, item) {
+        return MbValue::from_bool(found);
     }
     // Flag composite containment: `Color.RED in (Color.RED | Color.BLUE)`.
     if let Some(found) = super::stdlib::enum_class::flag_member_contains(obj, item) {
