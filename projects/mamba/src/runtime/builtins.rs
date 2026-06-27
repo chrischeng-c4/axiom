@@ -8009,6 +8009,9 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
                     if class_name == "functools.partial" {
                         return MbValue::from_bool(true);
                     }
+                    if class_name == "functools._singledispatchmethod_bound" {
+                        return MbValue::from_bool(true);
+                    }
                     if class_name == "collections.abc._register_bound"
                         || class_name == "abc._user_register_bound"
                     {
@@ -8352,6 +8355,11 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     all_args.extend(items);
                     let args_list = MbValue::from_ptr(MbObject::new_list(all_args));
                     return mb_call_spread(func_v, args_list);
+                }
+                if class_name == "functools._singledispatchmethod_bound" {
+                    return super::stdlib::functools_mod::mb_singledispatchmethod_call_bound(
+                        func, items,
+                    );
                 }
                 if class_name == "__unbound_method__" {
                     let guard = fields.read().unwrap();
