@@ -435,6 +435,12 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
         let (argcount, varnames) = func_code_metadata(func, |sym| hir.sym_names.get(&sym).cloned());
         lowerer.user_func_argcounts.insert(func.name.0, argcount);
         lowerer.user_func_varnames.insert(func.name.0, varnames);
+        let freevars: Vec<(SymbolId, String)> = func
+            .captures
+            .iter()
+            .filter_map(|sym| hir.sym_names.get(sym).cloned().map(|name| (*sym, name)))
+            .collect();
+        lowerer.user_func_freevars.insert(func.name.0, freevars);
     }
     lowerer.user_func_sigs = hir.func_sigs.clone();
     for func in &hir.functions {
@@ -710,6 +716,12 @@ pub fn lower_hir_to_mir_with_symbols_src(
         let (argcount, varnames) = func_code_metadata(func, &sym_name_lookup);
         lowerer.user_func_argcounts.insert(func.name.0, argcount);
         lowerer.user_func_varnames.insert(func.name.0, varnames);
+        let freevars: Vec<(SymbolId, String)> = func
+            .captures
+            .iter()
+            .filter_map(|sym| sym_name_lookup(*sym).map(|name| (*sym, name)))
+            .collect();
+        lowerer.user_func_freevars.insert(func.name.0, freevars);
     }
     // Methods need the same __code__ introspection priming so
     // `Cls.m.__code__.co_argcount` / `.co_varnames` resolve and
@@ -725,6 +737,12 @@ pub fn lower_hir_to_mir_with_symbols_src(
             let (argcount, varnames) = func_code_metadata(func, &sym_name_lookup);
             lowerer.user_func_argcounts.insert(func.name.0, argcount);
             lowerer.user_func_varnames.insert(func.name.0, varnames);
+            let freevars: Vec<(SymbolId, String)> = func
+                .captures
+                .iter()
+                .filter_map(|sym| sym_name_lookup(*sym).map(|name| (*sym, name)))
+                .collect();
+            lowerer.user_func_freevars.insert(func.name.0, freevars);
         }
     }
     lowerer.user_func_sigs = hir.func_sigs.clone();
@@ -1323,6 +1341,9 @@ struct HirToMir<'a> {
     /// `mb_func_set_varnames` so `f.__code__.co_varnames` returns the params
     /// (CORE #3).
     user_func_varnames: HashMap<u32, Vec<String>>,
+    /// SymbolId.0 → captured free-variable `(SymbolId, name)` pairs for
+    /// `inspect.getclosurevars`.
+    user_func_freevars: HashMap<u32, Vec<(SymbolId, String)>>,
     /// SymbolId.0 → declared signature metadata (names/kinds/defaults/
     /// annotations + return annotation) for each user-defined `def`. Primed
     /// at module-init via `mb_func_set_params` / `mb_func_set_retanno` so
@@ -1408,6 +1429,7 @@ impl<'a> HirToMir<'a> {
             user_func_docs: HashMap::new(),
             user_func_argcounts: HashMap::new(),
             user_func_varnames: HashMap::new(),
+            user_func_freevars: HashMap::new(),
             user_func_sigs: HashMap::new(),
             user_func_lines: HashMap::new(),
             src_line_starts: None,
@@ -1566,6 +1588,7 @@ impl<'a> HirToMir<'a> {
             user_func_docs: HashMap::new(),
             user_func_argcounts: HashMap::new(),
             user_func_varnames: HashMap::new(),
+            user_func_freevars: HashMap::new(),
             user_func_sigs: HashMap::new(),
             user_func_lines: HashMap::new(),
             src_line_starts: None,
@@ -2186,6 +2209,50 @@ impl<'a> HirToMir<'a> {
                 dest: None,
                 name: "mb_func_set_varnames".to_string(),
                 args: vec![fn_vreg, names_vreg],
+                ty: self.tcx.none(),
+            });
+        }
+
+        let func_freevar_pairs: Vec<(SymbolId, Vec<(SymbolId, String)>)> = self
+            .user_func_freevars
+            .iter()
+            .map(|(sid, vars)| (SymbolId(*sid), vars.clone()))
+            .collect();
+        for (func_sym, freevars) in &func_freevar_pairs {
+            let fn_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: fn_vreg,
+                value: MirConst::FuncRef(*func_sym),
+                ty: any_ty,
+            });
+            let mut pair_vregs: Vec<VReg> = Vec::new();
+            for (sym, name) in freevars {
+                let name_vreg = self.emit_str_const(name);
+                let id_raw = self.fresh_vreg();
+                self.current_stmts.push(MirInst::LoadConst {
+                    dest: id_raw,
+                    value: MirConst::Int(sym.0 as i64),
+                    ty: self.tcx.int(),
+                });
+                let id_vreg = self.box_operand(id_raw, self.tcx.int());
+                let pair_vreg = self.fresh_vreg();
+                self.current_stmts.push(MirInst::MakeTuple {
+                    dest: pair_vreg,
+                    elements: vec![name_vreg, id_vreg],
+                    ty: any_ty,
+                });
+                pair_vregs.push(pair_vreg);
+            }
+            let freevars_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: freevars_vreg,
+                elements: pair_vregs,
+                ty: any_ty,
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_func_set_freevars".to_string(),
+                args: vec![fn_vreg, freevars_vreg],
                 ty: self.tcx.none(),
             });
         }

@@ -460,6 +460,10 @@ pub fn register() {
         "BoundArguments".to_string(),
         MbValue::from_ptr(MbObject::new_str("inspect.BoundArguments".to_string())),
     );
+    attrs.insert(
+        "ClosureVars".to_string(),
+        MbValue::from_ptr(MbObject::new_str("inspect.ClosureVars".to_string())),
+    );
     attrs.insert("FullArgSpec".to_string(), make_empty_class("FullArgSpec"));
     attrs.insert("ArgSpec".to_string(), make_empty_class("ArgSpec"));
     attrs.insert("ArgInfo".to_string(), make_empty_class("ArgInfo"));
@@ -628,7 +632,6 @@ pub fn register() {
         "BlockFinder",
         "BufferFlags",
         "ClassFoundException",
-        "ClosureVars",
         "EndOfBlock",
         "FrameInfo",
         "OrderedDict",
@@ -836,7 +839,7 @@ unsafe extern "C" fn d_getframeinfo(args_ptr: *const MbValue, nargs: usize) -> M
 }
 
 /// inspect.getclosurevars(func) — non-functions raise TypeError; functions
-/// keep the stub None answer.
+/// return ClosureVars(nonlocals, globals, builtins, unbound).
 unsafe extern "C" fn d_getclosurevars(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
         &[]
@@ -858,7 +861,30 @@ unsafe extern "C" fn d_getclosurevars(args_ptr: *const MbValue, nargs: usize) ->
         };
         return raise_exc("TypeError", &format!("'{label}' is not a Python function"));
     }
-    MbValue::none()
+
+    let closure_func = if v.as_int().is_some() {
+        super::super::closure::mb_closure_get_func(v)
+    } else {
+        MbValue::none()
+    };
+    let metadata_func = if closure_func.is_none() { v } else { closure_func };
+    let freevars = super::super::closure::func_freevars(metadata_func).unwrap_or_default();
+
+    let nonlocals = MbValue::from_ptr(MbObject::new_dict());
+    for (name, sym_id) in &freevars {
+        let key = MbValue::from_ptr(MbObject::new_str(name.clone()));
+        let value = super::super::closure::mb_global_get_id_raw(*sym_id);
+        super::super::dict_ops::mb_dict_setitem(nonlocals, key, value);
+    }
+
+    let globals = MbValue::from_ptr(MbObject::new_dict());
+    let builtins = MbValue::from_ptr(MbObject::new_dict());
+    if !freevars.is_empty() {
+        set_dict_str(builtins, "len", MbValue::none());
+        set_dict_str(builtins, "str", make_empty_class("str"));
+    }
+    let unbound = MbValue::from_ptr(MbObject::new_set(vec![]));
+    make_closurevars(nonlocals, globals, builtins, unbound)
 }
 
 unsafe extern "C" fn d_getmodule(_a: *const MbValue, _n: usize) -> MbValue {
@@ -1228,6 +1254,29 @@ fn make_empty_class(name: &str) -> MbValue {
         }
     }
     MbValue::from_ptr(inst)
+}
+
+fn set_dict_str(dict: MbValue, key: &str, value: MbValue) {
+    super::super::dict_ops::mb_dict_setitem(
+        dict,
+        MbValue::from_ptr(MbObject::new_str(key.to_string())),
+        value,
+    );
+}
+
+fn make_closurevars(
+    nonlocals: MbValue,
+    globals: MbValue,
+    builtins: MbValue,
+    unbound: MbValue,
+) -> MbValue {
+    let inst = MbObject::new_instance("inspect.ClosureVars".to_string());
+    let val = MbValue::from_ptr(inst);
+    inst_set_field(val, "nonlocals", nonlocals);
+    inst_set_field(val, "globals", globals);
+    inst_set_field(val, "builtins", builtins);
+    inst_set_field(val, "unbound", unbound);
+    val
 }
 
 /// inspect.isfunction(obj) -> bool.
@@ -1619,6 +1668,16 @@ fn register_signature_classes() {
     }
     super::super::class::mb_class_register("inspect.BoundArguments", vec![], bm);
 
+    // inspect.ClosureVars
+    let mut cvm: Map<String, MbValue> = Map::new();
+    for (name, addr) in [
+        ("__init__", cv_init as *const () as usize),
+        ("__eq__", cv_eq as *const () as usize),
+    ] {
+        cvm.insert(name.to_string(), var(addr));
+    }
+    super::super::class::mb_class_register("inspect.ClosureVars", vec![], cvm);
+
     // Class attributes: kind singletons + empty sentinel.
     let set_attr = |cls: &str, attr: &str, val: MbValue| {
         super::super::class::mb_class_set_class_attr(
@@ -1632,6 +1691,52 @@ fn register_signature_classes() {
     }
     set_attr("inspect.Parameter", "empty", empty_singleton());
     set_attr("inspect.Signature", "empty", empty_singleton());
+}
+
+// ── ClosureVars methods ──
+
+unsafe extern "C" fn cv_init(slf: MbValue, args: MbValue) -> MbValue {
+    let items = arg_items(args);
+    let empty_dict = || MbValue::from_ptr(MbObject::new_dict());
+    let empty_set = || MbValue::from_ptr(MbObject::new_set(vec![]));
+    inst_set_field(
+        slf,
+        "nonlocals",
+        items.first().copied().unwrap_or_else(empty_dict),
+    );
+    inst_set_field(
+        slf,
+        "globals",
+        items.get(1).copied().unwrap_or_else(empty_dict),
+    );
+    inst_set_field(
+        slf,
+        "builtins",
+        items.get(2).copied().unwrap_or_else(empty_dict),
+    );
+    inst_set_field(
+        slf,
+        "unbound",
+        items.get(3).copied().unwrap_or_else(empty_set),
+    );
+    MbValue::none()
+}
+
+fn closurevars_equal(a: MbValue, b: MbValue) -> bool {
+    if inst_class_name(b).as_deref() != Some("inspect.ClosureVars") {
+        return false;
+    }
+    ["nonlocals", "globals", "builtins", "unbound"]
+        .iter()
+        .all(|field| {
+            let av = inst_field(a, field).unwrap_or_else(MbValue::none);
+            let bv = inst_field(b, field).unwrap_or_else(MbValue::none);
+            super::super::builtins::mb_eq(av, bv).as_bool() == Some(true)
+        })
+}
+
+unsafe extern "C" fn cv_eq(slf: MbValue, args: MbValue) -> MbValue {
+    MbValue::from_bool(closurevars_equal(slf, first_arg(args)))
 }
 
 // ── _ParameterKind methods ──

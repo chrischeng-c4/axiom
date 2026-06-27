@@ -328,6 +328,8 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     static FUNC_VARNAMES: std::cell::RefCell<HashMap<u64, Vec<String>>> =
         std::cell::RefCell::new(HashMap::new());
+    static FUNC_FREEVARS: std::cell::RefCell<HashMap<u64, Vec<(String, i64)>>> =
+        std::cell::RefCell::new(HashMap::new());
     // Declared-signature metadata for `inspect.signature` (FUNC_PARAMS) and
     // the textual return annotation (FUNC_RET_ANNOS). Populated at module
     // init via mb_func_set_params / mb_func_set_retanno emitted by lowering.
@@ -581,6 +583,49 @@ pub fn mb_func_get_varnames(func: MbValue) -> MbValue {
     })
 }
 
+/// Register a function's free variables for inspect.getclosurevars.
+///
+/// The list contains `(name, symbol_id)` pairs. Values still live in the
+/// runtime global-id namespace because nested functions share captured locals
+/// through StoreGlobal/LoadGlobal on the captured SymbolId.
+pub fn mb_func_set_freevars(func: MbValue, freevars: MbValue) {
+    let mut collected: Vec<(String, i64)> = Vec::new();
+    if let Some(ptr) = freevars.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                for item in lock.read().unwrap().iter() {
+                    let Some(pair_ptr) = item.as_ptr() else {
+                        continue;
+                    };
+                    let ObjData::Tuple(ref pair) = (*pair_ptr).data else {
+                        continue;
+                    };
+                    if pair.len() < 2 {
+                        continue;
+                    }
+                    let Some(name) = extract_str(pair[0]) else {
+                        continue;
+                    };
+                    let Some(sym_id) = pair[1].as_int() else {
+                        continue;
+                    };
+                    collected.push((name, sym_id));
+                }
+            }
+        }
+    }
+    let key = func.to_bits();
+    FUNC_FREEVARS.with(|m| {
+        m.borrow_mut().insert(key, collected);
+    });
+}
+
+/// Registered free variables for a function, if any metadata was primed.
+pub fn func_freevars(func: MbValue) -> Option<Vec<(String, i64)>> {
+    let key = func.to_bits();
+    FUNC_FREEVARS.with(|m| m.borrow().get(&key).cloned())
+}
+
 /// True if `func` is a registered user-defined function (present in any of the
 /// function metadata registries). Used to gate `__code__` synthesis so we don't
 /// fabricate a code object for arbitrary ints / pointers.
@@ -757,6 +802,11 @@ pub fn mb_global_set(name: MbValue, value: MbValue) {
 /// The id is passed as raw i64 (not NaN-boxed).
 pub fn mb_global_get_id(id: MbValue) -> MbValue {
     let key = id.to_bits() as i64;
+    mb_global_get_id_raw(key)
+}
+
+/// Read a global-id namespace value by raw SymbolId.
+pub fn mb_global_get_id_raw(key: i64) -> MbValue {
     GLOBAL_ID_NAMESPACE.with(|ns| {
         let val = ns.borrow().get(&key).copied();
         if val.is_none() && missing_global_should_raise_name_error() {
@@ -1015,6 +1065,7 @@ pub(crate) fn cleanup_all_closures() {
     let _ = FUNC_MODULES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_ARGCOUNTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_VARNAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_FREEVARS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_RET_ANNOS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_LINES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
