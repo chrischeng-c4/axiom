@@ -1355,19 +1355,23 @@ pub fn register() {
 /// which an enclosing `try/except SystemExit` can intercept. The message is the
 /// stringified exit code (CPython stores the code in `SystemExit.code`).
 pub fn mb_sys_exit(code: MbValue) -> MbValue {
-    let msg = match code.as_int() {
-        Some(i) => i.to_string(),
-        None if code.is_none() => String::new(),
-        None => match code.as_ptr() {
-            Some(ptr) => unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    s.clone()
-                } else {
-                    String::new()
-                }
+    let msg = if let Some(b) = code.as_bool() {
+        if b { "1" } else { "0" }.to_string()
+    } else {
+        match code.as_int() {
+            Some(i) => i.to_string(),
+            None if code.is_none() => String::new(),
+            None => match code.as_ptr() {
+                Some(ptr) => unsafe {
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        s.clone()
+                    } else {
+                        String::new()
+                    }
+                },
+                None => String::new(),
             },
-            None => String::new(),
-        },
+        }
     };
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("SystemExit".to_string())),
