@@ -909,6 +909,16 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                             }
                         }
                         // Retain iter_obj — it will live in ITERATORS map, GC must not free it.
+                        let next_method = class::mb_lookup_dunder(
+                            iter_obj,
+                            MbValue::from_ptr(MbObject::new_str("__next__".into())),
+                        );
+                        if next_method.is_none() {
+                            return raise_type_error(&format!(
+                                "iter() returned non-iterator of type '{}'",
+                                super::builtins::value_type_name(iter_obj)
+                            ));
+                        }
                         super::rc::retain_if_ptr(iter_obj);
                         // The returned iterator object must have __next__
                         IterKind::UserDefined(iter_obj)
@@ -3441,7 +3451,8 @@ fn advance_userdefined_if_applicable(id: u64) -> Option<MbValue> {
         MbValue::from_ptr(MbObject::new_str("__next__".into())),
     );
     if next_method.is_none() {
-        // No __next__ — mark exhausted and release our retain on iter_obj.
+        // No __next__ — mark exhausted, release our retain on iter_obj, and
+        // propagate the protocol violation instead of silently stopping.
         ITERATORS.with(|iters| {
             if let Some(iter) = iters.borrow_mut().get_mut(&id) {
                 iter.exhausted = true;
@@ -3450,6 +3461,10 @@ fn advance_userdefined_if_applicable(id: u64) -> Option<MbValue> {
         unsafe {
             super::rc::release_if_ptr(iter_obj);
         }
+        raise_type_error(&format!(
+            "'{}' object is not iterable",
+            super::builtins::value_type_name(iter_obj)
+        ));
         return Some(MbValue::none());
     }
 
