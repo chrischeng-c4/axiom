@@ -5960,6 +5960,17 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     {
                         return make_bound_native_method(obj, &attr_name);
                     }
+                    if class_name == "local"
+                        && !(attr_name.starts_with("__") && attr_name.ends_with("__"))
+                    {
+                        let instance = super::exception::mb_attribute_error_with_name_obj(
+                            &format!("'_thread._local' object has no attribute '{attr_name}'"),
+                            &attr_name,
+                            obj,
+                        );
+                        mb_raise_instance(instance);
+                        return MbValue::none();
+                    }
                     // 4. Fallback: __getattr__(self, name) dunder — call if it is a
                     //    TAG_FUNC function pointer; return value directly for other
                     //    stored values (legacy/non-JIT path).
