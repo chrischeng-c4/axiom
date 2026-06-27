@@ -6,6 +6,8 @@ use super::rc::{MbObject, ObjData};
 /// Implements Python's __iter__/__next__ protocol with iterators for
 /// built-in types (list, dict, tuple, str, range).
 use super::value::MbValue;
+use num_bigint::BigInt;
+use num_traits::{One, Signed, ToPrimitive, Zero};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -47,7 +49,11 @@ pub enum IterKind {
     /// Iterating over string characters
     Str(Vec<char>),
     /// Iterating over range(start, stop, step)
-    Range { current: i64, stop: i64, step: i64 },
+    Range {
+        current: BigInt,
+        stop: BigInt,
+        step: BigInt,
+    },
     /// Iterating over enumerate(iter).
     ///
     /// The inner iterator stays as a separate ITERATORS entry (`inner_id`)
@@ -376,27 +382,7 @@ pub fn unregister_generator_iter(gen_handle: MbValue) {
 /// Returns None if the handle is not a valid iterator (caller should fall back).
 pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
     let id = handle.as_int()? as u64;
-    if let Some((current, stop, step)) = mb_iter_range_params(handle) {
-        let count = if step > 0 {
-            ((stop - current + step - 1) / step).max(0) as usize
-        } else if step < 0 {
-            ((current - stop - step - 1) / (-step)).max(0) as usize
-        } else {
-            0
-        };
-        let mut items = Vec::with_capacity(count);
-        let mut cur = current;
-        if step > 0 {
-            while cur < stop {
-                items.push(MbValue::from_int(cur));
-                cur += step;
-            }
-        } else {
-            while cur > stop {
-                items.push(MbValue::from_int(cur));
-                cur += step;
-            }
-        }
+    if let Some(items) = range_iter_to_vec(handle) {
         return Some(items);
     }
     // Remove the iterator from storage to avoid borrowing issues.
@@ -408,26 +394,15 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             stop,
             step,
         } => {
-            // Compute the number of elements and build Vec in one allocation.
-            let count = if step > 0 {
-                ((stop - current + step - 1) / step).max(0) as usize
-            } else if step < 0 {
-                ((current - stop - step - 1) / (-step)).max(0) as usize
-            } else {
-                0
+            let len = range_len_big(&current, &stop, &step);
+            let Some(capacity) = len.to_usize() else {
+                return Some(Vec::new());
             };
-            let mut items = Vec::with_capacity(count);
+            let mut items = Vec::with_capacity(capacity);
             let mut cur = current;
-            if step > 0 {
-                while cur < stop {
-                    items.push(MbValue::from_int(cur));
-                    cur += step;
-                }
-            } else {
-                while cur > stop {
-                    items.push(MbValue::from_int(cur));
-                    cur += step;
-                }
+            while range_has_next_big(&cur, &stop, &step) {
+                items.push(bigint_to_value(cur.clone()));
+                cur += &step;
             }
             Some(items)
         }
@@ -860,44 +835,88 @@ pub fn mb_iter_sentinel(callable: MbValue, sentinel: MbValue) -> MbValue {
     MbValue::from_int(id as i64)
 }
 
-/// Compute the remaining-elements count of a Range-kind iterator handle.
-/// Returns None for non-range or non-iterator values. Used by len(range(...))
-/// and range.__len__ so `len(range(a, b, c))` answers in O(1) without
-/// consuming the iterator.
-pub fn mb_iter_range_len(handle: MbValue) -> Option<i64> {
+fn value_to_range_bigint(v: MbValue) -> Option<BigInt> {
+    if let Some(i) = v.as_int_pyint() {
+        return Some(BigInt::from(i));
+    }
+    unsafe { super::bigint_ops::extract_bigint(v) }
+}
+
+fn bigint_to_value(v: BigInt) -> MbValue {
+    super::bigint_ops::normalize_bigint(v)
+}
+
+fn range_state(handle: MbValue) -> Option<(BigInt, BigInt, BigInt)> {
     let id = handle.as_int()? as u64;
     ITERATORS.with(|iters| {
         let borrowed = iters.borrow();
         let it = borrowed.get(&id)?;
-        if it.exhausted {
-            return Some(0);
-        }
         if let IterKind::Range {
             current,
             stop,
             step,
-        } = it.kind
+        } = &it.kind
         {
-            if step == 0 {
-                return Some(0);
-            }
-            let remaining = if step > 0 {
-                if current >= stop {
-                    0
-                } else {
-                    (stop - current + step - 1) / step
-                }
-            } else {
-                if current <= stop {
-                    0
-                } else {
-                    (current - stop + (-step) - 1) / (-step)
-                }
-            };
-            return Some(remaining);
+            Some((current.clone(), stop.clone(), step.clone()))
+        } else {
+            None
         }
-        None
     })
+}
+
+pub fn is_range_handle(handle: MbValue) -> bool {
+    range_state(handle).is_some()
+}
+
+fn range_len_big(current: &BigInt, stop: &BigInt, step: &BigInt) -> BigInt {
+    if step.is_zero() {
+        return BigInt::zero();
+    }
+    let one = BigInt::one();
+    if step.is_positive() {
+        if current >= stop {
+            BigInt::zero()
+        } else {
+            ((stop - current - &one) / step) + one
+        }
+    } else if current <= stop {
+        BigInt::zero()
+    } else {
+        let neg_step = -step;
+        ((current - stop - &one) / &neg_step) + one
+    }
+}
+
+fn range_has_next_big(current: &BigInt, stop: &BigInt, step: &BigInt) -> bool {
+    if step.is_positive() {
+        current < stop
+    } else if step.is_negative() {
+        current > stop
+    } else {
+        false
+    }
+}
+
+fn range_len_for_handle(handle: MbValue) -> Option<BigInt> {
+    let (current, stop, step) = range_state(handle)?;
+    Some(range_len_big(&current, &stop, &step))
+}
+
+/// Compute the remaining-elements count of a Range-kind iterator handle.
+/// Returns None for non-range or non-iterator values. The legacy raw-i64 form
+/// saturates huge lengths for callers that can only carry machine integers;
+/// `mb_iter_range_len_value` keeps the exact Python integer.
+pub fn mb_iter_range_len(handle: MbValue) -> Option<i64> {
+    range_len_for_handle(handle).map(|n| n.to_i64().unwrap_or(i64::MAX))
+}
+
+pub fn mb_iter_range_len_value(handle: MbValue) -> Option<MbValue> {
+    range_len_for_handle(handle).map(bigint_to_value)
+}
+
+pub fn mb_iter_range_is_nonempty(handle: MbValue) -> Option<bool> {
+    let (current, stop, step) = range_state(handle)?;
+    Some(range_has_next_big(&current, &stop, &step))
 }
 
 /// Best-effort `__length_hint__` for a live iterator handle: the number of
@@ -947,28 +966,15 @@ pub fn mb_iter_length_hint(handle: MbValue) -> Option<i64> {
     })
 }
 
-/// If `handle` refers to an unexhausted Range iterator, return its
-/// `(current, stop, step)`. Used by `mb_obj_contains` to implement
-/// O(1) `value in range(...)` membership without iterating.
-pub fn mb_iter_range_params(handle: MbValue) -> Option<(i64, i64, i64)> {
-    let id = handle.as_int()? as u64;
-    ITERATORS.with(|iters| {
-        let borrowed = iters.borrow();
-        let it = borrowed.get(&id)?;
-        if it.exhausted {
-            return None;
-        }
-        if let IterKind::Range {
-            current,
-            stop,
-            step,
-        } = it.kind
-        {
-            Some((current, stop, step))
-        } else {
-            None
-        }
-    })
+/// If `handle` refers to an unexhausted Range iterator, return its exact
+/// `(current, stop, step)` Python integer values.
+pub fn mb_iter_range_params(handle: MbValue) -> Option<(MbValue, MbValue, MbValue)> {
+    let (current, stop, step) = range_state(handle)?;
+    Some((
+        bigint_to_value(current),
+        bigint_to_value(stop),
+        bigint_to_value(step),
+    ))
 }
 
 /// CPython-compatible structural equality for two iterator handles **when
@@ -980,40 +986,102 @@ pub fn mb_iter_range_params(handle: MbValue) -> Option<(i64, i64, i64)> {
 /// >= 1 the starts (i.e. current cursors) match, and when length >= 2 the
 /// steps also match. Empty ranges compare equal regardless of step/start.
 pub fn ranges_value_eq(a: MbValue, b: MbValue) -> Option<bool> {
-    let (ac, astop, ast) = mb_iter_range_params(a)?;
-    let (bc, bstop, bst) = mb_iter_range_params(b)?;
-    let len = |c: i64, e: i64, s: i64| -> i64 {
-        if s == 0 {
-            0
-        } else if s > 0 {
-            if c >= e {
-                0
-            } else {
-                (e - c + s - 1) / s
-            }
-        } else {
-            if c <= e {
-                0
-            } else {
-                (c - e + (-s) - 1) / (-s)
-            }
-        }
-    };
-    let la = len(ac, astop, ast);
-    let lb = len(bc, bstop, bst);
+    let (ac, astop, ast) = range_state(a)?;
+    let (bc, bstop, bst) = range_state(b)?;
+    let la = range_len_big(&ac, &astop, &ast);
+    let lb = range_len_big(&bc, &bstop, &bst);
     if la != lb {
         return Some(false);
     }
-    if la == 0 {
+    if la.is_zero() {
         return Some(true);
     }
     if ac != bc {
         return Some(false);
     }
-    if la == 1 {
+    if la == BigInt::one() {
         return Some(true);
     }
     Some(ast == bst)
+}
+
+fn range_contains_big(current: &BigInt, stop: &BigInt, step: &BigInt, value: &BigInt) -> bool {
+    if step.is_zero() {
+        return false;
+    }
+    let in_bounds = if step.is_positive() {
+        value >= current && value < stop
+    } else {
+        value <= current && value > stop
+    };
+    if !in_bounds {
+        return false;
+    }
+    let diff = value - current;
+    (diff % step.abs()).is_zero()
+}
+
+fn range_value_as_member_int(value: MbValue) -> Option<BigInt> {
+    value_to_range_bigint(value).or_else(|| {
+        let f = value.as_float()?;
+        if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+            Some(BigInt::from(f as i64))
+        } else {
+            None
+        }
+    })
+}
+
+pub fn range_contains_value(handle: MbValue, value: MbValue) -> Option<MbValue> {
+    let (current, stop, step) = range_state(handle)?;
+    if let Some(v) = range_value_as_member_int(value) {
+        return Some(MbValue::from_bool(range_contains_big(
+            &current, &stop, &step, &v,
+        )));
+    }
+    Some(MbValue::from_bool(false))
+}
+
+pub fn range_count(handle: MbValue, value: MbValue) -> Option<MbValue> {
+    let present = range_contains_value(handle, value)?
+        .as_bool()
+        .unwrap_or(false);
+    Some(MbValue::from_int(if present { 1 } else { 0 }))
+}
+
+pub fn range_index(handle: MbValue, value: MbValue) -> Option<MbValue> {
+    let (current, stop, step) = range_state(handle)?;
+    if let Some(v) = range_value_as_member_int(value) {
+        if range_contains_big(&current, &stop, &step, &v) {
+            return Some(bigint_to_value((v - current) / step));
+        }
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str("value is not in range".to_string())),
+    );
+    Some(MbValue::none())
+}
+
+pub fn range_hash(handle: MbValue) -> Option<MbValue> {
+    let (current, stop, step) = range_state(handle)?;
+    let len = range_len_big(&current, &stop, &step);
+    let one = BigInt::one();
+    let items = vec![
+        bigint_to_value(len.clone()),
+        if len.is_zero() {
+            MbValue::none()
+        } else {
+            bigint_to_value(current)
+        },
+        if len > one {
+            bigint_to_value(step)
+        } else {
+            MbValue::none()
+        },
+    ];
+    let tup = MbValue::from_ptr(MbObject::new_tuple(items));
+    Some(super::tuple_ops::mb_tuple_hash(tup))
 }
 
 /// If `handle` refers to an unexhausted Range iterator, return the value at
@@ -1021,43 +1089,39 @@ pub fn ranges_value_eq(a: MbValue, b: MbValue) -> Option<bool> {
 /// from the end). Returns None if `handle` is not a Range iter or if the
 /// index is out of bounds; callers must raise IndexError when None is
 /// returned to a known-Range input.
-pub fn range_iter_getitem(handle: MbValue, idx: i64) -> Option<i64> {
-    let (current, stop, step) = mb_iter_range_params(handle)?;
-    let len = if step == 0 {
-        0
-    } else if step > 0 {
-        if current >= stop {
-            0
-        } else {
-            (stop - current + step - 1) / step
-        }
-    } else {
-        if current <= stop {
-            0
-        } else {
-            (current - stop + (-step) - 1) / (-step)
-        }
-    };
-    let i = if idx < 0 { idx + len } else { idx };
-    if i < 0 || i >= len {
-        return None;
-    }
-    Some(current + i * step)
+pub fn range_iter_getitem(handle: MbValue, idx: i64) -> Option<MbValue> {
+    range_iter_getitem_big(handle, BigInt::from(idx))
 }
 
-fn range_len(current: i64, stop: i64, step: i64) -> i64 {
-    if step == 0 {
-        0
-    } else if step > 0 {
-        if current >= stop {
-            0
-        } else {
-            (stop - current + step - 1) / step
-        }
-    } else if current <= stop {
-        0
+fn range_iter_getitem_big(handle: MbValue, idx: BigInt) -> Option<MbValue> {
+    let (current, stop, step) = range_state(handle)?;
+    let len = range_len_big(&current, &stop, &step);
+    let i = if idx.is_negative() { idx + &len } else { idx };
+    if i.is_negative() || i >= len {
+        return None;
+    }
+    Some(bigint_to_value(current + i * step))
+}
+
+pub fn range_iter_getitem_value(handle: MbValue, idx: MbValue) -> Option<MbValue> {
+    range_iter_getitem_big(handle, value_to_range_bigint(idx)?)
+}
+
+fn clamp_big(idx: BigInt, low: &BigInt, high: &BigInt) -> BigInt {
+    if idx < *low {
+        low.clone()
+    } else if idx > *high {
+        high.clone()
     } else {
-        (current - stop + (-step) - 1) / (-step)
+        idx
+    }
+}
+
+fn slice_index(v: MbValue, default: BigInt) -> Option<BigInt> {
+    if v.is_none() {
+        Some(default)
+    } else {
+        value_to_range_bigint(v)
     }
 }
 
@@ -1069,14 +1133,14 @@ pub fn range_iter_slice(
     stop_v: MbValue,
     step_v: MbValue,
 ) -> Option<MbValue> {
-    let (current, stop, step) = mb_iter_range_params(handle)?;
-    let len = range_len(current, stop, step);
+    let (current, stop, step) = range_state(handle)?;
+    let len = range_len_big(&current, &stop, &step);
     let slice_step = if step_v.is_none() {
-        1
+        BigInt::one()
     } else {
-        step_v.as_int_pyint().unwrap_or(1)
+        value_to_range_bigint(step_v).unwrap_or_else(BigInt::one)
     };
-    if slice_step == 0 {
+    if slice_step.is_zero() {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
             MbValue::from_ptr(MbObject::new_str("slice step cannot be zero".to_string())),
@@ -1084,88 +1148,94 @@ pub fn range_iter_slice(
         return Some(MbValue::none());
     }
 
-    let clamp_pos = |idx: i64| idx.max(0).min(len);
-    let clamp_neg = |idx: i64| idx.max(-1).min(len - 1);
+    let zero = BigInt::zero();
+    let one = BigInt::one();
+    let neg_one = -&one;
+    let len_minus_one = &len - &one;
 
-    let raw_start = start_v.as_int_pyint();
-    let raw_stop = stop_v.as_int_pyint();
-    let start_idx = if slice_step > 0 {
-        raw_start
-            .map(|i| {
-                if i < 0 {
-                    clamp_pos(i + len)
-                } else {
-                    clamp_pos(i)
-                }
-            })
-            .unwrap_or(0)
+    let raw_start = slice_index(
+        start_v,
+        if slice_step.is_positive() {
+            zero.clone()
+        } else {
+            len_minus_one.clone()
+        },
+    )?;
+    let raw_stop = slice_index(
+        stop_v,
+        if slice_step.is_positive() {
+            len.clone()
+        } else {
+            neg_one.clone()
+        },
+    )?;
+    let start_idx = if slice_step.is_positive() {
+        let i = if raw_start.is_negative() {
+            raw_start + &len
+        } else {
+            raw_start
+        };
+        clamp_big(i, &zero, &len)
     } else {
-        raw_start
-            .map(|i| {
-                if i < 0 {
-                    clamp_neg(i + len)
-                } else {
-                    clamp_neg(i)
-                }
-            })
-            .unwrap_or(len - 1)
+        let i = if raw_start.is_negative() {
+            raw_start + &len
+        } else {
+            raw_start
+        };
+        clamp_big(i, &neg_one, &len_minus_one)
     };
-    let stop_idx = if slice_step > 0 {
-        raw_stop
-            .map(|i| {
-                if i < 0 {
-                    clamp_pos(i + len)
-                } else {
-                    clamp_pos(i)
-                }
-            })
-            .unwrap_or(len)
+    let stop_idx = if slice_step.is_positive() {
+        let i = if raw_stop.is_negative() {
+            raw_stop + &len
+        } else {
+            raw_stop
+        };
+        clamp_big(i, &zero, &len)
     } else {
-        raw_stop
-            .map(|i| {
-                if i < 0 {
-                    clamp_neg(i + len)
-                } else {
-                    clamp_neg(i)
-                }
-            })
-            .unwrap_or(-1)
+        let i = if raw_stop.is_negative() {
+            raw_stop + &len
+        } else {
+            raw_stop
+        };
+        clamp_big(i, &neg_one, &len_minus_one)
     };
 
-    let new_start = current + start_idx * step;
-    let new_stop = current + stop_idx * step;
+    let new_start = &current + start_idx * &step;
+    let new_stop = &current + stop_idx * &step;
     let new_step = step * slice_step;
     Some(mb_range_iter(
-        MbValue::from_int(new_start),
-        MbValue::from_int(new_stop),
-        MbValue::from_int(new_step),
+        bigint_to_value(new_start),
+        bigint_to_value(new_stop),
+        bigint_to_value(new_step),
     ))
 }
 
-/// Create a range iterator.
-/// Extract a range bound as i64. Accepts register ints and bools directly, and
-/// unboxes a BigInt that fits i64 (range over `sys.maxsize`-scale bounds); any
-/// other value (None, float, or a BigInt beyond i64) falls back to `default`.
-fn range_bound(v: MbValue, default: i64) -> i64 {
-    if let Some(i) = v.as_int_pyint() {
-        return i;
+pub fn range_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
+    let (mut cur, stop, step) = range_state(handle)?;
+    let len = range_len_big(&cur, &stop, &step);
+    let Some(capacity) = len.to_usize() else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("MemoryError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "range is too large to materialize".to_string(),
+            )),
+        );
+        return Some(Vec::new());
+    };
+    let mut items = Vec::with_capacity(capacity);
+    while range_has_next_big(&cur, &stop, &step) {
+        items.push(bigint_to_value(cur.clone()));
+        cur += &step;
     }
-    use num_traits::ToPrimitive;
-    if let Some(i) = unsafe { super::bigint_ops::extract_bigint(v) }.and_then(|b| b.to_i64()) {
-        return i;
-    }
-    default
+    Some(items)
 }
 
+/// Create a range iterator.
 pub fn mb_range_iter(start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
-    // bool ≤ int (#1680). A bound above 2^47 is a NaN-box-promoted BigInt, so
-    // `as_int_pyint` is None; unbox it to its exact i64 (range is i64-bounded)
-    // so `range(sys.maxsize - 1)` spans its real length rather than collapsing
-    // to an empty range.
-    let s = range_bound(start, 0);
-    let e = range_bound(stop, 0);
-    let st = range_bound(step, 1);
-    if st == 0 {
+    let s = value_to_range_bigint(start).unwrap_or_else(BigInt::zero);
+    let e = value_to_range_bigint(stop).unwrap_or_else(BigInt::zero);
+    let st = value_to_range_bigint(step).unwrap_or_else(BigInt::one);
+    if st.is_zero() {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
             MbValue::from_ptr(MbObject::new_str(
@@ -1417,34 +1487,8 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
     if let Some(id) = seq.as_int() {
         let is_iter = ITERATORS.with(|iters| iters.borrow().contains_key(&(id as u64)));
         if is_iter {
-            let items: Vec<MbValue> = ITERATORS.with(|iters| {
-                let borrowed = iters.borrow();
-                let it = borrowed.get(&(id as u64)).unwrap();
-                if let IterKind::Range {
-                    current,
-                    stop,
-                    step,
-                } = it.kind
-                {
-                    let mut out = Vec::new();
-                    let mut c = current;
-                    if step > 0 {
-                        while c < stop {
-                            out.push(MbValue::from_int(c));
-                            c += step;
-                        }
-                    } else if step < 0 {
-                        while c > stop {
-                            out.push(MbValue::from_int(c));
-                            c += step;
-                        }
-                    }
-                    out.reverse();
-                    out
-                } else {
-                    Vec::new()
-                }
-            });
+            let mut items = range_iter_to_vec(seq).unwrap_or_default();
+            items.reverse();
             ITERATORS.with(|iters| {
                 iters.borrow_mut().remove(&(id as u64));
             });
@@ -2782,7 +2826,7 @@ pub fn mb_has_next(iter_handle: MbValue) -> MbValue {
                     step,
                 } = &iter.kind
                 {
-                    let has = (*step > 0 && *current < *stop) || (*step < 0 && *current > *stop);
+                    let has = range_has_next_big(current, stop, step);
                     if !has {
                         iter.exhausted = true;
                     }
@@ -3589,11 +3633,7 @@ fn advance_chain_from_iterable_if_applicable(id: u64) -> Option<MbValue> {
         }
 
         let next_inner = if let Some((current, stop, step)) = mb_iter_range_params(sub_iterable) {
-            mb_range_iter(
-                MbValue::from_int(current),
-                MbValue::from_int(stop),
-                MbValue::from_int(step),
-            )
+            mb_range_iter(current, stop, step)
         } else {
             mb_iter(sub_iterable)
         };
@@ -3836,9 +3876,9 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
             stop,
             step,
         } => {
-            if (*step > 0 && *current < *stop) || (*step < 0 && *current > *stop) {
-                let val = MbValue::from_int(*current);
-                *current += *step;
+            if range_has_next_big(current, stop, step) {
+                let val = bigint_to_value(current.clone());
+                *current += &*step;
                 val
             } else {
                 iter.exhausted = true;

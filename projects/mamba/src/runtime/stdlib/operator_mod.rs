@@ -180,25 +180,16 @@ fn subscript(obj: MbValue, key: MbValue) -> MbValue {
         None => {
             // range objects are bare iterator handles (ints), not heap ptrs.
             // Support integer indexing into them (CPython: range[i]).
-            if let Some((current, stop, step)) = super::super::iter::mb_iter_range_params(obj) {
-                let len = super::super::iter::mb_iter_range_len(obj).unwrap_or(0);
+            if super::super::iter::is_range_handle(obj) {
                 // Reject non-integer keys (None, str, float) with TypeError.
                 if key.is_float() || is_str(key) || key.is_none() {
                     raise("TypeError", "range indices must be integers or slices");
                     return MbValue::none();
                 }
-                match key.as_int() {
-                    Some(i) => {
-                        let r = if i < 0 { i + len } else { i };
-                        if r >= 0 && r < len {
-                            let _ = stop;
-                            return MbValue::from_int(current + r * step);
-                        }
-                        raise("IndexError", "range object index out of range");
-                        return MbValue::none();
-                    }
+                match super::super::iter::range_iter_getitem_value(obj, key) {
+                    Some(v) => return v,
                     None => {
-                        raise("TypeError", "range indices must be integers or slices");
+                        raise("IndexError", "range object index out of range");
                         return MbValue::none();
                     }
                 }
