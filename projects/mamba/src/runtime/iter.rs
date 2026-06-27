@@ -297,6 +297,16 @@ pub fn mb_iter_supports_setstate(val: MbValue) -> bool {
     })
 }
 
+pub fn mb_userdefined_iterator_target(val: MbValue) -> Option<MbValue> {
+    let id = val.as_int()? as u64;
+    ITERATORS.with(|iters| {
+        iters.borrow().get(&id).and_then(|iter| match iter.kind {
+            IterKind::UserDefined(obj) => Some(obj),
+            _ => None,
+        })
+    })
+}
+
 /// Raise StopIteration — called by compiled __next__ when done.
 pub fn mb_stop_iteration(_dummy: MbValue) -> MbValue {
     STOP_ITERATION.with(|f| f.set(true));
