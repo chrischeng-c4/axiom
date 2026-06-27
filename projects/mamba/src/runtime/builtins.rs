@@ -8396,6 +8396,26 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             return result;
                         }
                     }
+                    if matches!(method_str.as_str(), "extract" | "from_list")
+                        && (type_name == "StackSummary"
+                            || super::class::class_mro_any(&type_name, |name| {
+                                name == "StackSummary"
+                            }))
+                    {
+                        let m = super::class::lookup_method(&type_name, &method_str);
+                        if let Some(addr) = m.as_func() {
+                            if super::module::is_native_func(addr as u64) {
+                                let mut all_items = Vec::with_capacity(items.len() + 1);
+                                all_items.push(MbValue::from_ptr(MbObject::new_str(
+                                    type_name.clone(),
+                                )));
+                                all_items.extend(items.iter().copied());
+                                let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+                                    std::mem::transmute(addr);
+                                return f(all_items.as_ptr(), all_items.len());
+                            }
+                        }
+                    }
                     // complex comparison dunders accessed unbound
                     // (`complex.__eq__(a, b)` etc.). __eq__/__ne__ return a bool
                     // when the other operand is numeric and NotImplemented

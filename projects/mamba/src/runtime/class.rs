@@ -14483,6 +14483,21 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         method, cls_recv, items,
                     );
                 }
+                if matches!(name.as_str(), "extract" | "from_list")
+                    && (s == "StackSummary" || class_mro_any(s, |base| base == "StackSummary"))
+                {
+                    if let Some(addr) = method.as_func() {
+                        if super::module::is_native_func(addr as u64) {
+                            let items = super::builtins::extract_items(args);
+                            let mut all_items = Vec::with_capacity(items.len() + 1);
+                            all_items.push(MbValue::from_ptr(MbObject::new_str(s.clone())));
+                            all_items.extend(items.iter().copied());
+                            let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+                                unsafe { std::mem::transmute(addr) };
+                            return unsafe { f(all_items.as_ptr(), all_items.len()) };
+                        }
+                    }
+                }
             }
             // complex.__eq__/__ne__/__lt__/… called directly on the type object
             // (`complex.__eq__(a, b)`). Lowered as a method call, so it bypasses
