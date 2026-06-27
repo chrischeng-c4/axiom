@@ -220,6 +220,12 @@ struct GenEntry {
     body_fn_addr: u64,
     /// Captured arguments.
     args: Vec<MbValue>,
+    /// Argument names in declaration order for inspect.getgeneratorlocals.
+    arg_names: Vec<String>,
+    /// Name of a yielded local value when lowering can identify `yield <var>`.
+    yield_local_name: Option<String>,
+    /// Snapshot of generator locals visible to inspect.getgeneratorlocals.
+    locals: HashMap<String, MbValue>,
     /// Name for debugging.
     #[allow(dead_code)]
     name: String,
@@ -437,6 +443,9 @@ pub fn mb_generator_create(name: MbValue, body_fn_addr: MbValue) -> MbValue {
         state: GenState::Created,
         body_fn_addr: fn_addr,
         args: Vec::new(),
+        arg_names: Vec::new(),
+        yield_local_name: None,
+        locals: HashMap::new(),
         name: gen_name,
         yielded_value: MbValue::none(),
         sent_value: MbValue::none(),
@@ -459,10 +468,81 @@ pub fn mb_generator_store_arg(gen_handle: MbValue, arg: MbValue) {
     if let Some(id) = gen_handle.as_int() {
         GENERATORS.with(|gens| {
             if let Some(entry) = gens.borrow_mut().get_mut(&(id as u64)) {
+                let idx = entry.args.len();
                 entry.args.push(arg);
+                if let Some(name) = entry.arg_names.get(idx).cloned() {
+                    entry.locals.insert(name, arg);
+                }
             }
         });
     }
+}
+
+/// Register a generator's parameter names and an optional yielded-local name.
+///
+/// The metadata list is `[arg_name..., yielded_local_or_None]`.
+pub fn mb_generator_set_local_names(gen_handle: MbValue, names: MbValue) {
+    let Some(id) = gen_handle.as_int() else {
+        return;
+    };
+    let mut items: Vec<MbValue> = Vec::new();
+    if let Some(ptr) = names.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                items = lock.read().unwrap().to_vec();
+            }
+        }
+    }
+    let mut arg_names = Vec::new();
+    let mut yield_local_name = None;
+    for (idx, item) in items.iter().copied().enumerate() {
+        if idx + 1 == items.len() {
+            yield_local_name = extract_str(item);
+        } else if let Some(name) = extract_str(item) {
+            arg_names.push(name);
+        }
+    }
+    GENERATORS.with(|gens| {
+        if let Some(entry) = gens.borrow_mut().get_mut(&(id as u64)) {
+            entry.arg_names = arg_names;
+            entry.yield_local_name = yield_local_name;
+            let pairs: Vec<(String, MbValue)> = entry
+                .arg_names
+                .iter()
+                .cloned()
+                .zip(entry.args.iter().copied())
+                .collect();
+            for (name, value) in pairs {
+                entry.locals.insert(name, value);
+            }
+        }
+    });
+}
+
+/// Snapshot live locals for inspect.getgeneratorlocals.
+pub fn mb_generator_locals(gen_handle: MbValue) -> Option<Vec<(String, MbValue)>> {
+    let id = gen_handle.as_int()? as u64;
+    GENERATORS.with(|gens| {
+        let gens = gens.borrow();
+        let entry = gens.get(&id)?;
+        if matches!(entry.state, GenState::Completed) {
+            return Some(Vec::new());
+        }
+        let mut out = Vec::new();
+        for name in &entry.arg_names {
+            if let Some(value) = entry.locals.get(name).copied() {
+                out.push((name.clone(), value));
+            }
+        }
+        if let Some(name) = &entry.yield_local_name {
+            if !entry.arg_names.iter().any(|arg| arg == name) {
+                if let Some(value) = entry.locals.get(name).copied() {
+                    out.push((name.clone(), value));
+                }
+            }
+        }
+        Some(out)
+    })
 }
 
 // ── Coroutine entry trampoline ──────────────────────────────────────────────
@@ -1072,6 +1152,16 @@ pub fn shutdown_pool() {
 /// Saves generator context and switches back to caller.
 /// Returns the value passed by send() (or None for plain next()).
 pub fn mb_generator_yield_value(value: MbValue) -> MbValue {
+    if let Some(id) = GEN_ACTIVE.with(|a| a.active_id.get()) {
+        GENERATORS.with(|gens| {
+            if let Some(entry) = gens.borrow_mut().get_mut(&id) {
+                if let Some(name) = entry.yield_local_name.clone() {
+                    entry.locals.insert(name, value);
+                }
+            }
+        });
+    }
+
     // Hot path: transfer value via thread-local cell + use cached ctx pointer.
     // No HashMap lookup, no RefCell borrow.
     GEN_XFER.with(|x| x.yield_v.set(value.to_bits()));
