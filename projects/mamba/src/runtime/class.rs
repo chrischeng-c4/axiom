@@ -4856,10 +4856,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         }
     }
 
+    if super::stdlib::weakref_mod::proxy_dead_attr_access(obj, &attr_name) {
+        super::stdlib::weakref_mod::raise_reference_error();
+        return MbValue::none();
+    }
     if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
         if !matches!(
             attr_name.as_str(),
-            "__class__" | "__callback__" | "_callback" | "_target" | "_target_id"
+            "__class__" | "__callback__" | "_callback" | "_target" | "_target_id" | "_dead"
         ) {
             return mb_getattr(target, attr);
         }
@@ -7807,11 +7811,15 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
     }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
+            let attr_name = extract_str(attr).unwrap_or_default();
+            if super::stdlib::weakref_mod::proxy_dead_attr_access(obj, &attr_name) {
+                super::stdlib::weakref_mod::raise_reference_error();
+                return;
+            }
             if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
-                let attr_name = extract_str(attr).unwrap_or_default();
                 if !matches!(
                     attr_name.as_str(),
-                    "__class__" | "__callback__" | "_callback" | "_target" | "_target_id"
+                    "__class__" | "__callback__" | "_callback" | "_target" | "_target_id" | "_dead"
                 ) {
                     mb_setattr(target, attr, value);
                     return;
@@ -8349,10 +8357,14 @@ pub fn mb_delattr(obj: MbValue, attr: MbValue) {
     let attr_name = extract_str(attr).unwrap_or_default();
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
+            if super::stdlib::weakref_mod::proxy_dead_attr_access(obj, &attr_name) {
+                super::stdlib::weakref_mod::raise_reference_error();
+                return;
+            }
             if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
                 if !matches!(
                     attr_name.as_str(),
-                    "__class__" | "__callback__" | "_callback" | "_target" | "_target_id"
+                    "__class__" | "__callback__" | "_callback" | "_target" | "_target_id" | "_dead"
                 ) {
                     mb_delattr(target, attr);
                     return;
@@ -13118,6 +13130,20 @@ pub fn mb_call_method_kwargs(
 pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) -> MbValue {
     // Safepoint poll at method dispatch (R4)
     super::gc::gc_safepoint();
+
+    let name_for_proxy = extract_str(method_name).unwrap_or_default();
+    if super::stdlib::weakref_mod::proxy_dead_attr_access(receiver, &name_for_proxy) {
+        super::stdlib::weakref_mod::raise_reference_error();
+        return MbValue::none();
+    }
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target(receiver) {
+        if !matches!(
+            name_for_proxy.as_str(),
+            "__class__" | "__callback__" | "_callback" | "_target" | "_target_id" | "_dead"
+        ) {
+            return mb_call_method(target, method_name, args);
+        }
+    }
 
     // Typed native wrappers are raw `Box<T>` pointers, not `MbObject`s.
     // Method lowering reaches this directly, so dispatch before fast paths.
