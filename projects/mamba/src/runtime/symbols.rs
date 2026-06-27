@@ -1835,8 +1835,9 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         // ── Generator ──
         rt_sym!(
             "mb_generator_create",
-            generator::mb_generator_create as fn(super::MbValue, super::MbValue) -> super::MbValue,
-            [I64, I64],
+            generator::mb_generator_create
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
             I64
         ),
         rt_sym!(
