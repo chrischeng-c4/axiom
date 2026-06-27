@@ -7851,6 +7851,23 @@ impl<'a> HirToMir<'a> {
             HirExpr::Call { func, args, ty } => {
                 // Method call: x.method(args) → mb_call_method(receiver, name, args_list)
                 if let HirExpr::Attr { object, attr, .. } = func.as_ref() {
+                    if attr == "_getframe"
+                        && args.is_empty()
+                        && self.expr_is_var_named(object, "sys")
+                    {
+                        let locals_ty = self.tcx.any();
+                        let locals = self.emit_current_locals_dict(locals_ty);
+                        let dest = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_sys_getframe_with_locals".to_string(),
+                            args: vec![locals],
+                            ty: *ty,
+                        });
+                        self.emit_exception_propagate();
+                        return dest;
+                    }
+
                     // Fast path: when the receiver type is statically Str and
                     // the method has a known direct runtime entry point with
                     // the same arity, bypass mb_call_method dispatch (which
@@ -10133,6 +10150,41 @@ impl<'a> HirToMir<'a> {
     /// Used by `locals()` and `vars()` (no-arg) inside function bodies.
     /// At module / class scope the runtime helper `mb_locals` is called instead
     /// (returns the module globals dict).
+    /// @spec .aw/tech-design/cclab-mamba/logic/introspection-builtins.md#locals_impl
+    fn expr_is_var_named(&self, expr: &HirExpr, expected: &str) -> bool {
+        let HirExpr::Var(sym_id, _) = expr else {
+            return false;
+        };
+        if self
+            .sym_names
+            .get(sym_id)
+            .is_some_and(|name| name == expected)
+        {
+            return true;
+        }
+        if let Some(symbol_table) = self.symbol_table {
+            let symbols = symbol_table.all_symbols();
+            if let Some(symbol) = symbols.get(sym_id.0 as usize) {
+                return symbol.name == expected;
+            }
+        }
+        false
+    }
+
+    fn emit_current_locals_dict(&mut self, ty: TypeId) -> VReg {
+        let locals = self.fresh_vreg();
+        if !self.in_module_scope {
+            return self.emit_locals_snapshot_dict(locals, ty);
+        }
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(locals),
+            name: "mb_locals".to_string(),
+            args: vec![],
+            ty,
+        });
+        locals
+    }
+
     /// @spec .aw/tech-design/cclab-mamba/logic/introspection-builtins.md#locals_impl
     fn emit_locals_snapshot_dict(&mut self, dest: VReg, ty: TypeId) -> VReg {
         // dest = mb_dict_new()
