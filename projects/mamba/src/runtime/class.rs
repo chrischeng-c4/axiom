@@ -5253,7 +5253,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 return if exhausted { MbValue::none() } else { obj };
             }
             "gi_code" => {
-                if let Some(func) = super::stdlib::types_mod::coroutine_generator_origin(obj) {
+                if let Some(func) = super::stdlib::types_mod::coroutine_generator_origin(obj)
+                    .or_else(|| super::generator::mb_generator_origin_func(obj))
+                {
                     return make_code_object(func);
                 }
                 return MbValue::from_ptr(MbObject::new_instance("code".to_string()));
