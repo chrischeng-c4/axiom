@@ -921,8 +921,18 @@ mod tests {
             }
         };
         assert_eq!(items.len(), 2);
-        assert!(sock_field(items[0], "_fd").and_then(|v| v.as_int()).unwrap() >= 0);
-        assert!(sock_field(items[1], "_fd").and_then(|v| v.as_int()).unwrap() >= 0);
+        assert!(
+            sock_field(items[0], "_fd")
+                .and_then(|v| v.as_int())
+                .unwrap()
+                >= 0
+        );
+        assert!(
+            sock_field(items[1], "_fd")
+                .and_then(|v| v.as_int())
+                .unwrap()
+                >= 0
+        );
         unsafe {
             m_close(items[0], MbValue::none());
             m_close(items[1], MbValue::none());
@@ -967,7 +977,11 @@ fn raise(exc: &str, msg: &str) -> MbValue {
 fn raise_os_errno(context: &str) -> MbValue {
     let err = std::io::Error::last_os_error();
     let errno = err.raw_os_error().unwrap_or(0);
-    let exc = match errno {
+    raise_os_errno_code(errno, context)
+}
+
+fn os_errno_exception_name(errno: i32) -> &'static str {
+    match errno {
         libc::ECONNREFUSED => "ConnectionRefusedError",
         libc::ECONNRESET => "ConnectionResetError",
         libc::ECONNABORTED => "ConnectionAbortedError",
@@ -975,7 +989,10 @@ fn raise_os_errno(context: &str) -> MbValue {
         libc::EAGAIN | libc::EINPROGRESS | libc::EALREADY => "BlockingIOError",
         libc::ETIMEDOUT => "TimeoutError",
         _ => "OSError",
-    };
+    }
+}
+
+fn os_errno_message(errno: i32) -> String {
     let detail = unsafe {
         let p = libc::strerror(errno);
         if p.is_null() {
@@ -984,8 +1001,21 @@ fn raise_os_errno(context: &str) -> MbValue {
             std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
         }
     };
+    format!("[Errno {errno}] {detail}")
+}
+
+fn os_errno_exception_instance(errno: i32) -> MbValue {
+    super::super::exception::mb_exception_new(
+        MbValue::from_ptr(MbObject::new_str(
+            os_errno_exception_name(errno).to_string(),
+        )),
+        MbValue::from_ptr(MbObject::new_str(os_errno_message(errno))),
+    )
+}
+
+fn raise_os_errno_code(errno: i32, context: &str) -> MbValue {
     let _ = context;
-    raise(exc, &format!("[Errno {errno}] {detail}"))
+    raise(os_errno_exception_name(errno), &os_errno_message(errno))
 }
 
 fn sock_instance(fd: i64, family: i64, stype: i64, proto: i64) -> MbValue {
@@ -1067,6 +1097,12 @@ fn kwarg_get(kwargs: Option<MbValue>, name: &str) -> Option<MbValue> {
         }
     }
     None
+}
+
+fn kwarg_truthy(value: Option<MbValue>) -> bool {
+    value
+        .and_then(|v| v.as_bool().or_else(|| v.as_int().map(|n| n != 0)))
+        .unwrap_or(false)
 }
 
 /// ("host", port) from an address tuple/list value.
@@ -2173,40 +2209,101 @@ unsafe extern "C" fn d_create_server_real(args_ptr: *const MbValue, nargs: usize
     sock_instance(fd as i64, 2, 1, 0)
 }
 
-/// socket.create_connection(addr, timeout=None)
+/// socket.create_connection(addr, timeout=None, *, source_address=None, all_errors=False)
 unsafe extern "C" fn d_create_connection_real(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let raw = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let Some((host, port)) = raw.first().copied().and_then(parse_addr_pair) else {
+    let kwargs = kwargs_of(raw);
+    let positional = if kwargs.is_some() && !raw.is_empty() {
+        &raw[..raw.len() - 1]
+    } else {
+        raw
+    };
+    let Some((host, port)) = positional.first().copied().and_then(parse_addr_pair) else {
         return raise(
             "TypeError",
             "create_connection(): address must be a (host, port) tuple",
         );
     };
-    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
-    if fd < 0 {
-        return raise_os_errno("socket");
+    let all_errors = kwarg_truthy(kwarg_get(kwargs, "all_errors"));
+
+    let c_host = match std::ffi::CString::new(host) {
+        Ok(c) => c,
+        Err(_) => {
+            return raise(
+                "gaierror",
+                "[Errno 8] nodename nor servname provided, or not known",
+            )
+        }
+    };
+    let service = port.to_string();
+    let c_serv = std::ffi::CString::new(service).unwrap_or_default();
+    let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+    hints.ai_family = libc::AF_UNSPEC;
+    hints.ai_socktype = libc::SOCK_STREAM;
+    hints.ai_protocol = 0;
+
+    let mut res: *mut libc::addrinfo = std::ptr::null_mut();
+    let rc = unsafe { libc::getaddrinfo(c_host.as_ptr(), c_serv.as_ptr(), &hints, &mut res) };
+    if rc != 0 {
+        let msg = unsafe {
+            let p = libc::gai_strerror(rc);
+            if p.is_null() {
+                "getaddrinfo failed".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+            }
+        };
+        return raise("gaierror", &format!("[Errno {rc}] {msg}"));
     }
-    set_cloexec(fd as i64, true);
-    let Some(sin) = sockaddr_v4(&host, port) else {
-        unsafe { libc::close(fd) };
-        return raise(
-            "gaierror",
-            "[Errno 8] nodename nor servname provided, or not known",
+
+    let mut errors: Vec<MbValue> = Vec::new();
+    let mut last_errno: Option<i32> = None;
+    let mut cur = res;
+    while !cur.is_null() {
+        unsafe {
+            let ai = &*cur;
+            let next = ai.ai_next;
+            if ai.ai_family != libc::AF_INET && ai.ai_family != libc::AF_INET6 {
+                cur = next;
+                continue;
+            }
+            let fd = libc::socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol);
+            if fd < 0 {
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                last_errno = Some(errno);
+                errors.push(os_errno_exception_instance(errno));
+                cur = next;
+                continue;
+            }
+            set_cloexec(fd as i64, true);
+            let connected = libc::connect(fd, ai.ai_addr, ai.ai_addrlen) == 0;
+            if connected {
+                libc::freeaddrinfo(res);
+                return sock_instance(
+                    fd as i64,
+                    ai.ai_family as i64,
+                    ai.ai_socktype as i64,
+                    ai.ai_protocol as i64,
+                );
+            }
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            libc::close(fd);
+            last_errno = Some(errno);
+            errors.push(os_errno_exception_instance(errno));
+            cur = next;
+        }
+    }
+    unsafe { libc::freeaddrinfo(res) };
+
+    if all_errors {
+        let group = super::super::exception::mb_exception_group_new(
+            MbValue::from_ptr(MbObject::new_str("create_connection failed".to_string())),
+            MbValue::from_ptr(MbObject::new_list(errors)),
         );
-    };
-    let rc = unsafe {
-        libc::connect(
-            fd,
-            &sin as *const libc::sockaddr_in as *const libc::sockaddr,
-            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-        )
-    };
-    if rc < 0 {
-        let out = raise_os_errno("connect");
-        unsafe { libc::close(fd) };
-        return out;
+        super::super::class::mb_raise_instance(group);
+        return MbValue::none();
     }
-    sock_instance(fd as i64, 2, 1, 0)
+    raise_os_errno_code(last_errno.unwrap_or(libc::ECONNREFUSED), "connect")
 }
 
 /// socket.getaddrinfo(host, port, family=0, type=0, proto=0, flags=0)
