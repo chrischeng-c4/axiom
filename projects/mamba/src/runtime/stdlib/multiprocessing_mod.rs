@@ -1,4 +1,4 @@
-use super::super::rc::MbObject;
+use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 /// multiprocessing module for Mamba (#1476).
 ///
@@ -17,8 +17,93 @@ use super::super::value::MbValue;
 /// conformance issues have closed against.
 use std::collections::HashMap;
 
-unsafe extern "C" fn dispatch_process(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_dict())
+fn kwargs_get(kwargs: MbValue, name: &str) -> Option<MbValue> {
+    let ptr = kwargs.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let key = super::super::dict_ops::DictKey::Str(name.to_string());
+            return lock.read().unwrap().get(&key).copied();
+        }
+    }
+    None
+}
+
+fn retain_field(value: MbValue) -> MbValue {
+    unsafe {
+        super::super::rc::retain_if_ptr(value);
+    }
+    value
+}
+
+fn process_field(process: MbValue, name: &str) -> MbValue {
+    process
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.read().unwrap().get(name).copied()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none)
+}
+
+fn set_process_field(process: MbValue, name: &str, value: MbValue) {
+    if let Some(ptr) = process.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.write().unwrap().insert(name.to_string(), value);
+            }
+        }
+    }
+}
+
+unsafe extern "C" fn dispatch_process(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let kwargs = a.last().copied().unwrap_or_else(MbValue::none);
+    let target = kwargs_get(kwargs, "target")
+        .or_else(|| a.get(1).copied())
+        .unwrap_or_else(MbValue::none);
+    let call_args = kwargs_get(kwargs, "args")
+        .or_else(|| a.get(3).copied())
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_tuple(Vec::new())));
+
+    let process = MbValue::from_ptr(MbObject::new_instance("Process".to_string()));
+    if let Some(ptr) = process.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut f = fields.write().unwrap();
+                f.insert("target".to_string(), retain_field(target));
+                f.insert("args".to_string(), retain_field(call_args));
+                f.insert("exitcode".to_string(), MbValue::none());
+                f.insert("_started".to_string(), MbValue::from_bool(false));
+            }
+        }
+    }
+    process
+}
+
+unsafe extern "C" fn dispatch_array(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    super::array_mod::mb_array_new(
+        a.first().copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+    )
+}
+
+unsafe extern "C" fn process_start(self_v: MbValue, _args: MbValue) -> MbValue {
+    let target = process_field(self_v, "target");
+    if !target.is_none() {
+        let call_args = process_field(self_v, "args");
+        super::super::builtins::mb_call_spread(target, call_args);
+    }
+    set_process_field(self_v, "_started", MbValue::from_bool(true));
+    set_process_field(self_v, "exitcode", MbValue::from_int(0));
+    MbValue::none()
+}
+
+unsafe extern "C" fn process_join(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::none()
 }
 
 unsafe extern "C" fn dispatch_queue(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -115,6 +200,10 @@ pub fn register() {
     let addr_process = dispatch_process as *const () as usize;
     attrs.insert("Process".into(), MbValue::from_func(addr_process));
 
+    let addr_array = dispatch_array as *const () as usize;
+    attrs.insert("Array".into(), MbValue::from_func(addr_array));
+    attrs.insert("RawArray".into(), MbValue::from_func(addr_array));
+
     let addr_queue = dispatch_queue as *const () as usize;
     attrs.insert("Queue".into(), MbValue::from_func(addr_queue));
 
@@ -130,6 +219,7 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
         set.insert(addr_process as u64);
+        set.insert(addr_array as u64);
         set.insert(addr_queue as u64);
         set.insert(addr_cpu_count as u64);
         set.insert(addr_current_process as u64);
@@ -191,7 +281,9 @@ pub fn register() {
     for name in MP_SURFACE_NAMES {
         attrs.insert((*name).into(), MbValue::from_func(addr_stub));
     }
-    // get_context / Value validate their arguments (override the stub).
+    // Array / RawArray / get_context / Value validate or construct real state (override stubs).
+    attrs.insert("Array".into(), MbValue::from_func(addr_array));
+    attrs.insert("RawArray".into(), MbValue::from_func(addr_array));
     let addr_get_context = dispatch_get_context as *const () as usize;
     attrs.insert("get_context".into(), MbValue::from_func(addr_get_context));
     let addr_value = dispatch_value as *const () as usize;
@@ -202,6 +294,24 @@ pub fn register() {
         set.insert(addr_get_context as u64);
         set.insert(addr_value as u64);
     });
+
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut()
+            .insert(addr_process as u64, "Process".to_string());
+    });
+
+    let mut process_methods: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("start", process_start as *const () as usize),
+        ("join", process_join as *const () as usize),
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+        process_methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register("Process", Vec::new(), process_methods);
 
     super::register_module("multiprocessing", attrs);
 }
