@@ -1373,6 +1373,10 @@ struct HirToMir<'a> {
     src_line_starts: Option<Vec<u32>>,
     /// Module source filename (co_filename), when known.
     src_filename: Option<String>,
+    /// Source first line for the function body currently being lowered.
+    current_func_src_line: Option<u32>,
+    /// Python-visible name for the function body currently being lowered.
+    current_func_name: Option<String>,
     /// (class_name, docstring) pairs primed at module-init via
     /// `mb_class_set_doc` so `inspect.getdoc(Cls)` works.
     pending_class_docs: Vec<(String, String)>,
@@ -1450,6 +1454,8 @@ impl<'a> HirToMir<'a> {
             user_func_lines: HashMap::new(),
             src_line_starts: None,
             src_filename: None,
+            current_func_src_line: None,
+            current_func_name: None,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
@@ -1611,6 +1617,8 @@ impl<'a> HirToMir<'a> {
             user_func_lines: HashMap::new(),
             src_line_starts: None,
             src_filename: None,
+            current_func_src_line: None,
+            current_func_name: None,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
@@ -1645,6 +1653,8 @@ impl<'a> HirToMir<'a> {
         self.finally_body_stack.clear();
         self.handler_region_tokens.clear();
         self.in_module_scope = false;
+        self.current_func_src_line = None;
+        self.current_func_name = None;
     }
 
     /// `*args` is a tuple in Python, but every call path packs the extra
@@ -1694,6 +1704,8 @@ impl<'a> HirToMir<'a> {
 
         // Track current function return type so Return lowering can unbox any→int (#827).
         self.current_return_ty = func.return_ty;
+        self.current_func_src_line = self.user_func_lines.get(&func.name.0).copied();
+        self.current_func_name = self.user_func_names.get(&func.name.0).cloned();
 
         // Populate cell_override from the function's captures (nonlocal-shared symbols).
         // These synthetic SymbolIds (1M+) must use global storage for consistency across
@@ -7851,6 +7863,38 @@ impl<'a> HirToMir<'a> {
             HirExpr::Call { func, args, ty } => {
                 // Method call: x.method(args) → mb_call_method(receiver, name, args_list)
                 if let HirExpr::Attr { object, attr, .. } = func.as_ref() {
+                    if attr == "walk_stack"
+                        && args.len() == 1
+                        && matches!(args.first(), Some(HirExpr::NoneLit(_)))
+                        && self.expr_is_var_named(object, "traceback")
+                    {
+                        // Mamba currently exposes module __file__ as None; keep
+                        // the synthetic frame filename aligned with that surface.
+                        let filename = self.emit_str_const("None");
+                        let line_number = self.current_func_src_line.unwrap_or(0) as i64 + 1;
+                        let line_raw = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadConst {
+                            dest: line_raw,
+                            value: MirConst::Int(line_number),
+                            ty: self.tcx.int(),
+                        });
+                        let line = self.box_operand(line_raw, self.tcx.int());
+                        let func_name = self
+                            .current_func_name
+                            .clone()
+                            .unwrap_or_else(|| "<module>".to_string());
+                        let name = self.emit_str_const(&func_name);
+                        let dest = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_traceback_walk_stack_frame".to_string(),
+                            args: vec![filename, line, name],
+                            ty: *ty,
+                        });
+                        self.emit_exception_propagate();
+                        return dest;
+                    }
+
                     if attr == "_getframe"
                         && args.is_empty()
                         && self.expr_is_var_named(object, "sys")
