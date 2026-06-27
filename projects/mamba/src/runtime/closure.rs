@@ -899,6 +899,16 @@ pub fn restore_global_id_namespace(saved: HashMap<i64, MbValue>) {
     });
 }
 
+/// Replace the current GLOBAL_ID_NAMESPACE and return the previous contents.
+///
+/// Worker OS threads have their own Rust thread-local runtime state. Thread
+/// targets still need to resolve the defining module's globals through the
+/// same SymbolId-keyed namespace used by JIT code, so threading installs a
+/// snapshot before invoking a target and restores the previous namespace after.
+pub fn replace_global_id_namespace(next: HashMap<i64, MbValue>) -> HashMap<i64, MbValue> {
+    GLOBAL_ID_NAMESPACE.with(|ns| std::mem::replace(&mut *ns.borrow_mut(), next))
+}
+
 /// Snapshot the current GLOBAL_ID_NAMESPACE (non-destructive).
 pub fn snapshot_global_id_namespace() -> HashMap<i64, MbValue> {
     GLOBAL_ID_NAMESPACE.with(|ns| ns.borrow().clone())
