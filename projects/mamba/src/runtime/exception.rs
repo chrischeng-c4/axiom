@@ -201,6 +201,12 @@ pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbVa
     // args = tuple of all constructor arguments (preserves all args, including non-string ones)
     let args_tuple = MbValue::from_ptr(MbObject::new_tuple(arg_items));
     fields.insert("args".to_string(), args_tuple);
+    if type_name == "AttributeError" {
+        fields.insert("name".to_string(), MbValue::none());
+        fields.insert("obj".to_string(), MbValue::none());
+    } else if type_name == "NameError" {
+        fields.insert("name".to_string(), MbValue::none());
+    }
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -212,6 +218,82 @@ pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbVa
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
+}
+
+fn dict_get_str(dict: MbValue, key: &str) -> Option<MbValue> {
+    dict.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn set_exception_field(instance: MbValue, key: &str, value: MbValue) {
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::rc::retain_if_ptr(value);
+                fields.write().unwrap().insert(key.to_string(), value);
+            }
+        }
+    }
+}
+
+/// Create an exception instance from positional args plus keyword metadata.
+/// Currently only AttributeError consumes CPython's keyword-only `name`/`obj`.
+pub fn mb_exception_new_with_args_and_kwargs(
+    exc_type: MbValue,
+    args_list: MbValue,
+    kwargs_dict: MbValue,
+) -> MbValue {
+    let type_name = super::class::resolve_class_name(exc_type)
+        .or_else(|| extract_str(exc_type))
+        .unwrap_or_else(|| "Exception".to_string());
+    let instance = mb_exception_new_with_args(
+        MbValue::from_ptr(MbObject::new_str(type_name.clone())),
+        args_list,
+    );
+    if type_name == "AttributeError" {
+        if let Some(name) = dict_get_str(kwargs_dict, "name") {
+            set_exception_field(instance, "name", name);
+        }
+        if let Some(obj) = dict_get_str(kwargs_dict, "obj") {
+            set_exception_field(instance, "obj", obj);
+        }
+    }
+    instance
+}
+
+pub fn mb_attribute_error_with_name_obj(msg: &str, name: &str, obj: MbValue) -> MbValue {
+    let exc_type = MbValue::from_ptr(MbObject::new_str("AttributeError".to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str(msg.to_string()),
+    )]));
+    let instance = mb_exception_new_with_args(exc_type, args);
+    set_exception_field(
+        instance,
+        "name",
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    set_exception_field(instance, "obj", obj);
+    instance
+}
+
+pub fn mb_name_error_with_name(name: MbValue) -> MbValue {
+    let name_s = extract_str(name).unwrap_or_default();
+    let exc_type = MbValue::from_ptr(MbObject::new_str("NameError".to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str(format!("name '{name_s}' is not defined")),
+    )]));
+    let instance = mb_exception_new_with_args(exc_type, args);
+    set_exception_field(
+        instance,
+        "name",
+        MbValue::from_ptr(MbObject::new_str(name_s)),
+    );
+    instance
 }
 
 /// Convert a MbException to a MbValue (stored as an Instance object).
@@ -255,6 +337,12 @@ fn store_exception_as_value(exc: MbException) -> MbValue {
         "args".to_string(),
         MbValue::from_ptr(MbObject::new_tuple(args_items)),
     );
+    if exc.exc_type == "AttributeError" {
+        fields.insert("name".to_string(), MbValue::none());
+        fields.insert("obj".to_string(), MbValue::none());
+    } else if exc.exc_type == "NameError" {
+        fields.insert("name".to_string(), MbValue::none());
+    }
     // StopIteration.value: generator return value takes priority; for
     // explicit `raise StopIteration(x)` the constructor argument is kept
     // in `exc.message` and surfaced here as a string fallback.

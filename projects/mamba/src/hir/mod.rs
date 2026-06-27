@@ -133,6 +133,10 @@ pub struct HirClass {
     /// e.g., `attr = Verbose()` in class body → (attr_name, value_expr).
     /// Used for descriptor protocol support.
     pub class_attr_assigns: Vec<(String, HirExpr)>,
+    /// Narrow executable class-body statements that must run at the class
+    /// definition point before attributes/decorators. Currently used for
+    /// CPython runtime NameError on unresolved bare-name reads in class bodies.
+    pub class_body_stmts: Vec<HirStmt>,
     /// `__slots__` declaration from class body (R14).
     /// e.g., `__slots__ = ['x', 'y']` → Some(vec!["x", "y"])
     pub slots: Option<Vec<String>>,
@@ -866,6 +870,7 @@ mod tests {
             explicit_match_args: None,
             metaclass: None,
             class_attr_assigns: vec![],
+            class_body_stmts: vec![],
             slots: None,
             class_kwargs: vec![],
             dataclass_fields: vec![],

@@ -126,6 +126,9 @@ pub struct TypeChecker {
     pub strict_type_fixture: bool,
     /// Suppress Any-inference warnings (#244).
     pub no_warn_any: bool,
+    /// Runtime/JIT execution mode: unresolved names should become runtime
+    /// NameError instead of compile-time undefined-name diagnostics.
+    pub allow_runtime_unresolved_names: bool,
     errors: Vec<MambaError>,
     pub diagnostics: Vec<Diagnostic>,
     /// Generic parameter lists for functions/classes (#314).
@@ -188,6 +191,7 @@ impl TypeChecker {
             strict: false,
             strict_type_fixture: false,
             no_warn_any: false,
+            allow_runtime_unresolved_names: false,
             errors: Vec::new(),
             diagnostics: Vec::new(),
             generic_defs: HashMap::new(),

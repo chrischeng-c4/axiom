@@ -1502,6 +1502,19 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_exception_new_with_args_and_kwargs",
+            exception::mb_exception_new_with_args_and_kwargs
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_name_error_with_name",
+            exception::mb_name_error_with_name as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_raise_from",
             exception::mb_raise_from as fn(super::MbValue, super::MbValue, super::MbValue),
             [I64, I64, I64],

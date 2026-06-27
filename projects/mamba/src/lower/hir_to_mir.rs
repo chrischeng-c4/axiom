@@ -1012,6 +1012,13 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 val_expr.clone(),
             ));
         }
+        if !cls.class_body_stmts.is_empty() {
+            lowerer.pending_class_body_stmts.push((
+                class_name.clone(),
+                cls.name,
+                cls.class_body_stmts.clone(),
+            ));
+        }
         // Store class decorators for application after registration.
         if !cls.decorators.is_empty() {
             lowerer.pending_class_decorators.push((
@@ -1224,6 +1231,9 @@ struct HirToMir<'a> {
     /// initializer expressions like `X = enum.auto()` see imports/bindings
     /// established by preceding statements (#1686 motivation).
     pending_class_attrs: Vec<(String, SymbolId, String, HirExpr)>,
+    /// Narrow executable class-body statements emitted at the class placeholder
+    /// before attribute assignment/decorators.
+    pending_class_body_stmts: Vec<(String, SymbolId, Vec<HirStmt>)>,
     /// Class-definition finalizers emitted after method table + class attrs are
     /// populated, so metaclass hooks see the complete namespace.
     pending_class_finalizers: Vec<(String, SymbolId)>,
@@ -1401,6 +1411,7 @@ impl<'a> HirToMir<'a> {
             pending_runtime_class_bases: Vec::new(),
             pending_runtime_class_base_lists: Vec::new(),
             pending_class_attrs: Vec::new(),
+            pending_class_body_stmts: Vec::new(),
             pending_class_finalizers: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
@@ -1560,6 +1571,7 @@ impl<'a> HirToMir<'a> {
             pending_runtime_class_bases: Vec::new(),
             pending_runtime_class_base_lists: Vec::new(),
             pending_class_attrs: Vec::new(),
+            pending_class_body_stmts: Vec::new(),
             pending_class_finalizers: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
@@ -2672,6 +2684,7 @@ impl<'a> HirToMir<'a> {
         // P2-R3 fallback: drain any class-attr assignments whose class never
         // produced a ClassDefPlaceholder (defensive; top-level classes always
         // emit one when they carry attr assigns).
+        self.emit_class_body_stmts_for(None);
         self.emit_class_attrs_for(None);
         self.emit_class_finalizers_for(None);
 
@@ -4482,6 +4495,7 @@ impl<'a> HirToMir<'a> {
             HirStmt::ClassDefPlaceholder { name: cls_sym, .. } => {
                 self.emit_pending_class_registrations(Some(*cls_sym));
                 self.emit_runtime_class_bases_for(Some(*cls_sym));
+                self.emit_class_body_stmts_for(Some(*cls_sym));
                 // P2-R3: emit class-level attribute assignments at the class's
                 // textual position so initializer expressions resolve imports
                 // and bindings established by preceding statements (#1686
@@ -4958,6 +4972,20 @@ impl<'a> HirToMir<'a> {
                     args: vec![cls_vreg, attr_vreg, boxed],
                     ty: self.tcx.none(),
                 });
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn emit_class_body_stmts_for(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_class_body_stmts.len() {
+            if cls_sym.map_or(true, |s| self.pending_class_body_stmts[i].1 == s) {
+                let (_, _, stmts) = self.pending_class_body_stmts.remove(i);
+                for stmt in &stmts {
+                    self.lower_stmt(stmt);
+                }
             } else {
                 i += 1;
             }
@@ -10910,6 +10938,7 @@ mod tests {
                         ty: any_ty,
                     },
                 )],
+                class_body_stmts: Vec::new(),
                 slots: None,
                 class_kwargs: Vec::new(),
                 dataclass_fields: Vec::new(),

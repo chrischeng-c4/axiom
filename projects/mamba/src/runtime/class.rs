@@ -5918,15 +5918,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             None => false,
                         };
                         if pure_user_hierarchy {
-                            super::exception::mb_raise(
-                                MbValue::from_ptr(super::rc::MbObject::new_str(
-                                    "AttributeError".to_string(),
-                                )),
-                                MbValue::from_ptr(super::rc::MbObject::new_str(format!(
-                                    "'{}' object has no attribute '{}'",
-                                    class_name, attr_name
-                                ))),
+                            let instance = super::exception::mb_attribute_error_with_name_obj(
+                                &format!("'{}' object has no attribute '{}'", class_name, attr_name),
+                                &attr_name,
+                                obj,
                             );
+                            mb_raise_instance(instance);
                             return MbValue::none();
                         }
                     }
@@ -16764,12 +16761,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         }
                         return super::builtins::mb_call_spread(resolved, args);
                     }
-                    super::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "'{class_name}' object has no attribute '{name}'"
-                        ))),
+                    let instance = super::exception::mb_attribute_error_with_name_obj(
+                        &format!("'{class_name}' object has no attribute '{name}'"),
+                        &name,
+                        receiver,
                     );
+                    mb_raise_instance(instance);
                     MbValue::none()
                 }
                 ObjData::BigInt(_) => {

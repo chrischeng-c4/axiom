@@ -108,7 +108,7 @@ impl TypeChecker {
                         // call time. If we're inside a function (current_return_ty is
                         // set), treat the undefined name as Any rather than erroring.
                         // Module-level free names stay hard errors.
-                        if self.current_return_ty.is_some() {
+                        if self.current_return_ty.is_some() || self.allow_runtime_unresolved_names {
                             self.tcx.any()
                         } else {
                             self.error(expr.span, format!("undefined name: `{name}`"));
