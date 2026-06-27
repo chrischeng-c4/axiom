@@ -1109,6 +1109,26 @@ fn sock_set_field(self_v: MbValue, name: &str, val: MbValue) {
     }
 }
 
+fn cm_enter_return_self(self_v: MbValue) -> MbValue {
+    let depth = sock_field(self_v, "_cm_enter_refs")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    sock_set_field(self_v, "_cm_enter_refs", MbValue::from_int(depth + 1));
+    unsafe { super::super::rc::retain_if_ptr(self_v) };
+    self_v
+}
+
+fn cm_exit_release_enter_ref(self_v: MbValue) {
+    let depth = sock_field(self_v, "_cm_enter_refs")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    if depth <= 0 {
+        return;
+    }
+    sock_set_field(self_v, "_cm_enter_refs", MbValue::from_int(depth - 1));
+    unsafe { super::super::rc::release_if_ptr(self_v) };
+}
+
 /// The live descriptor, or None (raising OSError EBADF) when closed.
 fn sock_fd_or_raise(self_v: MbValue) -> Option<i64> {
     let fd = sock_field(self_v, "_fd")
@@ -1917,22 +1937,22 @@ unsafe extern "C" fn sf_repr(self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn sf_enter(self_v: MbValue, _args: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(self_v) };
-    self_v
+    cm_enter_return_self(self_v)
 }
 
 unsafe extern "C" fn sf_exit(self_v: MbValue, _args: MbValue) -> MbValue {
     sf_close(self_v, MbValue::none());
+    cm_exit_release_enter_ref(self_v);
     MbValue::from_bool(false)
 }
 
 unsafe extern "C" fn m_enter(self_v: MbValue, _args: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(self_v) };
-    self_v
+    cm_enter_return_self(self_v)
 }
 
 unsafe extern "C" fn m_exit(self_v: MbValue, _args: MbValue) -> MbValue {
     m_close(self_v, MbValue::none());
+    cm_exit_release_enter_ref(self_v);
     MbValue::from_bool(false)
 }
 
