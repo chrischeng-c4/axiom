@@ -422,7 +422,7 @@ pub fn register() {
         ("getattr_static", d_getattr_static as *const () as usize),
         ("isdatadescriptor", d_isdatadescriptor as *const () as usize),
         ("currentframe", d_currentframe as *const () as usize),
-        ("stack", d_empty_list as *const () as usize),
+        ("stack", d_stack as *const () as usize),
         ("trace", d_empty_list as *const () as usize),
         ("getmro", d_getmro as *const () as usize),
         ("getclasstree", d_getclasstree as *const () as usize),
@@ -1237,6 +1237,34 @@ fn make_current_frame() -> MbValue {
 
 unsafe extern "C" fn d_currentframe(_a: *const MbValue, _n: usize) -> MbValue {
     make_current_frame()
+}
+
+fn make_stack_frame_info() -> MbValue {
+    let info = MbValue::from_ptr(MbObject::new_instance("FrameInfo".to_string()));
+    inst_set_field(info, "frame", make_current_frame());
+    inst_set_field(
+        info,
+        "filename",
+        MbValue::from_ptr(MbObject::new_str("<mamba>".to_string())),
+    );
+    inst_set_field(info, "lineno", MbValue::from_int(1));
+    inst_set_field(
+        info,
+        "function",
+        MbValue::from_ptr(MbObject::new_str("<module>".to_string())),
+    );
+    inst_set_field(
+        info,
+        "code_context",
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    inst_set_field(info, "index", MbValue::from_int(0));
+    inst_set_field(info, "positions", MbValue::none());
+    info
+}
+
+unsafe extern "C" fn d_stack(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_list(vec![make_stack_frame_info()]))
 }
 
 unsafe extern "C" fn d_empty_list(_a: *const MbValue, _n: usize) -> MbValue {
@@ -2680,6 +2708,24 @@ mod tests {
         assert!(inst_field(frame, "f_code").is_some());
         assert!(inst_field(frame, "f_locals").is_some());
         assert_eq!(inst_field(frame, "f_lineno").and_then(MbValue::as_int), Some(1));
+    }
+
+    #[test]
+    fn test_stack_returns_module_frame_info() {
+        let stack = unsafe { d_stack(std::ptr::null(), 0) };
+        let Some(ptr) = stack.as_ptr() else {
+            panic!("inspect.stack did not return a list");
+        };
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items.len(), 1);
+                let function = inst_field(items[0], "function").and_then(extract_str);
+                assert_eq!(function.as_deref(), Some("<module>"));
+                return;
+            }
+        }
+        panic!("inspect.stack did not return a list");
     }
 
     #[test]
