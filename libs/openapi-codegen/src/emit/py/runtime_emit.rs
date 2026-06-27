@@ -96,8 +96,16 @@ def _without_none(values: Mapping[str, Any] | Iterable[tuple[str, Any]] | None) 
     return [(str(k), v) for k, v in items if v is not None]
 
 
+def _query_value(value: Any) -> Any:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return [_query_value(v) for v in value]
+    return value
+
+
 def _url_with_params(url: str, params: Mapping[str, Any] | Iterable[tuple[str, Any]] | None) -> str:
-    extra = _without_none(params)
+    extra = [(key, _query_value(value)) for key, value in _without_none(params)]
     if not extra:
         return url
     parsed = urlsplit(url)

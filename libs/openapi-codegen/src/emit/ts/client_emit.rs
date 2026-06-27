@@ -31,6 +31,7 @@ export interface RequestArgs {
   query?: Record<string, unknown>;
   body?: unknown;
   headers?: Record<string, string>;
+  expectBody?: boolean;
 }
 
 export async function request<T>(config: ClientConfig, args: RequestArgs): Promise<T> {
@@ -51,7 +52,7 @@ export async function request<T>(config: ClientConfig, args: RequestArgs): Promi
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  if (response.status === 204) {
+  if (args.expectBody === false || response.status === 204) {
     return undefined as T;
   }
   return (await response.json()) as T;
@@ -73,6 +74,7 @@ export interface RequestArgs {
   query?: Record<string, unknown>;
   body?: unknown;
   headers?: Record<string, string>;
+  expectBody?: boolean;
 }
 
 export async function request<T>(config: ClientConfig, args: RequestArgs): Promise<T> {
@@ -85,6 +87,9 @@ export async function request<T>(config: ClientConfig, args: RequestArgs): Promi
     data: args.body,
     headers: { "Content-Type": "application/json", ...config.headers, ...args.headers },
   });
+  if (args.expectBody === false) {
+    return undefined as T;
+  }
   return response.data;
 }
 "##;
@@ -156,6 +161,9 @@ fn emit_method(p: &OperationPlan) -> String {
     }
     if p.body.is_some() {
         args.push("body: data.body".to_string());
+    }
+    if p.response_type == "void" {
+        args.push("expectBody: false".to_string());
     }
 
     let resp = &p.response_type_name;
@@ -295,13 +303,26 @@ mod tests {
     }
 
     #[test]
+    fn void_operation_marks_runtime_to_skip_body_parse() {
+        let out = render(
+            r##"{"paths":{"/health":{"get":{"operationId":"health","responses":{"200":{"description":"ok"}}}}}}"##,
+        );
+        assert!(out.contains("health(): Promise<HealthResponse> {"));
+        assert!(out.contains(
+            "return request<HealthResponse>(config, { method: \"GET\", path: `/health`, expectBody: false });"
+        ));
+    }
+
+    #[test]
     fn runtime_fetch_and_axios() {
         let fetch = emit_runtime(HttpClient::Fetch);
         assert!(fetch.contains("const doFetch = config.fetch ?? fetch;"));
+        assert!(fetch.contains("args.expectBody === false || response.status === 204"));
         assert!(!fetch.contains("axios"));
         let axios = emit_runtime(HttpClient::Axios);
         assert!(axios.contains("import axios from \"axios\";"));
         assert!(axios.contains("config.axios ?? axios.create()"));
+        assert!(axios.contains("if (args.expectBody === false)"));
         assert!(axios.contains("return response.data;"));
     }
 }

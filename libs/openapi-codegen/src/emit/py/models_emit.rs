@@ -28,7 +28,7 @@ pub fn emit(spec: &Spec, tm: &TypeMap) -> String {
     let mut out = String::from(HEADER);
     out.push_str("from __future__ import annotations\n");
     out.push_str("from typing import Any, Literal, Optional\n");
-    out.push_str("from pydantic import BaseModel, Field\n");
+    out.push_str("from pydantic import BaseModel, Field, RootModel\n");
 
     let blocks: Vec<String> = spec
         .components
@@ -51,11 +51,64 @@ fn emit_schema(name: &str, node: &RefOr<Schema>, tm: &TypeMap) -> String {
     match node {
         // A component that is itself a `$ref` → a plain alias.
         RefOr::Ref(_) => format!("{name} = {}", pymap::type_expr(node, tm)),
+        RefOr::Item(schema) if root_union_is_useful(schema) => {
+            emit_root_union_model(name, schema, tm)
+        }
         RefOr::Item(schema) if schema.properties.is_empty() => {
             // enum / union / primitive / free-form object → type alias
             format!("{name} = {}", pymap::type_expr(node, tm))
         }
         RefOr::Item(schema) => emit_model(name, schema, tm),
+    }
+}
+
+fn root_union_is_useful(schema: &Schema) -> bool {
+    let variants = if !schema.one_of.is_empty() {
+        &schema.one_of
+    } else if !schema.any_of.is_empty() {
+        &schema.any_of
+    } else {
+        return false;
+    };
+    variants.iter().any(|variant| match variant {
+        RefOr::Item(s) => !s.properties.is_empty(),
+        RefOr::Ref(_) => false,
+    })
+}
+
+fn emit_root_union_model(name: &str, schema: &Schema, tm: &TypeMap) -> String {
+    let variants = if !schema.one_of.is_empty() {
+        &schema.one_of
+    } else {
+        &schema.any_of
+    };
+    let mut blocks: Vec<String> = Vec::new();
+    let mut variant_names: Vec<String> = Vec::new();
+    for (idx, variant) in variants.iter().enumerate() {
+        match variant {
+            RefOr::Ref(_) => variant_names.push(pymap::type_expr(variant, tm)),
+            RefOr::Item(s) if s.properties.is_empty() => {
+                variant_names.push(pymap::type_expr(variant, tm))
+            }
+            RefOr::Item(s) => {
+                let variant_name = inline_variant_name(name, s, idx);
+                blocks.push(emit_model(&variant_name, s, tm));
+                variant_names.push(variant_name);
+            }
+        }
+    }
+    blocks.push(format!(
+        "class {name}(RootModel[{}]):\n    pass\n",
+        variant_names.join(" | ")
+    ));
+    blocks.join("\n\n")
+}
+
+fn inline_variant_name(parent: &str, schema: &Schema, idx: usize) -> String {
+    if schema.required.len() == 1 && schema.properties.contains_key(&schema.required[0]) {
+        format!("{parent}{}", to_pascal(&schema.required[0]))
+    } else {
+        format!("{parent}Variant{}", idx + 1)
     }
 }
 
@@ -93,6 +146,9 @@ fn sanitize(key: &str) -> String {
         .unwrap_or(false)
     {
         out.insert(0, '_');
+    }
+    if !is_py_ident(&out) {
+        out.push('_');
     }
     out
 }
