@@ -2045,12 +2045,25 @@ fn mb_os_fspath_v(args: &[MbValue]) -> MbValue {
 /// os.kill(pid, sig) — bad pid raises ProcessLookupError (OSError subclass).
 fn mb_os_kill(args: &[MbValue]) -> MbValue {
     let pid = args.first().and_then(|v| v.as_int());
-    let sig = args.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+    let sig_value = args.get(1).copied().unwrap_or_else(MbValue::none);
+    let sig = sig_value
+        .as_int_pyint()
+        .or_else(|| {
+            super::signal_mod::signal_enum_int_value(sig_value).and_then(|v| v.as_int_pyint())
+        })
+        .unwrap_or(0);
     let Some(pid) = pid else {
         return raise("TypeError", "an integer is required".to_string());
     };
     #[cfg(unix)]
     {
+        if pid == std::process::id() as i64 {
+            if let Some(result) =
+                super::signal_mod::mb_signal_deliver_if_registered(MbValue::from_int(sig))
+            {
+                return result;
+            }
+        }
         extern "C" {
             fn kill(pid: i32, sig: i32) -> i32;
         }
