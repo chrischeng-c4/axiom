@@ -5947,6 +5947,19 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             return make_bound_native_method(payload, &attr_name);
                         }
                     }
+                    // Native Thread methods live in threading_mod, not in the
+                    // user-class method registry. Expose them to Thread
+                    // subclasses after user overrides and instance fields had
+                    // a chance to win.
+                    if class_is_or_inherits(class_name, "Thread")
+                        && (matches!(
+                            attr_name.as_str(),
+                            "start" | "join" | "is_alive" | "isAlive" | "getName" | "setName"
+                                | "setDaemon"
+                        ) || (attr_name == "run" && lookup_method(class_name, "run").is_none()))
+                    {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
                     // 4. Fallback: __getattr__(self, name) dunder — call if it is a
                     //    TAG_FUNC function pointer; return value directly for other
                     //    stored values (legacy/non-JIT path).
@@ -7963,7 +7976,7 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                     return;
                 }
                 // threading: daemonizing a running thread is a RuntimeError.
-                if class_name == "Thread" {
+                if class_is_or_inherits(class_name, "Thread") {
                     if let Some(kp) = attr.as_ptr() {
                         if let ObjData::Str(ref attr_s) = (*kp).data {
                             if attr_s == "daemon" {
@@ -10229,6 +10242,10 @@ pub fn class_mro_any<F: Fn(&str) -> bool>(child: &str, pred: F) -> bool {
             false
         }
     })
+}
+
+fn class_is_or_inherits(class_name: &str, base_name: &str) -> bool {
+    class_name == base_name || class_mro_any(class_name, |name| name == base_name)
 }
 
 // ── Property / classmethod / staticmethod ──
@@ -14350,9 +14367,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "TracebackException" && name == "format" {
                     return super::stdlib::traceback_mod::mb_traceback_exception_format(receiver);
                 }
-                if class_name == "Thread" {
+                if class_is_or_inherits(class_name, "Thread") {
                     match name.as_str() {
-                        "start" | "run" => {
+                        "start" => {
+                            return super::stdlib::threading_mod::mb_threading_thread_start(
+                                receiver,
+                            );
+                        }
+                        "run" if lookup_method(class_name, "run").is_none() => {
                             return super::stdlib::threading_mod::mb_threading_thread_start(
                                 receiver,
                             );
