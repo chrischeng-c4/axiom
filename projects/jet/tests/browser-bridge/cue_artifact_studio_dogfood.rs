@@ -76,6 +76,7 @@ fn report(suite: &str, name: &str, outcome: Outcome) -> TestReport {
         shard_index: None,
         shard_total: None,
         artifacts: vec![],
+        steps: Vec::new(),
     }
 }
 

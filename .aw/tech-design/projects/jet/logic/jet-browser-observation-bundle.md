@@ -550,6 +550,8 @@ requirementDiagram
 ```yaml
 e2e_tests:
   - id: live_wasm_capture_after_click
+    capability_id: browser-trace-parity
+    claim_id: browser-automation-diagnostics
     name: "Live WASM capture after click"
     fixture: "projects/jet/examples/counter-demo"
     command: "cargo test -p jet --test browser_cli_smoke -- --nocapture"

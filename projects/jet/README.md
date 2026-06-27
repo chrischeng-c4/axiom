@@ -82,15 +82,7 @@ Source map:
 
 ## Capabilities
 
-From this point down is the AW-managed capability registry for Jet. Keep the
-contract and work-root table schemas stable, keep enum values inside the
-accepted AW vocabulary, and validate structural edits with
-`aw capability check --project jet --pretty`.
-
-Capability claims become meaningful only when their listed gate/evidence is
-runnable in the current environment. Use
-`aw capability report --project jet --verify` or `aw health --project jet` for
-readiness questions.
+Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
 
 ### Capability Index
 
@@ -105,7 +97,7 @@ readiness questions.
 | WASM And Multi-Target Execution | #3783 | implemented | passing | smoke, conformance, corpus, negative | partial | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
 | Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
 | Library Build And Package Publishing | #168 | implemented | verified | conformance | partial | `jet build --lib` (ESM+CJS, externalized deps/peerDeps, multi-entry), `.d.ts` emission, and `jet publish --build` with metadata validation + private-registry (`.npmrc` scoped) e2e all shipped and tested (A1-A3 merged). `partial`: `preserve_modules`/IIFE lib output, class-member `.d.ts` reduction, and some CJS re-export edge cases are TODO follow-ups. |
-| Component Workbench (Stories) | #169 | implemented | verified | conformance | ready_for_basic | CSF `*.stories.tsx` discovery, `jet stories` dev manager + isolated preview, preview HMR, and a prop-type-derived Controls panel (B1-B3 + B2b). The earlier `partial` follow-ups have since shipped: hook-state-preserving React Refresh (#196), `node_modules` bare-import resolution for dev + static (#197), generic/cross-file/intersection prop-type controls (#198), CSF2 `Template.bind`/re-exported stories/spread args (#199), and `jet stories build` static export (#190). CSF-compatible, no Storybook runtime. |
+| Component Workbench (Stories) | #169 | implemented | verified | conformance | ready_for_basic | CSF `*.stories.tsx` discovery, the Stories dev manager + isolated preview, preview HMR, and a prop-type-derived Controls panel (B1-B3 + B2b). The earlier `partial` follow-ups have since shipped: hook-state-preserving React Refresh (#196), `node_modules` bare-import resolution for dev + static (#197), generic/cross-file/intersection prop-type controls (#198), CSF2 `Template.bind`/re-exported stories/spread args (#199), and `jet stories build` static export (#190). CSF-compatible, no Storybook runtime. |
 
 ### Rust-Native Frontend Toolchain Replacement
 
@@ -119,15 +111,21 @@ Required Verification: smoke, conformance, corpus, negative, dogfood
 Promise:
 Jet is gated as an all-in-one Basic frontend replacement in dependency order:
 package manager, Browser Bridge, production build, serve, workspace, test,
-e2e, and trace. The current production-readiness gate is green.
+e2e, trace, and stack-aware API client codegen. `jet codegen openapi`
+resolves generated output from CLI flags, `jet.toml` `[codegen.openapi]`,
+and `package.json` dependencies so React Query hooks and fetch/axios runtime
+selection match the project tech stack. The current production-readiness gate
+is green.
 Gate Inventory:
 - `projects/jet/scripts/verify-basic-dom-gates.sh --all`
 - projects/jet/tests/fixtures/dom-production-build
+- `cargo test -p jet --test openapi_golden`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Production replacement readiness | epic | #3778 | implemented | verified | corpus | package manager -> Browser Bridge -> build -> serve/workspace/test/e2e/trace are green in `verify-basic-dom-gates.sh --all` |
+| Production replacement readiness | epic | #3778 | implemented | verified | corpus | package manager -> Browser Bridge -> build -> serve/workspace/test/e2e/trace are green in `projects/jet/scripts/verify-basic-dom-gates.sh --all` |
 | Full Toolchain Dogfood Flow | epic | #3778 | implemented | verified | dogfood | `projects/jet/scripts/verify-basic-dom-gates.sh --all`<br>projects/jet/tests/fixtures/dom-production-build |
+| Stack-Aware OpenAPI Codegen | change | #3778 | implemented | verified | conformance | `cargo test -p jet --test openapi_golden` — jet codegen openapi resolves stack/http/hooks from CLI flags, jet.toml, and package.json |
 
 ### Package Manager
 
@@ -143,11 +141,11 @@ Jet owns fixture hydration, mutation, workspace, and frozen-lockfile checks;
 isolated npm/pnpm benchmark evidence is green for the current Basic corpus.
 Gate Inventory:
 - `cargo test -p jet --lib pkg_manager -- --nocapture`
-- `projects/jet/scripts/compare-pkg-management.mjs --baseline-tools npm,pnpm --require-baselines`
+- `node projects/jet/scripts/compare-pkg-management.mjs --baseline-tools npm,pnpm --require-baselines`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Package manager readiness | epic | #3779 | implemented | verified | corpus | `projects/jet/scripts/compare-pkg-management.mjs` |
+| Package manager readiness | epic | #3779 | implemented | verified | corpus | `node projects/jet/scripts/compare-pkg-management.mjs` |
 | Package Manager Lockfile Parity | epic | #3779 | implemented | verified | conformance | `cargo test -p jet --lib pkg_manager::lockfile -- --nocapture`<br>projects/jet/fixtures/pkg-manager/lockfile |
 | Package Manager Workspace Parity | epic | #3779 | implemented | verified | conformance | `cargo test -p jet --lib pkg_manager::workspace -- --nocapture`<br>projects/jet/fixtures/pkg-manager/workspace |
 | Package Manager Registry Integrity | epic | #3779 | implemented | verified | negative | `cargo test -p jet --lib pkg_manager -- --nocapture`<br>projects/jet/fixtures/pkg-manager/registry |
@@ -157,7 +155,7 @@ Gate Inventory:
 ID: bundler-production-build
 Type: DeveloperTool
 Surfaces: CLI: `jet build` + `jet build --wasm` - Production and WASM build command surface.
-EC Dimensions: behavior: `projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3` - DOM production build corpus, runtime smoke, and Vite/Webpack comparison behavior.
+EC Dimensions: behavior: `node projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3` - DOM production build corpus, runtime smoke, and Vite/Webpack comparison behavior.
 Root WI: #3782
 Status: verified
 Required Verification: smoke, conformance, corpus, negative
@@ -166,16 +164,16 @@ Jet production build replacement is green after package manager and Browser
 Bridge gates. The expanded DOM production build corpus has green static checks,
 runtime smoke, and performance/size comparisons for the current fixture set.
 Gate Inventory:
-- `projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3`
+- `node projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3`
 - projects/jet/tests/fixtures/dom-production-build
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Bundler production readiness | epic | #3782 | implemented | verified | corpus | DOM production build corpus is green with required runtime smoke and Vite/Webpack comparisons |
+| Bundler production readiness | epic | #3782 | implemented | verified | corpus | `node projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3` |
 | Production Bundle Output Parity | epic | #3782 | implemented | verified | conformance | `cargo test -p jet --lib bundler -- --nocapture`<br>projects/jet/fixtures/bundler/production |
 | Transform Resolver Parity | epic | #3782 | implemented | verified | corpus | `cargo test -p jet --lib transform -- --nocapture`<br>projects/jet/fixtures/bundler/transform-resolver |
 | Asset Sourcemap Negative Paths | epic | #3782 | implemented | verified | negative | `cargo test -p jet --lib asset -- --nocapture`<br>projects/jet/fixtures/bundler/assets |
-| SCSS / Sass Compilation | change | #204 | implemented | verified | conformance | `cargo test -p jet --lib css::scss` — grass-based (pure-Rust, no C deps) `.scss`/`.sass` → CSS: nesting, variables, `@use`/`@import` partials, mixins; fed into the CSS pipeline (`@import` resolve → Tailwind JIT → lightningcss) before minify |
+| SCSS / Sass Compilation | change | #204 | implemented | verified | conformance | `cargo test -p jet --lib css::scss` — grass-based (pure-Rust, no C deps) SCSS/Sass to CSS: nesting, variables, use/import partials, mixins; fed into the CSS pipeline before minify |
 
 ### Dev Server And HMR
 
@@ -208,7 +206,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Dev server replacement readiness | epic | #3780 | implemented | verified | dogfood | jet dev is the client-connected dev control plane; jet serve is the static data plane |
+| Dev server replacement readiness | epic | #3780 | implemented | verified | dogfood | `projects/jet/scripts/verify-basic-dom-gates.sh --phase serve` |
 | Dev Server Local Serving Hmr | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib dev_server -- --nocapture`<br>projects/jet/fixtures/dev-server/basic-hmr |
 | Dev Server Proxy Contract | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib dev_server::proxy -- --nocapture` |
 | Dev Server Cli Contract | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib cli::e2e_command_contract_tests -- --nocapture` |
@@ -238,7 +236,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Workspace task runner readiness | epic | #3781 | implemented | verified | corpus | package/workspace replacement track plus canonical jet.toml config, lint, and schemas/jet.schema.json schema artifact |
+| Workspace task runner readiness | epic | #3781 | implemented | verified | corpus | `cargo run -p jet -- config schema --check` |
 | Task Runner Graph Cache | epic | #3781 | implemented | verified | conformance | `cargo test -p jet --lib task_runner -- --nocapture`<br>projects/jet/fixtures/task-runner/graph-cache |
 | Workspace Package Selection | epic | #3781 | implemented | verified | conformance | `cargo test -p jet --lib pkg_manager::workspace -- --nocapture`<br>projects/jet/fixtures/workspace/package-selection |
 | Nx Graph Parity | epic | #3781 | implemented | verified | corpus | `cargo test -p jet --lib pkg_manager::nx -- --nocapture`<br>projects/jet/fixtures/task-runner/nx |
@@ -308,12 +306,13 @@ Gate Inventory:
 | Library DOM/WASM Parity Fixtures | change | #4072 | implemented | verified | conformance | `cargo test -p jet --test react_dom_oracle_conformance library_dom_wasm_parity -- --nocapture`<br>projects/jet/parity/data/fixtures/libraries |
 | MUI Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/mui-visual-demo |
 | AntD Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression antd_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/antd-visual-demo |
+
 ### Browser, Trace, And Parity Infrastructure
 
 ID: browser-trace-parity
 Type: DeveloperTool
 Surfaces: CLI: `jet bb` + `jet trace` - Browser Bridge and trace diagnostic surface.
-EC Dimensions: behavior: `projects/jet/scripts/verify-browser-bridge-replacement.mjs` - Browser Bridge automation, trace evidence, and DOM/WASM parity corpus behavior.
+EC Dimensions: behavior: `node projects/jet/scripts/verify-browser-bridge-replacement.mjs` - Browser Bridge automation, trace evidence, and DOM/WASM parity corpus behavior.
 Root WI: #3786
 Status: auditing
 Required Verification: smoke, conformance, corpus, negative
@@ -321,14 +320,14 @@ Promise:
 Jet Browser Bridge, trace, and parity diagnostics are the second Basic
 replacement gate and the evidence substrate for later DOM/WASM parity.
 Gate Inventory:
-- `projects/jet/scripts/verify-browser-bridge-replacement.mjs --jet-bin target/release/jet`
+- `node projects/jet/scripts/verify-browser-bridge-replacement.mjs --jet-bin target/release/jet`
 - projects/jet/fixtures/trace/artifacts
 - projects/jet/fixtures/browser/automation-diagnostics
 - projects/jet/parity/**
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Browser trace parity readiness | epic | #3786 | implemented | passing | corpus | `projects/jet/scripts/verify-browser-bridge-replacement.mjs` |
+| Browser trace parity readiness | epic | #3786 | implemented | passing | corpus | `node projects/jet/scripts/verify-browser-bridge-replacement.mjs` |
 | Trace Evidence Artifacts | epic | #3786 | implemented | verified | conformance | `cargo test -p jet --lib trace -- --nocapture`<br>projects/jet/fixtures/trace/artifacts |
 | Browser Automation Diagnostics | epic | #3786 | implemented | verified | negative | `cargo test -p jet --lib browser -- --nocapture`<br>projects/jet/fixtures/browser/automation-diagnostics |
 | Parity Corpus Gates | epic | #3786 | implemented | verified | corpus | `projects/jet/scripts/verify-parity-oracle-gate.sh`<br>projects/jet/parity/** |
@@ -343,33 +342,51 @@ Gate Inventory:
 
 ### Library Build And Package Publishing
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| library-build-publishing | #168 | implemented | jet builds publishable npm packages in library mode (ESM + optional CJS, externalized dependencies/peerDependencies, multi-entry from package.json `exports`), emits `.d.ts` type declarations, and `jet publish --build` builds + validates package metadata (`exports`/`main`/`module`/`types`) before publishing to public or private (GitLab/Verdaccio/Nexus) registries via `.npmrc` scoped-registry auth. App-mode `jet build` is unchanged. | smoke, conformance, corpus, negative | `cargo test -p jet --test library_build`<br>`cargo test -p jet --test library_dts`<br>`cargo test -p jet --test library_publish_e2e`<br>`cargo test -p jet --lib bundler::lib_build bundler::dts`<br>`cargo test -p jet --lib pkg_manager::publish` |
+ID: library-build-publishing
+Root WI: #168
+Status: candidate
+Required Verification: smoke, conformance, corpus, negative
+Promise:
+jet builds publishable npm packages in library mode (ESM + optional CJS, externalized dependencies/peerDependencies, multi-entry from package.json `exports`), emits `.d.ts` type declarations, and `jet publish --build` builds + validates package metadata (`exports`/`main`/`module`/`types`) before publishing to public or private (GitLab/Verdaccio/Nexus) registries via `.npmrc` scoped-registry auth. App-mode `jet build` is unchanged.
+Gate Inventory:
+- `cargo test -p jet --test library_build`
+- `cargo test -p jet --test library_dts`
+- `cargo test -p jet --test library_publish_e2e`
+- `cargo test -p jet --lib bundler::lib_build bundler::dts`
+- `cargo test -p jet --lib pkg_manager::publish`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Library publishing readiness | epic | #168 | implemented | verified | conformance | A1 `jet build --lib` -> A2 `.d.ts` emission -> A3 publish + private-registry hardening (all merged) |
+| Library publishing readiness | epic | #168 | implemented | verified | conformance | `cargo test -p jet --test library_publish_e2e` — A1 library build, A2 declaration emission, and A3 publish/private-registry hardening are merged |
 | Library Build Mode | change | #170 | implemented | verified | conformance | `cargo test -p jet --test library_build` — ESM+CJS, externalized deps/peerDeps, multi-entry (preserve-modules/IIFE TODO) |
-| Type Declaration Emission | change | #171 | implemented | verified | conformance | `cargo test -p jet --test library_dts` — `.d.ts` per entry + `types` field (isolatedDeclarations) |
+| Type Declaration Emission | change | #171 | implemented | verified | conformance | `cargo test -p jet --test library_dts` — declaration files per entry plus package types field (isolatedDeclarations) |
 | Publish And Private Registry | change | #172 | implemented | verified | conformance | `cargo test -p jet --test library_publish_e2e` — build + metadata validate; in-process mock-registry publish/install round-trip |
-| Library CSS Cascade-Merge | change | #205 | implemented | verified | conformance | `cargo test -p jet --lib bundler::css_bundle` — cascade-ordered CSS merge across entries + raw asset copy in `jet build --lib` |
+| Library CSS Cascade-Merge | change | #205 | implemented | verified | conformance | `cargo test -p jet --lib bundler::css_bundle` — cascade-ordered CSS merge across entries plus raw asset copy in library builds |
 
 ### Component Workbench (Stories)
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| component-workbench | #169 | implemented | jet discovers and parses CSF `*.stories.tsx` (default-export meta + named-export stories), serves a jet-native manager UI (sidebar, isolated preview, toolbar) with HMR, and derives a live Controls panel from component prop types + `argTypes`. CSF/CSF2-compatible with no Storybook runtime dependency, with hook-state-preserving React Refresh, `node_modules` bare-import resolution, generic/cross-file prop-type controls, and a static `jet stories build` export (all shipped). | smoke, conformance, corpus, negative | `cargo test -p jet --test csf_discovery`<br>`cargo test -p jet --test manager`<br>`cargo test -p jet --test preview_hmr`<br>`cargo test -p jet --test controls`<br>`cargo test -p jet --test stories_build` |
+ID: component-workbench
+Root WI: #169
+Status: candidate
+Required Verification: smoke, conformance, corpus, negative
+Promise:
+jet discovers and parses CSF `*.stories.tsx` (default-export meta + named-export stories), serves a jet-native manager UI (sidebar, isolated preview, toolbar) with HMR, and derives a live Controls panel from component prop types + `argTypes`. CSF/CSF2-compatible with no Storybook runtime dependency, with hook-state-preserving React Refresh, `node_modules` bare-import resolution, generic/cross-file prop-type controls, and a static `jet stories build` export (all shipped).
+Gate Inventory:
+- `cargo test -p jet --test csf_discovery`
+- `cargo test -p jet --test manager`
+- `cargo test -p jet --test preview_hmr`
+- `cargo test -p jet --test controls`
+- `cargo test -p jet --test stories_build`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Component workbench readiness | epic | #169 | implemented | verified | conformance | B1 CSF discovery -> B2 `jet stories` manager -> B2b preview HMR -> B3 controls (all merged) |
+| Component workbench readiness | epic | #169 | implemented | verified | conformance | `cargo test -p jet --test stories_build` |
 | CSF Story Discovery | change | #173 | implemented | verified | conformance | `cargo test -p jet --test csf_discovery` — glob + CSF3 meta/named-story parse into a story index |
-| Stories Dev Manager | change | #174 | implemented | verified | conformance | `cargo test -p jet --test manager` — `jet stories` command + manager UI + isolated per-story preview |
+| Stories Dev Manager | change | #174 | implemented | verified | conformance | `cargo test -p jet --test manager` — Stories dev command path, manager UI, and isolated per-story preview |
 | Stories Preview HMR | change | #176 | implemented | verified | conformance | `cargo test -p jet --test preview_hmr` — watcher + WS, preview re-render/reload, manager untouched |
-| Stories Controls Panel | change | #175 | implemented | verified | conformance | `cargo test -p jet --test controls` — prop-type-inferred controls + `argTypes` override; live arg edits re-render the preview |
-| Stories Static Export | change | #190 | implemented | verified | conformance | `cargo test -p jet --test stories_build` — `jet stories build` emits a static, server-less workbench (manager + per-story previews + transformed modules, relative URLs) |
-| Hook-State-Preserving Refresh | change | #196 | implemented | verified | conformance | `cargo test -p jet --test preview_hmr` — React Refresh preserves `useState`/hook state across preview edits |
-| Stories Bare-Import Resolution | change | #197 | implemented | verified | conformance | `cargo test -p jet --test manager` — `node_modules` bare-import resolution for stories dev + static export |
+| Stories Controls Panel | change | #175 | implemented | verified | conformance | `cargo test -p jet --test controls` — prop-type-inferred controls plus argTypes override; live arg edits re-render the preview |
+| Stories Static Export | change | #190 | implemented | verified | conformance | `cargo test -p jet --test stories_build` — jet stories build emits a static, server-less workbench with manager, per-story previews, transformed modules, and relative URLs |
+| Hook-State-Preserving Refresh | change | #196 | implemented | verified | conformance | `cargo test -p jet --test preview_hmr` — React Refresh preserves useState/hook state across preview edits |
+| Stories Bare-Import Resolution | change | #197 | implemented | verified | conformance | `cargo test -p jet --test manager` — node_modules bare-import resolution for stories dev and static export |
 | Generic / Cross-File Prop Controls | change | #198 | implemented | verified | conformance | `cargo test -p jet --test controls` — controls inferred from generic, cross-file, and intersection prop types |
-| CSF2 Template.bind + Re-Exports | change | #199 | implemented | verified | conformance | `cargo test -p jet --test csf_discovery` — CSF2 `Template.bind({})`, re-exported stories, and spread-args discovery |
+| CSF2 Template.bind + Re-Exports | change | #199 | implemented | verified | conformance | `cargo test -p jet --test csf_discovery` — CSF2 Template.bind, re-exported stories, and spread-args discovery |

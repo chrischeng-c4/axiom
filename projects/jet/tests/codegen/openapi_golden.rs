@@ -27,6 +27,19 @@ fn file<'a>(out: &'a GeneratedOutput, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("missing generated file {name}"))
 }
 
+fn snapshot_body(snapshot: &str) -> String {
+    if !snapshot.starts_with("// <HANDWRITE ") {
+        return snapshot.to_string();
+    }
+    let Some(body_start) = snapshot.find('\n').map(|idx| idx + 1) else {
+        return snapshot.to_string();
+    };
+    let body = &snapshot[body_start..];
+    body.strip_suffix("\n// </HANDWRITE>\n")
+        .unwrap_or(body)
+        .to_string()
+}
+
 /// Byte-for-byte golden comparison for the minimal fixture. Regenerate with:
 /// `jet codegen openapi projects/jet/tests/fixtures/codegen/minimal.json
 ///  --out projects/jet/tests/__snapshots__/codegen` (then rename `X.ts` to
@@ -38,23 +51,23 @@ fn minimal_matches_golden_snapshots() {
 
     assert_eq!(
         file(&out, "types.ts"),
-        include_str!("../__snapshots__/codegen/minimal__types.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__types.ts"))
     );
     assert_eq!(
         file(&out, "runtime.ts"),
-        include_str!("../__snapshots__/codegen/minimal__runtime.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__runtime.ts"))
     );
     assert_eq!(
         file(&out, "client.ts"),
-        include_str!("../__snapshots__/codegen/minimal__client.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__client.ts"))
     );
     assert_eq!(
         file(&out, "hooks.ts"),
-        include_str!("../__snapshots__/codegen/minimal__hooks.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__hooks.ts"))
     );
     assert_eq!(
         file(&out, "index.ts"),
-        include_str!("../__snapshots__/codegen/minimal__index.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__index.ts"))
     );
 }
 
@@ -69,24 +82,26 @@ fn axios_backend_matches_golden_and_is_surface_invariant() {
 
     assert_eq!(
         file(&out, "runtime.ts"),
-        include_str!("../__snapshots__/codegen/minimal__runtime.axios.ts")
+        snapshot_body(include_str!(
+            "../__snapshots__/codegen/minimal__runtime.axios.ts"
+        ))
     );
     // types/client/hooks/index are backend-invariant: same as the fetch goldens.
     assert_eq!(
         file(&out, "types.ts"),
-        include_str!("../__snapshots__/codegen/minimal__types.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__types.ts"))
     );
     assert_eq!(
         file(&out, "client.ts"),
-        include_str!("../__snapshots__/codegen/minimal__client.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__client.ts"))
     );
     assert_eq!(
         file(&out, "hooks.ts"),
-        include_str!("../__snapshots__/codegen/minimal__hooks.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__hooks.ts"))
     );
     assert_eq!(
         file(&out, "index.ts"),
-        include_str!("../__snapshots__/codegen/minimal__index.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__index.ts"))
     );
 }
 

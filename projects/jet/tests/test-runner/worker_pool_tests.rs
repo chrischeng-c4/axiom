@@ -231,6 +231,7 @@ fn test_ndjson_contains_shard_fields() {
         shard_index: Some(2),
         shard_total: Some(4),
         artifacts: Vec::new(),
+        steps: Vec::new(),
     };
 
     let json = serde_json::to_string(&report).expect("serialise ok");

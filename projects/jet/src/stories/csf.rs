@@ -330,7 +330,10 @@ struct StoryMutation<'a> {
 
 /// Walk the top level for `X.args = {...}` and `X.storyName = '...'`
 /// assignment statements, grouping them by the mutated identifier `X`.
-fn collect_story_mutations<'a>(source: &str, root: Node<'a>) -> BTreeMap<String, StoryMutation<'a>> {
+fn collect_story_mutations<'a>(
+    source: &str,
+    root: Node<'a>,
+) -> BTreeMap<String, StoryMutation<'a>> {
     let mut out: BTreeMap<String, StoryMutation> = BTreeMap::new();
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
@@ -438,8 +441,7 @@ fn resolve_args_guarded(
             "spread_element" => {
                 // `...base` -> resolve a statically-known object's members.
                 if let Some(base) = spread_base_members(*member, source, scope, mutations) {
-                    let resolved =
-                        resolve_args_guarded(&base, source, scope, mutations, depth + 1);
+                    let resolved = resolve_args_guarded(&base, source, scope, mutations, depth + 1);
                     for (k, v) in resolved {
                         out.insert(k, v);
                     }
@@ -830,7 +832,11 @@ export { Primary };
 "#;
         let parsed = parse_csf(src, true).expect("parses");
         // Both bound templates surface as stories.
-        let names: Vec<_> = parsed.stories.iter().map(|s| s.export_name.as_str()).collect();
+        let names: Vec<_> = parsed
+            .stories
+            .iter()
+            .map(|s| s.export_name.as_str())
+            .collect();
         assert!(names.contains(&"Primary"), "got {names:?}");
         assert!(names.contains(&"Secondary"), "got {names:?}");
 
@@ -869,8 +875,14 @@ export const Dynamic = { args: { ...imported, only: 9 } };
             .iter()
             .find(|s| s.export_name == "Dynamic")
             .unwrap();
-        assert_eq!(dynamic.args.get("only"), Some(&CsfValue::Number("9".into())));
-        assert!(!dynamic.args.contains_key("x"), "unresolvable spread dropped");
+        assert_eq!(
+            dynamic.args.get("only"),
+            Some(&CsfValue::Number("9".into()))
+        );
+        assert!(
+            !dynamic.args.contains_key("x"),
+            "unresolvable spread dropped"
+        );
     }
 
     #[test]

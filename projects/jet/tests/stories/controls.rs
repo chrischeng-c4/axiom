@@ -91,7 +91,10 @@ fn arg_type_select_override_wins_over_inference() {
 
     let mut control_obj = BTreeMap::new();
     control_obj.insert("type".into(), CsfValue::Str("select".into()));
-    control_obj.insert("options".into(), CsfValue::Raw("[\"sm\", \"md\", \"lg\"]".into()));
+    control_obj.insert(
+        "options".into(),
+        CsfValue::Raw("[\"sm\", \"md\", \"lg\"]".into()),
+    );
 
     let mut arg_type = BTreeMap::new();
     arg_type.insert("control".into(), CsfValue::Object(control_obj));
@@ -163,7 +166,12 @@ fn write(path: std::path::PathBuf, contents: &str) {
 async fn get(router: &axum::Router, path: &str) -> (StatusCode, String) {
     let response = router
         .clone()
-        .oneshot(Request::builder().uri(path).body(Body::empty()).expect("request"))
+        .oneshot(
+            Request::builder()
+                .uri(path)
+                .body(Body::empty())
+                .expect("request"),
+        )
         .await
         .expect("router response");
     let status = response.status();
@@ -185,8 +193,14 @@ async fn manager_renders_controls_seeded_with_current_args() {
     assert_eq!(status, StatusCode::OK);
 
     // The panel renders one widget per resolved control.
-    assert!(html.contains("id=\"jet-controls\""), "controls panel present");
-    assert!(html.contains("data-control=\"primary\""), "boolean -> toggle");
+    assert!(
+        html.contains("id=\"jet-controls\""),
+        "controls panel present"
+    );
+    assert!(
+        html.contains("data-control=\"primary\""),
+        "boolean -> toggle"
+    );
     assert!(html.contains("data-control=\"label\""), "string -> text");
     assert!(html.contains("data-control=\"size\""), "union -> select");
     assert!(html.contains("data-control=\"count\""), "number -> number");
@@ -197,7 +211,10 @@ async fn manager_renders_controls_seeded_with_current_args() {
         html.contains("data-kind=\"toggle\" checked"),
         "primary toggle seeded true: {html}"
     );
-    assert!(html.contains("value=\"Click me\""), "label text seeded with story value");
+    assert!(
+        html.contains("value=\"Click me\""),
+        "label text seeded with story value"
+    );
     assert!(
         html.contains("<option value=\"lg\" selected>"),
         "size select seeds the current option"
@@ -223,7 +240,10 @@ async fn editing_a_control_targets_the_preview_render_hook() {
             || manager_html.contains("addEventListener('input'"),
         "controls have edit handlers"
     );
-    assert!(manager_html.contains("postMessage"), "edits post to the preview frame");
+    assert!(
+        manager_html.contains("postMessage"),
+        "edits post to the preview frame"
+    );
     assert!(
         manager_html.contains("jet-stories-args"),
         "uses the args-update message channel"
@@ -267,7 +287,10 @@ export const Basic = { args: { a: 1 } };
     let router = server::build_router(index, dir.path().to_path_buf());
     let (status, html) = get(&router, "/").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("No controls for this story."), "graceful empty panel");
+    assert!(
+        html.contains("No controls for this story."),
+        "graceful empty panel"
+    );
 }
 
 /// Sanity: the controls panel uses real props for a story whose meta lacks an
@@ -304,7 +327,11 @@ export function Widget(props: Props) { return null; }
     let source = fs::read_to_string(&component).expect("read component");
     let props = extract_props_at(&source, "Widget", Some(&component));
     let names: Vec<&str> = props.iter().map(|p| p.name.as_str()).collect();
-    assert_eq!(names, vec!["primary", "label", "size"], "imported props read");
+    assert_eq!(
+        names,
+        vec!["primary", "label", "size"],
+        "imported props read"
+    );
 
     let controls = resolve_controls(&props, &BTreeMap::new(), &BTreeMap::new());
     let kinds: Vec<ControlKind> = controls.into_iter().map(|c| c.kind).collect();
@@ -336,8 +363,10 @@ export function Widget(props: Props) { return null; }
     assert_eq!(names, vec!["id", "primary", "count"], "union of operands");
 
     let controls = resolve_controls(&props, &BTreeMap::new(), &BTreeMap::new());
-    let by_name: BTreeMap<&str, &ControlKind> =
-        controls.iter().map(|c| (c.name.as_str(), &c.kind)).collect();
+    let by_name: BTreeMap<&str, &ControlKind> = controls
+        .iter()
+        .map(|c| (c.name.as_str(), &c.kind))
+        .collect();
     assert_eq!(by_name.get("id"), Some(&&ControlKind::Text));
     assert_eq!(by_name.get("primary"), Some(&&ControlKind::Toggle));
     assert_eq!(by_name.get("count"), Some(&&ControlKind::Number));
@@ -355,8 +384,10 @@ export function Field(props: GenProps<number>) { return null; }
     assert_eq!(props.len(), 2);
 
     let controls = resolve_controls(&props, &BTreeMap::new(), &BTreeMap::new());
-    let by_name: BTreeMap<&str, &ControlKind> =
-        controls.iter().map(|c| (c.name.as_str(), &c.kind)).collect();
+    let by_name: BTreeMap<&str, &ControlKind> = controls
+        .iter()
+        .map(|c| (c.name.as_str(), &c.kind))
+        .collect();
     assert_eq!(
         by_name.get("value"),
         Some(&&ControlKind::Number),
@@ -411,8 +442,14 @@ export const Basic = { args: { primary: true, label: 'Hello' } };
     let router = server::build_router(index, root.to_path_buf());
     let (status, html) = get(&router, "/").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("data-control=\"primary\""), "cross-file bool control");
-    assert!(html.contains("data-control=\"label\""), "cross-file string control");
+    assert!(
+        html.contains("data-control=\"primary\""),
+        "cross-file bool control"
+    );
+    assert!(
+        html.contains("data-control=\"label\""),
+        "cross-file string control"
+    );
     assert!(html.contains("value=\"Hello\""), "seeded with story arg");
 }
 

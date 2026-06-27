@@ -1,6 +1,6 @@
 ---
 id: jet-codegen-openapi-http-client
-summary: Select the generated client's HTTP runtime (fetch or axios) for jet codegen openapi via a --http flag; only runtime.ts changes between backends.
+summary: Select the generated client's HTTP runtime (fetch or axios) for jet codegen openapi via CLI flag, jet.toml, or package.json stack detection; only runtime.ts changes between backends.
 capability_refs:
   - id: rust-native-frontend-toolchain
     role: primary
@@ -21,8 +21,8 @@ fill_sections: [logic, unit-test]
 id: jet-codegen-openapi-http-client-logic
 entry: start
 nodes:
-  start: { kind: start, label: "jet codegen openapi --http <fetch|axios> (default fetch)" }
-  parse: { kind: process, label: "Parse spec and resolve http_client option" }
+  start: { kind: start, label: "jet codegen openapi --http <fetch|axios>" }
+  parse: { kind: process, label: "Resolve http_client from --http, jet.toml [codegen.openapi].http, package.json axios, else fetch" }
   emit_types: { kind: process, label: "Emit types.ts (backend independent)" }
   http_dec: { kind: decision, label: "http_client == axios?" }
   fetch_rt: { kind: process, label: "Emit fetch runtime.ts (native fetch)" }
@@ -40,7 +40,7 @@ edges:
   - { from: emit_rest, to: done }
 ---
 flowchart TD
-    start([jet codegen openapi http flag]) --> parse[Parse spec and resolve http client option]
+    start([jet codegen openapi http flag]) --> parse[Resolve http client from CLI jet toml package json or fetch fallback]
     parse --> emit_types[Emit types ts backend independent]
     emit_types --> http_dec{http client is axios?}
     http_dec -->|yes| axios_rt[Emit axios runtime ts import axios AxiosInstance]
@@ -61,7 +61,7 @@ requirements:
     risk: high
     verify: unit
   R2:
-    text: "Default and --http fetch emit the existing fetch runtime unchanged."
+    text: "fetch from CLI, jet.toml, or fallback emits the existing fetch runtime unchanged."
     risk: high
     verify: unit
   R3:
@@ -72,6 +72,10 @@ requirements:
     text: "axios is a generated-output peer dependency only; jet adds no new Rust crate."
     risk: medium
     verify: command
+  R5:
+    text: "package.json axios dependency selects the axios runtime when --http and jet.toml do not override it."
+    risk: medium
+    verify: unit
 ---
 requirementDiagram
 requirement R1 {
@@ -98,6 +102,12 @@ requirement R4 {
   risk: Medium
   verifymethod: Test
 }
+requirement R5 {
+  id: R5
+  text: "package.json axios auto-detection"
+  risk: Medium
+  verifymethod: Test
+}
 ```
 
 ## Changes
@@ -111,15 +121,16 @@ changes:
     section: logic
     impl_mode: hand-written
     description: |
-      Add and parse `jet codegen openapi --http fetch|axios`, defaulting to
-      fetch and passing the selected backend into GenOptions.
+      Add and parse `jet codegen openapi --http fetch|axios`; when omitted,
+      resolve HTTP backend from [codegen.openapi].http, package.json axios,
+      then fetch fallback before passing the backend into GenOptions.
   - path: "projects/jet/src/codegen/mod.rs"
     action: modify
     section: logic
     impl_mode: hand-written
     description: |
-      Carry the HttpClient backend choice through generation while keeping
-      non-runtime generated files backend-invariant.
+      Carry the HttpClient backend choice through stack-aware generation while
+      keeping non-runtime generated files backend-invariant.
   - path: "projects/jet/src/codegen/client_emit.rs"
     action: modify
     section: logic

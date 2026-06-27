@@ -8,6 +8,12 @@ capability_refs:
     claim: full-toolchain-dogfood-flow
     coverage: partial
     rationale: "WI #4160: Jet package management must fully replace pnpm before Browser Bridge expansion and DOM production build claims."
+  - id: package-manager
+    role: primary
+    gap: package-manager-readiness
+    claim: package-manager-readiness
+    coverage: full
+    rationale: "The phase-1 package gate is the production evidence for the Package Manager readiness claim."
 ---
 
 # Complete Package Management Replacement Gate Before Build
@@ -466,6 +472,8 @@ requirement R3 {
 ```yaml
 e2e_tests:
   - id: package_phase_gate
+    capability_id: package-manager
+    claim_id: package-manager-readiness
     name: "Basic DOM package-management replacement gate"
     command: "projects/jet/scripts/verify-basic-dom-gates.sh --phase package"
     verifies:

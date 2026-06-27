@@ -1083,8 +1083,14 @@ mod tests {
         let css = fs::read_to_string(root.join("dist/style.css")).unwrap();
 
         // SCSS nesting flattened + variable resolved + `@use` partial pulled in.
-        assert!(css.contains(".card .title"), "nesting must flatten, got:\n{css}");
-        assert!(css.contains("12px"), "local variable must resolve, got:\n{css}");
+        assert!(
+            css.contains(".card .title"),
+            "nesting must flatten, got:\n{css}"
+        );
+        assert!(
+            css.contains("12px"),
+            "local variable must resolve, got:\n{css}"
+        );
         assert!(
             css.contains("#1a73e8") || css.to_lowercase().contains("#1a73e8"),
             "`@use` partial variable must resolve, got:\n{css}"
@@ -1092,7 +1098,10 @@ mod tests {
         assert!(!css.contains("$pad"), "no raw Sass variables, got:\n{css}");
         assert!(!css.contains("@use"), "no raw @use, got:\n{css}");
         // Plain CSS import survives verbatim.
-        assert!(css.contains("body { margin: 0; }"), "plain css must pass through, got:\n{css}");
+        assert!(
+            css.contains("body { margin: 0; }"),
+            "plain css must pass through, got:\n{css}"
+        );
     }
 
     #[test]

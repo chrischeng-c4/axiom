@@ -109,7 +109,8 @@ impl WorkspaceManager {
         if pkg_path.exists() {
             let content = std::fs::read_to_string(&pkg_path)
                 .with_context(|| workspace_config_io_ctx(&pkg_path))?;
-            let pkg: serde_json::Value = serde_json::from_str(&content)
+            let content = strip_aw_claim_wrapper_lines(&content);
+            let pkg: serde_json::Value = serde_json::from_str(content.as_ref())
                 .with_context(|| workspace_config_parse_ctx(&pkg_path))?;
             if let Some(workspaces) = pkg.get("workspaces") {
                 let patterns = parse_workspaces_field(workspaces).map_err(|shape| {
@@ -571,6 +572,31 @@ pub(crate) fn workspace_config_parse_ctx(path: &Path) -> String {
     )
 }
 
+/// Strip AW source-ownership wrapper lines from JSON fixtures before parsing.
+///
+/// This intentionally accepts only the exact line-comment markers emitted by
+/// standardization (`// <HANDWRITE ...>` and `// </HANDWRITE>`). General JSON
+/// comments remain invalid so real malformed `package.json` files still fail.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-pkg-manager.md#schema
+pub(crate) fn strip_aw_claim_wrapper_lines(content: &str) -> std::borrow::Cow<'_, str> {
+    if !content.contains("// <HANDWRITE") && !content.contains("// </HANDWRITE>") {
+        return std::borrow::Cow::Borrowed(content);
+    }
+    let mut stripped = String::with_capacity(content.len());
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("// <HANDWRITE ") || trimmed == "// </HANDWRITE>" {
+            continue;
+        }
+        stripped.push_str(line);
+        stripped.push('\n');
+    }
+    if !content.ends_with('\n') {
+        stripped.pop();
+    }
+    std::borrow::Cow::Owned(stripped)
+}
+
 /// GH #3580 — require the workspace package's `name`/`version` to be a
 /// non-empty string. Returns the value on success; on failure returns
 /// an `anyhow::Error` whose Display names the offending package.json
@@ -821,6 +847,34 @@ mod tests {
 
         let result = WorkspaceManager::discover(dir.path()).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn aw_wrapped_package_json_workspaces_are_detected() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"// <HANDWRITE gap="standardize:claim-code" tracker="pkg-json">
+{
+  "name": "wrapped-root",
+  "version": "1.0.0",
+  "workspaces": ["packages/*"]
+}
+// </HANDWRITE>
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("packages/ui")).unwrap();
+        std::fs::write(
+            dir.path().join("packages/ui/package.json"),
+            r#"{"name": "ui", "version": "1.0.0"}"#,
+        )
+        .unwrap();
+
+        let result = WorkspaceManager::discover(dir.path()).unwrap();
+        let wm = result.expect("AW-wrapped package.json workspaces should parse");
+        assert_eq!(wm.packages.len(), 1);
+        assert_eq!(wm.packages[0].name, "ui");
     }
 
     #[test]

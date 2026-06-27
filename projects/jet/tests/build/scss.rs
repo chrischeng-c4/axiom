@@ -51,16 +51,25 @@ $primary: #336699;
     let css = compile_sass_source(scss, Path::new("."), false).unwrap();
 
     // Nesting flattened into descendant selectors.
-    assert!(css.contains(".menu .item"), "nesting must flatten, got:\n{css}");
+    assert!(
+        css.contains(".menu .item"),
+        "nesting must flatten, got:\n{css}"
+    );
     // `&:hover` resolves to the parent selector.
     assert!(
         css.contains(".menu .item:hover"),
         "parent selector must resolve, got:\n{css}"
     );
     // The variable is resolved to its value and does not survive raw.
-    assert!(css.contains("#336699"), "variable must resolve, got:\n{css}");
+    assert!(
+        css.contains("#336699"),
+        "variable must resolve, got:\n{css}"
+    );
     assert!(!css.contains("$primary"), "no raw variables, got:\n{css}");
-    assert!(css.contains("4px 8px"), "declarations preserved, got:\n{css}");
+    assert!(
+        css.contains("4px 8px"),
+        "declarations preserved, got:\n{css}"
+    );
 }
 
 // ─── (b) @use / @import of a partial composes two scss files ─────────────────
@@ -83,8 +92,14 @@ fn scss_use_partial_composes_two_files() {
 
     let css = compile_sass_file(&dir.path().join("main.scss")).unwrap();
     assert!(css.contains(".btn"), "got:\n{css}");
-    assert!(css.contains("#ff5722"), "partial @use var must resolve, got:\n{css}");
-    assert!(css.contains("16px"), "partial @use var must resolve, got:\n{css}");
+    assert!(
+        css.contains("#ff5722"),
+        "partial @use var must resolve, got:\n{css}"
+    );
+    assert!(
+        css.contains("16px"),
+        "partial @use var must resolve, got:\n{css}"
+    );
     assert!(!css.contains("@use"), "no raw @use, got:\n{css}");
 }
 
@@ -101,7 +116,10 @@ fn scss_import_partial_composes_two_files() {
 
     let css = compile_sass_file(&dir.path().join("app.scss")).unwrap();
     assert!(css.contains(".link"), "got:\n{css}");
-    assert!(css.contains("#00bcd4"), "imported var must resolve, got:\n{css}");
+    assert!(
+        css.contains("#00bcd4"),
+        "imported var must resolve, got:\n{css}"
+    );
     assert!(!css.contains("@import"), "no raw @import, got:\n{css}");
 }
 
@@ -124,10 +142,26 @@ fn scss_entry_compiles_into_build_css_output() {
         .expect("scss entry should compile through the CSS pipeline");
 
     assert!(out.css.contains(".card"), "got:\n{}", out.css);
-    assert!(out.css.contains(".card .body"), "nesting flattened, got:\n{}", out.css);
-    assert!(out.css.contains("6px"), "variable resolved, got:\n{}", out.css);
-    assert!(out.css.contains("12px"), "nested decl present, got:\n{}", out.css);
-    assert!(!out.css.contains("$radius"), "no raw vars, got:\n{}", out.css);
+    assert!(
+        out.css.contains(".card .body"),
+        "nesting flattened, got:\n{}",
+        out.css
+    );
+    assert!(
+        out.css.contains("6px"),
+        "variable resolved, got:\n{}",
+        out.css
+    );
+    assert!(
+        out.css.contains("12px"),
+        "nested decl present, got:\n{}",
+        out.css
+    );
+    assert!(
+        !out.css.contains("$radius"),
+        "no raw vars, got:\n{}",
+        out.css
+    );
     // Hash is the standard 8-hex content hash the build emits.
     assert_eq!(out.hash.len(), 8, "hash: {}", out.hash);
 }
@@ -153,10 +187,26 @@ fn scss_partial_imported_from_css_entry_is_compiled() {
         .process(&dir.path().join("index.css"))
         .expect("css entry importing a scss partial should compile");
 
-    assert!(out.css.contains(".note strong"), "scss nesting flattened, got:\n{}", out.css);
-    assert!(out.css.contains("#222"), "scss var resolved, got:\n{}", out.css);
-    assert!(out.css.contains(".page"), "plain css preserved, got:\n{}", out.css);
-    assert!(!out.css.contains("@import"), "@import inlined, got:\n{}", out.css);
+    assert!(
+        out.css.contains(".note strong"),
+        "scss nesting flattened, got:\n{}",
+        out.css
+    );
+    assert!(
+        out.css.contains("#222"),
+        "scss var resolved, got:\n{}",
+        out.css
+    );
+    assert!(
+        out.css.contains(".page"),
+        "plain css preserved, got:\n{}",
+        out.css
+    );
+    assert!(
+        !out.css.contains("@import"),
+        "@import inlined, got:\n{}",
+        out.css
+    );
 }
 
 // ─── (d) plain .css still passes through unchanged ───────────────────────────
@@ -194,9 +244,18 @@ fn plain_css_is_not_treated_as_sass() {
 
     assert!(!is_scss_specifier("./styles.css"));
     assert!(is_scss_specifier("./styles.scss"));
-    assert_eq!(classify_style_import("./styles.css"), StyleImportRoute::PlainCss);
-    assert_eq!(classify_style_import("./styles.scss"), StyleImportRoute::Sass);
-    assert_eq!(classify_style_import("./styles.sass"), StyleImportRoute::Sass);
+    assert_eq!(
+        classify_style_import("./styles.css"),
+        StyleImportRoute::PlainCss
+    );
+    assert_eq!(
+        classify_style_import("./styles.scss"),
+        StyleImportRoute::Sass
+    );
+    assert_eq!(
+        classify_style_import("./styles.sass"),
+        StyleImportRoute::Sass
+    );
 }
 
 // ─── indented `.sass` syntax ─────────────────────────────────────────────────
@@ -212,7 +271,10 @@ fn indented_sass_syntax_compiles() {
     .unwrap();
 
     let css = compile_sass_file(&dir.path().join("ind.sass")).unwrap();
-    assert!(css.contains(".box .inner"), "indented nesting flattened, got:\n{css}");
+    assert!(
+        css.contains(".box .inner"),
+        "indented nesting flattened, got:\n{css}"
+    );
     assert!(css.contains("green"), "indented var resolved, got:\n{css}");
     assert!(css.contains("2px"), "got:\n{css}");
 }

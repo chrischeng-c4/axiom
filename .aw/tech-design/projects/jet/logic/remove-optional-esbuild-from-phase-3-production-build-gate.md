@@ -8,6 +8,12 @@ capability_refs:
     claim: full-toolchain-dogfood-flow
     coverage: partial
     rationale: "WI #4161: Jet production build must stop delegating minification to optional esbuild before phase-3 corpus parity can be evaluated."
+  - id: bundler-production-build
+    role: primary
+    gap: bundler-production-readiness
+    claim: bundler-production-readiness
+    coverage: full
+    rationale: "The phase-3 build gate is the production evidence for the Bundler production readiness claim."
 ---
 
 # Remove Optional Esbuild From Phase 3 Production Build Gate
@@ -121,6 +127,8 @@ requirement R2 {
 ```yaml
 e2e_tests:
   - id: phase_3_build_gate
+    capability_id: bundler-production-build
+    claim_id: bundler-production-readiness
     name: Phase-3 DOM production build gate reaches corpus comparison
     command: "projects/jet/scripts/verify-basic-dom-gates.sh --phase build"
     verifies:
