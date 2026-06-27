@@ -4163,6 +4163,7 @@ impl<'a> AstLowerer<'a> {
             });
             if !cls.decorators.is_empty()
                 || !cls.class_attr_assigns.is_empty()
+                || !cls.class_body_stmts.is_empty()
                 || !cls.runtime_base_exprs.is_empty()
                 || cls.runtime_base_list_expr.is_some()
                 || !cls.class_kwargs.is_empty()
@@ -4238,6 +4239,7 @@ impl<'a> AstLowerer<'a> {
         let mut explicit_match_args: Option<Vec<String>> = None;
         // P2-R3: Class-level attribute assignments (e.g., `attr = Verbose()` in class body).
         let mut class_attr_assigns: Vec<(String, HirExpr)> = Vec::new();
+        let mut class_body_stmts: Vec<HirStmt> = Vec::new();
         let enum_ignored_names = enum_ignore_names_for_class(bases, body);
         // R14: __slots__ declaration from class body.
         let mut slots: Option<Vec<String>> = None;
@@ -4534,6 +4536,18 @@ impl<'a> AstLowerer<'a> {
                         }
                     }
                 }
+                ast::Stmt::ExprStmt(expr) => {
+                    if let ast::Expr::Ident(read_name) = &expr.node {
+                        if read_name == name
+                            || (self.resolve_name(read_name, expr.span).is_none()
+                                && !self.outer_scope_names.contains_key(read_name.as_str()))
+                        {
+                            if let Some(raise) = self.name_error_raise(read_name, stmt.span) {
+                                class_body_stmts.push(raise);
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -4643,6 +4657,7 @@ impl<'a> AstLowerer<'a> {
             explicit_match_args: resolved_match_args,
             metaclass: None,
             class_attr_assigns,
+            class_body_stmts,
             slots,
             class_kwargs: Vec::new(),
             dataclass_fields,
@@ -5865,6 +5880,39 @@ impl<'a> AstLowerer<'a> {
                                     ty: self.checker.tcx.bool(),
                                 });
                             }
+                        }
+                    }
+                    if matches!(name.as_str(), "AttributeError" | "NameError")
+                        && args.iter().any(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Keyword { .. } | ast::CallArg::DoubleStarArg(_)
+                            )
+                        })
+                        && args.iter().all(|a| !matches!(a, ast::CallArg::StarArg(_)))
+                    {
+                        let pos = HirExpr::List {
+                            elements: args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect(),
+                            ty: any_ty,
+                        };
+                        if let Some(kwargs) = self.build_kwargs_dict(args, any_ty) {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_exception_new_with_args_and_kwargs".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(name.clone(), str_ty), pos, kwargs],
+                                ty: any_ty,
+                            });
                         }
                     }
                 }
@@ -8285,21 +8333,13 @@ impl<'a> AstLowerer<'a> {
         kw_acc
     }
 
-    /// Build `raise NameError("name '<name>' is not defined")` as a HirStmt for
-    /// a reference to an undefined name. Returns None when the `NameError`
-    /// builtin itself can't be resolved (so the caller falls back to normal
-    /// lowering rather than emitting a broken raise).
+    /// Build `raise NameError(..., name='<name>')` as a HirStmt for a reference
+    /// to an undefined name.
     fn name_error_raise(&self, name: &str, span: Span) -> Option<HirStmt> {
-        let ne_sym = self.resolve_name("NameError", span)?;
         let any_ty = self.checker.tcx.any();
-        let func = HirExpr::Var(ne_sym, any_ty);
-        let msg = HirExpr::StrLit(
-            format!("name '{name}' is not defined"),
-            self.checker.tcx.str(),
-        );
         let call = HirExpr::Call {
-            func: Box::new(func),
-            args: vec![msg],
+            func: Box::new(HirExpr::StrLit("mb_name_error_with_name".to_string(), any_ty)),
+            args: vec![HirExpr::StrLit(name.to_string(), self.checker.tcx.str())],
             ty: any_ty,
         };
         Some(HirStmt::Raise {

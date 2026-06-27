@@ -314,6 +314,7 @@ impl CompilerSession {
 
         let mut checker = TypeChecker::new();
         configure_checker_for_source(&mut checker, &src);
+        checker.allow_runtime_unresolved_names = true;
         // No check_dependencies — stdin source has no associated file path.
         let errors = filter_type_ignored(checker.check_module(&module), &src);
         if !errors.is_empty() {
@@ -410,6 +411,7 @@ impl CompilerSession {
         // first so the shared TypeChecker accumulates cross-module type info.
         let mut checker = TypeChecker::new();
         configure_checker_for_source(&mut checker, &source);
+        checker.allow_runtime_unresolved_names = true;
         self.check_dependencies(path, &mut checker);
 
         // Enforce expose filtering for native-module imports when a project
