@@ -593,7 +593,6 @@ pub fn register() {
         "getcallargs",
         "getcoroutinelocals",
         "getcoroutinestate",
-        "getgeneratorlocals",
         "getgeneratorstate",
         "getlineno",
         "getmembers_static",
@@ -606,6 +605,13 @@ pub fn register() {
     for name in plain_fns {
         let addr = d_none as *const () as usize;
         attrs.insert((*name).to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+    {
+        let addr = d_getgeneratorlocals as *const () as usize;
+        attrs.insert("getgeneratorlocals".to_string(), MbValue::from_func(addr));
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
@@ -836,6 +842,30 @@ unsafe extern "C" fn d_getframeinfo(args_ptr: *const MbValue, nargs: usize) -> M
         );
     }
     MbValue::none()
+}
+
+/// inspect.getgeneratorlocals(generator) -> dict of live generator locals.
+unsafe extern "C" fn d_getgeneratorlocals(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let v = a.first().copied().unwrap_or_else(MbValue::none);
+    let Some(locals) = super::super::generator::mb_generator_locals(v) else {
+        let label = match classify_for_introspection(v) {
+            Introspected::Scalar(l) => l.to_string(),
+            Introspected::UserClass(n) | Introspected::BuiltinType(n) => n,
+            Introspected::Int => "int".to_string(),
+            _ => "object".to_string(),
+        };
+        return raise_exc("TypeError", &format!("'{label}' is not a Python generator"));
+    };
+    let dict = MbValue::from_ptr(MbObject::new_dict());
+    for (name, value) in locals {
+        set_dict_str(dict, &name, value);
+    }
+    dict
 }
 
 /// inspect.getclosurevars(func) — non-functions raise TypeError; functions
