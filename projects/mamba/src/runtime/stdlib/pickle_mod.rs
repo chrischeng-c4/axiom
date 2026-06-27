@@ -430,6 +430,13 @@ fn raise_value_error(msg: &str) {
     );
 }
 
+fn raise_type_error(msg: &str) {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".into())),
+        MbValue::from_ptr(MbObject::new_str(msg.into())),
+    );
+}
+
 fn raise_pickling_error(msg: &str) {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("PicklingError".into())),
@@ -814,6 +821,12 @@ impl Encoder {
         class_name: &str,
         fields: &crate::runtime::rc::MbRwLock<FxHashMap<String, MbValue>>,
     ) -> Result<(), ()> {
+        if class_name == "socket.socket" {
+            raise_type_error("cannot pickle 'socket.socket' object");
+            self.failed = true;
+            return Err(());
+        }
+
         // __reduce__ path.
         let has_reduce = !super::super::class::lookup_method(class_name, "__reduce__").is_none();
         if has_reduce {
