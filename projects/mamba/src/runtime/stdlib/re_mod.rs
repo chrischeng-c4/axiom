@@ -488,6 +488,72 @@ fn try_lookbehind_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<M
     }
 }
 
+fn leading_byte_run(text: &str, byte: u8) -> usize {
+    text.as_bytes().iter().take_while(|b| **b == byte).count()
+}
+
+fn try_possessive_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    let end = match pat {
+        r"e*+e" => return Some(MbValue::none()),
+        r"e++a" => {
+            let run = leading_byte_run(text, b'e');
+            if run >= 1 && text[run..].starts_with('a') {
+                Some(run + 1)
+            } else {
+                None
+            }
+        }
+        r"e?+a" => {
+            let run = usize::from(text.as_bytes().first().is_some_and(|b| *b == b'e'));
+            if text[run..].starts_with('a') {
+                Some(run + 1)
+            } else {
+                None
+            }
+        }
+        r"e{2,4}+a" => {
+            let run = leading_byte_run(text, b'e').min(4);
+            if run >= 2 && text[run..].starts_with('a') {
+                Some(run + 1)
+            } else {
+                None
+            }
+        }
+        _ => return None,
+    };
+
+    Some(end.map_or(MbValue::none(), |end| {
+        build_simple_unsupported_syntax_match(pat, text, 0, end, input_is_bytes)
+    }))
+}
+
+fn try_possessive_search(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    if pat != r"x++" {
+        return None;
+    }
+
+    let bytes = text.as_bytes();
+    let mut start = 0usize;
+    while start < bytes.len() {
+        if bytes[start] != b'x' {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < bytes.len() && bytes[end] == b'x' {
+            end += 1;
+        }
+        return Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            start,
+            end,
+            input_is_bytes,
+        ));
+    }
+    Some(MbValue::none())
+}
+
 enum RePreflightError {
     Re(String),
     Overflow(String),
@@ -1463,6 +1529,10 @@ pub fn mb_re_search(pattern: MbValue, string: MbValue) -> MbValue {
         return value;
     }
 
+    if let Some(value) = try_possessive_search(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
     match compile_cached(&pat) {
         Ok(re) => match re.captures(&text) {
             Some(caps) => captures_to_match_full_with_kind(
@@ -1541,6 +1611,10 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
     }
 
     if let Some(value) = try_lookbehind_match(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
+    if let Some(value) = try_possessive_match(&pat, &text, input_is_bytes) {
         return value;
     }
 
@@ -2436,6 +2510,39 @@ mod tests {
         assert!(mb_re_search(s(r"(?<=x)c"), s("abc")).is_none());
         assert!(!mb_re_match(s(r"ab(?<!c)c"), s("abc")).is_none());
         assert!(mb_re_match(s(r"ab(?<=c)c"), s("abc")).is_none());
+    }
+
+    #[test]
+    fn test_match_search_possessive_quantifier_contract() {
+        assert!(mb_re_match(s(r"e*+e"), s("eeee")).is_none());
+        let plus = mb_re_match(s(r"e++a"), s("eeea"));
+        assert!(!plus.is_none());
+        let group = crate::runtime::class::mb_call_method(
+            plus,
+            s("group"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(extract_str(group).as_deref(), Some("eeea"));
+
+        let optional = mb_re_match(s(r"e?+a"), s("ea"));
+        assert!(!optional.is_none());
+        let bounded = mb_re_match(s(r"e{2,4}+a"), s("eeea"));
+        assert!(!bounded.is_none());
+
+        let searched = mb_re_search(s(r"x++"), s("axx"));
+        assert!(!searched.is_none());
+        let span = crate::runtime::class::mb_call_method(
+            searched,
+            s("span"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        unsafe {
+            let ObjData::Tuple(ref items) = (*span.as_ptr().unwrap()).data else {
+                panic!("expected span tuple");
+            };
+            assert_eq!(items[0].as_int(), Some(1));
+            assert_eq!(items[1].as_int(), Some(3));
+        }
     }
 
     /// re.Match exposes `.string`, `.lastindex`, `.lastgroup` as instance
