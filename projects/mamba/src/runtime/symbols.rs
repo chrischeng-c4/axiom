@@ -2169,6 +2169,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_coroutine_set_close_raises",
+            async_rt::mb_coroutine_set_close_raises as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_coroutine_should_suspend",
+            async_rt::mb_coroutine_should_suspend as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_coroutine_get_local",
             async_rt::mb_coroutine_get_local
                 as fn(super::MbValue, super::MbValue) -> super::MbValue,

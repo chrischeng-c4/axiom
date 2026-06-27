@@ -1,4 +1,6 @@
-use super::async_rt::{alloc_task_id, mb_coroutine_step, MbTask, COROUTINES, TASKS};
+use super::async_rt::{
+    alloc_task_id, mb_coroutine_step, mb_coroutine_suspend_current, MbTask, COROUTINES, TASKS,
+};
 use super::rc::{MbObject, ObjData};
 use super::value::MbValue;
 /// Task management, event loop, await, orbit bridge, and GIL for Mamba async (#313).
@@ -329,6 +331,18 @@ pub fn mb_orbit_register_waker(coro: MbValue) -> MbValue {
 /// (Str concat, list ctor, etc.) SIGSEGVs after caller's scope drops.
 pub fn mb_await(awaitable: MbValue) -> MbValue {
     if let Some(id) = awaitable.as_int() {
+        if super::generator::is_known_generator(awaitable) {
+            let yielded = super::generator::mb_generator_send(awaitable, MbValue::none());
+            if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+                super::exception::mb_clear_exception();
+                return super::generator::mb_generator_stop_value();
+            }
+            if super::exception::current_exception_type().is_some() {
+                return MbValue::none();
+            }
+            mb_coroutine_suspend_current(awaitable);
+            return yielded;
+        }
         // Distinguish a coroutine handle from a plain int. Async-iter
         // helpers (`g.__anext__()` on a generator-backed async-gen)
         // hand back the yielded primitive value directly, and we must
@@ -338,6 +352,21 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         let known = COROUTINES.read().unwrap().contains_key(&(id as u64));
         if !known {
             return awaitable;
+        }
+        let already_awaited = COROUTINES
+            .read()
+            .unwrap()
+            .get(&(id as u64))
+            .map(|c| c.awaiting && !c.exhausted)
+            .unwrap_or(false);
+        if already_awaited {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "coroutine is being awaited already".to_string(),
+                )),
+            );
+            return MbValue::none();
         }
         // Fast path: coroutine already complete
         let exhausted = COROUTINES
@@ -357,6 +386,9 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
                 super::rc::retain_if_ptr(result);
             }
             return result;
+        }
+        if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
+            coro.awaiting = true;
         }
 
         // Schedule via event loop and drive to completion
