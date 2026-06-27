@@ -910,6 +910,24 @@ mod tests {
         let result = mb_socket_gethostbyname(name);
         assert_eq!(str_val(result), Some("127.0.0.1".to_string()));
     }
+
+    #[test]
+    fn test_socketpair_returns_two_fd_backed_sockets() {
+        let pair = unsafe { d_socketpair_real(std::ptr::null(), 0) };
+        let items = unsafe {
+            match &(*pair.as_ptr().unwrap()).data {
+                ObjData::Tuple(items) => items.clone(),
+                _ => panic!("expected tuple"),
+            }
+        };
+        assert_eq!(items.len(), 2);
+        assert!(sock_field(items[0], "_fd").and_then(|v| v.as_int()).unwrap() >= 0);
+        assert!(sock_field(items[1], "_fd").and_then(|v| v.as_int()).unwrap() >= 0);
+        unsafe {
+            m_close(items[0], MbValue::none());
+            m_close(items[1], MbValue::none());
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1991,6 +2009,86 @@ unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> Mb
     sock_instance(fd as i64, family, stype, proto)
 }
 
+/// socket.socketpair(family=AF_UNIX, type=SOCK_STREAM, proto=0)
+unsafe extern "C" fn d_socketpair_real(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let raw = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let kwargs = kwargs_of(raw);
+    let positional: &[MbValue] = if kwargs.is_some() {
+        &raw[..nargs - 1]
+    } else {
+        raw
+    };
+    let int_param = |v: Option<MbValue>, def: i64, name: &str| -> Result<i64, MbValue> {
+        match v {
+            None => Ok(def),
+            Some(x) if x.is_none() => Ok(def),
+            Some(x) => match x.as_int_pyint() {
+                Some(i) => Ok(i),
+                None => Err(raise(
+                    "TypeError",
+                    &format!("{name} must be an integer (got {})", type_label(x)),
+                )),
+            },
+        }
+    };
+    let family = match int_param(
+        positional
+            .first()
+            .copied()
+            .or_else(|| kwarg_get(kwargs, "family")),
+        libc::AF_UNIX as i64,
+        "family",
+    ) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let stype = match int_param(
+        positional
+            .get(1)
+            .copied()
+            .or_else(|| kwarg_get(kwargs, "type")),
+        libc::SOCK_STREAM as i64,
+        "type",
+    ) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let proto = match int_param(
+        positional
+            .get(2)
+            .copied()
+            .or_else(|| kwarg_get(kwargs, "proto")),
+        0,
+        "proto",
+    ) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let mut fds = [0; 2];
+    let rc = unsafe {
+        libc::socketpair(
+            family as c_int,
+            stype as c_int,
+            proto as c_int,
+            fds.as_mut_ptr(),
+        )
+    };
+    if rc < 0 {
+        return raise_os_errno("socketpair");
+    }
+    set_cloexec(fds[0] as i64, true);
+    set_cloexec(fds[1] as i64, true);
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        sock_instance(fds[0] as i64, family, stype, proto),
+        sock_instance(fds[1] as i64, family, stype, proto),
+    ]))
+}
+
 fn type_label(v: MbValue) -> String {
     if v.is_none() {
         "NoneType".into()
@@ -2443,6 +2541,7 @@ pub(crate) fn register_real_socket(attrs: &mut HashMap<String, MbValue>) {
         ("getnameinfo", d_getnameinfo_real as *const () as usize),
         ("gethostname", d_gethostname_real as *const () as usize),
         ("close", d_close_real as *const () as usize),
+        ("socketpair", d_socketpair_real as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
