@@ -30,18 +30,15 @@ use super::super::value::MbValue;
 ///   - **`BaseSelector()`** / `SelectSelector()` / `PollSelector()` /
 ///     `EpollSelector()` / `KqueueSelector()` return Instance shells
 ///     of the matching class name. Methods (`register`, `unregister`,
-///     `modify`, `select`, `close`, `get_key`, `get_map`) are NOT
-///     attached; CPython code that calls them through the instance
-///     will diverge. Surface tests check class presence and callability,
-///     which is what Gate 1 / Gate 3 cover.
+///     `modify`, `select`, `close`, `get_key`, `get_map`) are attached
+///     for registration semantics and fd readiness polling.
 ///   - **`SelectorKey(fileobj, fd, events, data)`** returns a passive
 ///     Instance shell carrying the four namedtuple fields.
 ///
 /// Carve-outs (deliberately out of scope for this surface ticket):
-///   - No actual selector multiplexing — `select()` / `register()` etc.
-///     are not surfaced as bound methods. A real selector implementation
-///     requires either a `select(2)` syscall binding or a Tokio-backed
-///     reactor, both of which are tracked by separate issues.
+///   - Multiplexing is limited to registered live integer fds via `poll(2)`.
+///     It is not a platform selector backend, kqueue/epoll wrapper, or
+///     Tokio-backed reactor.
 ///   - `BaseSelector` is not a real ABC; subclassing it through Mamba
 ///     will not enforce the abstract-method contract.
 ///   - `DefaultSelector` does NOT alias the platform-specific class
@@ -49,6 +46,7 @@ use super::super::value::MbValue;
 ///     own Instance shell; `selectors.DefaultSelector is
 ///     selectors.KqueueSelector` is False even on macOS.
 use std::collections::HashMap;
+use std::os::raw::c_int;
 
 // ── Variadic dispatchers ──
 
@@ -331,15 +329,23 @@ fn is_dict(v: MbValue) -> bool {
 }
 
 /// `data=` keyword from the trailing kwargs dict, if present.
-fn kw_data(kwargs: Option<MbValue>) -> Option<MbValue> {
+fn kw_value(kwargs: Option<MbValue>, name: &str) -> Option<MbValue> {
     let dict = kwargs?;
     let sentinel = MbValue::from_bits(u64::MAX);
     let v = super::super::dict_ops::mb_dict_get(
         dict,
-        MbValue::from_ptr(MbObject::new_str("data".to_string())),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
         sentinel,
     );
     if v.to_bits() == sentinel.to_bits() { None } else { Some(v) }
+}
+
+fn kw_data(kwargs: Option<MbValue>) -> Option<MbValue> {
+    kw_value(kwargs, "data")
+}
+
+fn kw_timeout(kwargs: Option<MbValue>) -> Option<MbValue> {
+    kw_value(kwargs, "timeout")
 }
 
 /// Stable identity token for a fileobj used as a registration-map key:
@@ -606,12 +612,110 @@ unsafe extern "C" fn m_get_key(self_v: MbValue, args: MbValue) -> MbValue {
     raise_named("KeyError", &format!("{} is not registered", key))
 }
 
-/// Selector.select(timeout=None) — without a real OS readiness backend we
-/// report nothing ready, so an empty / timeout=0 selector yields `[]` (the
-/// documented "no events" return). Detecting actual I/O readiness needs a real
-/// select(2) and is tracked separately.
-unsafe extern "C" fn m_select(_self_v: MbValue, _args: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_list(Vec::new()))
+fn selector_timeout_arg(pos: &[MbValue], kwargs: Option<MbValue>) -> Option<MbValue> {
+    pos.first().copied().or_else(|| kw_timeout(kwargs))
+}
+
+fn poll_timeout_ms(timeout: Option<MbValue>) -> Result<c_int, MbValue> {
+    let Some(value) = timeout else {
+        return Ok(-1);
+    };
+    if value.is_none() {
+        return Ok(-1);
+    }
+    let secs = value.as_float().or_else(|| value.as_int().map(|i| i as f64)).unwrap_or(0.0);
+    if secs < 0.0 {
+        return Err(raise_named("ValueError", "timeout must be non-negative"));
+    }
+    if secs == 0.0 {
+        return Ok(0);
+    }
+    let ms = (secs * 1000.0).ceil().min(c_int::MAX as f64);
+    Ok(ms as c_int)
+}
+
+fn select_errno() -> MbValue {
+    let err = std::io::Error::last_os_error();
+    let errno = err.raw_os_error().unwrap_or(0);
+    raise_named("OSError", &format!("[Errno {errno}] {err}"))
+}
+
+/// Selector.select(timeout=None) -> [(SelectorKey, events), ...].
+///
+/// Mamba stores the selector registration map as `SelectorKey` values with
+/// integer fds. For live fd-backed sockets/files, bridge that map to
+/// `poll(2)` and report the ready masks while preserving the existing
+/// lazy-allocation hot path.
+unsafe extern "C" fn m_select(self_v: MbValue, args: MbValue) -> MbValue {
+    let (pos, kwargs) = split_method_kwargs(args);
+    let timeout = match poll_timeout_ms(selector_timeout_arg(&pos, kwargs)) {
+        Ok(timeout) => timeout,
+        Err(err) => return err,
+    };
+
+    let registrations: Vec<(MbValue, c_int, i64)> = read_map(self_v)
+        .into_iter()
+        .filter_map(|pair| {
+            let parts = method_pos(pair);
+            let sel_key = parts.get(1).copied()?;
+            let fd = get_field(sel_key, "fd").and_then(|v| v.as_int())?;
+            let events = get_field(sel_key, "events").and_then(|v| v.as_int()).unwrap_or(0);
+            if fd < 0 || fd > c_int::MAX as i64 {
+                return None;
+            }
+            Some((sel_key, fd as c_int, events))
+        })
+        .collect();
+    if registrations.is_empty() {
+        return MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    }
+
+    let mut pollfds: Vec<libc::pollfd> = registrations
+        .iter()
+        .map(|(_, fd, events)| {
+            let mut poll_events = 0;
+            if (events & 1) != 0 {
+                poll_events |= libc::POLLIN;
+            }
+            if (events & 2) != 0 {
+                poll_events |= libc::POLLOUT;
+            }
+            libc::pollfd {
+                fd: *fd,
+                events: poll_events,
+                revents: 0,
+            }
+        })
+        .collect();
+    let rc = libc::poll(
+        pollfds.as_mut_ptr(),
+        pollfds.len() as libc::nfds_t,
+        timeout,
+    );
+    if rc < 0 {
+        return select_errno();
+    }
+    if rc == 0 {
+        return MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    }
+
+    let mut ready = Vec::new();
+    for ((sel_key, _, events), pollfd) in registrations.into_iter().zip(pollfds.into_iter()) {
+        let mut mask = 0;
+        if (events & 1) != 0 && (pollfd.revents & libc::POLLIN) != 0 {
+            mask |= 1;
+        }
+        if (events & 2) != 0 && (pollfd.revents & libc::POLLOUT) != 0 {
+            mask |= 2;
+        }
+        if mask != 0 {
+            ready.push(MbValue::from_ptr(MbObject::new_tuple_borrowed(vec![
+                sel_key,
+                MbValue::from_int(mask),
+            ])));
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(ready))
 }
 
 /// Register the shared selector instance-method table for every selector
@@ -741,6 +845,41 @@ mod tests {
             } else {
                 panic!("expected Instance");
             }
+        }
+    }
+
+    #[test]
+    fn test_selector_select_reports_pipe_readable() {
+        register();
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let selector = mb_selectors_default_selector_new(&[]);
+        unsafe {
+            let args = MbValue::from_ptr(MbObject::new_list(vec![
+                MbValue::from_int(fds[0] as i64),
+                MbValue::from_int(1),
+            ]));
+            m_register(selector, args);
+            let byte = [1u8];
+            assert_eq!(
+                libc::write(fds[1], byte.as_ptr() as *const libc::c_void, 1),
+                1
+            );
+            let ready = m_select(
+                selector,
+                MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_float(0.1)])),
+            );
+            let entries = method_pos(ready);
+            assert_eq!(entries.len(), 1);
+            let event = method_pos(entries[0]);
+            assert_eq!(event.get(1).and_then(|v| v.as_int()), Some(1));
+            let key = event[0];
+            assert_eq!(
+                get_field(key, "fd").and_then(|v| v.as_int()),
+                Some(fds[0] as i64)
+            );
+            libc::close(fds[0]);
+            libc::close(fds[1]);
         }
     }
 }
