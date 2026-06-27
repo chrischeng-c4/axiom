@@ -25,7 +25,19 @@ fn gen_py_writes_pydantic_h2c_client() {
     }
     let models = std::fs::read_to_string(dir.path().join("models.py")).unwrap();
     assert!(models.contains("BaseModel"), "models.py not pydantic");
+    assert!(
+        models.contains("RootModel"),
+        "models.py missing pydantic RootModel for oneOf component unions"
+    );
     assert!(models.contains("class "), "models.py has no model class");
+    assert!(
+        models.contains("class QueryNodeAnd(BaseModel):"),
+        "QueryNode oneOf variants are not pydantic models"
+    );
+    assert!(
+        models.contains("and_: list[QueryNode] = Field(alias=\"and\")"),
+        "QueryNode keyword variant alias was not preserved"
+    );
     let runtime = std::fs::read_to_string(dir.path().join("h2c_runtime.py")).unwrap();
     assert!(
         runtime.contains("class H2CClient"),
