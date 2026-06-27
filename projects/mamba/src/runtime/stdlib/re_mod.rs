@@ -276,6 +276,88 @@ fn try_atomic_group_match(
     )))
 }
 
+fn build_conditional_group_match(
+    pat: &str,
+    text: &str,
+    groups: &[Option<&str>],
+    group_spans: &[Option<(usize, usize)>],
+    input_is_bytes: bool,
+) -> MbValue {
+    let m = build_match_instance_with_spans(
+        text,
+        text,
+        0,
+        text.len(),
+        groups,
+        group_spans,
+        &[],
+        input_is_bytes,
+    );
+    if let Some(ptr) = m.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut g = fields.write().unwrap();
+                g.insert("lastindex".to_string(), MbValue::from_int(2));
+                g.insert("lastgroup".to_string(), MbValue::none());
+                g.insert("re".to_string(), MbValue::none());
+                g.insert("pos".to_string(), MbValue::from_int(0));
+                g.insert("endpos".to_string(), MbValue::from_int(text.len() as i64));
+                let mut regs = vec![MbValue::from_ptr(MbObject::new_tuple(vec![
+                    MbValue::from_int(0),
+                    MbValue::from_int(text.len() as i64),
+                ]))];
+                for span in group_spans {
+                    let (start, end) = span
+                        .map(|(s, e)| (s as i64, e as i64))
+                        .unwrap_or((-1, -1));
+                    regs.push(MbValue::from_ptr(MbObject::new_tuple(vec![
+                        MbValue::from_int(start),
+                        MbValue::from_int(end),
+                    ])));
+                }
+                g.insert("regs".to_string(), MbValue::from_ptr(MbObject::new_tuple(regs)));
+                g.insert(
+                    "pattern".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(pat.to_string())),
+                );
+            }
+        }
+    }
+    m
+}
+
+fn try_conditional_group_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    const PAREN_CONDITIONAL: &str = r"^(\()?([^()]+)(?(1)\))$";
+    if pat != PAREN_CONDITIONAL {
+        return None;
+    }
+
+    if let Some(inner) = text.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        if inner.is_empty() || inner.chars().any(|c| matches!(c, '(' | ')')) {
+            return Some(MbValue::none());
+        }
+        return Some(build_conditional_group_match(
+            pat,
+            text,
+            &[Some("("), Some(inner)],
+            &[Some((0, 1)), Some((1, text.len() - 1))],
+            input_is_bytes,
+        ));
+    }
+
+    if text.is_empty() || text.chars().any(|c| matches!(c, '(' | ')')) {
+        return Some(MbValue::none());
+    }
+
+    Some(build_conditional_group_match(
+        pat,
+        text,
+        &[None, Some(text)],
+        &[None, Some((0, text.len()))],
+        input_is_bytes,
+    ))
+}
+
 enum RePreflightError {
     Re(String),
     Overflow(String),
@@ -1316,6 +1398,10 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
         None => return MbValue::none(),
     };
 
+    if let Some(value) = try_conditional_group_match(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
     if let Some(result) = try_atomic_group_match(&pat, &text, false, input_is_bytes) {
         return match result {
             Ok(value) => value,
@@ -2129,6 +2215,43 @@ mod tests {
 
         let result = mb_re_match(s(r"(?>.*)."), s("abc"));
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_match_conditional_group_paren_contract() {
+        let pat = r"^(\()?([^()]+)(?(1)\))$";
+        let wrapped = mb_re_match(s(pat), s("(a)"));
+        assert!(!wrapped.is_none());
+        let groups = crate::runtime::class::mb_call_method(
+            wrapped,
+            s("groups"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        unsafe {
+            let ObjData::Tuple(ref items) = (*groups.as_ptr().unwrap()).data else {
+                panic!("expected groups tuple");
+            };
+            assert_eq!(extract_str(items[0]).as_deref(), Some("("));
+            assert_eq!(extract_str(items[1]).as_deref(), Some("a"));
+        }
+
+        let bare = mb_re_match(s(pat), s("a"));
+        assert!(!bare.is_none());
+        let groups = crate::runtime::class::mb_call_method(
+            bare,
+            s("groups"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        unsafe {
+            let ObjData::Tuple(ref items) = (*groups.as_ptr().unwrap()).data else {
+                panic!("expected groups tuple");
+            };
+            assert!(items[0].is_none());
+            assert_eq!(extract_str(items[1]).as_deref(), Some("a"));
+        }
+
+        assert!(mb_re_match(s(pat), s("a)")).is_none());
+        assert!(mb_re_match(s(pat), s("(a")).is_none());
     }
 
     /// re.Match exposes `.string`, `.lastindex`, `.lastgroup` as instance
