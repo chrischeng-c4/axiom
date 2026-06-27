@@ -2035,6 +2035,41 @@ fn dispatch_generator_method(gen: MbValue, method: &str, args: MbValue) -> MbVal
     }
 }
 
+/// Dispatch method calls on coroutine handles (.send, .throw, .close).
+fn dispatch_coroutine_method(coro: MbValue, method: &str, args: MbValue) -> MbValue {
+    let arg_list = extract_args_list(args);
+    match method {
+        "send" => {
+            let value = arg_list.first().copied().unwrap_or(MbValue::none());
+            super::async_rt::mb_coroutine_send(coro, value)
+        }
+        "throw" => {
+            let exc_type = arg_list.first().copied().unwrap_or(MbValue::none());
+            let exc_msg = arg_list.get(1).copied().unwrap_or(MbValue::none());
+            let (type_str, msg_str) = match resolve_generator_throw_args(exc_type, exc_msg) {
+                Ok(parts) => parts,
+                Err(raised) => return raised,
+            };
+            super::async_rt::mb_coroutine_throw(
+                coro,
+                MbValue::from_ptr(MbObject::new_str(type_str)),
+                MbValue::from_ptr(MbObject::new_str(msg_str)),
+            )
+        }
+        "close" => super::async_rt::mb_coroutine_close(coro),
+        "__await__" => coro,
+        _ => {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "'coroutine' object has no attribute '{method}'"
+                ))),
+            );
+            MbValue::none()
+        }
+    }
+}
+
 /// Extract arguments from a list MbValue.
 fn extract_args_list(args: MbValue) -> Vec<MbValue> {
     if let Some(ptr) = args.as_ptr() {
@@ -5216,6 +5251,24 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 return if exhausted { MbValue::none() } else { obj };
             }
             "send" | "throw" | "close" | "__iter__" | "__next__" => {
+                return make_bound_native_method(obj, &attr_name);
+            }
+            _ => {}
+        }
+    }
+
+    // Coroutine handles are int-tagged values. Handle coroutine-specific attributes.
+    if obj.is_int() && super::async_rt::is_known_coroutine(obj) {
+        match attr_name.as_str() {
+            "cr_frame" => return super::async_rt::mb_coroutine_frame(obj),
+            "cr_running" => return super::async_rt::mb_coroutine_running(obj),
+            "cr_await" => {
+                let awaited = super::async_rt::mb_coroutine_awaited(obj)
+                    .as_bool()
+                    .unwrap_or(false);
+                return if awaited { obj } else { MbValue::none() };
+            }
+            "send" | "throw" | "close" | "__await__" => {
                 return make_bound_native_method(obj, &attr_name);
             }
             _ => {}
@@ -14886,6 +14939,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     // Generator protocol: intercept .send() / .throw() / .close() on generator handles
     if receiver.is_int() && super::generator::is_known_generator(receiver) {
         return dispatch_generator_method(receiver, &name, args);
+    }
+
+    // Coroutine protocol: intercept .send() / .throw() / .close() on coroutine handles.
+    if receiver.is_int() && super::async_rt::is_known_coroutine(receiver) {
+        return dispatch_coroutine_method(receiver, &name, args);
     }
 
     // Hashlib handle protocol: integer IDs allocated by hashlib_mod dispatch

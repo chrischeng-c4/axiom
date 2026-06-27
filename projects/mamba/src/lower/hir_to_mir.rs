@@ -2234,6 +2234,7 @@ impl<'a> HirToMir<'a> {
     fn lower_async_function(&mut self, func: &HirFunction) -> MirBody {
         let int_ty = self.tcx.int();
         let none_ty = self.tcx.none();
+        let close_raises_ignored_exit = self.async_body_catches_generator_exit(&func.body);
 
         // Synthetic SymbolId for the body function (step function)
         let body_sym = SymbolId(func.name.0.wrapping_add(2_000_000));
@@ -2383,6 +2384,20 @@ impl<'a> HirToMir<'a> {
             args: vec![coro_handle, body_fn_ptr],
             ty: none_ty,
         });
+        if close_raises_ignored_exit {
+            let flag_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: flag_vreg,
+                value: MirConst::Bool(true),
+                ty: self.tcx.bool(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_coroutine_set_close_raises".to_string(),
+                args: vec![coro_handle, flag_vreg],
+                ty: none_ty,
+            });
+        }
 
         // Return coroutine handle — body NOT called here, deferred to mb_coroutine_step
         self.finish_block(Terminator::Return(Some(coro_handle)));
@@ -9772,6 +9787,7 @@ impl<'a> HirToMir<'a> {
                     args: vec![],
                     ty: self.tcx.none(),
                 });
+                self.emit_async_suspend_check();
                 dest
             }
             HirExpr::ListComp {
@@ -10166,6 +10182,302 @@ impl<'a> HirToMir<'a> {
         self.start_block(continue_block);
     }
 
+    fn emit_async_suspend_check(&mut self) {
+        let Some(coro_handle) = self.async_coro_vreg else {
+            return;
+        };
+        let suspended = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(suspended),
+            name: "mb_coroutine_should_suspend".to_string(),
+            args: vec![coro_handle],
+            ty: self.tcx.bool(),
+        });
+        let return_block = self.fresh_block();
+        let continue_block = self.fresh_block();
+        self.finish_block(Terminator::Branch {
+            cond: suspended,
+            then_block: return_block,
+            else_block: continue_block,
+        });
+        self.start_block(return_block);
+        self.finish_block(Terminator::Return(Some(coro_handle)));
+        self.start_block(continue_block);
+    }
+
+    fn async_body_catches_generator_exit(&self, body: &[HirStmt]) -> bool {
+        body.iter().any(|stmt| match stmt {
+            HirStmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+                ..
+            } => {
+                let try_body_awaits = self.async_body_contains_await(body);
+                let async_handler = handlers
+                    .iter()
+                    .any(|handler| self.async_body_contains_await(&handler.body));
+                handlers.iter().any(|handler| {
+                    handler
+                        .exc_type
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_is_var_named(expr, "GeneratorExit"))
+                }) || (try_body_awaits && async_handler)
+                    || self.async_body_catches_generator_exit(body)
+                    || self.async_body_catches_generator_exit(else_body)
+                    || self.async_body_catches_generator_exit(finally_body)
+                    || handlers
+                        .iter()
+                        .any(|handler| self.async_body_catches_generator_exit(&handler.body))
+            }
+            HirStmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.async_body_catches_generator_exit(then_body)
+                    || self.async_body_catches_generator_exit(else_body)
+            }
+            HirStmt::While {
+                body, else_body, ..
+            }
+            | HirStmt::For {
+                body, else_body, ..
+            } => {
+                self.async_body_catches_generator_exit(body)
+                    || self.async_body_catches_generator_exit(else_body)
+            }
+            HirStmt::With { body, .. } => self.async_body_catches_generator_exit(body),
+            _ => false,
+        })
+    }
+
+    fn async_body_contains_await(&self, body: &[HirStmt]) -> bool {
+        body.iter().any(|stmt| match stmt {
+            HirStmt::Let { value, .. } | HirStmt::Assign { value, .. } => {
+                self.expr_contains_await(value)
+            }
+            HirStmt::Return { value, .. } => value
+                .as_ref()
+                .is_some_and(|expr| self.expr_contains_await(expr)),
+            HirStmt::Expr { expr, .. } => self.expr_contains_await(expr),
+            HirStmt::If {
+                cond,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.expr_contains_await(cond)
+                    || self.async_body_contains_await(then_body)
+                    || self.async_body_contains_await(else_body)
+            }
+            HirStmt::While {
+                cond,
+                body,
+                else_body,
+                ..
+            } => {
+                self.expr_contains_await(cond)
+                    || self.async_body_contains_await(body)
+                    || self.async_body_contains_await(else_body)
+            }
+            HirStmt::For {
+                iter,
+                body,
+                else_body,
+                ..
+            } => {
+                self.expr_contains_await(iter)
+                    || self.async_body_contains_await(body)
+                    || self.async_body_contains_await(else_body)
+            }
+            HirStmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+                ..
+            } => {
+                self.async_body_contains_await(body)
+                    || handlers
+                        .iter()
+                        .any(|handler| self.async_body_contains_await(&handler.body))
+                    || self.async_body_contains_await(else_body)
+                    || self.async_body_contains_await(finally_body)
+            }
+            HirStmt::Raise { value, from, .. } => value
+                .as_ref()
+                .is_some_and(|expr| self.expr_contains_await(expr))
+                || from
+                    .as_ref()
+                    .is_some_and(|expr| self.expr_contains_await(expr)),
+            HirStmt::With { items, body, .. } => {
+                items
+                    .iter()
+                    .any(|(expr, _)| self.expr_contains_await(expr))
+                    || self.async_body_contains_await(body)
+            }
+            HirStmt::Assert { test, msg, .. } => {
+                self.expr_contains_await(test)
+                    || msg
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+            }
+            HirStmt::Del { target, .. } => self.lvalue_contains_await(target),
+            HirStmt::Match { subject, cases, .. } => {
+                self.expr_contains_await(subject)
+                    || cases.iter().any(|case| {
+                        case.guard
+                            .as_ref()
+                            .is_some_and(|guard| self.expr_contains_await(guard))
+                            || self.async_body_contains_await(&case.body)
+                    })
+            }
+            HirStmt::Break { .. }
+            | HirStmt::Continue { .. }
+            | HirStmt::Import { .. }
+            | HirStmt::Global { .. }
+            | HirStmt::Nonlocal { .. }
+            | HirStmt::FuncDefPlaceholder { .. }
+            | HirStmt::ClassDefPlaceholder { .. } => false,
+        })
+    }
+
+    fn lvalue_contains_await(&self, target: &crate::hir::HirLValue) -> bool {
+        match target {
+            crate::hir::HirLValue::Var(_) => false,
+            crate::hir::HirLValue::Attr { object, .. } => self.expr_contains_await(object),
+            crate::hir::HirLValue::Index { object, index } => {
+                self.expr_contains_await(object) || self.expr_contains_await(index)
+            }
+            crate::hir::HirLValue::Unpack { targets, .. } => {
+                targets.iter().any(|target| self.lvalue_contains_await(target))
+            }
+        }
+    }
+
+    fn expr_contains_await(&self, expr: &HirExpr) -> bool {
+        match expr {
+            HirExpr::Await { .. } => true,
+            HirExpr::BinOp { lhs, rhs, .. } => {
+                self.expr_contains_await(lhs) || self.expr_contains_await(rhs)
+            }
+            HirExpr::UnaryOp { operand, .. } => self.expr_contains_await(operand),
+            HirExpr::Call { func, args, .. } => {
+                self.expr_contains_await(func)
+                    || args.iter().any(|arg| self.expr_contains_await(arg))
+            }
+            HirExpr::Attr { object, .. } => self.expr_contains_await(object),
+            HirExpr::Index { object, index, .. } => {
+                self.expr_contains_await(object) || self.expr_contains_await(index)
+            }
+            HirExpr::List { elements, .. }
+            | HirExpr::Set { elements, .. }
+            | HirExpr::Tuple { elements, .. } => {
+                elements.iter().any(|element| self.expr_contains_await(element))
+            }
+            HirExpr::Dict { entries, .. } => entries.iter().any(|(key, value)| {
+                self.expr_contains_await(key) || self.expr_contains_await(value)
+            }),
+            HirExpr::Slice {
+                start, stop, step, ..
+            } => {
+                start
+                    .as_ref()
+                    .is_some_and(|expr| self.expr_contains_await(expr))
+                    || stop
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+                    || step
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+            }
+            HirExpr::IfExpr {
+                cond,
+                then_val,
+                else_val,
+                ..
+            } => {
+                self.expr_contains_await(cond)
+                    || self.expr_contains_await(then_val)
+                    || self.expr_contains_await(else_val)
+            }
+            HirExpr::Lambda { defaults, body, .. } => {
+                defaults.iter().any(|default| {
+                    default
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+                }) || self.expr_contains_await(body)
+            }
+            HirExpr::Yield { value, .. } => value
+                .as_ref()
+                .is_some_and(|expr| self.expr_contains_await(expr)),
+            HirExpr::YieldFrom { iter, .. } => self.expr_contains_await(iter),
+            HirExpr::ListComp {
+                element,
+                generators,
+                ..
+            }
+            | HirExpr::SetComp {
+                element,
+                generators,
+                ..
+            }
+            | HirExpr::AnyAllComp {
+                element,
+                generators,
+                ..
+            } => {
+                self.expr_contains_await(element)
+                    || self.comprehensions_contain_await(generators)
+            }
+            HirExpr::DictComp {
+                key,
+                value,
+                generators,
+                ..
+            } => {
+                self.expr_contains_await(key)
+                    || self.expr_contains_await(value)
+                    || self.comprehensions_contain_await(generators)
+            }
+            HirExpr::FString { parts, .. } => self.fstring_parts_contain_await(parts),
+            HirExpr::Walrus { value, .. } => self.expr_contains_await(value),
+            HirExpr::IntLit(_, _)
+            | HirExpr::BigIntLit(_, _)
+            | HirExpr::FloatLit(_, _)
+            | HirExpr::StrLit(_, _)
+            | HirExpr::BytesLit(_, _)
+            | HirExpr::BoolLit(_, _)
+            | HirExpr::NoneLit(_)
+            | HirExpr::Var(_, _) => false,
+        }
+    }
+
+    fn comprehensions_contain_await(&self, generators: &[crate::hir::HirComprehension]) -> bool {
+        generators.iter().any(|generator| {
+            generator.is_async
+                || self.expr_contains_await(&generator.iter)
+                || generator
+                    .conditions
+                    .iter()
+                    .any(|cond| self.expr_contains_await(cond))
+        })
+    }
+
+    fn fstring_parts_contain_await(&self, parts: &[crate::hir::HirFStringPart]) -> bool {
+        parts.iter().any(|part| match part {
+            crate::hir::HirFStringPart::Literal(_) => false,
+            crate::hir::HirFStringPart::Expr(expr, spec) => {
+                self.expr_contains_await(expr)
+                    || spec
+                        .as_ref()
+                        .is_some_and(|parts| self.fstring_parts_contain_await(parts))
+            }
+        })
+    }
+
     /// Helper: emit an integer constant and return its vreg.
     fn emit_int_const(&mut self, n: i64) -> VReg {
         let dest = self.fresh_vreg();
@@ -10210,12 +10522,22 @@ impl<'a> HirToMir<'a> {
     /// (returns the module globals dict).
     /// @spec .aw/tech-design/cclab-mamba/logic/introspection-builtins.md#locals_impl
     fn expr_is_var_named(&self, expr: &HirExpr, expected: &str) -> bool {
+        if let HirExpr::StrLit(name, _) = expr {
+            return name == expected;
+        }
         let HirExpr::Var(sym_id, _) = expr else {
             return false;
         };
         if self
             .sym_names
             .get(sym_id)
+            .is_some_and(|name| name == expected)
+        {
+            return true;
+        }
+        if self
+            .class_syms
+            .get(&sym_id.0)
             .is_some_and(|name| name == expected)
         {
             return true;
