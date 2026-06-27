@@ -31,6 +31,16 @@ e2e_tests:
     assertions:
       - "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs."
       - "agent-facing query catalog output remains deterministic and offline."
+  - id: lumen-cli-interface-generated-clients
+    capability_id: cli-interface
+    claim_id: lumen-spec-schema-openapi-json-yaml-json-schema-offline
+    contract_id: spec-gen-generated-clients-public-api-journey
+    category: behavior
+    command: "cargo test -p lumen --test behavior_lumen_cli_interface_generated_clients -- --ignored --nocapture"
+    assertions:
+      - "lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document."
+      - "generated clients drive health, readiness, version, collection creation, indexing, search, duplicates, stats, and forced drop against a live h2c Lumen service."
+      - "the generated Python client validates recursive pydantic QueryNode union shapes while using the bundled h2c runtime."
   - id: lumen-cli-interface-llm-playbook
     capability_id: cli-interface
     claim_id: lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes

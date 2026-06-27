@@ -338,6 +338,38 @@ assert len(encoded) < 50, encoded
     }
 
     #[test]
+    fn generated_python_query_params_encode_bool_wire_values() {
+        let out = generate(SPEC, &opts()).unwrap();
+        let dir = write_generated_python_package(&out);
+        let script = format!(
+            r#"
+import sys
+sys.path.insert(0, {dir:?} + "/generated_api")
+from h2c_runtime import _url_with_params
+
+url = _url_with_params("http://127.0.0.1/items?existing=1", {{"force": True, "dry": False, "skip": None}})
+assert url == "http://127.0.0.1/items?existing=1&force=true&dry=false", url
+
+url = _url_with_params("http://127.0.0.1/items", [("flag", [True, False])])
+assert url == "http://127.0.0.1/items?flag=true&flag=false", url
+"#,
+            dir = dir.display().to_string(),
+        );
+        let output = Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .expect("run generated Python query param encoding smoke");
+        assert!(
+            output.status.success(),
+            "generated Python query param encoding smoke failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn generated_python_h2_runtime_rejects_unsafe_protocol_inputs() {
         let out = generate(SPEC, &opts()).unwrap();
         let dir = write_generated_python_package(&out);
