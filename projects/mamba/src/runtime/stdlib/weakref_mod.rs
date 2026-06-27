@@ -1,13 +1,12 @@
-// HANDWRITE-BEGIN reason: #1466 — no real weakref semantics, GC integration
-// required. Mamba's runtime is refcount-only, so every entry below ships a
-// strong-reference stub that preserves API SHAPE but cannot honour the
-// CPython contract (referent expiry, callback firing on collection,
-// auto-eviction of WeakSet / WeakValueDictionary entries, ReferenceError
-// on dead-proxy access, `finalize.alive` flip). Closing this gap requires
-// a GC / liveness-tracking subsystem in `runtime::rc` (or a successor)
-// that can publish referent-collected events to a per-object weak-ref
-// table. Tracked under #1466 (conformance(mamba/stdlib): weakref); also
-// see legacy #437.
+// HANDWRITE-BEGIN reason: #1466 — partial weakref semantics; full GC
+// integration still required. Mamba now has a small refcount/GC collection
+// notification path for selected proxy wrappers, so dead proxy access can
+// raise ReferenceError for covered referents. Most weakref container,
+// callback, finalize, and general ref-expiry semantics still use strong
+// stubs that preserve API shape without the full CPython contract. Closing
+// the remaining gap requires broader liveness tracking and callback dispatch.
+// Tracked under #1466 (conformance(mamba/stdlib): weakref); also see legacy
+// #437.
 //
 // Surface coverage vs `cpython312_surface.json` weakref entry: 13/13
 // (100%) — all CPython 3.12 public names registered. Stub semantics
@@ -27,18 +26,20 @@ use rustc_hash::FxHashMap;
 ///   WeakKeyDictionary, WeakMethod, WeakSet, WeakValueDictionary,
 ///   finalize, getweakrefcount, getweakrefs, itertools, proxy, ref, sys.
 ///
-/// Carve-out: NO REAL WEAK SEMANTICS.
+/// Carve-out: PARTIAL WEAK SEMANTICS.
 ///
-/// Real weak references require GC integration (tracking live objects and
-/// invalidating references when the referent is collected). Mamba's
-/// runtime is refcount-only, so this module ships strong-reference stubs
-/// that preserve API shape without true weakness:
+/// Full weak references require broad GC integration (tracking live objects,
+/// invalidating references, firing callbacks, and evicting containers when the
+/// referent is collected). Mamba currently preserves API shape plus a covered
+/// proxy-death subset:
 ///
 ///   - `ref(obj, callback=None)`: returns an Instance carrying a strong
-///     pointer to `obj` (the referent never expires under our refcount
-///     world). The callback, if any, is stored but never invoked.
-///   - `proxy(obj, callback=None)`: returns `obj` unchanged — no proxy
-///     wrapper, so `ReferenceError` cannot be raised.
+///     pointer to `obj` for most referents. The callback, if any, is stored
+///     but not generally invoked.
+///   - `proxy(obj, callback=None)`: returns `obj` unchanged for legacy
+///     live-object alias cases. Hash-sensitive and socket referents receive a
+///     proxy wrapper that can be marked dead by rc/GC collection notifications
+///     and raises `ReferenceError` on non-internal access after expiry.
 ///   - `WeakSet` / `WeakKeyDictionary` / `WeakValueDictionary` /
 ///     `WeakMethod` / `finalize`: Instance stubs that behave like their
 ///     strong-ref equivalents. Entries persist for the lifetime of the
@@ -52,25 +53,26 @@ use rustc_hash::FxHashMap;
 ///   - `itertools` / `sys`: CPython leaks these submodule imports into
 ///     `weakref`'s namespace; we mirror that with module placeholders.
 ///
-/// Tracked under #437 — promote to real weak references once the GC /
-/// liveness-tracking work lands.
+/// Tracked under #437/#1466 — promote to real weak references once the broader
+/// GC / liveness-tracking work lands.
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 
-// A per-referent weak-reference registry. Mamba's runtime is refcount-only,
-// so we model CPython's liveness contract for the *live-object* cases by
-// strong-holding the referent (the registry keeps it alive) and tracking the
-// ref/proxy objects created for it. This lets the live-object semantics that
-// the bulk of the CPython test-suite exercises behave correctly:
+// A per-referent weak-reference registry. Mamba's runtime is still mostly
+// refcount-only, so we model CPython's liveness contract for the common
+// *live-object* cases by tracking the ref/proxy objects created for a referent.
+// This lets the live-object semantics that the bulk of the CPython test-suite
+// exercises behave correctly:
 //
 //   * `weakref.ref(obj)` (no callback) is *reused* — two no-callback refs to
 //     the same object are the same object (`r1 is r2`).
 //   * `getweakrefcount(obj)` returns the number of live ref/proxy objects.
 //   * `getweakrefs(obj)` returns them in creation order.
 //
-// Dead-ref / collection-timing semantics (a ref expiring after the referent
-// is GC'd, callbacks firing on collection) remain out of scope: that needs a
-// real GC, tracked under gh #1466.
+// Selected proxy wrappers are also marked dead from rc/GC collection
+// notifications. General dead-ref timing, callback firing, and weak container
+// eviction remain out of scope: that needs broader liveness work, tracked under
+// gh #1466.
 thread_local! {
     // referent identity (pointer-or-folded-bits key) -> ordered list of the
     // ref/proxy MbValue objects created against it.
@@ -165,6 +167,48 @@ fn referent_needs_proxy_hash_guard(obj: MbValue) -> bool {
     false
 }
 
+fn referent_needs_proxy_wrapper(obj: MbValue) -> bool {
+    if referent_needs_proxy_hash_guard(obj) {
+        return true;
+    }
+    let Some(ptr) = obj.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. } if class_name == "socket.socket"
+        )
+    }
+}
+
+fn is_proxy_instance(val: MbValue) -> bool {
+    let Some(ptr) = val.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType")
+        )
+    }
+}
+
+fn is_internal_proxy_attr(attr_name: &str) -> bool {
+    matches!(
+        attr_name,
+        "__class__" | "__callback__" | "_callback" | "_target" | "_target_id" | "_dead"
+    )
+}
+
+fn target_id_addr(target_id: MbValue) -> Option<usize> {
+    if let Some(addr) = target_id.as_int() {
+        return Some(addr as usize);
+    }
+    extract_str(target_id).and_then(|s| usize::from_str_radix(&s, 16).ok())
+}
+
 pub fn proxy_target(proxy: MbValue) -> Option<MbValue> {
     let ptr = proxy.as_ptr()?;
     unsafe {
@@ -172,10 +216,107 @@ pub fn proxy_target(proxy: MbValue) -> Option<MbValue> {
             ObjData::Instance { class_name, fields }
                 if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType") =>
             {
-                fields.read().unwrap().get("_target").copied()
+                let fields = fields.read().unwrap();
+                if fields
+                    .get("_dead")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return None;
+                }
+                if let Some(target) = fields
+                    .get("_target")
+                    .copied()
+                    .filter(|target| !target.is_none())
+                {
+                    return Some(target);
+                }
+                fields
+                    .get("_target_id")
+                    .copied()
+                    .and_then(target_id_addr)
+                    .map(|addr| MbValue::from_ptr(addr as *mut MbObject))
             }
             _ => None,
         }
+    }
+}
+
+pub(crate) fn proxy_is_dead(proxy: MbValue) -> bool {
+    let Some(ptr) = proxy.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields }
+                if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType") =>
+            {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("_dead")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+pub(crate) fn proxy_dead_attr_access(proxy: MbValue, attr_name: &str) -> bool {
+    is_proxy_instance(proxy) && proxy_is_dead(proxy) && !is_internal_proxy_attr(attr_name)
+}
+
+pub(crate) fn raise_reference_error() {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ReferenceError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "weakly-referenced object no longer exists".to_string(),
+        )),
+    );
+}
+
+fn mark_weakref_dead(wref: MbValue) {
+    let Some(ptr) = wref.as_ptr() else {
+        return;
+    };
+    unsafe {
+        if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+            if !matches!(
+                class_name.as_str(),
+                "ReferenceType" | "ProxyType" | "CallableProxyType"
+            ) {
+                return;
+            }
+            let mut fields = fields.write().unwrap();
+            if fields.contains_key("_target") {
+                fields.insert("_target".to_string(), MbValue::none());
+            }
+            if let Some(dead) = fields.get_mut("_dead") {
+                *dead = MbValue::from_bool(true);
+            } else {
+                fields.insert("_dead".to_string(), MbValue::from_bool(true));
+            }
+        }
+    }
+}
+
+pub(crate) unsafe fn notify_referent_collected(obj: *mut MbObject) {
+    if obj.is_null() {
+        return;
+    }
+    let referent = MbValue::from_ptr(obj);
+    let key = referent_key(referent);
+    let weakrefs = WEAKREF_REGISTRY.with(|r| r.borrow_mut().remove(&key));
+    let Some(weakrefs) = weakrefs else {
+        return;
+    };
+    for wref in weakrefs {
+        mark_weakref_dead(wref);
+        // Do not release the registry's retained weakref/proxy during the
+        // referent's deallocation path. rc/GC sweep can already be walking
+        // the same object graph, and re-entering proxy field cleanup here is
+        // not safe until weakref liveness is fully owned by GC.
     }
 }
 
@@ -642,13 +783,14 @@ pub fn mb_weakref_deref(wref: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// weakref.proxy(obj, callback=None) -> proxy wrapper for hash-sensitive
-/// referents; otherwise keep the legacy live-object alias carve-out.
+/// weakref.proxy(obj, callback=None) -> proxy wrapper for referents whose
+/// observable contract needs proxy identity/dead-target checks; otherwise keep
+/// the legacy live-object alias carve-out.
 pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
     if reject_non_weakreferenceable(obj) {
         return MbValue::none();
     }
-    if referent_needs_proxy_hash_guard(obj) {
+    if referent_needs_proxy_wrapper(obj) {
         if callback.is_none() {
             if let Some(existing) = registry_find_plain_proxy(obj) {
                 unsafe { super::super::rc::retain_if_ptr(existing); }
@@ -663,10 +805,10 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
         } else {
             "ProxyType"
         };
-        let target_id = MbValue::from_int(referent_key(obj) as i64);
+        let target_id = MbValue::from_ptr(MbObject::new_str(format!("{:012x}", referent_key(obj))));
         let mut fields = FxHashMap::default();
-        fields.insert("_target".to_string(), obj);
         fields.insert("_target_id".to_string(), target_id);
+        fields.insert("_dead".to_string(), MbValue::from_bool(false));
         fields.insert("__callback__".to_string(), callback);
         fields.insert("_callback".to_string(), callback);
         fields.insert(

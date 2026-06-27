@@ -273,6 +273,12 @@ pub fn collect() -> usize {
     for addr in &to_free {
         let obj = *addr as *mut MbObject;
         unsafe {
+            super::stdlib::weakref_mod::notify_referent_collected(obj);
+        }
+    }
+    for addr in &to_free {
+        let obj = *addr as *mut MbObject;
+        unsafe {
             super::rc::release_contained_values_pub(obj);
         }
     }

@@ -4153,7 +4153,9 @@ impl<'a> HirToMir<'a> {
                     ("mb_context_enter", "mb_context_exit")
                 };
                 let mut ctx_vregs = Vec::new();
+                let mut ctx_is_temporary = Vec::new();
                 for (ctx, alias) in items {
+                    let is_temporary_ctx = !matches!(ctx, HirExpr::Var(..));
                     let ctx_vreg = self.lower_expr(ctx);
                     // Call __enter__ (or __aenter__ for async with) and bind to alias
                     let enter_dest = self.fresh_vreg();
@@ -4250,6 +4252,7 @@ impl<'a> HirToMir<'a> {
                         }
                     }
                     ctx_vregs.push(ctx_vreg);
+                    ctx_is_temporary.push(is_temporary_ctx);
                 }
                 // Dedicated exit block: BOTH the normal end-of-body path and the
                 // exception-propagation path (a call inside the body that raised)
@@ -4289,13 +4292,27 @@ impl<'a> HirToMir<'a> {
                 // function, else continue past the `with`.
                 self.start_block(exit_block);
                 let none_vreg = self.emit_none();
-                for &ctx_vreg in ctx_vregs.iter().rev() {
+                for (&ctx_vreg, &is_temporary_ctx) in
+                    ctx_vregs.iter().zip(ctx_is_temporary.iter()).rev()
+                {
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: None,
                         name: exit_helper.to_string(),
                         args: vec![ctx_vreg, none_vreg],
                         ty: self.tcx.any(),
                     });
+                    if is_temporary_ctx {
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: None,
+                            name: "mb_release_value".to_string(),
+                            args: vec![ctx_vreg],
+                            ty: self.tcx.none(),
+                        });
+                        self.current_stmts.push(MirInst::Copy {
+                            dest: ctx_vreg,
+                            source: none_vreg,
+                        });
+                    }
                 }
                 let exc_after = self.fresh_vreg();
                 self.current_stmts.push(MirInst::CallExtern {

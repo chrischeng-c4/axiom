@@ -936,6 +936,7 @@ pub unsafe fn mb_release(obj: *mut MbObject) {
     // Acquire on the load so we see all prior writes before freeing.
     if (*obj).header.rc.fetch_sub(1, Ordering::Release) == 1 {
         std::sync::atomic::fence(Ordering::Acquire);
+        crate::runtime::stdlib::weakref_mod::notify_referent_collected(obj);
         // #2096 subset A — eager free Bytes on rc=0 (Task #57).
         // Bytes has no contained MbValue pointers (verified in
         // release_contained_values' `_ => {}` arm) and is never inserted
