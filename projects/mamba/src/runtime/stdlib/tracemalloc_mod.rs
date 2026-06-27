@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 ///
 /// Implements Python-compatible memory allocation tracing.
 /// Integrates with Mamba's GC-tracked allocation counters.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -22,6 +22,13 @@ static GC_BASELINE: AtomicUsize = AtomicUsize::new(0);
 /// Snapshot: list of allocation traces captured at a point in time.
 static SNAPSHOT: std::sync::LazyLock<Mutex<Vec<(String, usize, usize)>>> =
     std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
+/// Approximate object traceback ownership for objects already observed through
+/// get_object_traceback(). Mamba does not tag every allocation yet, but clear()
+/// must make a previously reported object become untraced.
+static OBJECT_TRACEBACKS: std::sync::LazyLock<Mutex<HashSet<usize>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
+static CLEARED_OBJECT_TRACEBACKS: std::sync::LazyLock<Mutex<HashSet<usize>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -1004,6 +1011,8 @@ pub fn mb_tracemalloc_start(nframe: MbValue) -> MbValue {
     GC_BASELINE.store(super::super::gc::gc_get_count(), Ordering::Relaxed);
     TRACED_CURRENT.store(0, Ordering::Relaxed);
     TRACED_PEAK.store(0, Ordering::Relaxed);
+    OBJECT_TRACEBACKS.lock().unwrap().clear();
+    CLEARED_OBJECT_TRACEBACKS.lock().unwrap().clear();
     MbValue::none()
 }
 
@@ -1029,6 +1038,8 @@ pub fn mb_tracemalloc_stop() -> MbValue {
     // CPython zeroes the counters when tracing stops.
     TRACED_CURRENT.store(0, Ordering::Relaxed);
     TRACED_PEAK.store(0, Ordering::Relaxed);
+    OBJECT_TRACEBACKS.lock().unwrap().clear();
+    CLEARED_OBJECT_TRACEBACKS.lock().unwrap().clear();
     MbValue::none()
 }
 
@@ -1103,6 +1114,9 @@ pub fn mb_tracemalloc_clear_traces() -> MbValue {
     TRACED_CURRENT.store(0, Ordering::Relaxed);
     TRACED_PEAK.store(0, Ordering::Relaxed);
     SNAPSHOT.lock().unwrap().clear();
+    let mut active = OBJECT_TRACEBACKS.lock().unwrap();
+    let mut cleared = CLEARED_OBJECT_TRACEBACKS.lock().unwrap();
+    cleared.extend(active.drain());
     MbValue::none()
 }
 
@@ -1112,7 +1126,18 @@ pub fn mb_tracemalloc_clear_traces() -> MbValue {
 /// reported with a synthetic single-frame traceback as long as allocations
 /// have happened since the last clear_traces() (which forgets them).
 pub fn mb_tracemalloc_get_object_traceback(obj: MbValue) -> MbValue {
-    if !TRACING.load(Ordering::Acquire) || obj.as_ptr().is_none() {
+    let Some(ptr) = obj.as_ptr() else {
+        return MbValue::none();
+    };
+    if !TRACING.load(Ordering::Acquire) {
+        return MbValue::none();
+    }
+    let object_id = ptr as usize;
+    if CLEARED_OBJECT_TRACEBACKS
+        .lock()
+        .unwrap()
+        .contains(&object_id)
+    {
         return MbValue::none();
     }
     let (current, _) = traced_now();
@@ -1120,6 +1145,7 @@ pub fn mb_tracemalloc_get_object_traceback(obj: MbValue) -> MbValue {
     if current == 0 {
         return MbValue::none();
     }
+    OBJECT_TRACEBACKS.lock().unwrap().insert(object_id);
     make_traceback(&[("<unknown>".to_string(), 0)], None)
 }
 
