@@ -245,6 +245,31 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_range_no_args",
+            builtins::mb_range_no_args as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_range_2",
+            builtins::mb_range_2 as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_range_3",
+            builtins::mb_range_3
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_range_too_many_args",
+            builtins::mb_range_too_many_args as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_slice",
             builtins::mb_slice
                 as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
