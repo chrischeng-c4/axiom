@@ -22,11 +22,13 @@ use rustc_hash::FxHashMap;
 ///     pre-1441 implementation.
 ///   - All `print_*` callables write a best-effort line to stderr and
 ///     return `None`.
-///   - All `extract_*` / `format_*` / `format_tb` / `format_stack` /
-///     `format_list` / `format_exception_only` / `walk_*` callables
+///   - `format_exception_only()` returns CPython-shaped `list[str]`
+///     sentinel/error lines. `format_stack()` returns one synthetic formatted
+///     module frame line.
+///   - `extract_*` / `format_tb` / `format_list` / `walk_*` callables still
 ///     return empty list / empty iterator surfaces — sufficient for
-///     surface-presence checks and "no active exception" callers but
-///     not for real traceback rendering.
+///     surface-presence checks and "no active exception" callers but not for
+///     real traceback rendering.
 ///   - `clear_frames(tb)` is a no-op returning `None`.
 ///   - `FrameSummary` / `StackSummary` / `TracebackException` are
 ///     passive Instance class-shells. Construction returns an Instance
@@ -399,9 +401,13 @@ pub fn mb_traceback_format_tb(_tb: MbValue) -> MbValue {
 
 /// traceback.format_stack(f=None, limit=None) -> list[str].
 ///
-/// Mamba does not snapshot Python frames; always returns an empty list.
+/// Mamba does not snapshot Python frames yet. Return one synthetic formatted
+/// module frame so callers get CPython-shaped `list[str]` data instead of an
+/// empty surface stub.
 pub fn mb_traceback_format_stack() -> MbValue {
-    MbValue::from_ptr(MbObject::new_list(Vec::new()))
+    MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str("  File \"<mamba>\", line 1, in <module>\n".to_string()),
+    )]))
 }
 
 /// traceback.format_list(extracted_list) -> list[str].
@@ -1221,9 +1227,9 @@ mod tests {
     // -- format_exception_only --
 
     #[test]
-    fn test_format_exception_only_none_returns_empty() {
+    fn test_format_exception_only_none_returns_sentinel_line() {
         let r = mb_traceback_format_exception_only(&[MbValue::none()]);
-        assert_eq!(list_len(r), 0);
+        assert_eq!(list_len(r), 1);
     }
 
     #[test]
@@ -1242,9 +1248,19 @@ mod tests {
     }
 
     #[test]
-    fn test_format_stack_returns_empty_list() {
+    fn test_format_stack_returns_nonempty_string_list() {
         let r = mb_traceback_format_stack();
-        assert_eq!(list_len(r), 0);
+        assert_eq!(list_len(r), 1);
+        if let Some(ptr) = r.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    let items = lock.read().unwrap();
+                    assert!(extract_str(items[0]).is_some());
+                    return;
+                }
+            }
+        }
+        panic!("format_stack did not return a list");
     }
 
     #[test]
