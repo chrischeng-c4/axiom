@@ -385,6 +385,15 @@ fn alloc_gen_id() -> u64 {
     NEXT_GEN_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+fn clear_throw_xfer() {
+    let stale = GEN_XFER.with(|x| x.throw.replace(0));
+    if stale > 1 {
+        unsafe {
+            drop(Box::from_raw(stale as *mut (String, String)));
+        }
+    }
+}
+
 fn generator_is_running(id: u64) -> bool {
     RUNNING_GEN_STACK.with(|stack| stack.borrow().contains(&id))
 }
@@ -654,8 +663,8 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
 
     // Fast path: cache hit means this id was previously prepped and hasn't
     // completed (completion / throw / close all bust the cache). State is
-    // therefore Suspended and throw_request is None — skip the HashMap
-    // lookup entirely. Single TLS hit reads both id + ctx.
+    // therefore Suspended and no control transfer is pending — skip the
+    // HashMap lookup entirely. Single TLS hit reads both id + ctx.
     let cached_ctx = GEN_ACTIVE.with(|a| {
         if a.last_resumed_id.get() == id {
             Some(a.last_resumed_ctx.get())
@@ -664,7 +673,7 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
         }
     });
 
-    let (gen_ctx_ptr, has_throw) = if let Some(ctx_ptr) = cached_ctx {
+    let (gen_ctx_ptr, has_signal) = if let Some(ctx_ptr) = cached_ctx {
         (ctx_ptr, false)
     } else {
         // Slow path: full borrow, check state, init if Created.
@@ -683,15 +692,15 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
                 }
                 GenState::Suspended => {}
             }
-            let has_throw = entry.throw_request.is_some();
+            let has_signal = entry.throw_request.is_some() || entry.close_request;
             let ctx_ptr = &*entry.coro_ctx as *const CoroContext as *mut CoroContext;
-            Some((ctx_ptr, has_throw))
+            Some((ctx_ptr, has_signal))
         });
 
         match prep {
             Some(p) => {
-                // Populate cache only when no throw is pending — throw paths
-                // need to re-read entry.throw_request on the next resume.
+                // Populate cache only when no throw/close signal is pending —
+                // control paths need to re-read entry state on the next resume.
                 if !p.1 {
                     GEN_ACTIVE.with(|a| {
                         a.last_resumed_id.set(id);
@@ -707,9 +716,10 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
         }
     };
 
-    // Clear stale exceptions (unless a throw is pending)
-    if !has_throw {
+    // Clear stale exceptions/control transfers unless a throw/close is pending.
+    if !has_signal {
         super::exception::clear_current_exception();
+        clear_throw_xfer();
     }
 
     // Set up fast-path value transfer + clear completion (one TLS hit).
@@ -912,6 +922,7 @@ pub fn mb_generator_throw(gen_handle: MbValue, exc_type: MbValue, exc_msg: MbVal
 
         // Resume generator — yield_value will see THROW_XFER
         let result = resume_generator(id, MbValue::none());
+        clear_throw_xfer();
 
         // Clear the throw_request from entry (may have been consumed by yield_value
         // or may still be there if generator completed without yielding)
@@ -1000,6 +1011,7 @@ pub fn mb_generator_close(gen_handle: MbValue) {
 
         // Resume — yield_value will see THROW_XFER=1 (close) and raise GeneratorExit
         let result = resume_generator(id, MbValue::none());
+        clear_throw_xfer();
 
         // Check if generator yielded despite GeneratorExit (illegal)
         let completed = GENERATORS.with(|gens| {
@@ -1027,6 +1039,7 @@ pub fn mb_generator_close(gen_handle: MbValue) {
         GENERATORS.with(|gens| {
             if let Some(entry) = gens.borrow_mut().get_mut(&id) {
                 entry.state = GenState::Completed;
+                entry.close_request = false;
             }
         });
 
@@ -1036,21 +1049,11 @@ pub fn mb_generator_close(gen_handle: MbValue) {
         // resume_generator if the body let it unwind). Both must surface
         // as `None` — drop either if pending so the caller does not see
         // a phantom uncaught exception.
-        let pending = super::exception::mb_get_exception();
-        if !pending.is_none() {
-            if let Some(ptr) = pending.as_ptr() {
-                let is_termination = unsafe {
-                    matches!(
-                        &(*ptr).data,
-                        super::rc::ObjData::Instance { class_name, .. }
-                            if class_name == "StopIteration"
-                                || class_name == "GeneratorExit"
-                    )
-                };
-                if is_termination {
-                    super::exception::mb_clear_exception();
-                }
-            }
+        if matches!(
+            super::exception::current_exception_type().as_deref(),
+            Some("StopIteration" | "GeneratorExit")
+        ) {
+            super::exception::mb_clear_exception();
         }
     }
 }
@@ -1163,9 +1166,9 @@ pub(crate) fn cleanup_generator_state_for_runtime_reset() {
     GEN_XFER.with(|x| {
         x.yield_v.set(0);
         x.send.set(0);
-        x.throw.set(0);
         x.completion.set(0);
     });
+    clear_throw_xfer();
     CALLER_CTX_STACK.with(|stack| stack.reset());
     RUNNING_GEN_STACK.with(|stack| stack.borrow_mut().clear());
     LAST_STOP_VALUE.with(|cell| cell.set(MbValue::none().to_bits()));
