@@ -376,19 +376,33 @@ pub fn intenum_convert_callable() -> MbValue {
     callable_func(dispatch_intenum_convert as *const () as usize)
 }
 
+pub fn strenum_convert_callable() -> MbValue {
+    callable_func(dispatch_strenum_convert as *const () as usize)
+}
+
 pub fn mb_intenum_convert(args: MbValue) -> MbValue {
     let items = super::super::builtins::extract_items(args);
-    intenum_convert_from_args(&items)
+    enum_convert_from_args(&items, MixinKind::Int)
+}
+
+pub fn mb_strenum_convert(args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    enum_convert_from_args(&items, MixinKind::Str)
 }
 
 unsafe extern "C" fn dispatch_intenum_convert(args: *const MbValue, n: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args, n) };
-    intenum_convert_from_args(a)
+    enum_convert_from_args(a, MixinKind::Int)
 }
 
-fn intenum_convert_from_args(a: &[MbValue]) -> MbValue {
+unsafe extern "C" fn dispatch_strenum_convert(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    enum_convert_from_args(a, MixinKind::Str)
+}
+
+fn enum_convert_from_args(a: &[MbValue], mixin: MixinKind) -> MbValue {
     let class_name = a.first().copied().unwrap_or_else(MbValue::none);
-    let filter = intenum_convert_filter_arg(a);
+    let filter = enum_convert_filter_arg(a);
     let globals = super::super::closure::build_globals_dict();
     let mut members = Vec::new();
 
@@ -400,7 +414,7 @@ fn intenum_convert_from_args(a: &[MbValue]) -> MbValue {
                     let super::super::dict_ops::DictKey::Str(name) = key else {
                         continue;
                     };
-                    if !intenum_convert_accepts(filter, name) {
+                    if !enum_convert_accepts(filter, name) {
                         continue;
                     }
                     members.push((name.clone(), *value));
@@ -409,10 +423,7 @@ fn intenum_convert_from_args(a: &[MbValue]) -> MbValue {
         }
     }
     members.sort_by(|(name_a, value_a), (name_b, value_b)| {
-        match (value_a.as_int(), value_b.as_int()) {
-            (Some(a), Some(b)) => a.cmp(&b).then_with(|| name_a.cmp(name_b)),
-            _ => name_a.cmp(name_b),
-        }
+        enum_convert_order(mixin, name_a, *value_a, name_b, *value_b)
     });
 
     let member_pairs: Vec<MbValue> = members
@@ -427,12 +438,32 @@ fn intenum_convert_from_args(a: &[MbValue]) -> MbValue {
     enum_create_with_opts(
         class_name,
         MbValue::from_ptr(MbObject::new_list(member_pairs)),
-        MixinKind::Int,
+        mixin,
         1,
     )
 }
 
-fn intenum_convert_filter_arg(a: &[MbValue]) -> MbValue {
+fn enum_convert_order(
+    mixin: MixinKind,
+    name_a: &str,
+    value_a: MbValue,
+    name_b: &str,
+    value_b: MbValue,
+) -> std::cmp::Ordering {
+    match mixin {
+        MixinKind::Int => match (value_a.as_int(), value_b.as_int()) {
+            (Some(a), Some(b)) => a.cmp(&b).then_with(|| name_a.cmp(name_b)),
+            _ => name_a.cmp(name_b),
+        },
+        MixinKind::Str => match (extract_str(value_a), extract_str(value_b)) {
+            (Some(a), Some(b)) => a.cmp(&b).then_with(|| name_a.cmp(name_b)),
+            _ => name_a.cmp(name_b),
+        },
+        MixinKind::None => name_a.cmp(name_b),
+    }
+}
+
+fn enum_convert_filter_arg(a: &[MbValue]) -> MbValue {
     if let Some(candidate) = a.get(2).copied() {
         if !is_kwargs_dict(candidate) {
             return candidate;
@@ -444,7 +475,7 @@ fn intenum_convert_filter_arg(a: &[MbValue]) -> MbValue {
         .unwrap_or_else(MbValue::none)
 }
 
-fn intenum_convert_accepts(filter: MbValue, name: &str) -> bool {
+fn enum_convert_accepts(filter: MbValue, name: &str) -> bool {
     if filter.is_none() {
         return true;
     }

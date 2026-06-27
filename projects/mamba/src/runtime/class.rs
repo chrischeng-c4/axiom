@@ -5925,6 +5925,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     let class_found =
                         CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(s.as_str()));
                     if class_found {
+                        if s == "StrEnum" && attr_name == "_convert_" {
+                            return super::stdlib::enum_mod::strenum_convert_callable();
+                        }
                         match attr_name.as_str() {
                             "__dict__" => {
                                 return class_namespace_mappingproxy(s, None);
@@ -13218,6 +13221,18 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 return super::dict_ops::mb_dict_getitem(data, key);
             }
             _ => {}
+        }
+    }
+
+    if name == "_convert_" {
+        if let Some(ptr) = receiver.as_ptr() {
+            unsafe {
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    if s == "StrEnum" {
+                        return super::stdlib::enum_mod::mb_strenum_convert(args);
+                    }
+                }
+            }
         }
     }
 
