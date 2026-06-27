@@ -54,8 +54,56 @@ use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::super::value::MbValue;
 use crate::runtime::rc::MbRwLock as RwLock;
 use rustc_hash::FxHashMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU32;
+
+const CO_ITERABLE_COROUTINE: i64 = 0x0200;
+
+thread_local! {
+    static COROUTINE_FUNCTIONS: std::cell::RefCell<HashSet<u64>> =
+        std::cell::RefCell::new(HashSet::new());
+    static COROUTINE_GENERATOR_ORIGINS: std::cell::RefCell<HashMap<u64, MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+pub fn mark_coroutine_result(func: MbValue, result: MbValue) -> MbValue {
+    if !is_coroutine_function(func) || !super::super::generator::is_known_generator(result) {
+        return result;
+    }
+    if let Some(id) = result.as_int() {
+        COROUTINE_GENERATOR_ORIGINS.with(|origins| {
+            origins.borrow_mut().insert(id as u64, func);
+        });
+    }
+    result
+}
+
+pub fn is_coroutine_generator(gen: MbValue) -> bool {
+    gen.as_int().is_some_and(|id| {
+        COROUTINE_GENERATOR_ORIGINS.with(|origins| origins.borrow().contains_key(&(id as u64)))
+    })
+}
+
+pub fn coroutine_generator_origin(gen: MbValue) -> Option<MbValue> {
+    gen.as_int().and_then(|id| {
+        COROUTINE_GENERATOR_ORIGINS.with(|origins| origins.borrow().get(&(id as u64)).copied())
+    })
+}
+
+pub(crate) fn cleanup_all_types_state() {
+    let _ = COROUTINE_FUNCTIONS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
+    let _ = COROUTINE_GENERATOR_ORIGINS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+}
+
+fn mark_coroutine_function(func: MbValue) {
+    COROUTINE_FUNCTIONS.with(|funcs| {
+        funcs.borrow_mut().insert(func.to_bits());
+    });
+}
+
+fn is_coroutine_function(func: MbValue) -> bool {
+    COROUTINE_FUNCTIONS.with(|funcs| funcs.borrow().contains(&func.to_bits()))
+}
 
 // Each generated dispatcher loads `stringify!($name)` through `black_box`
 // so LLVM's `mergefunc` pass keeps the bodies distinct. Without that, any
@@ -655,9 +703,9 @@ pub fn mb_types_resolve_bases(bases: MbValue) -> MbValue {
 
 /// types.coroutine(func) -> func
 ///
-/// Identity decorator. CPython promotes generator-based functions to
-/// real coroutine objects; mamba returns the input unchanged. Like
-/// CPython, a non-callable argument raises TypeError with the message
+/// Mamba keeps the callable identity stable, but records the decorator effect
+/// so a returned generator exposes the generator-wrapper protocol and code flag.
+/// Like CPython, a non-callable argument raises TypeError with the message
 /// `types.coroutine() expects a callable`.
 pub fn mb_types_coroutine(func: MbValue) -> MbValue {
     if super::super::builtins::mb_callable(func).as_bool() != Some(true) {
@@ -669,6 +717,9 @@ pub fn mb_types_coroutine(func: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
+    mark_coroutine_function(func);
+    let flags = super::super::closure::func_flags(func) | CO_ITERABLE_COROUTINE;
+    super::super::closure::mb_func_set_flags(func, MbValue::from_int(flags));
     func
 }
 

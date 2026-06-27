@@ -9413,15 +9413,21 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
         // Already-boxed values (NaN-boxed ints, ptrs, bools, none) pass through.
         // An any/object-returning callee's result is already a valid MbValue
         // (possibly a no-NaN-prefix float) → pass through untouched.
-        if is_boxed_ret {
-            return raw_result;
-        }
-        let bits = raw_result.to_bits();
-        const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-        if bits & NAN_PREFIX == NAN_PREFIX {
-            raw_result // Already NaN-boxed
+        let result = if is_boxed_ret {
+            raw_result
         } else {
-            mb_box_int(bits as i64) // Raw i64 → NaN-box it
+            let bits = raw_result.to_bits();
+            const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
+            if bits & NAN_PREFIX == NAN_PREFIX {
+                raw_result // Already NaN-boxed
+            } else {
+                mb_box_int(bits as i64) // Raw i64 → NaN-box it
+            }
+        };
+        if super::stdlib::types_mod::is_coroutine_generator(result) {
+            result
+        } else {
+            super::stdlib::types_mod::mark_coroutine_result(func, result)
         }
     } else {
         MbValue::none()
