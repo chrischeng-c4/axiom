@@ -783,17 +783,48 @@ unsafe extern "C" fn stream_readline(_self_v: MbValue, _args: MbValue) -> MbValu
     MbValue::from_ptr(MbObject::new_str(line))
 }
 
+fn stream_name(self_v: MbValue) -> Option<String> {
+    self_v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().unwrap().get("name").and_then(|v| {
+                v.as_ptr().and_then(|sp| {
+                    if let ObjData::Str(ref s) = (*sp).data {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+        } else {
+            None
+        }
+    })
+}
+
+fn first_list_arg(args: MbValue) -> Option<MbValue> {
+    args.as_ptr().and_then(|p| unsafe {
+        if let ObjData::List(ref lock) = (*p).data {
+            lock.read().unwrap().first().copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn extract_bytes_payload(val: MbValue) -> Option<Vec<u8>> {
+    val.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::Bytes(bytes) => Some(bytes.clone()),
+            ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
+            ObjData::Str(s) => Some(s.as_bytes().to_vec()),
+            _ => None,
+        }
+    })
+}
+
 unsafe extern "C" fn stream_write(self_v: MbValue, args: MbValue) -> MbValue {
     use std::io::Write as _;
-    let text = args
-        .as_ptr()
-        .and_then(|p| unsafe {
-            if let ObjData::List(ref lock) = (*p).data {
-                lock.read().unwrap().first().copied()
-            } else {
-                None
-            }
-        })
+    let text = first_list_arg(args)
         .and_then(|v| {
             v.as_ptr().and_then(|p| unsafe {
                 if let ObjData::Str(ref s) = (*p).data {
@@ -804,26 +835,7 @@ unsafe extern "C" fn stream_write(self_v: MbValue, args: MbValue) -> MbValue {
             })
         })
         .unwrap_or_default();
-    let is_stderr = self_v.as_ptr().is_some_and(|p| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*p).data {
-            fields
-                .read()
-                .unwrap()
-                .get("name")
-                .and_then(|v| {
-                    v.as_ptr().and_then(|sp| {
-                        if let ObjData::Str(ref s) = (*sp).data {
-                            Some(s == "<stderr>")
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .unwrap_or(false)
-        } else {
-            false
-        }
-    });
+    let is_stderr = stream_name(self_v).as_deref() == Some("<stderr>");
     let n = text.chars().count() as i64;
     if is_stderr {
         if !super::super::output::try_write_stderr_redirect(&text) {
@@ -835,6 +847,21 @@ unsafe extern "C" fn stream_write(self_v: MbValue, args: MbValue) -> MbValue {
     MbValue::from_int(n)
 }
 
+unsafe extern "C" fn stream_buffer_write(self_v: MbValue, args: MbValue) -> MbValue {
+    use std::io::Write as _;
+    let bytes = first_list_arg(args)
+        .and_then(extract_bytes_payload)
+        .unwrap_or_default();
+    let is_stderr = stream_name(self_v).as_deref() == Some("<stderr>");
+    let n = bytes.len() as i64;
+    if is_stderr {
+        let _ = std::io::stderr().write_all(&bytes);
+    } else {
+        let _ = std::io::stdout().write_all(&bytes);
+    }
+    MbValue::from_int(n)
+}
+
 unsafe extern "C" fn stream_flush(_self_v: MbValue, _args: MbValue) -> MbValue {
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
@@ -842,22 +869,56 @@ unsafe extern "C" fn stream_flush(_self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// Register the shared `sys._Stream` method table.
-fn register_stream_class() {
+fn register_variadic_method_table(class_name: &str, entries: &[(&str, usize)]) {
     let mut methods: HashMap<String, MbValue> = HashMap::new();
-    for (name, addr) in [
-        ("read", stream_read as *const () as usize),
-        ("readline", stream_readline as *const () as usize),
-        ("write", stream_write as *const () as usize),
-        ("flush", stream_flush as *const () as usize),
-    ] {
-        super::super::module::register_variadic_func(addr as u64);
+    for (name, addr) in entries {
+        super::super::module::register_variadic_func(*addr as u64);
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-            s.borrow_mut().insert(addr as u64);
+            s.borrow_mut().insert(*addr as u64);
         });
-        methods.insert(name.to_string(), MbValue::from_func(addr));
+        methods.insert((*name).to_string(), MbValue::from_func(*addr));
     }
-    super::super::class::mb_class_register("sys._Stream", Vec::new(), methods);
+    super::super::class::mb_class_register(class_name, Vec::new(), methods);
+}
+
+/// Register the shared `sys._Stream` and `sys._StreamBuffer` method tables.
+fn register_stream_class() {
+    register_variadic_method_table(
+        "sys._Stream",
+        &[
+            ("read", stream_read as *const () as usize),
+            ("readline", stream_readline as *const () as usize),
+            ("write", stream_write as *const () as usize),
+            ("flush", stream_flush as *const () as usize),
+        ],
+    );
+    register_variadic_method_table(
+        "sys._StreamBuffer",
+        &[
+            ("write", stream_buffer_write as *const () as usize),
+            ("flush", stream_flush as *const () as usize),
+        ],
+    );
+}
+
+fn build_stream_buffer_stub(name: &str) -> MbValue {
+    use super::super::rc::{InstanceFields, MbObjectHeader, MbRwLock, ObjKind};
+    let mut fields = InstanceFields::default();
+    fields.insert(
+        "name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(format!("<{}>", name))),
+    );
+    let obj = Box::new(MbObject {
+        header: MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "sys._StreamBuffer".to_string(),
+            fields: MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
 }
 
 /// Build a std-stream object (an Instance carrying its display name).
@@ -868,6 +929,7 @@ fn build_stream_stub(name: &str) -> MbValue {
         "name".to_string(),
         MbValue::from_ptr(MbObject::new_str(format!("<{}>", name))),
     );
+    fields.insert("buffer".to_string(), build_stream_buffer_stub(name));
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),

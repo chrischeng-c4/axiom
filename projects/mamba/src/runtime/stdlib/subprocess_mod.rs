@@ -490,14 +490,81 @@ fn new_instance_with_fields(class_name: &str, fields: FxHashMap<String, MbValue>
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
-fn pipe_stream_value(data: Vec<u8>, captured: bool, text: bool) -> MbValue {
+fn normalize_text_newlines(text: String) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn decode_utf16_units(data: &[u8], big_endian: bool) -> String {
+    let mut units = Vec::with_capacity(data.len() / 2);
+    for chunk in data.chunks_exact(2) {
+        let bytes = [chunk[0], chunk[1]];
+        units.push(if big_endian {
+            u16::from_be_bytes(bytes)
+        } else {
+            u16::from_le_bytes(bytes)
+        });
+    }
+    String::from_utf16_lossy(&units)
+}
+
+fn decode_utf16_auto(data: &[u8]) -> String {
+    if data.starts_with(&[0xfe, 0xff]) {
+        decode_utf16_units(&data[2..], true)
+    } else if data.starts_with(&[0xff, 0xfe]) {
+        decode_utf16_units(&data[2..], false)
+    } else {
+        decode_utf16_units(data, false)
+    }
+}
+
+fn decode_utf32_units(data: &[u8], big_endian: bool) -> String {
+    let mut out = String::new();
+    for chunk in data.chunks_exact(4) {
+        let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+        let code = if big_endian {
+            u32::from_be_bytes(bytes)
+        } else {
+            u32::from_le_bytes(bytes)
+        };
+        out.push(char::from_u32(code).unwrap_or(char::REPLACEMENT_CHARACTER));
+    }
+    out
+}
+
+fn decode_utf32_auto(data: &[u8]) -> String {
+    if data.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
+        decode_utf32_units(&data[4..], true)
+    } else if data.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
+        decode_utf32_units(&data[4..], false)
+    } else {
+        decode_utf32_units(data, false)
+    }
+}
+
+fn decode_subprocess_text(data: &[u8], encoding: Option<&str>) -> String {
+    let decoded = match encoding
+        .unwrap_or("utf-8")
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .as_str()
+    {
+        "utf-16" | "utf16" => decode_utf16_auto(data),
+        "utf-16-le" | "utf16-le" => decode_utf16_units(data, false),
+        "utf-16-be" | "utf16-be" => decode_utf16_units(data, true),
+        "utf-32" | "utf32" => decode_utf32_auto(data),
+        "utf-32-le" | "utf32-le" => decode_utf32_units(data, false),
+        "utf-32-be" | "utf32-be" => decode_utf32_units(data, true),
+        _ => String::from_utf8_lossy(data).into_owned(),
+    };
+    normalize_text_newlines(decoded)
+}
+
+fn pipe_stream_value(data: Vec<u8>, captured: bool, text: bool, encoding: Option<&str>) -> MbValue {
     if !captured {
         return MbValue::none();
     }
     if text {
-        return super::io_mod::mb_stringio_new_with(
-            String::from_utf8_lossy(&data).replace("\r\n", "\n"),
-        );
+        return super::io_mod::mb_stringio_new_with(decode_subprocess_text(&data, encoding));
     }
     super::io_mod::mb_bytesio_new_with(data)
 }
@@ -624,6 +691,7 @@ struct SpawnOpts {
     check: bool,
     capture_output: bool,
     text: bool,
+    encoding: Option<String>,
     /// stdout/stderr selectors: 0 inherit, -1 PIPE, -2 STDOUT, -3 DEVNULL.
     stdout_sel: i64,
     stderr_sel: i64,
@@ -693,8 +761,9 @@ fn parse_spawn_opts(a: &[MbValue]) -> SpawnOpts {
     });
     opts.check = dict_get(kw, "check").and_then(|v| v.as_bool()) == Some(true);
     opts.capture_output = dict_get(kw, "capture_output").and_then(|v| v.as_bool()) == Some(true);
+    opts.encoding = dict_get(kw, "encoding").and_then(extract_str);
     opts.text = dict_get(kw, "text").and_then(|v| v.as_bool()) == Some(true)
-        || dict_get(kw, "encoding").is_some()
+        || opts.encoding.is_some()
         || dict_get(kw, "universal_newlines").and_then(|v| v.as_bool()) == Some(true);
     opts.stdout_sel = dict_get(kw, "stdout").and_then(|v| v.as_int()).unwrap_or(0);
     opts.stderr_sel = dict_get(kw, "stderr").and_then(|v| v.as_int()).unwrap_or(0);
@@ -826,14 +895,12 @@ fn spawn_with_opts(
     Ok((returncode_of(&status), stdout, stderr))
 }
 
-fn stream_value(data: Vec<u8>, captured: bool, text: bool) -> MbValue {
+fn stream_value(data: Vec<u8>, captured: bool, text: bool, encoding: Option<&str>) -> MbValue {
     if !captured {
         return MbValue::none();
     }
     if text {
-        MbValue::from_ptr(MbObject::new_str(
-            String::from_utf8_lossy(&data).replace("\r\n", "\n"),
-        ))
+        MbValue::from_ptr(MbObject::new_str(decode_subprocess_text(&data, encoding)))
     } else {
         MbValue::from_ptr(MbObject::new_bytes(data))
     }
@@ -872,8 +939,8 @@ pub fn mb_subprocess_run_all(a: &[MbValue]) -> MbValue {
         // Raise a CalledProcessError *instance* carrying returncode / cmd /
         // output / stderr so `except CalledProcessError as exc:` can read
         // exc.returncode (a bare string exception left it None).
-        let out_v = stream_value(stdout, out_captured, opts.text);
-        let err_v = stream_value(stderr, err_captured, opts.text);
+        let out_v = stream_value(stdout, out_captured, opts.text, opts.encoding.as_deref());
+        let err_v = stream_value(stderr, err_captured, opts.text, opts.encoding.as_deref());
         return raise_called_process_error(code, &cmd_args, out_v, err_v);
     }
 
@@ -882,11 +949,11 @@ pub fn mb_subprocess_run_all(a: &[MbValue]) -> MbValue {
     f.insert("returncode".into(), MbValue::from_int(code as i64));
     f.insert(
         "stdout".into(),
-        stream_value(stdout, out_captured, opts.text),
+        stream_value(stdout, out_captured, opts.text, opts.encoding.as_deref()),
     );
     f.insert(
         "stderr".into(),
-        stream_value(stderr, err_captured, opts.text),
+        stream_value(stderr, err_captured, opts.text, opts.encoding.as_deref()),
     );
     new_instance_with_fields("CompletedProcess", f)
 }
@@ -945,7 +1012,7 @@ pub fn mb_subprocess_check_output_all(a: &[MbValue]) -> MbValue {
         return MbValue::none();
     };
     if code == 0 {
-        return stream_value(stdout, true, opts.text);
+        return stream_value(stdout, true, opts.text, opts.encoding.as_deref());
     }
     let out = MbValue::from_ptr(MbObject::new_bytes(stdout));
     let err = MbValue::from_ptr(MbObject::new_bytes(stderr));
@@ -1165,6 +1232,13 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
     fields.insert("stdin".into(), MbValue::none());
     fields.insert("stdout".into(), MbValue::none());
     fields.insert("stderr".into(), MbValue::none());
+    fields.insert("_text".into(), MbValue::from_bool(opts.text));
+    if let Some(ref encoding) = opts.encoding {
+        fields.insert(
+            "_encoding".into(),
+            MbValue::from_ptr(MbObject::new_str(encoding.clone())),
+        );
+    }
 
     if cmd_args.is_empty() {
         fields.insert("returncode".into(), MbValue::from_int(-1));
@@ -1183,11 +1257,21 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
             fields.insert("pid".into(), MbValue::from_int(0));
             fields.insert(
                 "stdout".into(),
-                pipe_stream_value(output.stdout.clone(), opts.stdout_sel == -1, opts.text),
+                pipe_stream_value(
+                    output.stdout.clone(),
+                    opts.stdout_sel == -1,
+                    opts.text,
+                    opts.encoding.as_deref(),
+                ),
             );
             fields.insert(
                 "stderr".into(),
-                pipe_stream_value(output.stderr.clone(), opts.stderr_sel == -1, opts.text),
+                pipe_stream_value(
+                    output.stderr.clone(),
+                    opts.stderr_sel == -1,
+                    opts.text,
+                    opts.encoding.as_deref(),
+                ),
             );
             // Captured child streams for `communicate()` — the carve-out
             // runs the child synchronously, so they are fully available.
@@ -1240,20 +1324,47 @@ unsafe extern "C" fn completed_check_returncode(self_v: MbValue, _args: MbValue)
 /// the captured streams; a post-hoc `input` cannot be delivered and is
 /// ignored.
 unsafe extern "C" fn popen_communicate(self_v: MbValue, _args: MbValue) -> MbValue {
-    let field = |name: &str| -> MbValue {
+    let field = |name: &str| -> Option<MbValue> {
         if let Some(ptr) = self_v.as_ptr() {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     if let Some(v) = fields.read().unwrap().get(name).copied() {
-                        return v;
+                        return Some(v);
                     }
                 }
             }
         }
-        MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+        None
     };
-    let out = field("_captured_stdout");
-    let err = field("_captured_stderr");
+
+    let text = field("_text").and_then(|v| v.as_bool()).unwrap_or(false);
+    let encoding = field("_encoding").and_then(extract_str);
+    let captured_bytes = |name: &str| -> Vec<u8> {
+        field(name)
+            .and_then(|v| {
+                v.as_ptr().and_then(|ptr| unsafe {
+                    match &(*ptr).data {
+                        ObjData::Bytes(bytes) => Some(bytes.clone()),
+                        ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
+                        ObjData::Str(s) => Some(s.as_bytes().to_vec()),
+                        _ => None,
+                    }
+                })
+            })
+            .unwrap_or_default()
+    };
+    let make_stream = |data: Vec<u8>| -> MbValue {
+        if text {
+            MbValue::from_ptr(MbObject::new_str(decode_subprocess_text(
+                &data,
+                encoding.as_deref(),
+            )))
+        } else {
+            MbValue::from_ptr(MbObject::new_bytes(data))
+        }
+    };
+    let out = make_stream(captured_bytes("_captured_stdout"));
+    let err = make_stream(captured_bytes("_captured_stderr"));
     MbValue::from_ptr(MbObject::new_tuple(vec![out, err]))
 }
 
