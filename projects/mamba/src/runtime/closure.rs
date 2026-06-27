@@ -1089,6 +1089,7 @@ pub(crate) fn cleanup_all_closures() {
     let _ = FUNC_MODULES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_ARGCOUNTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_VARNAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_FLAGS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_FREEVARS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_RET_ANNOS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
