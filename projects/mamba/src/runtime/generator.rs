@@ -367,6 +367,13 @@ thread_local! {
     /// Max nesting depth: 16 (yield from chains deeper than this will panic).
     static CALLER_CTX_STACK: CallerCtxStack = CallerCtxStack::new();
 
+    /// IDs currently executing on nested coroutine stacks. `active_id` only
+    /// names the leaf generator; this stack keeps parent `yield from` frames
+    /// visible so re-entering an ancestor raises CPython's ValueError instead
+    /// of corrupting the coroutine context.
+    static RUNNING_GEN_STACK: std::cell::RefCell<Vec<u64>> =
+        std::cell::RefCell::new(Vec::new());
+
     /// StopIteration return value.
     static LAST_STOP_VALUE: std::cell::Cell<u64> = std::cell::Cell::new(MbValue::none().to_bits());
 }
@@ -376,6 +383,20 @@ static NEXT_GEN_ID: AtomicU64 = AtomicU64::new(1);
 
 fn alloc_gen_id() -> u64 {
     NEXT_GEN_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn generator_is_running(id: u64) -> bool {
+    RUNNING_GEN_STACK.with(|stack| stack.borrow().contains(&id))
+}
+
+fn raise_generator_already_executing() -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "generator already executing".to_string(),
+        )),
+    );
+    MbValue::none()
 }
 
 // ── Shared output capture (kept for compatibility with test infrastructure) ──
@@ -627,6 +648,10 @@ fn init_coro_context(ctx: &mut CoroContext, stack_top: *mut u8) {
 /// Optimized hot path: single GENERATORS borrow for check+prepare+get-ptr,
 /// then swap, then single borrow for read-result.
 fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
+    if generator_is_running(id) {
+        return raise_generator_already_executing();
+    }
+
     // Fast path: cache hit means this id was previously prepped and hasn't
     // completed (completion / throw / close all bust the cache). State is
     // therefore Suspended and throw_request is None — skip the HashMap
@@ -703,6 +728,7 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
 
     // Push caller context and swap
     let caller_ctx_ptr = CALLER_CTX_STACK.with(|stack| stack.push());
+    RUNNING_GEN_STACK.with(|stack| stack.borrow_mut().push(id));
 
     // === SWAP: caller → generator ===
     unsafe {
@@ -710,6 +736,10 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
     }
     // === SWAP BACK: generator yielded or completed ===
 
+    RUNNING_GEN_STACK.with(|stack| {
+        let popped = stack.borrow_mut().pop();
+        debug_assert_eq!(popped, Some(id));
+    });
     CALLER_CTX_STACK.with(|stack| stack.pop());
     GEN_ACTIVE.with(|a| {
         a.active_id.set(prev_active);
@@ -1137,6 +1167,7 @@ pub(crate) fn cleanup_generator_state_for_runtime_reset() {
         x.completion.set(0);
     });
     CALLER_CTX_STACK.with(|stack| stack.reset());
+    RUNNING_GEN_STACK.with(|stack| stack.borrow_mut().clear());
     LAST_STOP_VALUE.with(|cell| cell.set(MbValue::none().to_bits()));
 }
 
@@ -1246,6 +1277,12 @@ pub fn mb_generator_yield_from(sub_iter: MbValue) -> MbValue {
 
 /// Yield from a sub-generator, properly forwarding send/throw/close.
 fn yield_from_generator(sub_gen: MbValue) -> MbValue {
+    if let Some(id) = sub_gen.as_int() {
+        if generator_is_running(id as u64) {
+            return raise_generator_already_executing();
+        }
+    }
+
     let mut val = mb_generator_next(sub_gen);
 
     loop {
@@ -1261,6 +1298,11 @@ fn yield_from_generator(sub_gen: MbValue) -> MbValue {
         };
 
         if exhausted {
+            if let Some(exc_type) = super::exception::current_exception_type() {
+                if exc_type != "StopIteration" {
+                    return MbValue::none();
+                }
+            }
             let ret_val = if let Some(id) = sub_gen.as_int() {
                 GENERATORS.with(|gens| {
                     gens.borrow()

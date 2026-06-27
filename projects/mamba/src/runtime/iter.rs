@@ -404,6 +404,11 @@ pub fn check_and_clear_stop() -> bool {
     check_stop_iteration()
 }
 
+fn has_non_stop_exception() -> bool {
+    super::exception::current_exception_type()
+        .is_some_and(|t| t != "StopIteration")
+}
+
 fn alloc_iter_id() -> u64 {
     NEXT_ITER_ID.with(|cell| {
         let id = cell.get();
@@ -2220,6 +2225,9 @@ pub fn mb_next(iter_handle: MbValue) -> MbValue {
             GenFast::Resume(gen_handle) => {
                 check_stop_iteration();
                 let val = super::generator::mb_generator_next(gen_handle);
+                if has_non_stop_exception() {
+                    return MbValue::none();
+                }
                 if check_stop_iteration() {
                     super::exception::mb_clear_exception();
                     ITERATORS.with(|iters| {
@@ -2326,6 +2334,9 @@ pub fn mb_next(iter_handle: MbValue) -> MbValue {
         if super::generator::is_known_generator(iter_handle) {
             check_stop_iteration(); // clear stale flag
             let val = super::generator::mb_generator_next(iter_handle);
+            if has_non_stop_exception() {
+                return MbValue::none();
+            }
             if check_stop_iteration() {
                 super::exception::mb_clear_exception();
                 return MbValue::none();
@@ -2812,6 +2823,9 @@ pub fn mb_has_next(iter_handle: MbValue) -> MbValue {
             GenHas::Advance(gen_handle) => {
                 check_stop_iteration();
                 let val = super::generator::mb_generator_next(gen_handle);
+                if has_non_stop_exception() {
+                    return MbValue::from_bool(false);
+                }
                 if check_stop_iteration() {
                     super::exception::mb_clear_exception();
                     return ITERATORS.with(|iters| {
@@ -3390,6 +3404,9 @@ fn advance_generator_if_applicable(id: u64) -> Option<MbValue> {
     check_stop_iteration(); // clear stale flag
     let val = super::generator::mb_generator_next(gen_handle);
 
+    if has_non_stop_exception() {
+        return Some(MbValue::none());
+    }
     if check_stop_iteration() {
         // Generator exhausted: raise_stop_iteration sets both the local
         // STOP_ITERATION flag (cleared by check_stop_iteration above) AND
