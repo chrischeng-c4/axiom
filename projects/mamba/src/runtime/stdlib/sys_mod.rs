@@ -1485,24 +1485,55 @@ pub fn mb_sys_is_finalizing() -> MbValue {
     MbValue::from_bool(false)
 }
 
-/// sys.exc_info() → (type, value, traceback). Returns (None, None, None)
-/// when no exception is being handled — Mamba's exception machinery doesn't
-/// thread the active triple through here yet.
-pub fn mb_sys_exc_info() -> MbValue {
-    match super::super::exception::last_handled_exception() {
-        Some((etype, msg)) => {
-            let type_val = MbValue::from_ptr(MbObject::new_str(etype.clone()));
-            let value_val = MbValue::from_ptr(MbObject::new_str(msg));
-            // Minimal synthetic traceback object (tb_frame/tb_lineno/tb_next)
-            // so extract_tb / walk_tb consumers see a non-None third slot.
-            let tb_val = super::traceback_mod::make_tb_instance();
-            MbValue::from_ptr(MbObject::new_tuple(vec![type_val, value_val, tb_val]))
+fn exception_value_type_name(value: MbValue) -> Option<String> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, .. } => Some(class_name.clone()),
+            ObjData::Str(s) => Some(s.clone()),
+            _ => None,
         }
-        None => {
-            let triple = vec![MbValue::none(), MbValue::none(), MbValue::none()];
-            MbValue::from_ptr(MbObject::new_tuple(triple))
+    })
+}
+
+fn exception_traceback_value(value: MbValue) -> MbValue {
+    let Some(ptr) = value.as_ptr() else {
+        return MbValue::none();
+    };
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let existing = fields.read().unwrap().get("__traceback__").copied();
+            if let Some(tb) = existing {
+                super::super::rc::retain_if_ptr(tb);
+                return tb;
+            }
+            let tb = super::traceback_mod::make_tb_instance();
+            super::super::rc::retain_if_ptr(tb);
+            fields
+                .write()
+                .unwrap()
+                .insert("__traceback__".to_string(), tb);
+            return tb;
         }
     }
+    MbValue::none()
+}
+
+/// sys.exc_info() → (type, value, traceback). Returns (None, None, None)
+/// when no exception is being handled.
+pub fn mb_sys_exc_info() -> MbValue {
+    let value_val = super::super::class::last_caught_exception_value();
+    if value_val.is_none() {
+        let triple = vec![MbValue::none(), MbValue::none(), MbValue::none()];
+        return MbValue::from_ptr(MbObject::new_tuple(triple));
+    }
+
+    let etype = super::super::exception::last_handled_exception()
+        .map(|(etype, _)| etype)
+        .or_else(|| exception_value_type_name(value_val))
+        .unwrap_or_else(|| "Exception".to_string());
+    let type_val = MbValue::from_ptr(MbObject::new_str(etype));
+    let tb_val = exception_traceback_value(value_val);
+    MbValue::from_ptr(MbObject::new_tuple(vec![type_val, value_val, tb_val]))
 }
 
 /// sys.getfilesystemencoding() → 'utf-8'.
