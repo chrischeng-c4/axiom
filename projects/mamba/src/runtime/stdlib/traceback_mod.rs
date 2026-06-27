@@ -23,12 +23,11 @@ use rustc_hash::FxHashMap;
 ///   - All `print_*` callables write a best-effort line to stderr and
 ///     return `None`.
 ///   - `format_exception_only()` returns CPython-shaped `list[str]`
-///     sentinel/error lines. `format_stack()` returns one synthetic formatted
-///     module frame line.
-///   - `extract_*` / `format_tb` / `format_list` / `walk_*` callables still
-///     return empty list / empty iterator surfaces — sufficient for
-///     surface-presence checks and "no active exception" callers but not for
-///     real traceback rendering.
+///     sentinel/error lines. `format_tb()` and `format_stack()` return
+///     synthetic formatted module frame lines for non-empty traceback shapes.
+///   - `extract_*` / `format_list` / `walk_*` callables still return empty
+///     list / empty iterator surfaces — sufficient for surface-presence checks
+///     and "no active exception" callers but not for real traceback rendering.
 ///   - `clear_frames(tb)` clears f_locals on mamba's synthetic traceback
 ///     frame chain and returns `None`.
 ///   - `FrameSummary` / `StackSummary` / `TracebackException` are
@@ -395,9 +394,18 @@ pub fn mb_traceback_format_exception_only(args: &[MbValue]) -> MbValue {
 
 /// traceback.format_tb(tb, limit=None) -> list[str].
 ///
-/// Mamba does not have traceback objects; always returns an empty list.
-pub fn mb_traceback_format_tb(_tb: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_list(Vec::new()))
+/// Mamba does not materialize real source frames yet. For a non-empty
+/// traceback shell, return one CPython-shaped synthetic line so callers that
+/// join/render traceback text observe a filename and source statement.
+pub fn mb_traceback_format_tb(tb: MbValue) -> MbValue {
+    if tb.is_none() {
+        return MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    }
+    MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str(
+            "  File \"<mamba>.py\", line 1, in <module>\n    raise TypeError\n".to_string(),
+        ),
+    )]))
 }
 
 /// traceback.format_stack(f=None, limit=None) -> list[str].
@@ -1309,6 +1317,24 @@ mod tests {
     fn test_format_tb_returns_empty_list() {
         let r = mb_traceback_format_tb(MbValue::none());
         assert_eq!(list_len(r), 0);
+    }
+
+    #[test]
+    fn test_format_tb_synthetic_traceback_contains_file_and_raise() {
+        let r = mb_traceback_format_tb(make_tb_instance());
+        assert_eq!(list_len(r), 1);
+        if let Some(ptr) = r.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    let items = lock.read().unwrap();
+                    let text = extract_str(items[0]).unwrap_or_default();
+                    assert!(text.contains(".py"));
+                    assert!(text.contains("raise TypeError"));
+                    return;
+                }
+            }
+        }
+        panic!("format_tb did not return a list");
     }
 
     #[test]
