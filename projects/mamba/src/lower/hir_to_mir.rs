@@ -433,13 +433,20 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
     lowerer.user_func_sigs = hir.func_sigs.clone();
     for func in &hir.functions {
         if !func.decorators.is_empty() {
-            lowerer
-                .pending_decorators
-                .push((func.name, func.decorators.clone()));
+            let dispatch_sym = func.bind_name.unwrap_or(func.name);
+            lowerer.pending_decorators.push((
+                func.name,
+                func.decorators.clone(),
+                func.func_sig.clone(),
+            ));
             lowerer.decorated_func_syms.insert(func.name.0);
+            lowerer.decorated_func_syms.insert(dispatch_sym.0);
             lowerer
                 .decorated_func_return_tys
                 .insert(func.name.0, func.return_ty);
+            lowerer
+                .decorated_func_return_tys
+                .insert(dispatch_sym.0, func.return_ty);
         }
         let body = lowerer.lower_function(func);
         lowerer.bodies.push(body);
@@ -1032,13 +1039,20 @@ pub fn lower_hir_to_mir_with_symbols_src(
 
     for func in &hir.functions {
         if !func.decorators.is_empty() {
-            lowerer
-                .pending_decorators
-                .push((func.name, func.decorators.clone()));
+            let dispatch_sym = func.bind_name.unwrap_or(func.name);
+            lowerer.pending_decorators.push((
+                func.name,
+                func.decorators.clone(),
+                func.func_sig.clone(),
+            ));
             lowerer.decorated_func_syms.insert(func.name.0);
+            lowerer.decorated_func_syms.insert(dispatch_sym.0);
             lowerer
                 .decorated_func_return_tys
                 .insert(func.name.0, func.return_ty);
+            lowerer
+                .decorated_func_return_tys
+                .insert(dispatch_sym.0, func.return_ty);
         }
         let body = lowerer.lower_function(func);
         lowerer.bodies.push(body);
@@ -1237,9 +1251,9 @@ struct HirToMir<'a> {
     current_return_ty: TypeId,
     /// Counter for allocating synthetic lambda SymbolIds (starts at 4_000_000).
     next_lambda_id: u32,
-    /// Pending decorator applications: (func_sym, decorators_in_order).
+    /// Pending decorator applications: (impl_func_sym, decorators_in_order, per-def signature).
     /// Emitted at the start of top-level code, after class registrations.
-    pending_decorators: Vec<(SymbolId, Vec<HirExpr>)>,
+    pending_decorators: Vec<(SymbolId, Vec<HirExpr>, Option<crate::hir::HirFuncSig>)>,
     /// SymbolId.0 set for functions that have decorators.
     /// Call sites for these functions use dynamic dispatch via LoadGlobal.
     decorated_func_syms: HashSet<u32>,
@@ -1374,6 +1388,98 @@ impl<'a> HirToMir<'a> {
             module_annotations: Vec::new(),
             in_module_scope: false,
             is_class_method: false,
+        }
+    }
+
+    fn emit_func_sig_metadata(&mut self, func_sym: SymbolId, sig: &crate::hir::HirFuncSig) {
+        let any_ty = self.tcx.any();
+        let fn_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: fn_vreg,
+            value: MirConst::FuncRef(func_sym),
+            ty: any_ty,
+        });
+        let mut param_vregs: Vec<VReg> = Vec::new();
+        for p in &sig.params {
+            let name_vreg = self.emit_str_const(&p.name);
+            let kind_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: kind_raw,
+                value: MirConst::Int(p.kind as i64),
+                ty: self.tcx.int(),
+            });
+            let kind_vreg = self.box_operand(kind_raw, self.tcx.int());
+            let has_default = p.default.is_some() || p.default_opaque;
+            let hd_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: hd_raw,
+                value: MirConst::Int(if has_default { 1 } else { 0 }),
+                ty: self.tcx.int(),
+            });
+            let hd_vreg = self.box_operand(hd_raw, self.tcx.int());
+            let def_vreg = match &p.default {
+                Some(crate::hir::HirSigDefault::Int(v)) => {
+                    let raw = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: raw,
+                        value: MirConst::Int(*v),
+                        ty: self.tcx.int(),
+                    });
+                    self.box_operand(raw, self.tcx.int())
+                }
+                Some(crate::hir::HirSigDefault::Float(v)) => {
+                    let raw = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: raw,
+                        value: MirConst::Float(*v),
+                        ty: self.tcx.float(),
+                    });
+                    self.box_operand(raw, self.tcx.float())
+                }
+                Some(crate::hir::HirSigDefault::Str(s)) => self.emit_str_const(s),
+                Some(crate::hir::HirSigDefault::Bool(b)) => {
+                    let raw = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: raw,
+                        value: MirConst::Bool(*b),
+                        ty: self.tcx.bool(),
+                    });
+                    self.box_operand(raw, self.tcx.bool())
+                }
+                Some(crate::hir::HirSigDefault::None) | None => self.emit_none(),
+            };
+            let anno_vreg = match &p.annotation {
+                Some(s) => self.emit_str_const(s),
+                None => self.emit_none(),
+            };
+            let tup_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeTuple {
+                dest: tup_vreg,
+                elements: vec![name_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg],
+                ty: any_ty,
+            });
+            param_vregs.push(tup_vreg);
+        }
+        let params_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: params_vreg,
+            elements: param_vregs,
+            ty: any_ty,
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_func_set_params".to_string(),
+            args: vec![fn_vreg, params_vreg],
+            ty: self.tcx.none(),
+        });
+        if let Some(ret_anno) = &sig.return_annotation {
+            let ra_vreg = self.emit_str_const(ret_anno);
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_func_set_retanno".to_string(),
+                args: vec![fn_vreg, ra_vreg],
+                ty: self.tcx.none(),
+            });
         }
     }
 
@@ -2067,94 +2173,7 @@ impl<'a> HirToMir<'a> {
             .map(|(sid, sig)| (SymbolId(*sid), sig.clone()))
             .collect();
         for (func_sym, sig) in &func_sig_pairs {
-            let fn_vreg = self.fresh_vreg();
-            self.current_stmts.push(MirInst::LoadConst {
-                dest: fn_vreg,
-                value: MirConst::FuncRef(*func_sym),
-                ty: any_ty,
-            });
-            let mut param_vregs: Vec<VReg> = Vec::new();
-            for p in &sig.params {
-                let name_vreg = self.emit_str_const(&p.name);
-                let kind_raw = self.fresh_vreg();
-                self.current_stmts.push(MirInst::LoadConst {
-                    dest: kind_raw,
-                    value: MirConst::Int(p.kind as i64),
-                    ty: self.tcx.int(),
-                });
-                let kind_vreg = self.box_operand(kind_raw, self.tcx.int());
-                let has_default = p.default.is_some() || p.default_opaque;
-                let hd_raw = self.fresh_vreg();
-                self.current_stmts.push(MirInst::LoadConst {
-                    dest: hd_raw,
-                    value: MirConst::Int(if has_default { 1 } else { 0 }),
-                    ty: self.tcx.int(),
-                });
-                let hd_vreg = self.box_operand(hd_raw, self.tcx.int());
-                let def_vreg = match &p.default {
-                    Some(crate::hir::HirSigDefault::Int(v)) => {
-                        let raw = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::LoadConst {
-                            dest: raw,
-                            value: MirConst::Int(*v),
-                            ty: self.tcx.int(),
-                        });
-                        self.box_operand(raw, self.tcx.int())
-                    }
-                    Some(crate::hir::HirSigDefault::Float(v)) => {
-                        let raw = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::LoadConst {
-                            dest: raw,
-                            value: MirConst::Float(*v),
-                            ty: self.tcx.float(),
-                        });
-                        self.box_operand(raw, self.tcx.float())
-                    }
-                    Some(crate::hir::HirSigDefault::Str(s)) => self.emit_str_const(s),
-                    Some(crate::hir::HirSigDefault::Bool(b)) => {
-                        let raw = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::LoadConst {
-                            dest: raw,
-                            value: MirConst::Bool(*b),
-                            ty: self.tcx.bool(),
-                        });
-                        self.box_operand(raw, self.tcx.bool())
-                    }
-                    Some(crate::hir::HirSigDefault::None) | None => self.emit_none(),
-                };
-                let anno_vreg = match &p.annotation {
-                    Some(s) => self.emit_str_const(s),
-                    None => self.emit_none(),
-                };
-                let tup_vreg = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeTuple {
-                    dest: tup_vreg,
-                    elements: vec![name_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg],
-                    ty: any_ty,
-                });
-                param_vregs.push(tup_vreg);
-            }
-            let params_vreg = self.fresh_vreg();
-            self.current_stmts.push(MirInst::MakeList {
-                dest: params_vreg,
-                elements: param_vregs,
-                ty: any_ty,
-            });
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: None,
-                name: "mb_func_set_params".to_string(),
-                args: vec![fn_vreg, params_vreg],
-                ty: self.tcx.none(),
-            });
-            if let Some(ret_anno) = &sig.return_annotation {
-                let ra_vreg = self.emit_str_const(ret_anno);
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_func_set_retanno".to_string(),
-                    args: vec![fn_vreg, ra_vreg],
-                    ty: self.tcx.none(),
-                });
-            }
+            self.emit_func_sig_metadata(*func_sym, sig);
         }
 
         // Prime FUNC_LINES / FUNC_FILES (co_firstlineno / co_filename) for
@@ -3917,9 +3936,12 @@ impl<'a> HirToMir<'a> {
             }
             HirStmt::FuncDefPlaceholder {
                 name: func_sym,
+                bind_name,
                 redef,
+                func_sig,
                 ..
             } => {
+                let bind_sym = bind_name.unwrap_or(*func_sym);
                 // Register the function's __name__ so `f.__name__` works.
                 {
                     let any_ty = self.tcx.any();
@@ -3930,16 +3952,20 @@ impl<'a> HirToMir<'a> {
                         ty: any_ty,
                     });
                     // Look up the symbol's name via sym_name_lookup
-                    if let Some(fname) = self.symbol_table.and_then(|st| {
-                        if func_sym.0 < 1_000_000 {
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                st.get_symbol(*func_sym).name.clone()
-                            }))
-                            .ok()
-                        } else {
-                            None
-                        }
-                    }) {
+                    if let Some(fname) = self
+                        .symbol_table
+                        .and_then(|st| {
+                            if func_sym.0 < 1_000_000 {
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    st.get_symbol(*func_sym).name.clone()
+                                }))
+                                .ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| self.sym_names.get(func_sym).cloned())
+                    {
                         let name_vreg = self.emit_str_const(&fname);
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: None,
@@ -3949,6 +3975,9 @@ impl<'a> HirToMir<'a> {
                         });
                     }
                 }
+                let placeholder_sig = func_sig
+                    .clone()
+                    .or_else(|| self.user_func_sigs.get(&func_sym.0).cloned());
                 // Apply decorator(s) to the function at this point in execution order.
                 // Python semantics: `@dec def foo()` ≡ `def foo(); foo = dec(foo)`.
                 // Pull the decorators from pending_decorators (if any).
@@ -3956,12 +3985,22 @@ impl<'a> HirToMir<'a> {
                     let pos = self
                         .pending_decorators
                         .iter()
-                        .position(|(s, _)| s == func_sym);
+                        .position(|(s, _, _)| s == func_sym);
                     pos.map(|i| self.pending_decorators.remove(i))
-                        .map(|(_, d)| d)
+                        .map(|(_, d, sig)| (d, sig))
                 };
-                if let Some(decorators) = decorators {
+                let effective_sig = decorators
+                    .as_ref()
+                    .and_then(|(_, sig)| sig.clone())
+                    .or_else(|| placeholder_sig.clone());
+                if let Some(sig) = &effective_sig {
+                    self.emit_func_sig_metadata(*func_sym, sig);
+                }
+                if let Some((decorators, _)) = decorators {
                     let any_ty = self.tcx.any();
+                    let first_annotation = effective_sig
+                        .as_ref()
+                        .and_then(|sig| sig.params.iter().find_map(|p| p.annotation.clone()));
                     let mut func_vreg = self.fresh_vreg();
                     self.current_stmts.push(MirInst::LoadConst {
                         dest: func_vreg,
@@ -4028,6 +4067,19 @@ impl<'a> HirToMir<'a> {
                                     ty: any_ty,
                                 });
                             }
+                            HirExpr::Attr { object, attr, .. }
+                                if attr == "register" && first_annotation.is_some() =>
+                            {
+                                let dispatcher_vreg = self.lower_expr(object);
+                                let annotation_vreg =
+                                    self.emit_str_const(first_annotation.as_deref().unwrap_or(""));
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(result_vreg),
+                                    name: "mb_singledispatch_register_annotation".to_string(),
+                                    args: vec![dispatcher_vreg, func_vreg, annotation_vreg],
+                                    ty: any_ty,
+                                });
+                            }
                             _ => {
                                 let dec_vreg = self.lower_expr(dec_expr);
                                 self.current_stmts.push(MirInst::CallExtern {
@@ -4041,7 +4093,7 @@ impl<'a> HirToMir<'a> {
                         func_vreg = result_vreg;
                     }
                     self.current_stmts.push(MirInst::StoreGlobal {
-                        name: *func_sym,
+                        name: bind_sym,
                         value: func_vreg,
                     });
                 } else if *redef {
@@ -4058,7 +4110,7 @@ impl<'a> HirToMir<'a> {
                         ty: any_ty,
                     });
                     self.current_stmts.push(MirInst::StoreGlobal {
-                        name: *func_sym,
+                        name: bind_sym,
                         value: func_vreg,
                     });
                 }
@@ -9795,6 +9847,8 @@ mod tests {
                 name: SymbolId(0),
                 params: vec![(SymbolId(1), int_ty)],
                 return_ty: int_ty,
+                func_sig: None,
+                bind_name: None,
                 body: vec![HirStmt::Return {
                     value: Some(HirExpr::Var(SymbolId(1), int_ty)),
                     span: Span::dummy(),
@@ -9835,6 +9889,8 @@ mod tests {
                 name: SymbolId(0),
                 params: vec![(SymbolId(1), int_ty)],
                 return_ty: int_ty,
+                func_sig: None,
+                bind_name: None,
                 body: vec![HirStmt::If {
                     cond: HirExpr::BoolLit(true, bool_ty),
                     then_body: vec![HirStmt::Return {
@@ -10315,6 +10371,8 @@ mod tests {
                 name: SymbolId(10),
                 params: Vec::new(),
                 return_ty: int_ty,
+                func_sig: None,
+                bind_name: None,
                 body: vec![HirStmt::Expr {
                     expr: HirExpr::Yield {
                         value: Some(Box::new(HirExpr::Walrus {
@@ -10436,6 +10494,8 @@ mod tests {
                     name: method_sym,
                     params: vec![(self_sym, any_ty)],
                     return_ty: any_ty,
+                    func_sig: None,
+                    bind_name: None,
                     body: vec![HirStmt::Return {
                         value: Some(HirExpr::NoneLit(tcx.none())),
                         span: Span::dummy(),
