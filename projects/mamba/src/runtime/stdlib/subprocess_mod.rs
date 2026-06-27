@@ -12,8 +12,8 @@
 //!     stores `returncode` plus the captured streams; `communicate()`,
 //!     `wait()`, `poll()`, `kill()`/`terminate()`/`send_signal()` and the
 //!     context-manager dunders dispatch through the registered Popen
-//!     class. `Popen.stdin`/`stdout`/`stderr` attribute streams are still
-//!     plain None fields (no live pipe objects).
+//!     class. `Popen.stdout`/`stderr` are in-memory pipe stream stubs when
+//!     those selectors are `PIPE`; `stdin` remains a deferred live pipe gap.
 //!   - `shell=True` keyword argument is not parsed. The argv-list shape
 //!     (`run(["cmd", "arg"])`) and the whitespace-split string shape
 //!     (`run("cmd arg")`) are both honored, mirroring the existing
@@ -488,6 +488,37 @@ fn new_instance_with_fields(class_name: &str, fields: FxHashMap<String, MbValue>
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
+}
+
+fn pipe_stream_value(data: Vec<u8>, captured: bool, text: bool) -> MbValue {
+    if !captured {
+        return MbValue::none();
+    }
+    if text {
+        return super::io_mod::mb_stringio_new_with(
+            String::from_utf8_lossy(&data).replace("\r\n", "\n"),
+        );
+    }
+    super::io_mod::mb_bytesio_new_with(data)
+}
+
+fn close_stream_value(stream: MbValue) {
+    let Some(ptr) = stream.as_ptr() else {
+        return;
+    };
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            match class_name.as_str() {
+                "BytesIO" => {
+                    super::io_mod::mb_bytesio_close(stream);
+                }
+                "StringIO" => {
+                    super::io_mod::mb_stringio_close(stream);
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 /// Build a CompletedProcess Instance — `returncode`, `stdout`, `stderr`,
@@ -1096,6 +1127,7 @@ pub fn mb_subprocess_popen(args: MbValue) -> MbValue {
 ///   - an embedded NUL byte in any argv token raises `ValueError`.
 pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
     let args = a.first().copied().unwrap_or_else(MbValue::none);
+    let opts = parse_spawn_opts(a);
 
     // bufsize (2nd positional) must be an integer. CPython raises
     // `TypeError("bufsize must be an integer")` for e.g. `Popen(argv,
@@ -1149,6 +1181,14 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
             let code = returncode_of(&output.status);
             fields.insert("returncode".into(), MbValue::from_int(code as i64));
             fields.insert("pid".into(), MbValue::from_int(0));
+            fields.insert(
+                "stdout".into(),
+                pipe_stream_value(output.stdout.clone(), opts.stdout_sel == -1, opts.text),
+            );
+            fields.insert(
+                "stderr".into(),
+                pipe_stream_value(output.stderr.clone(), opts.stderr_sel == -1, opts.text),
+            );
             // Captured child streams for `communicate()` — the carve-out
             // runs the child synchronously, so they are fully available.
             fields.insert(
@@ -1231,10 +1271,23 @@ unsafe extern "C" fn popen_kill(_self_v: MbValue, _args: MbValue) -> MbValue {
 /// `with Popen(...) as p:` — enter returns self; exit closes the
 /// (already-drained) pipes and never suppresses exceptions.
 unsafe extern "C" fn popen_enter(self_v: MbValue, _args: MbValue) -> MbValue {
+    unsafe { super::super::rc::retain_if_ptr(self_v) };
     self_v
 }
 
-unsafe extern "C" fn popen_exit(_self_v: MbValue, _args: MbValue) -> MbValue {
+unsafe extern "C" fn popen_exit(self_v: MbValue, _args: MbValue) -> MbValue {
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let fields = fields.read().unwrap();
+                for name in ["stdin", "stdout", "stderr"] {
+                    if let Some(stream) = fields.get(name).copied() {
+                        close_stream_value(stream);
+                    }
+                }
+            }
+        }
+    }
     MbValue::from_bool(false)
 }
 
