@@ -669,6 +669,10 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                 } => {
                     if let Some(data) = super::dict_ops::mappingproxy_mapping(obj) {
                         return mb_iter(data);
+                    } else if let Some(members) =
+                        super::stdlib::enum_class::class_canonical_members_for_value(obj)
+                    {
+                        IterKind::List(MbValue::from_ptr(MbObject::new_list_borrowed(members)))
                     } else if let (Some(kind), Some(data)) = (
                         super::dict_ops::dict_view_kind(obj),
                         super::dict_ops::dict_view_data(obj),

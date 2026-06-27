@@ -9,7 +9,7 @@ use crate::types::{TypeChecker, TypeId};
 /// Converts a parsed + type-checked AST into HIR, resolving all names to
 /// SymbolIds and all types to TypeIds. Desugars compound constructs
 /// (elif chains, augmented assignments).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Check whether a function body contains `yield` or `yield from` expressions.
 ///
@@ -2381,6 +2381,209 @@ fn class_body_namedtuple_fields(body: &[Spanned<ast::Stmt>]) -> Vec<String> {
         .collect()
 }
 
+fn class_base_leaf_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Ident(name) => Some(name.as_str()),
+        ast::Expr::Attr { attr, .. } => Some(attr.as_str()),
+        _ => None,
+    }
+}
+
+fn is_enum_base_leaf(name: &str) -> bool {
+    matches!(
+        name,
+        "Enum" | "IntEnum" | "StrEnum" | "Flag" | "IntFlag" | "ReprEnum"
+    )
+}
+
+fn class_bases_include_enum(bases: &[Spanned<ast::Expr>]) -> bool {
+    bases
+        .iter()
+        .any(|base| class_base_leaf_name(&base.node).is_some_and(is_enum_base_leaf))
+}
+
+fn enum_ignore_names_from_expr(expr: &ast::Expr) -> HashSet<String> {
+    let mut out = HashSet::new();
+    match expr {
+        ast::Expr::StrLit(s) => {
+            out.extend(s.split_whitespace().map(str::to_string));
+        }
+        ast::Expr::ListLit(items) | ast::Expr::TupleLit(items) => {
+            for item in items {
+                if let ast::Expr::StrLit(s) = &item.node {
+                    out.insert(s.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+fn enum_ignore_names_for_class(
+    bases: &[Spanned<ast::Expr>],
+    body: &[Spanned<ast::Stmt>],
+) -> HashSet<String> {
+    if !class_bases_include_enum(bases) {
+        return HashSet::new();
+    }
+    let mut ignored = HashSet::new();
+    ignored.insert("_ignore_".to_string());
+    for stmt in body {
+        if let ast::Stmt::Assign { target, value } = &stmt.node {
+            if let ast::Expr::Ident(name) = &target.node {
+                if name == "_ignore_" {
+                    ignored.extend(enum_ignore_names_from_expr(&value.node));
+                }
+            }
+        }
+    }
+    ignored
+}
+
+fn is_zero_arg_vars_call(expr: &ast::Expr) -> bool {
+    matches!(
+        expr,
+        ast::Expr::Call { func, args }
+            if args.is_empty()
+                && matches!(&func.node, ast::Expr::Ident(name) if name == "vars")
+    )
+}
+
+fn range_literal_values(expr: &ast::Expr) -> Option<Vec<i64>> {
+    let ast::Expr::Call { func, args } = expr else {
+        return None;
+    };
+    if !matches!(&func.node, ast::Expr::Ident(name) if name == "range") {
+        return None;
+    }
+    let ints: Vec<i64> = args
+        .iter()
+        .map(|arg| match arg {
+            ast::CallArg::Positional(e) => {
+                if let ast::Expr::IntLit(v) = e.node {
+                    Some(v)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let (start, stop, step) = match ints.as_slice() {
+        [stop] => (0, *stop, 1),
+        [start, stop] => (*start, *stop, 1),
+        [start, stop, step] if *step != 0 => (*start, *stop, *step),
+        _ => return None,
+    };
+    let mut out = Vec::new();
+    let mut cur = start;
+    if step > 0 {
+        while cur < stop {
+            out.push(cur);
+            cur += step;
+        }
+    } else {
+        while cur > stop {
+            out.push(cur);
+            cur += step;
+        }
+    }
+    Some(out)
+}
+
+fn eval_enum_vars_key_expr(expr: &ast::Expr, loop_name: &str, loop_value: i64) -> Option<String> {
+    match expr {
+        ast::Expr::StrLit(s) => Some(s.clone()),
+        ast::Expr::BinOp {
+            op: ast::BinOp::Mod,
+            lhs,
+            rhs,
+        } => {
+            let ast::Expr::StrLit(fmt) = &lhs.node else {
+                return None;
+            };
+            let val = match &rhs.node {
+                ast::Expr::Ident(name) if name == loop_name => loop_value,
+                ast::Expr::IntLit(v) => *v,
+                _ => return None,
+            };
+            Some(fmt.replacen("%d", &val.to_string(), 1))
+        }
+        _ => None,
+    }
+}
+
+fn enum_vars_generated_attrs(
+    body: &[Spanned<ast::Stmt>],
+    ignored: &HashSet<String>,
+) -> Vec<(String, ast::Expr)> {
+    let vars_aliases: HashSet<String> = body
+        .iter()
+        .filter_map(|stmt| {
+            if let ast::Stmt::Assign { target, value } = &stmt.node {
+                if let ast::Expr::Ident(name) = &target.node {
+                    if is_zero_arg_vars_call(&value.node) {
+                        return Some(name.clone());
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+    if vars_aliases.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for stmt in body {
+        let ast::Stmt::For {
+            targets,
+            iter,
+            body: loop_body,
+            ..
+        } = &stmt.node
+        else {
+            continue;
+        };
+        let [loop_name] = targets.as_slice() else {
+            continue;
+        };
+        let Some(values) = range_literal_values(&iter.node) else {
+            continue;
+        };
+        for loop_value in values {
+            for inner in loop_body {
+                let ast::Stmt::Assign { target, value } = &inner.node else {
+                    continue;
+                };
+                let ast::Expr::Index { object, index } = &target.node else {
+                    continue;
+                };
+                let ast::Expr::Ident(alias) = &object.node else {
+                    continue;
+                };
+                if !vars_aliases.contains(alias) {
+                    continue;
+                }
+                let Some(attr_name) = eval_enum_vars_key_expr(&index.node, loop_name, loop_value)
+                else {
+                    continue;
+                };
+                if ignored.contains(&attr_name) {
+                    continue;
+                }
+                let lowered_value = match &value.node {
+                    ast::Expr::Ident(name) if name == loop_name => ast::Expr::IntLit(loop_value),
+                    other => other.clone(),
+                };
+                out.push((attr_name, lowered_value));
+            }
+        }
+    }
+    out
+}
+
 /// Is this class-body default value a `field(...)` / `dataclasses.field(...)`
 /// call carrying `init=False`? Such fields are excluded from the synthesized
 /// `__init__` parameter list (PEP 557).
@@ -3614,7 +3817,7 @@ impl<'a> AstLowerer<'a> {
         let placeholder_sym: std::cell::Cell<Option<SymbolId>> = std::cell::Cell::new(None);
         let stmt_span = span;
         let dataclass_decorated = decorators.iter().any(|d| decorator_is_dataclass(&d.node));
-        if let Some(mut cls) = self.lower_class(name, body, stmt_span, dataclass_decorated) {
+        if let Some(mut cls) = self.lower_class(name, body, bases, stmt_span, dataclass_decorated) {
             // PEP 557: register the synthesized __init__'s parameter
             // shape (declaration order; base dataclass fields first;
             // ClassVar / KW_ONLY sentinel / field(init=False) fields
@@ -3867,6 +4070,7 @@ impl<'a> AstLowerer<'a> {
         &mut self,
         name: &str,
         body: &[Spanned<ast::Stmt>],
+        bases: &[Spanned<ast::Expr>],
         span: Span,
         dataclass_decorated: bool,
     ) -> Option<HirClass> {
@@ -3883,6 +4087,7 @@ impl<'a> AstLowerer<'a> {
         let mut explicit_match_args: Option<Vec<String>> = None;
         // P2-R3: Class-level attribute assignments (e.g., `attr = Verbose()` in class body).
         let mut class_attr_assigns: Vec<(String, HirExpr)> = Vec::new();
+        let enum_ignored_names = enum_ignore_names_for_class(bases, body);
         // R14: __slots__ declaration from class body.
         let mut slots: Option<Vec<String>> = None;
         // PEP 526: ordered (name, annotation_repr) for EVERY annotated class-body
@@ -4115,6 +4320,9 @@ impl<'a> AstLowerer<'a> {
                 // Other assignments → class-level attribute init (P2-R3)
                 ast::Stmt::Assign { target, value } => {
                     if let ast::Expr::Ident(aname) = &target.node {
+                        if enum_ignored_names.contains(aname) {
+                            continue;
+                        }
                         if aname == "__match_args__" {
                             if let Some(val_expr) = self.lower_expr(value) {
                                 class_attr_assigns.push((aname.clone(), val_expr));
@@ -4167,6 +4375,15 @@ impl<'a> AstLowerer<'a> {
                     }
                 }
                 _ => {}
+            }
+        }
+        for (attr_name, value_expr) in enum_vars_generated_attrs(body, &enum_ignored_names) {
+            let spanned_value = Spanned {
+                node: value_expr,
+                span,
+            };
+            if let Some(val_expr) = self.lower_expr(&spanned_value) {
+                class_attr_assigns.push((attr_name, val_expr));
             }
         }
 
@@ -8939,6 +9156,110 @@ mod tests {
         let hir = lower_module(&module, &checker).unwrap();
         assert_eq!(hir.classes.len(), 1);
         assert_eq!(hir.classes[0].fields.len(), 1);
+    }
+
+    #[test]
+    fn test_lower_enum_base_keeps_class_attrs() {
+        let hir = helper_lower_with_classes(
+            vec![
+                sp(Stmt::Import {
+                    module: vec!["enum".to_string()],
+                    names: Some(vec![("Enum".to_string(), None)]),
+                    module_alias: None,
+                }),
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Color".to_string(),
+                    type_params: vec![],
+                    bases: vec![sp(Expr::Ident("Enum".to_string()))],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Assign {
+                        target: sp(Expr::Ident("RED".to_string())),
+                        value: sp(Expr::IntLit(1)),
+                    })],
+                }),
+            ],
+            &["Color"],
+        );
+        assert_eq!(hir.classes.len(), 1);
+        let class = &hir.classes[0];
+        assert!(class
+            .class_attr_assigns
+            .iter()
+            .any(|(name, _)| name == "RED"));
+    }
+
+    #[test]
+    fn test_lower_enum_ignore_vars_generated_attrs() {
+        let hir = helper_lower_with_classes(
+            vec![
+                sp(Stmt::Import {
+                    module: vec!["enum".to_string()],
+                    names: None,
+                    module_alias: None,
+                }),
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Days".to_string(),
+                    type_params: vec![],
+                    bases: vec![sp(Expr::Attr {
+                        object: Box::new(sp(Expr::Ident("enum".to_string()))),
+                        attr: "Enum".to_string(),
+                    })],
+                    keyword_args: vec![],
+                    body: vec![
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("_ignore_".to_string())),
+                            value: sp(Expr::StrLit("Days i".to_string())),
+                        }),
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("Days".to_string())),
+                            value: sp(Expr::Call {
+                                func: Box::new(sp(Expr::Ident("vars".to_string()))),
+                                args: vec![],
+                            }),
+                        }),
+                        sp(Stmt::For {
+                            targets: vec!["i".to_string()],
+                            var_ty: None,
+                            iter: sp(Expr::Call {
+                                func: Box::new(sp(Expr::Ident("range".to_string()))),
+                                args: vec![
+                                    CallArg::Positional(sp(Expr::IntLit(1))),
+                                    CallArg::Positional(sp(Expr::IntLit(4))),
+                                ],
+                            }),
+                            body: vec![sp(Stmt::Assign {
+                                target: sp(Expr::Index {
+                                    object: Box::new(sp(Expr::Ident("Days".to_string()))),
+                                    index: Box::new(sp(Expr::BinOp {
+                                        op: BinOp::Mod,
+                                        lhs: Box::new(sp(Expr::StrLit("DAY_%d".to_string()))),
+                                        rhs: Box::new(sp(Expr::Ident("i".to_string()))),
+                                    })),
+                                }),
+                                value: sp(Expr::Ident("i".to_string())),
+                            })],
+                            else_body: None,
+                        }),
+                    ],
+                }),
+            ],
+            &["Days"],
+        );
+        assert_eq!(hir.classes.len(), 1);
+        let class = &hir.classes[0];
+        let names: Vec<&str> = class
+            .class_attr_assigns
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert!(names.contains(&"DAY_1"));
+        assert!(names.contains(&"DAY_2"));
+        assert!(names.contains(&"DAY_3"));
+        assert!(!names.contains(&"Days"));
+        assert!(!names.contains(&"i"));
+        assert!(!names.contains(&"_ignore_"));
     }
 
     #[test]
