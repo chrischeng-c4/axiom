@@ -1,14 +1,13 @@
 ---
 id: semantic-jet-src
 summary: Semantic coverage for "projects/jet/src"
-fill_sections: [schema, e2e-test, changes]
 capability_refs:
-  - id: rust-native-frontend-toolchain
+  - id: "rust-native-frontend-toolchain"
     role: primary
-    gap: production-replacement-readiness
-    claim: full-toolchain-dogfood-flow
+    claim: "production-replacement-readiness"
     coverage: partial
-    rationale: "Traceability repair: this existing Jet TD/source edge supports the aggregate production replacement capability."
+    rationale: "Semantic takeover coverage for existing source group `projects/jet/src`."
+fill_sections: [schema, changes]
 ---
 
 # Semantic TD: jet/src
@@ -264,6 +263,9 @@ semantic_domain:
           - name: "cli"
             kind: "module"
             public: true
+          - name: "codegen"
+            kind: "module"
+            public: true
           - name: "css"
             kind: "module"
             public: true
@@ -303,6 +305,12 @@ semantic_domain:
           - name: "runner"
             kind: "module"
             public: true
+          - name: "standard_cli"
+            kind: "module"
+            public: true
+          - name: "stories"
+            kind: "module"
+            public: true
           - name: "task_runner"
             kind: "module"
             public: true
@@ -323,6 +331,41 @@ semantic_domain:
             public: true
           - name: "wasm_dev"
             kind: "module"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/jet/src"
+      - path: "projects/jet/src/standard_cli.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["config_surface", "service_method"]
+        symbols:
+          - name: "TOOL"
+            kind: "constant"
+            public: false
+          - name: "TOPICS"
+            kind: "constant"
+            public: false
+          - name: "llm_command"
+            kind: "function"
+            public: true
+          - name: "upgrade_command"
+            kind: "function"
+            public: true
+          - name: "issue_command"
+            kind: "function"
+            public: true
+          - name: "run_llm"
+            kind: "function"
+            public: true
+          - name: "run_upgrade"
+            kind: "function"
+            public: true
+          - name: "run_issue"
+            kind: "function"
             public: true
         source_evidence_node:
           layer: "backend"
@@ -516,7 +559,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/src"
       - path: "projects/jet/src/cli.rs"
         language: "rust"
@@ -526,6 +569,12 @@ semantic_domain:
           - name: "command"
             kind: "function"
             public: true
+          - name: "serve_command"
+            kind: "function"
+            public: false
+          - name: "browser_bridge_command"
+            kind: "function"
+            public: false
           - name: "execute"
             kind: "function"
             public: true
@@ -533,6 +582,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "run_nx_build"
+            kind: "function"
+            public: false
+          - name: "run_library_build"
             kind: "function"
             public: false
           - name: "resolve_store_path_from_home"
@@ -556,6 +608,24 @@ semantic_domain:
           - name: "parse_cli_numeric_flag"
             kind: "function"
             public: true
+          - name: "merge_dev_proxy_rules"
+            kind: "function"
+            public: false
+          - name: "parse_dev_proxy_rule"
+            kind: "function"
+            public: false
+          - name: "handle_serve_command"
+            kind: "function"
+            public: false
+          - name: "launch_detached_serve"
+            kind: "function"
+            public: false
+          - name: "shutdown_dev_server"
+            kind: "function"
+            public: false
+          - name: "print_shutdown_result"
+            kind: "function"
+            public: false
           - name: "read_project_type_is_lib"
             kind: "function"
             public: false
@@ -592,7 +662,16 @@ semantic_domain:
           - name: "find_entry_point"
             kind: "function"
             public: false
+          - name: "content_hash_prefix"
+            kind: "function"
+            public: false
           - name: "write_bundle_assets"
+            kind: "function"
+            public: false
+          - name: "append_css_side_effect_assets"
+            kind: "function"
+            public: false
+          - name: "resolve_css_side_effect_import_path"
             kind: "function"
             public: false
           - name: "copy_public_dir"
@@ -607,59 +686,12 @@ semantic_domain:
           - name: "render_build_index_html"
             kind: "function"
             public: false
-          - name: "build_flag_snapshot_from_matches"
-            kind: "function"
-            public: false
-          - name: "check_not_implemented_error"
-            kind: "function"
-            public: false
-          - name: "parse_define_arg"
-            kind: "function"
-            public: true
-          - name: "format_build_watch_not_implemented_warn"
-            kind: "function"
-            public: true
-          - name: "format_splitting_not_implemented_warn"
-            kind: "function"
-            public: true
-          - name: "prebundle_after_install"
-            kind: "function"
-            public: false
-          - name: "build_index_html_tests"
-            kind: "module"
-            public: false
-          - name: "check_handler_tests"
-            kind: "module"
-            public: false
-          - name: "e2e_command_contract_tests"
-            kind: "module"
-            public: false
-          - name: "build_target_validation_table_tests"
-            kind: "module"
-            public: false
-          - name: "list_scripts_tests"
-            kind: "module"
-            public: false
-          - name: "gh3789_non_string_script_value_warn_tests"
-            kind: "module"
-            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
           role: "source"
           section_type: "schema"
           domain: "projects/jet/src"
-```
-
-## E2E Test
-<!-- type: e2e-test lang: yaml -->
-
-```yaml
-tests:
-  coverage_kind: semantic
-  strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
-  evidence:
-    source_tests: []
 ```
 
 ## Changes
@@ -698,6 +730,14 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/jet/src/standard_cli.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-jet-src-standard-cli-rs>"
   - path: "projects/jet/src/build_clean.rs"
     action: modify
     section: schema
@@ -728,11 +768,4 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: ".aw/tech-design/projects/jet/semantic/jet-src.md"
-    action: verify
-    section: e2e-test
-    impl_mode: hand-written
-    description: |
-      Traceability repair: hand-written TD section retained as the implementation edge during AW standardization.
-
 ```
