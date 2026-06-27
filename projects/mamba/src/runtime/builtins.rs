@@ -1106,6 +1106,11 @@ pub fn mb_len(val: MbValue) -> MbValue {
                     if let Some(n) = super::dict_ops::dict_view_len(val) {
                         return MbValue::from_int(n);
                     }
+                    // Class-body enum classes may surface as type objects;
+                    // resolve them back to the class-name registry entry.
+                    if let Some(n) = super::stdlib::enum_class::class_member_count_for_value(val) {
+                        return MbValue::from_int(n);
+                    }
                     // namedtuple instances: len reflects declared field count.
                     if let Some(vals) = super::stdlib::collections_mod::namedtuple_values(val) {
                         return MbValue::from_int(vals.len() as i64);
