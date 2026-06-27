@@ -9556,6 +9556,23 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     if kw_pairs.is_empty() {
         return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(pos)));
     }
+    if let Some(type_name) = super::class::resolve_class_name(func).or_else(|| {
+        func.as_ptr().and_then(|ptr| unsafe {
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+    }) {
+        if super::exception::is_builtin_exception_name(&type_name) {
+            return super::exception::mb_exception_new_with_args_and_kwargs(
+                func,
+                MbValue::from_ptr(MbObject::new_list(pos)),
+                kwargs_dict,
+            );
+        }
+    }
     let addr = resolve_callable(func);
     let is_native = addr
         .map(|a| super::module::is_native_func(a as u64))
