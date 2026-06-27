@@ -1951,6 +1951,8 @@ fn dispatch_generator_method(gen: MbValue, method: &str, args: MbValue) -> MbVal
             super::generator::mb_generator_close(gen);
             MbValue::none()
         }
+        "__iter__" => gen,
+        "__await__" if super::stdlib::types_mod::is_coroutine_generator(gen) => gen,
         "__next__" => super::generator::mb_generator_next(gen),
         // Async-generator protocol: `async def f(): yield` is routed
         // through the sync generator path (see ast_to_hir.rs AsyncFnDef
@@ -5250,6 +5252,15 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     .unwrap_or(true);
                 return if exhausted { MbValue::none() } else { obj };
             }
+            "gi_code" => {
+                if let Some(func) = super::stdlib::types_mod::coroutine_generator_origin(obj) {
+                    return make_code_object(func);
+                }
+                return MbValue::from_ptr(MbObject::new_instance("code".to_string()));
+            }
+            "__await__" if super::stdlib::types_mod::is_coroutine_generator(obj) => {
+                return make_bound_native_method(obj, &attr_name);
+            }
             "send" | "throw" | "close" | "__iter__" | "__next__" => {
                 return make_bound_native_method(obj, &attr_name);
             }
@@ -7856,6 +7867,17 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
         }
     }
 
+    if obj.is_int() && super::generator::is_known_generator(obj) {
+        for k in [
+            "__iter__", "__next__", "send", "throw", "close", "gi_frame", "gi_code",
+        ] {
+            push(k.to_string(), &mut names, &mut seen);
+        }
+        if super::stdlib::types_mod::is_coroutine_generator(obj) {
+            push("__await__".to_string(), &mut names, &mut seen);
+        }
+    }
+
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -8944,12 +8966,15 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
     }
     if obj.is_int()
         && super::generator::is_known_generator(obj)
-        && matches!(
-            attr_name.as_str(),
-            "send" | "throw" | "close" | "__iter__" | "__next__" | "gi_frame"
-        )
     {
-        return MbValue::from_bool(true);
+        let has_generator_attr = matches!(
+            attr_name.as_str(),
+            "send" | "throw" | "close" | "__iter__" | "__next__" | "gi_frame" | "gi_code"
+        ) || (attr_name == "__await__"
+            && super::stdlib::types_mod::is_coroutine_generator(obj));
+        if has_generator_attr {
+            return MbValue::from_bool(true);
+        }
     }
     // File handles are stored as integer IDs in the file table (not heap
     // objects), with their method surface dispatched structurally in
@@ -12926,6 +12951,14 @@ pub fn mb_call0(func: MbValue) -> MbValue {
             super::builtins::mb_box_int(bits as i64)
         }
     }
+    fn finish_call(func: MbValue, raw: MbValue, is_boxed: bool) -> MbValue {
+        let result = rebox(raw, is_boxed);
+        if super::stdlib::types_mod::is_coroutine_generator(result) {
+            result
+        } else {
+            super::stdlib::types_mod::mark_coroutine_result(func, result)
+        }
+    }
     // Try TAG_FUNC direct function pointer first
     if let Some(addr) = func.as_func() {
         if addr > 4096 {
@@ -12945,7 +12978,7 @@ pub fn mb_call0(func: MbValue) -> MbValue {
             // REQ: JIT-compiled functions use SystemV/C calling convention.
             let is_boxed = super::module::is_boxed_return_func(addr as u64);
             let f: extern "C" fn() -> MbValue = unsafe { std::mem::transmute(addr) };
-            return rebox(f(), is_boxed);
+            return finish_call(func, f(), is_boxed);
         }
     }
     // Try closure handle (integer ID → lookup inner function)
@@ -12965,23 +12998,27 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                         1 => {
                             let f: extern "C" fn(MbValue) -> MbValue =
                                 unsafe { std::mem::transmute(addr) };
-                            return rebox(f(defaults[0]), is_boxed);
+                            return finish_call(func, f(defaults[0]), is_boxed);
                         }
                         2 => {
                             let f: extern "C" fn(MbValue, MbValue) -> MbValue =
                                 unsafe { std::mem::transmute(addr) };
-                            return rebox(f(defaults[0], defaults[1]), is_boxed);
+                            return finish_call(func, f(defaults[0], defaults[1]), is_boxed);
                         }
                         3 => {
                             let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
                                 unsafe { std::mem::transmute(addr) };
-                            return rebox(f(defaults[0], defaults[1], defaults[2]), is_boxed);
+                            return finish_call(
+                                func,
+                                f(defaults[0], defaults[1], defaults[2]),
+                                is_boxed,
+                            );
                         }
                         _ => { /* fall through to 0-arg call */ }
                     }
                 }
                 let f: extern "C" fn() -> MbValue = unsafe { std::mem::transmute(addr) };
-                return rebox(f(), is_boxed);
+                return finish_call(func, f(), is_boxed);
             }
         }
     }
@@ -13106,6 +13143,14 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
             raw
         } else {
             super::builtins::mb_box_int(bits as i64)
+        }
+    }
+    fn finish_call(func: MbValue, raw: MbValue, is_boxed: bool) -> MbValue {
+        let result = rebox(raw, is_boxed);
+        if super::stdlib::types_mod::is_coroutine_generator(result) {
+            result
+        } else {
+            super::stdlib::types_mod::mark_coroutine_result(func, result)
         }
     }
     // functools.partial / functools.wraps dispatch on Instance class_name.
@@ -13243,7 +13288,7 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
             // REQ: JIT-compiled functions use SystemV/C calling convention.
             let is_boxed = super::module::is_boxed_return_func(addr as u64);
             let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
-            return rebox(f(arg), is_boxed);
+            return finish_call(func, f(arg), is_boxed);
         }
     }
     // Try closure handle (integer ID → lookup inner function)
@@ -13273,12 +13318,12 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                             2 => {
                                 let f: extern "C" fn(MbValue, MbValue) -> MbValue =
                                     unsafe { std::mem::transmute(addr) };
-                                return rebox(f(arg, fill[0]), is_boxed);
+                                return finish_call(func, f(arg, fill[0]), is_boxed);
                             }
                             3 => {
                                 let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
                                     unsafe { std::mem::transmute(addr) };
-                                return rebox(f(arg, fill[0], fill[1]), is_boxed);
+                                return finish_call(func, f(arg, fill[0], fill[1]), is_boxed);
                             }
                             4 => {
                                 let f: extern "C" fn(
@@ -13287,7 +13332,11 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                                     MbValue,
                                     MbValue,
                                 ) -> MbValue = unsafe { std::mem::transmute(addr) };
-                                return rebox(f(arg, fill[0], fill[1], fill[2]), is_boxed);
+                                return finish_call(
+                                    func,
+                                    f(arg, fill[0], fill[1], fill[2]),
+                                    is_boxed,
+                                );
                             }
                             _ => { /* arity > 4: fall through to plain 1-arg dispatch */ }
                         }
@@ -13295,7 +13344,7 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                 }
                 // REQ: JIT-compiled functions use SystemV/C calling convention.
                 let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
-                return rebox(f(arg), is_boxed);
+                return finish_call(func, f(arg), is_boxed);
             }
         }
     }

@@ -52,6 +52,7 @@ pub fn cleanup_all_runtime_state() {
     // Order matters: iterators may reference closures/classes, so clear them first.
     iter::cleanup_all_iterators();
     generator::cleanup_generator_state_for_runtime_reset();
+    stdlib::types_mod::cleanup_all_types_state();
     closure::cleanup_all_closures();
     class::cleanup_all_classes();
     stdlib::dataclasses_mod::cleanup_all_dataclasses();
