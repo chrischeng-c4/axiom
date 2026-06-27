@@ -93,6 +93,15 @@ unsafe extern "C" fn dispatch_asyncio_shell(_a: *const MbValue, _n: usize) -> Mb
     MbValue::from_ptr(MbObject::new_dict())
 }
 
+unsafe extern "C" fn dispatch_iscoroutine(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    MbValue::from_bool(
+        args.first()
+            .copied()
+            .is_some_and(super::super::async_rt::is_known_coroutine),
+    )
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
 
@@ -109,6 +118,7 @@ pub fn register() {
         ("wait", dispatch_wait as *const () as usize),
         ("wait_for", dispatch_wait_for as *const () as usize),
         ("shield", dispatch_shield as *const () as usize),
+        ("iscoroutine", dispatch_iscoroutine as *const () as usize),
         ("Queue", dispatch_queue as *const () as usize),
         (
             "get_event_loop",
@@ -239,7 +249,6 @@ pub fn register() {
         "eager_task_factory",
         "get_child_watcher",
         "get_event_loop_policy",
-        "iscoroutine",
         "iscoroutinefunction",
         "isfuture",
         "new_event_loop",
