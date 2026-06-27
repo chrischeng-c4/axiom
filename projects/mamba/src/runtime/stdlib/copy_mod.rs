@@ -123,6 +123,9 @@ unsafe extern "C" fn dispatch_copy(args_ptr: *const MbValue, nargs: usize) -> Mb
 
 /// copy.copy(obj) -> shallow copy.
 pub fn mb_copy_copy(obj: MbValue) -> MbValue {
+    if super::super::generator::is_known_generator(obj) {
+        return raise_exc("TypeError", "cannot copy 'generator' object");
+    }
     // Immutable atoms (and tuples — see below) return by identity.
     if is_atomic(obj) {
         return return_identity(obj);
@@ -408,6 +411,9 @@ fn record_memoized(orig: MbValue, copy: MbValue) {
 /// Core deepcopy recursion. `memo` maps a source object's NaN-boxed bits to its
 /// freshly-built copy so repeated references and cycles collapse to one object.
 fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
+    if super::super::generator::is_known_generator(obj) {
+        return raise_exc("TypeError", "cannot pickle 'generator' object");
+    }
     // A slice is atomic for shallow copy (copy.copy returns it unchanged) but
     // deepcopy rebuilds it: CPython has no _deepcopy_atomic entry for slice, so
     // it reconstructs via slice.__reduce__ with deep-copied start/stop/step.
