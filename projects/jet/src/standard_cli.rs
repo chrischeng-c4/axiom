@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-src-standard-cli-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! jet's adapter over the shared `cli-std` crate for the three standard
 //! agent-facing commands (`llm` / `upgrade` / `issue`), per the CLI
 //! convention in `CONTRIBUTING.md`.
@@ -176,7 +177,9 @@ pub fn issue_command() -> Command {
                     Arg::new("dry-run")
                         .long("dry-run")
                         .action(ArgAction::SetTrue)
-                        .help("Print the issue that would be filed (and its URL) without creating it"),
+                        .help(
+                            "Print the issue that would be filed (and its URL) without creating it",
+                        ),
                 )
                 .arg(
                     Arg::new("message")
@@ -197,7 +200,10 @@ pub fn run_llm(matches: &ArgMatches) -> Result<()> {
         .map(String::as_str)
         .unwrap_or("outline");
     let format = cli_std::llm::Format::parse(
-        matches.get_one::<String>("format").map(String::as_str).unwrap_or("md"),
+        matches
+            .get_one::<String>("format")
+            .map(String::as_str)
+            .unwrap_or("md"),
     );
     let out = cli_std::llm::render(TOOL.project, TOOL.version, TOPICS, topic, format)?;
     println!("{out}");
@@ -275,3 +281,5 @@ pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
         _ => anyhow::bail!("unknown `jet issue` subcommand; try search / view / create"),
     }
 }
+
+// </HANDWRITE>

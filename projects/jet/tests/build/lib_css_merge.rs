@@ -43,11 +43,7 @@ fn write_minimal_lib(root: &std::path::Path) {
             "module": "./src/index.js"
         }"#,
     );
-    write_file(
-        root,
-        "src/index.js",
-        "export function go() { return 1; }\n",
-    );
+    write_file(root, "src/index.js", "export function go() { return 1; }\n");
 }
 
 /// Build the library with the given css_merge + raw_copy config. Untyped JS

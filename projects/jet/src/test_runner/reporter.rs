@@ -67,6 +67,7 @@ pub struct TestError {
 /// Author-authored `test.step(...)` evidence attached to a test report.
 /// The field is optional at the report level so older workers still render
 /// through the existing single-step E2E fallback.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-test-runner.md#schema
 #[derive(Debug, Clone, Serialize)]
 pub struct TestStepReport {
     pub id: String,

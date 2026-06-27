@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-fixtures-dom-production-build-antd-visual-src-antdvisualfixture-tsx" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import React, { useState } from "react";
 import Alert from "antd/es/alert";
 import Avatar from "antd/es/avatar";
@@ -228,3 +229,5 @@ export function AntdVisualFixture() {
     </main>
   );
 }
+
+// </HANDWRITE>

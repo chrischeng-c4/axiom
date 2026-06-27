@@ -134,6 +134,7 @@ _sdd:
 changes:
   - path: crates/jet/src/test_runner/worker.rs
     action: modify
+    section: doc
     impl_mode: hand-written
     purpose: |
       After writing `node_modules/@jet/test/`, also write
@@ -141,10 +142,12 @@ changes:
       index.mjs that `export *` + `export default` from @jet/test.
   - path: crates/jet/tests/playwright_compat_shim_tests.rs
     action: create
+    section: doc
     impl_mode: hand-written
     purpose: "Integration coverage PC1..PC3."
   - path: .aw/tech-design/crates/jet/logic/playwright-compat-shim-reexport.md
     action: create
+    section: doc
     impl_mode: hand-written
     purpose: "This spec."
 ```

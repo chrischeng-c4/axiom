@@ -223,18 +223,22 @@ types:
 changes:
   - path: .aw/tech-design/crates/jet/jit-runner.md
     action: delete
+    section: doc
     impl_mode: hand-written
     description: "Remove the old root loose JIT runner spec."
   - path: .aw/tech-design/crates/jet/logic/jit-runner.md
     action: add
+    section: doc
     impl_mode: hand-written
     description: "Rehome and normalize the JIT runner spec under logic/."
   - path: crates/jet/src/runner/mod.rs
     action: reference
+    section: doc
     impl_mode: hand-written
     description: "Defines ScriptRunner target resolution and command execution."
   - path: crates/jet/src/runner/jit.rs
     action: reference
+    section: doc
     impl_mode: hand-written
     description: "Defines JIT transform and watch execution."
 ```

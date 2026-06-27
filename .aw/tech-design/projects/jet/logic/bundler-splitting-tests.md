@@ -354,11 +354,13 @@ cargo test -p jet test_leaf_dynamic_import_single_chunk
 files:
   - path: .aw/tech-design/crates/jet/logic/bundler-splitting-tests.md
     action: MODIFY
+    section: doc
     impl_mode: hand-written
     desc: Replace TODO-heavy test coverage spec with this checkable current-state contract.
 
   - path: crates/jet/src/bundler/splitting.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing tests cover baseline splitting, manual chunks, preload hints, multi-entry simulation, dynamic cycles, diamond extraction, and leaf async chunks.
 ```

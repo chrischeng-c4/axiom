@@ -27,6 +27,7 @@ pub struct SvgrConfig {
     pub export_type: SvgrExportType,
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-asset.md#schema
 impl Default for SvgrConfig {
     fn default() -> Self {
         // fe-shared uses `vite-plugin-svgr` with `{ exportType: 'named' }`.

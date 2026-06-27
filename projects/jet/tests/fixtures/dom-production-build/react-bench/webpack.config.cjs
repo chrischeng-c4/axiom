@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-fixtures-dom-production-build-react-bench-webpack-config-cjs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 const path = require("path");
 
 class EmitHtmlPlugin {
@@ -61,3 +62,5 @@ module.exports = {
   },
   plugins: [new EmitHtmlPlugin()],
 };
+
+// </HANDWRITE>

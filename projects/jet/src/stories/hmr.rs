@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:071383a9" tracker="pending-tracker" reason="Preview HMR: a file watcher + WS endpoint that, on a story/component edit, computes the affected module set (dependents_of), invalidates the module cache, and pushes an HMR message; reuses the dev_server hmr_client + react_refresh runtime so compatible edits are state-preserving and incompatible edits fall back to a full preview reload."
+// <HANDWRITE gap="missing-generator:logic:071383a9" tracker="standardize-gap-projects-jet-src-stories-hmr-rs" reason="Preview HMR: a file watcher + WS endpoint that, on a story/component edit, computes the affected module set (dependents_of), invalidates the module cache, and pushes an HMR message; reuses the dev_server hmr_client + react_refresh runtime so compatible edits are state-preserving and incompatible edits fall back to a full preview reload.">
 //! HMR + state-preserving React refresh for the `jet stories` preview (B2b/#176).
 //!
 //! This module is the stories-scoped twin of [`crate::dev_server::hmr`], but
@@ -506,4 +506,4 @@ mod tests {
         assert!(affected.contains(&"/Button.stories.tsx".to_string()));
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

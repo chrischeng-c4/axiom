@@ -17,12 +17,14 @@ pub enum ModuleMapping {
     External(String),
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
 #[derive(Debug, Clone, Default)]
 pub struct ModuleResolutionIndex {
     module_ids: HashMap<PathBuf, usize>,
     package_roots: HashMap<String, Vec<PathBuf>>,
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
 impl ModuleResolutionIndex {
     pub fn from_module_map(module_map: &HashMap<PathBuf, usize>) -> Self {
         let mut seen = HashSet::new();
@@ -68,6 +70,7 @@ pub fn transform_modules_with_dir(
     transform_modules_with_dir_and_index(source, module_map, None, current_dir)
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
 pub fn transform_modules_with_dir_and_index(
     source: &str,
     module_map: &HashMap<PathBuf, usize>,
@@ -87,6 +90,7 @@ pub fn transform_modules_with_dir_and_index(
 /// parsed earlier (during graph construction) when one is supplied, avoiding a
 /// second parse of the same source. The caller guarantees `reuse_tree`, if
 /// `Some`, is the JS-grammar parse of exactly this `source`.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
 pub fn transform_modules_with_dir_index_and_tree(
     source: &str,
     module_map: &HashMap<PathBuf, usize>,

@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:d0ce83ef" tracker="pending-tracker" reason="start_stories_workbench(root, host, port): discover StoryIndex, build a dev-server variant (reuse dev_server substrate) with routes for the manager, isolated preview, and module serving; build per-story entry via module graph."
+// <HANDWRITE gap="missing-generator:logic:d0ce83ef" tracker="standardize-gap-projects-jet-src-stories-server-rs" reason="start_stories_workbench(root, host, port): discover StoryIndex, build a dev-server variant (reuse dev_server substrate) with routes for the manager, isolated preview, and module serving; build per-story entry via module graph.">
 //! The `jet stories` native workbench server (B2).
 //!
 //! A small, focused axum server — deliberately *not* a fork of
@@ -411,7 +411,10 @@ async fn react_refresh_handler() -> Response {
 /// the file watcher broadcasts [`super::hmr::StoriesHmrMessage`]s which this
 /// handler forwards as JSON. The manager shell never connects here, so it never
 /// reloads (B2b/#176).
-async fn stories_hmr_handler(ws: WebSocketUpgrade, State(state): State<WorkbenchState>) -> Response {
+async fn stories_hmr_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<WorkbenchState>,
+) -> Response {
     ws.on_upgrade(move |socket| stories_hmr_socket(socket, state.hmr.clone()))
 }
 
@@ -468,10 +471,7 @@ async fn module_handler(
     }
 
     let file_path = state.root.join(&path);
-    let ext = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     match ext {
         "ts" | "tsx" | "js" | "jsx" => {
@@ -634,7 +634,11 @@ async fn dep_handler(
     };
 
     match transform_to_js(&source, &file_path) {
-        Ok(code) => js_response(rewrite_bare_imports_to_dep_routes(&code, &state.root, &file_path)),
+        Ok(code) => js_response(rewrite_bare_imports_to_dep_routes(
+            &code,
+            &state.root,
+            &file_path,
+        )),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("jet stories: transform error for dep '@dep/{dep}': {err}"),
@@ -692,11 +696,7 @@ fn module_url_for(root: &Path, file: &Path) -> String {
 }
 
 fn html_response(html: String) -> Response {
-    (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        html,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
 }
 
 fn js_response(code: String) -> Response {
@@ -745,7 +745,10 @@ mod tests {
             file: PathBuf::from("/proj/a/B.stories.tsx"),
             title_path: vec!["X".into()],
         };
-        assert_eq!(story_module_url(Path::new("/proj"), &story), "/a/B.stories.tsx");
+        assert_eq!(
+            story_module_url(Path::new("/proj"), &story),
+            "/a/B.stories.tsx"
+        );
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

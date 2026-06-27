@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-fixtures-dom-production-build-dom-production-assets-css-inject-loader-cjs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 module.exports = function cssInjectLoader(source) {
   const css = JSON.stringify(source);
   return `
@@ -7,3 +8,5 @@ module.exports = function cssInjectLoader(source) {
     document.head.appendChild(style);
   `;
 };
+
+// </HANDWRITE>

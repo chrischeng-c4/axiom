@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-fixtures-dom-production-build-dom-production-assets-src-main-css" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 :root {
   color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
@@ -45,3 +46,5 @@ body {
   min-height: 32px;
   padding: 0 12px;
 }
+
+// </HANDWRITE>

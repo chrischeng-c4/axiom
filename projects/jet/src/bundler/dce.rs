@@ -56,6 +56,7 @@ pub fn eliminate_dead_code(source: &str) -> String {
 /// literal boolean or string comparison after define replacement. It does not
 /// try to prove general variable liveness, so it is safe to run on large third
 /// party bundles where the older brace-scanning optimizer is too broad.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn eliminate_static_conditionals_syntax(source: &str) -> String {
     let mut result = source.to_string();
 
@@ -74,6 +75,7 @@ pub fn eliminate_static_conditionals_syntax(source: &str) -> String {
 /// is known side-effect-free. This is intentionally narrower than general DCE:
 /// it handles the production pattern left after libraries such as MUI erase
 /// dev-only `propTypes` branches but keep an unused `var PropTypes = require(..)`.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn eliminate_unused_side_effect_free_require_bindings(
     source: &str,
     side_effect_free_module_ids: &HashSet<usize>,
@@ -260,6 +262,7 @@ pub(crate) fn eliminate_unused_reexport_assignments(
 
 /// Remove transformed CJS re-export glue that points at modules already proven
 /// unused by the source-level tree-shake pass.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn eliminate_require_reexports_to_eliminated_modules(
     source: &str,
     eliminated_module_ids: &HashSet<usize>,
@@ -328,6 +331,7 @@ pub fn eliminate_require_reexports_to_eliminated_modules(
 /// markers even when no helper reads `.__esModule`. This pass removes marker
 /// statements only if deleting all candidate markers leaves no `__esModule`
 /// literal anywhere else in the bundle.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn eliminate_unread_es_module_markers(source: &str) -> String {
     if !source.contains("__esModule") {
         return source.to_string();
@@ -885,6 +889,7 @@ fn skip_ascii_ws(bytes: &[u8], offset: &mut usize) {
     }
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn js_parses_without_errors(source: &str) -> bool {
     parse_js(source)
         .map(|tree| !tree.root_node().has_error())
@@ -2151,12 +2156,14 @@ Object.defineProperty(_m2.exports, "__esModule", { value: true });
 }
 // CODEGEN-END
 
+// <HANDWRITE gap="standardize:projects-jet-src-bundler-dce-rs-empty-statement-cleanup" tracker="standardize-gap-projects-jet-src-bundler-dce-rs" reason="Existing hand-written empty statement cleanup lives outside generated block; generator primitive does not yet cover tree-sitter empty-statement pruning.">
 /// Remove redundant empty statements (`;` directly under a program or
 /// statement block — the transform emits `function f(){...};` with a
 /// trailing semicolon per declaration, ~1KB of `};` on the react-bench
 /// bundle). Empty statements that are a branch body (`if(x);`) are
 /// children of the `if_statement`, not block-level siblings, and are
 /// never touched.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn remove_redundant_empty_statements(source: &str) -> String {
     let Some(tree) = parse_js(source) else {
         return source.to_string();
@@ -2202,3 +2209,4 @@ fn collect_block_level_empty_statements(node: Node<'_>, spans: &mut Vec<(usize, 
         collect_block_level_empty_statements(child, spans);
     }
 }
+// </HANDWRITE>

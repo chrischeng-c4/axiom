@@ -1,6 +1,6 @@
-// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures-production-build-regression.md#schema
+// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures.md#schema
 // CODEGEN-BEGIN
-// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures-production-build-regression.md#source
+// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures.md#source
 module.exports = {
   message: "CJS dependency loaded through the production bundle",
 };

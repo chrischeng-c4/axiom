@@ -111,6 +111,7 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
 /// imports it. Liveness now spreads from the entry across import /
 /// require / dynamic-import edges (and the re-export fixed point below)
 /// so a dead subtree can no longer keep itself or its dependencies live.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn analyze_used_exports_from(
     modules: &[(PathBuf, String)],
     entry: &Path,

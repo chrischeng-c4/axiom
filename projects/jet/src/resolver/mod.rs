@@ -514,6 +514,7 @@ impl Default for ResolveOptions {
     }
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 impl ResolveOptions {
     /// Browser production builds should prefer package ESM/browser production
     /// entries when package `exports` exposes bundler-oriented conditions.

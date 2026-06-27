@@ -384,36 +384,43 @@ cargo test -p jet --test browser_install
 files:
   - path: .aw/tech-design/crates/jet/logic/browser-driver.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home the browser driver TD as a checker-compliant current-state contract.
 
   - path: .aw/tech-design/crates/jet/testing/browser-driver.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove the unexpected top-level testing directory copy of this TD.
 
   - path: crates/jet/src/browser/mod.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing Browser facade for launch connect contexts pages and close.
 
   - path: crates/jet/src/browser/launcher.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing Chrome lookup process launch and CDP endpoint polling.
 
   - path: crates/jet/src/browser/cdp.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing WebSocket JSON-RPC request response and event transport.
 
   - path: crates/jet/src/browser/page.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing high-level Page API.
 
   - path: crates/jet/src/cdp_driver/page_binding.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing JS runtime page request and response bridge.
 ```

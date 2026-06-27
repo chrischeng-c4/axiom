@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:962dae38" tracker="pending-tracker" reason="Tree-sitter walk of a component file: locate the component's props type (interface or type alias referenced by the component's first param) and return an ordered list of (prop name, type text, optional flag)."
+// <HANDWRITE gap="missing-generator:logic:962dae38" tracker="standardize-gap-projects-jet-src-stories-prop-extractor-rs" reason="Tree-sitter walk of a component file: locate the component's props type (interface or type alias referenced by the component's first param) and return an ordered list of (prop name, type text, optional flag).">
 //! Component prop-type extraction for `jet stories` controls (B3).
 //!
 //! Given the source of a component file and the component's name, this module
@@ -200,8 +200,8 @@ fn props_type_from_declarators<'a>(
         if declarator.kind() != "variable_declarator" {
             continue;
         }
-        let name = first_child_of_kind(declarator, "identifier")
-            .map(|n| node_text(n, source).to_string());
+        let name =
+            first_child_of_kind(declarator, "identifier").map(|n| node_text(n, source).to_string());
         if name.as_deref() != Some(component_name) {
             continue;
         }
@@ -380,9 +380,7 @@ impl<'a> Resolver<'a> {
             // `type P = Base & Extra & { inline: ... }`
             "intersection_type" => self.props_from_intersection(source, rhs, subst),
             // `type P = Other` / `type P = Other<Arg>` — alias to another type.
-            "type_identifier" => {
-                self.resolve_named(node_text(rhs, source), &[])
-            }
+            "type_identifier" => self.resolve_named(node_text(rhs, source), &[]),
             "generic_type" => match generic_props_type(source, rhs) {
                 Some(PropsType::Generic(name, args)) => self.resolve_named(&name, &args),
                 _ => Vec::new(),
@@ -454,16 +452,17 @@ fn find_type_decl<'a>(source: &str, root: Node<'a>, type_name: &str) -> Option<N
     for child in named_children(root) {
         let decl = match child.kind() {
             "interface_declaration" | "type_alias_declaration" => child,
-            "export_statement" => match named_children(child).into_iter().find(|n| {
-                matches!(n.kind(), "interface_declaration" | "type_alias_declaration")
-            }) {
+            "export_statement" => match named_children(child)
+                .into_iter()
+                .find(|n| matches!(n.kind(), "interface_declaration" | "type_alias_declaration"))
+            {
                 Some(d) => d,
                 None => continue,
             },
             _ => continue,
         };
-        let name = first_child_of_kind(decl, "type_identifier")
-            .map(|n| node_text(n, source).to_string());
+        let name =
+            first_child_of_kind(decl, "type_identifier").map(|n| node_text(n, source).to_string());
         if name.as_deref() == Some(type_name) {
             return Some(decl);
         }
@@ -578,7 +577,10 @@ fn import_specifier_for(source: &str, root: Node, type_name: &str) -> Option<Str
                 .last()
         }?;
         let raw = node_text(source_node, source);
-        return Some(raw.trim_matches(|q| q == '"' || q == '\'' || q == '`').to_string());
+        return Some(
+            raw.trim_matches(|q| q == '"' || q == '\'' || q == '`')
+                .to_string(),
+        );
     }
     None
 }
@@ -914,4 +916,4 @@ export function Widget(props: Props) { return null; }
         assert!(extract_props(source, "Widget").is_empty());
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

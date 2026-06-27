@@ -1115,6 +1115,7 @@ fn parse_live_speed_multiplier(payload: &serde_json::Value) -> Option<u64> {
         .filter(|value| matches!(value, 1 | 2 | 4))
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 impl Default for LiveControlState {
     fn default() -> Self {
         Self {
@@ -1883,6 +1884,7 @@ pub fn write_open_review_app(evidence_dir: &Path, bundle: &E2eEvidenceBundle) ->
     write_open_runner_shell(evidence_dir, bundle)
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct E2eManualDocs {
     pub markdown_path: PathBuf,

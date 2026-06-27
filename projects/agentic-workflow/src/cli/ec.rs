@@ -1304,8 +1304,8 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
         cases = extract_td_e2e_cases(ctx)?;
         tool_manifests = extract_td_tool_manifests(ctx)?;
     }
+    cases = canonicalize_ec_cases(cases);
     derive_required_for_production(ctx, &mut cases)?;
-    cases.sort_by(|left, right| left.id.cmp(&right.id));
     tool_manifests.sort_by(|left, right| left.id.cmp(&right.id));
     let digest = digest_manifest_inputs(&cases, &tool_manifests);
     Ok(EcManifest {
@@ -1315,6 +1315,21 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
         cases,
         tool_manifests,
     })
+}
+
+fn canonicalize_ec_cases(mut cases: Vec<EcManifestCase>) -> Vec<EcManifestCase> {
+    cases.sort_by(|left, right| {
+        left.id
+            .cmp(&right.id)
+            .then_with(|| left.td_ref.cmp(&right.td_ref))
+            .then_with(|| left.test_path.cmp(&right.test_path))
+            .then_with(|| left.command.cmp(&right.command))
+    });
+    let mut by_id = BTreeMap::new();
+    for case in cases {
+        by_id.insert(case.id.clone(), case);
+    }
+    by_id.into_values().collect()
 }
 
 /// Derive each declared case's `required_for_production` from its capability
@@ -3555,6 +3570,22 @@ e2e_tests:
             evidence: Vec::new(),
             evaluators: Vec::new(),
         }
+    }
+
+    #[test]
+    fn canonicalize_ec_cases_keeps_newest_duplicate_td_ref() {
+        let mut earlier = case("library-dom-wasm-parity", "unmapped", "behavior");
+        earlier.td_ref =
+            ".aw/tech-design/projects/jet/specs/4041.md#library-dom-wasm-parity".into();
+        earlier.assertions = vec!["old assertion".into()];
+
+        let mut later = case("library-dom-wasm-parity", "unmapped", "behavior");
+        later.td_ref =
+            ".aw/tech-design/projects/jet/specs/4072.md#library-dom-wasm-parity".into();
+        later.assertions = vec!["new assertion".into()];
+
+        let cases = canonicalize_ec_cases(vec![later.clone(), earlier]);
+        assert_eq!(cases, vec![later]);
     }
 
     #[test]

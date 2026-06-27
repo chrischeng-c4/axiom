@@ -34,6 +34,7 @@ pub fn fold_constants(source: &str) -> String {
 /// the right side never evaluates), drop `!0 &&` / `!1 ||` wrappers, and
 /// sweep bare `!0;`/`!1;` statements. Anything that fails the conservative
 /// boundary checks is left alone, and the whole result is parse-guarded.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn fold_define_short_circuits(source: &str) -> String {
     if !source.contains("===") && !source.contains("!==") {
         return source.to_string();

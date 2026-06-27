@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:41fd209d" tracker="pending-tracker" reason="Tests: a changed module yields the correct invalidation set; the preview HTML includes the HMR client; a react-refresh-compatible vs incompatible edit routes to patch vs full reload; the manager shell is not reloaded."
+// <HANDWRITE gap="missing-generator:unit-test:41fd209d" tracker="standardize-gap-projects-jet-tests-stories-preview-hmr-rs" reason="Tests: a changed module yields the correct invalidation set; the preview HTML includes the HMR client; a react-refresh-compatible vs incompatible edit routes to patch vs full reload; the manager shell is not reloaded.">
 //! Integration tests for B2b (#176): HMR + state-preserving React refresh for
 //! the `jet stories` preview frame.
 //!
@@ -40,7 +40,11 @@ fn entry(id: &str, name: &str, file: &str) -> StoryEntry {
 
 #[test]
 fn preview_html_includes_hmr_client_and_ws_route() {
-    let story = entry("components-button--primary", "Primary", "/x/Button.stories.tsx");
+    let story = entry(
+        "components-button--primary",
+        "Primary",
+        "/x/Button.stories.tsx",
+    );
     let html = render_preview_html(&story, "/src/components/Button.stories.tsx");
 
     // The HMR client connects to the stories-scoped WS route...
@@ -190,7 +194,10 @@ fn message_routes_patch_to_update_and_reload_to_reload() {
     // A `.ts` helper edit → full preview reload (safe fallback).
     match message_for_change(&graph, "/src/theme.ts", 1234) {
         StoriesHmrMessage::Reload { reason } => {
-            assert!(reason.contains("/src/theme.ts"), "reason names the file: {reason}");
+            assert!(
+                reason.contains("/src/theme.ts"),
+                "reason names the file: {reason}"
+            );
         }
         other => panic!("expected Reload for a .ts edit, got {other:?}"),
     }
@@ -354,7 +361,11 @@ async fn served_module_is_instrumented_with_react_refresh() {
     let router = router_for(dir.path());
 
     let (status, js) = get(&router, "/src/Counter.tsx").await;
-    assert_eq!(status, StatusCode::OK, "module route serves the component JS");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "module route serves the component JS"
+    );
 
     // The transform's React Fast Refresh preamble + registration are present, so
     // importing this module registers the `Counter` family with the runtime.
@@ -390,11 +401,21 @@ async fn react_refresh_runtime_endpoint_is_served() {
 
     assert_eq!(REACT_REFRESH_ROUTE, "/@react-refresh");
     let (status, js) = get(&router, REACT_REFRESH_ROUTE).await;
-    assert_eq!(status, StatusCode::OK, "the /@react-refresh runtime is served");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the /@react-refresh runtime is served"
+    );
 
     // It exposes the API the preview wiring drives.
-    assert!(js.contains("performReactRefresh"), "runtime exposes performReactRefresh");
-    assert!(js.contains("onPerformReactRefresh"), "runtime exposes the host refresh hook");
+    assert!(
+        js.contains("performReactRefresh"),
+        "runtime exposes performReactRefresh"
+    );
+    assert!(
+        js.contains("onPerformReactRefresh"),
+        "runtime exposes the host refresh hook"
+    );
     assert!(
         js.contains("createSignatureFunctionForTransform"),
         "runtime exposes the signature factory the modules use"
@@ -405,7 +426,11 @@ async fn react_refresh_runtime_endpoint_is_served() {
 
 #[test]
 fn preview_html_wires_react_refresh_runtime_and_performs_refresh_on_update() {
-    let story = entry("components-counter--default", "Default", "/x/Counter.stories.tsx");
+    let story = entry(
+        "components-counter--default",
+        "Default",
+        "/x/Counter.stories.tsx",
+    );
     let html = render_preview_html(&story, "/src/Counter.stories.tsx");
 
     // Loads the refresh runtime BEFORE the story module and installs the
@@ -449,8 +474,14 @@ fn preview_html_wires_react_refresh_runtime_and_performs_refresh_on_update() {
         html.contains("location.reload()"),
         "preview keeps a full-reload fallback for incompatible edits"
     );
-    assert!(html.contains("case \"reload\":"), "reload message branch present");
-    assert!(html.contains("case \"update\":"), "update message branch present");
+    assert!(
+        html.contains("case \"reload\":"),
+        "reload message branch present"
+    );
+    assert!(
+        html.contains("case \"update\":"),
+        "update message branch present"
+    );
 }
 
 // ── (d) the manager shell carries NONE of the refresh wiring ─────────────────
@@ -482,4 +513,4 @@ fn manager_shell_has_no_react_refresh_runtime_or_reload() {
         "manager shell must never reload the whole page"
     );
 }
-// HANDWRITE-END
+// </HANDWRITE>

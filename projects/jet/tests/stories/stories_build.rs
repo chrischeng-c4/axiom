@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:5d65a1ff" tracker="pending-tracker" reason="Tests: build to a temp out_dir emits index.html + one preview per story + the transformed modules they import; emitted URLs are relative and resolve to files present in the output; dev jet stories behavior unaffected."
+// <HANDWRITE gap="missing-generator:unit-test:5d65a1ff" tracker="standardize-gap-projects-jet-tests-stories-stories-build-rs" reason="Tests: build to a temp out_dir emits index.html + one preview per story + the transformed modules they import; emitted URLs are relative and resolve to files present in the output; dev jet stories behavior unaffected.">
 //! Integration tests for B4: `jet stories build` — static export of the
 //! workbench (#190).
 //!
@@ -65,7 +65,10 @@ fn write(path: std::path::PathBuf, contents: &str) {
 fn write_fixtures() -> TempDir {
     let dir = TempDir::new().expect("temp dir");
     let root = dir.path();
-    write(root.join("src/components/Button.stories.tsx"), BUTTON_STORIES);
+    write(
+        root.join("src/components/Button.stories.tsx"),
+        BUTTON_STORIES,
+    );
     write(root.join("src/surfaces/Card.stories.tsx"), CARD_STORIES);
     write(
         root.join("src/components/Button.tsx"),
@@ -100,12 +103,18 @@ fn build_emits_manager_previews_and_modules() {
     // One preview per story, by id.
     for story in &index.stories {
         let preview = out.join("preview").join(format!("{}.html", story.id));
-        assert!(preview.is_file(), "preview for {} written: {:?}", story.id, preview);
+        assert!(
+            preview.is_file(),
+            "preview for {} written: {:?}",
+            story.id,
+            preview
+        );
     }
 
     // The transformed story modules + their imported components are emitted as JS.
     assert!(
-        out.join("modules/src/components/Button.stories.js").is_file(),
+        out.join("modules/src/components/Button.stories.js")
+            .is_file(),
         "Button.stories transformed to JS"
     );
     assert!(
@@ -155,11 +164,15 @@ fn emitted_urls_are_relative_and_resolve() {
         "preview imports the relative module url: {preview}"
     );
     assert!(
-        out.join("modules/src/components/Button.stories.js").is_file(),
+        out.join("modules/src/components/Button.stories.js")
+            .is_file(),
         "the imported module file exists"
     );
     // A static preview ships no HMR client / WebSocket.
-    assert!(!preview.contains("WebSocket"), "no HMR WebSocket in static preview");
+    assert!(
+        !preview.contains("WebSocket"),
+        "no HMR WebSocket in static preview"
+    );
 
     // The emitted Button.stories module rewrites its `./Button` import to the
     // emitted `.js` sibling, which exists.
@@ -236,8 +249,15 @@ fn build_emits_resolved_node_modules_dep_with_relative_url() {
     let dep_main = out.join("deps/clsx/dist/clsx.js");
     let dep_chunk = out.join("deps/clsx/dist/chunk.js");
     assert!(dep_main.is_file(), "resolved dep emitted: {:?}", dep_main);
-    assert!(dep_chunk.is_file(), "dep's transitive chunk emitted: {:?}", dep_chunk);
-    assert!(result.emitted.iter().any(|p| p == Path::new("deps/clsx/dist/clsx.js")));
+    assert!(
+        dep_chunk.is_file(),
+        "dep's transitive chunk emitted: {:?}",
+        dep_chunk
+    );
+    assert!(result
+        .emitted
+        .iter()
+        .any(|p| p == Path::new("deps/clsx/dist/clsx.js")));
 
     // The emitting component module rewrites the bare `clsx` import to a RELATIVE
     // path into the deps/ tree that EXISTS, and leaves the un-installed `react`
@@ -298,6 +318,9 @@ fn dev_renderers_default_output_is_unchanged() {
     // The dev preview still imports the absolute module URL + ships the HMR client.
     let preview = render_preview_html(&story, "/src/Button.stories.tsx");
     assert!(preview.contains("import * as Story from \"/src/Button.stories.tsx\""));
-    assert!(preview.contains("HMR connected"), "dev preview keeps the HMR client");
+    assert!(
+        preview.contains("HMR connected"),
+        "dev preview keeps the HMR client"
+    );
 }
-// HANDWRITE-END
+// </HANDWRITE>

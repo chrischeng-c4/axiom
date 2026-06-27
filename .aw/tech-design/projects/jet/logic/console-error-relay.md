@@ -400,21 +400,25 @@ cargo test -p jet dev_server::hmr::tests::client_message_unknown_type_fails
 files:
   - path: .aw/tech-design/crates/jet/logic/console-error-relay.md
     action: MODIFY
+    section: doc
     impl_mode: hand-written
     desc: Replace TODO template with checkable current-state contract.
 
   - path: crates/jet/src/dev_server/hmr.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation defines ClientMessage and ConsoleLevel plus schema tests.
 
   - path: crates/jet/src/dev_server/hmr_client.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation installs browser-side console relay hooks on HMR open.
 
   - path: crates/jet/src/dev_server/mod.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation parses ClientMessage frames and prints terminal diagnostics.
 ```

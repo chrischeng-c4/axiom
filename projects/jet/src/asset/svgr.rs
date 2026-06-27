@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:25f2eddb" tracker="pending-tracker" reason="New SVGR transform: parse an .svg file and emit a React component module (a component returning the SVG as JSX with props/ref forwarded); configurable named (ReactComponent) and/or default export, matching vite-plugin-svgr defaults."
+// <HANDWRITE gap="missing-generator:logic:25f2eddb" tracker="standardize-gap-projects-jet-src-asset-svgr-rs" reason="New SVGR transform: parse an .svg file and emit a React component module (a component returning the SVG as JSX with props/ref forwarded); configurable named (ReactComponent) and/or default export, matching vite-plugin-svgr defaults.">
 //! SVGR transform: turn an `.svg` file into a React component module.
 //!
 //! Mirrors `vite-plugin-svgr` (which `fe-shared` configures with
@@ -24,6 +24,7 @@ use anyhow::{anyhow, Result};
 /// Defaults to [`SvgrExportType::Named`] to match the `fe-shared`
 /// `vite-plugin-svgr` config (`{ exportType: 'named' }`), where the component
 /// is imported as `import { ReactComponent as Icon } from './icon.svg'`.
+/// @spec .aw/tech-design/projects/jet/logic/svgr-import-svg-as-a-react-component-named-default-export.md#logic
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SvgrExportType {
     /// Export only `export const ReactComponent = ...` (vite-plugin-svgr
@@ -37,6 +38,7 @@ pub enum SvgrExportType {
     Both,
 }
 
+/// @spec .aw/tech-design/projects/jet/logic/svgr-import-svg-as-a-react-component-named-default-export.md#logic
 impl Default for SvgrExportType {
     fn default() -> Self {
         // Match fe-shared's `{ exportType: 'named' }`.
@@ -56,6 +58,7 @@ impl Default for SvgrExportType {
 /// - exports per [`SvgrExportType`].
 ///
 /// Errors if the source contains no `<svg>` root element.
+/// @spec .aw/tech-design/projects/jet/logic/svgr-import-svg-as-a-react-component-named-default-export.md#logic
 pub fn transform_svg_to_component(svg_src: &str, export_type: SvgrExportType) -> Result<String> {
     let jsx = svg_to_jsx(svg_src)?;
 
@@ -83,7 +86,9 @@ fn export_clause(export_type: SvgrExportType) -> String {
     match export_type {
         SvgrExportType::Named => "export { ReactComponent };\n".to_string(),
         SvgrExportType::Default => "export default ReactComponent;\n".to_string(),
-        SvgrExportType::Both => "export { ReactComponent };\nexport default ReactComponent;\n".to_string(),
+        SvgrExportType::Both => {
+            "export { ReactComponent };\nexport default ReactComponent;\n".to_string()
+        }
     }
 }
 
@@ -634,7 +639,10 @@ mod tests {
         let module = transform_svg_to_component(svg, SvgrExportType::Named).unwrap();
         assert!(module.contains("className=\"icon\""), "module:\n{module}");
         assert!(module.contains("className=\"fill\""), "module:\n{module}");
-        assert!(!module.contains(" class="), "should not emit raw class= :\n{module}");
+        assert!(
+            !module.contains(" class="),
+            "should not emit raw class= :\n{module}"
+        );
     }
 
     #[test]
@@ -687,4 +695,4 @@ mod tests {
         assert!(body.contains("WebkitTransform"), "body: {body}");
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

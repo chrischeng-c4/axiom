@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-src-css-scss-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! SCSS / Sass compilation.
 //!
 //! Compiles `.scss` (SCSS syntax) and `.sass` (indented syntax) sources to
@@ -101,14 +102,20 @@ mod tests {
         assert!(css.contains(".card .title"), "got: {css}");
         // Variable is resolved.
         assert!(css.contains("8px"), "got: {css}");
-        assert!(!css.contains("$pad"), "variable must be resolved, got: {css}");
+        assert!(
+            !css.contains("$pad"),
+            "variable must be resolved, got: {css}"
+        );
     }
 
     #[test]
     fn compiles_mixins() {
         let scss = "@mixin flex { display: flex; }\n.row { @include flex; }";
         let css = compile_sass_source(scss, Path::new("."), false).unwrap();
-        assert!(css.contains("display") && css.contains("flex"), "got: {css}");
+        assert!(
+            css.contains("display") && css.contains("flex"),
+            "got: {css}"
+        );
         assert!(!css.contains("@include"), "got: {css}");
     }
 
@@ -122,11 +129,13 @@ mod tests {
     #[test]
     fn compile_error_is_surfaced() {
         let scss = ".broken { color: ; "; // missing value + unclosed
-        let err = compile_sass_source(scss, Path::new("."), false)
-            .expect_err("invalid scss must error");
+        let err =
+            compile_sass_source(scss, Path::new("."), false).expect_err("invalid scss must error");
         assert!(
             err.to_string().contains("Sass compile error"),
             "error should be tagged, got: {err}"
         );
     }
 }
+
+// </HANDWRITE>

@@ -334,26 +334,31 @@ cargo test -p jet bundler::tests::test_phase2_pipeline_size_smaller_than_phase1
 files:
   - path: .aw/tech-design/crates/jet/logic/variable-mangling.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home the loose root variable mangling spec as a checker-compliant current-state contract.
 
   - path: .aw/tech-design/crates/jet/variable-mangling.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove the crate-root loose spec file because only README.md is allowed at that level.
 
   - path: crates/jet/src/bundler/mangle.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing token-driven scope analysis and rename application implementation.
 
   - path: crates/jet/src/cli.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing production post-processing pipeline calls mangle_variables_with_root after minify.
 
   - path: crates/jet/src/bundler/mod.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing flattened bundle tests cover prefixed-name compression and collision safety.
 ```

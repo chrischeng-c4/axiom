@@ -201,14 +201,17 @@ types:
 changes:
   - path: .aw/tech-design/crates/jet/postcss-tailwind.md
     action: delete
+    section: doc
     impl_mode: hand-written
     description: "Remove the root loose feature spec with placeholder sections."
   - path: .aw/tech-design/crates/jet/logic/css/postcss-tailwind-foundation.md
     action: add
+    section: doc
     impl_mode: hand-written
     description: "Rehome and normalize the CSS/Tailwind feature foundation spec."
   - path: .aw/tech-design/crates/jet/logic/postcss-tailwind.md
     action: reference
+    section: doc
     impl_mode: hand-written
     description: "Active focused test-coverage spec for this subsystem."
 ```

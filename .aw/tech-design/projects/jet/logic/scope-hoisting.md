@@ -486,26 +486,31 @@ cargo test -p jet bundler::tests::test_phase2_pipeline_size_smaller_than_phase1
 files:
   - path: .aw/tech-design/crates/jet/scope-hoisting.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove loose crate-root duplicate. Crate root may contain README.md only.
 
   - path: .aw/tech-design/crates/jet/logic/scope-hoisting.md
     action: MODIFY
+    section: doc
     impl_mode: hand-written
     desc: Replace legacy placeholder-heavy scope-hoisting spec with this checkable logic contract.
 
   - path: crates/jet/src/bundler/scope_hoist.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns Phase 1 wrappers, Phase 2 flattening, safety checks, and prefix renaming.
 
   - path: crates/jet/src/bundler/scope_hoist_opt.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns post-flattening constant inlining, unused export removal, and side-effect gates.
 
   - path: crates/jet/src/bundler/mod.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns bundle format selection and production simulation tests.
 ```

@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-fixtures-dom-production-build-dom-production-assets-src-main-tsx" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./main.css";
@@ -25,3 +26,5 @@ function App() {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+// </HANDWRITE>

@@ -349,22 +349,27 @@ types:
 changes:
   - path: .aw/tech-design/crates/jet/workspace-protocol.md
     action: delete
+    section: doc
     impl_mode: hand-written
     description: "Remove the old root loose spec with placeholder sections."
   - path: .aw/tech-design/crates/jet/logic/workspace-protocol.md
     action: add
+    section: doc
     impl_mode: hand-written
     description: "Rehome and normalize the workspace protocol spec under logic/ with typed sections."
   - path: crates/jet/src/pkg_manager/workspace.rs
     action: reference
+    section: doc
     impl_mode: hand-written
     description: "Defines workspace config loading, package discovery, topological order, and workspace protocol helpers."
   - path: crates/jet/src/pkg_manager/mod.rs
     action: reference
+    section: doc
     impl_mode: hand-written
     description: "Defines workspace-aware install flow and relative symlink creation."
   - path: crates/jet/src/pkg_manager/lockfile.rs
     action: reference
+    section: doc
     impl_mode: hand-written
     description: "Defines workspace lockfile fields and validation behavior."
 ```

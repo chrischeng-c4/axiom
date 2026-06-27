@@ -25,7 +25,10 @@ fn write_file(base: &std::path::Path, rel: &str, content: &str) {
 }
 
 /// Build a library at `root` with the given formats and return the result.
-fn run_lib_build(root: &std::path::Path, formats: Vec<OutputFormat>) -> jet::bundler::LibBuildResult {
+fn run_lib_build(
+    root: &std::path::Path,
+    formats: Vec<OutputFormat>,
+) -> jet::bundler::LibBuildResult {
     let options = LibBuildOptions {
         project_root: root.to_path_buf(),
         out_dir: root.join("dist"),
@@ -154,7 +157,11 @@ export function go(a) { return merge({}, { a }); }
     );
 
     let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
-    assert_eq!(result.entries.len(), 2, "one entry × two formats → two files");
+    assert_eq!(
+        result.entries.len(),
+        2,
+        "one entry × two formats → two files"
+    );
 
     let esm = result
         .entries
@@ -213,11 +220,7 @@ fn lib_multi_entry_from_exports() {
             "peerDependencies": { "react": "^18.0.0" }
         }"#,
     );
-    write_file(
-        root,
-        "src/index.js",
-        "export const root = 1;\n",
-    );
+    write_file(root, "src/index.js", "export const root = 1;\n");
     write_file(
         root,
         "src/client.js",
@@ -240,7 +243,10 @@ export function client() { return useState(0); }
 
     let subpaths: HashSet<&str> = result.entries.iter().map(|e| e.subpath.as_str()).collect();
     assert!(subpaths.contains("."), "`.` entry must be built");
-    assert!(subpaths.contains("./client"), "`./client` entry must be built");
+    assert!(
+        subpaths.contains("./client"),
+        "`./client` entry must be built"
+    );
 
     let client = result
         .entries
@@ -299,14 +305,20 @@ exports.run = function(x) { return util.double(x); };
     };
 
     // Sanity: defaults keep app mode off.
-    assert!(!options.library, "app-mode BundleOptions::library must default false");
+    assert!(
+        !options.library,
+        "app-mode BundleOptions::library must default false"
+    );
     assert!(
         !options.externalize_all_packages,
         "app-mode must default to inlining packages"
     );
 
     let bundler = Bundler::new(options).unwrap();
-    let result = bundler.bundle(entry).await.expect("app bundle must succeed");
+    let result = bundler
+        .bundle(entry)
+        .await
+        .expect("app bundle must succeed");
 
     // The relative util.js must be INLINED into the app bundle (not external).
     assert!(
@@ -551,11 +563,7 @@ fn lib_iife_default_global_name_derived_from_package_name() {
             "module": "./src/index.js"
         }"#,
     );
-    write_file(
-        root,
-        "src/index.js",
-        "export const x = 1;\n",
-    );
+    write_file(root, "src/index.js", "export const x = 1;\n");
 
     let options = LibBuildOptions {
         project_root: root.to_path_buf(),
@@ -613,11 +621,7 @@ fn lib_cjs_renamed_reexport_from_relative_inlines() {
             "module": "./src/index.js"
         }"#,
     );
-    write_file(
-        root,
-        "src/foo.js",
-        "export function Foo() { return 1; }\n",
-    );
+    write_file(root, "src/foo.js", "export function Foo() { return 1; }\n");
     // Entry renames foo's `Foo` to the public `Bar` via a re-export.
     write_file(
         root,
@@ -671,11 +675,7 @@ fn lib_cjs_star_reexport_from_relative_inlines() {
         "src/util.js",
         "export function alpha() {}\nexport function beta() {}\n",
     );
-    write_file(
-        root,
-        "src/index.js",
-        "export * from \"./util\";\n",
-    );
+    write_file(root, "src/index.js", "export * from \"./util\";\n");
 
     let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
     let cjs = cjs_code(&result);
@@ -1020,12 +1020,22 @@ fn lib_entry_falls_back_to_src_index_when_exports_point_at_dist() {
           "exports": { ".": { "import": "./dist/index.js", "require": "./dist/index.cjs" } }
         }"#,
     );
-    write_file(root, "src/index.ts", "export const hello = (): string => \"hi\";\n");
+    write_file(
+        root,
+        "src/index.ts",
+        "export const hello = (): string => \"hi\";\n",
+    );
 
     let result = run_lib_build(root, vec![OutputFormat::Esm]);
-    assert!(!result.entries.is_empty(), "convention fallback must yield an entry");
+    assert!(
+        !result.entries.is_empty(),
+        "convention fallback must yield an entry"
+    );
     let esm = &result.entries[0].code;
-    assert!(esm.contains("hello"), "built ESM must contain the source symbol, got:\n{esm}");
+    assert!(
+        esm.contains("hello"),
+        "built ESM must contain the source symbol, got:\n{esm}"
+    );
 }
 
 /// #170 explicit `[lib].entry` (via `LibBuildOptions::entry`) selects the SOURCE
@@ -1040,7 +1050,11 @@ fn lib_explicit_entry_overrides_exports() {
         r#"{ "name": "explicit-lib", "version": "1.0.0", "type": "module",
             "exports": { ".": "./dist/index.js" } }"#,
     );
-    write_file(root, "src/main.ts", "export const answer = (): number => 42;\n");
+    write_file(
+        root,
+        "src/main.ts",
+        "export const answer = (): number => 42;\n",
+    );
 
     let options = LibBuildOptions {
         project_root: root.to_path_buf(),

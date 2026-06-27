@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:b3d9a1f2" tracker="pending-tracker" reason="Shared node_modules bare-import resolution for the stories workbench (dev server + static export): resolve a bare specifier to an on-disk node_modules file via the project ModuleResolver, extract every import specifier (incl. bare) from source, and key a dep by its node_modules-relative path so both the dev route and the static layout map a dep consistently."
+// <HANDWRITE gap="missing-generator:logic:b3d9a1f2" tracker="standardize-gap-projects-jet-src-stories-deps-rs" reason="Shared node_modules bare-import resolution for the stories workbench (dev server + static export): resolve a bare specifier to an on-disk node_modules file via the project ModuleResolver, extract every import specifier (incl. bare) from source, and key a dep by its node_modules-relative path so both the dev route and the static layout map a dep consistently.">
 //! Shared `node_modules` bare-import resolution for `jet stories` (#197).
 //!
 //! Both the dev workbench server ([`super::server`]) and the static exporter
@@ -49,7 +49,11 @@ use crate::resolver::{ModuleResolver, ResolveKind, ResolveOptions};
 ///
 /// The resolver uses the default browser ESM conditions
 /// (`import`/`browser`/`default`), matching the dev preview's runtime.
-pub fn resolve_bare_specifier(root: &Path, importer_file: &Path, specifier: &str) -> Option<PathBuf> {
+pub fn resolve_bare_specifier(
+    root: &Path,
+    importer_file: &Path,
+    specifier: &str,
+) -> Option<PathBuf> {
     // Only bare specifiers are our concern. A leading `.` or `/` is a relative
     // or absolute import the module-serving path already handles.
     if specifier.starts_with('.') || specifier.starts_with('/') {
@@ -144,8 +148,8 @@ pub fn extract_all_import_specifiers(source: &str) -> Vec<String> {
             || line.starts_with("import'")
             || line.starts_with("import{")
             || line == "import";
-        let is_reexport = (line.starts_with("export ") || line.starts_with("export{"))
-            && line.contains(" from ");
+        let is_reexport =
+            (line.starts_with("export ") || line.starts_with("export{")) && line.contains(" from ");
         if !is_import && !is_reexport {
             continue;
         }
@@ -231,8 +235,12 @@ const dyn = import("ignored");
 
     #[test]
     fn resolve_returns_none_for_relative() {
-        assert!(resolve_bare_specifier(Path::new("/proj"), Path::new("/proj/a.tsx"), "./b").is_none());
-        assert!(resolve_bare_specifier(Path::new("/proj"), Path::new("/proj/a.tsx"), "/abs").is_none());
+        assert!(
+            resolve_bare_specifier(Path::new("/proj"), Path::new("/proj/a.tsx"), "./b").is_none()
+        );
+        assert!(
+            resolve_bare_specifier(Path::new("/proj"), Path::new("/proj/a.tsx"), "/abs").is_none()
+        );
     }
 
     #[test]
@@ -247,7 +255,11 @@ const dyn = import("ignored");
         )
         .unwrap();
         std::fs::create_dir_all(pkg.join("dist")).unwrap();
-        std::fs::write(pkg.join("dist/clsx.mjs"), "export default function clsx(){}\n").unwrap();
+        std::fs::write(
+            pkg.join("dist/clsx.mjs"),
+            "export default function clsx(){}\n",
+        )
+        .unwrap();
 
         let importer = root.join("src/Button.tsx");
         std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
@@ -266,4 +278,4 @@ const dyn = import("ignored");
         assert!(resolve_bare_specifier(root, &importer, "react").is_none());
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-scripts-compare-dom-build-corpus-mjs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -278,3 +279,5 @@ console.log(JSON.stringify(evidence, null, 2));
 if (result !== "green") {
   process.exit(1);
 }
+
+// </HANDWRITE>

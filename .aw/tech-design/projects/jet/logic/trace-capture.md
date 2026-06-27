@@ -230,22 +230,27 @@ flowchart TD
 changes:
   - path: .aw/tech-design/crates/jet/logic/trace-capture.md
     action: create
+    section: doc
     purpose: Re-home and normalize the trace capture TD as a logic spec.
     impl_mode: hand-written
   - path: .aw/tech-design/crates/jet/testing/trace-capture.md
     action: delete
+    section: doc
     purpose: Remove the stale testing-directory note without section annotations.
     impl_mode: hand-written
   - path: crates/jet/src/trace/buffer.rs
     action: none
+    section: doc
     purpose: Existing TraceBuffer and commit logic described by this spec.
     impl_mode: hand-written
   - path: crates/jet/src/test_runner/wire.rs
     action: none
+    section: doc
     purpose: Existing WireTraceMode parsing described by this spec.
     impl_mode: hand-written
   - path: crates/jet/src/test_runner/reporter.rs
     action: none
+    section: doc
     purpose: Existing TestReport trace_path field described by this spec.
     impl_mode: hand-written
 ```

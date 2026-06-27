@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-scripts-compare-basic-builds-mjs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import { brotliCompressSync, gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -112,6 +113,7 @@ async function materializeFixtureRoot(source, dependencyRoot, outputRoot, fixtur
     recursive: true,
     filter: (src) => !src.split(path.sep).includes("node_modules") && !src.split(path.sep).includes("dist"),
   });
+  await sanitizeAwClaimWrappers(workRoot);
 
   const dependencyNodeModules = path.join(dependencyRoot, "node_modules");
   const fixtureNodeModules = path.join(workRoot, "node_modules");
@@ -119,6 +121,40 @@ async function materializeFixtureRoot(source, dependencyRoot, outputRoot, fixtur
     await symlink(dependencyNodeModules, fixtureNodeModules, "dir");
   }
   return workRoot;
+}
+
+async function sanitizeAwClaimWrappers(root) {
+  for (const file of await walkFiles(root)) {
+    if (!isAwWrappedTextCandidate(file)) continue;
+    const text = await readFile(file, "utf8");
+    const stripped = stripAwClaimWrapperLines(text);
+    if (stripped !== text) await writeFile(file, stripped);
+  }
+}
+
+function isAwWrappedTextCandidate(file) {
+  return new Set([
+    ".cjs",
+    ".css",
+    ".html",
+    ".js",
+    ".json",
+    ".jsx",
+    ".mjs",
+    ".ts",
+    ".tsx",
+  ]).has(path.extname(file));
+}
+
+function stripAwClaimWrapperLines(text) {
+  if (!text.includes("// <HANDWRITE") && !text.includes("// </HANDWRITE>")) return text;
+  return text
+    .split(/\n/)
+    .filter((line) => {
+      const trimmed = line.trimStart();
+      return !trimmed.startsWith("// <HANDWRITE ") && trimmed !== "// </HANDWRITE>";
+    })
+    .join("\n");
 }
 
 async function pathIsDirectory(candidate) {
@@ -1285,3 +1321,5 @@ console.log(JSON.stringify(evidence, null, 2));
 if (overallResult === "red") {
   process.exit(1);
 }
+
+// </HANDWRITE>
