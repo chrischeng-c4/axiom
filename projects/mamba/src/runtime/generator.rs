@@ -1289,36 +1289,13 @@ fn yield_from_generator(sub_gen: MbValue) -> MbValue {
     let mut val = mb_generator_next(sub_gen);
 
     loop {
-        let exhausted = if let Some(id) = sub_gen.as_int() {
-            GENERATORS.with(|gens| {
-                gens.borrow()
-                    .get(&(id as u64))
-                    .map(|e| matches!(e.state, GenState::Completed))
-                    .unwrap_or(true)
-            })
-        } else {
-            true
-        };
-
-        if exhausted {
+        if generator_completed(sub_gen) {
             if let Some(exc_type) = super::exception::current_exception_type() {
                 if exc_type != "StopIteration" {
                     return MbValue::none();
                 }
             }
-            let ret_val = if let Some(id) = sub_gen.as_int() {
-                GENERATORS.with(|gens| {
-                    gens.borrow()
-                        .get(&(id as u64))
-                        .map(|e| e.return_value)
-                        .unwrap_or(MbValue::none())
-                })
-            } else {
-                MbValue::none()
-            };
-            super::iter::check_and_clear_stop();
-            super::exception::clear_current_exception();
-            return ret_val;
+            return finish_yield_from(sub_gen);
         }
 
         let sent = mb_generator_yield_value(val);
@@ -1329,9 +1306,38 @@ fn yield_from_generator(sub_gen: MbValue) -> MbValue {
                 .unwrap_or_else(|| "Exception".to_string());
             let exc_msg_str =
                 super::exception::get_exception_message_pub(exc_val).unwrap_or_default();
-            let type_vreg = MbValue::from_ptr(MbObject::new_str(exc_type_str));
-            let msg_vreg = MbValue::from_ptr(MbObject::new_str(exc_msg_str));
+            let type_vreg = MbValue::from_ptr(MbObject::new_str(exc_type_str.clone()));
+            let msg_vreg = MbValue::from_ptr(MbObject::new_str(exc_msg_str.clone()));
             val = mb_generator_throw(sub_gen, type_vreg, msg_vreg);
+
+            if generator_completed(sub_gen)
+                && super::exception::current_exception_type().as_deref() == Some("StopIteration")
+            {
+                let ret_val = finish_yield_from(sub_gen);
+                if exc_type_str == "GeneratorExit" {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str(exc_type_str)),
+                        MbValue::from_ptr(MbObject::new_str(exc_msg_str)),
+                    );
+                    return MbValue::none();
+                }
+                return ret_val;
+            }
+
+            if exc_type_str == "GeneratorExit"
+                && !generator_completed(sub_gen)
+                && super::exception::mb_has_exception().as_bool() != Some(true)
+            {
+                force_generator_completed(sub_gen);
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "generator ignored GeneratorExit".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+
             if super::exception::mb_has_exception().as_bool() == Some(true) {
                 return MbValue::none();
             }
@@ -1343,6 +1349,49 @@ fn yield_from_generator(sub_gen: MbValue) -> MbValue {
         } else {
             val = mb_generator_send(sub_gen, sent);
         }
+    }
+}
+
+fn generator_completed(gen_handle: MbValue) -> bool {
+    if let Some(id) = gen_handle.as_int() {
+        GENERATORS.with(|gens| {
+            gens.borrow()
+                .get(&(id as u64))
+                .map(|e| matches!(e.state, GenState::Completed))
+                .unwrap_or(true)
+        })
+    } else {
+        true
+    }
+}
+
+fn generator_return_value(gen_handle: MbValue) -> MbValue {
+    if let Some(id) = gen_handle.as_int() {
+        GENERATORS.with(|gens| {
+            gens.borrow()
+                .get(&(id as u64))
+                .map(|e| e.return_value)
+                .unwrap_or(MbValue::none())
+        })
+    } else {
+        MbValue::none()
+    }
+}
+
+fn finish_yield_from(sub_gen: MbValue) -> MbValue {
+    let ret_val = generator_return_value(sub_gen);
+    super::iter::check_and_clear_stop();
+    super::exception::clear_current_exception();
+    ret_val
+}
+
+fn force_generator_completed(gen_handle: MbValue) {
+    if let Some(id) = gen_handle.as_int() {
+        GENERATORS.with(|gens| {
+            if let Some(entry) = gens.borrow_mut().get_mut(&(id as u64)) {
+                entry.state = GenState::Completed;
+            }
+        });
     }
 }
 
