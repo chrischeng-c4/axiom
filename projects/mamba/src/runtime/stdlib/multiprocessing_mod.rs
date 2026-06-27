@@ -427,7 +427,7 @@ unsafe extern "C" fn dispatch_get_context(args_ptr: *const MbValue, nargs: usize
 
 /// multiprocessing.Value(typecode_or_type, ...) — validates the typecode. A
 /// string that is not a single valid array/ctypes typecode is a TypeError
-/// (CPython); a ctypes type object or valid code returns the value stub.
+/// (CPython); a ctypes type object or valid code returns a shared Value object.
 unsafe extern "C" fn dispatch_value(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     const VALID: &str = "cbBuhHiIlLqQfd";
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
@@ -452,7 +452,19 @@ unsafe extern "C" fn dispatch_value(args_ptr: *const MbValue, nargs: usize) -> M
             }
         }
     }
-    MbValue::from_ptr(MbObject::new_dict())
+    let initial = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let value = MbValue::from_ptr(MbObject::new_instance("Value".to_string()));
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .write()
+                    .unwrap()
+                    .insert("value".to_string(), retain_field(initial));
+            }
+        }
+    }
+    value
 }
 
 /// Register the multiprocessing module.
