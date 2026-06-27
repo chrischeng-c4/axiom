@@ -27,11 +27,13 @@ use std::cell::RefCell;
 ///     no IntEnum coercion — which beats CPython's hot loop comfortably.
 ///   - **`signal(signum, handler)`** returns the previous handler;
 ///     Mamba returns the SIG_DFL sentinel (`0`).
-///   - **`raise_signal`, `pthread_kill`, `pause`, `sigwait`, `sigpending`,
-///     `setitimer`, `getitimer`, `pthread_sigmask`, `set_wakeup_fd`,
-///     `siginterrupt`** — return `None` or an empty/zero value as
-///     CPython would on a no-op fast path. These are surface-presence
-///     stubs; sending real signals from a mamba process is out of scope.
+///   - **`raise_signal`** synchronously invokes the installed Python-level
+///     handler when one was registered through `signal.signal`.
+///   - **`pthread_kill`, `pause`, `sigwait`, `sigpending`, `setitimer`,
+///     `getitimer`, `pthread_sigmask`, `set_wakeup_fd`, `siginterrupt`** —
+///     return `None` or an empty/zero value as CPython would on a no-op fast
+///     path. These are surface-presence stubs; process-wide Unix signal
+///     plumbing remains out of scope.
 ///   - **`strsignal(signum)`** returns `None` (CPython returns a localized
 ///     description; surface-presence callers only check callable).
 ///   - **`valid_signals()`** returns an empty set (CPython returns the set
@@ -45,9 +47,9 @@ use std::cell::RefCell;
 ///     value-to-member lookup so `Signals(2) is SIGINT` holds.
 ///
 /// Carve-outs (deliberately out of scope for this surface ticket):
-///   - No actual signal delivery / Unix `sigaction` plumbing — every
-///     callable that would mutate process state in CPython is a no-op
-///     here. Real signal handling can be wired later behind a separate
+///   - No Unix `sigaction` plumbing — Mamba only supports synchronous
+///     Python-level delivery for handlers recorded in this module.
+///     Process-wide signal handling can be wired later behind a separate
 ///     issue once exception propagation across the JIT boundary lands.
 ///   - Full EnumMeta behavior is not modeled; only the value/name/identity
 ///     surface required by the signal module constants is provided.
@@ -524,6 +526,24 @@ pub fn mb_signal_raise_signal(signum: MbValue) -> MbValue {
         );
     }
     MbValue::none()
+}
+
+/// Deliver a same-process signal only when Mamba owns the disposition.
+///
+/// This is used by `os.kill(os.getpid(), sig)`: custom Python handlers and
+/// SIG_IGN are pure Mamba state, so they can be honored synchronously.
+/// `raise_signal` owns the callable-vs-sentinel distinction; this helper only
+/// decides whether the signal has a Mamba-owned disposition at all. Missing
+/// handlers and SIG_DFL stay on the OS path so ordinary process-signal behavior
+/// is not silently replaced by a no-op.
+pub(crate) fn mb_signal_deliver_if_registered(signum: MbValue) -> Option<MbValue> {
+    let n = as_signum(signum)?;
+    let handler = HANDLERS.with(|h| h.borrow().get(&n).copied())?;
+    if signal_int_value(handler) == Some(0) {
+        None
+    } else {
+        Some(mb_signal_raise_signal(signum))
+    }
 }
 
 /// signal.set_wakeup_fd(fd) -> previous fd (-1 sentinel).
