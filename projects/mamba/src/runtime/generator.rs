@@ -1272,10 +1272,28 @@ pub fn mb_generator_yield_from(sub_iter: MbValue) -> MbValue {
                 break;
             }
         }
-        let _sent = mb_generator_yield_value(val);
+        let sent = mb_generator_yield_value(val);
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            super::iter::mb_iter_release(iter_handle);
+            return MbValue::none();
+        }
+        if !sent.is_none() {
+            super::iter::mb_iter_release(iter_handle);
+            raise_yield_from_missing_send();
+            return MbValue::none();
+        }
     }
     super::iter::mb_iter_release(iter_handle);
     MbValue::none()
+}
+
+fn raise_yield_from_missing_send() {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "'iterator' object has no attribute 'send'".to_string(),
+        )),
+    );
 }
 
 /// Yield from a sub-generator, properly forwarding send/throw/close.
