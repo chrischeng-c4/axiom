@@ -24,6 +24,7 @@ pub(crate) const DICT_SUBCLASS_VALUE_FIELD: &str = "__mamba_dict_value__";
 pub(crate) const TUPLE_SUBCLASS_VALUE_FIELD: &str = "__mamba_tuple_value__";
 
 /// A class definition stored at runtime.
+#[derive(Clone)]
 pub struct MbClass {
     pub name: String,
     /// Base classes (direct parents)
@@ -47,6 +48,20 @@ pub struct MbClass {
 struct NamedTupleBaseShape {
     tuple_name: String,
     fields: Vec<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ThreadClassState {
+    class_registry: HashMap<String, MbClass>,
+    user_classes: HashSet<String>,
+    callable_registry: HashSet<u64>,
+    slots_registry: HashMap<String, Vec<String>>,
+    dict_suppressed: HashSet<String>,
+    kwargs_registry: HashMap<String, HashMap<String, MbValue>>,
+    namedtuple_base_shapes: HashMap<String, NamedTupleBaseShape>,
+    runtime_checkable_protocols: HashSet<String>,
+    abc_virtual_subclasses: HashSet<(String, String)>,
+    user_abc_own_abstract: HashMap<String, HashSet<String>>,
 }
 
 // Global class registry — maps class name → MbClass.
@@ -16962,6 +16977,43 @@ fn union_type_args(val: MbValue) -> Option<Vec<MbValue>> {
     })
 }
 
+fn reset_class_lookup_caches() {
+    let _ = METHOD_CACHE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = SIMPLE_CLASS_CACHE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    METHOD_CACHE_GEN.with(|g| g.set(0));
+}
+
+pub(crate) fn snapshot_thread_class_state() -> ThreadClassState {
+    ThreadClassState {
+        class_registry: CLASS_REGISTRY.with(|c| c.borrow().clone()),
+        user_classes: USER_CLASSES.with(|c| c.borrow().clone()),
+        callable_registry: CALLABLE_REGISTRY.with(|c| c.borrow().clone()),
+        slots_registry: SLOTS_REGISTRY.with(|c| c.borrow().clone()),
+        dict_suppressed: DICT_SUPPRESSED.with(|c| c.borrow().clone()),
+        kwargs_registry: KWARGS_REGISTRY.with(|c| c.borrow().clone()),
+        namedtuple_base_shapes: NAMEDTUPLE_BASE_SHAPES.with(|c| c.borrow().clone()),
+        runtime_checkable_protocols: RUNTIME_CHECKABLE_PROTOCOLS.with(|c| c.borrow().clone()),
+        abc_virtual_subclasses: ABC_VIRTUAL_SUBCLASSES.with(|c| c.borrow().clone()),
+        user_abc_own_abstract: USER_ABC_OWN_ABSTRACT.with(|c| c.borrow().clone()),
+    }
+}
+
+pub(crate) fn replace_thread_class_state(next: ThreadClassState) -> ThreadClassState {
+    let previous = snapshot_thread_class_state();
+    CLASS_REGISTRY.with(|c| *c.borrow_mut() = next.class_registry);
+    USER_CLASSES.with(|c| *c.borrow_mut() = next.user_classes);
+    CALLABLE_REGISTRY.with(|c| *c.borrow_mut() = next.callable_registry);
+    SLOTS_REGISTRY.with(|c| *c.borrow_mut() = next.slots_registry);
+    DICT_SUPPRESSED.with(|c| *c.borrow_mut() = next.dict_suppressed);
+    KWARGS_REGISTRY.with(|c| *c.borrow_mut() = next.kwargs_registry);
+    NAMEDTUPLE_BASE_SHAPES.with(|c| *c.borrow_mut() = next.namedtuple_base_shapes);
+    RUNTIME_CHECKABLE_PROTOCOLS.with(|c| *c.borrow_mut() = next.runtime_checkable_protocols);
+    ABC_VIRTUAL_SUBCLASSES.with(|c| *c.borrow_mut() = next.abc_virtual_subclasses);
+    USER_ABC_OWN_ABSTRACT.with(|c| *c.borrow_mut() = next.user_abc_own_abstract);
+    reset_class_lookup_caches();
+    previous
+}
+
 // ── Cleanup ──
 
 /// Reset all class-related thread_local state to defaults.
@@ -16977,10 +17029,8 @@ pub(crate) fn cleanup_all_classes() {
     let _ = LAST_RAISED_INSTANCE.with(|c| c.try_borrow_mut().map(|mut m| *m = None));
     let _ = ABSTRACT_METHODS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     cleanup_class_docs();
-    let _ = METHOD_CACHE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = SIMPLE_CLASS_CACHE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ABC_VIRTUAL_SUBCLASSES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    METHOD_CACHE_GEN.with(|g| g.set(0));
+    reset_class_lookup_caches();
 }
 
 #[cfg(test)]
