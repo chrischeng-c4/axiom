@@ -1407,12 +1407,26 @@ unsafe extern "C" fn popen_communicate(self_v: MbValue, _args: MbValue) -> MbVal
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let encoding = instance_field(self_v, "_encoding").and_then(extract_str);
+    let capture_output = instance_field(self_v, "_capture_output")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let stdout_sel = instance_field(self_v, "_stdout_sel")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    let stderr_sel = instance_field(self_v, "_stderr_sel")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    let stdout_captured = capture_output || stdout_sel == -1;
+    let stderr_captured = capture_output || stderr_sel == -1;
     let captured_bytes = |name: &str| -> Vec<u8> {
         instance_field(self_v, name)
             .and_then(value_bytes)
             .unwrap_or_default()
     };
-    let make_stream = |data: Vec<u8>| -> MbValue {
+    let make_stream = |data: Vec<u8>, captured: bool| -> MbValue {
+        if !captured {
+            return MbValue::none();
+        }
         if text {
             MbValue::from_ptr(MbObject::new_str(decode_subprocess_text(
                 &data,
@@ -1422,8 +1436,8 @@ unsafe extern "C" fn popen_communicate(self_v: MbValue, _args: MbValue) -> MbVal
             MbValue::from_ptr(MbObject::new_bytes(data))
         }
     };
-    let out = make_stream(captured_bytes("_captured_stdout"));
-    let err = make_stream(captured_bytes("_captured_stderr"));
+    let out = make_stream(captured_bytes("_captured_stdout"), stdout_captured);
+    let err = make_stream(captured_bytes("_captured_stderr"), stderr_captured);
     MbValue::from_ptr(MbObject::new_tuple(vec![out, err]))
 }
 
