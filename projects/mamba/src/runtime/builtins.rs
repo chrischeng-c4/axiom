@@ -2331,6 +2331,8 @@ pub fn mb_breakpoint_call(pos_list: MbValue, kwargs_dict: MbValue) -> MbValue {
 pub fn mb_type(val: MbValue) -> MbValue {
     let name = if let Some(iter_type) = super::iter::mb_iter_type_name(val) {
         iter_type
+    } else if val.is_int() && super::async_rt::is_known_coroutine(val) {
+        "coroutine"
     } else if val.is_int() {
         // uuid handles (NAMESPACE_*, uuid4(), ...) are int-tagged values; report
         // their real type so `type(uuid.NAMESPACE_DNS).__name__ == "UUID"`.
