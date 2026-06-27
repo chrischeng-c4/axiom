@@ -346,6 +346,13 @@ disp_unary!(d_isclass, mb_inspect_isclass);
 disp_unary!(d_ismethod, mb_inspect_ismethod);
 disp_unary!(d_signature, mb_inspect_signature);
 
+unsafe extern "C" fn d_iscoroutinefunction(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let func = args.first().copied().unwrap_or_else(MbValue::none);
+    const CO_COROUTINE: i64 = 0x0100;
+    MbValue::from_bool(super::super::closure::func_flags(func) & CO_COROUTINE != 0)
+}
+
 unsafe extern "C" fn d_iscoroutine(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     MbValue::from_bool(
@@ -409,7 +416,7 @@ pub fn register() {
         ("isroutine", d_isroutine as *const () as usize),
         ("ismodule", d_ismodule as *const () as usize),
         ("isgeneratorfunction", d_isfunction as *const () as usize),
-        ("iscoroutinefunction", d_isfunction as *const () as usize),
+        ("iscoroutinefunction", d_iscoroutinefunction as *const () as usize),
         ("iscoroutine", d_iscoroutine as *const () as usize),
         ("isawaitable", d_isfunction as *const () as usize),
         ("isasyncgenfunction", d_isfunction as *const () as usize),

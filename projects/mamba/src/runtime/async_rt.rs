@@ -609,7 +609,12 @@ mod tests {
 
         mb_coroutine_complete(coro, MbValue::from_int(42));
         let result = mb_await(coro);
-        assert_eq!(result.as_int(), Some(42));
+        assert!(result.is_none());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("RuntimeError")
+        );
+        super::super::exception::mb_clear_exception();
 
         mb_coroutine_release(coro);
     }
