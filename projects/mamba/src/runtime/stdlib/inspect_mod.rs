@@ -1205,34 +1205,33 @@ unsafe extern "C" fn d_isdatadescriptor(args_ptr: *const MbValue, nargs: usize) 
     MbValue::from_bool(result)
 }
 
-fn make_current_frame() -> MbValue {
-    let frame = MbObject::new_instance("frame".to_string());
-    unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*frame).data {
-            let mut g = fields.write().unwrap();
-            g.insert(
-                "f_code".to_string(),
-                super::super::class::make_module_code_object("<unknown>", ""),
-            );
-            g.insert(
-                "f_locals".to_string(),
-                MbValue::from_ptr(MbObject::new_dict()),
-            );
-            g.insert(
-                "f_globals".to_string(),
-                MbValue::from_ptr(MbObject::new_dict()),
-            );
-            g.insert(
-                "f_builtins".to_string(),
-                MbValue::from_ptr(MbObject::new_dict()),
-            );
-            g.insert("f_lineno".to_string(), MbValue::from_int(1));
-            g.insert("f_lasti".to_string(), MbValue::from_int(0));
-            g.insert("f_back".to_string(), MbValue::none());
-            g.insert("f_trace".to_string(), MbValue::none());
-        }
-    }
-    MbValue::from_ptr(frame)
+pub(crate) fn make_current_frame_with_locals(locals: MbValue) -> MbValue {
+    let frame = MbValue::from_ptr(MbObject::new_instance("frame".to_string()));
+    inst_set_field(
+        frame,
+        "f_code",
+        super::super::class::make_module_code_object("<unknown>", ""),
+    );
+    inst_set_field(frame, "f_locals", locals);
+    inst_set_field(
+        frame,
+        "f_globals",
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
+    inst_set_field(
+        frame,
+        "f_builtins",
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
+    inst_set_field(frame, "f_lineno", MbValue::from_int(1));
+    inst_set_field(frame, "f_lasti", MbValue::from_int(0));
+    inst_set_field(frame, "f_back", MbValue::none());
+    inst_set_field(frame, "f_trace", MbValue::none());
+    frame
+}
+
+pub(crate) fn make_current_frame() -> MbValue {
+    make_current_frame_with_locals(MbValue::from_ptr(MbObject::new_dict()))
 }
 
 unsafe extern "C" fn d_currentframe(_a: *const MbValue, _n: usize) -> MbValue {

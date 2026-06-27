@@ -2531,6 +2531,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64],
             I64
         ),
+        rt_sym!(
+            "mb_sys_getframe_with_locals",
+            super::stdlib::sys_mod::mb_sys_getframe_with_locals
+                as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
         // ── Stdlib: os ──
         rt_sym!(
             "mb_os_getcwd",
