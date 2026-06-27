@@ -5,7 +5,8 @@ use super::super::value::MbValue;
 /// Minimal callable-dispatcher shim covering the most-used top-level
 /// entry points on 3.12. It keeps module-attribute reads stable and
 /// implements the small stateful subset needed by current conformance
-/// fixtures (`Process`, `Array`, and duplex `Pipe` connections).
+/// fixtures (`Process`, `Pool.apply`, `Array`, and duplex `Pipe`
+/// connections).
 ///
 /// Full functional conformance (Gate 1 behavior + Gate 3 typeshed
 /// surface) is tracked separately under #1476; this shim ships the
@@ -148,6 +149,21 @@ unsafe extern "C" fn dispatch_array(args_ptr: *const MbValue, nargs: usize) -> M
     )
 }
 
+unsafe extern "C" fn dispatch_pool(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    let pool = MbValue::from_ptr(MbObject::new_instance("Pool".to_string()));
+    if let Some(ptr) = pool.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .write()
+                    .unwrap()
+                    .insert("_closed".to_string(), MbValue::from_bool(false));
+            }
+        }
+    }
+    pool
+}
+
 fn make_connection(pipe_id: u64, end: usize) -> MbValue {
     let conn = MbValue::from_ptr(MbObject::new_instance("Connection".to_string()));
     if let Some(ptr) = conn.as_ptr() {
@@ -279,6 +295,37 @@ unsafe extern "C" fn process_join(_self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::none()
 }
 
+unsafe extern "C" fn pool_apply(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    let func = items.first().copied().unwrap_or_else(MbValue::none);
+    if func.is_none() {
+        return MbValue::none();
+    }
+    let call_args = items
+        .get(1)
+        .copied()
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_tuple(Vec::new())));
+    super::super::builtins::mb_call_spread(func, call_args)
+}
+
+unsafe extern "C" fn pool_enter(self_v: MbValue, _args: MbValue) -> MbValue {
+    self_v
+}
+
+unsafe extern "C" fn pool_exit(self_v: MbValue, _args: MbValue) -> MbValue {
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .write()
+                    .unwrap()
+                    .insert("_closed".to_string(), MbValue::from_bool(true));
+            }
+        }
+    }
+    MbValue::none()
+}
+
 unsafe extern "C" fn dispatch_queue(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     // multiprocessing.Queue is, for in-process purposes, the same FIFO as
     // queue.Queue (which already raises queue.Empty/queue.Full on the *_nowait
@@ -380,6 +427,9 @@ pub fn register() {
     let addr_pipe = dispatch_pipe as *const () as usize;
     attrs.insert("Pipe".into(), MbValue::from_func(addr_pipe));
 
+    let addr_pool = dispatch_pool as *const () as usize;
+    attrs.insert("Pool".into(), MbValue::from_func(addr_pool));
+
     let addr_queue = dispatch_queue as *const () as usize;
     attrs.insert("Queue".into(), MbValue::from_func(addr_queue));
 
@@ -397,6 +447,7 @@ pub fn register() {
         set.insert(addr_process as u64);
         set.insert(addr_array as u64);
         set.insert(addr_pipe as u64);
+        set.insert(addr_pool as u64);
         set.insert(addr_queue as u64);
         set.insert(addr_cpu_count as u64);
         set.insert(addr_current_process as u64);
@@ -462,6 +513,7 @@ pub fn register() {
     attrs.insert("Array".into(), MbValue::from_func(addr_array));
     attrs.insert("RawArray".into(), MbValue::from_func(addr_array));
     attrs.insert("Pipe".into(), MbValue::from_func(addr_pipe));
+    attrs.insert("Pool".into(), MbValue::from_func(addr_pool));
     let addr_get_context = dispatch_get_context as *const () as usize;
     attrs.insert("get_context".into(), MbValue::from_func(addr_get_context));
     let addr_value = dispatch_value as *const () as usize;
@@ -476,6 +528,7 @@ pub fn register() {
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         m.borrow_mut()
             .insert(addr_process as u64, "Process".to_string());
+        m.borrow_mut().insert(addr_pool as u64, "Pool".to_string());
     });
 
     let mut process_methods: HashMap<String, MbValue> = HashMap::new();
@@ -490,6 +543,23 @@ pub fn register() {
         process_methods.insert(name.to_string(), MbValue::from_func(addr));
     }
     super::super::class::mb_class_register("Process", Vec::new(), process_methods);
+
+    let mut pool_methods: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("apply", pool_apply as *const () as usize),
+        ("__enter__", pool_enter as *const () as usize),
+        ("__exit__", pool_exit as *const () as usize),
+        ("close", pool_exit as *const () as usize),
+        ("join", pool_exit as *const () as usize),
+        ("terminate", pool_exit as *const () as usize),
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+        pool_methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register("Pool", Vec::new(), pool_methods);
 
     let mut connection_methods: HashMap<String, MbValue> = HashMap::new();
     for (name, addr) in [
