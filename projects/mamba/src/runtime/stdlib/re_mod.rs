@@ -35,12 +35,13 @@ thread_local! {
 /// Translate Python `re` spellings the Rust `regex` crate spells
 /// differently:
 /// - `\Z` (Python end-of-string) → `\z` (Rust).
-/// - `(?>...)` (Python atomic group) → `(?:...)`.
+/// - `(?>...)` (Python atomic group) → `(?:...)` for Rust compilation.
 ///
-/// Rust's regex engine is DFA/NFA based and never backtracks catastrophically,
-/// so downgrading atomic groups to non-capturing groups preserves match
-/// language for the supported subset while keeping fnmatch-generated patterns
-/// compilable. The scan avoids escaped text and character classes.
+/// The regex crate has no atomic-group syntax. `re.match` / `re.fullmatch`
+/// handle the first atomic group with a committed-phase matcher before this
+/// fallback translation is used. Other APIs keep the compatibility downgrade
+/// so fnmatch-generated patterns remain compilable. The scan avoids escaped
+/// text and character classes.
 fn py_pattern_to_rust(pat: &str) -> String {
     let mut out = String::with_capacity(pat.len());
     let chars: Vec<char> = pat.chars().collect();
@@ -94,6 +95,169 @@ fn py_pattern_to_rust(pat: &str) -> String {
         i += 1;
     }
     out
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AtomicGroupSpan {
+    group_start: usize,
+    body_start: usize,
+    body_end: usize,
+    group_end: usize,
+}
+
+fn find_matching_group_close(pat: &str, body_start: usize) -> Option<usize> {
+    let mut in_class = false;
+    let mut escaped = false;
+    let mut depth = 0usize;
+
+    for (rel, c) in pat[body_start..].char_indices() {
+        let i = body_start + rel;
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == '[' && !in_class {
+            in_class = true;
+            continue;
+        }
+        if c == ']' && in_class {
+            in_class = false;
+            continue;
+        }
+        if in_class {
+            continue;
+        }
+        if c == '(' {
+            depth += 1;
+            continue;
+        }
+        if c == ')' {
+            if depth == 0 {
+                return Some(i);
+            }
+            depth -= 1;
+        }
+    }
+
+    None
+}
+
+fn find_first_atomic_group(pat: &str) -> Option<AtomicGroupSpan> {
+    let mut in_class = false;
+    let mut escaped = false;
+
+    for (i, c) in pat.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == '[' && !in_class {
+            in_class = true;
+            continue;
+        }
+        if c == ']' && in_class {
+            in_class = false;
+            continue;
+        }
+        if in_class {
+            continue;
+        }
+        if c == '(' && pat[i..].starts_with("(?>") {
+            let body_start = i + 3;
+            let body_end = find_matching_group_close(pat, body_start)?;
+            return Some(AtomicGroupSpan {
+                group_start: i,
+                body_start,
+                body_end,
+                group_end: body_end + 1,
+            });
+        }
+    }
+
+    None
+}
+
+fn anchored_match_end(pat: &str, text: &str, require_full: bool) -> Result<Option<usize>, String> {
+    let anchored = if require_full {
+        format!("^(?:{pat})$")
+    } else {
+        format!("^(?:{pat})")
+    };
+    let re = regex::Regex::new(&py_pattern_to_rust(&anchored)).map_err(|e| e.to_string())?;
+    Ok(re.find(text).map(|m| m.end()))
+}
+
+fn build_atomic_group_match(input: &str, source_pattern: &str, end: usize) -> MbValue {
+    let matched = &input[..end];
+    let m = build_match_instance_with_spans(matched, input, 0, end, &[], &[], &[]);
+    if let Some(ptr) = m.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut g = fields.write().unwrap();
+                g.insert("lastindex".to_string(), MbValue::none());
+                g.insert("lastgroup".to_string(), MbValue::none());
+                let pat_val = MbValue::from_ptr(MbObject::new_str(source_pattern.to_string()));
+                let pat_inst = mb_re_compile(pat_val, MbValue::from_int(0));
+                g.insert("re".to_string(), pat_inst);
+                g.insert("pos".to_string(), MbValue::from_int(0));
+                g.insert("endpos".to_string(), MbValue::from_int(input.len() as i64));
+                g.insert(
+                    "regs".to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+                        MbObject::new_tuple(vec![
+                            MbValue::from_int(0),
+                            MbValue::from_int(end as i64),
+                        ]),
+                    )])),
+                );
+            }
+        }
+    }
+    m
+}
+
+fn try_atomic_group_match(
+    pat: &str,
+    text: &str,
+    require_full: bool,
+) -> Option<Result<MbValue, String>> {
+    let span = find_first_atomic_group(pat)?;
+    let prefix = &pat[..span.group_start];
+    let body = &pat[span.body_start..span.body_end];
+    let suffix = &pat[span.group_end..];
+
+    let prefix_end = match anchored_match_end(prefix, text, false) {
+        Ok(Some(end)) => end,
+        Ok(None) => return Some(Ok(MbValue::none())),
+        Err(e) => return Some(Err(e)),
+    };
+    let rest = &text[prefix_end..];
+    let atomic_len = match anchored_match_end(body, rest, false) {
+        Ok(Some(end)) => end,
+        Ok(None) => return Some(Ok(MbValue::none())),
+        Err(e) => return Some(Err(e)),
+    };
+    let committed_end = prefix_end + atomic_len;
+    let suffix_text = &text[committed_end..];
+    let suffix_len = match anchored_match_end(suffix, suffix_text, require_full) {
+        Ok(Some(end)) => end,
+        Ok(None) => return Some(Ok(MbValue::none())),
+        Err(e) => return Some(Err(e)),
+    };
+
+    Some(Ok(build_atomic_group_match(
+        text,
+        pat,
+        committed_end + suffix_len,
+    )))
 }
 
 enum RePreflightError {
@@ -1104,6 +1268,16 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
         None => return MbValue::none(),
     };
 
+    if let Some(result) = try_atomic_group_match(&pat, &text, false) {
+        return match result {
+            Ok(value) => value,
+            Err(e) => {
+                raise_re_error(&e);
+                MbValue::none()
+            }
+        };
+    }
+
     // Anchor at start by wrapping pattern
     let anchored = format!("^(?:{pat})");
     match regex::Regex::new(&py_pattern_to_rust(&anchored)) {
@@ -1133,6 +1307,16 @@ pub fn mb_re_fullmatch(pattern: MbValue, string: MbValue) -> MbValue {
         Some(s) => s,
         None => return MbValue::none(),
     };
+
+    if let Some(result) = try_atomic_group_match(&pat, &text, true) {
+        return match result {
+            Ok(value) => value,
+            Err(e) => {
+                raise_re_error(&e);
+                MbValue::none()
+            }
+        };
+    }
 
     let anchored = format!("^(?:{pat})$");
     match regex::Regex::new(&py_pattern_to_rust(&anchored)) {
@@ -1864,6 +2048,18 @@ mod tests {
         let result = mb_re_match(s("\\d{3}"), s("123abc"));
         assert!(!result.is_none());
         let result = mb_re_match(s("\\d{3}"), s("abc123"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_match_atomic_group_no_backtrack() {
+        let result = mb_re_match(s(r"a(?>bc|b)c"), s("abc"));
+        assert!(result.is_none());
+
+        let result = mb_re_match(s(r"a(?>bc|b)c"), s("abcc"));
+        assert!(!result.is_none());
+
+        let result = mb_re_match(s(r"(?>.*)."), s("abc"));
         assert!(result.is_none());
     }
 
