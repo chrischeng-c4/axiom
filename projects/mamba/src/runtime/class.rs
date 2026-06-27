@@ -5172,7 +5172,13 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         || class_name == "Exception"
                         || class_name == "BaseException")
                 {
-                    return super::stdlib::traceback_mod::make_tb_instance();
+                    let tb = super::stdlib::traceback_mod::make_tb_instance();
+                    super::rc::retain_if_ptr(tb);
+                    fields
+                        .write()
+                        .unwrap()
+                        .insert("__traceback__".to_string(), tb);
+                    return tb;
                 }
             }
         }
