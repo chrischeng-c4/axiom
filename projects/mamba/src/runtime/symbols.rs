@@ -1955,6 +1955,20 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_functools_singledispatchmethod",
+            functools_mod::mb_functools_singledispatchmethod
+                as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_singledispatchmethod_register_value",
+            functools_mod::mb_singledispatchmethod_register_value
+                as fn(super::MbValue, super::MbValue, super::MbValue),
+            [I64, I64, I64],
+            Void
+        ),
+        rt_sym!(
             "mb_fstring_value",
             string_ops::mb_fstring_value as fn(super::MbValue) -> super::MbValue,
             [I64],
