@@ -511,20 +511,7 @@ fn extract_list(val: MbValue) -> Vec<MbValue> {
     // `product(*[range(n)] * 2)` (which shares one object) or `chain(r, r)`.
     // The generic mb_iter/mb_next fallback below would drain it on the first
     // extract and yield an empty list on the second.
-    if let Some((cur, stop, step)) = super::super::iter::mb_iter_range_params(val) {
-        let mut out = Vec::new();
-        let mut c = cur;
-        if step > 0 {
-            while c < stop {
-                out.push(MbValue::from_int(c));
-                c += step;
-            }
-        } else if step < 0 {
-            while c > stop {
-                out.push(MbValue::from_int(c));
-                c += step;
-            }
-        }
+    if let Some(out) = super::super::iter::range_iter_to_vec(val) {
         return out;
     }
     // Fall back to iterator protocol (generators, iterator handles, custom iter).

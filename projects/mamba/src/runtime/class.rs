@@ -599,7 +599,7 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
         ),
         "range" => matches!(
             dunder,
-            "__len__" | "__getitem__" | "__contains__" | "__iter__" | "__reversed__"
+            "__len__" | "__getitem__" | "__contains__" | "__iter__" | "__reversed__" | "__hash__"
         ),
         // `types.UnionType` (the `X | Y` runtime type) exposes `__args__`
         // (its member types) plus the union-combining operators.
@@ -4936,9 +4936,10 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     // attribute handling sees the value as a plain integer.
     if let Some((start, stop, step)) = super::iter::mb_iter_range_params(obj) {
         match attr_name.as_str() {
-            "start" => return MbValue::from_int(start),
-            "stop" => return MbValue::from_int(stop),
-            "step" => return MbValue::from_int(step),
+            "start" => return start,
+            "stop" => return stop,
+            "step" => return step,
+            "count" | "index" | "__hash__" => return make_bound_native_method(obj, &attr_name),
             _ => {}
         }
     }
@@ -11160,18 +11161,14 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
     // Support integer subscript so `range(10, 20)[5]` matches CPython's
     // range.__getitem__ semantics. Out-of-bounds raises IndexError.
     if super::iter::is_iter_handle(obj) {
-        // A range index above 2^47 (e.g. `range(sys.maxsize)[i]` during a
-        // bisect over a huge range) is a NaN-box-promoted BigInt; unbox it
-        // when it fits i64, and promote the resulting element back to BigInt.
-        let idx_i64 = key.as_int_pyint().or_else(|| {
-            use num_traits::ToPrimitive;
-            unsafe { super::bigint_ops::extract_bigint(key) }.and_then(|b| b.to_i64())
-        });
-        if let Some(idx) = idx_i64 {
-            match super::iter::range_iter_getitem(obj, idx) {
-                Some(v) => return super::bigint_ops::int_from_i64(v),
+        if key.is_int()
+            || key.is_bool()
+            || unsafe { super::bigint_ops::extract_bigint(key) }.is_some()
+        {
+            match super::iter::range_iter_getitem_value(obj, key) {
+                Some(v) => return v,
                 None => {
-                    if super::iter::mb_iter_range_params(obj).is_some() {
+                    if super::iter::is_range_handle(obj) {
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
                             MbValue::from_ptr(MbObject::new_str(
@@ -12418,22 +12415,8 @@ pub fn mb_obj_contains(obj: MbValue, item: MbValue) -> MbValue {
     }
     // Range-iterator handles look like ints (the iterator id). Match
     // CPython's range.__contains__ — O(1) math check, never iterates.
-    if let Some((current, stop, step)) = super::iter::mb_iter_range_params(obj) {
-        if let Some(v) = item.as_int() {
-            if step == 0 {
-                return MbValue::from_bool(false);
-            }
-            let in_bounds = if step > 0 {
-                v >= current && v < stop
-            } else {
-                v <= current && v > stop
-            };
-            if !in_bounds {
-                return MbValue::from_bool(false);
-            }
-            return MbValue::from_bool((v - current).rem_euclid(step.abs()) == 0);
-        }
-        return MbValue::from_bool(false);
+    if let Some(found) = super::iter::range_contains_value(obj, item) {
+        return found;
     }
     // Class-body enum class: `member in Color` / `value in Color`.
     if let Some(found) = super::stdlib::enum_class::class_contains_for_value(obj, item) {
@@ -14631,6 +14614,36 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     return mb_call_method(new_recv, method_name, rest);
                 }
             }
+        }
+    }
+
+    // Range handles share the int tag with primitive ints and other handle
+    // registries. Dispatch range-specific methods before generic int/handle
+    // fallbacks so large lazy ranges never materialize for count/index/hash.
+    if receiver.is_int() && super::iter::is_range_handle(receiver) {
+        let arg_items: Vec<MbValue> = args
+            .as_ptr()
+            .and_then(|p| unsafe {
+                if let ObjData::List(ref lk) = (*p).data {
+                    Some(lk.read().unwrap().to_vec())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        match name.as_str() {
+            "count" => {
+                let needle = arg_items.first().copied().unwrap_or_else(MbValue::none);
+                return super::iter::range_count(receiver, needle).unwrap_or_else(MbValue::none);
+            }
+            "index" => {
+                let needle = arg_items.first().copied().unwrap_or_else(MbValue::none);
+                return super::iter::range_index(receiver, needle).unwrap_or_else(MbValue::none);
+            }
+            "__hash__" => {
+                return super::iter::range_hash(receiver).unwrap_or_else(MbValue::none);
+            }
+            _ => {}
         }
     }
 
