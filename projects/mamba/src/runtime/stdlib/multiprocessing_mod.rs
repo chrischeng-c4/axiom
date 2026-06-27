@@ -350,6 +350,10 @@ unsafe extern "C" fn pool_map(_self_v: MbValue, args: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(results))
 }
 
+unsafe extern "C" fn pool_imap_unordered(self_v: MbValue, args: MbValue) -> MbValue {
+    pool_map(self_v, args)
+}
+
 unsafe extern "C" fn pool_enter(self_v: MbValue, _args: MbValue) -> MbValue {
     self_v
 }
@@ -604,6 +608,7 @@ pub fn register() {
     for (name, addr) in [
         ("apply", pool_apply as *const () as usize),
         ("map", pool_map as *const () as usize),
+        ("imap_unordered", pool_imap_unordered as *const () as usize),
         ("__enter__", pool_enter as *const () as usize),
         ("__exit__", pool_exit as *const () as usize),
         ("close", pool_exit as *const () as usize),
