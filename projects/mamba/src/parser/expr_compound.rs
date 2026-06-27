@@ -424,35 +424,159 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comprehension_targets(&mut self) -> crate::error::Result<(Vec<String>, bool)> {
-        if self.peek_kind() == Some(TokenKind::LParen) {
-            self.advance();
-            let (targets, had_comma) =
-                self.parse_comprehension_target_names_until(TokenKind::RParen)?;
-            self.expect(TokenKind::RParen)?;
-            return Ok((targets, had_comma));
+        let mut targets = Vec::new();
+        let unpack_target =
+            self.parse_comprehension_target_list_until(TokenKind::In, &mut targets)?;
+        if targets.is_empty() {
+            let span = self
+                .peek()
+                .map(|token| Span::new(self.file_id, token.start, token.end))
+                .unwrap_or_else(Span::dummy);
+            return Err(crate::error::MambaError::syntax(
+                span,
+                "expected comprehension target",
+            ));
         }
-
-        self.parse_comprehension_target_names_until(TokenKind::In)
+        Ok((targets, unpack_target))
     }
 
-    fn parse_comprehension_target_names_until(
+    fn parse_comprehension_target_list_until(
         &mut self,
         stop: TokenKind,
-    ) -> crate::error::Result<(Vec<String>, bool)> {
-        let mut targets = Vec::new();
+        targets: &mut Vec<String>,
+    ) -> crate::error::Result<bool> {
         let mut had_comma = false;
-        let (ts, te) = self.expect_name()?;
-        targets.push(self.text_at(ts, te).to_string());
-        while self.peek_kind() == Some(TokenKind::Comma) {
+        while self.peek_kind() != Some(stop.clone()) {
+            had_comma |= self.parse_comprehension_target_atom(&stop, targets)?;
+            if self.peek_kind() != Some(TokenKind::Comma) {
+                break;
+            }
             had_comma = true;
             self.advance();
             if self.peek_kind() == Some(stop.clone()) {
                 break;
             }
-            let (ts, te) = self.expect_name()?;
-            targets.push(self.text_at(ts, te).to_string());
         }
-        Ok((targets, had_comma))
+        Ok(had_comma)
+    }
+
+    fn parse_comprehension_target_atom(
+        &mut self,
+        stop: &TokenKind,
+        targets: &mut Vec<String>,
+    ) -> crate::error::Result<bool> {
+        let Some(kind) = self.peek_kind() else {
+            return Err(crate::error::MambaError::syntax(
+                Span::dummy(),
+                "unexpected end of comprehension target",
+            ));
+        };
+
+        match kind {
+            TokenKind::Star => {
+                self.advance();
+                self.parse_comprehension_target_atom(stop, targets)?;
+                Ok(true)
+            }
+            TokenKind::LParen => {
+                self.advance();
+                let had_comma =
+                    self.parse_comprehension_target_list_until(TokenKind::RParen, targets)?;
+                self.expect(TokenKind::RParen)?;
+                Ok(had_comma)
+            }
+            TokenKind::LBracket => {
+                self.advance();
+                self.parse_comprehension_target_list_until(TokenKind::RBracket, targets)?;
+                self.expect(TokenKind::RBracket)?;
+                Ok(true)
+            }
+            ref name_kind if Self::is_name_token(name_kind) => {
+                let (ts, te) = self.expect_name()?;
+                let name = self.text_at(ts, te).to_string();
+                let mut binds_name = true;
+                loop {
+                    match self.peek_kind() {
+                        Some(TokenKind::Dot) => {
+                            binds_name = false;
+                            self.advance();
+                            self.expect_name()?;
+                        }
+                        Some(TokenKind::LBracket) => {
+                            binds_name = false;
+                            self.consume_balanced_target_trailer(
+                                TokenKind::LBracket,
+                                TokenKind::RBracket,
+                            )?;
+                        }
+                        Some(TokenKind::LParen) => {
+                            binds_name = false;
+                            self.consume_balanced_target_trailer(
+                                TokenKind::LParen,
+                                TokenKind::RParen,
+                            )?;
+                        }
+                        _ => break,
+                    }
+                }
+                if binds_name {
+                    targets.push(name);
+                }
+                Ok(false)
+            }
+            _ if self.peek_kind() == Some(stop.clone()) => Ok(false),
+            _ => {
+                let span = self
+                    .peek()
+                    .map(|token| Span::new(self.file_id, token.start, token.end))
+                    .unwrap_or_else(Span::dummy);
+                Err(crate::error::MambaError::syntax(
+                    span,
+                    format!("expected identifier, got {kind}"),
+                ))
+            }
+        }
+    }
+
+    fn consume_balanced_target_trailer(
+        &mut self,
+        open: TokenKind,
+        close: TokenKind,
+    ) -> crate::error::Result<()> {
+        self.expect(open)?;
+        let mut depth = 1usize;
+        while depth > 0 {
+            let Some(kind) = self.peek_kind() else {
+                return Err(crate::error::MambaError::syntax(
+                    Span::dummy(),
+                    "unexpected end of comprehension target",
+                ));
+            };
+            match kind {
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    depth -= 1;
+                    self.advance();
+                }
+                TokenKind::Eof => {
+                    let span = self
+                        .peek()
+                        .map(|token| Span::new(self.file_id, token.start, token.end))
+                        .unwrap_or_else(Span::dummy);
+                    return Err(crate::error::MambaError::syntax(
+                        span,
+                        format!("expected {close}, got EOF"),
+                    ));
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        Ok(())
     }
 
     fn validate_comprehension_assignment_exprs(
@@ -888,6 +1012,29 @@ mod tests {
             }
             other => panic!("expected ListComp, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_list_comp_complex_target_collects_binding_names() {
+        match parse_expr("[x for a, (*b, c[d+e::f(g)], h.i) in items]") {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators[0].targets, vec!["a", "b"]);
+                assert!(generators[0].unpack_target);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_list_comp_rejects_walrus_rebinding_complex_target_name() {
+        let src = "[(a := 1) for a, (*b, c[d+e::f(g)], h.i) in j]\n";
+        let err = crate::parser::parse(src, fid()).expect_err("expected syntax error");
+        assert!(
+            err.to_string().contains(
+                "assignment expression cannot rebind comprehension iteration variable 'a'"
+            ),
+            "{err}"
+        );
     }
 
     // REQ: tick-132 test-coverage — PEP 530 async-for list comprehension gating gap.
