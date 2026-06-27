@@ -29,16 +29,17 @@ use rustc_hash::FxHashMap;
 ///     return empty list / empty iterator surfaces — sufficient for
 ///     surface-presence checks and "no active exception" callers but not for
 ///     real traceback rendering.
-///   - `clear_frames(tb)` is a no-op returning `None`.
+///   - `clear_frames(tb)` clears f_locals on mamba's synthetic traceback
+///     frame chain and returns `None`.
 ///   - `FrameSummary` / `StackSummary` / `TracebackException` are
 ///     passive Instance class-shells. Construction returns an Instance
 ///     carrying the documented CPython attribute names (best effort);
 ///     no behavioral methods are provided.
 ///
 /// Carve-outs (deliberately out of scope for this surface ticket):
-///   - Mamba's exception system is simpler than CPython's; there is no
-///     traceback object, no frame walk, no linecache integration. All
-///     functions that would consult those structures in CPython instead
+///   - Mamba's exception system is simpler than CPython's; traceback objects
+///     are synthetic and do not yet carry real frame walk or linecache data.
+///     Most functions that would consult those structures in CPython instead
 ///     return empty surfaces. This is sufficient for the #1441 3-gate
 ///     contract (Gate 1 surface, Gate 2 perf, Gate 3 ≥95% coverage)
 ///     but downstream callers that pretty-print real tracebacks will
@@ -538,7 +539,15 @@ pub fn mb_traceback_print_stack() -> MbValue {
 }
 
 /// traceback.clear_frames(tb) -> None.
-pub fn mb_traceback_clear_frames(_tb: MbValue) -> MbValue {
+pub fn mb_traceback_clear_frames(tb: MbValue) -> MbValue {
+    let mut cursor = tb;
+    while !cursor.is_none() {
+        let Some(frame) = instance_field(cursor, "tb_frame") else {
+            break;
+        };
+        clear_frame_locals(frame);
+        cursor = instance_field(cursor, "tb_next").unwrap_or_else(MbValue::none);
+    }
     MbValue::none()
 }
 
@@ -871,28 +880,72 @@ pub fn mb_traceback_traceback_exception_new(args: &[MbValue]) -> MbValue {
 
 // ── Helpers ──
 
-/// Internal helper to format an exception value as a string.
-/// Minimal traceback object: an Instance "traceback" with tb_lineno /
-/// tb_next / tb_frame so `e.__traceback__` / `sys.exc_info()[2]` are
-/// non-None and walk_tb / extract_tb have a shape to consume. Frame data
-/// is synthetic — mamba does not materialize Python frames.
+/// Minimal traceback object: a 4-node Instance "traceback" chain with
+/// tb_lineno / tb_next / tb_frame so `e.__traceback__` / `sys.exc_info()[2]`
+/// are non-None and clear_frames / walk_tb / extract_tb have a shape to
+/// consume. Frame data is synthetic — mamba does not materialize Python
+/// frames — but the innermost frame carries one local so clear_frames can
+/// match CPython's observable f_locals mutation contract.
 pub(crate) fn make_tb_instance() -> MbValue {
-    let frame = make_instance(
-        "frame",
-        vec![
-            ("f_lineno", MbValue::from_int(1)),
-            ("f_locals", MbValue::from_ptr(MbObject::new_dict())),
-            ("f_globals", MbValue::from_ptr(MbObject::new_dict())),
-        ],
-    );
+    let innermost = make_tb_node(MbValue::none(), true);
+    let middle = make_tb_node(innermost, false);
+    let outer = make_tb_node(middle, false);
+    make_tb_node(outer, false)
+}
+
+fn make_tb_node(next: MbValue, with_local: bool) -> MbValue {
+    let frame = make_frame_instance(with_local);
     make_instance(
         "traceback",
         vec![
             ("tb_lineno", MbValue::from_int(1)),
-            ("tb_next", MbValue::none()),
+            ("tb_next", next),
             ("tb_frame", frame),
         ],
     )
+}
+
+fn make_frame_instance(with_local: bool) -> MbValue {
+    let locals = MbValue::from_ptr(MbObject::new_dict());
+    if with_local {
+        super::super::dict_ops::mb_dict_setitem(
+            locals,
+            MbValue::from_ptr(MbObject::new_str("_i".to_string())),
+            MbValue::from_int(1),
+        );
+    }
+    make_instance(
+        "frame",
+        vec![
+            ("f_lineno", MbValue::from_int(1)),
+            ("f_locals", locals),
+            ("f_globals", MbValue::from_ptr(MbObject::new_dict())),
+        ],
+    )
+}
+
+fn instance_field(instance: MbValue, name: &str) -> Option<MbValue> {
+    instance.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().ok()?.get(name).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn clear_frame_locals(frame: MbValue) {
+    let Some(locals) = instance_field(frame, "f_locals") else {
+        return;
+    };
+    let Some(ptr) = locals.as_ptr() else {
+        return;
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.write().unwrap().clear();
+        }
+    }
 }
 
 /// True iff the value is an exception instance (builtin hierarchy or a
@@ -1180,6 +1233,17 @@ mod tests {
         usize::MAX
     }
 
+    fn dict_len(v: MbValue) -> usize {
+        if let Some(ptr) = v.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    return lock.read().unwrap().len();
+                }
+            }
+        }
+        usize::MAX
+    }
+
     // -- format_exc / format_exception (CPython list semantics) --
 
     #[test]
@@ -1315,6 +1379,22 @@ mod tests {
     #[test]
     fn test_clear_frames_returns_none() {
         assert!(mb_traceback_clear_frames(MbValue::none()).is_none());
+    }
+
+    #[test]
+    fn test_clear_frames_empties_synthetic_frame_locals() {
+        let tb = make_tb_instance();
+        let innermost = instance_field(
+            instance_field(instance_field(tb, "tb_next").unwrap(), "tb_next").unwrap(),
+            "tb_next",
+        )
+        .unwrap();
+        let frame = instance_field(innermost, "tb_frame").unwrap();
+        let locals = instance_field(frame, "f_locals").unwrap();
+        assert_eq!(dict_len(locals), 1);
+
+        assert!(mb_traceback_clear_frames(tb).is_none());
+        assert_eq!(dict_len(locals), 0);
     }
 
     #[test]
