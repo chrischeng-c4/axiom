@@ -8545,13 +8545,17 @@ pub fn mb_delattr(obj: MbValue, attr: MbValue) {
                     return;
                 }
             }
-            if let ObjData::Str(ref class_name) = (*ptr).data {
-                let is_class =
-                    CLASS_REGISTRY.with(|r| r.borrow().contains_key(class_name.as_str()));
+            let class_object_name = if let ObjData::Str(ref class_name) = (*ptr).data {
+                Some(class_name.clone())
+            } else {
+                type_object_name(obj)
+            };
+            if let Some(class_name) = class_object_name {
+                let is_class = CLASS_REGISTRY.with(|r| r.borrow().contains_key(&class_name));
                 if is_class {
                     let removed = CLASS_REGISTRY.with(|reg| {
                         let mut reg = reg.borrow_mut();
-                        let Some(cls) = reg.get_mut(class_name.as_str()) else {
+                        let Some(cls) = reg.get_mut(&class_name) else {
                             return false;
                         };
                         let attr_val = cls.class_attrs.remove(&attr_name);
