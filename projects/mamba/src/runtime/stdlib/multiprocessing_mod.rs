@@ -308,6 +308,21 @@ unsafe extern "C" fn pool_apply(_self_v: MbValue, args: MbValue) -> MbValue {
     super::super::builtins::mb_call_spread(func, call_args)
 }
 
+unsafe extern "C" fn pool_map(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    let func = items.first().copied().unwrap_or_else(MbValue::none);
+    if func.is_none() {
+        return MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    }
+    let iterable = items.get(1).copied().unwrap_or_else(MbValue::none);
+    let mut results = Vec::new();
+    for item in super::super::builtins::extract_items(iterable) {
+        let call_args = MbValue::from_ptr(MbObject::new_list(vec![item]));
+        results.push(super::super::builtins::mb_call_spread(func, call_args));
+    }
+    MbValue::from_ptr(MbObject::new_list(results))
+}
+
 unsafe extern "C" fn pool_enter(self_v: MbValue, _args: MbValue) -> MbValue {
     self_v
 }
@@ -547,6 +562,7 @@ pub fn register() {
     let mut pool_methods: HashMap<String, MbValue> = HashMap::new();
     for (name, addr) in [
         ("apply", pool_apply as *const () as usize),
+        ("map", pool_map as *const () as usize),
         ("__enter__", pool_enter as *const () as usize),
         ("__exit__", pool_exit as *const () as usize),
         ("close", pool_exit as *const () as usize),
