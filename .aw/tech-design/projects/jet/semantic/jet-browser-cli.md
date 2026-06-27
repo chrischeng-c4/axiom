@@ -1,14 +1,13 @@
 ---
 id: semantic-jet-browser-cli
 summary: Semantic coverage for "projects/jet/src/browser_cli"
-fill_sections: [schema, e2e-test, changes]
 capability_refs:
-  - id: rust-native-frontend-toolchain
+  - id: "rust-native-frontend-toolchain"
     role: primary
-    gap: production-replacement-readiness
-    claim: full-toolchain-dogfood-flow
+    claim: "production-replacement-readiness"
     coverage: partial
-    rationale: "Traceability repair: this existing Jet TD/source edge supports the aggregate production replacement capability."
+    rationale: "Semantic takeover coverage for existing source group `projects/jet/src/browser_cli`."
+fill_sections: [schema, changes]
 ---
 
 # Semantic TD: jet/browser_cli
@@ -26,15 +25,39 @@ semantic_domain:
       - path: "projects/jet/src/browser_cli/session.rs"
         language: "rust"
         ownership_state: "codegen"
-        generator_primitives: ["data_model", "service_method"]
+        generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
+          - name: "MODE_FOREGROUND"
+            kind: "constant"
+            public: true
+          - name: "MODE_DETACHED"
+            kind: "constant"
+            public: true
           - name: "Session"
             kind: "struct"
+            public: true
+          - name: "default_mode"
+            kind: "function"
+            public: false
+          - name: "is_detached"
+            kind: "function"
             public: true
           - name: "session_path"
             kind: "function"
             public: true
+          - name: "shutdown_request_path"
+            kind: "function"
+            public: true
           - name: "write"
+            kind: "function"
+            public: true
+          - name: "request_shutdown"
+            kind: "function"
+            public: true
+          - name: "shutdown_requested"
+            kind: "function"
+            public: true
+          - name: "clear_shutdown_request"
             kind: "function"
             public: true
           - name: "read"
@@ -67,11 +90,112 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/jet/src/browser_cli"
+      - path: "projects/jet/src/browser_cli/interact.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["config_surface", "enum_model", "service_method"]
+        symbols:
+          - name: "BB_OBSERVE_INIT_JS"
+            kind: "constant"
+            public: true
+          - name: "Target"
+            kind: "enum"
+            public: true
+          - name: "parse_target"
+            kind: "function"
+            public: true
+          - name: "is_ref_shaped"
+            kind: "function"
+            public: false
+          - name: "json_str"
+            kind: "function"
+            public: false
+          - name: "element_expr"
+            kind: "function"
+            public: false
+          - name: "action_js"
+            kind: "function"
+            public: false
+          - name: "SNAPSHOT_JS"
+            kind: "constant"
+            public: false
+          - name: "snapshot"
+            kind: "function"
+            public: true
+          - name: "click"
+            kind: "function"
+            public: true
+          - name: "fill"
+            kind: "function"
+            public: true
+          - name: "type_text"
+            kind: "function"
+            public: true
+          - name: "hover"
+            kind: "function"
+            public: true
+          - name: "select"
+            kind: "function"
+            public: true
+          - name: "set_checked"
+            kind: "function"
+            public: true
+          - name: "arm_observe_hooks"
+            kind: "function"
+            public: false
+          - name: "goto"
+            kind: "function"
+            public: true
+          - name: "history_step"
+            kind: "function"
+            public: true
+          - name: "reload"
+            kind: "function"
+            public: true
+          - name: "resize"
+            kind: "function"
+            public: true
+          - name: "wait_for_ready"
+            kind: "function"
+            public: false
+          - name: "wait"
+            kind: "function"
+            public: true
+          - name: "read_observe_buffer"
+            kind: "function"
+            public: false
+          - name: "HOOKS_HEALED_NOTE"
+            kind: "constant"
+            public: false
+          - name: "observe_result"
+            kind: "function"
+            public: false
+          - name: "console"
+            kind: "function"
+            public: true
+          - name: "requests"
+            kind: "function"
+            public: true
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/jet/src/browser_cli"
       - path: "projects/jet/src/browser_cli/mod.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method"]
         symbols:
+          - name: "interact"
+            kind: "module"
+            public: true
+          - name: "mcp"
+            kind: "module"
+            public: true
           - name: "pretty"
             kind: "module"
             public: true
@@ -99,9 +223,24 @@ semantic_domain:
           - name: "prepare_session_with_init_scripts"
             kind: "function"
             public: true
-          - name: "launch"
+          - name: "prepare_session_with_mode"
+            kind: "function"
+            public: false
+          - name: "launch_detached"
             kind: "function"
             public: true
+          - name: "launch_foreground"
+            kind: "function"
+            public: true
+          - name: "wait_for_shutdown_request"
+            kind: "function"
+            public: false
+          - name: "shutdown"
+            kind: "function"
+            public: true
+          - name: "close_remote_browser"
+            kind: "function"
+            public: false
           - name: "format_browser_cli_ctrl_c_warn"
             kind: "function"
             public: true
@@ -120,20 +259,56 @@ semantic_domain:
           - name: "frame"
             kind: "function"
             public: true
-          - name: "screenshot"
+          - name: "perf"
             kind: "function"
             public: true
-          - name: "eval"
+          - name: "dispatch_mouse_event"
+            kind: "function"
+            public: false
+          - name: "mouse"
             kind: "function"
             public: true
-          - name: "tsx"
+          - name: "wheel"
             kind: "function"
             public: true
-          - name: "gh3612_safe_chrome_path_tests"
+          - name: "drag"
+            kind: "function"
+            public: true
+          - name: "key_code_for"
+            kind: "function"
+            public: false
+          - name: "windows_virtual_key_code_for"
+            kind: "function"
+            public: false
+          - name: "dispatch_key_event"
+            kind: "function"
+            public: false
+          - name: "key"
+            kind: "function"
+            public: true
+          - name: "observation_bundle"
+            kind: "function"
+            public: true
+          - name: "read_target_manifest_bundle"
+            kind: "function"
+            public: false
+          - name: "screenshot_visual_probe_from_png"
+            kind: "function"
+            public: false
+          - name: "pixel_differs_from_background"
+            kind: "function"
+            public: false
+          - name: "screenshot_visual_probe_tests"
             kind: "module"
             public: false
-          - name: "gh3732_browser_cli_ctrl_c_warn_tests"
-            kind: "module"
+          - name: "dom_observation_bundle_from_page"
+            kind: "function"
+            public: true
+          - name: "dom_observation_bundle"
+            kind: "function"
+            public: true
+          - name: "dom_tree_expr"
+            kind: "function"
             public: false
         source_evidence_node:
           layer: "backend"
@@ -176,17 +351,53 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/jet/src/browser_cli"
-```
-
-## E2E Test
-<!-- type: e2e-test lang: yaml -->
-
-```yaml
-tests:
-  coverage_kind: semantic
-  strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
-  evidence:
-    source_tests: []
+      - path: "projects/jet/src/browser_cli/mcp.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["config_surface", "service_method"]
+        symbols:
+          - name: "PROTOCOL_VERSION"
+            kind: "constant"
+            public: false
+          - name: "SERVER_NAME"
+            kind: "constant"
+            public: false
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "write_frame"
+            kind: "function"
+            public: false
+          - name: "handle_message"
+            kind: "function"
+            public: false
+          - name: "initialize_result"
+            kind: "function"
+            public: false
+          - name: "tool_definitions"
+            kind: "function"
+            public: false
+          - name: "arg_target"
+            kind: "function"
+            public: false
+          - name: "text_content"
+            kind: "function"
+            public: false
+          - name: "arg_f64"
+            kind: "function"
+            public: false
+          - name: "call_tool"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/jet/src/browser_cli"
 ```
 
 ## Changes
@@ -201,6 +412,14 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/jet/src/browser_cli/interact.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:jet-bb-semantic-surface>"
   - path: "projects/jet/src/browser_cli/mod.rs"
     action: modify
     section: schema
@@ -213,11 +432,12 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: ".aw/tech-design/projects/jet/semantic/jet-browser-cli.md"
-    action: verify
-    section: e2e-test
-    impl_mode: hand-written
+  - path: "projects/jet/src/browser_cli/mcp.rs"
+    action: modify
+    section: schema
     description: |
-      Traceability repair: hand-written TD section retained as the implementation edge during AW standardization.
-
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:jet-bb-mcp-server>"
 ```
