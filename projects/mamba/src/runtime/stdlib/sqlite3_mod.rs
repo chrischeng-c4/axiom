@@ -8,6 +8,10 @@ use rustc_hash::FxHashMap;
 /// No external dependency (no rusqlite).
 use std::collections::HashMap;
 
+const CONNECTION_CLASS: &str = "sqlite3.Connection";
+const CURSOR_CLASS: &str = "sqlite3.Cursor";
+const ROW_CLASS: &str = "sqlite3.Row";
+
 // ── Variadic dispatchers (callable from module-attr context) ──
 
 macro_rules! disp_unary {
@@ -103,6 +107,57 @@ unsafe extern "C" fn m_connection_execute(self_v: MbValue, args: MbValue) -> MbV
 unsafe extern "C" fn m_connection_executemany(self_v: MbValue, args: MbValue) -> MbValue {
     let cur = mb_sqlite3_cursor(self_v);
     m_cursor_executemany(cur, args)
+}
+
+fn raise_type_error(message: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(message.to_string())),
+    );
+    MbValue::none()
+}
+
+fn sqlite_callback_looks_callable(value: MbValue) -> bool {
+    if super::super::builtins::mb_callable(value).as_bool() == Some(true) {
+        return true;
+    }
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(&(*ptr).data, ObjData::Instance { class_name, .. } if class_name == "method")
+    })
+}
+
+fn store_callback_or_none(conn: MbValue, field: &str, callback: MbValue) -> MbValue {
+    if callback.is_none() {
+        inst_set_field(conn, field, MbValue::none());
+        return MbValue::none();
+    }
+    if sqlite_callback_looks_callable(callback) {
+        inst_set_field(conn, field, callback);
+        return MbValue::none();
+    }
+    raise_type_error("the first argument must be callable")
+}
+
+unsafe extern "C" fn m_connection_set_trace_callback(self_v: MbValue, args: MbValue) -> MbValue {
+    let callback = args_vec(args).first().copied().unwrap_or_else(MbValue::none);
+    store_callback_or_none(self_v, "_trace_callback", callback)
+}
+
+unsafe extern "C" fn m_connection_set_progress_handler(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = args_vec(args);
+    let callback = a.first().copied().unwrap_or_else(MbValue::none);
+    let result = store_callback_or_none(self_v, "_progress_handler", callback);
+    if result.is_none() {
+        if let Some(n) = a.get(1).and_then(|v| v.as_int()) {
+            inst_set_field(self_v, "_progress_handler_n", MbValue::from_int(n));
+        }
+    }
+    result
+}
+
+unsafe extern "C" fn m_connection_set_authorizer(self_v: MbValue, args: MbValue) -> MbValue {
+    let callback = args_vec(args).first().copied().unwrap_or_else(MbValue::none);
+    store_callback_or_none(self_v, "_authorizer", callback)
 }
 
 unsafe extern "C" fn m_connection_commit(self_v: MbValue, _args: MbValue) -> MbValue {
@@ -316,6 +371,9 @@ fn register_sqlite3_classes() {
             ("cursor",      m_connection_cursor      as *const () as usize),
             ("execute",     m_connection_execute     as *const () as usize),
             ("executemany", m_connection_executemany as *const () as usize),
+            ("set_trace_callback", m_connection_set_trace_callback as *const () as usize),
+            ("set_progress_handler", m_connection_set_progress_handler as *const () as usize),
+            ("set_authorizer", m_connection_set_authorizer as *const () as usize),
             ("commit",      m_connection_commit      as *const () as usize),
             ("rollback",    m_connection_rollback    as *const () as usize),
             ("close",       m_connection_close       as *const () as usize),
@@ -325,7 +383,7 @@ fn register_sqlite3_classes() {
             super::super::module::register_variadic_func(addr as u64);
             methods.insert(name.to_string(), MbValue::from_func(addr));
         }
-        mb_class_register("Connection", Vec::new(), methods);
+        mb_class_register(CONNECTION_CLASS, Vec::new(), methods);
     }
 
     // Cursor.
@@ -344,7 +402,7 @@ fn register_sqlite3_classes() {
             super::super::module::register_variadic_func(addr as u64);
             methods.insert(name.to_string(), MbValue::from_func(addr));
         }
-        mb_class_register("Cursor", Vec::new(), methods);
+        mb_class_register(CURSOR_CLASS, Vec::new(), methods);
     }
 
     // Row — dual index/name access via __getitem__.
@@ -353,7 +411,7 @@ fn register_sqlite3_classes() {
         let addr = m_row_getitem as *const () as usize;
         super::super::module::register_variadic_func(addr as u64);
         methods.insert("__getitem__".to_string(), MbValue::from_func(addr));
-        mb_class_register("Row", Vec::new(), methods);
+        mb_class_register(ROW_CLASS, Vec::new(), methods);
     }
 
     // Exception taxonomy — base before subclass so MRO accumulates ancestors.
@@ -432,9 +490,6 @@ pub fn register() {
     // is true simply because the attr is present.
     register_sqlite3_classes();
     for cls in [
-        "Connection",
-        "Cursor",
-        "Row",
         "Error",
         "InterfaceError",
         "DatabaseError",
@@ -448,6 +503,16 @@ pub fn register() {
         attrs.insert(
             cls.to_string(),
             MbValue::from_ptr(MbObject::new_str(cls.to_string())),
+        );
+    }
+    for (public_name, class_name) in [
+        ("Connection", CONNECTION_CLASS),
+        ("Cursor", CURSOR_CLASS),
+        ("Row", ROW_CLASS),
+    ] {
+        attrs.insert(
+            public_name.to_string(),
+            MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
         );
     }
 
@@ -1040,7 +1105,7 @@ fn build_row(values: &[RValue], columns: &[String], row_factory: Option<MbValue>
     let mbs: Vec<MbValue> = values.iter().map(rvalue_to_mb).collect();
     let is_row = row_factory
         .and_then(extract_str)
-        .map(|s| s == "Row")
+        .map(|s| s == ROW_CLASS || s == "Row")
         .unwrap_or(false);
     if is_row {
         let mut fields: FxHashMap<String, MbValue> = FxHashMap::default();
@@ -1056,7 +1121,7 @@ fn build_row(values: &[RValue], columns: &[String], row_factory: Option<MbValue>
             "_columns".to_string(),
             MbValue::from_ptr(MbObject::new_tuple_borrowed(colvals)),
         );
-        new_instance_with_fields("Row", fields)
+        new_instance_with_fields(ROW_CLASS, fields)
     } else {
         MbValue::from_ptr(MbObject::new_tuple_borrowed(mbs))
     }
@@ -1145,7 +1210,11 @@ pub fn mb_sqlite3_connect(db_path: MbValue) -> MbValue {
     fields.insert("closed".to_string(), MbValue::from_bool(false));
     fields.insert("_cid".to_string(), MbValue::from_int(cid as i64));
     fields.insert("row_factory".to_string(), MbValue::none());
-    new_instance_with_fields("Connection", fields)
+    fields.insert("_trace_callback".to_string(), MbValue::none());
+    fields.insert("_progress_handler".to_string(), MbValue::none());
+    fields.insert("_progress_handler_n".to_string(), MbValue::none());
+    fields.insert("_authorizer".to_string(), MbValue::none());
+    new_instance_with_fields(CONNECTION_CLASS, fields)
 }
 
 /// conn.cursor() -> a `Cursor` bound to the connection (inherits row_factory).
@@ -1164,7 +1233,7 @@ pub fn mb_sqlite3_cursor(conn: MbValue) -> MbValue {
     fields.insert("rowcount".to_string(), MbValue::from_int(-1));
     fields.insert("lastrowid".to_string(), MbValue::none());
     fields.insert("description".to_string(), MbValue::none());
-    new_instance_with_fields("Cursor", fields)
+    new_instance_with_fields(CURSOR_CLASS, fields)
 }
 #[cfg(test)]
 mod tests {
@@ -1222,7 +1291,7 @@ mod tests {
     #[test]
     fn test_connect_with_str_path() {
         let conn = mb_sqlite3_connect(s(":memory:"));
-        assert_eq!(instance_class(conn), Some("Connection".to_string()));
+        assert_eq!(instance_class(conn), Some(CONNECTION_CLASS.to_string()));
         assert_eq!(field_str(conn, "database"), Some(":memory:".to_string()));
     }
 
@@ -1238,7 +1307,7 @@ mod tests {
         let conn = mb_sqlite3_connect(s(":memory:"));
         let cursor = mb_sqlite3_cursor(conn);
         // cursor() returns a distinct Cursor instance (not the connection).
-        assert_eq!(instance_class(cursor), Some("Cursor".to_string()));
+        assert_eq!(instance_class(cursor), Some(CURSOR_CLASS.to_string()));
     }
 
     // --- real backend fields/methods ---
@@ -1258,5 +1327,18 @@ mod tests {
         assert_eq!(inst_field(cursor, "_cid").and_then(|v| v.as_int()), inst_field(conn, "_cid").and_then(|v| v.as_int()));
         assert!(inst_field(cursor, "_curid").and_then(|v| v.as_int()).is_some());
         assert_eq!(inst_field(cursor, "rowcount").and_then(|v| v.as_int()), Some(-1));
+    }
+
+    #[test]
+    fn test_connection_callback_setters_accept_none_clear() {
+        let conn = mb_sqlite3_connect(s(":memory:"));
+        unsafe {
+            assert!(m_connection_set_trace_callback(conn, MbValue::none()).is_none());
+            assert!(m_connection_set_progress_handler(conn, MbValue::none()).is_none());
+            assert!(m_connection_set_authorizer(conn, MbValue::none()).is_none());
+        }
+        assert!(inst_field(conn, "_trace_callback").unwrap().is_none());
+        assert!(inst_field(conn, "_progress_handler").unwrap().is_none());
+        assert!(inst_field(conn, "_authorizer").unwrap().is_none());
     }
 }
