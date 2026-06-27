@@ -5840,6 +5840,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         if super::closure::mb_func_is_registered(class_attr) {
                             return make_bound_method(class_attr, obj);
                         }
+                        if let Some(addr) = class_attr.as_func() {
+                            if super::module::is_native_func(addr as u64)
+                                || super::module::is_variadic_func(addr as u64)
+                                || super::module::is_kwargs_func(addr as u64)
+                            {
+                                return make_bound_native_method(obj, &attr_name);
+                            }
+                        }
                         super::rc::retain_if_ptr(class_attr);
                         return class_attr;
                     }
