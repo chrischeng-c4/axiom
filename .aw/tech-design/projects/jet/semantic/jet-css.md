@@ -1,14 +1,13 @@
 ---
 id: semantic-jet-css
 summary: Semantic coverage for "projects/jet/src/css"
-fill_sections: [schema, e2e-test, changes]
 capability_refs:
-  - id: rust-native-frontend-toolchain
+  - id: "rust-native-frontend-toolchain"
     role: primary
-    gap: production-replacement-readiness
-    claim: full-toolchain-dogfood-flow
+    claim: "production-replacement-readiness"
     coverage: partial
-    rationale: "Traceability repair: this existing Jet TD/source edge supports the aggregate production replacement capability."
+    rationale: "Semantic takeover coverage for existing source group `projects/jet/src/css`."
+fill_sections: [schema, changes]
 ---
 
 # Semantic TD: jet/css
@@ -78,6 +77,9 @@ semantic_domain:
           - name: "plugins"
             kind: "module"
             public: true
+          - name: "scss"
+            kind: "module"
+            public: true
           - name: "tailwind"
             kind: "module"
             public: true
@@ -128,6 +130,35 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/jet/src/css"
+      - path: "projects/jet/src/css/scss.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "is_scss_path"
+            kind: "function"
+            public: true
+          - name: "is_sass_path"
+            kind: "function"
+            public: true
+          - name: "is_sass_family_path"
+            kind: "function"
+            public: true
+          - name: "compile_sass_source"
+            kind: "function"
+            public: true
+          - name: "compile_sass_file"
+            kind: "function"
+            public: true
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/jet/src/css"
       - path: "projects/jet/src/css/directives.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -168,17 +199,6 @@ semantic_domain:
           domain: "projects/jet/src/css"
 ```
 
-## E2E Test
-<!-- type: e2e-test lang: yaml -->
-
-```yaml
-tests:
-  coverage_kind: semantic
-  strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
-  evidence:
-    source_tests: []
-```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
@@ -203,17 +223,18 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/jet/src/css/scss.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-jet-src-css-scss-rs>"
   - path: "projects/jet/src/css/directives.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: ".aw/tech-design/projects/jet/semantic/jet-css.md"
-    action: verify
-    section: e2e-test
-    impl_mode: hand-written
-    description: |
-      Traceability repair: hand-written TD section retained as the implementation edge during AW standardization.
-
 ```
