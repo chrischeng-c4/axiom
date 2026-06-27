@@ -43,6 +43,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
     use super::module;
     use super::pep695;
     use super::set_ops;
+    use super::stdlib::functools_mod;
     use super::string_ops;
     use super::tokio_exec;
     use super::tuple_ops;
@@ -221,8 +222,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_type3_kwargs",
             builtins::mb_type3_kwargs
-                as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue)
-                    -> super::MbValue,
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
             [I64, I64, I64, I64],
             I64
         ),
@@ -259,8 +264,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         ),
         rt_sym!(
             "mb_breakpoint_call",
-            builtins::mb_breakpoint_call
-                as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            builtins::mb_breakpoint_call as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
@@ -1942,6 +1946,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             closure::mb_func_set_srcinfo as fn(super::MbValue, super::MbValue, super::MbValue),
             [I64, I64, I64],
             Void
+        ),
+        rt_sym!(
+            "mb_singledispatch_register_annotation",
+            functools_mod::mb_singledispatch_register_annotation
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
         ),
         rt_sym!(
             "mb_fstring_value",

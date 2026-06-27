@@ -66,6 +66,14 @@ pub struct HirFunction {
     pub name: SymbolId,
     pub params: Vec<(SymbolId, TypeId)>,
     pub return_ty: TypeId,
+    /// Per-definition signature metadata. This must travel with the function
+    /// occurrence, not only in HirModule.func_sigs keyed by SymbolId, because
+    /// Python permits repeated helper defs with the same name.
+    pub func_sig: Option<HirFuncSig>,
+    /// Public symbol this function definition binds after decorators run.
+    /// Usually None/name; decorated repeated defs can use a unique implementation
+    /// symbol while rebinding the same public Python name.
+    pub bind_name: Option<SymbolId>,
     pub body: Vec<HirStmt>,
     pub span: Span,
     /// Captured variable symbols (for closures)
@@ -268,8 +276,10 @@ pub enum HirStmt {
     /// to the earlier decorator's wrapper/dummy).
     FuncDefPlaceholder {
         name: SymbolId,
+        bind_name: Option<SymbolId>,
         span: Span,
         redef: bool,
+        func_sig: Option<HirFuncSig>,
     },
     /// Placeholder for a decorated class definition in the top-level order.
     /// Class registration itself happens at the top of the module body
@@ -819,6 +829,8 @@ mod tests {
             name: SymbolId(0),
             params: vec![(SymbolId(1), int_ty), (SymbolId(2), int_ty)],
             return_ty: int_ty,
+            func_sig: None,
+            bind_name: None,
             body: vec![],
             span: Span::dummy(),
             captures: vec![SymbolId(10)],
