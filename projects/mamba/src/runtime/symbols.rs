@@ -1807,6 +1807,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_generator_set_local_names",
+            generator::mb_generator_set_local_names as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
             "mb_generator_next",
             generator::mb_generator_next as fn(super::MbValue) -> super::MbValue,
             [I64],

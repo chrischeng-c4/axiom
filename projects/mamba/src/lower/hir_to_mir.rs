@@ -1778,6 +1778,18 @@ impl<'a> HirToMir<'a> {
         let bool_ty = self.tcx.bool();
         let float_ty = self.tcx.float();
         let any_ty = self.tcx.any();
+        let generator_arg_names: Vec<String> = func
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, (sym, _))| {
+                self.sym_names
+                    .get(sym)
+                    .cloned()
+                    .unwrap_or_else(|| format!("arg{i}"))
+            })
+            .collect();
+        let generator_yield_local = self.first_yield_var_name(&func.body);
 
         // Synthetic SymbolId for the body function
         let body_sym = SymbolId(func.name.0.wrapping_add(3_000_000));
@@ -1889,6 +1901,28 @@ impl<'a> HirToMir<'a> {
             ty: int_ty,
         });
 
+        let mut local_name_vregs: Vec<VReg> = Vec::new();
+        for name in &generator_arg_names {
+            local_name_vregs.push(self.emit_str_const(name));
+        }
+        let yield_name_vreg = generator_yield_local
+            .as_ref()
+            .map(|name| self.emit_str_const(name))
+            .unwrap_or_else(|| self.emit_none());
+        local_name_vregs.push(yield_name_vreg);
+        let local_names_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: local_names_vreg,
+            elements: local_name_vregs,
+            ty: any_ty,
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_generator_set_local_names".to_string(),
+            args: vec![gen_handle, local_names_vreg],
+            ty: none_ty,
+        });
+
         // Store function args for deferred thread spawn. NaN-box each primitive
         // arg first so the stored value is always a proper MbValue: `call_body_fn`
         // delivers these to the body verbatim (as i64 bits), and the body unboxes
@@ -1914,6 +1948,238 @@ impl<'a> HirToMir<'a> {
             return_ty: int_ty,
             blocks: std::mem::take(&mut self.blocks),
         }
+    }
+
+    fn first_yield_var_name(&self, stmts: &[HirStmt]) -> Option<String> {
+        self.first_yield_var_in_stmts(stmts)
+            .and_then(|sym| self.sym_names.get(&sym).cloned())
+    }
+
+    fn first_yield_var_in_stmts(&self, stmts: &[HirStmt]) -> Option<SymbolId> {
+        for stmt in stmts {
+            if let Some(sym) = self.first_yield_var_in_stmt(stmt) {
+                return Some(sym);
+            }
+        }
+        None
+    }
+
+    fn first_yield_var_in_stmt(&self, stmt: &HirStmt) -> Option<SymbolId> {
+        match stmt {
+            HirStmt::Let { value, .. } => self.first_yield_var_in_expr(value),
+            HirStmt::Assign { value, .. } => self.first_yield_var_in_expr(value),
+            HirStmt::Return { value, .. } => value
+                .as_ref()
+                .and_then(|expr| self.first_yield_var_in_expr(expr)),
+            HirStmt::Expr { expr, .. } => self.first_yield_var_in_expr(expr),
+            HirStmt::If {
+                cond,
+                then_body,
+                else_body,
+                ..
+            } => self
+                .first_yield_var_in_expr(cond)
+                .or_else(|| self.first_yield_var_in_stmts(then_body))
+                .or_else(|| self.first_yield_var_in_stmts(else_body)),
+            HirStmt::While {
+                cond,
+                body,
+                else_body,
+                ..
+            } => self
+                .first_yield_var_in_expr(cond)
+                .or_else(|| self.first_yield_var_in_stmts(body))
+                .or_else(|| self.first_yield_var_in_stmts(else_body)),
+            HirStmt::For {
+                iter,
+                body,
+                else_body,
+                ..
+            } => self
+                .first_yield_var_in_expr(iter)
+                .or_else(|| self.first_yield_var_in_stmts(body))
+                .or_else(|| self.first_yield_var_in_stmts(else_body)),
+            HirStmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+                ..
+            } => self
+                .first_yield_var_in_stmts(body)
+                .or_else(|| {
+                    handlers
+                        .iter()
+                        .find_map(|handler| self.first_yield_var_in_stmts(&handler.body))
+                })
+                .or_else(|| self.first_yield_var_in_stmts(else_body))
+                .or_else(|| self.first_yield_var_in_stmts(finally_body)),
+            HirStmt::With { items, body, .. } => items
+                .iter()
+                .find_map(|(expr, _)| self.first_yield_var_in_expr(expr))
+                .or_else(|| self.first_yield_var_in_stmts(body)),
+            HirStmt::Assert { test, msg, .. } => self
+                .first_yield_var_in_expr(test)
+                .or_else(|| msg.as_ref().and_then(|expr| self.first_yield_var_in_expr(expr))),
+            HirStmt::Raise { value, from, .. } => value
+                .as_ref()
+                .and_then(|expr| self.first_yield_var_in_expr(expr))
+                .or_else(|| from.as_ref().and_then(|expr| self.first_yield_var_in_expr(expr))),
+            HirStmt::Del { target, .. } => self.first_yield_var_in_lvalue(target),
+            HirStmt::Match { subject, cases, .. } => self
+                .first_yield_var_in_expr(subject)
+                .or_else(|| {
+                    cases
+                        .iter()
+                        .find_map(|case| self.first_yield_var_in_stmts(&case.body))
+                }),
+            HirStmt::Break { .. }
+            | HirStmt::Continue { .. }
+            | HirStmt::Import { .. }
+            | HirStmt::Global { .. }
+            | HirStmt::Nonlocal { .. }
+            | HirStmt::FuncDefPlaceholder { .. }
+            | HirStmt::ClassDefPlaceholder { .. } => None,
+        }
+    }
+
+    fn first_yield_var_in_lvalue(&self, target: &crate::hir::HirLValue) -> Option<SymbolId> {
+        match target {
+            crate::hir::HirLValue::Attr { object, .. }
+            | crate::hir::HirLValue::Index { object, .. } => self.first_yield_var_in_expr(object),
+            crate::hir::HirLValue::Unpack { targets, .. } => targets
+                .iter()
+                .find_map(|target| self.first_yield_var_in_lvalue(target)),
+            crate::hir::HirLValue::Var(_) => None,
+        }
+    }
+
+    fn first_yield_var_in_expr(&self, expr: &HirExpr) -> Option<SymbolId> {
+        match expr {
+            HirExpr::Yield {
+                value: Some(value),
+                ..
+            } => match &**value {
+                HirExpr::Var(sym, _) => Some(*sym),
+                other => self.first_yield_var_in_expr(other),
+            },
+            HirExpr::Yield { value: None, .. } => None,
+            HirExpr::YieldFrom { iter, .. } | HirExpr::Await { value: iter, .. } => {
+                self.first_yield_var_in_expr(iter)
+            }
+            HirExpr::BinOp { lhs, rhs, .. } => self
+                .first_yield_var_in_expr(lhs)
+                .or_else(|| self.first_yield_var_in_expr(rhs)),
+            HirExpr::UnaryOp { operand, .. } => self.first_yield_var_in_expr(operand),
+            HirExpr::Call { func, args, .. } => self
+                .first_yield_var_in_expr(func)
+                .or_else(|| args.iter().find_map(|arg| self.first_yield_var_in_expr(arg))),
+            HirExpr::Attr { object, .. } => self.first_yield_var_in_expr(object),
+            HirExpr::Index { object, index, .. } => self
+                .first_yield_var_in_expr(object)
+                .or_else(|| self.first_yield_var_in_expr(index)),
+            HirExpr::List { elements, .. }
+            | HirExpr::Set { elements, .. }
+            | HirExpr::Tuple { elements, .. } => elements
+                .iter()
+                .find_map(|element| self.first_yield_var_in_expr(element)),
+            HirExpr::Dict { entries, .. } => entries.iter().find_map(|(key, value)| {
+                self.first_yield_var_in_expr(key)
+                    .or_else(|| self.first_yield_var_in_expr(value))
+            }),
+            HirExpr::Slice {
+                start, stop, step, ..
+            } => start
+                .as_ref()
+                .and_then(|expr| self.first_yield_var_in_expr(expr))
+                .or_else(|| stop.as_ref().and_then(|expr| self.first_yield_var_in_expr(expr)))
+                .or_else(|| step.as_ref().and_then(|expr| self.first_yield_var_in_expr(expr))),
+            HirExpr::IfExpr {
+                cond,
+                then_val,
+                else_val,
+                ..
+            } => self
+                .first_yield_var_in_expr(cond)
+                .or_else(|| self.first_yield_var_in_expr(then_val))
+                .or_else(|| self.first_yield_var_in_expr(else_val)),
+            HirExpr::Lambda { body, .. } => self.first_yield_var_in_expr(body),
+            HirExpr::ListComp {
+                element,
+                generators,
+                ..
+            }
+            | HirExpr::SetComp {
+                element,
+                generators,
+                ..
+            } => self
+                .first_yield_var_in_expr(element)
+                .or_else(|| self.first_yield_var_in_comprehensions(generators)),
+            HirExpr::DictComp {
+                key,
+                value,
+                generators,
+                ..
+            } => self
+                .first_yield_var_in_expr(key)
+                .or_else(|| self.first_yield_var_in_expr(value))
+                .or_else(|| self.first_yield_var_in_comprehensions(generators)),
+            HirExpr::AnyAllComp {
+                element,
+                generators,
+                ..
+            } => self
+                .first_yield_var_in_expr(element)
+                .or_else(|| self.first_yield_var_in_comprehensions(generators)),
+            HirExpr::FString { parts, .. } => parts.iter().find_map(|part| match part {
+                crate::hir::HirFStringPart::Expr(expr, spec) => self
+                    .first_yield_var_in_expr(expr)
+                    .or_else(|| {
+                        spec.as_ref()
+                            .and_then(|parts| self.first_yield_var_in_fstring_parts(parts))
+                    }),
+                crate::hir::HirFStringPart::Literal(_) => None,
+            }),
+            HirExpr::Walrus { target: _, value, .. } => self.first_yield_var_in_expr(value),
+            HirExpr::IntLit(_, _)
+            | HirExpr::BigIntLit(_, _)
+            | HirExpr::FloatLit(_, _)
+            | HirExpr::StrLit(_, _)
+            | HirExpr::BytesLit(_, _)
+            | HirExpr::BoolLit(_, _)
+            | HirExpr::NoneLit(_)
+            | HirExpr::Var(_, _) => None,
+        }
+    }
+
+    fn first_yield_var_in_comprehensions(
+        &self,
+        generators: &[crate::hir::HirComprehension],
+    ) -> Option<SymbolId> {
+        generators.iter().find_map(|gen| {
+            self.first_yield_var_in_expr(&gen.iter)
+                .or_else(|| {
+                    gen.conditions
+                        .iter()
+                        .find_map(|cond| self.first_yield_var_in_expr(cond))
+                })
+        })
+    }
+
+    fn first_yield_var_in_fstring_parts(
+        &self,
+        parts: &[crate::hir::HirFStringPart],
+    ) -> Option<SymbolId> {
+        parts.iter().find_map(|part| match part {
+            crate::hir::HirFStringPart::Expr(expr, spec) => self
+                .first_yield_var_in_expr(expr)
+                .or_else(|| {
+                    spec.as_ref()
+                        .and_then(|parts| self.first_yield_var_in_fstring_parts(parts))
+                }),
+            crate::hir::HirFStringPart::Literal(_) => None,
+        })
     }
 
     /// Lower async function into wrapper + body (#313 R1).
