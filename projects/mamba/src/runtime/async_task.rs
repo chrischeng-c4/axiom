@@ -55,7 +55,7 @@ pub fn mb_task_done(task_handle: MbValue) -> MbValue {
 
 /// Get the result of a completed task.
 pub fn mb_task_result(task_handle: MbValue) -> MbValue {
-    if let Some(id) = task_handle.as_int() {
+    let result = if let Some(id) = task_handle.as_int() {
         TASKS
             .read()
             .unwrap()
@@ -64,7 +64,11 @@ pub fn mb_task_result(task_handle: MbValue) -> MbValue {
             .unwrap_or(MbValue::none())
     } else {
         MbValue::none()
+    };
+    unsafe {
+        super::rc::retain_if_ptr(result);
     }
+    result
 }
 
 // ── Task Cancellation ──
@@ -369,13 +373,22 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
             return MbValue::none();
         }
         // Fast path: coroutine already complete
-        let exhausted = COROUTINES
+        let (state, exhausted) = COROUTINES
             .read()
             .unwrap()
             .get(&(id as u64))
-            .map(|c| c.exhausted)
-            .unwrap_or(true);
+            .map(|c| (c.state, c.exhausted))
+            .unwrap_or((0, true));
         if exhausted {
+            if state != 0 {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "cannot reuse already awaited coroutine".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
             let result = COROUTINES
                 .read()
                 .unwrap()
@@ -452,12 +465,21 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         }
         result
     } else if let Some(result) = await_asyncio_task(awaitable) {
+        unsafe {
+            super::rc::retain_if_ptr(result);
+        }
         result
     } else if let Some(result) = await_asyncio_future(awaitable) {
+        unsafe {
+            super::rc::retain_if_ptr(result);
+        }
         result
     } else {
         // await on a non-coroutine (e.g. list from asyncio.gather, constant value):
         // pass through unchanged so users can `await asyncio.gather(...)`.
+        unsafe {
+            super::rc::retain_if_ptr(awaitable);
+        }
         awaitable
     }
 }
@@ -551,9 +573,6 @@ fn await_asyncio_task(awaitable: MbValue) -> Option<MbValue> {
         .get(&coro_id)
         .is_some_and(|coro| coro.exhausted)
     {
-        unsafe {
-            super::rc::retain_if_ptr(result);
-        }
         return Some(result);
     }
     Some(awaitable)
@@ -592,12 +611,7 @@ fn await_asyncio_future(awaitable: MbValue) -> Option<MbValue> {
             raise_cancelled_error();
             Some(MbValue::none())
         }
-        "FINISHED" => {
-            unsafe {
-                super::rc::retain_if_ptr(result);
-            }
-            Some(result)
-        }
+        "FINISHED" => Some(result),
         _ => Some(awaitable),
     }
 }
@@ -656,7 +670,7 @@ pub fn mb_gather(coros: MbValue) -> MbValue {
                             .unwrap_or(MbValue::none())
                     })
                     .collect();
-                return MbValue::from_ptr(MbObject::new_list(results));
+                return MbValue::from_ptr(MbObject::new_list_borrowed(results));
             }
         }
     }
@@ -767,12 +781,16 @@ pub fn mb_run_until_complete(main_coro: MbValue) -> MbValue {
         event_loop.tick();
     }
 
-    TASKS
+    let result = TASKS
         .read()
         .unwrap()
         .get(&main_task_id)
         .map(|t| t.result)
-        .unwrap_or(MbValue::none())
+        .unwrap_or(MbValue::none());
+    unsafe {
+        super::rc::retain_if_ptr(result);
+    }
+    result
 }
 
 // ── GIL Management (#313 R3) ──
