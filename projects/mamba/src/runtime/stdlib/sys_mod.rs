@@ -6,7 +6,7 @@ use super::super::value::MbValue;
 ///           sys.maxsize, sys.exit(), sys.getrecursionlimit(),
 ///           sys.setrecursionlimit(), sys.getdefaultencoding(),
 ///           sys.float_info, sys.int_info, sys.stdin, sys.stdout,
-///           sys.stderr, sys.modules
+///           sys.stderr, sys.modules, sys._getframe()
 use std::collections::HashMap;
 
 // ── Dispatch wrappers ──
@@ -81,6 +81,10 @@ unsafe extern "C" fn dispatch_is_finalizing(_args_ptr: *const MbValue, _nargs: u
 
 unsafe extern "C" fn dispatch_exc_info(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     mb_sys_exc_info()
+}
+
+unsafe extern "C" fn dispatch_getframe(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    super::inspect_mod::make_current_frame()
 }
 
 unsafe extern "C" fn dispatch_getfilesystemencoding(
@@ -1149,6 +1153,7 @@ pub fn register() {
             dispatch_is_finalizing as *const () as usize,
         ),
         ("exc_info", dispatch_exc_info as *const () as usize),
+        ("_getframe", dispatch_getframe as *const () as usize),
         (
             "getfilesystemencoding",
             dispatch_getfilesystemencoding as *const () as usize,
@@ -1534,6 +1539,10 @@ pub fn mb_sys_exc_info() -> MbValue {
     let type_val = MbValue::from_ptr(MbObject::new_str(etype));
     let tb_val = exception_traceback_value(value_val);
     MbValue::from_ptr(MbObject::new_tuple(vec![type_val, value_val, tb_val]))
+}
+
+pub fn mb_sys_getframe_with_locals(locals: MbValue) -> MbValue {
+    super::inspect_mod::make_current_frame_with_locals(locals)
 }
 
 /// sys.getfilesystemencoding() → 'utf-8'.

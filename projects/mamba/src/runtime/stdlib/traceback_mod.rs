@@ -169,6 +169,10 @@ pub fn register() {
             "from_list".into(),
             MbValue::from_func(dispatch_ss_from_list as *const () as usize),
         );
+        ss.insert(
+            "extract".into(),
+            MbValue::from_func(dispatch_ss_extract as *const () as usize),
+        );
         ss.insert("format".into(), var(ss_format as *const () as usize));
         ss.insert("__getitem__".into(), var(ss_getitem as *const () as usize));
         ss.insert("__setitem__".into(), var(ss_setitem as *const () as usize));
@@ -190,6 +194,7 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             let mut s = s.borrow_mut();
             s.insert(dispatch_ss_from_list as *const () as usize as u64);
+            s.insert(dispatch_ss_extract as *const () as usize as u64);
             s.insert(dispatch_te_from_exception as *const () as usize as u64);
         });
         super::super::module::NATIVE_TYPE_NAMES.with(|m| {
@@ -664,6 +669,52 @@ unsafe extern "C" fn dispatch_ss_from_list(args_ptr: *const MbValue, nargs: usiz
     make_stack_summary(entries)
 }
 
+/// `StackSummary.extract(frame_gen, *, capture_locals=False, ...)`.
+///
+/// Mamba only has synthetic frame shells, but CPython callers expect extract()
+/// to consume `(frame, lineno)` pairs and optionally snapshot `frame.f_locals`
+/// as repr strings.
+unsafe extern "C" fn dispatch_ss_extract(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let pos = positional(a);
+    let src = pos.first().copied().unwrap_or_else(MbValue::none);
+    let capture_locals = kwarg(a, "capture_locals")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let mut entries = Vec::new();
+    for item in super::super::builtins::extract_items(src) {
+        let pair = list_items_of(item);
+        let frame = pair.first().copied().unwrap_or_else(MbValue::none);
+        let lineno = pair
+            .get(1)
+            .copied()
+            .or_else(|| instance_field(frame, "f_lineno"))
+            .unwrap_or_else(|| MbValue::from_int(1));
+        let locals = if capture_locals {
+            frame_locals_repr_dict(frame)
+        } else {
+            MbValue::none()
+        };
+        entries.push(make_instance(
+            "FrameSummary",
+            vec![
+                (
+                    "filename",
+                    MbValue::from_ptr(MbObject::new_str("<mamba>.py".to_string())),
+                ),
+                ("lineno", lineno),
+                (
+                    "name",
+                    MbValue::from_ptr(MbObject::new_str("<module>".to_string())),
+                ),
+                ("locals", locals),
+                ("line", MbValue::none()),
+            ],
+        ));
+    }
+    make_stack_summary(entries)
+}
+
 unsafe extern "C" fn ss_format(self_v: MbValue, _args: MbValue) -> MbValue {
     let mut lines: Vec<MbValue> = Vec::new();
     for entry in stack_entries(self_v) {
@@ -954,6 +1005,33 @@ fn clear_frame_locals(frame: MbValue) {
             lock.write().unwrap().clear();
         }
     }
+}
+
+fn frame_locals_repr_dict(frame: MbValue) -> MbValue {
+    let out = MbValue::from_ptr(MbObject::new_dict());
+    if let Some(locals) = instance_field(frame, "f_locals") {
+        if let Some(ptr) = locals.as_ptr() {
+            let pairs: Vec<(MbValue, MbValue)> = unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    lock.read()
+                        .unwrap()
+                        .iter()
+                        .map(|(key, value)| {
+                            (super::super::dict_ops::dict_key_to_mbvalue(key), *value)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            };
+            for (key, value) in pairs {
+                let key = super::super::builtins::mb_str(key);
+                let value = super::super::builtins::mb_repr(value);
+                super::super::dict_ops::mb_dict_setitem(out, key, value);
+            }
+        }
+    }
+    out
 }
 
 /// True iff the value is an exception instance (builtin hierarchy or a
@@ -1335,6 +1413,36 @@ mod tests {
             }
         }
         panic!("format_tb did not return a list");
+    }
+
+    #[test]
+    fn test_stack_summary_extract_captures_synthetic_locals() {
+        let frame = make_frame_instance(true);
+        let pair = MbValue::from_ptr(MbObject::new_tuple(vec![frame, MbValue::from_int(1)]));
+        let src = MbValue::from_ptr(MbObject::new_list(vec![pair]));
+        let kwargs = MbValue::from_ptr(MbObject::new_dict());
+        super::super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("capture_locals".to_string())),
+            MbValue::from_bool(true),
+        );
+
+        let with_args = [src, kwargs];
+        let with = unsafe { dispatch_ss_extract(with_args.as_ptr(), with_args.len()) };
+        let entry = stack_entries(with)[0];
+        let locals = instance_field(entry, "locals").unwrap();
+        assert_eq!(dict_len(locals), 1);
+        let value = super::super::super::dict_ops::mb_dict_get(
+            locals,
+            MbValue::from_ptr(MbObject::new_str("_i".to_string())),
+            MbValue::none(),
+        );
+        assert_eq!(extract_str(value).as_deref(), Some("1"));
+
+        let without_args = [src];
+        let without = unsafe { dispatch_ss_extract(without_args.as_ptr(), without_args.len()) };
+        let entry = stack_entries(without)[0];
+        assert!(instance_field(entry, "locals").unwrap().is_none());
     }
 
     #[test]
