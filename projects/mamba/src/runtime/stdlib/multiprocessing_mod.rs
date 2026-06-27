@@ -2,20 +2,36 @@ use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 /// multiprocessing module for Mamba (#1476).
 ///
-/// Minimal callable-dispatcher shim covering the four most-used
-/// top-level entry points on 3.12 (`multiprocessing.Process`,
-/// `multiprocessing.Queue`, `multiprocessing.cpu_count`,
-/// `multiprocessing.current_process`). All four return an empty
-/// dict sentinel today; their job here is to be identity-stable
-/// module-attribute reads so the `multiprocessing` module-attribute
-/// resolver short-circuits CPython's module-dict probe chain for
-/// read-only sentinels.
+/// Minimal callable-dispatcher shim covering the most-used top-level
+/// entry points on 3.12. It keeps module-attribute reads stable and
+/// implements the small stateful subset needed by current conformance
+/// fixtures (`Process`, `Array`, and duplex `Pipe` connections).
 ///
 /// Full functional conformance (Gate 1 behavior + Gate 3 typeshed
 /// surface) is tracked separately under #1476; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the stdlib
 /// conformance issues have closed against.
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
+
+struct PipeState {
+    inbox: [VecDeque<MbValue>; 2],
+    closed: [bool; 2],
+}
+
+#[derive(Clone, Copy)]
+struct PendingProcess {
+    process: MbValue,
+    target: MbValue,
+    args: MbValue,
+}
+
+static NEXT_PIPE_ID: AtomicU64 = AtomicU64::new(1);
+static PIPES: LazyLock<Mutex<HashMap<u64, PipeState>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static PENDING_PROCESSES: LazyLock<Mutex<Vec<PendingProcess>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 fn kwargs_get(kwargs: MbValue, name: &str) -> Option<MbValue> {
     let ptr = kwargs.as_ptr()?;
@@ -58,6 +74,47 @@ fn set_process_field(process: MbValue, name: &str, value: MbValue) {
     }
 }
 
+fn is_pipe_connection(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. } if class_name == "Connection"
+        )
+    })
+}
+
+fn has_pipe_arg(args: MbValue) -> bool {
+    super::super::builtins::extract_items(args)
+        .into_iter()
+        .any(is_pipe_connection)
+}
+
+fn defer_process(process: MbValue, target: MbValue, args: MbValue) {
+    retain_field(process);
+    retain_field(target);
+    retain_field(args);
+    PENDING_PROCESSES.lock().unwrap().push(PendingProcess {
+        process,
+        target,
+        args,
+    });
+}
+
+fn run_pending_processes() {
+    let pending: Vec<PendingProcess> = {
+        let mut queue = PENDING_PROCESSES.lock().unwrap();
+        queue.drain(..).collect()
+    };
+    for item in pending {
+        if !item.target.is_none() {
+            super::super::builtins::mb_call_spread(item.target, item.args);
+        }
+        set_process_field(item.process, "_started", MbValue::from_bool(true));
+        set_process_field(item.process, "_deferred", MbValue::from_bool(false));
+        set_process_field(item.process, "exitcode", MbValue::from_int(0));
+    }
+}
+
 unsafe extern "C" fn dispatch_process(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kwargs = a.last().copied().unwrap_or_else(MbValue::none);
@@ -91,10 +148,125 @@ unsafe extern "C" fn dispatch_array(args_ptr: *const MbValue, nargs: usize) -> M
     )
 }
 
+fn make_connection(pipe_id: u64, end: usize) -> MbValue {
+    let conn = MbValue::from_ptr(MbObject::new_instance("Connection".to_string()));
+    if let Some(ptr) = conn.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut f = fields.write().unwrap();
+                f.insert("_pipe_id".to_string(), MbValue::from_int(pipe_id as i64));
+                f.insert("_end".to_string(), MbValue::from_int(end as i64));
+                f.insert("_closed".to_string(), MbValue::from_bool(false));
+            }
+        }
+    }
+    conn
+}
+
+fn connection_parts(conn: MbValue) -> Option<(u64, usize)> {
+    let ptr = conn.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if class_name != "Connection" {
+                return None;
+            }
+            let f = fields.read().unwrap();
+            let pipe_id = f.get("_pipe_id")?.as_int()? as u64;
+            let end = f.get("_end")?.as_int()? as usize;
+            Some((pipe_id, end.min(1)))
+        } else {
+            None
+        }
+    }
+}
+
+unsafe extern "C" fn dispatch_pipe(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    let pipe_id = NEXT_PIPE_ID.fetch_add(1, Ordering::Relaxed);
+    PIPES.lock().unwrap().insert(
+        pipe_id,
+        PipeState {
+            inbox: [VecDeque::new(), VecDeque::new()],
+            closed: [false, false],
+        },
+    );
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        make_connection(pipe_id, 0),
+        make_connection(pipe_id, 1),
+    ]))
+}
+
+unsafe extern "C" fn connection_send(self_v: MbValue, args: MbValue) -> MbValue {
+    let Some((pipe_id, end)) = connection_parts(self_v) else {
+        return MbValue::none();
+    };
+    let item = super::super::builtins::extract_items(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
+    let other = 1 - end;
+    if let Some(state) = PIPES.lock().unwrap().get_mut(&pipe_id) {
+        if !state.closed[end] {
+            retain_field(item);
+            state.inbox[other].push_back(item);
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn connection_recv(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some((pipe_id, end)) = connection_parts(self_v) else {
+        return MbValue::none();
+    };
+    if let Some(value) = PIPES
+        .lock()
+        .unwrap()
+        .get_mut(&pipe_id)
+        .and_then(|state| state.inbox[end].pop_front())
+    {
+        return value;
+    }
+    run_pending_processes();
+    PIPES
+        .lock()
+        .unwrap()
+        .get_mut(&pipe_id)
+        .and_then(|state| state.inbox[end].pop_front())
+        .unwrap_or_else(MbValue::none)
+}
+
+unsafe extern "C" fn connection_close(self_v: MbValue, _args: MbValue) -> MbValue {
+    if let Some((pipe_id, end)) = connection_parts(self_v) {
+        if let Some(state) = PIPES.lock().unwrap().get_mut(&pipe_id) {
+            state.closed[end] = true;
+        }
+        if let Some(ptr) = self_v.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    fields
+                        .write()
+                        .unwrap()
+                        .insert("_closed".to_string(), MbValue::from_bool(true));
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
 unsafe extern "C" fn process_start(self_v: MbValue, _args: MbValue) -> MbValue {
     let target = process_field(self_v, "target");
     if !target.is_none() {
         let call_args = process_field(self_v, "args");
+        if has_pipe_arg(call_args) {
+            defer_process(self_v, target, call_args);
+            set_process_field(self_v, "_started", MbValue::from_bool(true));
+            set_process_field(self_v, "_deferred", MbValue::from_bool(true));
+            return MbValue::none();
+        }
         super::super::builtins::mb_call_spread(target, call_args);
     }
     set_process_field(self_v, "_started", MbValue::from_bool(true));
@@ -103,6 +275,7 @@ unsafe extern "C" fn process_start(self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn process_join(_self_v: MbValue, _args: MbValue) -> MbValue {
+    run_pending_processes();
     MbValue::none()
 }
 
@@ -204,6 +377,9 @@ pub fn register() {
     attrs.insert("Array".into(), MbValue::from_func(addr_array));
     attrs.insert("RawArray".into(), MbValue::from_func(addr_array));
 
+    let addr_pipe = dispatch_pipe as *const () as usize;
+    attrs.insert("Pipe".into(), MbValue::from_func(addr_pipe));
+
     let addr_queue = dispatch_queue as *const () as usize;
     attrs.insert("Queue".into(), MbValue::from_func(addr_queue));
 
@@ -220,6 +396,7 @@ pub fn register() {
         let mut set = s.borrow_mut();
         set.insert(addr_process as u64);
         set.insert(addr_array as u64);
+        set.insert(addr_pipe as u64);
         set.insert(addr_queue as u64);
         set.insert(addr_cpu_count as u64);
         set.insert(addr_current_process as u64);
@@ -284,6 +461,7 @@ pub fn register() {
     // Array / RawArray / get_context / Value validate or construct real state (override stubs).
     attrs.insert("Array".into(), MbValue::from_func(addr_array));
     attrs.insert("RawArray".into(), MbValue::from_func(addr_array));
+    attrs.insert("Pipe".into(), MbValue::from_func(addr_pipe));
     let addr_get_context = dispatch_get_context as *const () as usize;
     attrs.insert("get_context".into(), MbValue::from_func(addr_get_context));
     let addr_value = dispatch_value as *const () as usize;
@@ -312,6 +490,20 @@ pub fn register() {
         process_methods.insert(name.to_string(), MbValue::from_func(addr));
     }
     super::super::class::mb_class_register("Process", Vec::new(), process_methods);
+
+    let mut connection_methods: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("send", connection_send as *const () as usize),
+        ("recv", connection_recv as *const () as usize),
+        ("close", connection_close as *const () as usize),
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+        connection_methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register("Connection", Vec::new(), connection_methods);
 
     super::register_module("multiprocessing", attrs);
 }
