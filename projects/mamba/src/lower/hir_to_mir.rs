@@ -1288,6 +1288,10 @@ struct HirToMir<'a> {
     /// exception (CPython clears the handled exception when the handler frame
     /// unwinds). See the `HirStmt::Try` handler-body lowering.
     handler_region_tokens: Vec<VReg>,
+    /// Exception exit targets for handler bodies that still owe a finally block.
+    /// A `raise` inside an except handler is not allowed to return past the
+    /// try/finally; it must run the finally body first, then propagate.
+    handler_raise_exit_stack: Vec<BlockId>,
     /// Symbol table for variable classification (global/nonlocal/cell/free).
     /// None when created without symbols (basic lowering).
     symbol_table: Option<&'a SymbolTable>,
@@ -1424,6 +1428,7 @@ impl<'a> HirToMir<'a> {
             with_exit_stack: Vec::new(),
             finally_body_stack: Vec::new(),
             handler_region_tokens: Vec::new(),
+            handler_raise_exit_stack: Vec::new(),
             symbol_table: None,
             sym_types: HashMap::new(),
             sym_names: HashMap::new(),
@@ -1584,6 +1589,7 @@ impl<'a> HirToMir<'a> {
             with_exit_stack: Vec::new(),
             finally_body_stack: Vec::new(),
             handler_region_tokens: Vec::new(),
+            handler_raise_exit_stack: Vec::new(),
             symbol_table: None,
             sym_types: HashMap::new(),
             sym_names: HashMap::new(),
@@ -3507,8 +3513,14 @@ impl<'a> HirToMir<'a> {
                             }
                             let prev_active = self.active_except_vreg;
                             self.active_except_vreg = Some(matched);
+                            if !finally_body.is_empty() {
+                                self.handler_raise_exit_stack.push(finally_block);
+                            }
                             for s in &h.body {
                                 self.lower_stmt(s);
+                            }
+                            if !finally_body.is_empty() {
+                                self.handler_raise_exit_stack.pop();
                             }
                             self.active_except_vreg = prev_active;
                             self.finish_block(Terminator::Goto(skip_block));
@@ -3556,6 +3568,7 @@ impl<'a> HirToMir<'a> {
                                 args: vec![caught_exc, type_vreg],
                                 ty: self.tcx.bool(),
                             });
+                            self.emit_exception_propagate();
                             let handler_body_block = self.fresh_block();
                             let next_check = if i + 1 < handlers.len() {
                                 let nb = self.fresh_block();
@@ -3589,8 +3602,14 @@ impl<'a> HirToMir<'a> {
                         }
                         let prev_active = self.active_except_vreg;
                         self.active_except_vreg = Some(caught_exc);
+                        if !finally_body.is_empty() {
+                            self.handler_raise_exit_stack.push(finally_block);
+                        }
                         for s in &h.body {
                             self.lower_stmt(s);
+                        }
+                        if !finally_body.is_empty() {
+                            self.handler_raise_exit_stack.pop();
                         }
                         self.active_except_vreg = prev_active;
                         self.finish_block(Terminator::Goto(finally_block));
@@ -3601,9 +3620,13 @@ impl<'a> HirToMir<'a> {
                         let reraise_finally = self.fresh_block();
                         self.finish_block(Terminator::Goto(reraise_finally));
                         self.start_block(reraise_finally);
+                        let prev_active = self.active_except_vreg;
+                        self.active_except_vreg = Some(caught_exc);
                         for s in finally_body.iter() {
                             self.lower_stmt(s);
+                            self.emit_exception_propagate();
                         }
+                        self.active_except_vreg = prev_active;
                         // Re-raise the caught exception
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: None,
@@ -3635,9 +3658,45 @@ impl<'a> HirToMir<'a> {
                     args: vec![handled_exc_token],
                     ty: self.tcx.none(),
                 });
+                let finally_context = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(finally_context),
+                    name: "mb_get_exception".to_string(),
+                    args: Vec::new(),
+                    ty: self.tcx.any(),
+                });
+                self.emit_extern_call(None, "mb_clear_exception");
+                let prev_active = self.active_except_vreg;
+                self.active_except_vreg = Some(finally_context);
                 for s in finally_body {
                     self.lower_stmt(s);
+                    self.emit_exception_propagate();
                 }
+                self.active_except_vreg = prev_active;
+                let restore_pending = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(restore_pending),
+                    name: "mb_is_not_none".to_string(),
+                    args: vec![finally_context],
+                    ty: self.tcx.bool(),
+                });
+                let restore_block = self.fresh_block();
+                let after_restore_block = self.fresh_block();
+                self.finish_block(Terminator::Branch {
+                    cond: restore_pending,
+                    then_block: restore_block,
+                    else_block: after_restore_block,
+                });
+                self.start_block(restore_block);
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_reraise".to_string(),
+                    args: vec![finally_context],
+                    ty: self.tcx.none(),
+                });
+                self.finish_block(Terminator::Goto(after_restore_block));
+                self.start_block(after_restore_block);
+                self.emit_exception_propagate();
                 self.finish_block(Terminator::Goto(merge_block));
                 self.start_block(merge_block);
                 // except* can leave a reraised unmatched sub-group in CURRENT_EXCEPTION
@@ -3843,22 +3902,53 @@ impl<'a> HirToMir<'a> {
                         // Pattern: raise ExcType (bare, no call)
                         if let HirExpr::Var(sym, _) = value_expr {
                             if let Some(class_name) = self.class_syms.get(&sym.0).cloned() {
-                                let type_vreg = self.emit_str_const(&class_name);
-                                let msg_vreg = self.emit_str_const("");
-                                let (raise_fn, mut raise_args) = if has_context {
-                                    ("mb_raise_with_context", vec![type_vreg, msg_vreg])
+                                if self.user_class_syms.contains(&sym.0) {
+                                    let type_vreg = self.emit_str_const(&class_name);
+                                    let args_list = self.fresh_vreg();
+                                    self.current_stmts.push(MirInst::MakeList {
+                                        dest: args_list,
+                                        elements: Vec::new(),
+                                        ty: self.tcx.any(),
+                                    });
+                                    let instance = self.fresh_vreg();
+                                    self.current_stmts.push(MirInst::CallExtern {
+                                        dest: Some(instance),
+                                        name: "mb_instance_new_with_init".to_string(),
+                                        args: vec![type_vreg, args_list],
+                                        ty: self.tcx.any(),
+                                    });
+                                    let (raise_fn, raise_args) = if has_context {
+                                        (
+                                            "mb_raise_instance_with_context",
+                                            vec![instance, self.active_except_vreg.unwrap()],
+                                        )
+                                    } else {
+                                        ("mb_raise_instance", vec![instance])
+                                    };
+                                    self.current_stmts.push(MirInst::CallExtern {
+                                        dest: None,
+                                        name: raise_fn.to_string(),
+                                        args: raise_args,
+                                        ty: self.tcx.none(),
+                                    });
                                 } else {
-                                    ("mb_raise", vec![type_vreg, msg_vreg])
-                                };
-                                if has_context {
-                                    raise_args.push(self.active_except_vreg.unwrap());
+                                    let type_vreg = self.emit_str_const(&class_name);
+                                    let msg_vreg = self.emit_str_const("");
+                                    let (raise_fn, mut raise_args) = if has_context {
+                                        ("mb_raise_with_context", vec![type_vreg, msg_vreg])
+                                    } else {
+                                        ("mb_raise", vec![type_vreg, msg_vreg])
+                                    };
+                                    if has_context {
+                                        raise_args.push(self.active_except_vreg.unwrap());
+                                    }
+                                    self.current_stmts.push(MirInst::CallExtern {
+                                        dest: None,
+                                        name: raise_fn.to_string(),
+                                        args: raise_args,
+                                        ty: self.tcx.none(),
+                                    });
                                 }
-                                self.current_stmts.push(MirInst::CallExtern {
-                                    dest: None,
-                                    name: raise_fn.to_string(),
-                                    args: raise_args,
-                                    ty: self.tcx.none(),
-                                });
                                 raise_emitted = true;
                             }
                         }
@@ -3931,6 +4021,11 @@ impl<'a> HirToMir<'a> {
                         // unwound this handler frame). Also keeps the runtime
                         // save stack balanced on the raise-out-of-handler path.
                         self.emit_handler_region_restores();
+                        if let Some(target) = self.handler_raise_exit_stack.last().copied() {
+                            self.finish_block(Terminator::Goto(target));
+                            self.start_block(dead_block);
+                            return;
+                        }
                         let none_vreg = self.emit_none();
                         self.finish_block(Terminator::Return(Some(none_vreg)));
                         self.start_block(dead_block);
