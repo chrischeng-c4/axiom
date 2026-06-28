@@ -1829,6 +1829,77 @@ fn build_class_namespace_dict(class_name: &str) -> MbValue {
     dict
 }
 
+fn is_dict_value(value: MbValue) -> bool {
+    value
+        .as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+}
+
+fn merge_namespace_dict(target: MbValue, source: MbValue) {
+    let entries: Vec<(String, MbValue)> = source
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                Some(
+                    lock.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|(key, value)| {
+                            if let super::dict_ops::DictKey::Str(name) = key {
+                                Some((name.clone(), *value))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    for (key, value) in entries {
+        super::dict_ops::mb_dict_setitem(
+            target,
+            MbValue::from_ptr(MbObject::new_str(key)),
+            value,
+        );
+    }
+}
+
+fn prepared_class_namespace(meta: &str, class_name: &str) -> Option<MbValue> {
+    if lookup_method(meta, "__prepare__").is_none() {
+        return None;
+    }
+    let name_val = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
+    let bases = class_bases_tuple(class_name);
+    let prepared = mb_call_metaclass_prepare(meta, name_val, bases);
+    if super::exception::current_exception_type().is_some() {
+        return Some(prepared);
+    }
+    if !is_dict_value(prepared) {
+        return None;
+    }
+    let body_namespace = build_class_namespace_dict(class_name);
+    merge_namespace_dict(prepared, body_namespace);
+    Some(prepared)
+}
+
+pub fn mb_call_metaclass_prepare(meta_name: &str, name: MbValue, bases: MbValue) -> MbValue {
+    let method = lookup_method(meta_name, "__prepare__");
+    if method.is_none() {
+        return MbValue::none();
+    }
+    let (callable, descriptor_kind) = unwrap_descriptor_method(method);
+    let mut args = Vec::new();
+    if !matches!(descriptor_kind, DescriptorKind::StaticMethod) {
+        args.push(make_type_object(meta_name));
+    }
+    args.push(name);
+    args.push(bases);
+    super::builtins::mb_call_spread(callable, MbValue::from_ptr(MbObject::new_list(args)))
+}
+
 fn sync_class_namespace_from_dict(class_name: &str, namespace: MbValue) {
     let entries: Vec<(String, MbValue)> = namespace
         .as_ptr()
@@ -1924,11 +1995,21 @@ fn call_metaclass_method(meta: &str, method_name: &str, args: Vec<MbValue>) -> M
     super::builtins::mb_call_spread(method, MbValue::from_ptr(MbObject::new_list_borrowed(args)))
 }
 
-fn run_metaclass_definition_hooks(class_name: &str, meta: &str) {
+fn run_metaclass_definition_hooks(
+    class_name: &str,
+    meta: &str,
+    namespace_override: Option<MbValue>,
+) {
     if meta.is_empty() || meta == "type" {
         return;
     }
-    let namespace = build_class_namespace_dict(class_name);
+    let namespace = namespace_override
+        .or_else(|| prepared_class_namespace(meta, class_name))
+        .unwrap_or_else(|| build_class_namespace_dict(class_name));
+    if super::exception::current_exception_type().is_some() {
+        clear_classcell_state(class_name);
+        return;
+    }
     let bases = class_bases_tuple(class_name);
     let name_val = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
     let meta_val = make_type_object(meta);
@@ -1985,7 +2066,41 @@ pub fn mb_class_finalize_definition(class_name: MbValue) {
         }
     });
     if let Some(meta) = meta {
-        run_metaclass_definition_hooks(&name, &meta);
+        run_metaclass_definition_hooks(&name, &meta, None);
+    }
+}
+
+pub fn mb_class_finalize_definition_with_namespace(class_name: MbValue, namespace: MbValue) {
+    let name = match extract_str(class_name) {
+        Some(name) if !name.is_empty() => name,
+        _ => return,
+    };
+    let snapshot = CLASS_REGISTRY.with(|reg| {
+        reg.borrow().get(&name).map(|cls| {
+            (
+                cls.metaclass_finalized,
+                cls.metaclass.clone(),
+                cls.bases.clone(),
+            )
+        })
+    });
+    let Some((already_finalized, explicit_meta, bases)) = snapshot else {
+        return;
+    };
+    if already_finalized {
+        return;
+    }
+    let meta = explicit_meta.or_else(|| inherited_metaclass_for_bases(&bases));
+    CLASS_REGISTRY.with(|reg| {
+        if let Some(cls) = reg.borrow_mut().get_mut(&name) {
+            if cls.metaclass.is_none() {
+                cls.metaclass = meta.clone();
+            }
+            cls.metaclass_finalized = true;
+        }
+    });
+    if let Some(meta) = meta {
+        run_metaclass_definition_hooks(&name, &meta, Some(namespace));
     }
 }
 
@@ -4187,7 +4302,66 @@ fn seed_builtin_data_subclass_value(instance: MbValue, args_list: MbValue, base:
     true
 }
 
+fn mark_class_metaclass_finalized(class_name: &str) {
+    CLASS_REGISTRY.with(|reg| {
+        if let Some(cls) = reg.borrow_mut().get_mut(class_name) {
+            cls.metaclass_finalized = true;
+        }
+    });
+}
+
+pub(crate) fn type_new_unbound(items: &[MbValue]) -> MbValue {
+    if items.len() != 4 {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "type.__new__() takes exactly 4 arguments".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    let metaclass = items[0];
+    let Some(meta_name) = resolve_class_name(metaclass) else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "type.__new__(X): X is not a type object".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    let type_obj = super::builtins::mb_type3(items[1], items[2], items[3]);
+    if super::exception::current_exception_type().is_some() {
+        return type_obj;
+    }
+    if let Some(class_name) = resolve_class_name(type_obj).or_else(|| extract_str(items[1])) {
+        if meta_name != "type" {
+            mb_class_set_metaclass(
+                MbValue::from_ptr(MbObject::new_str(class_name.clone())),
+                MbValue::from_ptr(MbObject::new_str(meta_name)),
+            );
+        }
+        mark_class_metaclass_finalized(&class_name);
+    }
+    type_obj
+}
+
+pub(crate) fn type_init_unbound(items: &[MbValue]) -> MbValue {
+    if items.is_empty() || resolve_class_name(items[0]).is_none() {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "type.__init__(X): X is not a type object".to_string(),
+            )),
+        );
+    }
+    MbValue::none()
+}
+
 pub(crate) fn builtin_type_new_unbound(type_name: &str, items: &[MbValue]) -> Option<MbValue> {
+    if type_name == "type" {
+        return Some(type_new_unbound(items));
+    }
     if !matches!(
         type_name,
         "str" | "int" | "float" | "complex" | "list" | "dict" | "tuple" | "set" | "frozenset"
@@ -16764,6 +16938,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     items.push(receiver);
                 }
                 return object_new_unbound(&items);
+            }
+            if s == "type" && name == "__init__" {
+                let items = super::builtins::extract_items(args);
+                return type_init_unbound(&items);
             }
             if s == "object" && name == "__init__" {
                 let items = super::builtins::extract_items(args);
