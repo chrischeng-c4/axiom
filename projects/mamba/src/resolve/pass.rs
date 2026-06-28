@@ -2066,6 +2066,7 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2344,6 +2345,7 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2377,6 +2379,7 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["k".into()],
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2408,6 +2411,7 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["v".into()],
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2439,6 +2443,7 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["n".into()],
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2467,6 +2472,7 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["fresh_var".into()],
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2523,6 +2529,7 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2558,6 +2565,7 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![sp(Expr::BinOp {
                             op: BinOp::Gt,
@@ -2604,6 +2612,7 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,

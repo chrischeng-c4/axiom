@@ -403,7 +403,8 @@ impl<'a> Parser<'a> {
             };
             self.expect(TokenKind::For)?;
 
-            let (targets, unpack_target) = self.parse_comprehension_targets()?;
+            let (targets, unpack_target, target_reads_before_bind) =
+                self.parse_comprehension_targets()?;
 
             self.expect(TokenKind::In)?;
             let iter = self.parse_expr_bp(0)?;
@@ -415,6 +416,7 @@ impl<'a> Parser<'a> {
             generators.push(Comprehension {
                 targets,
                 unpack_target,
+                target_reads_before_bind,
                 iter,
                 conditions,
                 is_async,
@@ -423,10 +425,13 @@ impl<'a> Parser<'a> {
         Ok(generators)
     }
 
-    fn parse_comprehension_targets(&mut self) -> crate::error::Result<(Vec<String>, bool)> {
+    fn parse_comprehension_targets(
+        &mut self,
+    ) -> crate::error::Result<(Vec<String>, bool, Vec<String>)> {
         let mut targets = Vec::new();
+        let mut target_reads = Vec::new();
         let unpack_target =
-            self.parse_comprehension_target_list_until(TokenKind::In, &mut targets)?;
+            self.parse_comprehension_target_list_until(TokenKind::In, &mut targets, &mut target_reads)?;
         if targets.is_empty() {
             let span = self
                 .peek()
@@ -437,17 +442,22 @@ impl<'a> Parser<'a> {
                 "expected comprehension target",
             ));
         }
-        Ok((targets, unpack_target))
+        let target_reads_before_bind = target_reads
+            .into_iter()
+            .filter(|name| targets.iter().any(|target| target == name))
+            .collect();
+        Ok((targets, unpack_target, target_reads_before_bind))
     }
 
     fn parse_comprehension_target_list_until(
         &mut self,
         stop: TokenKind,
         targets: &mut Vec<String>,
+        target_reads: &mut Vec<String>,
     ) -> crate::error::Result<bool> {
         let mut had_comma = false;
         while self.peek_kind() != Some(stop.clone()) {
-            had_comma |= self.parse_comprehension_target_atom(&stop, targets)?;
+            had_comma |= self.parse_comprehension_target_atom(&stop, targets, target_reads)?;
             if self.peek_kind() != Some(TokenKind::Comma) {
                 break;
             }
@@ -464,6 +474,7 @@ impl<'a> Parser<'a> {
         &mut self,
         stop: &TokenKind,
         targets: &mut Vec<String>,
+        target_reads: &mut Vec<String>,
     ) -> crate::error::Result<bool> {
         let Some(kind) = self.peek_kind() else {
             return Err(crate::error::MambaError::syntax(
@@ -475,19 +486,27 @@ impl<'a> Parser<'a> {
         match kind {
             TokenKind::Star => {
                 self.advance();
-                self.parse_comprehension_target_atom(stop, targets)?;
+                self.parse_comprehension_target_atom(stop, targets, target_reads)?;
                 Ok(true)
             }
             TokenKind::LParen => {
                 self.advance();
                 let had_comma =
-                    self.parse_comprehension_target_list_until(TokenKind::RParen, targets)?;
+                    self.parse_comprehension_target_list_until(
+                        TokenKind::RParen,
+                        targets,
+                        target_reads,
+                    )?;
                 self.expect(TokenKind::RParen)?;
                 Ok(had_comma)
             }
             TokenKind::LBracket => {
                 self.advance();
-                self.parse_comprehension_target_list_until(TokenKind::RBracket, targets)?;
+                self.parse_comprehension_target_list_until(
+                    TokenKind::RBracket,
+                    targets,
+                    target_reads,
+                )?;
                 self.expect(TokenKind::RBracket)?;
                 Ok(true)
             }
@@ -521,6 +540,8 @@ impl<'a> Parser<'a> {
                 }
                 if binds_name {
                     targets.push(name);
+                } else {
+                    target_reads.push(name);
                 }
                 Ok(false)
             }
@@ -1019,6 +1040,18 @@ mod tests {
         match parse_expr("[x for a, (*b, c[d+e::f(g)], h.i) in items]") {
             Expr::ListComp { generators, .. } => {
                 assert_eq!(generators[0].targets, vec!["a", "b"]);
+                assert!(generators[0].unpack_target);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_list_comp_records_target_read_before_bind() {
+        match parse_expr("[1 for l[0], l in items]") {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators[0].targets, vec!["l"]);
+                assert_eq!(generators[0].target_reads_before_bind, vec!["l"]);
                 assert!(generators[0].unpack_target);
             }
             other => panic!("expected ListComp, got {other:?}"),
