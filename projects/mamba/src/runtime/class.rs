@@ -7504,6 +7504,11 @@ fn mb_getattr_impl(
                             return MbValue::from_ptr(MbObject::new_tuple(names));
                         }
                     }
+                    if matches!(attr_name.as_str(), "_asdict" | "_replace")
+                        && fields.read().unwrap().contains_key("_namedtuple_fields")
+                    {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
                     // defaultdict.default_factory — the stored factory callable.
                     if class_name == "collections.defaultdict" && attr_name == "default_factory" {
                         let factory = fields

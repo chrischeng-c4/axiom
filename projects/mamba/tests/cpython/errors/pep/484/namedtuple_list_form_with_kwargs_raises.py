@@ -9,7 +9,7 @@
 # case = "namedtuple_list_form_with_kwargs_raises"
 # subject = "typing.NamedTuple"
 # kind = "mechanical"
-# xfail = "mamba does not reject mixing the NamedTuple list form with keyword fields (project_mamba_class_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

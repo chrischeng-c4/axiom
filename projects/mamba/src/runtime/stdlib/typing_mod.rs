@@ -1623,9 +1623,21 @@ pub fn mb_typing_assert_type(val: MbValue, _typ: MbValue) -> MbValue {
 pub fn mb_typing_is_typeddict(tp: MbValue) -> MbValue {
     if let Some(ptr) = tp.as_ptr() {
         unsafe {
-            if let super::super::rc::ObjData::Str(ref name) = (*ptr).data {
+            let name = match &(*ptr).data {
+                super::super::rc::ObjData::Str(name) => Some(name.clone()),
+                super::super::rc::ObjData::Instance { class_name, fields }
+                    if class_name == "type" =>
+                {
+                    fields
+                        .read()
+                        .ok()
+                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                }
+                _ => None,
+            };
+            if let Some(name) = name {
                 let is_td = name == "TypedDict"
-                    || super::super::class::class_mro_any(name, |c| c == "TypedDict");
+                    || super::super::class::class_mro_any(&name, |c| c == "TypedDict");
                 return MbValue::from_bool(is_td);
             }
         }
