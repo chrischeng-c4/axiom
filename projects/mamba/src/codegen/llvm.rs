@@ -464,7 +464,7 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
             value,
         } => {
             ir.push_str(&format!(
-                "  call void @mb_list_setitem(i64 %v{}, i64 %v{}, i64 %v{})\n",
+                "  call void @mb_obj_setitem(i64 %v{}, i64 %v{}, i64 %v{})\n",
                 object.0, index.0, value.0
             ));
         }

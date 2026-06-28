@@ -329,6 +329,41 @@ fn test_str_index_type() {
     assert!(errors.is_empty(), "str[0] should be str: {errors:?}");
 }
 
+#[test]
+fn test_user_subscript_assignment_does_not_require_receiver_type() {
+    let errors = check(
+        "class Recorder:\n\
+         \x20   def __setitem__(self, key, value):\n\
+         \x20       pass\n\
+         r = Recorder()\n\
+         r[1:2] = 42\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "user __setitem__ slice assignment should be runtime-dispatched: {errors:?}"
+    );
+}
+
+#[test]
+fn test_subscript_assignment_list_index_still_checks_element_type() {
+    let errors = check("xs: list[int] = [1]\nxs[0] = \"bad\"\n");
+    assert!(
+        errors.iter().any(|e| e.contains("expected `int`, got `str`")),
+        "list element assignment mismatch should still be rejected: {errors:?}"
+    );
+}
+
+#[test]
+fn test_subscript_assignment_list_slice_checks_list_value_type() {
+    let errors = check("xs: list[int] = [1]\nxs[0:1] = [\"bad\"]\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `list[int]`, got `list[str]`")),
+        "list slice assignment mismatch should still be rejected: {errors:?}"
+    );
+}
+
 // --- #249: Exception hierarchy ---
 
 #[test]

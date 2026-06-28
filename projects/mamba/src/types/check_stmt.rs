@@ -173,6 +173,11 @@ impl TypeChecker {
                     define_unpack_targets(self, &target.node);
                     return;
                 }
+                if let Expr::Index { object, index } = &target.node {
+                    self.check_subscript_assignment(object, index, value);
+                    return;
+                }
+
                 let target_ty = self.check_expr(target);
                 let value_ty = self.check_expr(value);
                 if !self.types_compatible(target_ty, value_ty) {
@@ -961,6 +966,39 @@ impl TypeChecker {
             }
         }
         None // no explicit __match_args__
+    }
+
+    fn check_subscript_assignment(
+        &mut self,
+        object: &Spanned<Expr>,
+        index: &Spanned<Expr>,
+        value: &Spanned<Expr>,
+    ) {
+        let obj_ty = self.check_expr(object);
+        self.check_expr(index);
+        let value_ty = self.check_expr(value);
+        let is_slice = matches!(index.node, Expr::Slice { .. });
+        let expected = match self.tcx.get(obj_ty).clone() {
+            Ty::List(elem) if is_slice => Some(self.tcx.intern(Ty::List(elem))),
+            Ty::List(elem) => Some(elem),
+            Ty::Dict(_, value) => Some(value),
+            Ty::Any | Ty::Error => None,
+            _ => None,
+        };
+
+        let Some(expected_ty) = expected else {
+            return;
+        };
+        if !self.types_compatible(expected_ty, value_ty) {
+            self.error(
+                value.span,
+                format!(
+                    "type mismatch in assignment: expected `{}`, got `{}`",
+                    self.ty_name(expected_ty),
+                    self.ty_name(value_ty),
+                ),
+            );
+        }
     }
 
     /// Infer element type from an iterable expression (#248).
