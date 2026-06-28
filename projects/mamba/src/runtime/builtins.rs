@@ -9344,56 +9344,22 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
         // an empty dict (a positional spread carries no keywords). Then fall
         // through to the fixed-arity dispatch.
         if has_star || has_kwargs {
-            let params = super::closure::func_params(func);
-            let r = params
-                .as_ref()
-                .map(|ps| ps.iter().filter(|p| p.kind <= 1).count())
-                .unwrap_or(0);
-            let defaults = super::closure::closure_defaults(func);
-            let first_default = r.saturating_sub(defaults.len());
-            let mut frame: Vec<MbValue> = Vec::with_capacity(r + 2);
-            for i in 0..r {
-                if i < items.len() {
-                    frame.push(items[i]);
-                } else if i >= first_default && (i - first_default) < defaults.len() {
-                    frame.push(defaults[i - first_default]);
-                } else {
-                    frame.push(MbValue::none());
+            let empty_kw: Vec<(String, MbValue)> = Vec::new();
+            if let Some(frame) = bind_declared_call_frame(func, &items, &empty_kw) {
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
                 }
-            }
-            if has_star {
-                let rest: Vec<MbValue> = if items.len() > r {
-                    items[r..].to_vec()
-                } else {
-                    Vec::new()
-                };
-                frame.push(MbValue::from_ptr(MbObject::new_list(rest)));
-            }
-            if has_kwargs {
-                // The slot right after the regular params is the kwargs dict
-                // appended by mb_call_spread_kwargs (`f(a, b, **d)` arrives as
-                // [a, b, {d}]); reuse it so **kw is populated. A pure positional
-                // spread leaves no dict there → empty kwargs.
-                let kw = if !has_star {
-                    items.get(r).copied().filter(|v| {
-                        v.as_ptr()
-                            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
-                            .unwrap_or(false)
-                    })
-                } else {
-                    None
-                };
-                match kw {
-                    Some(d) => {
-                        unsafe {
-                            super::rc::retain_if_ptr(d);
-                        }
-                        frame.push(d);
-                    }
-                    None => frame.push(MbValue::from_ptr(MbObject::new_dict())),
+                items = frame;
+            } else {
+                let mut frame: Vec<MbValue> = Vec::new();
+                if has_star {
+                    frame.push(MbValue::from_ptr(MbObject::new_list(items)));
                 }
+                if has_kwargs {
+                    frame.push(MbValue::from_ptr(MbObject::new_dict()));
+                }
+                items = frame;
             }
-            items = frame;
         }
         // SAFETY: the function was compiled with the matching arity.
         // JIT-compiled functions use SystemV/C calling convention and may return
@@ -9523,6 +9489,119 @@ fn merge_kwargs_dicts(a: MbValue, b: MbValue) -> MbValue {
         }
     }
     out
+}
+
+fn callable_display_name(func: MbValue) -> String {
+    super::closure::mb_func_get_name(func)
+        .as_ptr()
+        .and_then(|fp| unsafe {
+            match &(*fp).data {
+                ObjData::Str(ref s) => Some(s.clone()),
+                _ => None,
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn bind_declared_call_frame(
+    func: MbValue,
+    pos: &[MbValue],
+    kw_pairs: &[(String, MbValue)],
+) -> Option<Vec<MbValue>> {
+    let params = super::closure::func_params(func)?;
+    let has_varargs = params.iter().any(|p| p.kind == 2);
+    let has_varkw = params.iter().any(|p| p.kind == 4);
+    let mut frame: Vec<MbValue> = Vec::with_capacity(params.len());
+    let mut pos_idx = 0usize;
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let fname = callable_display_name(func);
+    for p in &params {
+        match p.kind {
+            0 => {
+                if pos_idx < pos.len() {
+                    frame.push(pos[pos_idx]);
+                    pos_idx += 1;
+                } else if p.has_default {
+                    frame.push(p.default);
+                } else {
+                    frame.push(MbValue::none());
+                }
+            }
+            1 => {
+                if pos_idx < pos.len() {
+                    if kw_pairs.iter().any(|(k, _)| *k == p.name) {
+                        raise_type_error(format!(
+                            "{fname}() got multiple values for argument '{}'",
+                            p.name
+                        ));
+                        return Some(Vec::new());
+                    }
+                    frame.push(pos[pos_idx]);
+                    pos_idx += 1;
+                } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
+                    used.insert(k.clone());
+                    frame.push(*v);
+                } else if p.has_default {
+                    frame.push(p.default);
+                } else {
+                    frame.push(MbValue::none());
+                }
+            }
+            2 => {
+                let rest = if pos_idx < pos.len() {
+                    pos[pos_idx..].to_vec()
+                } else {
+                    Vec::new()
+                };
+                pos_idx = pos.len();
+                frame.push(MbValue::from_ptr(MbObject::new_list(rest)));
+            }
+            3 => {
+                if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
+                    used.insert(k.clone());
+                    frame.push(*v);
+                } else if p.has_default {
+                    frame.push(p.default);
+                } else {
+                    frame.push(MbValue::none());
+                }
+            }
+            4 => {
+                let extra = super::dict_ops::mb_dict_new();
+                for (k, v) in kw_pairs {
+                    if !used.contains(k) {
+                        unsafe {
+                            super::rc::retain_if_ptr(*v);
+                        }
+                        super::dict_ops::mb_dict_setitem(
+                            extra,
+                            MbValue::from_ptr(MbObject::new_str(k.clone())),
+                            *v,
+                        );
+                    }
+                }
+                frame.push(extra);
+            }
+            _ => {}
+        }
+    }
+    if !has_varargs && pos_idx < pos.len() {
+        raise_type_error(format!(
+            "{fname}() takes {} positional arguments but {} were given",
+            params.iter().filter(|p| matches!(p.kind, 0 | 1)).count(),
+            pos.len()
+        ));
+        return Some(Vec::new());
+    }
+    if !has_varkw {
+        if let Some((bad, _)) = kw_pairs.iter().find(|(k, _)| !used.contains(k.as_str())) {
+            raise_type_error(format!(
+                "{fname}() got an unexpected keyword argument '{bad}'"
+            ));
+            return Some(Vec::new());
+        }
+    }
+    Some(frame)
 }
 
 /// Dispatch a JIT-compiled function by its exact frame arity (SystemV/C ABI),
@@ -9665,66 +9744,18 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
     // passed the kwargs dict as `a` and read garbage for the trailing slots.
     let pos = extract_items(args_list);
     let kw_pairs = kwargs_dict_pairs(kwargs_dict);
-    let params = super::closure::func_params(func);
-    let regulars: Vec<super::closure::MbParamInfo> = params
-        .map(|ps| ps.into_iter().filter(|p| p.kind <= 1).collect())
-        .unwrap_or_default();
-    let mut frame: Vec<MbValue> = Vec::with_capacity(regulars.len() + 2);
-    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let n_pos = pos.len();
-    for (idx, p) in regulars.iter().enumerate() {
-        if idx < n_pos {
-            // Bound positionally. A keyword of the same name is a duplicate —
-            // CPython raises `f() got multiple values for argument 'name'`.
-            if kw_pairs.iter().any(|(k, _)| *k == p.name) {
-                let fname = super::closure::mb_func_get_name(func)
-                    .as_ptr()
-                    .and_then(|fp| unsafe {
-                        match &(*fp).data {
-                            ObjData::Str(ref s) => Some(s.clone()),
-                            _ => None,
-                        }
-                    })
-                    .unwrap_or_default();
-                raise_type_error(format!(
-                    "{fname}() got multiple values for argument '{}'",
-                    p.name
-                ));
-                return MbValue::none();
-            }
-            frame.push(pos[idx]);
-        } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
-            used.insert(k.clone());
-            frame.push(*v);
-        } else if p.has_default {
-            frame.push(p.default);
-        } else {
-            frame.push(MbValue::none());
+    if let Some(frame) = bind_declared_call_frame(func, &pos, &kw_pairs) {
+        if super::exception::current_exception_type().is_some() {
+            return MbValue::none();
         }
+        return dispatch_jit_frame(raw_addr, &frame, is_boxed_ret);
     }
+    let mut frame = Vec::new();
     if has_star {
-        let rest: Vec<MbValue> = if n_pos > regulars.len() {
-            pos[regulars.len()..].to_vec()
-        } else {
-            Vec::new()
-        };
-        frame.push(MbValue::from_ptr(MbObject::new_list(rest)));
+        frame.push(MbValue::from_ptr(MbObject::new_list(pos)));
     }
     if has_kwargs {
-        let extra = super::dict_ops::mb_dict_new();
-        for (k, v) in &kw_pairs {
-            if !used.contains(k) {
-                unsafe {
-                    super::rc::retain_if_ptr(*v);
-                }
-                super::dict_ops::mb_dict_setitem(
-                    extra,
-                    MbValue::from_ptr(MbObject::new_str(k.clone())),
-                    *v,
-                );
-            }
-        }
-        frame.push(extra);
+        frame.push(kwargs_dict);
     }
     dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
 }
@@ -9954,15 +9985,11 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     //    already carries them positionally.) Native dispatchers are excluded:
     //    they expect the flattened-positional convention (step 5).
     if has_star && !is_native {
-        if has_kw {
-            return invoke_args_kwargs(
-                func,
-                MbValue::from_ptr(MbObject::new_list(pos)),
-                kwargs_dict,
-            );
-        }
-        // *args without **kwargs: keywords cannot bind — fall through to the
-        // flatten fallback below.
+        return invoke_args_kwargs(
+            func,
+            MbValue::from_ptr(MbObject::new_list(pos)),
+            kwargs_dict,
+        );
     }
 
     // 4. Regular / keyword-only user target with declared parameters: bind
