@@ -9,7 +9,7 @@
 # case = "overload_only_stub_call_raises"
 # subject = "typing.overload"
 # kind = "mechanical"
-# xfail = "mamba does not raise NotImplementedError when calling an overload-only function (project_mamba_function_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
