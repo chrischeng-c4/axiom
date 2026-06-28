@@ -1946,6 +1946,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_closure_new_with_cells",
+            closure::mb_closure_new_with_cells
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_closure_get_capture",
             closure::mb_closure_get_capture as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -2090,6 +2097,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_global_set_id",
             closure::mb_global_set_id as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_capture_cell_set_id",
+            closure::mb_capture_cell_set_id as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_capture_cell_reset_id",
+            closure::mb_capture_cell_reset_id as fn(super::MbValue, super::MbValue),
             [I64, I64],
             Void
         ),
