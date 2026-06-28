@@ -183,6 +183,9 @@ fn referent_needs_proxy_hash_guard(obj: MbValue) -> bool {
 }
 
 fn referent_needs_proxy_wrapper(obj: MbValue) -> bool {
+    if is_int_backed_function_handle(obj) {
+        return true;
+    }
     if referent_needs_proxy_hash_guard(obj) {
         return true;
     }
@@ -197,6 +200,12 @@ fn referent_needs_proxy_wrapper(obj: MbValue) -> bool {
                     || class_name == "socket.socket"
         )
     }
+}
+
+fn is_int_backed_function_handle(obj: MbValue) -> bool {
+    obj.as_int().is_some_and(|id| id >= 0)
+        && (!super::super::closure::mb_closure_get_func(obj).is_none()
+            || super::super::closure::mb_func_is_registered(obj))
 }
 
 fn is_proxy_instance(val: MbValue) -> bool {
@@ -222,6 +231,7 @@ fn is_internal_proxy_attr(attr_name: &str) -> bool {
             | "_target_id"
             | "_dead"
             | "_global_tracked"
+            | "_target_is_function_handle"
             | "_class_object_name"
     )
 }
@@ -505,6 +515,27 @@ pub(crate) fn proxy_target_or_raise(proxy: MbValue) -> Option<MbValue> {
         return Some(MbValue::none());
     }
     proxy_target(proxy)
+}
+
+pub(crate) fn proxy_references_int_function(proxy: MbValue) -> bool {
+    let Some(ptr) = proxy.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields }
+                if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType") =>
+            {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("_target_is_function_handle")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
 }
 
 pub(crate) fn proxy_dead_attr_access(proxy: MbValue, attr_name: &str) -> bool {
@@ -937,7 +968,13 @@ fn reject_non_weakreferenceable(obj: MbValue) -> bool {
         Some("bool")
     } else if obj
         .as_int()
-        .is_some_and(|id| id < 0 || !super::uuid_mod::is_uuid_handle(id as u64))
+        .is_some_and(|id| {
+            id < 0
+                || !(super::uuid_mod::is_uuid_handle(id as u64)
+                    || super::super::generator::is_known_generator(obj)
+                    || super::super::iter::mb_is_iterator_handle(obj)
+                    || is_int_backed_function_handle(obj))
+        })
     {
         Some("int")
     } else if obj.is_float() {
@@ -1064,9 +1101,17 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
         } else {
             "ProxyType"
         };
+        let function_handle = is_int_backed_function_handle(obj);
         let target_id = MbValue::from_ptr(MbObject::new_str(format!("{:012x}", referent_key(obj))));
         let mut fields = FxHashMap::default();
         fields.insert("_target_id".to_string(), target_id);
+        if function_handle {
+            fields.insert("_target".to_string(), obj);
+            fields.insert(
+                "_target_is_function_handle".to_string(),
+                MbValue::from_bool(true),
+            );
+        }
         fields.insert("_dead".to_string(), MbValue::from_bool(false));
         fields.insert(
             "_global_tracked".to_string(),
