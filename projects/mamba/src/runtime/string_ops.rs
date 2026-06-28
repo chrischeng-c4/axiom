@@ -4790,6 +4790,29 @@ pub fn value_to_string(val: MbValue) -> String {
                         });
                         if let Some(items) = items {
                             drop(fields_guard);
+                            if (class_name == "OSError"
+                                || super::exception::is_subclass_of(class_name, "OSError"))
+                                && items.len() >= 2
+                            {
+                                let errno = items[0]
+                                    .as_int()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| value_to_string(items[0]));
+                                let strerror = value_to_string(items[1]);
+                                if let Some(filename) = items.get(2).copied() {
+                                    let repr = super::builtins::mb_repr(filename);
+                                    if let Some(path) = repr.as_ptr().and_then(|p| unsafe {
+                                        if let ObjData::Str(ref s) = (*p).data {
+                                            Some(s.clone())
+                                        } else {
+                                            None
+                                        }
+                                    }) {
+                                        return format!("[Errno {errno}] {strerror}: {path}");
+                                    }
+                                }
+                                return format!("[Errno {errno}] {strerror}");
+                            }
                             return match items.len() {
                                 0 => String::new(),
                                 1 => {
