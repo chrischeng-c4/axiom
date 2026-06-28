@@ -11617,6 +11617,15 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
             if exec_has_pending_exception() {
                 return MbValue::none();
             }
+            if receiver.is_none() {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'NoneType' object has no attribute '{attr}'"
+                    ))),
+                );
+                return MbValue::none();
+            }
             super::class::mb_getattr(receiver, MbValue::from_ptr(MbObject::new_str(attr.clone())))
         }
         Expr::Index { object, index } => {
@@ -11796,7 +11805,11 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             ExecFlow::Normal
         }
         Stmt::FnDef {
-            name, params, body, ..
+            decorators,
+            name,
+            params,
+            body,
+            ..
         } => {
             let mut param_names = Vec::with_capacity(params.len());
             let mut defaults = Vec::with_capacity(params.len());
@@ -11813,6 +11826,34 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                     None => None,
                 };
                 defaults.push(default);
+            }
+            let mut decorator_values = Vec::with_capacity(decorators.len());
+            for decorator in decorators {
+                let value = exec_eval_expr(ctx, &decorator.node);
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+                decorator_values.push(value);
+            }
+            let mut decorated_value = MbValue::none();
+            for decorator in decorator_values.into_iter().rev() {
+                if mb_callable(decorator).as_bool() != Some(true) {
+                    let type_name = exec_match_type_name(decorator);
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{type_name}' object is not callable"
+                        ))),
+                    );
+                    return ExecFlow::Normal;
+                }
+                decorated_value = mb_call_spread(
+                    decorator,
+                    MbValue::from_ptr(MbObject::new_list(vec![decorated_value])),
+                );
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
             }
             ctx.functions.insert(
                 name.clone(),
@@ -13740,6 +13781,51 @@ TRACE.append("after-loop")
             ]
         );
         crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_with_globals_decorator_errors_at_definition_time() {
+        fn assert_exec_exception(ns: MbValue, source: &str, expected: &str) {
+            crate::runtime::exception::mb_clear_exception();
+            let code = MbValue::from_ptr(MbObject::new_str(source.to_string()));
+
+            assert!(mb_exec_with_globals(code, ns).is_none());
+            assert_eq!(
+                crate::runtime::exception::current_exception_type().as_deref(),
+                Some(expected)
+            );
+
+            crate::runtime::exception::mb_clear_exception();
+        }
+
+        let ns = crate::runtime::dict_ops::mb_dict_new();
+        assert_exec_exception(ns, "@missing\ndef f():\n    return 1\n", "NameError");
+
+        crate::runtime::dict_ops::mb_dict_setitem(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("nullval".to_string())),
+            MbValue::none(),
+        );
+        assert_exec_exception(ns, "@nullval\ndef f():\n    return 1\n", "TypeError");
+        assert_exec_exception(
+            ns,
+            "@nullval.attr\ndef f():\n    return 1\n",
+            "AttributeError",
+        );
+
+        assert_exec_exception(
+            ns,
+            r#"
+def needs_one(n):
+    def deco(func):
+        return func
+    return deco
+@needs_one()
+def f():
+    return 1
+"#,
+            "TypeError",
+        );
     }
 
     #[test]
