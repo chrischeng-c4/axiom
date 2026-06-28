@@ -3441,6 +3441,10 @@ fn builtin_data_payload_base(class_name: &str) -> Option<&'static str> {
     None
 }
 
+pub(crate) fn class_has_builtin_data_payload_base(class_name: &str) -> bool {
+    builtin_data_payload_base(class_name).is_some()
+}
+
 fn payload_field_for_base(base: &str) -> &'static str {
     match base {
         "str" => STR_SUBCLASS_VALUE_FIELD,
@@ -12730,7 +12734,23 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
         let args = MbValue::from_ptr(MbObject::new_list(vec![key]));
         return mb_call_method(obj, method_name, args);
     }
-    if let Some((_base, payload)) = builtin_data_payload_if_unoverridden(obj, "__getitem__") {
+    if let Some((base, payload)) = builtin_data_payload_if_unoverridden(obj, "__getitem__") {
+        if base == "dict" {
+            if super::dict_ops::mb_dict_contains(payload, key).as_bool() == Some(true) {
+                return super::dict_ops::mb_dict_getitem(payload, key);
+            }
+            if let Some(ptr) = obj.as_ptr() {
+                if let ObjData::Instance { ref class_name, .. } = unsafe { &(*ptr).data } {
+                    let missing = lookup_method(class_name, "__missing__");
+                    if !missing.is_none() {
+                        return super::builtins::mb_call_spread(
+                            missing,
+                            MbValue::from_ptr(MbObject::new_list(vec![obj, key])),
+                        );
+                    }
+                }
+            }
+        }
         return mb_obj_getitem(payload, key);
     }
     MbValue::none()
