@@ -637,6 +637,15 @@ pub fn mb_str_slice_full(s: MbValue, start: MbValue, stop: MbValue, step: MbValu
 
 // ── Case Methods ──
 
+fn push_unicode_titlecase(out: &mut String, c: char) {
+    match c {
+        // Unicode titlecase digraph DZ: upper/title/lower forms all titlecase
+        // to U+01C5, while uppercase maps to U+01C4.
+        '\u{01C4}' | '\u{01C5}' | '\u{01C6}' => out.push('\u{01C5}'),
+        _ => out.extend(c.to_uppercase()),
+    }
+}
+
 pub fn mb_str_upper(s: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
@@ -680,7 +689,12 @@ pub fn mb_str_capitalize(s: MbValue) -> MbValue {
             let mut chars = st.chars();
             let result = match chars.next() {
                 None => String::new(),
-                Some(c) => c.to_uppercase().to_string() + &chars.as_str().to_lowercase(),
+                Some(c) => {
+                    let mut out = String::new();
+                    push_unicode_titlecase(&mut out, c);
+                    out.push_str(&chars.as_str().to_lowercase());
+                    out
+                }
             };
             new_str(result)
         } else {
@@ -704,7 +718,7 @@ pub fn mb_str_title(s: MbValue) -> MbValue {
                     if prev_cased {
                         result.extend(c.to_lowercase());
                     } else {
-                        result.extend(c.to_uppercase());
+                        push_unicode_titlecase(&mut result, c);
                     }
                 } else {
                     result.push(c);
@@ -5380,6 +5394,13 @@ mod tests {
     fn test_title_with_punctuation() {
         unsafe {
             assert_eq!(as_str(mb_str_title(s("it's a test"))), Some("It'S A Test"));
+        }
+    }
+
+    #[test]
+    fn test_title_uses_unicode_titlecase_mapping() {
+        unsafe {
+            assert_eq!(as_str(mb_str_title(s("Ǆ ǅ ǆ"))), Some("ǅ ǅ ǅ"));
         }
     }
 

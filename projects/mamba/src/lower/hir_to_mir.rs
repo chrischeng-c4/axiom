@@ -6891,6 +6891,152 @@ impl<'a> HirToMir<'a> {
             .map(|&sym| (sym, self.sym_to_vreg.get(&sym).copied()))
             .collect();
 
+        if generators.len() == 1
+            && self.is_range_call(&gen.iter)
+            && !self.is_gen_body
+            && !gen.is_async
+            && !gen.unpack_target
+            && extra_vars.is_empty()
+        {
+            let range_args: Vec<HirExpr> = if let HirExpr::Call { args, .. } = &gen.iter {
+                args.clone()
+            } else {
+                unreachable!()
+            };
+            let int_ty = self.tcx.int();
+            let unbox_range_arg = |this: &mut Self, e: &HirExpr| -> VReg {
+                let v = this.lower_expr(e);
+                let unboxed = this.fresh_vreg();
+                this.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(unboxed),
+                    name: "mb_unbox_int_if_boxed".to_string(),
+                    args: vec![v],
+                    ty: int_ty,
+                });
+                unboxed
+            };
+
+            let (start_raw, stop_raw, step_raw) = match range_args.as_slice() {
+                [stop] => {
+                    let stop = unbox_range_arg(self, stop);
+                    let start = self.emit_int_const(0);
+                    let step = self.emit_int_const(1);
+                    (start, stop, step)
+                }
+                [start, stop] => {
+                    let start = unbox_range_arg(self, start);
+                    let stop = unbox_range_arg(self, stop);
+                    let step = self.emit_int_const(1);
+                    (start, stop, step)
+                }
+                [start, stop, step] => {
+                    let start = unbox_range_arg(self, start);
+                    let stop = unbox_range_arg(self, stop);
+                    let step = unbox_range_arg(self, step);
+                    (start, stop, step)
+                }
+                _ => unreachable!(),
+            };
+
+            let counter_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::Copy {
+                dest: counter_vreg,
+                source: start_raw,
+            });
+            let var_vreg = self.fresh_vreg();
+            self.sym_to_vreg.insert(gen_var, var_vreg);
+            let expose_raw_int = self
+                .sym_types
+                .get(&gen_var)
+                .is_some_and(|ty| matches!(self.tcx.get(*ty), Ty::Int));
+
+            let header = self.fresh_block();
+            let body_block = self.fresh_block();
+            let latch_block = self.fresh_block();
+            let exit_block = self.fresh_block();
+
+            self.finish_block(Terminator::Goto(header));
+            let cmp_op = if range_args.len() == 3 {
+                match Self::hir_literal_int(&range_args[2]) {
+                    Some(s) if s > 0 => MirBinOp::Lt,
+                    Some(s) if s < 0 => MirBinOp::Gt,
+                    _ => unreachable!("is_range_call rejects non-literal/zero step"),
+                }
+            } else {
+                MirBinOp::Lt
+            };
+            self.start_block(header);
+            let cond = self.fresh_vreg();
+            self.current_stmts.push(MirInst::BinOp {
+                dest: cond,
+                op: cmp_op,
+                lhs: counter_vreg,
+                rhs: stop_raw,
+                ty: int_ty,
+            });
+            self.finish_block(Terminator::Branch {
+                cond,
+                then_block: body_block,
+                else_block: exit_block,
+            });
+
+            self.start_block(body_block);
+            if expose_raw_int {
+                self.current_stmts.push(MirInst::Copy {
+                    dest: var_vreg,
+                    source: counter_vreg,
+                });
+            } else {
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(var_vreg),
+                    name: "mb_box_int".to_string(),
+                    args: vec![counter_vreg],
+                    ty: self.tcx.any(),
+                });
+            }
+            for condition in &gen.conditions {
+                let cond_vreg = self.lower_cond_as_bool(condition);
+                let next_condition = self.fresh_block();
+                let skip_block = self.fresh_block();
+                self.finish_block(Terminator::Branch {
+                    cond: cond_vreg,
+                    then_block: next_condition,
+                    else_block: skip_block,
+                });
+                self.start_block(skip_block);
+                self.finish_block(Terminator::Goto(latch_block));
+                self.start_block(next_condition);
+            }
+            emit_body(self);
+            self.finish_block(Terminator::Goto(latch_block));
+
+            self.start_block(latch_block);
+            let next_val = self.fresh_vreg();
+            self.current_stmts.push(MirInst::BinOp {
+                dest: next_val,
+                op: MirBinOp::Add,
+                lhs: counter_vreg,
+                rhs: step_raw,
+                ty: int_ty,
+            });
+            self.current_stmts.push(MirInst::Copy {
+                dest: counter_vreg,
+                source: next_val,
+            });
+            self.finish_block(Terminator::Goto(header));
+
+            self.start_block(exit_block);
+            match saved_binding {
+                Some(vreg) => {
+                    self.sym_to_vreg.insert(gen_var, vreg);
+                }
+                None => {
+                    self.sym_to_vreg.remove(&gen_var);
+                }
+            }
+            return;
+        }
+
         let iterable = self.lower_expr(&gen.iter);
         let iter_obj = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
@@ -7984,6 +8130,54 @@ impl<'a> HirToMir<'a> {
                         });
                         self.emit_exception_propagate();
                         return dest;
+                    }
+
+                    if args.is_empty() {
+                        let direct_chr_method = match attr.as_str() {
+                            "upper" => Some("mb_str_upper"),
+                            "lower" => Some("mb_str_lower"),
+                            "title" => Some("mb_str_title"),
+                            _ => None,
+                        };
+                        if let Some(fn_name) = direct_chr_method {
+                            if let HirExpr::Call {
+                                func: chr_func,
+                                args: chr_args,
+                                ..
+                            } = object.as_ref()
+                            {
+                                if chr_args.len() == 1 {
+                                    if let HirExpr::Var(chr_sym, _) = chr_func.as_ref() {
+                                        if self
+                                            .builtin_syms
+                                            .get(&chr_sym.0)
+                                            .is_some_and(|name| name == "mb_chr")
+                                        {
+                                            let arg_raw = self.lower_expr(&chr_args[0]);
+                                            let arg_boxed =
+                                                self.box_operand(arg_raw, chr_args[0].ty());
+                                            let chr_value = self.fresh_vreg();
+                                            self.current_stmts.push(MirInst::CallExtern {
+                                                dest: Some(chr_value),
+                                                name: "mb_chr".to_string(),
+                                                args: vec![arg_boxed],
+                                                ty: self.tcx.str(),
+                                            });
+                                            self.emit_exception_propagate();
+                                            let dest = self.fresh_vreg();
+                                            self.current_stmts.push(MirInst::CallExtern {
+                                                dest: Some(dest),
+                                                name: fn_name.to_string(),
+                                                args: vec![chr_value],
+                                                ty: self.tcx.str(),
+                                            });
+                                            self.emit_exception_propagate();
+                                            return dest;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Fast path: when the receiver type is statically Str and
@@ -11807,6 +12001,114 @@ mod tests {
         assert!(
             !names.contains(&"mb_set_new".to_string()),
             "set(x) with 1 arg should NOT emit mb_set_new"
+        );
+    }
+
+    #[test]
+    fn test_list_comprehension_range_uses_native_counter() {
+        use crate::resolve::SymbolKind;
+
+        let mut tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let list_int_ty = tcx.intern(Ty::List(int_ty));
+        let mut symbols = SymbolTable::new();
+        let range_sym = symbols.define("range".to_string(), SymbolKind::Variable);
+        let c_sym = symbols.define("c".to_string(), SymbolKind::Variable);
+
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: Vec::new(),
+            top_level: vec![HirStmt::Expr {
+                expr: HirExpr::ListComp {
+                    element: Box::new(HirExpr::Var(c_sym, int_ty)),
+                    generators: vec![HirComprehension {
+                        var: c_sym,
+                        extra_vars: Vec::new(),
+                        unpack_target: false,
+                        iter: HirExpr::Call {
+                            func: Box::new(HirExpr::Var(range_sym, tcx.any())),
+                            args: vec![HirExpr::IntLit(10, int_ty)],
+                            ty: tcx.any(),
+                        },
+                        conditions: Vec::new(),
+                        is_async: false,
+                    }],
+                    ty: list_int_ty,
+                },
+                span: Span::dummy(),
+            }],
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let names = collect_extern_names(&mir);
+        assert!(
+            !names.contains(&"mb_iter".to_string()),
+            "range comprehensions should not allocate a generic iterator: {names:?}"
+        );
+        assert!(
+            !names.contains(&"mb_next_or_stop".to_string()),
+            "range comprehensions should not dispatch through mb_next_or_stop: {names:?}"
+        );
+        assert!(
+            names.contains(&"mb_list_append_unchecked".to_string()),
+            "list comprehension must still append each generated element: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_chr_case_method_lowers_to_direct_string_runtime() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let mut symbols = SymbolTable::new();
+        let chr_sym = symbols.define("chr".to_string(), SymbolKind::Variable);
+        let c_sym = symbols.define("c".to_string(), SymbolKind::Variable);
+
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: Vec::new(),
+            top_level: vec![HirStmt::Expr {
+                expr: HirExpr::Call {
+                    func: Box::new(HirExpr::Attr {
+                        object: Box::new(HirExpr::Call {
+                            func: Box::new(HirExpr::Var(chr_sym, any_ty)),
+                            args: vec![HirExpr::Var(c_sym, any_ty)],
+                            ty: any_ty,
+                        }),
+                        attr: "lower".to_string(),
+                        ty: any_ty,
+                    }),
+                    args: Vec::new(),
+                    ty: any_ty,
+                },
+                span: Span::dummy(),
+            }],
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let names = collect_extern_names(&mir);
+        assert!(
+            names.contains(&"mb_chr".to_string()),
+            "chr(...) should still use the chr runtime entry point: {names:?}"
+        );
+        assert!(
+            names.contains(&"mb_str_lower".to_string()),
+            "chr(...).lower() should bypass generic method dispatch: {names:?}"
+        );
+        assert!(
+            !names.contains(&"mb_call_method".to_string()),
+            "chr(...).lower() should not dispatch through mb_call_method: {names:?}"
         );
     }
 
