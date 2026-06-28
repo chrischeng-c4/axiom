@@ -2311,7 +2311,10 @@ fn call_registered_method_addr(addr: u64, args: &[MbValue]) -> MbValue {
             _ => return MbValue::none(),
         }
     };
-    let is_boxed = super::module::is_boxed_return_func(addr);
+    let is_boxed = super::module::is_boxed_return_func(addr)
+        || super::module::is_variadic_func(addr)
+        || super::module::is_kwargs_func(addr)
+        || super::module::is_native_func(addr);
     rebox_method_result(raw, is_boxed)
 }
 
@@ -17726,6 +17729,31 @@ mod tests {
             assert_eq!(extract_str(str_name).as_deref(), Some("str"));
             assert_eq!(extract_str(none_name).as_deref(), Some("NoneType"));
         }
+    }
+
+    extern "C" fn variadic_float_return_method(_self_v: MbValue, _args: MbValue) -> MbValue {
+        MbValue::from_float(5.0)
+    }
+
+    #[test]
+    fn test_variadic_registered_method_preserves_float_return() {
+        let addr = variadic_float_return_method as usize;
+        super::super::module::register_variadic_func(addr as u64);
+        let mut methods = HashMap::new();
+        methods.insert("timeout".to_string(), MbValue::from_func(addr));
+        mb_class_register("VariadicFloatReturn688", vec![], methods);
+
+        let inst = MbValue::from_ptr(MbObject::new_instance(
+            "VariadicFloatReturn688".to_string(),
+        ));
+        let result = mb_call_method(
+            inst,
+            MbValue::from_ptr(MbObject::new_str("timeout".to_string())),
+            MbValue::from_ptr(MbObject::new_list(Vec::new())),
+        );
+
+        assert_eq!(result.as_float(), Some(5.0));
+        assert_eq!(result.as_int(), None);
     }
 
     #[test]
