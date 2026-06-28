@@ -6,6 +6,42 @@ use super::value::MbValue;
 /// goes through RwLock guards for thread-safety.
 use smallvec::smallvec;
 use std::cell::{Cell, RefCell};
+use std::ops::Deref;
+
+pub(crate) struct RetainedListSnapshot {
+    items: Vec<MbValue>,
+}
+
+impl RetainedListSnapshot {
+    fn new(items: Vec<MbValue>) -> Self {
+        for &item in &items {
+            unsafe { super::rc::retain_if_ptr(item) };
+        }
+        Self { items }
+    }
+}
+
+impl Deref for RetainedListSnapshot {
+    type Target = [MbValue];
+
+    fn deref(&self) -> &Self::Target {
+        &self.items
+    }
+}
+
+impl Drop for RetainedListSnapshot {
+    fn drop(&mut self) {
+        for &item in &self.items {
+            unsafe { super::rc::release_if_ptr(item) };
+        }
+    }
+}
+
+pub(crate) fn retained_list_snapshot(
+    lock: &super::rc::MbRwLock<super::rc::MbList>,
+) -> RetainedListSnapshot {
+    RetainedListSnapshot::new(lock.read().unwrap().iter().copied().collect())
+}
 
 #[derive(Clone, Copy)]
 struct SortMutationWatch {
@@ -930,29 +966,83 @@ pub fn mb_list_setslice(
                 return;
             }
             if let ObjData::List(ref lock) = (*ptr).data {
+                let new_elems: Vec<MbValue> = super::builtins::extract_items(value);
                 let mut items = lock.write().unwrap();
                 let len = items.len() as i64;
-                let s = start.as_int().map(|i| clamp_index(i, len)).unwrap_or(0) as usize;
+                let step = _step.as_int_pyint().unwrap_or(1);
+                if step == 0 {
+                    drop(items);
+                    super::builtins::raise_value_error("slice step cannot be zero".to_string());
+                    return;
+                }
+                if step != 1 {
+                    let (mut i, end) = if step > 0 {
+                        let s = start
+                            .as_int_pyint()
+                            .map(|idx| clamp_index(idx, len))
+                            .unwrap_or(0);
+                        let e = stop
+                            .as_int_pyint()
+                            .map(|idx| clamp_index(idx, len))
+                            .unwrap_or(len);
+                        (s, e)
+                    } else {
+                        let s = start
+                            .as_int_pyint()
+                            .map(|idx| clamp_index(idx, len))
+                            .unwrap_or(len - 1);
+                        let e = stop
+                            .as_int_pyint()
+                            .map(|idx| clamp_index(idx, len))
+                            .unwrap_or(-1);
+                        (s, e)
+                    };
+                    let mut indices = Vec::new();
+                    if step > 0 {
+                        while i < end {
+                            if i >= 0 && i < len {
+                                indices.push(i as usize);
+                            }
+                            i += step;
+                        }
+                    } else {
+                        while i > end {
+                            if i >= 0 && i < len {
+                                indices.push(i as usize);
+                            }
+                            i += step;
+                        }
+                    }
+                    if indices.len() != new_elems.len() {
+                        drop(items);
+                        super::builtins::raise_value_error(format!(
+                            "attempt to assign sequence of size {} to extended slice of size {}",
+                            new_elems.len(),
+                            indices.len()
+                        ));
+                        return;
+                    }
+                    for &v in &new_elems {
+                        super::rc::retain_if_ptr(v);
+                    }
+                    for (idx, new_value) in indices.into_iter().zip(new_elems.into_iter()) {
+                        let old = items[idx];
+                        items[idx] = new_value;
+                        super::rc::release_if_ptr(old);
+                    }
+                    mark_list_mutated(list);
+                    return;
+                }
+                let s = start
+                    .as_int_pyint()
+                    .map(|i| clamp_index(i, len))
+                    .unwrap_or(0) as usize;
                 let e = stop
-                    .as_int()
+                    .as_int_pyint()
                     .map(|i| clamp_index(i, len))
                     .unwrap_or(len as i64) as usize;
                 let s = s.min(items.len());
                 let e = e.min(items.len()).max(s);
-
-                // Get new elements from value (must be a list)
-                let new_elems: Vec<MbValue> = if let Some(vp) = value.as_ptr() {
-                    match &(*vp).data {
-                        ObjData::List(ref vlock) => {
-                            let vr = vlock.read().unwrap();
-                            vr.iter().copied().collect()
-                        }
-                        ObjData::Tuple(ref t) => t.clone(),
-                        _ => vec![],
-                    }
-                } else {
-                    vec![]
-                };
 
                 // Retain new elements
                 for &v in &new_elems {
@@ -1268,7 +1358,7 @@ pub fn mb_list_remove(list: MbValue, value: MbValue) {
                 // Scan a snapshot WITHOUT holding the lock: mb_eq can
                 // re-enter user __eq__ that mutates this list (reentrancy
                 // hardening — holding the write lock across it deadlocks).
-                let snapshot: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                let snapshot = retained_list_snapshot(lock);
                 let mut found_pos: Option<usize> = None;
                 for (i, v) in snapshot.iter().enumerate() {
                     if super::builtins::mb_eq(*v, value).as_bool() == Some(true) {
@@ -1442,10 +1532,10 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                     // Snapshot the elements, then release the lock while the
                     // key callable runs: mb_call1_val can re-enter the runtime
                     // (and even this list) arbitrarily.
-                    let snapshot: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                    let snapshot = retained_list_snapshot(lock);
                     let mut indexed: Vec<(MbValue, MbValue)> = Vec::with_capacity(snapshot.len());
                     let mutation_watch = ActiveSortMutationWatch::new(list);
-                    for item in snapshot {
+                    for &item in snapshot.iter() {
                         let k = if let Some(ref name) = named_key {
                             call_named_callable_pub(name, item).unwrap_or(item)
                         } else {
@@ -1543,7 +1633,7 @@ pub fn mb_list_index_range(
                 // Snapshot, then release the lock: mb_eq can re-enter user
                 // __eq__ that mutates this very list (reentrancy hardening —
                 // holding the read lock across it deadlocks against clear()).
-                let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                let items = retained_list_snapshot(lock);
                 let len = items.len() as i64;
                 // Resolve start: default 0; negatives count from the end and
                 // clamp to 0; positives clamp to len.
@@ -1596,7 +1686,7 @@ pub fn mb_list_count(list: MbValue, value: MbValue) -> MbValue {
             if let ObjData::List(ref lock) = (*ptr).data {
                 // Snapshot then release: mb_eq may re-enter user __eq__ that
                 // mutates this list (see mb_list_index_range).
-                let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                let items = retained_list_snapshot(lock);
                 // Identity-first like CPython list.count (PyObject_RichCompareBool):
                 // a self-unequal element such as NaN still counts the same object.
                 let n = items
@@ -1631,7 +1721,7 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                 ObjData::List(ref lock) => {
                     // Snapshot then release: mb_eq may re-enter user __eq__
                     // that mutates this list (see mb_list_index_range).
-                    let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                    let items = retained_list_snapshot(lock);
                     for item in items.iter() {
                         // CPython `x in seq` is identity-first (`x is e or x == e`
                         // via PyObject_RichCompareBool), so a self-unequal element
