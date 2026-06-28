@@ -511,7 +511,7 @@ pub fn mb_tuple_repeat(tup: MbValue, n: MbValue) -> MbValue {
 pub fn mb_tuple_eq(a: MbValue, b: MbValue) -> MbValue {
     unsafe {
         match (as_tuple(a), as_tuple(b)) {
-            (Some(ta), Some(tb)) => MbValue::from_bool(ta == tb),
+            (Some(_), Some(_)) => super::builtins::mb_eq(a, b),
             _ => MbValue::from_bool(false),
         }
     }
