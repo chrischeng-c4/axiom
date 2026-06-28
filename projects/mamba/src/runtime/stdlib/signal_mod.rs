@@ -165,72 +165,28 @@ fn enum_defs(class_name: &str) -> &'static [(&'static str, i64)] {
     }
 }
 
-fn make_int_enum_member(class_name: &str, member_name: &str, value: i64) -> MbValue {
-    let inst_ptr = MbObject::new_instance(class_name.to_string());
-    let inst = MbValue::from_ptr(inst_ptr);
-    unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
-            let mut map = fields.write().unwrap();
-            map.insert(
-                "name".to_string(),
-                MbValue::from_ptr(MbObject::new_str(member_name.to_string())),
-            );
-            map.insert(
-                "_name_".to_string(),
-                MbValue::from_ptr(MbObject::new_str(member_name.to_string())),
-            );
-            map.insert("value".to_string(), MbValue::from_int(value));
-            map.insert("_value_".to_string(), MbValue::from_int(value));
-            map.insert(
-                "__class__".to_string(),
-                MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
-            );
-        }
-    }
-    inst
-}
-
 fn insert_int_enum_members(
     attrs: &mut HashMap<String, MbValue>,
     class_name: &str,
     defs: &[(&'static str, i64)],
 ) {
-    let mut by_value: HashMap<i64, MbValue> = HashMap::new();
-    for (name, value) in defs {
-        let member = *by_value
-            .entry(*value)
-            .or_insert_with(|| make_int_enum_member(class_name, name, *value));
+    let members = super::enum_class::register_int_enum(class_name, defs);
+    for ((name, _), member) in defs.iter().zip(members) {
         attrs.insert((*name).to_string(), member);
     }
 }
 
 fn lookup_registered_member(class_name: &str, value: i64) -> Option<MbValue> {
-    let member_name = enum_defs(class_name)
+    enum_defs(class_name)
         .iter()
-        .find_map(|(name, v)| (*v == value).then_some(*name))?;
-    super::super::module::MODULES.with(|mods| {
-        mods.borrow()
-            .get("signal")
-            .and_then(|m| m.attrs.get(member_name).copied())
-    })
+        .any(|(_, member_value)| *member_value == value)
+        .then_some(())?;
+    let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(value)]));
+    super::enum_class::enum_class_call(class_name, args).filter(|member| !member.is_none())
 }
 
 fn member_value(v: MbValue) -> Option<i64> {
-    v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance {
-            ref class_name,
-            ref fields,
-        } = (*ptr).data
-        {
-            if matches!(class_name.as_str(), "Signals" | "Handlers" | "Sigmasks") {
-                return fields
-                    .read()
-                    .ok()
-                    .and_then(|f| f.get("value").and_then(|value| value.as_int_pyint()));
-            }
-        }
-        None
-    })
+    super::enum_class::int_member_value(v).and_then(|raw| raw.as_int_pyint())
 }
 
 fn signal_int_value(v: MbValue) -> Option<i64> {
