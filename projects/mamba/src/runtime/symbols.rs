@@ -2665,6 +2665,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_recursion_enter",
+            super::stdlib::sys_mod::mb_recursion_enter as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_recursion_leave",
+            super::stdlib::sys_mod::mb_recursion_leave as fn(),
+            [],
+            Void
+        ),
+        rt_sym!(
             "mb_sys_getsizeof",
             super::stdlib::sys_mod::mb_sys_getsizeof as fn(super::MbValue) -> super::MbValue,
             [I64],

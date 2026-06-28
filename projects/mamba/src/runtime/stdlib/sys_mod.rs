@@ -145,6 +145,7 @@ unsafe extern "C" fn dispatch_sys_stub_none(_args_ptr: *const MbValue, _nargs: u
 
 thread_local! {
     static RECURSION_LIMIT: std::cell::Cell<i64> = const { std::cell::Cell::new(1000) };
+    static RECURSION_DEPTH: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
     static SWITCH_INTERVAL: std::cell::Cell<f64> = const { std::cell::Cell::new(0.005) };
     static INTERN_TABLE: std::cell::RefCell<std::collections::HashMap<String, u64>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
@@ -1387,7 +1388,7 @@ pub fn mb_sys_exit(code: MbValue) -> MbValue {
 
 /// sys.getrecursionlimit() → int
 pub fn mb_sys_getrecursionlimit() -> MbValue {
-    MbValue::from_int(1000) // Default Python recursion limit
+    MbValue::from_int(RECURSION_LIMIT.with(|c| c.get()))
 }
 
 /// sys.setrecursionlimit(limit) → None
@@ -1413,6 +1414,35 @@ pub fn mb_sys_setrecursionlimit(limit: MbValue) -> MbValue {
         RECURSION_LIMIT.with(|c| c.set(n));
     }
     MbValue::none()
+}
+
+pub fn mb_recursion_enter() -> MbValue {
+    let ok = RECURSION_DEPTH.with(|depth| {
+        let current = depth.get();
+        let limit = RECURSION_LIMIT.with(|limit| limit.get());
+        let next = current.saturating_add(1);
+        if next > limit {
+            false
+        } else {
+            depth.set(next);
+            true
+        }
+    });
+    if !ok {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("RecursionError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "maximum recursion depth exceeded".to_string(),
+            )),
+        );
+    }
+    MbValue::from_bool(ok)
+}
+
+pub fn mb_recursion_leave() {
+    RECURSION_DEPTH.with(|depth| {
+        depth.set(depth.get().saturating_sub(1));
+    });
 }
 
 /// sys.setswitchinterval(interval) → None
