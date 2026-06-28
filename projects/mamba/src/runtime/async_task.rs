@@ -768,6 +768,9 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
 }
 
 pub fn mb_async_iter(iterable: MbValue) -> MbValue {
+    if super::generator::is_known_generator(iterable) {
+        return iterable;
+    }
     let method = lookup_dunder(iterable, "__aiter__");
     if method.is_none() {
         return raise_type_error(format!(
@@ -789,14 +792,22 @@ pub fn mb_async_iter(iterable: MbValue) -> MbValue {
 }
 
 pub fn mb_async_next_or_stop(async_iter: MbValue) -> MbValue {
-    let method = lookup_dunder(async_iter, "__anext__");
-    if method.is_none() {
-        return raise_type_error(format!(
-            "async for object '{}' does not implement __anext__",
-            super::builtins::value_type_name(async_iter)
-        ));
-    }
-    let awaitable = super::class::mb_call_method1(method, async_iter);
+    let awaitable = if super::generator::is_known_generator(async_iter) {
+        super::class::mb_call_method(
+            async_iter,
+            new_str("__anext__"),
+            MbValue::from_ptr(MbObject::new_list(Vec::new())),
+        )
+    } else {
+        let method = lookup_dunder(async_iter, "__anext__");
+        if method.is_none() {
+            return raise_type_error(format!(
+                "async for object '{}' does not implement __anext__",
+                super::builtins::value_type_name(async_iter)
+            ));
+        }
+        super::class::mb_call_method1(method, async_iter)
+    };
     if super::exception::current_exception_type().as_deref() == Some("StopAsyncIteration") {
         super::exception::mb_clear_exception();
         return MbValue::stop_iter_sentinel();

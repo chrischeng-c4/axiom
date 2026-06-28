@@ -489,7 +489,7 @@ impl<'a> Parser<'a> {
             } else {
                 let expr = self.parse_expr()?;
                 // Generator expression as sole argument: `f(x for x in ...)`
-                if self.peek_kind() == Some(TokenKind::For) {
+                if self.at_comprehension_clause_start() {
                     let generators = self.parse_comprehension_clauses()?;
                     let span = expr.span;
                     let gen = Spanned::new(
