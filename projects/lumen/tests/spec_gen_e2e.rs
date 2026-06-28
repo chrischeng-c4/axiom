@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:dc8df8ae" tracker="standardize-gap-projects-lumen-tests-spec-gen-e2e-rs" reason="lumen spec gen e2e: drives the CLI to emit typed clients from lumen's own OpenAPI offline (py pydantic + sync/async h2c runtime, --lang emitter selection) plus plain `spec` OpenAPI passthrough. Not yet captured as unit-test units in lumen-tests.md; aw claim_code/fillback adoption hangs."
 //! `lumen spec gen` — generate a typed client (ts/py/rust) from lumen's own
 //! OpenAPI document, offline.
 //!
@@ -95,3 +97,4 @@ fn plain_spec_still_prints_openapi() {
     assert!(stdout.trim_start().starts_with('{'));
     assert!(stdout.contains("\"openapi\""));
 }
+// HANDWRITE-END
