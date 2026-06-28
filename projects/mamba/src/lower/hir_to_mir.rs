@@ -3952,12 +3952,58 @@ impl<'a> HirToMir<'a> {
                                         ty: self.tcx.any(),
                                     });
                                     let cn_vreg = self.emit_str_const(&class_name);
-                                    self.current_stmts.push(MirInst::CallExtern {
-                                        dest: None,
-                                        name: "mb_exception_group_construct_and_raise".to_string(),
-                                        args: vec![args_list, cn_vreg],
-                                        ty: self.tcx.none(),
-                                    });
+                                    if has_from && has_context {
+                                        let from_val = {
+                                            let v = self.lower_expr(from.as_ref().unwrap());
+                                            self.box_operand(v, from.as_ref().unwrap().ty())
+                                        };
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: None,
+                                            name:
+                                                "mb_exception_group_construct_and_raise_from_with_context"
+                                                    .to_string(),
+                                            args: vec![
+                                                args_list,
+                                                cn_vreg,
+                                                from_val,
+                                                self.active_except_vreg.unwrap(),
+                                            ],
+                                            ty: self.tcx.none(),
+                                        });
+                                    } else if has_from {
+                                        let from_val = {
+                                            let v = self.lower_expr(from.as_ref().unwrap());
+                                            self.box_operand(v, from.as_ref().unwrap().ty())
+                                        };
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: None,
+                                            name: "mb_exception_group_construct_and_raise_from"
+                                                .to_string(),
+                                            args: vec![args_list, cn_vreg, from_val],
+                                            ty: self.tcx.none(),
+                                        });
+                                    } else if has_context {
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: None,
+                                            name:
+                                                "mb_exception_group_construct_and_raise_with_context"
+                                                    .to_string(),
+                                            args: vec![
+                                                args_list,
+                                                cn_vreg,
+                                                self.active_except_vreg.unwrap(),
+                                            ],
+                                            ty: self.tcx.none(),
+                                        });
+                                    } else {
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: None,
+                                            name: "mb_exception_group_construct_and_raise"
+                                                .to_string(),
+                                            args: vec![args_list, cn_vreg],
+                                            ty: self.tcx.none(),
+                                        });
+                                    }
                                     raise_emitted = true;
                                 } else if args.len() > 1 && !has_from {
                                     // Built-in exception with multiple args: use

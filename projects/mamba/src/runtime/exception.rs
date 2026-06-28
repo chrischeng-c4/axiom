@@ -1047,9 +1047,35 @@ pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
     )
 }
 
+fn builtin_exception_is_exception_subclass(name: &str) -> bool {
+    if matches!(
+        name,
+        "BaseException"
+            | "SystemExit"
+            | "KeyboardInterrupt"
+            | "GeneratorExit"
+            | "BaseExceptionGroup"
+    ) {
+        return false;
+    }
+    is_builtin_exception_name(name)
+}
+
 /// Simplified exception hierarchy check.
 pub fn is_subclass_of(child: &str, parent: &str) -> bool {
-    if parent == "Exception" || parent == "BaseException" {
+    if parent == "Exception" {
+        if builtin_exception_is_exception_subclass(child) {
+            return true;
+        }
+        if child == "Error" || is_configparser_error_subclass(child) {
+            return true;
+        }
+        if super::class::class_mro_any(child, builtin_exception_is_exception_subclass) {
+            return true;
+        }
+        return super::class::check_class_hierarchy(child, parent);
+    }
+    if parent == "BaseException" {
         if is_builtin_exception_name(child) {
             return true;
         }
@@ -1514,78 +1540,53 @@ pub fn mb_exception_group_construct_and_raise(args_list: MbValue, class_name: Mb
     MbValue::none()
 }
 
+pub fn mb_exception_group_construct_and_raise_with_context(
+    args_list: MbValue,
+    class_name: MbValue,
+    context: MbValue,
+) -> MbValue {
+    let group = mb_exception_group_construct(args_list, class_name);
+    if !group.is_none() {
+        super::class::mb_raise_instance_with_context(group, context);
+    }
+    MbValue::none()
+}
+
+pub fn mb_exception_group_construct_and_raise_from(
+    args_list: MbValue,
+    class_name: MbValue,
+    cause: MbValue,
+) -> MbValue {
+    let group = mb_exception_group_construct(args_list, class_name);
+    if !group.is_none() {
+        super::class::mb_raise_instance_from(group, cause);
+    }
+    MbValue::none()
+}
+
+pub fn mb_exception_group_construct_and_raise_from_with_context(
+    args_list: MbValue,
+    class_name: MbValue,
+    cause: MbValue,
+    context: MbValue,
+) -> MbValue {
+    let group = mb_exception_group_construct(args_list, class_name);
+    if !group.is_none() {
+        super::class::mb_raise_instance_from_with_context(group, cause, context);
+    }
+    MbValue::none()
+}
+
 /// except* handler: match exceptions in a group by type.
 /// Returns (matched, rest) tuple — matched is an ExceptionGroup of matching
 /// exceptions, rest is an ExceptionGroup of non-matching (or None if all matched).
 pub fn mb_except_star(group: MbValue, exc_type: MbValue) -> MbValue {
-    let target_type = extract_str(exc_type).unwrap_or_default();
-
-    // Get exceptions tuple/list from group
-    let exceptions = group.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            let fields = fields.read().unwrap();
-            fields.get("exceptions").copied()
-        } else {
-            None
-        }
-    });
-
-    let mut matched = Vec::new();
-    let mut rest = Vec::new();
-
-    if let Some(exc_collection) = exceptions {
-        if let Some(ptr) = exc_collection.as_ptr() {
-            unsafe {
-                // Support both Tuple and List storage
-                let items: Vec<MbValue> = match &(*ptr).data {
-                    ObjData::Tuple(items) => items.clone(),
-                    ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-                    _ => vec![],
-                };
-                for exc in items.iter() {
-                    let actual_type = get_exception_type(*exc).unwrap_or_default();
-                    if actual_type == target_type || is_subclass_of(&actual_type, &target_type) {
-                        matched.push(*exc);
-                    } else {
-                        rest.push(*exc);
-                    }
-                }
-            }
-        }
-    }
-
-    let msg = group
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let fields = fields.read().unwrap();
-                fields.get("message").and_then(|v| extract_str(*v))
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    let matched_val = if matched.is_empty() {
-        MbValue::none()
-    } else {
-        // Use new_list_borrowed: exceptions are shared with the original group
-        mb_exception_group_new(
-            MbValue::from_ptr(MbObject::new_str(msg.clone())),
-            MbValue::from_ptr(MbObject::new_list_borrowed(matched)),
-        )
+    let cond = match parse_eg_condition(exc_type) {
+        Ok(c) => c,
+        Err(()) => return MbValue::none(),
     };
-
-    let rest_val = if rest.is_empty() {
-        MbValue::none()
-    } else {
-        mb_exception_group_new(
-            MbValue::from_ptr(MbObject::new_str(msg)),
-            MbValue::from_ptr(MbObject::new_list_borrowed(rest)),
-        )
-    };
-
-    MbValue::from_ptr(MbObject::new_tuple(vec![matched_val, rest_val]))
+    let (matched, rest) = eg_split_rec(group, &cond);
+    MbValue::from_ptr(MbObject::new_tuple(vec![matched, rest]))
 }
 
 // ── R1: Built-in Exception Class Registration ──
@@ -1978,18 +1979,97 @@ fn eg_child_exceptions(group: MbValue) -> Vec<MbValue> {
     vec![]
 }
 
+fn eg_class_name(group: MbValue) -> String {
+    group
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "ExceptionGroup".to_string())
+}
+
+fn eg_copy_notes(from: MbValue, to: MbValue) {
+    let notes = from.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get("__notes__").copied()
+        } else {
+            None
+        }
+    });
+    let Some(notes) = notes else {
+        return;
+    };
+    let Some(notes_ptr) = notes.as_ptr() else {
+        return;
+    };
+    let copied = unsafe {
+        match &(*notes_ptr).data {
+            ObjData::List(lock) => {
+                let items = lock.read().unwrap().to_vec();
+                Some(MbValue::from_ptr(MbObject::new_list_borrowed(items)))
+            }
+            _ => None,
+        }
+    };
+    let Some(copied) = copied else {
+        return;
+    };
+    if let Some(to_ptr) = to.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*to_ptr).data {
+                fields
+                    .write()
+                    .unwrap()
+                    .insert("__notes__".to_string(), copied);
+            }
+        }
+    }
+}
+
 /// Derive a new group from `group` carrying `excs`, preserving the message
 /// (CPython's `derive` + metadata copy). Retains the borrowed children.
 fn eg_derive(group: MbValue, excs: Vec<MbValue>) -> MbValue {
+    let class_name = eg_class_name(group);
+    if class_name != "ExceptionGroup" && class_name != "BaseExceptionGroup" {
+        let derive = super::class::lookup_method(&class_name, "derive");
+        if !derive.is_none() {
+            let exc_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(excs));
+            let args = MbValue::from_ptr(MbObject::new_list(vec![exc_tuple]));
+            let derived = super::class::mb_call_method(
+                group,
+                MbValue::from_ptr(MbObject::new_str("derive".to_string())),
+                args,
+            );
+            if is_exception_group_value(derived) {
+                eg_copy_notes(group, derived);
+                return derived;
+            }
+            mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "derive must return an instance of BaseExceptionGroup".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
+
     for e in &excs {
         unsafe {
             super::rc::retain_if_ptr(*e);
         }
     }
-    mb_exception_group_new(
+    let derived = mb_exception_group_new_as(
         MbValue::from_ptr(MbObject::new_str(eg_message(group))),
         MbValue::from_ptr(MbObject::new_list_borrowed(excs)),
-    )
+        &class_name,
+    );
+    eg_copy_notes(group, derived);
+    derived
 }
 
 /// Recursive `split` per PEP 654. Returns `(matched, rest)` where each side is a
