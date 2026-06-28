@@ -2027,6 +2027,9 @@ fn as_complex_pair(val: MbValue) -> Option<(f64, f64)> {
             }
         }
     }
+    if let Some(("complex", payload)) = super::class::builtin_data_payload(val) {
+        return as_complex_pair(payload);
+    }
     None
 }
 
@@ -2036,10 +2039,12 @@ fn as_complex_pair(val: MbValue) -> Option<(f64, f64)> {
 fn is_complex_obj(val: MbValue) -> bool {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
-            return matches!((*ptr).data, ObjData::Complex(_, _));
+            if matches!((*ptr).data, ObjData::Complex(_, _)) {
+                return true;
+            }
         }
     }
-    false
+    matches!(super::class::builtin_data_payload(val), Some(("complex", _)))
 }
 
 /// True iff `val` is a number complex comparison can be defined against
@@ -2051,10 +2056,12 @@ fn is_complex_cmp_operand(val: MbValue) -> bool {
     }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
-            return matches!((*ptr).data, ObjData::Complex(_, _) | ObjData::BigInt(_));
+            if matches!((*ptr).data, ObjData::Complex(_, _) | ObjData::BigInt(_)) {
+                return true;
+            }
         }
     }
-    false
+    matches!(super::class::builtin_data_payload(val), Some(("complex", _)))
 }
 
 /// Compute an unbound complex comparison dunder `complex.<method>(a, b)`.
@@ -8577,6 +8584,13 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             _ => None,
                         })
                         .unwrap_or_default();
+                    if method_str == "__new__" {
+                        if let Some(result) =
+                            super::class::builtin_type_new_unbound(&type_name, &items)
+                        {
+                            return result;
+                        }
+                    }
                     if type_name == "collections.Counter" && method_str == "fromkeys" {
                         return super::class::mb_counter_fromkeys_not_implemented();
                     }
