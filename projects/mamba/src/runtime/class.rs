@@ -15028,6 +15028,32 @@ pub fn mb_call_method_kwargs(
     let name = extract_str(method_name).unwrap_or_default();
     let pos = super::builtins::extract_items(pos_list);
 
+    if name == "__init__" && kwargs_dict_has_entries(kwargs_dict) {
+        if let Some(type_name) = receiver.as_ptr().and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Set(_) => Some("set"),
+                ObjData::FrozenSet(_) => Some("frozenset"),
+                ObjData::Instance { class_name, .. } if class_is_or_inherits(class_name, "set") => {
+                    Some("set")
+                }
+                ObjData::Instance { class_name, .. }
+                    if class_is_or_inherits(class_name, "frozenset") =>
+                {
+                    Some("frozenset")
+                }
+                _ => None,
+            }
+        }) {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "{type_name}() takes no keyword arguments"
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
+
     if let Some(type_name) = receiver.as_ptr().and_then(|p| unsafe {
         match &(*p).data {
             ObjData::Str(s) => Some(s.clone()),
