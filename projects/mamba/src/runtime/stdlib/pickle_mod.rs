@@ -627,10 +627,14 @@ impl Encoder {
         // NaN-boxed handle is an int, which would otherwise serialize as a
         // bogus integer). CPython raises PicklingError / AttributeError.
         {
-            let is_lambda = extract_str(super::super::closure::mb_func_get_name(val))
-                .as_deref() == Some("<lambda>");
-            if is_lambda || super::super::generator::is_known_generator(val) {
-                raise_pickling_error("Can't pickle local object or generator");
+            let is_lambda = extract_str(super::super::closure::mb_func_get_name(val)).as_deref()
+                == Some("<lambda>");
+            if is_lambda
+                || super::super::generator::is_known_generator(val)
+                || super::super::async_rt::is_known_coroutine(val)
+                || super::super::async_rt::is_coroutine_wrapper(val)
+            {
+                raise_pickling_error("Can't pickle local object, generator, or coroutine");
                 self.failed = true;
                 return Err(());
             }

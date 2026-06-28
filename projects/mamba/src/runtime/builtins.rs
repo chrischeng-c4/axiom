@@ -873,9 +873,9 @@ fn print_repr(val: MbValue) {
                             .and_then(|v| v.as_ptr())
                             .and_then(|p| {
                                 if let ObjData::Str(ref s) = (*p).data {
-                                Some(s.clone())
-                            } else {
-                                None
+                                    Some(s.clone())
+                                } else {
+                                    None
                                 }
                             });
                         if let Some(name) = name {
@@ -1446,11 +1446,7 @@ fn int_subclass_numeric_operands(
     }
 }
 
-fn numeric_subclass_operands(
-    a: MbValue,
-    b: MbValue,
-    dunder: &str,
-) -> Option<(MbValue, MbValue)> {
+fn numeric_subclass_operands(a: MbValue, b: MbValue, dunder: &str) -> Option<(MbValue, MbValue)> {
     let av = int_subclass_payload_for_dunder(a, dunder)
         .or_else(|| float_subclass_payload_for_dunder(a, dunder));
     let bv = int_subclass_payload_for_dunder(b, dunder)
@@ -2700,9 +2696,9 @@ pub fn mb_type3_kwargs(name: MbValue, bases: MbValue, dict: MbValue, kwargs: MbV
     let metaclass = kwargs.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             lock.read().ok().and_then(|map| {
-                    map.get(&super::dict_ops::DictKey::Str("metaclass".to_string()))
-                        .copied()
-                })
+                map.get(&super::dict_ops::DictKey::Str("metaclass".to_string()))
+                    .copied()
+            })
         } else {
             None
         }
@@ -6094,6 +6090,12 @@ pub fn mb_repr(val: MbValue) -> MbValue {
         if let Some(r) = super::iter::mb_iter_repr(val) {
             return MbValue::from_ptr(MbObject::new_str(r));
         }
+        if super::async_rt::is_known_coroutine(val) {
+            return MbValue::from_ptr(MbObject::new_str(format!(
+                "<coroutine object at 0x{:x}>",
+                i
+            )));
+        }
         format!("{i}")
     } else if let Some(f) = val.as_float() {
         super::string_ops::python_float_repr(f)
@@ -6177,6 +6179,12 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     class_name,
                     ref fields,
                 } => {
+                    if class_name == "coroutine_wrapper" {
+                        return MbValue::from_ptr(MbObject::new_str(format!(
+                            "<coroutine_wrapper object at 0x{:x}>",
+                            ptr as usize
+                        )));
+                    }
                     if class_name == "UnionType" {
                         return MbValue::from_ptr(MbObject::new_str(union_type_repr(val)));
                     }
@@ -6215,9 +6223,9 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             .and_then(|v| v.as_ptr())
                             .and_then(|p| {
                                 if let ObjData::Str(ref s) = (*p).data {
-                                Some(s.clone())
-                            } else {
-                                None
+                                    Some(s.clone())
+                                } else {
+                                    None
                                 }
                             });
                         if let Some(name) = name {
@@ -6421,11 +6429,11 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                         let parts: Vec<String> = keys
                             .iter()
                             .filter_map(|k| {
-                            let v = *guard.get(k)?;
-                            Some(if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
-                                format!("{k}={repr_prefix}(...)")
-                            } else {
-                                let r = mb_repr(v);
+                                let v = *guard.get(k)?;
+                                Some(if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
+                                    format!("{k}={repr_prefix}(...)")
+                                } else {
+                                    let r = mb_repr(v);
                                     let rs = r
                                         .as_ptr()
                                         .and_then(|p| {
@@ -6436,9 +6444,9 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                                             }
                                         })
                                         .unwrap_or_default();
-                                format!("{k}={rs}")
+                                    format!("{k}={rs}")
+                                })
                             })
-                        })
                             .collect();
                         drop(guard);
                         return MbValue::from_ptr(MbObject::new_str(format!(
@@ -8174,6 +8182,9 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
                     if super::stdlib::enum_mod::is_functional_enum_class(obj) {
                         return MbValue::from_bool(true);
                     }
+                    if class_name == "__exec_function__" {
+                        return MbValue::from_bool(true);
+                    }
                     if class_name == "__unbound_method__" || class_name == "__bound_native_method__"
                     {
                         return MbValue::from_bool(true);
@@ -8513,6 +8524,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 // Bound native method (`f = gen.uniform; f(10, 10)`): the
                 // Instance carries the receiver + method name; dispatch as a
                 // normal method call.
+                if class_name == "__exec_function__" {
+                    return mb_exec_function_call(func, items);
+                }
                 if class_name == "__bound_native_method__" {
                     let g = fields.read().unwrap();
                     let recv = g.get("__self__").copied().unwrap_or_else(MbValue::none);
@@ -8600,8 +8614,8 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         let method_str = method_name
                             .as_ptr()
                             .and_then(|p| match &(*p).data {
-                            ObjData::Str(s) => Some(s.clone()),
-                            _ => None,
+                                ObjData::Str(s) => Some(s.clone()),
+                                _ => None,
                             })
                             .unwrap_or_default();
                         let a = items.first().copied().unwrap_or_else(MbValue::none);
@@ -11265,6 +11279,74 @@ fn exec_store_name(ctx: &mut ExecContext, name: &str, value: MbValue) {
     }
 }
 
+fn make_exec_function_value(name: &str, is_async: bool, return_value: MbValue) -> MbValue {
+    let inst = MbObject::new_instance("__exec_function__".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut guard = fields.write().unwrap();
+            guard.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            guard.insert("__is_async__".to_string(), MbValue::from_bool(is_async));
+            unsafe {
+                super::rc::retain_if_ptr(return_value);
+            }
+            guard.insert("__return__".to_string(), return_value);
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn exec_function_field(func: MbValue, key: &str) -> Option<MbValue> {
+    let ptr = func.as_ptr()?;
+    unsafe {
+        let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        else {
+            return None;
+        };
+        if class_name != "__exec_function__" {
+            return None;
+        }
+        fields.read().unwrap().get(key).copied()
+    }
+}
+
+pub fn mb_exec_function_is_async(func: MbValue) -> bool {
+    exec_function_field(func, "__is_async__")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+pub fn mb_exec_function_call(func: MbValue, args: Vec<MbValue>) -> MbValue {
+    if !args.is_empty() {
+        exec_raise_type_error(format!(
+            "function takes 0 arguments but {} were given",
+            args.len()
+        ));
+        return MbValue::none();
+    }
+    let return_value = exec_function_field(func, "__return__").unwrap_or_else(MbValue::none);
+    unsafe {
+        super::rc::retain_if_ptr(return_value);
+    }
+    if mb_exec_function_is_async(func) {
+        let name = exec_function_field(func, "__name__")
+            .and_then(eval_str_value)
+            .unwrap_or_else(|| "<exec coroutine>".to_string());
+        let coro = super::async_rt::mb_coroutine_new(
+            MbValue::from_ptr(MbObject::new_str(name)),
+            MbValue::from_ptr(MbObject::new_list(Vec::new())),
+        );
+        super::async_rt::mb_coroutine_complete(coro, return_value);
+        return coro;
+    }
+    return_value
+}
+
 fn exec_truthy(value: MbValue) -> bool {
     if let Some(b) = value.as_bool() {
         return b;
@@ -11337,7 +11419,9 @@ fn exec_range_values(args: &[MbValue]) -> MbValue {
     if step == 0 {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-            MbValue::from_ptr(MbObject::new_str("range() arg 3 must not be zero".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "range() arg 3 must not be zero".to_string(),
+            )),
         );
         return MbValue::none();
     }
@@ -11385,6 +11469,27 @@ fn exec_call_function(ctx: &mut ExecContext, func: &ExecFunction, args: &[MbValu
         ExecFlow::Return(value) => value,
         ExecFlow::Normal | ExecFlow::Break | ExecFlow::Continue => MbValue::none(),
     }
+}
+
+fn exec_static_return_value(
+    ctx: &mut ExecContext,
+    body: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+) -> MbValue {
+    let Some(stmt) = body.iter().find(|stmt| {
+        matches!(
+            stmt.node,
+            crate::parser::ast::Stmt::Return(_) | crate::parser::ast::Stmt::ExprStmt(_)
+        )
+    }) else {
+        return MbValue::none();
+    };
+    match &stmt.node {
+        crate::parser::ast::Stmt::Return(Some(expr)) => Some(exec_eval_expr(ctx, &expr.node)),
+        crate::parser::ast::Stmt::Return(None) => Some(MbValue::none()),
+        crate::parser::ast::Stmt::ExprStmt(expr) => Some(exec_eval_expr(ctx, &expr.node)),
+        _ => None,
+    }
+    .unwrap_or_else(MbValue::none)
 }
 
 fn exec_eval_fstring_parts(
@@ -11849,6 +11954,29 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                     body: body.clone(),
                 },
             );
+            if decorators.is_empty() && params.is_empty() {
+                let return_value = exec_static_return_value(ctx, body);
+                if !exec_has_pending_exception() {
+                    let func_value = make_exec_function_value(name, false, return_value);
+                    exec_store_name(ctx, name, func_value);
+                }
+            }
+            ExecFlow::Normal
+        }
+        Stmt::AsyncFnDef {
+            decorators,
+            name,
+            params,
+            body,
+            ..
+        } => {
+            if decorators.is_empty() && params.is_empty() {
+                let return_value = exec_static_return_value(ctx, body);
+                if !exec_has_pending_exception() {
+                    let func_value = make_exec_function_value(name, true, return_value);
+                    exec_store_name(ctx, name, func_value);
+                }
+            }
             ExecFlow::Normal
         }
         Stmt::Return(value) => {
