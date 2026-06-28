@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-commands.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-gpu-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat gpu` — report the GPU every vat on this host can reach.
 //!

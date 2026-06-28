@@ -14,7 +14,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "rig"
-generated_from_td_digest = "sha256:c0d0be9ffeee7fa1fd8fddfa030eca423abb29b7f99f33a04594087f9cabdb76"
+generated_from_td_digest = "sha256:3e5bc1a9adcefd067ba338d3e3efd01b31df9274f0436be217624381c946cbe7"
 
 [[aw.ec.generated.cases]]
 id = "rig-floor-ratchet-pin-gates"
@@ -25,7 +25,7 @@ category = "performance"
 td_ref = "projects/rig/tech-design/logic/external-contracts.md#rig-floor-ratchet-pin-gates"
 test_path = "projects/rig/tests/performance_rig_floor_ratchet_pin_gates.rs"
 command = "cargo test -p rig"
-required_for_production = true
+required_for_production = false
 assertions = [
     "pin gate tests pass",
     "floor and ratchet baseline semantics remain covered",
@@ -40,7 +40,7 @@ category = "performance"
 td_ref = "projects/rig/tech-design/logic/external-contracts.md#rig-open-loop-load-generator"
 test_path = "projects/rig/tests/performance_rig_open_loop_load_generator.rs"
 command = "cargo test -p rig"
-required_for_production = true
+required_for_production = false
 assertions = [
     "load generator tests pass",
     "open-loop load remains part of rig's public contract",

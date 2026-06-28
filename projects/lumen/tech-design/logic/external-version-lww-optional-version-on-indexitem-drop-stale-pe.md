@@ -116,3 +116,25 @@ requirementDiagram
 
 - [logic] Correct contract: stale check (version present AND stored >= version) drops the write before drop_eid+apply_value; otherwise apply and, when versioned, store the max version per (id, field). Absent version = arrival order.
 - [unit-test] R1–R3 cover stale-drop, newer-wins, and the unversioned arrival-order regression, each bound to a concrete test.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/types.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Expose optional external version fields on index payloads."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Apply last-write-wins external version checks during index writes."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Cover stale version drops, newer version wins, and unversioned arrival-order behavior."
+```

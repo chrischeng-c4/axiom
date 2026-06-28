@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-emulator-workflows-expr-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The `${...}` expression evaluator for the built-in Cloud Workflows emulator.
 //!
@@ -14,11 +14,13 @@
 use serde_json::{Map, Value};
 
 /// Variable bindings in scope during evaluation.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-workflows-expr-rs.md#source
 pub type Scope = Map<String, Value>;
 
 /// Resolve a workflow *value*: a `${...}` string evaluates to the inner
 /// expression's value, a string with embedded `${...}` interpolates, and
 /// arrays/objects are resolved recursively. Non-string scalars pass through.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-workflows-expr-rs.md#source
 pub fn eval_value(v: &Value, scope: &Scope) -> Result<Value, String> {
     match v {
         Value::String(s) => eval_string(s, scope),
@@ -103,6 +105,7 @@ fn whole_expr(s: &str) -> Option<&str> {
 }
 
 /// Evaluate an expression string against `scope`.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-workflows-expr-rs.md#source
 pub fn eval_expr(src: &str, scope: &Scope) -> Result<Value, String> {
     let tokens = tokenize(src)?;
     let mut p = Parser { tokens, pos: 0 };
@@ -278,6 +281,7 @@ struct Parser {
     pos: usize,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-workflows-expr-rs.md#source
 impl Parser {
     fn peek(&self) -> Option<&Tok> {
         self.tokens.get(self.pos)
@@ -547,6 +551,7 @@ fn truthy(v: &Value) -> bool {
 }
 
 /// Stringify a value for interpolation / `+` concat.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-workflows-expr-rs.md#source
 pub fn to_text(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),

@@ -1,5 +1,5 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-projects-lumen.md#schema
-// HANDWRITE-BEGIN gap="lumen-build-provenance-stamp" tracker="projects/lumen/tech-design/semantic/lumen-projects-lumen.md#schema" reason="Build script provenance stamping is semantically covered but not losslessly generated from TD."
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-build-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Build script: stamp `LUMEN_GIT_SHA` and `LUMEN_BUILT_AT` into the binary
 //! so `GET /version` can report provenance.
 //!
@@ -52,4 +52,4 @@ fn short_sha() -> Option<String> {
         Some(sha)
     }
 }
-// HANDWRITE-END
+// CODEGEN-END

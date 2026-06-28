@@ -502,7 +502,6 @@ fn inplace_verb_bails_without_init() {
     );
 }
 
-
 #[test]
 fn wi_validate_accepts_apply_dirty_issue_file_on_issue_branch() {
     let Some((git, bin)) = skip_unless_ready() else {

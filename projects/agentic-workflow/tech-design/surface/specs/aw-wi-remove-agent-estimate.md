@@ -149,10 +149,14 @@ requirementDiagram
 ```yaml
 e2e_tests:
   - id: wi-remove-agent-estimate-build
+    capability_id: work-item-planning
+    claim_id: capability-to-epic-planning
     command: cargo build -p agentic-workflow --bin aw
     assertions:
       - "the aw binary builds after removing estimate helpers"
   - id: wi-remove-agent-estimate-spec-check
+    capability_id: work-item-planning
+    claim_id: capability-to-epic-planning
     command: ./target/debug/aw td check projects/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md
     assertions:
       - "the canonical contract remains parseable by td check"

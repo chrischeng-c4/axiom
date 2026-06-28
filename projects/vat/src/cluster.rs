@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-cluster-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Local Kubernetes cluster drivers (kind / k3d / minikube) behind one enum.
 //!
@@ -29,6 +29,7 @@ pub enum ResolvedBackend {
     Minikube,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-cluster-rs.md#source
 impl ResolvedBackend {
     /// The three backends in `auto` preference order.
     pub const ALL: [ResolvedBackend; 3] = [Self::Kind, Self::K3d, Self::Minikube];
@@ -259,6 +260,7 @@ impl ResolvedBackend {
 }
 
 /// Desired cluster shape passed to a backend driver.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-cluster-rs.md#source
 pub struct ClusterSpec<'a> {
     pub name: &'a str,
     pub k8s_version: Option<&'a str>,
@@ -268,6 +270,7 @@ pub struct ClusterSpec<'a> {
 
 /// Result of creating or inspecting a cluster.
 #[derive(Debug, Clone)]
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-cluster-rs.md#source
 pub struct ClusterInfo {
     pub backend: &'static str,
     pub name: String,
@@ -285,6 +288,7 @@ pub struct BackendUnavailable {
     pub docker: bool,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-cluster-rs.md#source
 impl BackendUnavailable {
     /// The requested backend as the token used in vat.toml / `--backend`.
     pub fn requested_name(&self) -> &'static str {
@@ -303,6 +307,7 @@ impl BackendUnavailable {
 }
 
 /// The token used for a requested backend in vat.toml and `--backend`.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-cluster-rs.md#source
 pub fn backend_token(backend: ClusterBackend) -> &'static str {
     match backend {
         ClusterBackend::Auto => "auto",

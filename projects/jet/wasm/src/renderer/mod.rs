@@ -2052,7 +2052,7 @@ mod tests {
 
     /// @spec .aw/tech-design/projects/jet/specs/3944.md#unit-test
     #[test]
-    fn dom_like_inline_layout_matches_list_fixture_boxes() {
+    fn surface_inline_layout_matches_list_fixture_boxes() {
         use crate::Props;
 
         fn props(id: &str) -> Props {

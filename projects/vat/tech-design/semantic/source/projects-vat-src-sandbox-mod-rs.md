@@ -1,34 +1,27 @@
 ---
 id: vat-source-projects-vat-src-sandbox-mod-rs
-summary: Source replay payload for projects/vat/src/sandbox/mod.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/sandbox/mod.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/sandbox/mod.rs
+# Standardized projects/vat/src/sandbox/mod.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/src/sandbox/mod.rs` generated from AST during Score force-regeneration standardization.
+Rust source-unit TD for `projects/vat/src/sandbox/mod.rs`, captured during #39 vat migration onto td_ast lossless source generation.
 
-### Symbols
-
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `pick` | projects/vat/src/sandbox/mod.rs | function | pub | 46 | pick(spec: &EnvSpec) -> Box<dyn Sandbox> |
-| `process` | projects/vat/src/sandbox/mod.rs | module | pub | 20 |  |
-| `seatbelt` | projects/vat/src/sandbox/mod.rs | module | pub | 21 |  |
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
 //! Pluggable isolation backends.
 //!
 //! The differentiator of vat is the state layer, not the isolation mechanism —
@@ -51,7 +44,7 @@ pub mod seatbelt;
 
 use std::path::Path;
 
-use crate::spec::{EnvSpec, Isolation};
+use crate::spec::{EgressPolicy, EnvSpec, Isolation};
 
 /// An isolation backend resolves the user's command into the *actual* program
 /// + argv to exec (e.g. seatbelt wraps it in `sandbox-exec`). The caller then
@@ -74,11 +67,27 @@ pub trait Sandbox {
 /// @spec projects/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#source
 pub fn pick(spec: &EnvSpec) -> Box<dyn Sandbox> {
     match spec.isolation {
-        Isolation::None => Box::new(process::ProcessBackend),
+        Isolation::None => {
+            if spec.egress != EgressPolicy::Open {
+                eprintln!(
+                    "vat: warning: [network].egress confinement requires --isolation seatbelt; \
+                     running without egress enforcement."
+                );
+            }
+            Box::new(process::ProcessBackend)
+        }
         Isolation::Seatbelt => {
             if cfg!(target_os = "macos") && seatbelt::available() {
-                Box::new(seatbelt::SeatbeltBackend)
+                Box::new(seatbelt::SeatbeltBackend {
+                    egress: spec.egress,
+                })
             } else {
+                if spec.egress != EgressPolicy::Open {
+                    eprintln!(
+                        "vat: warning: seatbelt unavailable; [network].egress confinement \
+                         is not enforced."
+                    );
+                }
                 eprintln!(
                     "vat: seatbelt isolation requested but unavailable on this host; \
                      using process backend (workspace is still copy-on-write)."
@@ -88,21 +97,17 @@ pub fn pick(spec: &EnvSpec) -> Box<dyn Sandbox> {
         }
     }
 }
-`````
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/sandbox/mod.rs"
+  - path: projects/vat/src/sandbox/mod.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-sandbox.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-sandbox-mod-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/sandbox/mod.rs` captured during #39 vat standardization.
 ```

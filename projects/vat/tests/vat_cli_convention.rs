@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:e2e-test:d485becb" tracker="pending-tracker" reason="Smoke test: --help lists all three mandatory verbs; upgrade --check and report-issue --dry-run behave per contract."
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_cli_convention-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Binary smoke test for the mandatory CLI convention: every CLI ships
 //! `llm`, `upgrade`, and `report-issue` (CONTRIBUTING.md).
 //!
@@ -61,4 +62,4 @@ fn cli_convention_upgrade_check_exits_cleanly() {
         out.status
     );
 }
-// HANDWRITE-END
+// CODEGEN-END

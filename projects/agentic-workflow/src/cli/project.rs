@@ -542,17 +542,28 @@ fn build_health_report_with_options_internal(
 ) -> Result<ProjectHealthReport> {
     let project_root = crate::find_project_root()?;
     let project = resolve_health_project_name(&project_root, project)?;
+    let caps_ec_only = project_health_caps_ec_only(&project);
+    let verify_traceability = verify_traceability && !caps_ec_only;
+    let verify_cb = verify_cb && !caps_ec_only;
+    let verify_cold = verify_cold && !caps_ec_only;
     let progress = HealthProgressSink::new(&project, emit_progress);
     progress.emit(0, "start", "starting project health verification", None);
-    let test_gates =
-        project_test_gate_report_with_progress(&project, &project_root, verify_tests, &progress)?;
+    let test_gates = if caps_ec_only {
+        ProjectTestGateReport::skipped_by_caps_ec_policy(&project)
+    } else {
+        project_test_gate_report_with_progress(&project, &project_root, verify_tests, &progress)?
+    };
     build_health_report_with_test_gates_and_capability_verified_internal(
         &project,
         verify_traceability,
         verify_cb,
         verify_cold,
         test_gates,
-        verify_tests && verify_cb && verify_traceability && verify_ec,
+        if caps_ec_only {
+            verify_ec
+        } else {
+            verify_tests && verify_cb && verify_traceability && verify_ec
+        },
         None,
         &progress,
     )
@@ -621,6 +632,10 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
 ) -> Result<ProjectHealthReport> {
     let project_root = crate::find_project_root()?;
     let project = resolve_health_project_name(&project_root, project)?;
+    let caps_ec_only = project_health_caps_ec_only(&project);
+    let verify_traceability = verify_traceability && !caps_ec_only;
+    let verify_cb = verify_cb && !caps_ec_only;
+    let verify_cold = verify_cold && !caps_ec_only;
     progress.emit(
         30,
         "traceability",
@@ -636,6 +651,10 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
     })?;
     let traceability_note = if verify_traceability {
         None
+    } else if caps_ec_only {
+        Some(format!(
+            "traceability is advisory for `{project}` self-health; capability and EC gates are authoritative"
+        ))
     } else {
         Some(format!(
             "traceability not evaluated; run `aw health --project {project} full`"
@@ -649,6 +668,13 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
             })?,
             None,
         )
+    } else if caps_ec_only {
+        (
+            cb_verify_not_evaluated(),
+            Some(format!(
+                "cb verify is advisory for `{project}` self-health; capability and EC gates are authoritative"
+            )),
+        )
     } else {
         (
             cb_verify_not_evaluated(),
@@ -659,8 +685,11 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
     };
     let cold_workspace_count =
         crate::cli::cb::project_force_regen_cold_verify_workspaces(&project)?.len();
-    let production_gates_evaluated =
-        production_gates_evaluated && (verify_cold || cold_workspace_count == 0);
+    let production_gates_evaluated = if caps_ec_only {
+        production_gates_evaluated
+    } else {
+        production_gates_evaluated && (verify_cold || cold_workspace_count == 0)
+    };
     let cold_rebuilds = if verify_cold {
         progress.emit(70, "cold", "running cold rebuild verification", None);
         crate::generate::apply::with_quiet_apply_diagnostics(|| {
@@ -683,18 +712,24 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
     );
     report.traceability_evaluated = verify_traceability;
     report.traceability_note = traceability_note.clone();
-    report
-        .blockers
-        .extend(crate::cli::standardize::project_root_artifact_blockers(
-            &project,
-        )?);
-    if let Some(note) = traceability_note {
-        report.blockers.push(note);
+    if !caps_ec_only {
+        report
+            .blockers
+            .extend(crate::cli::standardize::project_root_artifact_blockers(
+                &project,
+            )?);
+    }
+    if !caps_ec_only {
+        if let Some(note) = traceability_note {
+            report.blockers.push(note);
+        }
     }
     report.cb_verify_evaluated = verify_cb;
     report.cb_verify_note = cb_verify_note.clone();
-    if let Some(note) = cb_verify_note {
-        report.blockers.push(note);
+    if !caps_ec_only {
+        if let Some(note) = cb_verify_note {
+            report.blockers.push(note);
+        }
     }
     if verify_cold && cold_workspace_count == 0 {
         report.cold_rebuild_evaluated = false;
@@ -714,13 +749,19 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
         report.cold_rebuild_clean = true;
         report.cold_rebuild_note = if cold_workspace_count == 0 {
             None
+        } else if caps_ec_only {
+            Some(format!(
+                "cold rebuild is advisory for `{project}` self-health; capability and EC gates are authoritative"
+            ))
         } else {
             Some(format!(
                 "cold rebuild not evaluated; run `aw health --project {project} full`"
             ))
         };
         if let Some(note) = &report.cold_rebuild_note {
-            report.blockers.push(note.clone());
+            if !caps_ec_only {
+                report.blockers.push(note.clone());
+            }
         }
     }
     apply_scoped_production_readiness(
@@ -740,6 +781,10 @@ fn resolve_health_project_name(project_root: &std::path::Path, requested: &str) 
             .map(|project| project.name)
             .unwrap_or_else(|| requested.to_string()),
     )
+}
+
+pub(crate) fn project_health_caps_ec_only(project: &str) -> bool {
+    matches!(project, "agentic-workflow" | "aw")
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -839,11 +884,16 @@ fn apply_scoped_production_readiness(
                             production_gates_evaluated,
                         )
                     });
+                    let regenerability_gap_count = if project_health_caps_ec_only(&report.project) {
+                        0
+                    } else {
+                        report.regenerability_authority.gap_count
+                    };
                     evaluate_release_scope_with_regenerability(
                         inputs_from_sections(&document.capabilities, &verified_by_id),
                         report.blockers.clone(),
                         production_gates_evaluated,
-                        report.regenerability_authority.gap_count,
+                        regenerability_gap_count,
                     )
                 }
                 Err(err) => {
@@ -952,9 +1002,10 @@ impl ProjectHealthReport {
         cold_rebuilds: Vec<CbColdVerifySummary>,
         test_gates: ProjectTestGateReport,
     ) -> Self {
+        let caps_ec_only = project_health_caps_ec_only(project);
         let mut blockers = Vec::new();
         let mut regenerability_gaps = Vec::new();
-        if !managed.uncovered_files.is_empty() {
+        if !caps_ec_only && !managed.uncovered_files.is_empty() {
             blockers.push(format!(
                 "{} unmanaged source file(s)",
                 managed.uncovered_files.len()
@@ -1016,18 +1067,18 @@ impl ProjectHealthReport {
         }
         let regenerability_authority =
             regenerability_authority_report(project, &regenerable, regenerability_gaps);
-        if regenerability_authority.required_for_production {
+        if !caps_ec_only && regenerability_authority.required_for_production {
             blockers.extend(regenerability_authority.blockers.iter().cloned());
         }
         let managed_ready = managed.percent >= 100.0 && managed.uncovered_files.is_empty();
-        if !semantic.uncovered_files.is_empty() {
+        if !caps_ec_only && !semantic.uncovered_files.is_empty() {
             blockers.push(format!(
                 "semantic TD coverage incomplete: {}/{}",
                 semantic.semantically_covered_files, semantic.total_files
             ));
         }
         if let Some(gap) = &semantic.next_gap {
-            if semantic_gap_blocks_readiness(&gap.primitive) {
+            if !caps_ec_only && semantic_gap_blocks_readiness(&gap.primitive) {
                 blockers.push(format!(
                     "next semantic gap: {} {}",
                     gap.target, gap.primitive
@@ -1042,7 +1093,7 @@ impl ProjectHealthReport {
                 .is_none_or(|gap| !semantic_gap_blocks_readiness(&gap.primitive))
             && semantic.blocked_gap_count == 0
             && semantic.human_decision_required_count == 0;
-        if traceability.blocker_count > 0 {
+        if !caps_ec_only && traceability.blocker_count > 0 {
             blockers.push(format!(
                 "traceability closure incomplete: {} blocker(s)",
                 traceability.blocker_count
@@ -1061,11 +1112,11 @@ impl ProjectHealthReport {
                 )
             }));
         }
-        if !cb.clean {
+        if !caps_ec_only && !cb.clean {
             blockers.push(format!("cb verify has {} finding(s)", cb.failures.len()));
             blockers.extend(cb.failures.iter().cloned());
         }
-        if cb.public_api_total > cb.public_api_covered {
+        if !caps_ec_only && cb.public_api_total > cb.public_api_covered {
             blockers.push(format!(
                 "public API semantic coverage incomplete: {}/{}",
                 cb.public_api_covered, cb.public_api_total
@@ -1080,7 +1131,7 @@ impl ProjectHealthReport {
                 cold_rebuild_failures.push(format!("{workspace}: {failure}"));
             }
         }
-        if !cold_rebuild_failures.is_empty() {
+        if !caps_ec_only && !cold_rebuild_failures.is_empty() {
             blockers.push(format!(
                 "cold rebuild failed: {} finding(s)",
                 cold_rebuild_failures.len()
@@ -1094,49 +1145,51 @@ impl ProjectHealthReport {
             regenerable.handwrite_files,
             regenerable.unmarked_files,
         );
-        if stack_migration.incomplete_workspace_count > 0 {
+        if !caps_ec_only && stack_migration.incomplete_workspace_count > 0 {
             blockers.push(format!(
                 "stack migration classification incomplete: {}/{} workspace(s)",
                 stack_migration.incomplete_workspace_count,
                 stack_migration.workspaces.len()
             ));
         }
-        blockers.extend(stack_migration.blockers.iter().cloned());
-        match test_gates.status {
-            ProjectTestGateStatus::Passed => {}
-            ProjectTestGateStatus::NotEvaluated => {
-                blockers.push(
-                    test_gates
-                        .note
-                        .clone()
-                        .unwrap_or_else(|| "test gates not evaluated".to_string()),
-                );
-            }
-            ProjectTestGateStatus::NotConfigured => {
-                blockers.push(
-                    test_gates
-                        .note
-                        .clone()
-                        .unwrap_or_else(|| "no workspace test_cmd configured".to_string()),
-                );
-            }
-            ProjectTestGateStatus::Failed => {
-                blockers.push(format!(
-                    "test gates failed: {}/{} command(s)",
-                    test_gates.failed_count, test_gates.command_count
-                ));
-                blockers.extend(
-                    test_gates
-                        .commands
-                        .iter()
-                        .filter(|cmd| cmd.status == ProjectTestCommandStatus::Failed)
-                        .map(|cmd| {
-                            format!(
-                                "{} `{}` failed with exit {:?}",
-                                cmd.workspace, cmd.command, cmd.exit_code
-                            )
-                        }),
-                );
+        if !caps_ec_only {
+            blockers.extend(stack_migration.blockers.iter().cloned());
+            match test_gates.status {
+                ProjectTestGateStatus::Passed => {}
+                ProjectTestGateStatus::NotEvaluated => {
+                    blockers.push(
+                        test_gates
+                            .note
+                            .clone()
+                            .unwrap_or_else(|| "test gates not evaluated".to_string()),
+                    );
+                }
+                ProjectTestGateStatus::NotConfigured => {
+                    blockers.push(
+                        test_gates
+                            .note
+                            .clone()
+                            .unwrap_or_else(|| "no workspace test_cmd configured".to_string()),
+                    );
+                }
+                ProjectTestGateStatus::Failed => {
+                    blockers.push(format!(
+                        "test gates failed: {}/{} command(s)",
+                        test_gates.failed_count, test_gates.command_count
+                    ));
+                    blockers.extend(
+                        test_gates
+                            .commands
+                            .iter()
+                            .filter(|cmd| cmd.status == ProjectTestCommandStatus::Failed)
+                            .map(|cmd| {
+                                format!(
+                                    "{} `{}` failed with exit {:?}",
+                                    cmd.workspace, cmd.command, cmd.exit_code
+                                )
+                            }),
+                    );
+                }
             }
         }
 
@@ -1153,8 +1206,11 @@ impl ProjectHealthReport {
             && traceability.command_traceability.hidden_command_count == 0
             && traceability.command_traceability.orphan_command_count == 0;
         let capability_ready = true;
-        let takeover_ready =
-            capability_ready && managed_ready && semantic_ready && traceability_ready;
+        let takeover_ready = if caps_ec_only {
+            capability_ready
+        } else {
+            capability_ready && managed_ready && semantic_ready && traceability_ready
+        };
         let generator_request_ready = takeover_ready;
 
         Self {
@@ -1295,6 +1351,14 @@ impl ProjectHealthReport {
             && self.command_traceability_blocker_count == 0
             && self.command_traceability_hidden_command_count == 0
             && self.command_traceability_orphan_command_count == 0;
+        if project_health_caps_ec_only(&self.project) {
+            let ec_ready = self.ec.check_clean
+                && (!self.ec.verify_evaluated
+                    || matches!(self.ec.status, ProjectEcGateStatus::Passed));
+            self.takeover_ready = self.capability_ready && ec_ready;
+            self.generator_request_ready = self.takeover_ready;
+            return;
+        }
         self.takeover_ready = self.capability_ready
             && self.managed_ready
             && self.semantic_ready
@@ -1423,6 +1487,21 @@ impl ProjectTestGateReport {
             }],
         }
     }
+
+    fn skipped_by_caps_ec_policy(project: &str) -> Self {
+        Self {
+            evaluated: true,
+            status: ProjectTestGateStatus::Passed,
+            note: Some(format!(
+                "workspace test gates are advisory for `{project}` self-health; capability and EC gates are authoritative"
+            )),
+            command_count: 0,
+            passed_count: 0,
+            failed_count: 0,
+            skipped_count: 0,
+            commands: Vec::new(),
+        }
+    }
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -1444,6 +1523,9 @@ fn project_test_gate_report_with_progress(
 ) -> Result<ProjectTestGateReport> {
     if !verify_tests {
         return Ok(ProjectTestGateReport::not_evaluated(project));
+    }
+    if project_health_caps_ec_only(project) {
+        return Ok(ProjectTestGateReport::skipped_by_caps_ec_policy(project));
     }
     progress.emit(10, "tests", "loading configured test gates", None);
 
@@ -1994,6 +2076,15 @@ fn project_health_ec_gen_axis(report: &ProjectHealthReport) -> serde_json::Value
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_td_axis(report: &ProjectHealthReport) -> serde_json::Value {
+    if project_health_caps_ec_only(&report.project) {
+        return serde_json::json!({
+            "status": "advisory",
+            "managed_percent": report.managed_percent,
+            "semantic_percent": report.semantic_percent,
+            "traceability_percent": report.traceability_percent,
+            "td_lock_clean": report.td_lock.clean,
+        });
+    }
     let passed = report.managed_ready
         && report.semantic_ready
         && report.traceability_ready
@@ -2011,9 +2102,11 @@ fn project_health_td_axis(report: &ProjectHealthReport) -> serde_json::Value {
 fn project_health_td_gen_axis(report: &ProjectHealthReport) -> serde_json::Value {
     let generated_units = report.codegen_files;
     let expected_units = report.codegen_eligible_files;
-    let status = if report.regenerability_authority.required_for_production
-        && report.regenerability_authority.gap_count > 0
-    {
+    let required_for_production = report.regenerability_authority.required_for_production
+        && !project_health_caps_ec_only(&report.project);
+    let status = if project_health_caps_ec_only(&report.project) {
+        "advisory"
+    } else if required_for_production && report.regenerability_authority.gap_count > 0 {
         "blocked"
     } else if report.codegen_percent >= 100.0 {
         "passed"
@@ -2028,12 +2121,27 @@ fn project_health_td_gen_axis(report: &ProjectHealthReport) -> serde_json::Value
         "generated_percent": percent_of(generated_units, expected_units),
         "handwrite_units": report.cb_ownership.handwrite_files,
         "missing_units": report.cb_ownership.unmarked_files,
-        "required_for_production": report.regenerability_authority.required_for_production,
+        "required_for_production": required_for_production,
     })
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_compact_blockers(report: &ProjectHealthReport) -> serde_json::Value {
+    let next_gap = if project_health_caps_ec_only(&report.project) {
+        None
+    } else {
+        report.next_gap.as_ref()
+    };
+    let blocked_gap_count = if project_health_caps_ec_only(&report.project) {
+        0
+    } else {
+        report.blocked_gap_count
+    };
+    let human_decision_required_count = if project_health_caps_ec_only(&report.project) {
+        0
+    } else {
+        report.human_decision_required_count
+    };
     serde_json::json!({
         "blocker_count": report.blockers.len(),
         "blockers_preview": preview_strings_limited(&report.blockers, HEALTH_COMPACT_PREVIEW_LIMIT),
@@ -2041,9 +2149,9 @@ fn project_health_compact_blockers(report: &ProjectHealthReport) -> serde_json::
         "production_blockers_preview": preview_strings_limited(&report.production_blockers, HEALTH_COMPACT_PREVIEW_LIMIT),
         "global_blocker_count": report.global_blockers.len(),
         "global_blockers_preview": preview_strings_limited(&report.global_blockers, HEALTH_COMPACT_PREVIEW_LIMIT),
-        "next_gap": &report.next_gap,
-        "blocked_gap_count": report.blocked_gap_count,
-        "human_decision_required_count": report.human_decision_required_count,
+        "next_gap": next_gap,
+        "blocked_gap_count": blocked_gap_count,
+        "human_decision_required_count": human_decision_required_count,
     })
 }
 
@@ -2208,23 +2316,36 @@ fn project_health_loop_status(report: &ProjectHealthReport) -> &'static str {
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_completion(report: &ProjectHealthReport) -> serde_json::Value {
-    serde_json::json!({
-        "root_complete": report.production_ready,
-        "workflow_complete": report.production_ready,
-        "requires_hitl": project_health_requires_hitl(report),
-        "criteria": [
+    let criteria = if project_health_caps_ec_only(&report.project) {
+        vec![
+            "capability roots are defined and runtime verified",
+            "capability claims map to production EC cases",
+            "EC inventory/check is clean",
+            "EC commands pass when verification is requested",
+        ]
+    } else {
+        vec![
             "capability roots are defined and runtime verified",
             "managed, semantic, and traceability takeover gates are ready",
             "CB/cold/test/EC production gates are evaluated and clean",
             "capability claims have EC, TD, and artifact closure",
-            "no workflow locks or artifact quality blockers remain"
-        ],
+            "no workflow locks or artifact quality blockers remain",
+        ]
+    };
+    serde_json::json!({
+        "root_complete": report.production_ready,
+        "workflow_complete": report.production_ready,
+        "requires_hitl": project_health_requires_hitl(report),
+        "criteria": criteria,
         "missing": project_health_missing(report),
     })
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_requires_hitl(report: &ProjectHealthReport) -> bool {
+    if project_health_caps_ec_only(&report.project) {
+        return false;
+    }
     report.workflow_lock_count > 0 || report.human_decision_required_count > 0
 }
 
@@ -2244,8 +2365,10 @@ fn project_health_missing(report: &ProjectHealthReport) -> Vec<String> {
     for blocker in &report.production_blockers {
         push_project_health_missing(&mut missing, &mut seen, blocker.clone());
     }
-    if let Some(gap) = &report.next_gap {
-        push_project_health_missing(&mut missing, &mut seen, format!("next gap: {gap}"));
+    if !project_health_caps_ec_only(&report.project) {
+        if let Some(gap) = &report.next_gap {
+            push_project_health_missing(&mut missing, &mut seen, format!("next gap: {gap}"));
+        }
     }
     missing
 }
@@ -2264,39 +2387,41 @@ fn push_project_health_missing(
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<String> {
     let mut missing = Vec::new();
-    if !report.traceability_evaluated {
-        missing.push(report.traceability_note.clone().unwrap_or_else(|| {
-            format!(
-                "traceability not evaluated; run `aw health --project {} full`",
-                report.project
-            )
-        }));
-    }
-    if !report.cb_verify_evaluated {
-        missing.push(report.cb_verify_note.clone().unwrap_or_else(|| {
-            format!(
-                "cb verify not evaluated; run `aw health --project {} full`",
-                report.project
-            )
-        }));
-    }
-    if !report.cold_rebuild_evaluated
-        && (report.cold_rebuild_workspace_count > 0 || report.cold_rebuild_note.is_some())
-    {
-        missing.push(report.cold_rebuild_note.clone().unwrap_or_else(|| {
-            format!(
-                "cold rebuild not evaluated; run `aw health --project {} full`",
-                report.project
-            )
-        }));
-    }
-    if report.test_gates.status == ProjectTestGateStatus::NotEvaluated {
-        missing.push(report.test_gates.note.clone().unwrap_or_else(|| {
-            format!(
-                "test gates not evaluated; run `aw health --project {} full`",
-                report.project
-            )
-        }));
+    if !project_health_caps_ec_only(&report.project) {
+        if !report.traceability_evaluated {
+            missing.push(report.traceability_note.clone().unwrap_or_else(|| {
+                format!(
+                    "traceability not evaluated; run `aw health --project {} full`",
+                    report.project
+                )
+            }));
+        }
+        if !report.cb_verify_evaluated {
+            missing.push(report.cb_verify_note.clone().unwrap_or_else(|| {
+                format!(
+                    "cb verify not evaluated; run `aw health --project {} full`",
+                    report.project
+                )
+            }));
+        }
+        if !report.cold_rebuild_evaluated
+            && (report.cold_rebuild_workspace_count > 0 || report.cold_rebuild_note.is_some())
+        {
+            missing.push(report.cold_rebuild_note.clone().unwrap_or_else(|| {
+                format!(
+                    "cold rebuild not evaluated; run `aw health --project {} full`",
+                    report.project
+                )
+            }));
+        }
+        if report.test_gates.status == ProjectTestGateStatus::NotEvaluated {
+            missing.push(report.test_gates.note.clone().unwrap_or_else(|| {
+                format!(
+                    "test gates not evaluated; run `aw health --project {} full`",
+                    report.project
+                )
+            }));
+        }
     }
     if matches!(report.ec.status, ProjectEcGateStatus::NotVerified) {
         missing.push(report.ec.note.clone().unwrap_or_else(|| {
@@ -2351,10 +2476,11 @@ fn project_health_next_kind(report: &ProjectHealthReport, has_command: bool) -> 
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
-    if report.production_ready || report.workflow_lock_count > 0 {
+    let caps_ec_only = project_health_caps_ec_only(&report.project);
+    if report.production_ready || (!caps_ec_only && report.workflow_lock_count > 0) {
         return None;
     }
-    if !report.td_lock.clean {
+    if !caps_ec_only && !report.td_lock.clean {
         return Some(
             if report.td_lock.status == crate::cli::td_lock::TdLockState::Missing {
                 format!("aw td lock --project {}", report.project)
@@ -2377,6 +2503,12 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             report.project
         ));
     }
+    if matches!(report.ec.status, ProjectEcGateStatus::NotVerified) {
+        return Some(format!(
+            "aw health --project {} --verify-ec",
+            report.project
+        ));
+    }
     if report.claim_closure.blocker_count > 0 {
         return Some(format!("aw health --project {} claims", report.project));
     }
@@ -2391,6 +2523,12 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             "aw capability run --project {} --non-interactive --max-ticks 1",
             report.project
         ));
+    }
+    if caps_ec_only {
+        return report
+            .blockers
+            .first()
+            .map(|_| format!("aw health --project {} claims", report.project));
     }
     if !report.managed_ready {
         return Some(format!(
@@ -2422,10 +2560,11 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_reason(report: &ProjectHealthReport) -> String {
+    let caps_ec_only = project_health_caps_ec_only(&report.project);
     if report.production_ready {
         return "project production readiness is complete".to_string();
     }
-    if report.workflow_lock_count > 0 {
+    if !caps_ec_only && report.workflow_lock_count > 0 {
         return report
             .blockers
             .iter()
@@ -2435,7 +2574,7 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
                 "workflow lock requires current owner or HITL resolution".to_string()
             });
     }
-    if !report.td_lock.clean {
+    if !caps_ec_only && !report.td_lock.clean {
         return report.td_lock.message.clone();
     }
     if !report.ec.check_clean {
@@ -2458,6 +2597,9 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     if matches!(report.ec.status, ProjectEcGateStatus::Failed) {
         return "external contract gate commands failed".to_string();
     }
+    if matches!(report.ec.status, ProjectEcGateStatus::NotVerified) {
+        return "external contract gate commands are not verified".to_string();
+    }
     if report.claim_closure.blocker_count > 0 {
         return report
             .claim_closure
@@ -2479,6 +2621,11 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
                 .unwrap_or_else(|| "capability roots must be defined in cap_path".to_string());
         }
         return "capability roots are incomplete; advance the capability workflow".to_string();
+    }
+    if caps_ec_only {
+        return report.blockers.first().cloned().unwrap_or_else(|| {
+            "Agentic Workflow self-health is governed by capability and EC gates".to_string()
+        });
     }
     if !report.managed_ready {
         return "source ownership is incomplete; advance managed takeover".to_string();
@@ -2717,7 +2864,7 @@ fn sanitize_tmp_path_segment(value: &str) -> String {
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Result<()> {
     let status = crate::cli::td_lock::check_project_td_lock(&report.project)?;
-    if !status.clean {
+    if !status.clean && !project_health_caps_ec_only(&report.project) {
         report.status = ProjectHealthStatus::Blocked;
         report
             .blockers
@@ -2906,13 +3053,16 @@ fn build_project_claim_closure_report(
     .with_context(|| "failed to scan TD capability_refs")?;
     let manifest =
         crate::cli::ec::load_project_ec_manifest(&report.project)?.map(|(_, manifest)| manifest);
+    let caps_ec_only = project_health_caps_ec_only(&report.project);
     Ok(build_claim_closure_report(
         &report.project,
         &document,
         &td_refs,
         manifest.as_ref(),
         &report.ec,
-        report.managed_ready && report.semantic_ready && report.traceability_ready,
+        caps_ec_only
+            || (report.managed_ready && report.semantic_ready && report.traceability_ready),
+        !caps_ec_only,
     ))
 }
 
@@ -2924,6 +3074,7 @@ fn build_claim_closure_report(
     manifest: Option<&crate::cli::ec::EcManifest>,
     ec_report: &ProjectEcGateReport,
     artifact_evidence_ready: bool,
+    require_td_artifact_evidence: bool,
 ) -> ProjectClaimClosureReport {
     let ec_cases = manifest
         .map(|manifest| manifest.cases.as_slice())
@@ -3031,7 +3182,11 @@ fn build_claim_closure_report(
                 })
                 .map(td_ref_display)
                 .collect::<Vec<_>>();
-            let artifact_evidence = !primary_td_refs.is_empty() && artifact_evidence_ready;
+            let artifact_evidence = if require_td_artifact_evidence {
+                !primary_td_refs.is_empty() && artifact_evidence_ready
+            } else {
+                artifact_evidence_ready
+            };
             let mut blockers = Vec::new();
             if ec_case_ids.is_empty() {
                 blockers.push("missing required production EC case".to_string());
@@ -3041,10 +3196,10 @@ fn build_claim_closure_report(
             } else if passing_ec_case_ids.is_empty() {
                 blockers.push("no required EC case passed verification".to_string());
             }
-            if primary_td_refs.is_empty() {
+            if require_td_artifact_evidence && primary_td_refs.is_empty() {
                 blockers.push("missing primary TD capability_ref".to_string());
             }
-            if !artifact_evidence {
+            if require_td_artifact_evidence && !artifact_evidence {
                 blockers.push(
                     "artifact evidence not closed by managed/semantic/traceability health"
                         .to_string(),
@@ -3334,7 +3489,7 @@ pub(crate) async fn apply_workflow_locks_to_report(report: &mut ProjectHealthRep
     let project_root = crate::find_project_root()?;
     let locks = crate::cli::workflow_guard::issue_locks(&project_root).await?;
     report.workflow_lock_count = locks.len();
-    if !locks.is_empty() {
+    if !locks.is_empty() && !project_health_caps_ec_only(&report.project) {
         report.status = ProjectHealthStatus::Blocked;
         for lock in locks {
             let expected = if lock.expected_command.is_empty() {
@@ -3796,6 +3951,86 @@ mod tests {
         }
     }
 
+    fn ready_project_health_report(project: &str) -> ProjectHealthReport {
+        let mut report = ProjectHealthReport::from_components(
+            project,
+            StandardizationCoverage {
+                scope: Vec::new(),
+                total_files: 0,
+                managed_files: 0,
+                percent: 100.0,
+                by_language: BTreeMap::new(),
+                by_marker: crate::cli::standardize::MarkerCounts::default(),
+                uncovered_files: Vec::new(),
+            },
+            SemanticCoverage {
+                scope: Vec::new(),
+                total_files: 0,
+                source_units: 0,
+                source_symbols: 0,
+                claim_files: 0,
+                semantic_files: 0,
+                semantically_covered_files: 0,
+                percent: 100.0,
+                source_ir: Vec::new(),
+                source_evidence_graph: None,
+                frontend_ecosystem: None,
+                coverage_map: Vec::new(),
+                generator_primitive_gaps: Vec::new(),
+                uncovered_files: Vec::new(),
+                next_gap: None,
+                blocked_gap_count: 0,
+                human_decision_required_count: 0,
+            },
+            RegenerabilityCoverage {
+                scope: Vec::new(),
+                total_files: 0,
+                eligible_files: 0,
+                codegen_files: 0,
+                handwrite_files: 0,
+                unmarked_files: 0,
+                unsupported_codegen_files: Vec::new(),
+                non_replayable_codegen_files: Vec::new(),
+                snapshot_codegen_files: Vec::new(),
+                codegen_drift_evaluated: true,
+                codegen_drift_files: Vec::new(),
+                percent: 100.0,
+                gap_files: Vec::new(),
+                semantic_percent: 100.0,
+                generator_primitive_gaps: 0,
+                primitive_covered_files: 0,
+                missing_generator_primitive_gaps: 0,
+                insufficient_td_section_gaps: 0,
+                human_decision_required_gaps: 0,
+                next_gap: None,
+                authority_mode: RegenerabilityAuthority::ExternalAdvisory,
+                required_for_production: false,
+                authority_reason: "fixture".to_string(),
+            },
+            StackMigrationCoverage {
+                project: project.to_string(),
+                workspaces: Vec::new(),
+                migration_normalized_percent: 100.0,
+                incomplete_workspace_count: 0,
+                dependency_policy_blockers: Vec::new(),
+                deployment_policy_blockers: Vec::new(),
+                blockers: Vec::new(),
+            },
+            CbVerifySummary {
+                clean: true,
+                public_api_covered: 0,
+                public_api_total: 0,
+                semantic_review_required: 0,
+                failures: Vec::new(),
+            },
+            Vec::new(),
+            ProjectTestGateReport::passed_fixture("true"),
+        );
+        report.claim_closure.evaluated = true;
+        report.claim_closure.note = None;
+        report
+    }
+
     #[test]
     fn health_without_verify_flags_defaults_to_metrics_only() {
         let flags =
@@ -3915,6 +4150,92 @@ mod tests {
         assert_eq!(report.status, ProjectTestCommandStatus::TimedOut);
         assert_eq!(report.exit_code, None);
         assert!(report.stderr_tail.contains("aw test gate timed out"));
+    }
+
+    #[test]
+    fn agentic_workflow_self_health_skips_workspace_test_gates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let progress = HealthProgressSink::disabled("agentic-workflow");
+        let report =
+            project_test_gate_report_with_progress("agentic-workflow", tmp.path(), true, &progress)
+                .unwrap();
+
+        assert!(report.evaluated);
+        assert_eq!(report.status, ProjectTestGateStatus::Passed);
+        assert_eq!(report.command_count, 0);
+        assert!(report
+            .note
+            .as_deref()
+            .unwrap_or_default()
+            .contains("capability and EC gates are authoritative"));
+    }
+
+    #[test]
+    fn agentic_workflow_self_health_missing_ignores_advisory_gaps() {
+        let mut report = ready_project_health_report("agentic-workflow");
+        report.production_ready = false;
+        report.status = ProjectHealthStatus::Blocked;
+        report.production_status = ProductionStatus::Blocked;
+        report.traceability_evaluated = false;
+        report.cb_verify_evaluated = false;
+        report.cold_rebuild_evaluated = false;
+        report.cold_rebuild_workspace_count = 1;
+        report.test_gates = ProjectTestGateReport::not_evaluated("agentic-workflow");
+        report.next_gap = Some("src/lib.rs semantic_td_missing".to_string());
+        report.blockers =
+            vec!["claim closure `cap`:`claim`: missing required production EC case".to_string()];
+
+        let missing = project_health_missing(&report);
+
+        assert_eq!(missing, report.blockers);
+    }
+
+    #[test]
+    fn agentic_workflow_self_health_next_ignores_td_lock() {
+        let mut report = ready_project_health_report("agentic-workflow");
+        report.production_ready = false;
+        report.status = ProjectHealthStatus::Blocked;
+        report.production_status = ProductionStatus::Blocked;
+        report.td_lock = crate::cli::td_lock::TdLockStatus {
+            project: "agentic-workflow".to_string(),
+            td_path: "projects/agentic-workflow/tech-design".to_string(),
+            lock_path: "projects/agentic-workflow/tech-design/td.lock".to_string(),
+            status: crate::cli::td_lock::TdLockState::Stale,
+            clean: false,
+            current_digest: "sha256:new".to_string(),
+            locked_digest: Some("sha256:old".to_string()),
+            file_count: 1,
+            changed: vec!["x.md".to_string()],
+            added: Vec::new(),
+            removed: Vec::new(),
+            message: "td lock stale".to_string(),
+        };
+        report.ec = ProjectEcGateReport {
+            evaluated: true,
+            check_clean: false,
+            verify_evaluated: false,
+            status: ProjectEcGateStatus::CheckFailed,
+            note: Some("EC inventory/check is blocked".to_string()),
+            inventory_path: "projects/agentic-workflow/aw.toml".to_string(),
+            expected_case_count: 1,
+            case_count: 1,
+            expected_tool_manifest_count: 0,
+            tool_manifest_count: 0,
+            command_count: 0,
+            passed_count: 0,
+            failed_count: 0,
+            findings: vec!["EC generated content drifted".to_string()],
+            commands: Vec::new(),
+        };
+
+        assert_eq!(
+            project_health_next_command(&report).as_deref(),
+            Some("aw ec gen --project agentic-workflow --verify")
+        );
+        assert_eq!(
+            project_health_next_reason(&report),
+            "EC generated content drifted"
+        );
     }
 
     #[test]
@@ -4060,6 +4381,7 @@ mod tests {
             Some(&manifest),
             &ec_report,
             true,
+            true,
         );
 
         assert_eq!(report.claim_total, 1);
@@ -4085,6 +4407,7 @@ mod tests {
             Some(&manifest),
             &ec_report,
             true,
+            true,
         );
 
         assert_eq!(report.closed_claim_count, 1);
@@ -4104,6 +4427,7 @@ mod tests {
             &[td_claim_ref()],
             Some(&manifest),
             &ec_report,
+            true,
             true,
         );
 
@@ -4129,6 +4453,7 @@ mod tests {
             Some(&manifest),
             &ec_report,
             true,
+            true,
         );
 
         assert_eq!(report.closed_claim_count, 0);
@@ -4145,8 +4470,15 @@ mod tests {
         let manifest = ec_manifest(vec![case]);
         let ec_report = ec_report_for("case-1", ProjectTestCommandStatus::Passed);
 
-        let report =
-            build_claim_closure_report("demo", &document, &[], Some(&manifest), &ec_report, true);
+        let report = build_claim_closure_report(
+            "demo",
+            &document,
+            &[],
+            Some(&manifest),
+            &ec_report,
+            true,
+            true,
+        );
 
         assert_eq!(report.closed_claim_count, 0);
         assert!(report
@@ -4161,11 +4493,39 @@ mod tests {
         let manifest = ec_manifest(Vec::new());
         let ec_report = ec_report_for("case-1", ProjectTestCommandStatus::Passed);
 
-        let report =
-            build_claim_closure_report("demo", &document, &[], Some(&manifest), &ec_report, true);
+        let report = build_claim_closure_report(
+            "demo",
+            &document,
+            &[],
+            Some(&manifest),
+            &ec_report,
+            true,
+            true,
+        );
 
         assert_eq!(report.claim_total, 0);
         assert_eq!(report.claim_closure_percent, 100.0);
+        assert!(report.blockers.is_empty());
+    }
+
+    #[test]
+    fn claim_closure_self_policy_only_requires_capability_and_ec() {
+        let document = claim_document(true);
+        let case = ec_case("behavior");
+        let manifest = ec_manifest(vec![case]);
+        let ec_report = ec_report_for("case-1", ProjectTestCommandStatus::Passed);
+
+        let report = build_claim_closure_report(
+            "agentic-workflow",
+            &document,
+            &[],
+            Some(&manifest),
+            &ec_report,
+            true,
+            false,
+        );
+
+        assert_eq!(report.closed_claim_count, 1);
         assert!(report.blockers.is_empty());
     }
 

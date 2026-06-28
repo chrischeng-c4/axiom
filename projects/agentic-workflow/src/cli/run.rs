@@ -2164,7 +2164,7 @@ fn persistence_blocked_envelope(
         persistence: Some(WorkflowPersistence {
             status: "repo_dirty".to_string(),
             commit_complete: false,
-            wi_evidence_complete: true,
+            wi_evidence_complete: false,
             dirty_paths,
             scopes,
             reason,
@@ -3266,7 +3266,7 @@ test_cmd = "true"
         )
         .unwrap();
 
-        let dirty = project_done_or_dirty_envelope_with_health(
+        let mut dirty = project_done_or_dirty_envelope_with_health(
             "jet",
             root,
             root_dir,
@@ -3282,11 +3282,19 @@ test_cmd = "true"
         let dirty_persistence = dirty.persistence.as_ref().unwrap();
         assert_eq!(dirty_persistence.status, "repo_dirty");
         assert!(!dirty_persistence.commit_complete);
-        assert!(dirty_persistence.wi_evidence_complete);
+        assert!(!dirty_persistence.wi_evidence_complete);
         assert_eq!(
             dirty_persistence.dirty_paths,
             vec!["projects/jet/src/lib.rs".to_string()]
         );
+        ensure_hitl_question(&mut dirty, "aw run --project jet");
+        let dirty_json = serde_json::to_value(&dirty).unwrap();
+        assert_eq!(dirty_json["completion"]["requires_hitl"], true);
+        assert_eq!(
+            dirty_json["persistence"]["wi_evidence_complete"],
+            serde_json::Value::Bool(false)
+        );
+        assert!(dirty_json.get("hitl_question").is_some());
 
         let after_approval = project_done_or_dirty_envelope_with_health(
             "jet",

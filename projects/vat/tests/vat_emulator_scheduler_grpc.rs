@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:e2e-test:17151d09" tracker="pending-tracker" reason="gRPC e2e: generated CloudScheduler client → emulator → sink."
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_scheduler_grpc-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Integration test for the Cloud Scheduler emulator's gRPC front-end. Spawns
 //! `vat emulator cloud-scheduler`, drives the GENERATED gRPC client to
 //! CreateJob + RunJob with an httpTarget pointing at a local sink, and asserts
@@ -38,6 +39,7 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_scheduler_grpc-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -115,4 +117,4 @@ async fn cloud_scheduler_grpc_fires_job_on_run() {
     assert!(got.contains("POST /fire"), "wrong request line: {got}");
     assert!(got.contains("hello-grpc-job"), "missing job body: {got}");
 }
-// HANDWRITE-END
+// CODEGEN-END

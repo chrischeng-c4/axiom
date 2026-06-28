@@ -10,9 +10,31 @@
 // @command cargo test -p arena
 // AW-EC-END
 
+// Contract: arena remains runnable as a vat runner
+// Contract: arena stays protocol-agnostic and leaves environment setup to vat
 #[test]
-#[ignore = "AW EC placeholder: implement this external contract test or keep the aw.toml inventory command authoritative"]
+#[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn arena_vat_managed_comparison_runner() {
-    panic!("AW EC placeholder for arena-vat-managed-comparison-runner");
+    let command = "cargo test -p arena";
+    let id = "arena-vat-managed-comparison-runner";
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !root.join(".aw").is_dir() {
+        assert!(
+            root.pop(),
+            "AW EC {id}: no .aw/ project root above {}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+    }
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&root)
+        .status()
+        .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    assert!(
+        status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}",
+        status.code()
+    );
 }
 // CODEGEN-END

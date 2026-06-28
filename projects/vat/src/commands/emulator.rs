@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-commands.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-emulator-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat emulator` — run one of vat's built-in Rust emulators.
 //!

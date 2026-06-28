@@ -2920,16 +2920,16 @@ mod tests {
     use super::{
         cb_verify_summary_from_report, classify_codegen_origin_spec, collect_force_regen_specs,
         collect_source_scope_files, collect_tree_files, commit_force_regen, compare_source_roots,
-        copy_tree, extract_cold_rebuild_target_paths,
-        extract_project_root_llms_target_paths, extract_spec_managed_ref,
-        extract_spec_managed_refs, format_rust_files, has_handwrite_ownership_marker,
-        is_minified_asset_file, resolve_project_force_regen_scope, run_force_regen_specs,
-        sample_count, sample_semantic_review_units, spec_declares_source_section,
-        td_public_symbol_semantic_coverage, upsert_public_api_overview,
-        upsert_public_api_overview_targets, verify_force_regen_conformance,
-        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs,
-        ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
-        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
+        copy_tree, extract_cold_rebuild_target_paths, extract_project_root_llms_target_paths,
+        extract_spec_managed_ref, extract_spec_managed_refs, format_rust_files,
+        has_handwrite_ownership_marker, is_minified_asset_file, resolve_project_force_regen_scope,
+        run_force_regen_specs, sample_count, sample_semantic_review_units,
+        spec_declares_source_section, td_public_symbol_semantic_coverage,
+        upsert_public_api_overview, upsert_public_api_overview_targets,
+        verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
+        CbCommand, CbGenArgs, ForceRegenConformanceReport, ForceRegenScope,
+        PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
+        SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -3119,6 +3119,74 @@ console.log('ok');
             }
             _ => panic!("expected cb gen"),
         }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct CompletenessFinding {
+        code: &'static str,
+        line: usize,
+        pattern: &'static str,
+    }
+
+    fn scan_completeness_placeholders(content: &str) -> Vec<CompletenessFinding> {
+        const ALLOWED_MARKERS: [&str; 3] =
+            ["HANDWRITE-BEGIN", "generator-gap", "future_work_allowed"];
+        const HARD_PATTERNS: [(&str, &str); 6] = [
+            ("todo implement", "placeholder_artifact"),
+            ("todo: implement", "placeholder_artifact"),
+            ("rest omitted", "omitted_content"),
+            ("similar pattern omitted", "omitted_content"),
+            ("omitted for brevity", "omitted_content"),
+            ("...", "omitted_content"),
+        ];
+
+        let mut findings = Vec::new();
+        for (idx, line) in content.lines().enumerate() {
+            if ALLOWED_MARKERS.iter().any(|marker| line.contains(marker)) {
+                continue;
+            }
+            let lowered = line.to_ascii_lowercase();
+            for (pattern, code) in HARD_PATTERNS {
+                if lowered.contains(pattern) {
+                    findings.push(CompletenessFinding {
+                        code,
+                        line: idx + 1,
+                        pattern,
+                    });
+                    break;
+                }
+            }
+        }
+        findings
+    }
+
+    #[test]
+    fn completeness_placeholder_scanner_contract() {
+        let findings = scan_completeness_placeholders(
+            r#"
+fn generated() {
+    // TODO implement text
+    // similar pattern omitted from generated prose
+    // future_work_allowed TODO implement this after generator primitive lands
+}
+"#,
+        );
+
+        assert_eq!(
+            findings,
+            vec![
+                CompletenessFinding {
+                    code: "placeholder_artifact",
+                    line: 3,
+                    pattern: "todo implement",
+                },
+                CompletenessFinding {
+                    code: "omitted_content",
+                    line: 4,
+                    pattern: "similar pattern omitted",
+                },
+            ]
+        );
     }
 
     #[test]

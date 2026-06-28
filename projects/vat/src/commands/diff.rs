@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-commands.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-diff-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat diff <id>` — full filesystem changes vs. the vat's base.
 //!

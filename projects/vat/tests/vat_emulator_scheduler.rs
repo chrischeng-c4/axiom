@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-tests.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_scheduler-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Self-contained integration test for the built-in Cloud Scheduler emulator.
 //! Spawns `vat emulator cloud-scheduler`, creates an httpTarget job, calls
@@ -38,6 +38,7 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_scheduler-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();

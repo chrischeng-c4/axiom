@@ -1,0 +1,44 @@
+{
+  "project": "projects/vat/**",
+  "scope": "projects/vat/**",
+  "surfaces": [
+    {
+      "kind": "route",
+      "name": "routes",
+      "preserve": "preserve externally visible REST and gRPC endpoint paths before quality changes"
+    },
+    {
+      "kind": "command",
+      "name": "commands",
+      "preserve": "preserve vat CLI command names, arguments, environment variables, and output contracts before quality changes"
+    },
+    {
+      "kind": "generated_source",
+      "name": "source ownership",
+      "preserve": "preserve CODEGEN and HANDWRITE boundaries while migrating legacy semantic TD evidence"
+    },
+    {
+      "kind": "api",
+      "name": "public API",
+      "preserve": "preserve public Rust API, serialized state, and test evidence contracts before quality changes"
+    },
+    {
+      "kind": "doc",
+      "name": "documentation",
+      "preserve": "preserve documented capability, CLI, and workflow contracts before quality changes"
+    }
+  ],
+  "quality_debt": [
+    "projects/vat/tech-design/semantic/vat-src.md uses legacy semantic TD shape"
+  ],
+  "safe_levers": [
+    {
+      "name": "semantic TD evidence rewrite",
+      "risk": "low"
+    },
+    {
+      "name": "localized source ownership repair",
+      "risk": "medium"
+    }
+  ]
+}

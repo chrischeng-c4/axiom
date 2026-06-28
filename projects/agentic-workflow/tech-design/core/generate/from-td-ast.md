@@ -214,6 +214,7 @@ nodes:
   cli_branch:      { kind: process,  label: "cli_subcommand::emit_typed(payload, ctx) (R2, R3)" }
   rpc_branch:      { kind: process,  label: "rust_schema::emit_rpc_components(payload, ctx)" }
   logic_branch:    { kind: process,  label: "logic_emitter::emit_typed(payload, ctx) (R2)" }
+  rust_source_branch: { kind: process, label: "rust-source-unit structural generator route" }
   facade_branch:   { kind: process,  label: "module_facade::emit_typed(payload, ctx) (R2)" }
   trait_branch:    { kind: process,  label: "trait_impl::emit_typed(payload, ctx) (R2)" }
   legacy_branch:   { kind: process,  label: "Mark LegacyFallback; defer to apply.rs path" }
@@ -229,6 +230,7 @@ edges:
   - { from: match_kind,      to: cli_branch,       label: "CliManifest" }
   - { from: match_kind,      to: rpc_branch,       label: "OpenRpc" }
   - { from: match_kind,      to: logic_branch,     label: "MermaidPlus(logic)" }
+  - { from: match_kind,      to: rust_source_branch, label: "RustSourceUnit" }
   - { from: match_kind,      to: facade_branch,    label: "Changes(exports)" }
   - { from: match_kind,      to: trait_branch,     label: "Schema(x-trait-impls)" }
   - { from: match_kind,      to: legacy_branch,    label: "other" }
@@ -236,6 +238,7 @@ edges:
   - { from: cli_branch,      to: record_outcome }
   - { from: rpc_branch,      to: record_outcome }
   - { from: logic_branch,    to: record_outcome }
+  - { from: rust_source_branch, to: record_outcome }
   - { from: facade_branch,   to: record_outcome }
   - { from: trait_branch,    to: record_outcome }
   - { from: legacy_branch,   to: record_outcome }
@@ -252,6 +255,7 @@ flowchart TD
     match_kind -->|CliManifest| cli_branch[cli_subcommand emit_typed payload ctx]
     match_kind -->|OpenRpc| rpc_branch[rust_schema emit_rpc_components payload ctx]
     match_kind -->|MermaidPlus logic| logic_branch[logic_emitter emit_typed payload ctx]
+    match_kind -->|RustSourceUnit| rust_source_branch[rust-source-unit structural generator route]
     match_kind -->|Changes exports| facade_branch[module_facade emit_typed payload ctx]
     match_kind -->|Schema x-trait-impls| trait_branch[trait_impl emit_typed payload ctx]
     match_kind -->|other| legacy_branch[Mark LegacyFallback defer to apply.rs]
@@ -259,6 +263,7 @@ flowchart TD
     cli_branch --> record_outcome
     rpc_branch --> record_outcome
     logic_branch --> record_outcome
+    rust_source_branch --> record_outcome
     facade_branch --> record_outcome
     trait_branch --> record_outcome
     legacy_branch --> record_outcome
@@ -436,6 +441,10 @@ fn classify_section(section: &TDSection) -> DispatchOutcome {
             (TypedBody::MermaidPlus(_), SectionType::Logic) => {
                 typed_generator("rust-logic-emitter", DispatchMaturity::SemanticGenerator)
             }
+            (TypedBody::RustSourceUnit(_), SectionType::RustSourceUnit) => structural_scaffold(
+                "rust-source-unit",
+                "typed Rust source-unit item tree ready for lossless source regeneration",
+            ),
             (TypedBody::Placeholder, _) => (
                 "none",
                 DispatchStatus::Skipped,
@@ -705,6 +714,34 @@ mod tests {
         assert_eq!(outcome.strategy, DispatchStrategy::HandwriteGap);
         assert_eq!(outcome.maturity, DispatchMaturity::HandwriteGap);
         assert_eq!(outcome.gap_id.as_deref(), Some("typed-generator:rest-api"));
+    }
+
+    #[test]
+    fn rust_source_unit_dispatch_routes_as_structural_generator() {
+        let td = TDAst {
+            frontmatter: serde_yaml::Value::Null,
+            sections: vec![section(
+                SectionType::RustSourceUnit,
+                TypedBody::RustSourceUnit(
+                    crate::generate::rust_source_unit::parse("pub fn demo() {}")
+                        .expect("rust source parses"),
+                ),
+            )],
+        };
+        let ctx = DispatchCtx {
+            spec_path: std::path::PathBuf::from("demo.md"),
+            spec_ref_prefix: "demo.md".to_string(),
+            target_lang: Some("rs".to_string()),
+        };
+
+        let report = dispatch_from_tdast(&td, &ctx);
+        let outcome = &report.outcomes[0];
+        assert_eq!(outcome.status, DispatchStatus::Emitted);
+        assert_eq!(outcome.generator, "rust-source-unit");
+        assert_eq!(outcome.strategy, DispatchStrategy::StructuralScaffold);
+        assert_eq!(outcome.maturity, DispatchMaturity::StructuralGenerator);
+        assert!(!outcome.source_backed);
+        assert!(outcome.gap_id.is_none());
     }
 }
 ```

@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:e2e-test:3b39ab4a" tracker="pending-tracker" reason="Route a known host (http + https-MITM) to a local sink and assert it's served locally; unmatched host still forwards."
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_httpmock_routing-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Integration test for http-mock host-routing (network sandbox v1).
 //! Spawns `vat emulator http-mock` with a route and asserts a proxied request to
 //! the routed host is served by a local sink — over plain HTTP, via the
@@ -36,6 +37,7 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_httpmock_routing-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -174,4 +176,4 @@ async fn http_mock_routes_https_via_mitm() {
         .expect("sink did not receive the MITM-routed https request");
     assert!(got.contains("GET /s"), "wrong request line: {got}");
 }
-// HANDWRITE-END
+// CODEGEN-END

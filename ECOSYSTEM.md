@@ -38,6 +38,8 @@ Data, storage, networking, scientific computing. Tools with correct answers.
 | `cclab-media` | Image/audio processing |
 | `cclab-text` | NLP / text processing |
 | `cclab-grid-*` | Spreadsheet engine (6 crates) |
+| `cclab-surface` | Renderer-neutral UI element tree and serializable snapshot model shared by Jet WASM, desktop renderers, and parity tools |
+| `cclab-ui-runtime` | Renderer-neutral component runtime: hooks, fiber storage, mount, flush, and update scheduling over `cclab-surface` elements |
 
 ## Layer 3: Framework
 

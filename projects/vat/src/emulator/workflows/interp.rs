@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-emulator-workflows-interp-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The step interpreter for the built-in Cloud Workflows emulator.
 //!
@@ -43,6 +43,7 @@ struct Interp<'a> {
 }
 
 /// Run a workflow `source` with `argument`, returning the execution result.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-workflows-interp-rs.md#source
 pub async fn run(source: &str, argument: Value, client: &reqwest::Client) -> Result<Value, String> {
     let defs: Value =
         serde_yaml::from_str(source).map_err(|e| format!("parse workflow source: {e}"))?;

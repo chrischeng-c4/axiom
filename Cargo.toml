@@ -35,6 +35,8 @@ members = [
     "libs/openapi-codegen",
     "libs/h2c",
     "libs/cli-std",
+    "libs/surface",
+    "libs/ui-runtime",
     "libs/raft-host",
     "libs/operator",
     "libs/service-http",
