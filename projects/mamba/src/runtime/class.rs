@@ -3285,6 +3285,131 @@ fn seed_namedtuple_subclass_fields(
     true
 }
 
+fn instance_class_name(value: MbValue) -> Option<String> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { class_name, .. } = &(*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn instance_is_kind_of(actual_class: &str, requested_class: &str) -> bool {
+    actual_class == requested_class || check_class_hierarchy(actual_class, requested_class)
+}
+
+fn custom_new_method(class_name: &str) -> MbValue {
+    if check_class_hierarchy(class_name, "int") {
+        return MbValue::none();
+    }
+    let method = lookup_method(class_name, "__new__");
+    if method.is_none() {
+        return MbValue::none();
+    }
+    let (unwrapped, _kind) = unwrap_descriptor_method(method);
+    unwrapped
+}
+
+fn cached_init_for(class_name: &str) -> Option<(u64, bool)> {
+    CLASS_REGISTRY.with(|reg| reg.borrow().get(class_name).and_then(|cls| cls.cached_init))
+}
+
+fn call_init_for_instance(init_class: &str, instance: MbValue, args_list: MbValue) -> bool {
+    if let Some((addr, is_registered)) = cached_init_for(init_class) {
+        if is_registered {
+            unsafe {
+                super::rc::retain_if_ptr(instance);
+            }
+            call_init_with_args(addr, instance, args_list);
+        }
+        return true;
+    }
+
+    let init_method = lookup_method(init_class, "__init__");
+    if init_method.is_none() {
+        return false;
+    }
+    let addr = extract_func_addr(init_method);
+    if addr != 0 {
+        let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+        if is_registered {
+            unsafe {
+                super::rc::retain_if_ptr(instance);
+            }
+            call_init_with_args(addr, instance, args_list);
+        }
+    }
+    true
+}
+
+fn class_overrides_init(class_name: &str) -> bool {
+    !lookup_method(class_name, "__init__").is_none()
+}
+
+fn class_overrides_new(class_name: &str) -> bool {
+    !lookup_method(class_name, "__new__").is_none()
+}
+
+pub(crate) fn object_new_unbound(items: &[MbValue]) -> MbValue {
+    let Some(cls) = items.first().copied() else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "object.__new__() takes exactly one argument".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    let Some(class_name) = resolve_class_name(cls) else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "object.__new__(X): X is not a type object".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    if items.len() > 1 && !class_overrides_init(&class_name) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{}.__new__() takes exactly one argument",
+                class_name
+            ))),
+        );
+        return MbValue::none();
+    }
+    MbValue::from_ptr(MbObject::new_instance(class_name))
+}
+
+pub(crate) fn object_init_unbound(items: &[MbValue]) -> MbValue {
+    let Some(instance) = items.first().copied() else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "object.__init__() takes exactly one argument".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    if items.len() > 1 {
+        let init_allowed = instance_class_name(instance)
+            .as_deref()
+            .is_some_and(class_overrides_new);
+        if !init_allowed {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "object.__init__() takes exactly one argument".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
+    MbValue::none()
+}
+
 fn instance_new_with_init_impl(
     class_name: MbValue,
     args_list: MbValue,
@@ -3312,14 +3437,12 @@ fn instance_new_with_init_impl(
         return member;
     }
 
-    // Single registry access: fetch both metaclass and cached_init together to avoid
-    // two separate RefCell borrows + HashMap lookups per instance creation.
-    let (metaclass_name, cached_init) = CLASS_REGISTRY.with(|reg| {
+    let metaclass_name = CLASS_REGISTRY.with(|reg| {
         let r = reg.borrow();
         if let Some(cls) = r.get(&name) {
-            (cls.metaclass.clone(), cls.cached_init)
+            cls.metaclass.clone()
         } else {
-            (None, None)
+            None
         }
     });
     let metaclass_name = if skip_metaclass { None } else { metaclass_name };
@@ -3394,41 +3517,36 @@ fn instance_new_with_init_impl(
     } else {
         0
     };
-    let instance = if class_defines_own_method(&name, "__new__")
-        && !class_defines_own_method(&name, "__init__")
-        && !check_class_hierarchy(&name, "int")
-    {
-        let new_func = lookup_method(&name, "__new__");
+    let new_func = custom_new_method(&name);
+    let instance = if !new_func.is_none() {
         let mut ctor_args = vec![MbValue::from_ptr(MbObject::new_str(name.clone()))];
         ctor_args.extend(super::builtins::extract_items(args_list));
-        let result = super::builtins::mb_call_spread(
-            new_func,
-            MbValue::from_ptr(MbObject::new_list(ctor_args)),
-        );
-        if !result.is_none() {
-            result
-        } else {
-            MbValue::from_ptr(MbObject::new_instance_with_capacity(
-                name.clone(),
-                field_capacity,
-            ))
-        }
+        super::builtins::mb_call_spread(new_func, MbValue::from_ptr(MbObject::new_list(ctor_args)))
     } else {
         MbValue::from_ptr(MbObject::new_instance_with_capacity(
             name.clone(),
             field_capacity,
         ))
     };
+    if super::exception::mb_has_exception().as_bool() == Some(true) {
+        return MbValue::none();
+    }
+    let Some(init_class) = instance_class_name(instance) else {
+        return instance;
+    };
+    if !instance_is_kind_of(&init_class, &name) {
+        return instance;
+    }
     if check_class_hierarchy(&name, "int") && !seed_int_subclass_value(instance, args_list) {
         return MbValue::none();
     }
-    if let Some(base) = builtin_data_payload_base(&name) {
+    if let Some(base) = builtin_data_payload_base(&init_class) {
         if !seed_builtin_data_subclass_value(instance, args_list, base) {
             return MbValue::none();
         }
     }
-    if let Some(shape) = namedtuple_subclass_shape(&name) {
-        if !seed_namedtuple_subclass_fields(instance, args_list, &name, &shape) {
+    if let Some(shape) = namedtuple_subclass_shape(&init_class) {
+        if !seed_namedtuple_subclass_fields(instance, args_list, &init_class, &shape) {
             return MbValue::none();
         }
     }
@@ -3439,62 +3557,27 @@ fn instance_new_with_init_impl(
     // cached-init path so a base class's `__init__` in the MRO does not
     // shadow the synthesized one; a dataclass that defines its own __init__
     // keeps it.
-    if super::stdlib::dataclasses_mod::dc_has_synth_init(&name)
-        && !class_defines_own_method(&name, "__init__")
+    if super::stdlib::dataclasses_mod::dc_has_synth_init(&init_class)
+        && !class_defines_own_method(&init_class, "__init__")
     {
-        super::stdlib::dataclasses_mod::dc_run_synth_init(&name, instance, args_list);
+        super::stdlib::dataclasses_mod::dc_run_synth_init(&init_class, instance, args_list);
         return instance;
     }
 
-    if simple_namespace_subclass_inherits_native_init(&name) {
+    if simple_namespace_subclass_inherits_native_init(&init_class) {
         if !seed_simple_namespace_subclass_fields(instance, args_list) {
             return MbValue::none();
         }
         return instance;
     }
 
-    // Fast path: use cached __init__ from MbClass to avoid MRO walk.
-    // cached_init was already fetched in the single registry access above.
-    let has_init = if let Some((addr, is_registered)) = cached_init {
-        // Cached __init__ found — use it directly without MRO walk.
-        if is_registered {
-            // Extract args from the list and call __init__ with arity-based dispatch.
-            // Retain instance before dispatch: the JIT Return terminator emits
-            // mb_release_value for all I64-typed vreg params including self, dropping
-            // rc from 1→0 and freeing the instance. We pre-retain (rc 1→2) so the
-            // JIT release only brings rc to 1, leaving the instance alive for the caller.
-            unsafe {
-                super::rc::retain_if_ptr(instance);
-            }
-            call_init_with_args(addr, instance, args_list);
-        }
-        true
-    } else {
-        // No cached __init__ — fall back to MRO lookup (handles dynamically added methods).
-        let init_method = lookup_method(&name, "__init__");
-        if !init_method.is_none() {
-            let addr = extract_func_addr(init_method);
-            if addr != 0 {
-                let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
-                if is_registered {
-                    // Same retain guard as the cached path above.
-                    unsafe {
-                        super::rc::retain_if_ptr(instance);
-                    }
-                    call_init_with_args(addr, instance, args_list);
-                }
-            }
-            true
-        } else {
-            false
-        }
-    };
+    let has_init = call_init_for_instance(&init_class, instance, args_list);
 
     if !has_init {
         // No __init__ defined — store args as e.args for Exception-like classes
         // Check if any base class is an exception type (including built-in hierarchy)
         let is_exception = CLASS_REGISTRY.with(|reg| {
-            if let Some(cls) = reg.borrow().get(&name) {
+            if let Some(cls) = reg.borrow().get(&init_class) {
                 cls.mro.iter().any(|c| {
                     c == "Exception"
                         || c == "BaseException"
@@ -3507,11 +3590,11 @@ fn instance_new_with_init_impl(
         // A user subclass of (Base)ExceptionGroup must carry the EG shape
         // (`message` + `exceptions` tuple) so str()/repr()/split() work — the
         // generic exception init below would only store `args`.
-        let is_eg = name == "ExceptionGroup"
-            || name == "BaseExceptionGroup"
+        let is_eg = init_class == "ExceptionGroup"
+            || init_class == "BaseExceptionGroup"
             || CLASS_REGISTRY.with(|reg| {
                 reg.borrow()
-                    .get(&name)
+                    .get(&init_class)
                     .map(|cls| {
                         cls.mro
                             .iter()
@@ -3528,8 +3611,8 @@ fn instance_new_with_init_impl(
                         let excs = items.get(1).copied().unwrap_or_else(MbValue::none);
                         // PEP 654: an ExceptionGroup subclass (but not a bare
                         // BaseExceptionGroup subclass) cannot nest a BaseException.
-                        let is_eg_not_base = name == "ExceptionGroup"
-                            || super::exception::is_subclass_of(&name, "ExceptionGroup");
+                        let is_eg_not_base = init_class == "ExceptionGroup"
+                            || super::exception::is_subclass_of(&init_class, "ExceptionGroup");
                         if is_eg_not_base {
                             let members: Vec<MbValue> = excs
                                 .as_ptr()
@@ -3547,7 +3630,7 @@ fn instance_new_with_init_impl(
                                 super::exception::mb_raise(
                                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                                     MbValue::from_ptr(MbObject::new_str(
-                                        super::exception::eg_nest_error_message(&name),
+                                        super::exception::eg_nest_error_message(&init_class),
                                     )),
                                 );
                                 return instance;
@@ -3562,7 +3645,7 @@ fn instance_new_with_init_impl(
                         mb_setattr(
                             instance,
                             MbValue::from_ptr(MbObject::new_str("__type__".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(name.clone())),
+                            MbValue::from_ptr(MbObject::new_str(init_class.clone())),
                         );
                         let exc_tuple = if let Some(ep) = excs.as_ptr() {
                             match &(*ep).data {
@@ -3608,7 +3691,7 @@ fn instance_new_with_init_impl(
                         mb_setattr(
                             instance,
                             MbValue::from_ptr(MbObject::new_str("__type__".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(name.clone())),
+                            MbValue::from_ptr(MbObject::new_str(init_class.clone())),
                         );
                         // Store args as tuple — items borrowed from args list.
                         let args_tuple =
@@ -3619,7 +3702,7 @@ fn instance_new_with_init_impl(
                             args_tuple,
                         );
                         // StopIteration stores the first arg as `.value` (CPython semantics).
-                        if name == "StopIteration" {
+                        if init_class == "StopIteration" {
                             eprintln!("[DBG] StopIteration init branch taken");
                             let value_val = items.first().copied().unwrap_or_else(MbValue::none);
                             super::rc::retain_if_ptr(value_val);
@@ -5350,6 +5433,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 ref fields,
             } = (*ptr).data
             {
+                if class_name == "__super__"
+                    && attr_name != "__super_class__"
+                    && attr_name != "__super_self__"
+                {
+                    return mb_super_getattr(obj, attr);
+                }
                 if class_name == "__unbound_method__"
                     && attr_name != "__method__"
                     && attr_name != "__type__"
@@ -11918,12 +12007,16 @@ pub fn mb_super_getattr(proxy: MbValue, attr: MbValue) -> MbValue {
                     .copied()
                     .unwrap_or(MbValue::none());
 
-                // Get the actual class of the instance
+                // Get the actual class of the instance. In __new__, super_self is
+                // the class object, so resolve it back to the user class name.
                 let instance_class = if let Some(self_ptr) = super_self.as_ptr() {
-                    if let ObjData::Instance { ref class_name, .. } = (*self_ptr).data {
-                        class_name.clone()
-                    } else {
-                        return MbValue::none();
+                    match &(*self_ptr).data {
+                        ObjData::Instance { class_name, .. } if class_name == "type" => {
+                            resolve_class_name(super_self).unwrap_or_default()
+                        }
+                        ObjData::Instance { class_name, .. } => class_name.clone(),
+                        ObjData::Str(s) => s.clone(),
+                        _ => return MbValue::none(),
                     }
                 } else {
                     return MbValue::none();
@@ -15995,20 +16088,15 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // `cls` is the first arg (a type object carrying __name__, or a bare
             // class-name string); the bound type `s` (usually "object") is ignored.
             if name == "__new__" {
-                let items = super::builtins::extract_items(args);
-                if let Some(cls) = items.first().copied() {
-                    // `resolve_class_name` recovers the class name from a bare
-                    // name string, a `type` object, OR a native constructor func
-                    // pointer (defaultdict/OrderedDict/date are dispatcher funcs
-                    // registered in NATIVE_TYPE_NAMES) — the latter is what the
-                    // type-wall `obj = object.__new__(StdlibClass)` idiom needs.
-                    // The old inline extraction only handled Str / `type` objects
-                    // and returned None for a func pointer, dropping to a getattr
-                    // fallback that raised "'type' has no attribute '__new__'".
-                    if let Some(cn) = resolve_class_name(cls) {
-                        return MbValue::from_ptr(MbObject::new_instance(cn));
-                    }
+                let mut items = super::builtins::extract_items(args);
+                if items.is_empty() && s != "object" {
+                    items.push(receiver);
                 }
+                return object_new_unbound(&items);
+            }
+            if s == "object" && name == "__init__" {
+                let items = super::builtins::extract_items(args);
+                return object_init_unbound(&items);
             }
             if name == "register" && is_collections_abc_name(s) {
                 let items = super::builtins::extract_items(args);
@@ -18096,10 +18184,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         drop(fields_guard);
                         // Get the actual class of the instance for MRO
                         let instance_class = if let Some(self_ptr) = super_self.as_ptr() {
-                            if let ObjData::Instance { ref class_name, .. } = (*self_ptr).data {
-                                class_name.clone()
-                            } else {
-                                String::new()
+                            match &(*self_ptr).data {
+                                ObjData::Instance { class_name, .. } if class_name == "type" => {
+                                    String::new()
+                                }
+                                ObjData::Instance { class_name, .. } => class_name.clone(),
+                                _ => String::new(),
                             }
                         } else {
                             String::new()
@@ -18110,10 +18200,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         // creation of the class (bypassing metaclass routing,
                         // which is the very frame we are in).
                         if instance_class.is_empty() {
-                            let self_class = super_self.as_ptr().and_then(|p| match &(*p).data {
-                                ObjData::Str(s) => Some(s.clone()),
-                                _ => None,
-                            });
+                            let self_class = resolve_class_name(super_self);
                             if let Some(cls_str) = self_class {
                                 let meta = CLASS_REGISTRY.with(|reg| {
                                     reg.borrow().get(&cls_str).and_then(|c| c.metaclass.clone())
@@ -18130,6 +18217,40 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     if name == "__call__" {
                                         return instance_new_default(super_self, args);
                                     }
+                                }
+                                if name == "__new__" {
+                                    let inherited =
+                                        lookup_method_after(&cls_str, &super_class, &name);
+                                    if !inherited.is_none() {
+                                        let (actual_method, _dk) =
+                                            unwrap_descriptor_method(inherited);
+                                        let call_method = if actual_method.as_func().is_some()
+                                            || actual_method.as_int().is_some()
+                                        {
+                                            actual_method
+                                        } else {
+                                            inherited
+                                        };
+                                        let addr = extract_func_addr(call_method);
+                                        if addr != 0 {
+                                            let is_reg = CALLABLE_REGISTRY
+                                                .with(|r| r.borrow().contains(&addr));
+                                            if is_reg {
+                                                let items = super::builtins::extract_items(args);
+                                                return call_registered_method_addr(addr, &items);
+                                            }
+                                        }
+                                        if call_method.as_int().is_some()
+                                            || call_method.as_ptr().is_some()
+                                        {
+                                            return super::builtins::mb_call_spread(
+                                                call_method,
+                                                args,
+                                            );
+                                        }
+                                    }
+                                    let items = super::builtins::extract_items(args);
+                                    return object_new_unbound(&items);
                                 }
                             }
                         }
