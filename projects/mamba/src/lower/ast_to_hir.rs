@@ -7100,11 +7100,29 @@ impl<'a> AstLowerer<'a> {
                             {
                                 return Some(self.build_spread_kwargs_call(f, args, any_ty));
                             }
-                            // Separate regular params from *args/**kwargs for ordered resolution.
+                            // Separate positionally-bindable regular params from keyword-only
+                            // slots. ParamInfo preserves ParamKind, while kw-only is tracked
+                            // in arg_bind_sigs from the original AST signature.
+                            let kwonly_names: std::collections::HashSet<String> = self
+                                .arg_bind_sigs
+                                .get(fname)
+                                .map(|sig| {
+                                    sig.iter().filter(|p| p.2).map(|p| p.0.clone()).collect()
+                                })
+                                .unwrap_or_default();
                             let regular_params: Vec<(usize, &ParamInfo)> = param_info
                                 .iter()
                                 .enumerate()
-                                .filter(|(_, (_, _, k))| *k == ast::ParamKind::Regular)
+                                .filter(|(_, (name, _, k))| {
+                                    *k == ast::ParamKind::Regular && !kwonly_names.contains(name)
+                                })
+                                .collect();
+                            let kwonly_params: Vec<(usize, &ParamInfo)> = param_info
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, (name, _, k))| {
+                                    *k == ast::ParamKind::Regular && kwonly_names.contains(name)
+                                })
                                 .collect();
                             let has_star = param_info
                                 .iter()
@@ -7112,6 +7130,9 @@ impl<'a> AstLowerer<'a> {
                             let has_dstar = param_info
                                 .iter()
                                 .any(|(_, _, k)| *k == ast::ParamKind::DoubleStar);
+                            if has_star && !kwonly_names.is_empty() {
+                                return Some(self.build_spread_kwargs_call(f, args, any_ty));
+                            }
                             // Positional-only param names: a keyword of the same
                             // name does NOT bind the param (CPython) — with
                             // **kwargs it lands in the dict. pos_only is only in
@@ -7127,88 +7148,103 @@ impl<'a> AstLowerer<'a> {
                             } else {
                                 std::collections::HashSet::new()
                             };
-                            let mut ordered: Vec<Option<HirExpr>> =
-                                vec![None; regular_params.len()];
-                            let mut excess_pos: Vec<HirExpr> = Vec::new();
-                            let mut excess_kw: Vec<(String, HirExpr)> = Vec::new();
-                            let mut pos_idx = 0;
+                            let mut positional_values: Vec<HirExpr> = Vec::new();
+                            let mut keyword_values: Vec<(String, HirExpr)> = Vec::new();
                             for a in args {
                                 match a {
                                     ast::CallArg::Positional(e) => {
-                                        if pos_idx < regular_params.len() {
-                                            ordered[pos_idx] = self.lower_expr(e);
-                                            pos_idx += 1;
-                                        } else if has_star {
-                                            if let Some(expr) = self.lower_expr(e) {
-                                                excess_pos.push(expr);
-                                            }
+                                        if let Some(expr) = self.lower_expr(e) {
+                                            positional_values.push(expr);
                                         }
                                     }
                                     ast::CallArg::Keyword { name: kw, value } => {
-                                        // Try to match keyword arg to a regular param name —
-                                        // but never a positional-only param (it cannot be
-                                        // filled by keyword; the keyword belongs in **kwargs).
-                                        let matched = if posonly_names.contains(kw) {
-                                            None
-                                        } else {
-                                            regular_params.iter().position(|(_, (n, _, _))| n == kw)
-                                        };
-                                        if let Some(idx) = matched {
-                                            ordered[idx] = self.lower_expr(value);
-                                        } else if has_dstar {
-                                            // Unmatched (or positional-only) kwargs go to the
-                                            // **kwargs dict.
-                                            if let Some(expr) = self.lower_expr(value) {
-                                                excess_kw.push((kw.clone(), expr));
-                                            }
+                                        if let Some(expr) = self.lower_expr(value) {
+                                            keyword_values.push((kw.clone(), expr));
                                         }
                                     }
                                     _ => {}
                                 }
                             }
-                            // Fill defaults for missing regular args.
-                            for (i, (orig_idx, _)) in regular_params.iter().enumerate() {
-                                if ordered[i].is_none() {
-                                    let (_, ref default, _) = param_info[*orig_idx];
-                                    if let Some(ref def_expr) = default {
-                                        ordered[i] = match def_expr {
-                                            ParamDefault::Ast(expr) => self.lower_expr(expr),
-                                            ParamDefault::Frozen(expr) => Some(expr.clone()),
-                                        };
+                            let mut used_kw: std::collections::HashSet<String> =
+                                std::collections::HashSet::new();
+                            let mut hir_args: Vec<HirExpr> = Vec::new();
+                            let excess_pos_values: Vec<HirExpr> = if has_star {
+                                positional_values
+                                    .iter()
+                                    .skip(regular_params.len())
+                                    .cloned()
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                            for (i, (orig_idx, (name, default, _))) in
+                                regular_params.iter().enumerate()
+                            {
+                                if i < positional_values.len() {
+                                    hir_args.push(positional_values[i].clone());
+                                    if keyword_values.iter().any(|(kw, _)| kw == name) {
+                                        used_kw.insert(name.clone());
+                                    }
+                                } else if !posonly_names.contains(name) {
+                                    if let Some((kw, expr)) =
+                                        keyword_values.iter().find(|(kw, _)| kw == name)
+                                    {
+                                        used_kw.insert(kw.clone());
+                                        hir_args.push(expr.clone());
+                                    } else if let Some(def_expr) = default {
+                                        match def_expr {
+                                            ParamDefault::Ast(expr) => {
+                                                if let Some(lowered) = self.lower_expr(expr) {
+                                                    hir_args.push(lowered);
+                                                }
+                                            }
+                                            ParamDefault::Frozen(expr) => hir_args.push(expr.clone()),
+                                        }
+                                    }
+                                } else if let Some(def_expr) = &param_info[*orig_idx].1 {
+                                    match def_expr {
+                                        ParamDefault::Ast(expr) => {
+                                            if let Some(lowered) = self.lower_expr(expr) {
+                                                hir_args.push(lowered);
+                                            }
+                                        }
+                                        ParamDefault::Frozen(expr) => hir_args.push(expr.clone()),
                                     }
                                 }
                             }
-                            // Build final HirExpr args: regular_args... [, *args_list] [, **kwargs_dict]
-                            // Note: excess positional/keyword args are NOT appended here.
-                            // They are handled at MIR lowering time via variadic packing.
-                            // However, we pass them as trailing HirExpr elements so the MIR
-                            // lowering can recognize them.
-                            let mut hir_args: Vec<HirExpr> =
-                                ordered.into_iter().flatten().collect();
-                            // For *args: append excess positional args (MIR will pack them)
-                            hir_args.extend(excess_pos);
-                            // For **kwargs: if present, skip here — handled at MIR level
-                            // We store excess kwargs as a dict literal in the call args.
-                            if has_dstar && !excess_kw.is_empty() {
-                                let dict_entries: Vec<(HirExpr, HirExpr)> = excess_kw
+                            for (_orig_idx, (name, default, _)) in kwonly_params {
+                                if let Some((kw, expr)) =
+                                    keyword_values.iter().find(|(kw, _)| kw == name)
+                                {
+                                    used_kw.insert(kw.clone());
+                                    hir_args.push(expr.clone());
+                                } else if let Some(def_expr) = default {
+                                    match def_expr {
+                                        ParamDefault::Ast(expr) => {
+                                            if let Some(lowered) = self.lower_expr(expr) {
+                                                hir_args.push(lowered);
+                                            }
+                                        }
+                                        ParamDefault::Frozen(expr) => hir_args.push(expr.clone()),
+                                    }
+                                }
+                            }
+                            if has_star {
+                                hir_args.extend(excess_pos_values);
+                            }
+                            if has_dstar {
+                                let dict_entries: Vec<(HirExpr, HirExpr)> = keyword_values
                                     .into_iter()
+                                    .filter(|(kw, _)| !used_kw.contains(kw))
                                     .map(|(k, v)| {
                                         let key = HirExpr::StrLit(k, self.checker.tcx.str());
                                         (key, v)
                                     })
                                     .collect();
-                                let dict = HirExpr::Dict {
+                                hir_args.push(HirExpr::Dict {
                                     entries: dict_entries,
                                     ty: any_ty,
-                                };
-                                hir_args.push(dict);
-                            } else if has_dstar {
-                                // No excess kwargs — pass an empty dict
-                                let dict = HirExpr::Dict {
-                                    entries: vec![],
-                                    ty: any_ty,
-                                };
-                                hir_args.push(dict);
+                                });
                             }
                             return Some(HirExpr::Call {
                                 func: Box::new(f),
