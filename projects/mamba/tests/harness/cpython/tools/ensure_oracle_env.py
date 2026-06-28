@@ -74,12 +74,14 @@ def run_checked(args: list[str]) -> None:
 def python_info(python: str) -> dict[str, Any]:
     script = """
 import json
+import ntpath
 import platform
 import sys
 
 print(json.dumps({
     "executable": sys.executable,
     "implementation": platform.python_implementation(),
+    "ntpath_allow_missing": hasattr(ntpath, "ALLOW_MISSING"),
     "version": sys.version,
     "version_info": list(sys.version_info[:3]),
 }))
@@ -87,12 +89,17 @@ print(json.dumps({
     return json.loads(run_capture([python, "-c", script]))
 
 
-def ensure_cpython_312(info: dict[str, Any], python: str) -> None:
+def ensure_oracle_python(info: dict[str, Any], python: str) -> None:
     if info["implementation"] != "CPython" or info["version_info"][:2] != [3, 12]:
         got = f"{info['implementation']} {'.'.join(map(str, info['version_info']))}"
         raise SystemExit(
             f"{python!r} resolves to {got}; oracle-env requires CPython 3.12. "
             "Pass --python /path/to/python3.12."
+        )
+    if not info["ntpath_allow_missing"]:
+        raise SystemExit(
+            f"{python!r} is CPython 3.12 but lacks ntpath.ALLOW_MISSING; "
+            "use a newer CPython 3.12.x build for the oracle environment."
         )
 
 
@@ -104,7 +111,7 @@ def resolve_python(arg: str | None) -> str:
             continue
         try:
             info = python_info(candidate)
-            ensure_cpython_312(info, candidate)
+            ensure_oracle_python(info, candidate)
             return str(Path(info["executable"]).resolve())
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{candidate}: {exc}")
@@ -169,6 +176,7 @@ def identity_inputs(requirements: Path, python: str, python_data: dict[str, Any]
         "requirements_sha256": sha256_file(requirements),
         "python_executable": python,
         "python_implementation": python_data["implementation"],
+        "python_ntpath_allow_missing": python_data["ntpath_allow_missing"],
         "python_version": python_data["version"],
         "python_version_info": python_data["version_info"],
         "lib_test_source": str(lib_test_source),
