@@ -310,12 +310,14 @@ impl WriteCoordinator {
 /// The write seam the API binds to: submit a log entry, get its applied outcome,
 /// and report the applied head. Implemented by [`WriteCoordinator`] (the WAL-seam
 /// path for embedded/nats/relay) and by `RaftWriteSink` (the raft-host path).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 #[async_trait::async_trait]
 pub trait WriteSink: Send + Sync {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome>;
     fn applied_seq(&self) -> u64;
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 #[async_trait::async_trait]
 impl WriteSink for WriteCoordinator {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
