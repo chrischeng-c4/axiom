@@ -9,7 +9,7 @@
 # case = "get_type_hints_bad_forward_ref_raises"
 # subject = "typing.get_type_hints"
 # kind = "mechanical"
-# xfail = "mamba does not resolve/raise on an undefined forward ref in get_type_hints (project_mamba_function_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
