@@ -8543,6 +8543,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     let mut all_args = Vec::with_capacity(items.len() + 1);
                     all_args.push(self_v);
                     all_args.extend(items);
+                    super::class::append_missing_method_defaults(func_v, &mut all_args, 1);
                     let args_list = MbValue::from_ptr(MbObject::new_list(all_args));
                     return mb_call_spread(func_v, args_list);
                 }
