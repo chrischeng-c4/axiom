@@ -7508,12 +7508,20 @@ impl<'a> HirToMir<'a> {
 
         let iterable = self.lower_expr(&gen.iter);
         let iter_obj = self.fresh_vreg();
+        let iter_fn = if gen.is_async {
+            "mb_async_iter"
+        } else {
+            "mb_iter"
+        };
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(iter_obj),
-            name: "mb_iter".to_string(),
+            name: iter_fn.to_string(),
             args: vec![iterable],
             ty: self.tcx.any(),
         });
+        if gen.is_async {
+            self.emit_exception_propagate();
+        }
 
         let header = self.fresh_block();
         let body_block = self.fresh_block();
@@ -7523,12 +7531,20 @@ impl<'a> HirToMir<'a> {
         self.start_block(header);
         // Lever A: single-call advance + sentinel check.
         let next_val = self.fresh_vreg();
+        let next_fn = if gen.is_async {
+            "mb_async_next_or_stop"
+        } else {
+            "mb_next_or_stop"
+        };
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(next_val),
-            name: "mb_next_or_stop".to_string(),
+            name: next_fn.to_string(),
             args: vec![iter_obj],
             ty: self.tcx.any(),
         });
+        if gen.is_async {
+            self.emit_exception_propagate();
+        }
         let is_stop = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(is_stop),
