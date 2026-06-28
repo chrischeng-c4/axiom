@@ -11139,7 +11139,7 @@ fn eval_binop(op: crate::parser::ast::BinOp, l: MbValue, r: MbValue) -> MbValue 
         B::FloorDiv => mb_floordiv(l, r),
         B::Mod => mb_mod(l, r),
         B::Pow => mb_pow(l, r),
-        B::MatMul => MbValue::none(),
+        B::MatMul => super::class::mb_matmul(l, r),
         B::Eq => mb_eq(l, r),
         B::NotEq => mb_ne(l, r),
         B::Lt => mb_lt(l, r),

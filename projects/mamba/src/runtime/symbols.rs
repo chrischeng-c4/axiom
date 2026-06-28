@@ -325,6 +325,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_matmul",
+            class::mb_matmul as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_div",
             builtins::mb_div as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -599,6 +605,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_imul",
             class::mb_imul as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_imatmul",
+            class::mb_imatmul as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
