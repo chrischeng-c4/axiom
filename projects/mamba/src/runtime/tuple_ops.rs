@@ -331,7 +331,12 @@ pub fn mb_tuple_slice_full(tup: MbValue, start: MbValue, stop: MbValue, step: Mb
             let len = items.len() as i64;
             let st = step.as_int().unwrap_or(1);
             if st == 0 {
-                // ValueError: slice step cannot be zero
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "slice step cannot be zero".to_string(),
+                    )),
+                );
                 return mb_tuple_new();
             }
             let (s, e) = if st > 0 {
