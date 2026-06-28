@@ -1,10 +1,11 @@
 // HANDWRITE-BEGIN reason: #1466 — partial weakref semantics; full GC
 // integration still required. Mamba now has a small refcount/GC collection
 // notification path for selected proxy wrappers, so dead proxy access can
-// raise ReferenceError for covered referents. Most weakref container,
-// callback, finalize, and general ref-expiry semantics still use strong
-// stubs that preserve API shape without the full CPython contract. Closing
-// the remaining gap requires broader liveness tracking and callback dispatch.
+// raise ReferenceError for covered referents, and a narrow global-liveness
+// sweep fires weakref.ref callbacks for covered module-global referents. Most
+// weakref container, finalize, and general ref-expiry semantics still use
+// strong stubs that preserve API shape without the full CPython contract.
+// Closing the remaining gap requires broader liveness tracking.
 // Tracked under #1466 (conformance(mamba/stdlib): weakref); also see legacy
 // #437.
 //
@@ -31,11 +32,11 @@ use rustc_hash::FxHashMap;
 /// Full weak references require broad GC integration (tracking live objects,
 /// invalidating references, firing callbacks, and evicting containers when the
 /// referent is collected). Mamba currently preserves API shape plus a covered
-/// proxy-death subset:
+/// proxy-death and module-global ref-callback subsets:
 ///
 ///   - `ref(obj, callback=None)`: returns an Instance carrying a strong
-///     pointer to `obj` for most referents. The callback, if any, is stored
-///     but not generally invoked.
+///     pointer to `obj` for most referents. Callbacks are stored and fired
+///     only for the covered module-global liveness sweep.
 ///   - `proxy(obj, callback=None)`: returns `obj` unchanged for legacy
 ///     live-object alias cases. Hash-sensitive and socket referents receive a
 ///     proxy wrapper that can be marked dead by rc/GC collection notifications
@@ -70,9 +71,9 @@ use std::sync::atomic::AtomicU32;
 //   * `getweakrefs(obj)` returns them in creation order.
 //
 // Selected proxy wrappers are also marked dead from rc/GC collection
-// notifications. General dead-ref timing, callback firing, and weak container
-// eviction remain out of scope: that needs broader liveness work, tracked under
-// gh #1466.
+// notifications. Ref callbacks fire for the covered module-global liveness
+// sweep. General dead-ref timing and weak container eviction remain out of
+// scope: that needs broader liveness work, tracked under gh #1466.
 thread_local! {
     // referent identity (pointer-or-folded-bits key) -> ordered list of the
     // ref/proxy MbValue objects created against it.
@@ -349,6 +350,34 @@ pub(crate) fn expire_unbound_class_refs() {
     }
 }
 
+pub(crate) fn expire_unbound_ref_callbacks() {
+    let refs: Vec<MbValue> = WEAKREF_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .values()
+            .flat_map(|items| items.iter().copied())
+            .collect()
+    });
+    for wref in refs {
+        if ref_callback(wref).is_none() || !ref_tracks_global_liveness(wref) {
+            continue;
+        }
+        let target = reference_target(wref);
+        if target.is_none() {
+            if mark_weakref_dead(wref) {
+                fire_ref_callback(wref);
+            }
+            continue;
+        }
+        if !value_has_live_global(target) && mark_weakref_dead(wref) {
+            fire_ref_callback(wref);
+        }
+        unsafe {
+            super::super::rc::release_if_ptr(target);
+        }
+    }
+}
+
 fn finalize_is_alive(fin: MbValue) -> bool {
     let Some(ptr) = fin.as_ptr() else {
         return false;
@@ -551,9 +580,9 @@ pub(crate) fn raise_reference_error() {
     );
 }
 
-fn mark_weakref_dead(wref: MbValue) {
+fn mark_weakref_dead(wref: MbValue) -> bool {
     let Some(ptr) = wref.as_ptr() else {
-        return;
+        return false;
     };
     unsafe {
         if let ObjData::Instance { class_name, fields } = &(*ptr).data {
@@ -561,9 +590,16 @@ fn mark_weakref_dead(wref: MbValue) {
                 class_name.as_str(),
                 "ReferenceType" | "ProxyType" | "CallableProxyType"
             ) {
-                return;
+                return false;
             }
             let mut fields = fields.write().unwrap();
+            if fields
+                .get("_dead")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return false;
+            }
             if fields.contains_key("_target") {
                 fields.insert("_target".to_string(), MbValue::none());
             }
@@ -572,8 +608,35 @@ fn mark_weakref_dead(wref: MbValue) {
             } else {
                 fields.insert("_dead".to_string(), MbValue::from_bool(true));
             }
+            return true;
         }
     }
+    false
+}
+
+fn ref_tracks_global_liveness(wref: MbValue) -> bool {
+    let Some(ptr) = wref.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "ReferenceType" => fields
+                .read()
+                .unwrap()
+                .get("_global_tracked")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+}
+
+fn fire_ref_callback(wref: MbValue) {
+    let callback = ref_callback(wref);
+    if callback.is_none() {
+        return;
+    }
+    let _ = super::super::class::mb_call_method1(callback, wref);
 }
 
 pub(crate) unsafe fn notify_referent_collected(obj: *mut MbObject) {
@@ -1040,6 +1103,10 @@ pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
     fields.insert("_target".to_string(), obj);
     fields.insert("_target_id".to_string(), target_id);
     fields.insert("_dead".to_string(), MbValue::from_bool(false));
+    fields.insert(
+        "_global_tracked".to_string(),
+        MbValue::from_bool(value_has_live_global(obj)),
+    );
     if let Some(name) = class_object_name {
         fields.insert(
             "_class_object_name".to_string(),
@@ -1559,9 +1626,11 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     static FINALIZE_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static REF_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static REF_CALLBACK_ARG_BITS: AtomicU64 = AtomicU64::new(0);
 
     unsafe extern "C" fn finalize_test_callback(
         _args_ptr: *const MbValue,
@@ -1575,6 +1644,21 @@ mod tests {
         let addr = finalize_test_callback as *const () as usize;
         crate::runtime::module::register_variadic_func(addr as u64);
         MbValue::from_func(addr)
+    }
+
+    extern "C" fn ref_test_callback(wref: MbValue) -> MbValue {
+        REF_CALLBACK_COUNT.fetch_add(1, Ordering::SeqCst);
+        REF_CALLBACK_ARG_BITS.store(wref.to_bits(), Ordering::SeqCst);
+        MbValue::none()
+    }
+
+    fn registered_ref_test_callback() -> MbValue {
+        let addr = ref_test_callback as *const () as usize;
+        let callback = MbValue::from_func(addr);
+        let mut methods = HashMap::new();
+        methods.insert("__call__".to_string(), callback);
+        crate::runtime::class::mb_class_register("WeakRefCallbackHook", vec![], methods);
+        callback
     }
 
     fn get_field(instance: MbValue, field: &str) -> MbValue {
@@ -1623,6 +1707,29 @@ mod tests {
         let cb = MbValue::from_int(42);
         let wref = mb_weakref_ref(obj, cb);
         assert_eq!(get_field(wref, "_callback").as_int(), Some(42));
+    }
+
+    #[test]
+    fn test_ref_callback_fires_once_after_global_rebind() {
+        REF_CALLBACK_COUNT.store(0, Ordering::SeqCst);
+        REF_CALLBACK_ARG_BITS.store(0, Ordering::SeqCst);
+
+        let obj = target();
+        let global_id = MbValue::from_bits(9021);
+        crate::runtime::closure::mb_global_set_id(global_id, obj);
+        let wref = mb_weakref_ref(obj, registered_ref_test_callback());
+
+        expire_unbound_ref_callbacks();
+        assert_eq!(REF_CALLBACK_COUNT.load(Ordering::SeqCst), 0);
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        expire_unbound_ref_callbacks();
+        assert_eq!(REF_CALLBACK_COUNT.load(Ordering::SeqCst), 1);
+        assert_eq!(REF_CALLBACK_ARG_BITS.load(Ordering::SeqCst), wref.to_bits());
+        assert!(reference_target(wref).is_none());
+
+        expire_unbound_ref_callbacks();
+        assert_eq!(REF_CALLBACK_COUNT.load(Ordering::SeqCst), 1);
     }
 
     #[test]
