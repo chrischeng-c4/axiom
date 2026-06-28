@@ -188,18 +188,30 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
     // the same pointer thereafter.
     let in_cache = MODULES.with(|mods| mods.borrow().contains_key(&name));
     if in_cache {
-        let val = MODULES.with(|mods| {
-            let mut map = mods.borrow_mut();
-            if let Some(module) = map.get_mut(&name) {
-                module_to_value_and_cache(module)
-            } else {
-                MbValue::none()
-            }
+        let file_backed = MODULES.with(|mods| {
+            mods.borrow()
+                .get(&name)
+                .and_then(|module| module.file.as_ref())
+                .is_some()
         });
-        if !val.is_none() {
-            update_sys_modules(&name, val);
+        if file_backed && lookup_sys_modules(&name).is_none() {
+            MODULES.with(|mods| {
+                mods.borrow_mut().remove(&name);
+            });
+        } else {
+            let val = MODULES.with(|mods| {
+                let mut map = mods.borrow_mut();
+                if let Some(module) = map.get_mut(&name) {
+                    module_to_value_and_cache(module)
+                } else {
+                    MbValue::none()
+                }
+            });
+            if !val.is_none() {
+                update_sys_modules(&name, val);
+            }
+            return val;
         }
-        return val;
     }
 
     // Pre-cache a sentinel module to prevent circular import recursion.
@@ -1389,6 +1401,12 @@ fn find_module(name: &str) -> Option<PathBuf> {
         return script_dir_result;
     }
 
+    for base in live_sys_path_paths() {
+        if let Some(found) = probe_module_path(&base, &parts) {
+            return Some(found);
+        }
+    }
+
     SEARCH_PATHS.with(|paths| {
         for base in paths.borrow().iter() {
             if let Some(found) = probe_module_path(base, &parts) {
@@ -1397,6 +1415,37 @@ fn find_module(name: &str) -> Option<PathBuf> {
         }
         None
     })
+}
+
+fn live_sys_path_paths() -> Vec<PathBuf> {
+    let sys_path = MODULES.with(|mods| {
+        mods.borrow()
+            .get("sys")
+            .and_then(|m| m.attrs.get("path").copied())
+    });
+    let Some(path_val) = sys_path else {
+        return Vec::new();
+    };
+    let Some(ptr) = path_val.as_ptr() else {
+        return Vec::new();
+    };
+    unsafe {
+        let ObjData::List(ref lock) = (*ptr).data else {
+            return Vec::new();
+        };
+        lock.read()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| extract_str(*entry))
+            .map(|entry| {
+                if entry.is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    PathBuf::from(entry)
+                }
+            })
+            .collect()
+    }
 }
 
 /// Try to find a module file at `base/parts.py` or `base/parts/__init__.py`.

@@ -11057,10 +11057,70 @@ fn exec_store_global(ctx: &ExecContext, name: &str, value: MbValue) {
     );
 }
 
+fn exec_import_stmt(
+    ctx: &ExecContext,
+    module: &[String],
+    names: &Option<Vec<(String, Option<String>)>>,
+    module_alias: &Option<String>,
+) {
+    let module_name = module.join(".");
+    let module_name_val = MbValue::from_ptr(MbObject::new_str(module_name.clone()));
+
+    if let Some(names) = names {
+        let is_star = names.len() == 1 && names[0].0 == "*";
+        if is_star {
+            let exports = super::module::mb_import_star(module_name_val);
+            if exec_has_pending_exception() {
+                return;
+            }
+            for (name, value) in kwargs_dict_pairs(exports) {
+                exec_store_global(ctx, &name, value);
+            }
+            return;
+        }
+
+        let _ = super::module::mb_import(module_name_val);
+        if exec_has_pending_exception() {
+            return;
+        }
+        for (name, alias) in names {
+            let attr = MbValue::from_ptr(MbObject::new_str(name.clone()));
+            let module_name_val = MbValue::from_ptr(MbObject::new_str(module_name.clone()));
+            let value = super::module::mb_module_getattr(module_name_val, attr);
+            if exec_has_pending_exception() {
+                return;
+            }
+            let bound = alias.as_deref().unwrap_or(name.as_str());
+            exec_store_global(ctx, bound, value);
+        }
+        return;
+    }
+
+    let value = super::module::mb_import(module_name_val);
+    if exec_has_pending_exception() {
+        return;
+    }
+    if let Some(alias) = module_alias {
+        exec_store_global(ctx, alias, value);
+    } else if let Some(top_name) = module.first() {
+        let bound_value = if module.len() > 1 {
+            super::module::mb_import(MbValue::from_ptr(MbObject::new_str(top_name.clone())))
+        } else {
+            value
+        };
+        exec_store_global(ctx, top_name, bound_value);
+    }
+}
+
 fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
     use crate::parser::ast::Stmt;
     match stmt {
-        Stmt::Pass | Stmt::Import { .. } => {}
+        Stmt::Pass => {}
+        Stmt::Import {
+            module,
+            names,
+            module_alias,
+        } => exec_import_stmt(ctx, module, names, module_alias),
         Stmt::Assign { target, value } => {
             if let crate::parser::ast::Expr::Ident(name) = &target.node {
                 if exec_is_typevar_constructor(&value.node) {
@@ -12643,6 +12703,55 @@ mod tests {
     #[test]
     fn test_exec_returns_none() {
         assert!(mb_exec(MbValue::none()).is_none());
+    }
+
+    #[test]
+    fn test_exec_with_globals_star_import_uses_all() {
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert("public_a".to_string(), MbValue::from_int(1));
+        attrs.insert("public_extra".to_string(), MbValue::from_int(2));
+        attrs.insert("_private_listed".to_string(), MbValue::from_int(3));
+        attrs.insert("_private_one".to_string(), MbValue::from_int(4));
+        attrs.insert(
+            "__all__".to_string(),
+            MbValue::from_ptr(MbObject::new_list(vec![
+                MbValue::from_ptr(MbObject::new_str("public_a".to_string())),
+                MbValue::from_ptr(MbObject::new_str("_private_listed".to_string())),
+            ])),
+        );
+        crate::runtime::module::mb_module_register("mamba_exec_star_test_mod", attrs);
+
+        let ns = crate::runtime::dict_ops::mb_dict_new();
+        let code = MbValue::from_ptr(MbObject::new_str(
+            "from mamba_exec_star_test_mod import *".to_string(),
+        ));
+        assert!(mb_exec_with_globals(code, ns).is_none());
+
+        let public_a = crate::runtime::dict_ops::mb_dict_get(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("public_a".to_string())),
+            MbValue::none(),
+        );
+        let private_listed = crate::runtime::dict_ops::mb_dict_get(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("_private_listed".to_string())),
+            MbValue::none(),
+        );
+        let public_extra = crate::runtime::dict_ops::mb_dict_get(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("public_extra".to_string())),
+            MbValue::none(),
+        );
+        let private_one = crate::runtime::dict_ops::mb_dict_get(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("_private_one".to_string())),
+            MbValue::none(),
+        );
+
+        assert_eq!(public_a.as_int(), Some(1));
+        assert_eq!(private_listed.as_int(), Some(3));
+        assert!(public_extra.is_none());
+        assert!(private_one.is_none());
     }
 
     #[test]
