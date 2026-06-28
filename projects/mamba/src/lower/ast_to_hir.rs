@@ -5255,6 +5255,7 @@ impl<'a> AstLowerer<'a> {
                 let it = self.lower_expr(iter)?;
                 let any_ty = self.checker.tcx.any();
                 let span = stmt.span;
+                let is_async = matches!(&stmt.node, ast::Stmt::AsyncFor { .. });
 
                 // Infer element type: explicit annotation > range() → int > any
                 let elem_ty = var_ty
@@ -5296,13 +5297,23 @@ impl<'a> AstLowerer<'a> {
                         .filter_map(|s| self.lower_stmt(s))
                         .collect();
                     self.runtime_class_base_names.truncate(base_stack_len);
-                    Some(HirStmt::For {
-                        var: tmp_sym,
-                        iter: it,
-                        body: b,
-                        else_body: eb,
-                        span,
-                    })
+                    if is_async {
+                        Some(HirStmt::AsyncFor {
+                            var: tmp_sym,
+                            iter: it,
+                            body: b,
+                            else_body: eb,
+                            span,
+                        })
+                    } else {
+                        Some(HirStmt::For {
+                            var: tmp_sym,
+                            iter: it,
+                            body: b,
+                            else_body: eb,
+                            span,
+                        })
+                    }
                 } else {
                     let var_id = self.define_local(&targets[0], elem_ty);
                     let base_stack_len = self.runtime_class_base_names.len();
@@ -5314,13 +5325,23 @@ impl<'a> AstLowerer<'a> {
                         .filter_map(|s| self.lower_stmt(s))
                         .collect();
                     self.runtime_class_base_names.truncate(base_stack_len);
-                    Some(HirStmt::For {
-                        var: var_id,
-                        iter: it,
-                        body: b,
-                        else_body: eb,
-                        span,
-                    })
+                    if is_async {
+                        Some(HirStmt::AsyncFor {
+                            var: var_id,
+                            iter: it,
+                            body: b,
+                            else_body: eb,
+                            span,
+                        })
+                    } else {
+                        Some(HirStmt::For {
+                            var: var_id,
+                            iter: it,
+                            body: b,
+                            else_body: eb,
+                            span,
+                        })
+                    }
                 }
             }
             ast::Stmt::Break => Some(HirStmt::Break { span: stmt.span }),
