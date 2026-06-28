@@ -1437,9 +1437,8 @@ pub fn mb_typing_get_type_hints(obj: MbValue) -> MbValue {
         return dict;
     }
     // Class / module annotations: read the `__annotations__` mapping (PEP 526)
-    // and resolve each textual annotation to its runtime type, matching
-    // CPython's `get_type_hints(cls)`. The stored values are the textual
-    // annotation (mamba's type-as-string representation).
+    // and resolve textual annotations to runtime types. Class annotations may
+    // already carry runtime objects after class registration normalizes them.
     let ann = super::super::class::mb_getattr(obj, new_str_v("__annotations__"));
     let pairs: Vec<(String, MbValue)> = ann.as_ptr().map(|ptr| unsafe {
         if let super::super::rc::ObjData::Dict(ref lock) = (*ptr).data {
@@ -1456,15 +1455,18 @@ pub fn mb_typing_get_type_hints(obj: MbValue) -> MbValue {
     }).unwrap_or_default();
     unsafe { super::super::rc::release_if_ptr(ann); }
     for (name, val) in pairs {
-        let Some(anno) = extract_str(val) else { continue };
-        if let Some(t) = resolve_annotation(&anno) {
-            set(&name, t);
+        if let Some(anno) = extract_str(val) {
+            if let Some(t) = resolve_annotation(&anno) {
+                set(&name, t);
+            } else {
+                super::super::exception::mb_raise(
+                    new_str_v("NameError"),
+                    new_str_v(&format!("name '{anno}' is not defined")),
+                );
+                return MbValue::none();
+            }
         } else {
-            super::super::exception::mb_raise(
-                new_str_v("NameError"),
-                new_str_v(&format!("name '{anno}' is not defined")),
-            );
-            return MbValue::none();
+            set(&name, val);
         }
     }
     dict
@@ -1548,7 +1550,7 @@ fn parse_generic_alias(s: &str) -> Option<MbValue> {
 /// scalar/container names resolve to the cached type singletons; unknown
 /// names return None (the caller raises NameError, matching CPython's
 /// forward-reference resolution failure).
-fn resolve_annotation(anno: &str) -> Option<MbValue> {
+pub(crate) fn resolve_annotation(anno: &str) -> Option<MbValue> {
     let name = anno.trim();
     let name = name.trim_matches(|c| c == '"' || c == '\'');
     
