@@ -9378,6 +9378,7 @@ fn c3_merge(lists: &mut Vec<Vec<String>>) -> Result<Vec<String>, String> {
 ///           Is(20), IsNot(21), In(22), NotIn(23)
 /// Note: Is/IsNot are identity checks (no dunder). In/NotIn use __contains__ on RHS.
 /// The codegen handles these specially and should not route them here.
+const MATMUL_OPCODE: i64 = 24;
 const BINOP_DUNDERS: &[&str] = &[
     "add", "sub", "mul", "truediv", "floordiv", "mod", "pow", "eq", "ne", "lt", "gt", "le", "ge",
     "and", "or", "and", "or", "xor", "lshift", "rshift",
@@ -9385,6 +9386,7 @@ const BINOP_DUNDERS: &[&str] = &[
     "", // IsNot — identity, not dunder-dispatched
     "", // In — uses RHS __contains__, handled by mb_obj_contains
     "", // NotIn — uses RHS __contains__, handled by mb_obj_contains
+    "matmul",
 ];
 
 /// Dispatch a binary operation through dunder methods.
@@ -9542,6 +9544,12 @@ pub fn mb_imul(a: MbValue, b: MbValue) -> MbValue {
         return a;
     }
     mb_inplace(a, b, "__imul__", 2, super::builtins::mb_mul)
+}
+pub fn mb_matmul(a: MbValue, b: MbValue) -> MbValue {
+    mb_dispatch_binop(MATMUL_OPCODE, a, b)
+}
+pub fn mb_imatmul(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__imatmul__", MATMUL_OPCODE, mb_matmul)
 }
 pub fn mb_ipow(a: MbValue, b: MbValue) -> MbValue {
     mb_inplace(a, b, "__ipow__", 6, super::builtins::mb_pow)
