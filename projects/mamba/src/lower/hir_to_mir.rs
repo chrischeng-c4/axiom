@@ -39,6 +39,10 @@ type MethodEntry = (
     bool,
     // `@target.register(type_expr)` on a sibling singledispatchmethod.
     Option<(SymbolId, HirExpr)>,
+    // Full decorator list in source order. Used when a class method has a
+    // generic runtime decorator in the stack and must apply CPython bottom-up
+    // composition instead of the builtin-only fast path.
+    Vec<HirExpr>,
 );
 
 type PendingClassRegistration = (
@@ -813,9 +817,14 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 generic_decorator: Option<HirExpr>,
                 singledispatchmethod: bool,
                 sdm_register: Option<(SymbolId, HirExpr)>,
+                decorators: Vec<HirExpr>,
             }
             impl Raw {
-                fn new(sym: SymbolId, marker_attrs: Vec<&'static str>) -> Self {
+                fn new(
+                    sym: SymbolId,
+                    marker_attrs: Vec<&'static str>,
+                    decorators: Vec<HirExpr>,
+                ) -> Self {
                     Self {
                         sym,
                         kind: MethodDecorKind::None,
@@ -825,6 +834,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                         generic_decorator: None,
                         singledispatchmethod: false,
                         sdm_register: None,
+                        decorators,
                     }
                 }
             }
@@ -843,7 +853,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                         _ => None,
                     })
                     .collect();
-                let mut r = Raw::new(m.name, marker_attrs);
+                let mut r = Raw::new(m.name, marker_attrs, m.decorators.clone());
                 for dec in &m.decorators {
                     match dec {
                         HirExpr::Var(dec_sym, _) => {
@@ -953,6 +963,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                     r.generic_decorator.clone(),
                     r.singledispatchmethod,
                     r.sdm_register.clone(),
+                    r.decorators.clone(),
                 ));
             }
             out
@@ -5018,6 +5029,7 @@ impl<'a> HirToMir<'a> {
             generic_decorator,
             singledispatchmethod,
             sdm_register,
+            all_decorators,
         ) in methods
         {
             let name_vreg = self.emit_str_const(method_name);
@@ -5044,7 +5056,106 @@ impl<'a> HirToMir<'a> {
                     ty: self.tcx.none(),
                 });
             }
-            let mut wrapped = match decor_kind {
+            let has_runtime_generic_decorator = all_decorators.iter().any(|dec_expr| {
+                !matches!(
+                    dec_expr,
+                    HirExpr::Var(dec_sym, _)
+                        if self
+                            .class_syms
+                            .get(&dec_sym.0)
+                            .is_some_and(|name| matches!(
+                                name.as_str(),
+                                "property"
+                                    | "classmethod"
+                                    | "staticmethod"
+                                    | "cached_property"
+                                    | "singledispatchmethod"
+                            ))
+                ) && !matches!(
+                    dec_expr,
+                    HirExpr::Attr { attr, .. }
+                        if matches!(attr.as_str(), "setter" | "getter" | "deleter")
+                )
+            });
+            let mut wrapped = if has_runtime_generic_decorator {
+                let mut current = addr_vreg;
+                for dec_expr in all_decorators.iter().rev() {
+                    let next = self.fresh_vreg();
+                    match dec_expr {
+                        HirExpr::Var(dec_sym, _)
+                            if self.class_syms.get(&dec_sym.0).is_some_and(|name| {
+                                matches!(
+                                    name.as_str(),
+                                    "property"
+                                        | "classmethod"
+                                        | "staticmethod"
+                                        | "cached_property"
+                                        | "singledispatchmethod"
+                                )
+                            }) =>
+                        {
+                            let dec_name =
+                                self.class_syms.get(&dec_sym.0).cloned().unwrap_or_default();
+                            let extern_name = match dec_name.as_str() {
+                                "property" => "mb_property_new",
+                                "classmethod" => "mb_classmethod_new",
+                                "staticmethod" => "mb_staticmethod_new",
+                                "cached_property" => "mb_cached_property_new",
+                                "singledispatchmethod" => "mb_functools_singledispatchmethod",
+                                _ => unreachable!(),
+                            };
+                            let args = if dec_name == "cached_property" {
+                                vec![current, self.emit_str_const(method_name)]
+                            } else {
+                                vec![current]
+                            };
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: extern_name.to_string(),
+                                args,
+                                ty: any_ty,
+                            });
+                        }
+                        HirExpr::Var(dec_sym, _) if self.user_funcs.contains(&dec_sym.0) => {
+                            self.current_stmts.push(MirInst::Call {
+                                dest: Some(next),
+                                func: *dec_sym,
+                                args: vec![current],
+                                ty: any_ty,
+                            });
+                        }
+                        HirExpr::Var(dec_sym, _) if self.user_class_syms.contains(&dec_sym.0) => {
+                            let class_name =
+                                self.class_syms.get(&dec_sym.0).cloned().unwrap_or_default();
+                            let name_vreg = self.emit_str_const(&class_name);
+                            let args_list = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::MakeList {
+                                dest: args_list,
+                                elements: vec![current],
+                                ty: any_ty,
+                            });
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: "mb_instance_new_with_init".to_string(),
+                                args: vec![name_vreg, args_list],
+                                ty: any_ty,
+                            });
+                        }
+                        _ => {
+                            let dec_vreg = self.lower_expr(dec_expr);
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: "mb_call1_val".to_string(),
+                                args: vec![dec_vreg, current],
+                                ty: any_ty,
+                            });
+                        }
+                    }
+                    current = next;
+                }
+                current
+            } else {
+                match decor_kind {
                 MethodDecorKind::None => addr_vreg,
                 MethodDecorKind::Property => {
                     let mut w = self.fresh_vreg();
@@ -5122,6 +5233,7 @@ impl<'a> HirToMir<'a> {
                         ty: any_ty,
                     });
                     w
+                }
                 }
             };
             if *singledispatchmethod {
