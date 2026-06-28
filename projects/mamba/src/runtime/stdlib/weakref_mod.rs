@@ -992,14 +992,14 @@ unsafe extern "C" fn wvd_setitem(self_v: MbValue, args: MbValue) -> MbValue {
     if reject_non_weakreferenceable(val) {
         return MbValue::none();
     }
-    super::super::dict_ops::mb_dict_setitem(wk_data(self_v), key, val);
+    super::super::dict_ops::mb_dict_setitem(wvd_data_pruned(self_v), key, val);
     MbValue::none()
 }
 
 unsafe extern "C" fn wvd_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
     let sentinel = MbValue::from_bits(u64::MAX);
-    let found = super::super::dict_ops::mb_dict_get(wk_data(self_v), key, sentinel);
+    let found = super::super::dict_ops::mb_dict_get(wvd_data_pruned(self_v), key, sentinel);
     if found.to_bits() == u64::MAX {
         let key_repr = super::super::builtins::mb_repr(key);
         let ks = key_repr
@@ -1025,34 +1025,66 @@ unsafe extern "C" fn wvd_get(self_v: MbValue, args: MbValue) -> MbValue {
     let a = wk_args(args);
     let key = a.first().copied().unwrap_or_else(MbValue::none);
     let default = a.get(1).copied().unwrap_or_else(MbValue::none);
-    super::super::dict_ops::mb_dict_get(wk_data(self_v), key, default)
+    super::super::dict_ops::mb_dict_get(wvd_data_pruned(self_v), key, default)
 }
 
 unsafe extern "C" fn wvd_contains(self_v: MbValue, args: MbValue) -> MbValue {
     let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::dict_ops::mb_dict_contains(wk_data(self_v), key)
+    super::super::dict_ops::mb_dict_contains(wvd_data_pruned(self_v), key)
 }
 
 unsafe extern "C" fn wvd_len(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::dict_ops::mb_dict_len(wk_data(self_v))
+    super::super::dict_ops::mb_dict_len(wvd_data_pruned(self_v))
 }
 
 unsafe extern "C" fn wvd_delitem(self_v: MbValue, args: MbValue) -> MbValue {
     let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::dict_ops::mb_dict_delitem(wk_data(self_v), key);
+    super::super::dict_ops::mb_dict_delitem(wvd_data_pruned(self_v), key);
     MbValue::none()
 }
 
 unsafe extern "C" fn wvd_keys(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::dict_ops::mb_dict_keys(wk_data(self_v))
+    super::super::dict_ops::mb_dict_keys(wvd_data_pruned(self_v))
 }
 
 unsafe extern "C" fn wvd_values(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::dict_ops::mb_dict_values(wk_data(self_v))
+    super::super::dict_ops::mb_dict_values(wvd_data_pruned(self_v))
 }
 
 unsafe extern "C" fn wvd_items(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::dict_ops::mb_dict_items(wk_data(self_v))
+    super::super::dict_ops::mb_dict_items(wvd_data_pruned(self_v))
+}
+
+fn prune_weak_value_dict_data(data: MbValue) {
+    let Some(ptr) = data.as_ptr() else {
+        return;
+    };
+    let stale_keys = unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .unwrap()
+                .iter()
+                .filter_map(|(key, value)| {
+                    (!value_has_live_global(*value))
+                        .then(|| super::super::dict_ops::dict_key_to_mbvalue(key))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        }
+    };
+    for key in stale_keys {
+        super::super::dict_ops::mb_dict_delitem(data, key);
+        unsafe {
+            super::super::rc::release_if_ptr(key);
+        }
+    }
+}
+
+fn wvd_data_pruned(self_v: MbValue) -> MbValue {
+    let data = wk_data(self_v);
+    prune_weak_value_dict_data(data);
+    data
 }
 
 fn weak_key_dict_key_is_live(key: &super::super::dict_ops::DictKey) -> bool {
@@ -2119,6 +2151,34 @@ mod tests {
         unsafe {
             assert!(matches!(&(*data.as_ptr().unwrap()).data, ObjData::Dict(_)));
         }
+    }
+
+    #[test]
+    fn test_weak_value_dict_prunes_unbound_value() {
+        let d = mb_weakref_weak_value_dict();
+        let value = target();
+        let global_id = MbValue::from_bits(9203);
+        crate::runtime::closure::mb_global_set_id(global_id, value);
+        let key = MbValue::from_ptr(MbObject::new_str("x".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![key, value]));
+
+        unsafe {
+            wvd_setitem(d, args);
+        }
+        let contains_args = MbValue::from_ptr(MbObject::new_list(vec![key]));
+        assert_eq!(
+            unsafe { wvd_contains(d, contains_args) }.as_bool(),
+            Some(true)
+        );
+        assert_eq!(unsafe { wvd_len(d, MbValue::none()) }.as_int(), Some(1));
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        let contains_args = MbValue::from_ptr(MbObject::new_list(vec![key]));
+        assert_eq!(
+            unsafe { wvd_contains(d, contains_args) }.as_bool(),
+            Some(false)
+        );
+        assert_eq!(unsafe { wvd_len(d, MbValue::none()) }.as_int(), Some(0));
     }
 
     // -- WeakMethod --
