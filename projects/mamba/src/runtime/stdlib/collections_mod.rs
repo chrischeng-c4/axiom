@@ -2467,6 +2467,8 @@ pub fn mb_chainmap_new(args: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::{builtins, class, dict_ops};
+
     use super::*;
 
     fn s(val: &str) -> MbValue {
@@ -2549,6 +2551,32 @@ mod tests {
         assert!(od.as_ptr().is_some());
         // Empty constructor reprs as `OrderedDict()`.
         assert_eq!(ordereddict_repr(od), "OrderedDict()");
+    }
+
+    #[test]
+    fn test_ordereddict_bound_methods_forward_to_backing_dict() {
+        let pairs = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_tuple(vec![s("a"), MbValue::from_int(1)])),
+            MbValue::from_ptr(MbObject::new_tuple(vec![s("b"), MbValue::from_int(2)])),
+        ]));
+        let od = mb_ordereddict_new(&[pairs]);
+
+        let move_to_end = class::mb_getattr(od, s("move_to_end"));
+        builtins::mb_call_spread(
+            move_to_end,
+            MbValue::from_ptr(MbObject::new_list(vec![s("a")])),
+        );
+        assert_eq!(ordereddict_repr(od), "OrderedDict({'b': 2, 'a': 1})");
+
+        let items = class::mb_getattr(od, s("items"));
+        let view = builtins::mb_call_spread(items, MbValue::from_ptr(MbObject::new_list(vec![])));
+        let entries = dict_ops::dict_view_elements(view).expect("items() should return view");
+        let first = builtins::extract_items(entries[0]);
+        let second = builtins::extract_items(entries[1]);
+        assert_eq!(extract_str(first[0]).as_deref(), Some("b"));
+        assert_eq!(first[1].as_int(), Some(2));
+        assert_eq!(extract_str(second[0]).as_deref(), Some("a"));
+        assert_eq!(second[1].as_int(), Some(1));
     }
 
     #[test]
