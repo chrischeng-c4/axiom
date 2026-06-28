@@ -11345,6 +11345,12 @@ fn obj_has_user_dunder(obj: MbValue, name: &str) -> bool {
 }
 
 pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(obj) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_obj_getitem(target, key);
+    }
     // A slice subscript now lowers to a real slice object. Normalize it to the
     // (start, stop, step) tuple form that built-in containers and native-stub
     // sequences consume - UNLESS `obj` defines a user `__getitem__`, which must
@@ -12103,6 +12109,12 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
 
 /// Runtime-dispatched __setitem__: list or dict.
 pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(obj) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_obj_setitem(target, key, value);
+    }
     // Normalize a slice *object* key to the (start, stop, step) tuple the
     // built-in slice-assignment handling consumes, unless `obj` has a user
     // `__setitem__` (which must receive the real slice). Slice subscripts now
@@ -12316,7 +12328,7 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                                 super::stdlib::collections_mod::user_wrapper_kind(class_name),
                                 Some("list")
                             ) {
-                                super::list_ops::mb_list_setitem(data, key, value);
+                                mb_obj_setitem(data, key, value);
                             } else {
                                 super::dict_ops::mb_dict_setitem(data, key, value);
                             }
