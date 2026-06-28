@@ -1332,6 +1332,37 @@ pub(crate) fn class_defines_own_method(name: &str, method: &str) -> bool {
     })
 }
 
+fn call_set_name_if_present(owner_name: &str, attr_name: &str, val: MbValue) {
+    if let Some(set_name_method) = try_get_dunder_on_value(val, "__set_name__") {
+        let addr = extract_func_addr(set_name_method);
+        if addr != 0 {
+            let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+            if is_registered {
+                let owner = MbValue::from_ptr(MbObject::new_str(owner_name.to_string()));
+                let attr_str = MbValue::from_ptr(MbObject::new_str(attr_name.to_string()));
+                // REQ: JIT-compiled functions use SystemV/C calling convention.
+                let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
+                    unsafe { std::mem::transmute(addr as usize) };
+                func(val, owner, attr_str);
+            }
+        }
+    }
+}
+
+fn make_instance_dict_proxy(instance: MbValue) -> MbValue {
+    let proxy = MbObject::new_instance("__instance_dict_proxy__".to_string());
+    unsafe {
+        super::rc::retain_if_ptr(instance);
+        if let ObjData::Instance { ref fields, .. } = (*proxy).data {
+            fields
+                .write()
+                .unwrap()
+                .insert("_target".to_string(), instance);
+        }
+    }
+    MbValue::from_ptr(proxy)
+}
+
 pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String, MbValue>) {
     // Register all method addresses as valid callables.
     // R1 P1: Also unwrap classmethod/staticmethod wrappers to register
@@ -1454,20 +1485,7 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
                 .and_then(|cls| cls.class_attrs.get(attr_name).copied())
         });
         if let Some(val) = attr_val {
-            if let Some(set_name_method) = try_get_dunder_on_value(val, "__set_name__") {
-                let addr = extract_func_addr(set_name_method);
-                if addr != 0 {
-                    let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
-                    if is_registered {
-                        let owner = MbValue::from_ptr(MbObject::new_str(name.to_string()));
-                        let attr_str = MbValue::from_ptr(MbObject::new_str(attr_name.clone()));
-                        // REQ: JIT-compiled functions use SystemV/C calling convention.
-                        let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                            unsafe { std::mem::transmute(addr as usize) };
-                        func(val, owner, attr_str);
-                    }
-                }
-            }
+            call_set_name_if_present(name, attr_name, val);
         }
     }
 }
@@ -2000,6 +2018,7 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
     unsafe {
         super::rc::retain_if_ptr(value);
     }
+    let mut call_set_name = false;
     CLASS_REGISTRY.with(|reg| {
         let mut reg = reg.borrow_mut();
         if let Some(cls) = reg.get_mut(&name) {
@@ -2025,6 +2044,7 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
                         super::rc::release_if_ptr(prev);
                     }
                 }
+                call_set_name = true;
             }
         } else {
             // No matching class — drop the retain we just took.
@@ -2033,6 +2053,9 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
             }
         }
     });
+    if call_set_name {
+        call_set_name_if_present(&name, &attr, value);
+    }
     if synthesize_typeddict {
         synthesize_typeddict_metadata_from_annotations(&name, value);
     }
@@ -6382,6 +6405,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                         make_type_object(&type_name_str),
                                     );
                                 }
+                                if USER_CLASSES.with(|u| u.borrow().contains(&type_name_str)) {
+                                    let (unwrapped, _dk) = unwrap_descriptor_method(method);
+                                    super::rc::retain_if_ptr(unwrapped);
+                                    return unwrapped;
+                                }
                                 return make_unbound_method(&type_name_str, &attr_name);
                             }
                             if let Some(method) =
@@ -6739,30 +6767,20 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             );
                             return MbValue::none();
                         }
-                        // Materialize the instance __dict__ as a real dict over
-                        // the instance fields, unless a user shadowed `__dict__`
-                        // as an explicit field (handled by the lookup below).
+                        // Expose a live mapping proxy over instance fields,
+                        // unless a user shadowed `__dict__` as an explicit
+                        // field (handled by the lookup below).
                         let has_field = fields.read().unwrap().contains_key("__dict__");
                         if !has_field {
-                            let guard = fields.read().unwrap();
-                            let hidden = namedtuple_hidden_dict_fields(&guard);
-                            let dict = super::dict_ops::mb_dict_new();
-                            for (k, v) in guard.iter() {
-                                // `__ns_order__` is SimpleNamespace's hidden
-                                // insertion-order list; it must not surface in
-                                // __dict__ (vars() already excludes it).
-                                if k == "__ns_order__"
-                                    || hidden.contains(k)
-                                    || is_builtin_data_payload_field(k)
-                                {
-                                    continue;
-                                }
-                                let key =
-                                    MbValue::from_ptr(super::rc::MbObject::new_str(k.clone()));
-                                super::dict_ops::mb_dict_setitem(dict, key, *v);
-                            }
-                            return dict;
+                            return make_instance_dict_proxy(obj);
                         }
+                    }
+                    if class_name == "__instance_dict_proxy__"
+                        && builtin_type_method_names_by_name("dict")
+                            .iter()
+                            .any(|method| *method == attr_name.as_str())
+                    {
+                        return make_bound_native_method(obj, &attr_name);
                     }
                     // Python descriptor protocol:
                     // 1. Data descriptors (has __set__) override instance __dict__
@@ -10829,6 +10847,7 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
                             || (target == "property" && class_name == "__property__")
                             || (target == "staticmethod" && class_name == "__staticmethod__")
                             || (target == "classmethod" && class_name == "__classmethod__")
+                            || (target == "dict" && class_name == "__instance_dict_proxy__")
                     }
                 });
                 if nominal {
@@ -12686,6 +12705,9 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     ref class_name,
                     ref fields,
                 } => {
+                    if class_name == "__instance_dict_proxy__" {
+                        return super::dict_ops::mb_dict_getitem(obj, key);
+                    }
                     if let Some(member) =
                         super::stdlib::enum_class::enum_class_getitem_for_value(obj, key)
                     {
@@ -13309,6 +13331,10 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                     ref class_name,
                     ref fields,
                 } => {
+                    if class_name == "__instance_dict_proxy__" {
+                        super::dict_ops::mb_dict_setitem(obj, key, value);
+                        return MbValue::none();
+                    }
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"
                         || class_name == "collections.OrderedDict"
@@ -13432,6 +13458,12 @@ pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
                     super::dict_ops::mb_dict_delitem(obj, key);
                 }
                 _ => {
+                    if let super::rc::ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                        if class_name == "__instance_dict_proxy__" {
+                            super::dict_ops::mb_dict_delitem(obj, key);
+                            return;
+                        }
+                    }
                     // Dispatch the __delitem__ dunder like the __setitem__
                     // path; without one, item deletion is a TypeError.
                     if try_get_dunder(obj, "__delitem__").is_some() {
@@ -18190,6 +18222,9 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     ref fields,
                     ..
                 } => {
+                    if class_name == "__instance_dict_proxy__" {
+                        return super::dict_ops::dispatch_dict_method(&name, receiver, args);
+                    }
                     // Super proxy: dispatch through MRO after the current class
                     if class_name == "__super__" {
                         let fields_guard = fields.read().unwrap();
@@ -19399,8 +19434,8 @@ mod tests {
     #[test]
     fn test_property_setter_deleter() {
         let prop = mb_property_new(MbValue::from_int(1));
-        mb_property_setter(prop, MbValue::from_int(2));
-        mb_property_deleter(prop, MbValue::from_int(3));
+        let prop = mb_property_setter(prop, MbValue::from_int(2));
+        let prop = mb_property_deleter(prop, MbValue::from_int(3));
 
         let fset_key = MbValue::from_ptr(MbObject::new_str("fset".to_string()));
         assert_eq!(mb_getattr(prop, fset_key).as_int(), Some(2));
@@ -20034,7 +20069,7 @@ mod tests {
     fn test_property_fset_stored() {
         let prop = mb_property_new(MbValue::from_int(1));
         let setter = MbValue::from_int(300);
-        mb_property_setter(prop, setter);
+        let prop = mb_property_setter(prop, setter);
         let key = MbValue::from_ptr(MbObject::new_str("fset".to_string()));
         assert_eq!(mb_getattr(prop, key).as_int(), Some(300));
     }
@@ -20043,7 +20078,7 @@ mod tests {
     fn test_property_fdel_stored() {
         let prop = mb_property_new(MbValue::from_int(1));
         let deleter = MbValue::from_int(400);
-        mb_property_deleter(prop, deleter);
+        let prop = mb_property_deleter(prop, deleter);
         let key = MbValue::from_ptr(MbObject::new_str("fdel".to_string()));
         assert_eq!(mb_getattr(prop, key).as_int(), Some(400));
     }
@@ -20420,7 +20455,7 @@ mod tests {
         // T2.2: @property.setter stores the setter function
         let prop = mb_property_new(MbValue::from_int(10));
         let setter = MbValue::from_int(20);
-        mb_property_setter(prop, setter);
+        let prop = mb_property_setter(prop, setter);
 
         let key = MbValue::from_ptr(MbObject::new_str("fset".to_string()));
         let stored = mb_getattr(prop, key);
@@ -20432,7 +20467,7 @@ mod tests {
         // T2.3: @property.deleter stores the deleter function
         let prop = mb_property_new(MbValue::from_int(10));
         let deleter = MbValue::from_int(30);
-        mb_property_deleter(prop, deleter);
+        let prop = mb_property_deleter(prop, deleter);
 
         let key = MbValue::from_ptr(MbObject::new_str("fdel".to_string()));
         let stored = mb_getattr(prop, key);

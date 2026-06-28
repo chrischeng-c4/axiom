@@ -55,6 +55,280 @@ fn dictlike_backing_data(value: MbValue) -> Option<MbValue> {
     super::class::unwrap_dictlike_data(value)
 }
 
+fn instance_dict_proxy_target(value: MbValue) -> Option<MbValue> {
+    let ptr = value.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if class_name == "__instance_dict_proxy__" {
+                return fields
+                    .read()
+                    .unwrap()
+                    .get("_target")
+                    .copied()
+                    .filter(|v| !v.is_none());
+            }
+        }
+    }
+    None
+}
+
+fn instance_dict_key_name(key: MbValue) -> Option<String> {
+    let ptr = key.as_ptr()?;
+    unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            return Some(s.clone());
+        }
+    }
+    None
+}
+
+fn raise_instance_dict_key_error(key: MbValue) {
+    let key_repr =
+        instance_dict_key_name(key).unwrap_or_else(|| dict_key_raw_str(&to_dict_key(key)));
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(key_repr)),
+    );
+}
+
+fn instance_dict_getitem(proxy: MbValue, key: MbValue) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    let Some(name) = instance_dict_key_name(key) else {
+        raise_instance_dict_key_error(key);
+        return Some(MbValue::none());
+    };
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(v) = fields.read().unwrap().get(&name).copied() {
+                    super::rc::retain_if_ptr(v);
+                    return Some(v);
+                }
+            }
+        }
+    }
+    raise_instance_dict_key_error(key);
+    Some(MbValue::none())
+}
+
+fn instance_dict_get(proxy: MbValue, key: MbValue, default: MbValue) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    let Some(name) = instance_dict_key_name(key) else {
+        unsafe {
+            super::rc::retain_if_ptr(default);
+        }
+        return Some(default);
+    };
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(v) = fields.read().unwrap().get(&name).copied() {
+                    super::rc::retain_if_ptr(v);
+                    return Some(v);
+                }
+            }
+        }
+    }
+    unsafe {
+        super::rc::retain_if_ptr(default);
+    }
+    Some(default)
+}
+
+fn instance_dict_setitem(proxy: MbValue, key: MbValue, value: MbValue) -> bool {
+    let Some(target) = instance_dict_proxy_target(proxy) else {
+        return false;
+    };
+    let Some(name) = instance_dict_key_name(key) else {
+        return true;
+    };
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::rc::retain_if_ptr(value);
+                let old = fields.write().unwrap().insert(name, value);
+                if let Some(prev) = old {
+                    super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+    true
+}
+
+fn instance_dict_delitem(proxy: MbValue, key: MbValue) -> bool {
+    let Some(target) = instance_dict_proxy_target(proxy) else {
+        return false;
+    };
+    let Some(name) = instance_dict_key_name(key) else {
+        raise_instance_dict_key_error(key);
+        return true;
+    };
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(old) = fields.write().unwrap().remove(&name) {
+                    super::rc::release_if_ptr(old);
+                    return true;
+                }
+            }
+        }
+    }
+    raise_instance_dict_key_error(key);
+    true
+}
+
+fn instance_dict_pop(proxy: MbValue, key: MbValue, default: Option<MbValue>) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    let Some(name) = instance_dict_key_name(key) else {
+        if let Some(default) = default {
+            return Some(default);
+        }
+        raise_instance_dict_key_error(key);
+        return Some(MbValue::none());
+    };
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(v) = fields.write().unwrap().remove(&name) {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    if let Some(default) = default {
+        return Some(default);
+    }
+    raise_instance_dict_key_error(key);
+    Some(MbValue::none())
+}
+
+fn instance_dict_setdefault(proxy: MbValue, key: MbValue, default: MbValue) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    let Some(name) = instance_dict_key_name(key) else {
+        unsafe {
+            super::rc::retain_if_ptr(default);
+        }
+        return Some(default);
+    };
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut guard = fields.write().unwrap();
+                if let Some(v) = guard.get(&name).copied() {
+                    super::rc::retain_if_ptr(v);
+                    return Some(v);
+                }
+                super::rc::retain_if_ptr(default);
+                guard.insert(name, default);
+                super::rc::retain_if_ptr(default);
+                return Some(default);
+            }
+        }
+    }
+    Some(default)
+}
+
+fn instance_dict_keys(proxy: MbValue) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let keys = fields
+                    .read()
+                    .unwrap()
+                    .keys()
+                    .filter(|k| k.as_str() != "__ns_order__")
+                    .map(|k| MbValue::from_ptr(MbObject::new_str(k.clone())))
+                    .collect();
+                return Some(MbValue::from_ptr(MbObject::new_list(keys)));
+            }
+        }
+    }
+    Some(MbValue::from_ptr(MbObject::new_list(Vec::new())))
+}
+
+fn instance_dict_values(proxy: MbValue) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let values = fields
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != "__ns_order__")
+                    .map(|(_, &v)| v)
+                    .collect();
+                return Some(MbValue::from_ptr(MbObject::new_list_borrowed(values)));
+            }
+        }
+    }
+    Some(MbValue::from_ptr(MbObject::new_list(Vec::new())))
+}
+
+fn instance_dict_items(proxy: MbValue) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let items = fields
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != "__ns_order__")
+                    .map(|(k, &v)| {
+                        super::rc::retain_if_ptr(v);
+                        MbValue::from_ptr(MbObject::new_tuple(vec![
+                            MbValue::from_ptr(MbObject::new_str(k.clone())),
+                            v,
+                        ]))
+                    })
+                    .collect();
+                return Some(MbValue::from_ptr(MbObject::new_list(items)));
+            }
+        }
+    }
+    Some(MbValue::from_ptr(MbObject::new_list(Vec::new())))
+}
+
+fn instance_dict_len(proxy: MbValue) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let len = fields
+                    .read()
+                    .unwrap()
+                    .keys()
+                    .filter(|k| k.as_str() != "__ns_order__")
+                    .count();
+                return Some(MbValue::from_int(len as i64));
+            }
+        }
+    }
+    Some(MbValue::from_int(0))
+}
+
+fn instance_dict_contains(proxy: MbValue, key: MbValue) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    let Some(name) = instance_dict_key_name(key) else {
+        return Some(MbValue::from_bool(false));
+    };
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                return Some(MbValue::from_bool(fields.read().unwrap().contains_key(&name)));
+            }
+        }
+    }
+    Some(MbValue::from_bool(false))
+}
+
 /// Type-preserving dict key. Distinguishes int from string keys so that
 /// `d[1]` and `d["1"]` are distinct entries (matching CPython semantics).
 #[derive(Debug)]
@@ -765,6 +1039,9 @@ fn is_slice_tuple(key: MbValue) -> bool {
 
 /// dict[key] -> value  (raises KeyError if key not found)
 pub fn mb_dict_getitem(dict: MbValue, key: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_getitem(dict, key) {
+        return value;
+    }
     // ET.Element stub: integer / slice subscripts read `_children`
     // (`e[0]`, `e[1:3]` → list of children) instead of dict keys.
     if key.as_int().is_some() || is_slice_tuple(key) {
@@ -821,6 +1098,9 @@ pub fn mb_dict_getitem(dict: MbValue, key: MbValue) -> MbValue {
 
 /// dict.get(key, default) -> value
 pub fn mb_dict_get(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_get(dict, key, default) {
+        return value;
+    }
     let Some(dk) = to_dict_key_checked(key) else {
         return MbValue::none();
     };
@@ -852,6 +1132,9 @@ pub fn mb_dict_get(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
 
 /// dict[key] = value
 pub fn mb_dict_setitem(dict: MbValue, key: MbValue, value: MbValue) {
+    if instance_dict_setitem(dict, key, value) {
+        return;
+    }
     // ET.Element stub: `e[i] = child` replaces the i-th child.
     if key.as_int().is_some() {
         if let Some(children) = super::stdlib::xml_mod::element_stub_children(dict) {
@@ -903,6 +1186,9 @@ pub fn mb_dict_setitem(dict: MbValue, key: MbValue, value: MbValue) {
 
 /// del dict[key]
 pub fn mb_dict_delitem(dict: MbValue, key: MbValue) {
+    if instance_dict_delitem(dict, key) {
+        return;
+    }
     // ET.Element stub: `del e[i]` / `del e[a:b]` remove children.
     if key.as_int().is_some() || is_slice_tuple(key) {
         if let Some(children) = super::stdlib::xml_mod::element_stub_children(dict) {
@@ -970,6 +1256,9 @@ pub fn mb_dict_delitem(dict: MbValue, key: MbValue) {
 
 /// key in dict -> bool
 pub fn mb_dict_contains(dict: MbValue, key: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_contains(dict, key) {
+        return value;
+    }
     if let Some(backing) = dictlike_backing_data(dict) {
         return mb_dict_contains(backing, key);
     }
@@ -1008,6 +1297,9 @@ pub fn mb_is_mapping(val: MbValue) -> MbValue {
 
 /// len(dict) -> int
 pub fn mb_dict_len(dict: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_len(dict) {
+        return value;
+    }
     // ET.Element stub: len(e) is the child count.
     if let Some(children) = super::stdlib::xml_mod::element_stub_children(dict) {
         if let Some(ptr) = children.as_ptr() {
@@ -1035,6 +1327,9 @@ pub fn mb_dict_len(dict: MbValue) -> MbValue {
 
 /// dict.keys() -> list of keys (preserving original types)
 pub fn mb_dict_keys(dict: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_keys(dict) {
+        return value;
+    }
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -1351,6 +1646,9 @@ pub(crate) fn dict_view_mapping_proxy(view: MbValue) -> Option<MbValue> {
 
 /// dict.values() -> list of values
 pub fn mb_dict_values(dict: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_values(dict) {
+        return value;
+    }
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -1366,6 +1664,9 @@ pub fn mb_dict_values(dict: MbValue) -> MbValue {
 
 /// dict.items() -> list of (key, value) tuples
 pub fn mb_dict_items(dict: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_items(dict) {
+        return value;
+    }
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -1391,6 +1692,9 @@ pub fn mb_dict_items(dict: MbValue) -> MbValue {
 
 /// dict.pop(key, default) -> removed value or default
 pub fn mb_dict_pop(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_pop(dict, key, Some(default)) {
+        return value;
+    }
     let Some(dk) = to_dict_key_checked(key) else {
         return MbValue::none();
     };
@@ -1416,6 +1720,9 @@ pub fn mb_dict_pop(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
 
 /// dict.pop(key) without default — raises KeyError if key not found.
 pub fn mb_dict_pop_no_default(dict: MbValue, key: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_pop(dict, key, None) {
+        return value;
+    }
     let Some(dk) = to_dict_key_checked(key) else {
         return MbValue::none();
     };
@@ -1448,6 +1755,9 @@ pub fn mb_dict_pop_no_default(dict: MbValue, key: MbValue) -> MbValue {
 
 /// dict.setdefault(key, default) -> existing or newly set value
 pub fn mb_dict_setdefault(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
+    if let Some(value) = instance_dict_setdefault(dict, key, default) {
+        return value;
+    }
     let Some(dk) = to_dict_key_checked(key) else {
         return MbValue::none();
     };
