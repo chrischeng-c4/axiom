@@ -9119,7 +9119,8 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         // `__init__` still fall through to the generic stub,
                         // preserving the ZoneInfo/Path/... `_arg0`/`key` shape.
                         if super::class::class_is_registered(&name)
-                            && !super::class::lookup_method(&name, "__init__").is_none()
+                            && (!super::class::lookup_method(&name, "__init__").is_none()
+                                || super::class::class_has_builtin_data_payload_base(&name))
                         {
                             let args_list = MbValue::from_ptr(MbObject::new_list(items.clone()));
                             return super::class::mb_instance_new_with_init(

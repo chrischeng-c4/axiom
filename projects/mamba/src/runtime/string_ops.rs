@@ -3727,9 +3727,8 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
         Some(t) => t,
         None => return MbValue::none(),
     };
-    let mapping_ptr = mapping.as_ptr();
     let lookup = |name: &str| -> Option<MbValue> {
-        let ptr = mapping_ptr?;
+        let ptr = mapping.as_ptr()?;
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let guard = lock.read().unwrap();
@@ -3756,7 +3755,13 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
                 }
             }
         }
-        None
+        let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+        let value = super::class::mb_obj_getitem(mapping, key);
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            None
+        } else {
+            Some(value)
+        }
     };
     let mut out = String::new();
     let mut chars = template.chars().peekable();
@@ -5075,6 +5080,11 @@ mod tests {
                 panic!("expected list")
             }
         }
+    }
+
+    extern "C" fn format_map_missing_test_fn(_self_v: MbValue, key: MbValue) -> MbValue {
+        let key_s = unsafe { as_str(key).unwrap_or_default().to_string() };
+        s(&format!("<{key_s}>"))
     }
 
     #[test]
@@ -6842,6 +6852,33 @@ mod tests {
         unsafe {
             assert_eq!(as_str(result), Some("{missing}"));
         }
+    }
+
+    #[test]
+    fn test_format_map_uses_dict_subclass_payload_and_missing() {
+        super::super::class::cleanup_all_classes();
+        let addr = format_map_missing_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let mut methods = std::collections::HashMap::new();
+        methods.insert("__missing__".to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register(
+            "FormatMapDictPayload001",
+            vec!["dict".to_string()],
+            methods,
+        );
+
+        let kwargs = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(kwargs, s("name"), s("Alice"));
+        let inst = super::super::class::mb_instance_new_with_init(
+            s("FormatMapDictPayload001"),
+            MbValue::from_ptr(MbObject::new_list(vec![kwargs])),
+        );
+
+        let result = mb_str_format_map(s("{name} {age}"), inst);
+        unsafe {
+            assert_eq!(as_str(result), Some("Alice <age>"));
+        }
+        super::super::class::cleanup_all_classes();
     }
 
     #[test]
