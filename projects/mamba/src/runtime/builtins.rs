@@ -8600,6 +8600,16 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     if type_name == "object" && method_str == "__init__" {
                         return super::class::object_init_unbound(&items);
                     }
+                    if type_name == "object" {
+                        match method_str.as_str() {
+                            "__setattr__" => return super::class::object_setattr_unbound(&items),
+                            "__delattr__" => return super::class::object_delattr_unbound(&items),
+                            "__getattribute__" => {
+                                return super::class::object_getattribute_unbound(&items)
+                            }
+                            _ => {}
+                        }
+                    }
                     if items.is_empty() {
                         if let Some(result) =
                             super::stdlib::string_constants_mod::static_no_self_error(
