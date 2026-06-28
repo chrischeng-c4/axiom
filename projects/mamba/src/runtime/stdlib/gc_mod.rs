@@ -181,6 +181,7 @@ pub fn mb_gc_mod_collect(args: &[MbValue]) -> MbValue {
     });
     let freed = super::super::gc::collect();
     super::weakref_mod::expire_unbound_class_refs();
+    super::weakref_mod::expire_unbound_finalizers();
     // Reset the count baseline so the next get_count()[0] starts near zero.
     COUNT_BASELINE.with(|b| b.set(super::super::gc::gc_get_count()));
     MbValue::from_int(freed as i64)
