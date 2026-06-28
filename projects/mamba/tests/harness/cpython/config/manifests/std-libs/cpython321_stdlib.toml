@@ -41320,11 +41320,9 @@ dimension = "real_world"
 case = "test_typing"
 subject = "cpython321.test_typing"
 kind = "semantic"
-xfail = "CPython 3.12 seed pass; mamba promotion pending"
 source = "tests/harness/cpython/config/seeds/pass/test_typing.py"
 intent = "execute CPython 3.12 seed test_typing"
 body = '''
-# mamba-xfail: CPython 3.12 seed pass; mamba promotion pending
 # Promoted from the upstream unittest port to an executable AssertionPass seed.
 # Surface: typing — symbol exposure for the core type-hint vocabulary, plus the
 # couple of runtime helpers mamba services today:
@@ -41333,8 +41331,7 @@ body = '''
 #     ClassVar, Final, Literal, Protocol, TypedDict, NamedTuple)
 #   * typing.cast(t, x) is a passthrough that returns x unchanged
 #   * typing.TYPE_CHECKING == False at runtime
-#   * typing.get_type_hints returns a dict (empty on mamba, but the shape is
-#     stable enough to assert on)
+#   * typing.get_type_hints returns a dict stable enough to assert on
 # Intentionally NOT exercised on mamba today (tracked separately):
 #   * typing.{Iterable,Sequence,Mapping,MutableMapping,MutableSequence,NewType,
 #     overload} — missing from the mamba stub

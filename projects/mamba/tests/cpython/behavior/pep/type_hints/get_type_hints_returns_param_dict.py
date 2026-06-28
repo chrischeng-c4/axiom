@@ -9,7 +9,7 @@
 # case = "get_type_hints_returns_param_dict"
 # subject = "typing.get_type_hints"
 # kind = "semantic"
-# xfail = "mamba diverges on the typing get_type_hints runtime machinery (project_mamba_pep_silent_divergences_2026_05_27)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
