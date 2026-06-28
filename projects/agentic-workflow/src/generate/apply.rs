@@ -200,6 +200,56 @@ pub fn run_apply_worktree(
     run_apply_inner(spec_path, worktree, false, None, None, false)
 }
 
+/// Format generated Rust through rustfmt so codegen output is rustfmt-stable
+/// AND replay-deterministic. Callers format BEFORE comparing to / writing the
+/// target, so a formatted working tree compares equal to freshly generated
+/// content instead of reading as drift (issues #160/#161). Matches the
+/// `--edition 2021 --config skip_children=true` invocation used by
+/// `cb::format_rust_files`. Falls back to the input unchanged when rustfmt is
+/// absent or the content is a fragment rustfmt cannot parse, so generation
+/// never breaks. stdin is written on a thread to avoid a pipe deadlock on large
+/// files.
+pub(crate) fn format_rust_source(src: &str) -> String {
+    let Some(rustfmt) = crate::git::find_rustfmt_bin() else {
+        return src.to_string();
+    };
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = match Command::new(&rustfmt)
+        .arg("--edition")
+        .arg("2021")
+        .arg("--config")
+        .arg("skip_children=true")
+        .arg("--emit")
+        .arg("stdout")
+        .arg("--quiet")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return src.to_string(),
+    };
+    let mut stdin = match child.stdin.take() {
+        Some(stdin) => stdin,
+        None => return src.to_string(),
+    };
+    let src_owned = src.to_string();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(src_owned.as_bytes());
+        // `stdin` dropped here closes the pipe so rustfmt sees EOF.
+    });
+    let output = child.wait_with_output();
+    let _ = writer.join();
+    match output {
+        Ok(out) if out.status.success() => {
+            String::from_utf8(out.stdout).unwrap_or_else(|_| src.to_string())
+        }
+        _ => src.to_string(),
+    }
+}
+
 fn run_apply_inner(
     spec_path: &Path,
     root: &Path,
@@ -824,7 +874,20 @@ fn run_apply_inner(
             (new_content, 1)
         };
 
+        // Normalize generated Rust through rustfmt BEFORE comparing/writing so
+        // codegen is fmt-stable and replay-deterministic: a formatted working
+        // tree compares equal to freshly-generated+formatted content instead of
+        // reading as perpetual drift (issues #160/#161).
+        let updated_content = if target_path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            format_rust_source(&updated_content)
+        } else {
+            updated_content
+        };
+
         let changed = !existed || updated_content != file_content;
+        // A block that only differed by formatting now compares equal, so it is
+        // not counted as a replay update.
+        let blocks_updated = if changed { blocks_updated } else { 0 };
 
         if !dry_run && changed {
             if let Some(parent) = target_path.parent() {
