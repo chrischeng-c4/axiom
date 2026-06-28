@@ -4913,9 +4913,10 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         unsafe {
             return match (&(*pa).data, &(*pb).data) {
                 (ObjData::List(la), ObjData::List(lb)) => {
-                    let a = la.read().unwrap();
-                    let b = lb.read().unwrap();
-                    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
+                    let a = super::list_ops::retained_list_snapshot(la);
+                    let b = super::list_ops::retained_list_snapshot(lb);
+                    a.len() == b.len()
+                        && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
                 }
                 (ObjData::Tuple(a), ObjData::Tuple(b)) => {
                     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
@@ -5541,8 +5542,8 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
         unsafe {
             return match (&(*pa).data, &(*pb).data) {
                 (ObjData::List(la), ObjData::List(lb)) => {
-                    let a = la.read().unwrap();
-                    let b = lb.read().unwrap();
+                    let a = super::list_ops::retained_list_snapshot(la);
+                    let b = super::list_ops::retained_list_snapshot(lb);
                     seq_lt(&a, &b)
                 }
                 (ObjData::Tuple(a), ObjData::Tuple(b)) => seq_lt(a, b),
@@ -5616,7 +5617,8 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
                 }
                 // Instance: dispatch __lt__ dunder
                 (ObjData::Instance { class_name, .. }, _) => {
-                    dispatch_richcmp_dunder(a, b, class_name, "__lt__")
+                    dispatch_richcmp_dunder_result(a, b, class_name, "__lt__")
+                        .unwrap_or_else(|| values_lt_fallback(a, b))
                 }
                 _ => values_lt_fallback(a, b),
             };
@@ -5648,20 +5650,33 @@ fn values_lt_fallback(a: MbValue, b: MbValue) -> bool {
 }
 
 /// Dispatch a rich comparison dunder (__lt__, __le__, __gt__, __ge__) on an Instance.
-fn dispatch_richcmp_dunder(a: MbValue, b: MbValue, class_name: &str, dunder: &str) -> bool {
+fn dispatch_richcmp_dunder_result(
+    a: MbValue,
+    b: MbValue,
+    class_name: &str,
+    dunder: &str,
+) -> Option<bool> {
     let method = super::class::lookup_method(class_name, dunder);
-    if !method.is_none() {
-        let method_name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
-        let args = MbValue::from_ptr(MbObject::new_list(vec![b]));
-        let result = super::class::mb_call_method(a, method_name, args);
-        if let Some(bv) = result.as_bool() {
-            return bv;
-        }
-        if let Some(iv) = result.as_int() {
-            return iv != 0;
-        }
+    if method.is_none() {
+        return None;
     }
-    false
+    let method_name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![b]));
+    let result = super::class::mb_call_method(a, method_name, args);
+    if result.is_not_implemented() {
+        return None;
+    }
+    if let Some(bv) = result.as_bool() {
+        return Some(bv);
+    }
+    if let Some(iv) = result.as_int() {
+        return Some(iv != 0);
+    }
+    Some(false)
+}
+
+fn dispatch_richcmp_dunder(a: MbValue, b: MbValue, class_name: &str, dunder: &str) -> bool {
+    dispatch_richcmp_dunder_result(a, b, class_name, dunder).unwrap_or(false)
 }
 
 /// Lexicographic less-than for MbValue sequences.
@@ -5962,8 +5977,8 @@ fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
                     return ta.len().cmp(&tb.len());
                 }
                 (ObjData::List(ref la), ObjData::List(ref lb)) => {
-                    let la = la.read().unwrap();
-                    let lb = lb.read().unwrap();
+                    let la = super::list_ops::retained_list_snapshot(la);
+                    let lb = super::list_ops::retained_list_snapshot(lb);
                     for (ea, eb) in la.iter().zip(lb.iter()) {
                         let cmp = mb_value_cmp(*ea, *eb);
                         if cmp != std::cmp::Ordering::Equal {
