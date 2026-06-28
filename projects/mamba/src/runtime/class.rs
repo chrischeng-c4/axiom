@@ -2269,11 +2269,43 @@ fn extract_registered_func_addr(val: MbValue) -> u64 {
     extract_func_addr(val)
 }
 
-fn method_args_with_receiver(receiver: Option<MbValue>, args: MbValue) -> MbValue {
+pub(crate) fn append_missing_method_defaults(
+    func: MbValue,
+    all_args: &mut Vec<MbValue>,
+    pos_args_start: usize,
+) {
+    let Some(params) = super::closure::func_params(func) else {
+        return;
+    };
+    if params.iter().any(|p| matches!(p.kind, 2 | 4)) {
+        return;
+    }
+    let provided_user_args = all_args.len().saturating_sub(pos_args_start);
+    let positional_capacity = params
+        .iter()
+        .filter(|p| matches!(p.kind, 0 | 1))
+        .count();
+    if provided_user_args > positional_capacity {
+        return;
+    }
+    for param in params.iter().skip(provided_user_args) {
+        if !param.has_default {
+            break;
+        }
+        all_args.push(param.default);
+    }
+}
+
+fn method_args_with_receiver_and_defaults(
+    func: MbValue,
+    receiver: Option<MbValue>,
+    args: MbValue,
+) -> MbValue {
     let mut all_args = Vec::new();
     if let Some(value) = receiver {
         all_args.push(value);
     }
+    let pos_args_start = all_args.len();
     if let Some(args_ptr) = args.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*args_ptr).data {
@@ -2281,6 +2313,7 @@ fn method_args_with_receiver(receiver: Option<MbValue>, args: MbValue) -> MbValu
             }
         }
     }
+    append_missing_method_defaults(func, &mut all_args, pos_args_start);
     MbValue::from_ptr(MbObject::new_list(all_args))
 }
 
@@ -14074,6 +14107,30 @@ pub fn mb_call_method_kwargs(
     let name = extract_str(method_name).unwrap_or_default();
     let pos = super::builtins::extract_items(pos_list);
 
+    if let Some(type_name) = receiver.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::Str(s) => Some(s.clone()),
+            ObjData::Instance { class_name, fields } if class_name == "type" => fields
+                .read()
+                .unwrap()
+                .get("__name__")
+                .and_then(|v| extract_str(*v)),
+            _ => None,
+        }
+    }) {
+        if class_is_registered(&type_name) {
+            let Some(actual_receiver) = pos.first().copied() else {
+                super::builtins::raise_type_error(format!(
+                    "{}() missing 1 required positional argument: 'self'",
+                    name
+                ));
+                return MbValue::none();
+            };
+            let rest = MbValue::from_ptr(MbObject::new_list(pos[1..].to_vec()));
+            return mb_call_method_kwargs(actual_receiver, method_name, rest, kwargs_dict);
+        }
+    }
+
     let bound: Option<Vec<MbValue>> = (|| {
         // Receiver class → resolve the (possibly inherited) method value.
         let class_name = receiver.as_ptr().and_then(|p| unsafe {
@@ -14094,33 +14151,33 @@ pub fn mb_call_method_kwargs(
         {
             return None;
         }
-        let argcount = super::closure::mb_func_get_argcount(method_val).as_int()?;
-        if argcount <= 1 {
-            return None; // only `self` (or unknown) — nothing to bind
-        }
-        let varnames_tuple = super::closure::mb_func_get_varnames(method_val);
-        let vp = varnames_tuple.as_ptr()?;
-        let names: Vec<String> = unsafe {
-            if let ObjData::Tuple(items) = &(*vp).data {
-                items.iter().filter_map(|v| extract_str(*v)).collect()
-            } else {
-                return None;
-            }
-        };
-        if names.len() < argcount as usize {
+        let params = super::closure::func_params(method_val)?;
+        if params.iter().any(|p| matches!(p.kind, 2 | 4)) {
             return None;
         }
-        // User-visible params are co_varnames[1..argcount] (drop the leading self).
-        let user_params: Vec<&str> = names[1..argcount as usize]
+        let bindable_pos: Vec<usize> = params
             .iter()
-            .map(|s| s.as_str())
+            .enumerate()
+            .filter_map(|(idx, p)| {
+                if matches!(p.kind, 0 | 1) {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
             .collect();
-        let mut slots: Vec<Option<MbValue>> = vec![None; user_params.len()];
-        if pos.len() > slots.len() {
-            return None; // too many positional → let the normal path handle it
+        let mut slots: Vec<Option<MbValue>> = vec![None; params.len()];
+        if pos.len() > bindable_pos.len() {
+            super::builtins::raise_type_error(format!(
+                "{}() takes {} positional arguments but {} were given",
+                name,
+                bindable_pos.len(),
+                pos.len()
+            ));
+            return Some(Vec::new());
         }
         for (i, v) in pos.iter().enumerate() {
-            slots[i] = Some(*v);
+            slots[bindable_pos[i]] = Some(*v);
         }
         let kp = kwargs_dict.as_ptr()?;
         let pairs: Vec<(String, MbValue)> = unsafe {
@@ -14141,10 +14198,24 @@ pub fn mb_call_method_kwargs(
             }
         };
         for (k, v) in &pairs {
-            match user_params.iter().position(|p| *p == k.as_str()) {
+            match params.iter().position(|p| p.name == *k) {
                 Some(idx) => {
+                    if params[idx].kind == 0 {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "{}() got positional-only argument passed as keyword: '{}'",
+                                name, k
+                            ))),
+                        );
+                        return Some(Vec::new());
+                    }
                     if slots[idx].is_some() {
-                        return None; // duplicate value for a param → normal path
+                        super::builtins::raise_type_error(format!(
+                            "{}() got multiple values for argument '{}'",
+                            name, k
+                        ));
+                        return Some(Vec::new());
                     }
                     slots[idx] = Some(*v);
                 }
@@ -14160,11 +14231,19 @@ pub fn mb_call_method_kwargs(
                 }
             }
         }
-        // Every param must be filled — a defaulted gap would need the default,
-        // which co_varnames doesn't carry, so fall back to the legacy path.
-        let mut out = Vec::with_capacity(slots.len());
-        for s in slots {
-            out.push(s?);
+        let mut out = Vec::with_capacity(params.len());
+        for (idx, p) in params.iter().enumerate() {
+            if let Some(value) = slots[idx] {
+                out.push(value);
+            } else if p.has_default {
+                out.push(p.default);
+            } else {
+                super::builtins::raise_type_error(format!(
+                    "{}() missing required argument: '{}'",
+                    name, p.name
+                ));
+                return Some(Vec::new());
+            }
         }
         Some(out)
     })();
@@ -17657,6 +17736,15 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                             all_args.extend(items.iter());
                                         }
                                     }
+                                    append_missing_method_defaults(
+                                        call_method,
+                                        &mut all_args,
+                                        if dk == DescriptorKind::StaticMethod {
+                                            0
+                                        } else {
+                                            1
+                                        },
+                                    );
                                     return call_registered_method_addr(addr, &all_args);
                                 }
                             }
@@ -17668,7 +17756,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     )),
                                     DescriptorKind::Regular => Some(receiver),
                                 };
-                                let args_list = method_args_with_receiver(receiver_arg, args);
+                                let args_list = method_args_with_receiver_and_defaults(
+                                    call_method,
+                                    receiver_arg,
+                                    args,
+                                );
                                 return super::builtins::mb_call_spread(call_method, args_list);
                             }
                         }
@@ -17809,6 +17901,15 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                             all_args.extend(items.iter());
                                         }
                                     }
+                                    append_missing_method_defaults(
+                                        call_method,
+                                        &mut all_args,
+                                        if dk == DescriptorKind::StaticMethod {
+                                            0
+                                        } else {
+                                            1
+                                        },
+                                    );
                                     return call_registered_method_addr(addr, &all_args);
                                 }
                             }
@@ -17820,7 +17921,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     )),
                                     DescriptorKind::Regular => Some(super_self),
                                 };
-                                let args_list = method_args_with_receiver(receiver_arg, args);
+                                let args_list = method_args_with_receiver_and_defaults(
+                                    call_method,
+                                    receiver_arg,
+                                    args,
+                                );
                                 return super::builtins::mb_call_spread(call_method, args_list);
                             }
                             return method;
@@ -17972,20 +18077,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 let is_variadic = super::module::is_variadic_func(addr as u64);
                                 let has_kwargs = super::module::is_kwargs_func(addr as u64);
                                 if !is_variadic && !has_kwargs {
-                                    if let Some(params) = super::closure::func_params(call_method) {
-                                        let regulars: Vec<&super::closure::MbParamInfo> =
-                                            params.iter().filter(|p| p.kind <= 1).collect();
-                                        let provided_user_args =
-                                            all_args.len().saturating_sub(pos_args_start);
-                                        if provided_user_args < regulars.len() {
-                                            let missing = &regulars[provided_user_args..];
-                                            if missing.iter().all(|p| p.has_default) {
-                                                for p in missing {
-                                                    all_args.push(p.default);
-                                                }
-                                            }
-                                        }
-                                    }
+                                    append_missing_method_defaults(
+                                        call_method,
+                                        &mut all_args,
+                                        pos_args_start,
+                                    );
                                 }
                                 // Variadic / kwargs methods: pack positional args into a list
                                 // (and empty dict for **kwargs) so the compiled signature
@@ -18043,7 +18139,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 }
                                 DescriptorKind::Regular => Some(receiver),
                             };
-                            let args_list = method_args_with_receiver(receiver_arg, args);
+                            let args_list = method_args_with_receiver_and_defaults(
+                                call_method,
+                                receiver_arg,
+                                args,
+                            );
                             return super::builtins::mb_call_spread(call_method, args_list);
                         }
                         // Closure handle or other callable stored as class attr:
@@ -18056,7 +18156,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 }
                                 DescriptorKind::Regular => Some(receiver),
                             };
-                            let args_list = method_args_with_receiver(receiver_arg, args);
+                            let args_list = method_args_with_receiver_and_defaults(
+                                call_method,
+                                receiver_arg,
+                                args,
+                            );
                             return super::builtins::mb_call_spread(call_method, args_list);
                         }
                         return method;
