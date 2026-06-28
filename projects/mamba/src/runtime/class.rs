@@ -11973,7 +11973,7 @@ pub fn mb_check_abstract(class_name: MbValue) -> MbValue {
 /// `super(ClassName, instance)` → proxy object that resolves methods
 /// starting from the next class in MRO after ClassName.
 pub fn mb_super(class_name: MbValue, instance: MbValue) -> MbValue {
-    let name = extract_str(class_name).unwrap_or_default();
+    let name = resolve_class_name(class_name).unwrap_or_default();
     // Create a super proxy as a special instance with __super_class__ and __super_self__
     let proxy = MbObject::new_instance("__super__".to_string());
     unsafe {
@@ -12009,13 +12009,13 @@ pub fn mb_super_getattr(proxy: MbValue, attr: MbValue) -> MbValue {
 
                 // Get the actual class of the instance. In __new__, super_self is
                 // the class object, so resolve it back to the user class name.
-                let instance_class = if let Some(self_ptr) = super_self.as_ptr() {
+                let (instance_class, class_context) = if let Some(self_ptr) = super_self.as_ptr() {
                     match &(*self_ptr).data {
                         ObjData::Instance { class_name, .. } if class_name == "type" => {
-                            resolve_class_name(super_self).unwrap_or_default()
+                            (resolve_class_name(super_self).unwrap_or_default(), true)
                         }
-                        ObjData::Instance { class_name, .. } => class_name.clone(),
-                        ObjData::Str(s) => s.clone(),
+                        ObjData::Instance { class_name, .. } => (class_name.clone(), false),
+                        ObjData::Str(s) => (s.clone(), true),
                         _ => return MbValue::none(),
                     }
                 } else {
@@ -12024,6 +12024,26 @@ pub fn mb_super_getattr(proxy: MbValue, attr: MbValue) -> MbValue {
 
                 let val = lookup_method_after(&instance_class, &super_class, &attr_name);
                 if !val.is_none() {
+                    let (actual_method, dk) = unwrap_descriptor_method(val);
+                    let call_method =
+                        if actual_method.as_func().is_some() || actual_method.as_int().is_some() {
+                            actual_method
+                        } else {
+                            val
+                        };
+                    if extract_func_addr(call_method) != 0 || call_method.as_int().is_some() {
+                        return match dk {
+                            DescriptorKind::StaticMethod => call_method,
+                            DescriptorKind::ClassMethod => make_bound_method(
+                                call_method,
+                                MbValue::from_ptr(MbObject::new_str(instance_class)),
+                            ),
+                            DescriptorKind::Regular if class_context && attr_name == "__new__" => {
+                                call_method
+                            }
+                            DescriptorKind::Regular => make_bound_method(call_method, super_self),
+                        };
+                    }
                     super::rc::retain_if_ptr(val);
                     return val;
                 }
