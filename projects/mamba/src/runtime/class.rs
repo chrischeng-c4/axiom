@@ -16856,6 +16856,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     }
                     return dict;
                 }
+                if (s == "bytes" || s == "bytearray") && name == "maketrans" {
+                    let mut byte_args = arg_items
+                        .iter()
+                        .copied()
+                        .filter(|v| super::builtins::try_bytes_like(*v).is_some());
+                    return super::bytes_ops::mb_bytes_maketrans(
+                        byte_args.next().unwrap_or_else(MbValue::none),
+                        byte_args.next().unwrap_or_else(MbValue::none),
+                    );
+                }
                 // Fallthrough: unhandled classmethod — synthesise a string receiver
                 // and delegate to dispatch_str_method (handles bytes.fromhex, str.maketrans, etc.)
                 let str_recv = MbValue::from_ptr(MbObject::new_str(s.clone()));

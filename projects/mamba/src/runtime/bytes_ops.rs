@@ -188,6 +188,9 @@ fn validated_bytes_from_items(items: &[MbValue]) -> Option<Vec<u8>> {
 /// after the byte payload is extracted.
 unsafe fn drain_handle_to_u8s(handle: MbValue) -> Option<Vec<u8>> {
     let items: Vec<MbValue> = if let Some(v) = super::iter::drain_iter_to_vec(handle) {
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
         v
     } else {
         // Slow path: standard iterator protocol. drain_iter_to_vec put the
@@ -195,10 +198,18 @@ unsafe fn drain_handle_to_u8s(handle: MbValue) -> Option<Vec<u8>> {
         let h = super::iter::mb_iter(handle);
         let mut out = Vec::new();
         loop {
-            if super::iter::mb_has_next(h).as_bool() != Some(true) {
+            let has_next = super::iter::mb_has_next(h);
+            if super::exception::mb_has_exception().as_bool() == Some(true) {
+                return None;
+            }
+            if has_next.as_bool() != Some(true) {
                 break;
             }
-            out.push(super::iter::mb_next(h));
+            let item = super::iter::mb_next(h);
+            if super::exception::mb_has_exception().as_bool() == Some(true) {
+                return None;
+            }
+            out.push(item);
         }
         out
     };
@@ -207,6 +218,47 @@ unsafe fn drain_handle_to_u8s(handle: MbValue) -> Option<Vec<u8>> {
         super::rc::release_if_ptr(it);
     }
     data
+}
+
+unsafe fn bytes_join_parts(parts: MbValue) -> Option<Vec<MbValue>> {
+    if let Some(ptr) = parts.as_ptr() {
+        match &(*ptr).data {
+            ObjData::List(ref lock) => return Some(lock.read().unwrap().to_vec()),
+            ObjData::Tuple(ref items) => return Some(items.clone()),
+            _ => {}
+        }
+    }
+    let handle = super::iter::mb_iter(parts);
+    if handle.is_none() {
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
+        raise_type_error("can only join an iterable");
+        return None;
+    }
+    if let Some(items) = super::iter::drain_iter_to_vec(handle) {
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
+        return Some(items);
+    }
+    let h = super::iter::mb_iter(handle);
+    let mut out = Vec::new();
+    loop {
+        let has_next = super::iter::mb_has_next(h);
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
+        if has_next.as_bool() != Some(true) {
+            break;
+        }
+        let item = super::iter::mb_next(h);
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
+        out.push(item);
+    }
+    Some(out)
 }
 
 fn try_iterable_to_u8s(source: MbValue) -> Option<Option<Vec<u8>>> {
@@ -1895,34 +1947,19 @@ pub fn mb_bytes_join(sep: MbValue, parts: MbValue) -> MbValue {
         let sep_data = as_bytes_cloned(sep).unwrap_or_default();
         let mut result = Vec::new();
         let mut first = true;
-        // Collect items from list or iterable
-        if let Some(ptr) = parts.as_ptr() {
-            match &(*ptr).data {
-                ObjData::List(ref lock) => {
-                    let items = lock.read().unwrap();
-                    for item in items.iter() {
-                        if !first {
-                            result.extend_from_slice(&sep_data);
-                        }
-                        if let Some(data) = as_bytes_cloned(*item) {
-                            result.extend_from_slice(&data);
-                        }
-                        first = false;
-                    }
-                }
-                ObjData::Tuple(ref items) => {
-                    for item in items.iter() {
-                        if !first {
-                            result.extend_from_slice(&sep_data);
-                        }
-                        if let Some(data) = as_bytes_cloned(*item) {
-                            result.extend_from_slice(&data);
-                        }
-                        first = false;
-                    }
-                }
-                _ => {}
+        let Some(items) = bytes_join_parts(parts) else {
+            return MbValue::none();
+        };
+        for item in items {
+            if !first {
+                result.extend_from_slice(&sep_data);
             }
+            let Some(data) = as_bytes_cloned(item) else {
+                raise_type_error("sequence item must be a bytes-like object");
+                return MbValue::none();
+            };
+            result.extend_from_slice(&data);
+            first = false;
         }
         // CPython: bytearray.join(...) returns a bytearray; bytes.join(...)
         // returns bytes. The result type follows the separator's type.
@@ -2244,6 +2281,7 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
         "ljust" => mb_bytes_ljust(receiver, arg(0), arg(1)),
         "rjust" => mb_bytes_rjust(receiver, arg(0), arg(1)),
         "translate" => mb_bytes_translate(receiver, arg(0), arg(1)),
+        "maketrans" => mb_bytes_maketrans(arg(0), arg(1)),
         "rsplit" => {
             let maxsplit = if argc() > 1 { arg(1) } else { MbValue::none() };
             mb_bytes_rsplit(receiver, arg(0), maxsplit)
@@ -2344,6 +2382,26 @@ fn bytes_to_value(receiver: MbValue, data: Vec<u8>) -> MbValue {
     } else {
         MbValue::from_ptr(MbObject::new_bytes(data))
     }
+}
+
+pub fn mb_bytes_maketrans(from: MbValue, to: MbValue) -> MbValue {
+    let Some(from_b) = extract_bytes(from) else {
+        raise_type_error("maketrans arguments must be bytes-like objects");
+        return MbValue::none();
+    };
+    let Some(to_b) = extract_bytes(to) else {
+        raise_type_error("maketrans arguments must be bytes-like objects");
+        return MbValue::none();
+    };
+    if from_b.len() != to_b.len() {
+        raise_value_error("maketrans arguments must have same length");
+        return MbValue::none();
+    }
+    let mut table: Vec<u8> = (0u8..=255).collect();
+    for (src, dst) in from_b.into_iter().zip(to_b) {
+        table[src as usize] = dst;
+    }
+    MbValue::from_ptr(MbObject::new_bytes(table))
 }
 
 fn fill_byte(arg: MbValue) -> u8 {
@@ -2511,7 +2569,15 @@ pub fn mb_bytes_translate(receiver: MbValue, table: MbValue, delete: MbValue) ->
             return MbValue::none();
         }
     }
-    let delete_b = extract_bytes(delete).unwrap_or_default();
+    let delete_b = if delete.is_none() {
+        Vec::new()
+    } else {
+        let Some(bytes) = extract_bytes(delete) else {
+            raise_type_error("a bytes-like object is required, not 'int'");
+            return MbValue::none();
+        };
+        bytes
+    };
     let mut out = Vec::with_capacity(data.len());
     for &b in &data {
         if delete_b.contains(&b) {

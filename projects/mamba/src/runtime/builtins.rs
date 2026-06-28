@@ -8845,6 +8845,14 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             }
                         }
                     }
+                    if (type_name == "bytes" || type_name == "bytearray")
+                        && method_str == "maketrans"
+                    {
+                        return super::bytes_ops::mb_bytes_maketrans(
+                            items.first().copied().unwrap_or_else(MbValue::none),
+                            items.get(1).copied().unwrap_or_else(MbValue::none),
+                        );
+                    }
                     // `random.Random.getrandbits(self, n)` — unbound calls on
                     // the Random base must reach the NATIVE generator (the
                     // user's override delegates here; re-dispatching on self
