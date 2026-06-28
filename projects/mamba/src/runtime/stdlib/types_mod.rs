@@ -600,12 +600,10 @@ fn metaclass_value(name: &str) -> MbValue {
 }
 
 fn prepare_namespace(meta_name: &str, name: MbValue, bases: MbValue) -> MbValue {
-    let prepare = super::super::class::lookup_method(meta_name, "__prepare__");
-    if prepare.is_none() {
+    if super::super::class::lookup_method(meta_name, "__prepare__").is_none() {
         return MbValue::from_ptr(MbObject::new_dict());
     }
-    let args = MbValue::from_ptr(MbObject::new_list(vec![name, bases]));
-    let ns = super::super::builtins::mb_call_spread(prepare, args);
+    let ns = super::super::class::mb_call_metaclass_prepare(meta_name, name, bases);
     if ns.is_none() {
         MbValue::from_ptr(MbObject::new_dict())
     } else {
@@ -917,18 +915,20 @@ mod tests {
         let name = MbValue::from_ptr(MbObject::new_str("MyClass".to_string()));
         let cls = mb_types_new_class(name);
         assert_eq!(
-            get_str(get_field(cls, "__name__")).as_deref(),
+            crate::runtime::class::resolve_class_name(cls).as_deref(),
             Some("MyClass")
         );
     }
 
     #[test]
-    fn test_new_class_defaults_when_name_missing() {
+    fn test_new_class_rejects_missing_name() {
         let cls = mb_types_new_class(MbValue::none());
+        assert!(cls.is_none());
         assert_eq!(
-            get_str(get_field(cls, "__name__")).as_deref(),
-            Some("NewClass")
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
         );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
