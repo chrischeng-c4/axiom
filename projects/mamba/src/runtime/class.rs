@@ -6350,6 +6350,15 @@ fn mb_getattr_impl(
                 }
             }
         }
+        if attr_name == "_convert_" {
+            if let Some(ptr) = obj.as_ptr() {
+                unsafe {
+                    if matches!(&(*ptr).data, ObjData::Str(s) if s == "StrEnum") {
+                        return super::stdlib::enum_mod::strenum_convert_callable();
+                    }
+                }
+            }
+        }
     }
     // Unbound-method wrappers (Cls.method): function attributes set by
     // decorators (@typing.override → __override__) live in the FUNC_ATTRS
@@ -6946,6 +6955,9 @@ fn mb_getattr_impl(
     }
 
     if let Some(addr) = obj.as_func() {
+        if attr_name == "_convert_" && super::stdlib::enum_mod::is_enum_constructor(obj) {
+            return super::stdlib::enum_mod::enum_convert_callable();
+        }
         if attr_name == "_convert_" && super::stdlib::enum_mod::is_intenum_constructor(obj) {
             return super::stdlib::enum_mod::intenum_convert_callable();
         }
@@ -15564,6 +15576,17 @@ pub fn mb_call_method_kwargs(
     let name = extract_str(method_name).unwrap_or_default();
     let pos = super::builtins::extract_items(pos_list);
 
+    if name == "_convert_"
+        && receiver.as_ptr().is_some_and(|ptr| unsafe {
+            matches!(&(*ptr).data, ObjData::Str(s) if s == "StrEnum")
+        })
+    {
+        let mut all = pos;
+        all.push(kwargs_dict);
+        let args_list = MbValue::from_ptr(MbObject::new_list_borrowed(all));
+        return super::stdlib::enum_mod::mb_strenum_convert(args_list);
+    }
+
     if name == "__init__" && kwargs_dict_has_entries(kwargs_dict) {
         if let Some(type_name) = receiver.as_ptr().and_then(|ptr| unsafe {
             match &(*ptr).data {
@@ -15775,6 +15798,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 | "_global_tracked"
         ) {
             return mb_call_method(target, method_name, args);
+        }
+    }
+
+    if name_for_proxy == "_convert_" {
+        if let Some(ptr) = receiver.as_ptr() {
+            unsafe {
+                if matches!(&(*ptr).data, ObjData::Str(s) if s == "StrEnum") {
+                    return super::stdlib::enum_mod::mb_strenum_convert(args);
+                }
+            }
         }
     }
 
@@ -16101,6 +16134,9 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     }
 
     if receiver.as_func().is_some() {
+        if name == "_convert_" && super::stdlib::enum_mod::is_enum_constructor(receiver) {
+            return super::stdlib::enum_mod::mb_enum_convert(args);
+        }
         if name == "_convert_" && super::stdlib::enum_mod::is_intenum_constructor(receiver) {
             return super::stdlib::enum_mod::mb_intenum_convert(args);
         }
