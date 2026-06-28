@@ -2241,13 +2241,7 @@ fn rebox_method_result(raw: MbValue, is_boxed: bool) -> MbValue {
     if is_boxed {
         return raw;
     }
-    let bits = raw.to_bits();
-    const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-    if bits & NAN_PREFIX == NAN_PREFIX {
-        raw
-    } else {
-        super::builtins::mb_box_int(bits as i64)
-    }
+    super::builtins::mb_box_int(raw.to_bits() as i64)
 }
 
 fn call_registered_method_addr(addr: u64, args: &[MbValue]) -> MbValue {
@@ -5358,6 +5352,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 return anns;
             }
         }
+    }
+
+    // __dict__ on functions: expose a lightweight proxy backed by the function
+    // attribute side registry so f.__dict__.update({...}) mutates f.attr.
+    if attr_name == "__dict__" && super::pep695::is_attrable_function(obj) {
+        return super::pep695::func_attrs_dict_proxy(obj);
     }
 
     // cell.cell_contents for cells exposed through function.__closure__.
@@ -8928,6 +8928,10 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
     // attributes live in the pep695 FUNC_ATTRS side registry. Gated on the
     // function-name registry so plain ints never accrue attributes.
     if super::pep695::is_attrable_function(obj) {
+        if extract_str(attr).as_deref() == Some("__name__") {
+            super::closure::mb_func_set_name(obj, value);
+            return;
+        }
         super::pep695::func_attrs_set(obj, attr, value);
     }
 }
@@ -13514,21 +13518,14 @@ pub fn mb_call_method1(method: MbValue, arg: MbValue) -> MbValue {
 /// are detected via `is_native_func` and dispatched with the correct ABI (#1132).
 pub fn mb_call0(func: MbValue) -> MbValue {
     super::gc::gc_safepoint();
-    // Re-box raw i64 returns from JIT-compiled functions. `is_boxed` (from
-    // is_boxed_return_func(addr), set for any/object-returning callees)
-    // disambiguates a non-NaN-prefixed raw return: those return a valid MbValue
-    // (e.g. a float) and must pass through untouched. See mb_call1_val::rebox.
+    // Re-box primitive returns through mb_box_int. It preserves real NaN-boxed
+    // values but also correctly boxes raw negative i64 values, whose high bits
+    // otherwise look like a NaN-box prefix.
     fn rebox(raw: MbValue, is_boxed: bool) -> MbValue {
         if is_boxed {
             return raw;
         }
-        let bits = raw.to_bits();
-        const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-        if bits & NAN_PREFIX == NAN_PREFIX {
-            raw
-        } else {
-            super::builtins::mb_box_int(bits as i64)
-        }
+        super::builtins::mb_box_int(raw.to_bits() as i64)
     }
     fn finish_call(func: MbValue, raw: MbValue, is_boxed: bool) -> MbValue {
         let result = rebox(raw, is_boxed);
@@ -13566,6 +13563,13 @@ pub fn mb_call0(func: MbValue) -> MbValue {
         if let Some(addr) = fn_val.as_func() {
             if addr > 4096 {
                 let is_boxed = super::module::is_boxed_return_func(addr as u64);
+                let has_star_kw = super::closure::func_params(func)
+                    .map(|params| params.iter().any(|p| matches!(p.kind, 2 | 4)))
+                    .unwrap_or(false);
+                if has_star_kw {
+                    let args = MbValue::from_ptr(MbObject::new_list(vec![]));
+                    return super::builtins::mb_call_spread(func, args);
+                }
                 // If the closure carries default argument values (e.g.
                 // `lambda x=i: ...`), dispatch using those defaults so the
                 // callee sees the frozen values instead of uninitialized
@@ -13718,23 +13722,14 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
     // Re-box raw i64 returns from JIT-compiled functions that declared a
     // primitive (int) return type — mb_call_spread has the same logic.
     //
-    // A non-NaN-prefixed raw return is AMBIGUOUS: it is either a raw machine int
-    // (int fast-path return, needs boxing) OR a float MbValue (untagged raw f64
-    // bits, already correct). `is_boxed` — from is_boxed_return_func(addr), set
-    // for any/object-returning callees — disambiguates: those return a valid
-    // MbValue (a float, or an already-boxed value), so pass it through untouched
-    // rather than mis-boxing the bit pattern as a giant int.
+    // Re-box primitive returns through mb_box_int. It preserves real NaN-boxed
+    // values but also correctly boxes raw negative i64 values, whose high bits
+    // otherwise look like a NaN-box prefix.
     fn rebox(raw: MbValue, is_boxed: bool) -> MbValue {
         if is_boxed {
             return raw;
         }
-        let bits = raw.to_bits();
-        const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-        if bits & NAN_PREFIX == NAN_PREFIX {
-            raw
-        } else {
-            super::builtins::mb_box_int(bits as i64)
-        }
+        super::builtins::mb_box_int(raw.to_bits() as i64)
     }
     fn finish_call(func: MbValue, raw: MbValue, is_boxed: bool) -> MbValue {
         let result = rebox(raw, is_boxed);
@@ -14193,6 +14188,24 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 "__hash__" => return super::builtins::mb_hash(receiver),
                 _ => {}
             }
+        }
+    }
+
+    if let Some(func) = super::pep695::func_attrs_proxy_func(receiver) {
+        let name = extract_str(method_name).unwrap_or_default();
+        if name == "update" {
+            let items = super::builtins::extract_items(args);
+            let mapping = items.first().copied().unwrap_or_else(MbValue::none);
+            if super::pep695::func_attrs_update_from_mapping(func, mapping) {
+                return MbValue::none();
+            }
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "function __dict__.update expected a dict".to_string(),
+                )),
+            );
+            return MbValue::none();
         }
     }
 
@@ -19839,6 +19852,45 @@ mod tests {
             Some(10),
             "getattr must return existing attribute value"
         );
+    }
+
+    #[test]
+    fn test_function_dict_update_sets_function_attributes() {
+        let func = MbValue::from_func(0x12345);
+        let dict_attr = MbValue::from_ptr(MbObject::new_str("__dict__".to_string()));
+        let proxy = mb_getattr(func, dict_attr);
+        let mapping = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(
+            mapping,
+            MbValue::from_ptr(MbObject::new_str("abc".to_string())),
+            MbValue::from_int(7),
+        );
+
+        mb_call_method(
+            proxy,
+            MbValue::from_ptr(MbObject::new_str("update".to_string())),
+            MbValue::from_ptr(MbObject::new_list(vec![mapping])),
+        );
+
+        let attr = MbValue::from_ptr(MbObject::new_str("abc".to_string()));
+        assert_eq!(mb_getattr(func, attr).as_int(), Some(7));
+        crate::runtime::pep695::cleanup_func_attrs();
+    }
+
+    #[test]
+    fn test_function_name_setattr_updates_name_registry() {
+        let func = MbValue::from_func(0x12346);
+        mb_setattr(
+            func,
+            MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+            MbValue::from_ptr(MbObject::new_str("renamed".to_string())),
+        );
+
+        let name = mb_getattr(
+            func,
+            MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+        );
+        assert_eq!(extract_str(name).as_deref(), Some("renamed"));
     }
 
     #[test]

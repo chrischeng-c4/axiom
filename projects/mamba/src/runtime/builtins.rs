@@ -9459,21 +9459,13 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 _ => MbValue::none(),
             }
         });
-        // Re-box: JIT functions may return raw i64 for ints (unboxed by
-        // CheckedAdd). If the result has no NaN prefix, treat it as a raw int.
-        // Already-boxed values (NaN-boxed ints, ptrs, bools, none) pass through.
-        // An any/object-returning callee's result is already a valid MbValue
-        // (possibly a no-NaN-prefix float) → pass through untouched.
+        // Re-box primitive returns through mb_box_int. It preserves real
+        // NaN-boxed values but also correctly boxes raw negative i64 values,
+        // whose high bits otherwise look like a NaN-box prefix.
         let result = if is_boxed_ret {
             raw_result
         } else {
-            let bits = raw_result.to_bits();
-            const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-            if bits & NAN_PREFIX == NAN_PREFIX {
-                raw_result // Already NaN-boxed
-            } else {
-                mb_box_int(bits as i64) // Raw i64 → NaN-box it
-            }
+            mb_box_int(raw_result.to_bits() as i64)
         };
         if super::stdlib::types_mod::is_coroutine_generator(result) {
             result
@@ -9598,13 +9590,7 @@ fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) ->
     if is_boxed_ret {
         return raw_result;
     }
-    let bits = raw_result.to_bits();
-    const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-    if bits & NAN_PREFIX == NAN_PREFIX {
-        raw_result
-    } else {
-        mb_box_int(bits as i64)
-    }
+    mb_box_int(raw_result.to_bits() as i64)
 }
 
 /// Detect `(*args, **kwargs)` presence for a callable. The addr-keyed

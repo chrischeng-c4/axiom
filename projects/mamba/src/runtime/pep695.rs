@@ -242,6 +242,60 @@ pub fn func_attrs_get(func: MbValue, attr_name: &str) -> Option<MbValue> {
         })
 }
 
+/// Return a lightweight proxy for a function's writable `__dict__`.
+///
+/// Function values carry no heap fields, so attribute storage lives in
+/// FUNC_ATTRS. The proxy lets method dispatch implement `f.__dict__.update(d)`
+/// by writing back to that side registry.
+pub fn func_attrs_dict_proxy(func: MbValue) -> MbValue {
+    let inst = MbObject::new_instance("function.__dict__".to_string());
+    instance_field_set(inst, "_func", func);
+    MbValue::from_ptr(inst)
+}
+
+/// Extract the function value from a function.__dict__ proxy.
+pub fn func_attrs_proxy_func(proxy: MbValue) -> Option<MbValue> {
+    let ptr = proxy.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if class_name == "function.__dict__" {
+                return fields.read().ok()?.get("_func").copied();
+            }
+        }
+    }
+    None
+}
+
+/// Merge a dict-like mapping into a function's writable attribute registry.
+pub fn func_attrs_update_from_mapping(func: MbValue, mapping: MbValue) -> bool {
+    let Some(ptr) = mapping.as_ptr() else {
+        return false;
+    };
+    let pairs: Vec<(String, MbValue)> = unsafe {
+        match &(*ptr).data {
+            ObjData::Dict(lock) => lock
+                .read()
+                .unwrap()
+                .iter()
+                .filter_map(|(key, value)| match key {
+                    super::dict_ops::DictKey::Str(name) => Some((name.clone(), *value)),
+                    _ => None,
+                })
+                .collect(),
+            _ => return false,
+        }
+    };
+    for (name, value) in pairs {
+        let attr = MbValue::from_ptr(MbObject::new_str(name));
+        func_attrs_set(func, attr, value);
+    }
+    true
+}
+
 /// Test-support / shutdown cleanup: drop all stored function attributes.
 pub fn cleanup_func_attrs() {
     let _ = FUNC_ATTRS.with(|m| {
@@ -312,5 +366,20 @@ mod tests {
         assert!(func_attrs_get(f, "missing").is_none());
         cleanup_func_attrs();
         assert!(func_attrs_get(f, "__type_params__").is_none());
+    }
+
+    #[test]
+    fn func_attrs_update_from_mapping_roundtrip() {
+        let f = MbValue::from_func(0x12345);
+        let mapping = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(
+            mapping,
+            MbValue::from_ptr(MbObject::new_str("abc".to_string())),
+            MbValue::from_int(7),
+        );
+
+        assert!(func_attrs_update_from_mapping(f, mapping));
+        assert_eq!(func_attrs_get(f, "abc").unwrap().as_int(), Some(7));
+        cleanup_func_attrs();
     }
 }

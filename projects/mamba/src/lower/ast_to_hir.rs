@@ -5457,6 +5457,21 @@ impl<'a> AstLowerer<'a> {
                         }
                     }
                 }
+                if let Some(names) = names {
+                    for (orig, alias) in names {
+                        if orig != "*" {
+                            let bound = alias.as_deref().unwrap_or(orig.as_str());
+                            self.define_local(bound, self.checker.tcx.any());
+                        }
+                    }
+                } else {
+                    let bound = module_alias
+                        .as_deref()
+                        .or_else(|| module.first().map(String::as_str));
+                    if let Some(bound) = bound {
+                        self.define_local(bound, self.checker.tcx.any());
+                    }
+                }
                 Some(HirStmt::Import {
                     import: HirImport {
                         module: module.clone(),
@@ -5607,6 +5622,7 @@ impl<'a> AstLowerer<'a> {
                 } else {
                     return_ty
                 };
+                let declared_sig = func_sig_meta(params, return_ty);
                 // PEP 695: see the module-level FnDef arm — type-param names
                 // must reach the param/return type lowering.
                 let saved_tps = std::mem::replace(
@@ -5626,6 +5642,10 @@ impl<'a> AstLowerer<'a> {
                 };
                 self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
+                    self.result
+                        .func_sigs
+                        .insert(func.name.0, declared_sig.clone());
+                    func.func_sig = Some(declared_sig.clone());
                     func.is_generator = contains_yield(body);
                     func.decorators = decorators
                         .iter()
@@ -5648,7 +5668,7 @@ impl<'a> AstLowerer<'a> {
                     bind_name: None,
                     span: stmt.span,
                     redef: false,
-                    func_sig: Some(func_sig_meta(params, return_ty)),
+                    func_sig: Some(declared_sig),
                 };
                 Some(placeholder)
             }
@@ -5670,6 +5690,7 @@ impl<'a> AstLowerer<'a> {
                     &mut self.active_type_params,
                     type_params.iter().map(|p| p.name.clone()).collect(),
                 );
+                let declared_sig = func_sig_meta(params, return_ty);
                 let lowered = if is_decorated {
                     self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                 } else {
@@ -5677,6 +5698,10 @@ impl<'a> AstLowerer<'a> {
                 };
                 self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
+                    self.result
+                        .func_sigs
+                        .insert(func.name.0, declared_sig.clone());
+                    func.func_sig = Some(declared_sig.clone());
                     if contains_yield(body) {
                         // Same async-generator routing as the top-level
                         // AsyncFnDef arm: route through the sync generator
@@ -5700,7 +5725,7 @@ impl<'a> AstLowerer<'a> {
                     bind_name: None,
                     span: stmt.span,
                     redef: false,
-                    func_sig: Some(func_sig_meta(params, return_ty)),
+                    func_sig: Some(declared_sig),
                 })
             }
             _ => None,
