@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#rust-source-unit
+// HANDWRITE-BEGIN gap="missing-generator:logic:d11d8be6" tracker="standardize-gap-projects-lumen-src-raft-sm-rs" reason="EngineSm: lumen's Engine as a raft_host::RaftStateMachine (epic #524 convergence). apply folds a committed command into the engine and records ApplyOutcome in a window for read-your-write; snapshot/restore bridge to the engine RDB checkpoint; the raft log index is the WAL seq. No semantic TD captured yet; aw claim_code/fillback adoption hangs."
 //! `EngineSm` — lumen's [`Engine`] as a [`raft_host::RaftStateMachine`].
 //!
 //! This is lumen's convergence onto the shared raft host (epic #524): the host
@@ -206,3 +208,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
+// HANDWRITE-END

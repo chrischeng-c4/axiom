@@ -27,7 +27,23 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:c86e685e60f08d1f1d11210465ff193ae9769bdefd96df8d44852d5f80097f4a"
+generated_from_td_digest = "sha256:d6d465539a4e2ef34789b433d3b74db3a72b12fab0b65745be9545c301956486"
+
+[[aw.ec.generated.cases]]
+id = "lumen-cli-interface-generated-clients"
+capability_id = "cli-interface"
+claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+contract_id = "spec-gen-generated-clients-public-api-journey"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-generated-clients"
+test_path = "projects/lumen/tests/behavior_lumen_cli_interface_generated_clients.rs"
+command = "cargo test -p lumen --test behavior_lumen_cli_interface_generated_clients -- --ignored --nocapture"
+required_for_production = true
+assertions = [
+    "lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document.",
+    "generated clients drive health, readiness, version, collection creation, indexing, search, duplicates, stats, and forced drop against a live h2c Lumen service.",
+    "the generated Python client validates recursive pydantic QueryNode union shapes while using the bundled h2c runtime.",
+]
 
 [[aw.ec.generated.cases]]
 id = "lumen-cli-interface-llm-playbook"
