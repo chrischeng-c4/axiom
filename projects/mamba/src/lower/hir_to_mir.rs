@@ -7517,6 +7517,18 @@ impl<'a> HirToMir<'a> {
                 dest
             }
             HirExpr::Var(sym, ty) => {
+                // Synthetic nonlocal/cell symbols must always read the shared
+                // storage, even if this function has a stale local vreg from
+                // an earlier assignment.
+                if self.cell_override.contains(&sym.0) {
+                    let dest = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadGlobal {
+                        dest,
+                        name: *sym,
+                        ty: *ty,
+                    });
+                    return dest;
+                }
                 if let Some(&vreg) = self.sym_to_vreg.get(sym) {
                     return vreg;
                 }
@@ -7631,17 +7643,6 @@ impl<'a> HirToMir<'a> {
                             ty: *ty,
                         });
                     }
-                    return dest;
-                }
-                // Check cell_override first: synthetic (1M+) nonlocal-shared symbols
-                // always load from global storage regardless of symbol_table classification.
-                if self.cell_override.contains(&sym.0) {
-                    let dest = self.fresh_vreg();
-                    self.current_stmts.push(MirInst::LoadGlobal {
-                        dest,
-                        name: *sym,
-                        ty: *ty,
-                    });
                     return dest;
                 }
                 // Check variable classification for global/cell/free access
@@ -8354,6 +8355,7 @@ impl<'a> HirToMir<'a> {
                             | "mb_exception_new_with_args_and_kwargs"
                             | "mb_exception_group_construct"
                             | "mb_arg_bind_error"
+                            | "mb_unbound_local_error_value"
                     ) {
                         self.emit_exception_propagate();
                     }

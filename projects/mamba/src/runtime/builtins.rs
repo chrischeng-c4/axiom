@@ -11805,6 +11805,15 @@ fn mb_compile_impl(
         _ => unreachable!("mode already validated"),
     };
 
+    if let Some(err) = validate_compile_nonlocal_declarations(&ast) {
+        let msg = format_syntax_error(&err, &source_map, &filename_str);
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(msg)),
+        );
+        return MbValue::none();
+    }
+
     // ── Return CodeObject (R1) ──────────────────────────────────────────────
     MbValue::from_ptr(MbObject::new_code_object(
         source_str,
@@ -11812,6 +11821,146 @@ fn mb_compile_impl(
         mode_str,
         ast,
     ))
+}
+
+fn validate_compile_nonlocal_declarations(
+    module: &crate::parser::ast::Module,
+) -> Option<crate::error::MambaError> {
+    use crate::parser::ast::Stmt;
+    use std::collections::HashSet;
+
+    fn function_bindings(
+        params: &[crate::parser::ast::Param],
+        body: &[crate::source::Spanned<Stmt>],
+    ) -> HashSet<String> {
+        let mut assigned = Vec::new();
+        let mut declared = Vec::new();
+        crate::resolve::pass::collect_assignment_targets(body, &mut assigned, &mut declared);
+        crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut assigned);
+
+        let mut bindings: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
+        for name in assigned {
+            if !declared.iter().any(|decl| decl == &name) {
+                bindings.insert(name);
+            }
+        }
+        bindings
+    }
+
+    fn visit(
+        stmts: &[crate::source::Spanned<Stmt>],
+        function_scopes: &mut Vec<HashSet<String>>,
+    ) -> Option<crate::error::MambaError> {
+        for stmt in stmts {
+            match &stmt.node {
+                Stmt::Nonlocal(names) => {
+                    for name in names {
+                        if !function_scopes
+                            .iter()
+                            .rev()
+                            .any(|scope| scope.contains(name))
+                        {
+                            return Some(crate::error::MambaError::syntax(
+                                stmt.span,
+                                format!("no binding for nonlocal '{name}' found"),
+                            ));
+                        }
+                    }
+                }
+                Stmt::FnDef { params, body, .. } | Stmt::AsyncFnDef { params, body, .. } => {
+                    function_scopes.push(function_bindings(params, body));
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                    function_scopes.pop();
+                }
+                Stmt::ClassDef { body, .. } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                }
+                Stmt::If {
+                    body,
+                    elif_clauses,
+                    else_body,
+                    ..
+                } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                    for (_, elif_body) in elif_clauses {
+                        if let Some(err) = visit(elif_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                    if let Some(else_body) = else_body {
+                        if let Some(err) = visit(else_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                }
+                Stmt::While {
+                    body, else_body, ..
+                }
+                | Stmt::For {
+                    body, else_body, ..
+                }
+                | Stmt::AsyncFor {
+                    body, else_body, ..
+                } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                    if let Some(else_body) = else_body {
+                        if let Some(err) = visit(else_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                }
+                Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                }
+                Stmt::Try {
+                    body,
+                    handlers,
+                    else_body,
+                    finally_body,
+                } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                    for handler in handlers {
+                        if let Some(err) = visit(&handler.body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                    if let Some(else_body) = else_body {
+                        if let Some(err) = visit(else_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                    if let Some(finally_body) = finally_body {
+                        if let Some(err) = visit(finally_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        if let Some(err) = visit(&arm.body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    visit(&module.stmts, &mut Vec::new())
 }
 
 /// Format a MambaError as a SyntaxError message with file/line/col (R4).
@@ -13107,6 +13256,20 @@ mod tests {
             crate::runtime::exception::mb_has_exception().as_bool(),
             Some(true),
             "SyntaxError should be raised"
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_compile_invalid_nonlocal_raises_syntax_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let src = "def outer():\n    def inner():\n        nonlocal missing\n        missing = 1\n";
+        let result = mb_compile(make_str(src), make_str("<test>"), make_str("exec"));
+        assert!(result.is_none(), "invalid nonlocal should fail");
+        let exc = crate::runtime::exception::mb_catch_exception();
+        assert_eq!(
+            crate::runtime::exception::get_exception_type_pub(exc).as_deref(),
+            Some("SyntaxError")
         );
         crate::runtime::exception::mb_clear_exception();
     }

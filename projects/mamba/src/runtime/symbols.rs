@@ -1559,6 +1559,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_unbound_local_error_value",
+            exception::mb_unbound_local_error_value as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_raise_from",
             exception::mb_raise_from as fn(super::MbValue, super::MbValue, super::MbValue),
             [I64, I64, I64],
