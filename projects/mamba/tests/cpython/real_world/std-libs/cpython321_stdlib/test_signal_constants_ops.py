@@ -9,13 +9,12 @@
 # case = "test_signal_constants_ops"
 # subject = "cpython321.test_signal_constants_ops"
 # kind = "semantic"
-# xfail = "CPython 3.12 seed pass; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "tests/cpython/config/seeds/pass/test_signal_constants_ops.py"
 # status = "filled"
 # ///
 """cpython321.test_signal_constants_ops: execute CPython 3.12 seed test_signal_constants_ops"""
-# mamba-xfail: CPython 3.12 seed pass; mamba promotion pending
 # Operational AssertionPass seed for the `signal` module — the
 # stdlib wrapper over POSIX signal numbers (SIGINT / SIGTERM /
 # SIGKILL / etc.) used by subprocess management, server shutdown
@@ -23,13 +22,10 @@
 # (SIGALRM). Surface focuses on the canonical POSIX signal-number
 # constants — these are part of the OS ABI and stable across mamba
 # / CPython on the same platform (macOS arm64). Both runtimes expose
-# the integer value of each signal directly; mamba surfaces them as
-# raw `int`, CPython 3.5+ wraps them in `signal.Signals` enum, but
-# `isinstance(SIGINT, int)` is True in both runtimes because
-# `Signals` is an `IntEnum` subclass — so equality with the bare
-# int still works. No fixture coverage yet for the signal-constant
-# surface (existing test_signal fixtures focus on handlers, not the
-# constants).
+# the integer value of each signal directly through `signal.Signals`
+# IntEnum members. `isinstance(SIGINT, int)` is True in both runtimes
+# because `Signals` is an `IntEnum` subclass — so equality with the
+# bare int still works.
 #
 # Surface (all canonical POSIX signal numbers, per macOS / BSD ABI):
 #   • signal.SIGHUP == 1;  signal.SIGINT == 2;  signal.SIGQUIT == 3;
