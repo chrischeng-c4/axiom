@@ -696,6 +696,15 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
 /// Create an iterator for any iterable object.
 /// Checks built-in types first, then falls back to __iter__ dunder (R1).
 pub fn mb_iter(obj: MbValue) -> MbValue {
+    if super::stdlib::weakref_mod::proxy_references_int_function(obj) {
+        return raise_type_error("Weakref proxy referenced a non-iterator 'function' object");
+    }
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(obj) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_iter(target);
+    }
     // If this is already a known iterator handle (from mb_enumerate, mb_zip,
     // mb_reversed, etc., or a generator handle pre-registered by
     // `mb_generator_create` via `register_generator_iter`), return it
@@ -884,9 +893,22 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                             ));
                         }
                         // Invoke __iter__(self) to get the iterator object
-                        let iter_obj = class::mb_call_method1(iter_method, obj);
+                        let mut iter_obj = class::mb_call_method1(iter_method, obj);
                         if iter_obj.is_none() {
                             return MbValue::none();
+                        }
+                        if super::stdlib::weakref_mod::proxy_references_int_function(iter_obj) {
+                            return raise_type_error(
+                                "Weakref proxy referenced a non-iterator 'function' object",
+                            );
+                        }
+                        if let Some(target) =
+                            super::stdlib::weakref_mod::proxy_target_or_raise(iter_obj)
+                        {
+                            if target.is_none() {
+                                return MbValue::none();
+                            }
+                            iter_obj = target;
                         }
                         // If __iter__ returned a built-in iterator handle (e.g.
                         // `return iter([1,2,3])`), use it directly — wrapping it as
@@ -1786,6 +1808,15 @@ pub fn mb_enumerate(iterable: MbValue, start: MbValue) -> MbValue {
 
 /// Create a reversed iterator.
 pub fn mb_reversed(seq: MbValue) -> MbValue {
+    if super::stdlib::weakref_mod::proxy_references_int_function(seq) {
+        return raise_type_error("'function' object is not reversible");
+    }
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(seq) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_reversed(target);
+    }
     // Iterator handle path: support reversed(range(...)) and other iterators
     // whose full contents can be materialized.
     if let Some(id) = seq.as_int() {
@@ -2182,6 +2213,15 @@ pub fn mb_zip_strict(iterables: MbValue, strict: MbValue) -> MbValue {
 pub fn mb_next(iter_handle: MbValue) -> MbValue {
     // Safepoint poll at loop backedge (R4)
     super::gc::gc_safepoint();
+    if super::stdlib::weakref_mod::proxy_references_int_function(iter_handle) {
+        return raise_type_error("object is not an iterator");
+    }
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(iter_handle) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_next(target);
+    }
     if let Some(id) = iter_handle.as_int() {
         let id_u = id as u64;
         // Generator-iterator fast path. Per-yield in `for x in gen()`, the
@@ -2510,6 +2550,15 @@ pub fn mb_is_stop_iter(v: MbValue) -> MbValue {
 /// Used for direct `next(it)` calls (not in for-loop lowering which uses mb_next).
 pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
     super::gc::gc_safepoint();
+    if super::stdlib::weakref_mod::proxy_references_int_function(iter_handle) {
+        return raise_type_error("object is not an iterator");
+    }
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(iter_handle) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_next_raise(target);
+    }
     if let Some(id) = iter_handle.as_int() {
         let is_iter = ITERATORS.with(|iters| iters.borrow().contains_key(&(id as u64)));
         if is_iter {

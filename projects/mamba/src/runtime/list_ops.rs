@@ -471,6 +471,9 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                     // to __iter__ for Instance values.
                     let iter_handle = super::iter::mb_iter(val);
                     if iter_handle.is_none() {
+                        if super::exception::current_exception_type().is_some() {
+                            return MbValue::none();
+                        }
                         return MbValue::from_ptr(MbObject::new_list(Vec::new()));
                     }
                     let mut items = Vec::new();
