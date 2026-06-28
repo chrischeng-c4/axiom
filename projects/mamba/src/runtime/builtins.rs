@@ -8599,6 +8599,11 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     if type_name == "collections.Counter" && method_str == "fromkeys" {
                         return super::class::mb_counter_fromkeys_not_implemented();
                     }
+                    if type_name == "dict" && method_str == "fromkeys" {
+                        let iterable = items.first().copied().unwrap_or_else(MbValue::none);
+                        let value = items.get(1).copied().unwrap_or_else(MbValue::none);
+                        return super::dict_ops::mb_dict_fromkeys(iterable, value);
+                    }
                     if type_name == "object" && method_str == "__new__" {
                         return super::class::object_new_unbound(&items);
                     }
