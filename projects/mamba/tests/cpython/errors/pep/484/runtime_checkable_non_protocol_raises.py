@@ -9,7 +9,7 @@
 # case = "runtime_checkable_non_protocol_raises"
 # subject = "typing.runtime_checkable"
 # kind = "mechanical"
-# xfail = "mamba does not guard @runtime_checkable to Protocol classes (project_mamba_class_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

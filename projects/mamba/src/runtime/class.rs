@@ -540,6 +540,49 @@ pub fn is_runtime_checkable_protocol(name: &str) -> bool {
     RUNTIME_CHECKABLE_PROTOCOLS.with(|s| s.borrow().contains(name))
 }
 
+fn protocol_required_members(proto: &str) -> Option<(Vec<String>, bool)> {
+    CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let pcls = reg.get(proto)?;
+        let mut has_non_method_member = false;
+        let mut required: Vec<String> = pcls
+            .methods
+            .keys()
+            .filter(|n| !(n.starts_with("__") && n.ends_with("__")))
+            .cloned()
+            .collect();
+        for name in pcls.class_attrs.keys() {
+            if !(name.starts_with("__") && name.ends_with("__")) {
+                required.push(name.clone());
+                has_non_method_member = true;
+            }
+        }
+        if let Some(anns) = pcls.class_attrs.get("__annotations__") {
+            if let Some(ptr) = anns.as_ptr() {
+                unsafe {
+                    if let ObjData::Dict(ref lock) = (*ptr).data {
+                        for k in lock.read().unwrap().keys() {
+                            if let super::dict_ops::DictKey::Str(s) = k {
+                                if !(s.starts_with("__") && s.ends_with("__")) {
+                                    required.push(s.clone());
+                                    has_non_method_member = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        required.sort();
+        required.dedup();
+        Some((required, has_non_method_member))
+    })
+}
+
+fn protocol_has_non_method_members(proto: &str) -> bool {
+    protocol_required_members(proto).is_some_and(|(_, has_data)| has_data)
+}
+
 /// Structural isinstance: does `obj` (its class MRO + its own instance fields)
 /// provide every non-dunder member declared by runtime-checkable Protocol
 /// `proto` — including data members declared as annotations (`name: str`)?
@@ -557,41 +600,16 @@ fn protocol_structural_match(obj: MbValue, obj_class: &str, proto: &str) -> bool
             }
         })
         .unwrap_or_default();
+    let Some((required, _)) = protocol_required_members(proto) else {
+        return false;
+    };
+    if required.is_empty() {
+        // An empty Protocol matches any object (CPython: all objects satisfy a
+        // member-less runtime_checkable Protocol).
+        return true;
+    }
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
-        let Some(pcls) = reg.get(proto) else {
-            return false;
-        };
-        // Required members: the Protocol's own non-dunder method/attr names...
-        let mut required: Vec<String> = pcls
-            .methods
-            .keys()
-            .chain(pcls.class_attrs.keys())
-            .filter(|n| !(n.starts_with("__") && n.ends_with("__")))
-            .cloned()
-            .collect();
-        // ...plus annotation-only DATA members, which live as keys inside the
-        // class's `__annotations__` dict rather than as class_attrs.
-        if let Some(anns) = pcls.class_attrs.get("__annotations__") {
-            if let Some(ptr) = anns.as_ptr() {
-                unsafe {
-                    if let ObjData::Dict(ref lock) = (*ptr).data {
-                        for k in lock.read().unwrap().keys() {
-                            if let super::dict_ops::DictKey::Str(s) = k {
-                                if !(s.starts_with("__") && s.ends_with("__")) {
-                                    required.push(s.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if required.is_empty() {
-            // An empty Protocol matches any object (CPython: all objects
-            // satisfy a member-less runtime_checkable Protocol).
-            return true;
-        }
         // The candidate's MRO (itself + ancestors); fall back to just itself
         // when unregistered.
         let chain: Vec<String> = reg
@@ -609,6 +627,34 @@ fn protocol_structural_match(obj: MbValue, obj_class: &str, proto: &str) -> bool
                         c.methods.contains_key(member) || c.class_attrs.contains_key(member)
                     })
                 })
+        };
+        required.iter().all(|m| provides(m))
+    })
+}
+
+fn protocol_structural_subclass(child_name: &str, proto: &str) -> bool {
+    let Some((required, _)) = protocol_required_members(proto) else {
+        return false;
+    };
+    if required.is_empty() {
+        return true;
+    }
+    CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let chain: Vec<String> = reg
+            .get(child_name)
+            .map(|c| {
+                let mut v = vec![child_name.to_string()];
+                v.extend(c.mro.iter().cloned());
+                v
+            })
+            .unwrap_or_else(|| vec![child_name.to_string()]);
+        let provides = |member: &str| -> bool {
+            chain.iter().any(|cn| {
+                reg.get(cn).map_or(false, |c| {
+                    c.methods.contains_key(member) || c.class_attrs.contains_key(member)
+                })
+            })
         };
         required.iter().all(|m| provides(m))
     })
@@ -12457,6 +12503,32 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
     {
         super::builtins::raise_type_error("issubclass() arg 1 must be a class".to_string());
         return MbValue::none();
+    }
+    if !parent_name.is_empty()
+        && class_mro_list(&parent_name)
+            .iter()
+            .any(|b| b == "Protocol" || b == "typing.Protocol")
+    {
+        if !is_runtime_checkable_protocol(&parent_name) {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "Instance and class checks can only be used with @runtime_checkable protocols"
+                        .to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+        if protocol_has_non_method_members(&parent_name) {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "Protocols with non-method members don't support issubclass()".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+        return MbValue::from_bool(protocol_structural_subclass(&child_name, &parent_name));
     }
     // Metaclass __subclasscheck__: issubclass(S, C) defers to
     // type(C).__subclasscheck__(C, S) when the metaclass defines it.
