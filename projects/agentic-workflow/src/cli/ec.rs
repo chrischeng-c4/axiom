@@ -3172,7 +3172,10 @@ fn generated_ec_test_files(
 
 fn render_ec_test(ctx: &EcProjectContext, case: &EcManifestCase) -> String {
     match ctx.target.as_str() {
-        "rust" => render_rust_ec_test(case),
+        // Format the rendered Rust wrapper so the manifest content, the written
+        // file, and `ec check`'s re-render all share rustfmt-stable bytes —
+        // `cargo fmt --check` and `aw ec check` then agree (issue #160).
+        "rust" => crate::generate::apply::format_rust_source(&render_rust_ec_test(case)),
         "python" => render_python_ec_test(case),
         "typescript" | "javascript" | "ts" | "js" => render_ts_ec_test(case),
         _ => render_text_ec_test(case),
