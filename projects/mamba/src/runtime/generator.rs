@@ -403,9 +403,7 @@ fn generator_is_running(id: u64) -> bool {
 fn raise_generator_already_executing() -> MbValue {
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(
-            "generator already executing".to_string(),
-        )),
+        MbValue::from_ptr(MbObject::new_str("generator already executing".to_string())),
     );
     MbValue::none()
 }
@@ -1265,6 +1263,13 @@ pub fn mb_generator_yield_value(value: MbValue) -> MbValue {
 
 /// Yield from a sub-iterator/generator. Called from compiled code.
 pub fn mb_generator_yield_from(sub_iter: MbValue) -> MbValue {
+    if super::async_rt::is_known_coroutine(sub_iter) {
+        if !active_generator_is_coroutine() {
+            return raise_yield_from_coroutine_in_plain_generator();
+        }
+        return yield_from_coroutine(sub_iter);
+    }
+
     // If sub_iter is a generator handle, delegate yield
     if sub_iter.is_int() && is_known_generator(sub_iter) {
         return yield_from_generator(sub_iter);
@@ -1303,6 +1308,24 @@ pub fn mb_generator_yield_from(sub_iter: MbValue) -> MbValue {
     MbValue::none()
 }
 
+fn active_generator_is_coroutine() -> bool {
+    GEN_ACTIVE.with(|active| {
+        active.active_id.get().is_some_and(|id| {
+            super::stdlib::types_mod::is_coroutine_generator(MbValue::from_int(id as i64))
+        })
+    })
+}
+
+fn raise_yield_from_coroutine_in_plain_generator() -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "cannot 'yield from' a coroutine object in a non-coroutine generator".to_string(),
+        )),
+    );
+    MbValue::none()
+}
+
 fn raise_yield_from_missing_send() {
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
@@ -1310,6 +1333,40 @@ fn raise_yield_from_missing_send() {
             "'iterator' object has no attribute 'send'".to_string(),
         )),
     );
+}
+
+fn finish_yield_from_coroutine() -> MbValue {
+    let ret_val = super::async_task::stop_iteration_exception_value();
+    super::exception::mb_clear_exception();
+    ret_val
+}
+
+fn yield_from_coroutine(sub_coro: MbValue) -> MbValue {
+    let mut val = super::async_rt::mb_coroutine_send(sub_coro, MbValue::none());
+
+    loop {
+        match super::exception::current_exception_type().as_deref() {
+            Some("StopIteration") => return finish_yield_from_coroutine(),
+            Some(_) => return MbValue::none(),
+            None => {}
+        }
+
+        let sent = mb_generator_yield_value(val);
+
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            let exc_val = super::exception::mb_catch_exception();
+            let exc_type_str = super::exception::get_exception_type_pub(exc_val)
+                .unwrap_or_else(|| "Exception".to_string());
+            let exc_msg_str =
+                super::exception::get_exception_message_pub(exc_val).unwrap_or_default();
+            let type_vreg = MbValue::from_ptr(MbObject::new_str(exc_type_str));
+            let msg_vreg = MbValue::from_ptr(MbObject::new_str(exc_msg_str));
+            val = super::async_rt::mb_coroutine_throw(sub_coro, type_vreg, msg_vreg);
+            continue;
+        }
+
+        val = super::async_rt::mb_coroutine_send(sub_coro, sent);
+    }
 }
 
 /// Yield from a sub-generator, properly forwarding send/throw/close.
@@ -1480,9 +1537,16 @@ fn call_body_fn(fn_addr: u64, args: &[MbValue]) -> MbValue {
 fn raise_stop_iteration(return_value: MbValue) {
     super::iter::signal_stop_iteration();
     LAST_STOP_VALUE.with(|v| v.set(return_value.to_bits()));
-    let exc_type = MbValue::from_ptr(MbObject::new_str("StopIteration".to_string()));
-    let exc_msg = MbValue::from_ptr(MbObject::new_str(String::new()));
-    super::exception::mb_raise(exc_type, exc_msg);
+    if return_value.is_none() {
+        let exc_type = MbValue::from_ptr(MbObject::new_str("StopIteration".to_string()));
+        let exc_msg = MbValue::from_ptr(MbObject::new_str(String::new()));
+        super::exception::mb_raise(exc_type, exc_msg);
+    } else {
+        let exc_type = MbValue::from_ptr(MbObject::new_str("StopIteration".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![return_value]));
+        let instance = super::exception::mb_exception_new_with_args(exc_type, args);
+        super::class::mb_raise_instance(instance);
+    }
     LAST_STOP_VALUE.with(|v| v.set(return_value.to_bits()));
 }
 

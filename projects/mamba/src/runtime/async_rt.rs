@@ -153,6 +153,10 @@ thread_local! {
     static CURRENT_COROUTINE_ID: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
+pub(crate) fn has_current_coroutine() -> bool {
+    CURRENT_COROUTINE_ID.with(|cell| cell.get().is_some())
+}
+
 /// Advance a coroutine to its next suspension point.
 /// If the coroutine has a registered body function and hasn't started yet
 /// (state == 0), calls the body function to execute it (#313 R1).
@@ -395,6 +399,40 @@ pub fn mb_coroutine_awaited(coro_handle: MbValue) -> MbValue {
         })
         .unwrap_or(false);
     MbValue::from_bool(awaited)
+}
+
+pub fn mb_coroutine_await_wrapper(coro_handle: MbValue) -> MbValue {
+    let wrapper = MbObject::new_instance("coroutine_wrapper".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*wrapper).data {
+            fields
+                .write()
+                .unwrap()
+                .insert("__coro__".to_string(), coro_handle);
+        }
+    }
+    MbValue::from_ptr(wrapper)
+}
+
+pub fn coroutine_wrapper_target(wrapper: MbValue) -> Option<MbValue> {
+    let ptr = wrapper.as_ptr()?;
+    unsafe {
+        let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        else {
+            return None;
+        };
+        if class_name != "coroutine_wrapper" {
+            return None;
+        }
+        fields.read().unwrap().get("__coro__").copied()
+    }
+}
+
+pub fn is_coroutine_wrapper(wrapper: MbValue) -> bool {
+    coroutine_wrapper_target(wrapper).is_some()
 }
 
 pub(crate) fn mb_coroutine_suspend_current(awaitable: MbValue) {
