@@ -38,6 +38,7 @@ pub mod td_lock;
 pub mod td_migrate;
 pub mod update;
 pub mod validate_spec_structure;
+pub mod view;
 pub mod workflow_guard;
 
 // Legacy modules kept for init.rs / update.rs dependencies

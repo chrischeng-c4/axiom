@@ -1510,6 +1510,7 @@ fn extract_e2e_cases_from_markdown(
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
                     .unwrap_or_else(|| default_ec_command(ctx, &ctx.project_root.join(&test_path)));
+                let command = normalize_ec_command(command);
                 let assertions = raw
                     .assertions
                     .or(raw.asserts)
@@ -2881,21 +2882,33 @@ fn run_ec_verify_command(
         .current_dir(project_root)
         .output();
     match output {
-        Ok(output) => EcVerifyCommandResult {
-            case_id,
-            capability_id,
-            claim_id,
-            category,
-            command,
-            status: if output.status.success() {
+        Ok(output) => {
+            let false_green = ec_false_green_reason(&command, &output.stdout, &output.stderr);
+            let status = if output.status.success() && false_green.is_none() {
                 "passed".to_string()
             } else {
                 "failed".to_string()
-            },
-            exit_code: output.status.code(),
-            stdout_tail: tail_lossy(&output.stdout, 4000),
-            stderr_tail: tail_lossy(&output.stderr, 4000),
-        },
+            };
+            let mut stderr_tail = tail_lossy(&output.stderr, 4000);
+            if let Some(reason) = false_green {
+                if stderr_tail.trim().is_empty() {
+                    stderr_tail = reason;
+                } else {
+                    stderr_tail = format!("{reason}\n{stderr_tail}");
+                }
+            }
+            EcVerifyCommandResult {
+                case_id,
+                capability_id,
+                claim_id,
+                category,
+                command,
+                status,
+                exit_code: output.status.code(),
+                stdout_tail: tail_lossy(&output.stdout, 4000),
+                stderr_tail,
+            }
+        }
         Err(err) => EcVerifyCommandResult {
             case_id,
             capability_id,
@@ -2908,6 +2921,98 @@ fn run_ec_verify_command(
             stderr_tail: err.to_string(),
         },
     }
+}
+
+fn normalize_ec_command(command: String) -> String {
+    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() < 4 || tokens.first() != Some(&"cargo") || tokens.get(1) != Some(&"test") {
+        return command;
+    }
+    let cargo_args_end = tokens
+        .iter()
+        .position(|token| *token == "--")
+        .unwrap_or(tokens.len());
+    if tokens[..cargo_args_end].iter().any(|token| {
+        matches!(
+            *token,
+            "--lib"
+                | "--bin"
+                | "--bins"
+                | "--example"
+                | "--examples"
+                | "--test"
+                | "--tests"
+                | "--bench"
+                | "--benches"
+                | "--all-targets"
+                | "--doc"
+        )
+    }) {
+        return command;
+    }
+
+    let mut idx = 2usize;
+    let mut filter_idx = None;
+    while idx < cargo_args_end {
+        match tokens[idx] {
+            "-p" | "--package" => idx += 2,
+            "--manifest-path" | "--target" | "--features" => idx += 2,
+            "--workspace" | "--all" | "--locked" | "--offline" | "--quiet" | "-q" => idx += 1,
+            token if token.starts_with('-') => idx += 1,
+            _ => {
+                filter_idx = Some(idx);
+                break;
+            }
+        }
+    }
+    let Some(filter_idx) = filter_idx else {
+        return command;
+    };
+
+    let mut normalized = Vec::with_capacity(tokens.len() + 1);
+    normalized.extend_from_slice(&tokens[..filter_idx]);
+    normalized.push("--lib");
+    normalized.extend_from_slice(&tokens[filter_idx..]);
+    normalized.join(" ")
+}
+
+fn ec_false_green_reason(command: &str, stdout: &[u8], stderr: &[u8]) -> Option<String> {
+    if !looks_like_cargo_test_command(command) {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(stdout);
+    let stderr = String::from_utf8_lossy(stderr);
+    match cargo_test_executed_count(&stdout, &stderr) {
+        Some(0) => Some(format!(
+            "cargo test command passed but executed 0 tests; refusing EC false green: {command}"
+        )),
+        _ => None,
+    }
+}
+
+fn looks_like_cargo_test_command(command: &str) -> bool {
+    command.contains("cargo test")
+}
+
+fn cargo_test_executed_count(stdout: &str, stderr: &str) -> Option<usize> {
+    let mut total = 0usize;
+    let mut saw_count = false;
+    for line in stdout.lines().chain(stderr.lines()) {
+        let Some(count) = parse_cargo_running_test_count(line) else {
+            continue;
+        };
+        total = total.saturating_add(count);
+        saw_count = true;
+    }
+    saw_count.then_some(total)
+}
+
+fn parse_cargo_running_test_count(line: &str) -> Option<usize> {
+    let rest = line.trim().strip_prefix("running ")?;
+    let number = rest
+        .strip_suffix(" tests")
+        .or_else(|| rest.strip_suffix(" test"))?;
+    number.trim().parse().ok()
 }
 
 fn compare_case_field(
@@ -3296,17 +3401,48 @@ fn __FN__() {
             env!("CARGO_MANIFEST_DIR")
         );
     }
-    let status = std::process::Command::new("sh")
+    let output = std::process::Command::new("sh")
         .arg("-c")
         .arg(command)
         .current_dir(&root)
-        .status()
+        .output()
         .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success()
+        && aw_ec_cargo_test_executed_count(command, &stdout, &stderr) == Some(0)
+    {
+        panic!("AW EC {id} FAILED: cargo test command passed but executed 0 tests: {command}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+    }
     assert!(
-        status.success(),
-        "AW EC {id} FAILED (exit {:?}): {command}",
-        status.code()
+        output.status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status.code()
     );
+}
+
+fn aw_ec_cargo_test_executed_count(command: &str, stdout: &str, stderr: &str) -> Option<usize> {
+    if !command.contains("cargo test") {
+        return None;
+    }
+    let mut total = 0usize;
+    let mut saw_count = false;
+    for line in stdout.lines().chain(stderr.lines()) {
+        let Some(count) = aw_ec_parse_cargo_running_test_count(line) else {
+            continue;
+        };
+        total = total.saturating_add(count);
+        saw_count = true;
+    }
+    saw_count.then_some(total)
+}
+
+fn aw_ec_parse_cargo_running_test_count(line: &str) -> Option<usize> {
+    let rest = line.trim().strip_prefix("running ")?;
+    let number = rest
+        .strip_suffix(" tests")
+        .or_else(|| rest.strip_suffix(" test"))?;
+    number.trim().parse().ok()
 }
 "#;
 
@@ -3636,8 +3772,7 @@ e2e_tests:
         earlier.assertions = vec!["old assertion".into()];
 
         let mut later = case("library-dom-wasm-parity", "unmapped", "behavior");
-        later.td_ref =
-            ".aw/tech-design/projects/jet/specs/4072.md#library-dom-wasm-parity".into();
+        later.td_ref = ".aw/tech-design/projects/jet/specs/4072.md#library-dom-wasm-parity".into();
         later.assertions = vec!["new assertion".into()];
 
         let cases = canonicalize_ec_cases(vec![later.clone(), earlier]);
@@ -3764,6 +3899,22 @@ e2e_tests:
     }
 
     #[test]
+    fn ec_command_normalization_targets_lib_for_cargo_test_filter() {
+        assert_eq!(
+            normalize_ec_command(
+                "cargo test -p agentic-workflow artifact_quality -- --nocapture".to_string()
+            ),
+            "cargo test -p agentic-workflow --lib artifact_quality -- --nocapture"
+        );
+        assert_eq!(
+            normalize_ec_command(
+                "cargo test -p agentic-workflow --test behavior_aw_view -- --ignored".to_string()
+            ),
+            "cargo test -p agentic-workflow --test behavior_aw_view -- --ignored"
+        );
+    }
+
+    #[test]
     fn derive_required_for_production_uses_type_ceiling_for_declared_ec_cases() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join(".aw")).unwrap();
@@ -3881,7 +4032,7 @@ edition = "2021"
         assert_eq!(case.category, "behavior");
         assert_eq!(
             case.command,
-            "cargo test -p demo-crate demo_happy_path -- --nocapture"
+            "cargo test -p demo-crate --lib demo_happy_path -- --nocapture"
         );
         assert_eq!(case.assertions.len(), 2);
         assert_eq!(case.evidence.len(), 3);
@@ -4249,6 +4400,62 @@ e2e_tests:
         assert_eq!(summary.command_count, 1);
         assert_eq!(summary.passed_count, 1);
         assert_eq!(summary.results[0].claim_id, "demo-smoke");
+    }
+
+    #[test]
+    fn ec_verify_rejects_zero_test_false_green() {
+        use std::os::unix::fs::PermissionsExt;
+
+        assert_eq!(
+            normalize_ec_command(
+                "cargo test -p agentic-workflow artifact_quality -- --nocapture".to_string()
+            ),
+            "cargo test -p agentic-workflow --lib artifact_quality -- --nocapture"
+        );
+
+        let (tmp, ctx) = write_demo_repo();
+        let fake_bin = tmp.path().join("bin");
+        fs::create_dir_all(&fake_bin).unwrap();
+        let fake_cargo = fake_bin.join("cargo");
+        fs::write(
+            &fake_cargo,
+            "#!/bin/sh\nprintf 'running 0 tests\\n\\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s\\n'\nexit 0\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&fake_cargo).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_cargo, perms).unwrap();
+
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("projects/demo/external-contracts/behavior/zero.md"),
+            format!(
+                r#"
+## Zero
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: zero false green
+    capability_id: demo
+    claim_id: demo-zero
+    command: "PATH={}:$PATH cargo test -p demo missing_filter"
+```
+"#,
+                fake_bin.display()
+            ),
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx).unwrap();
+
+        assert!(!summary.clean, "{:?}", summary.results);
+        assert_eq!(summary.command_count, 1);
+        assert_eq!(summary.failed_count, 1);
+        assert!(summary.results[0].stderr_tail.contains("executed 0 tests"));
     }
 
     #[test]
