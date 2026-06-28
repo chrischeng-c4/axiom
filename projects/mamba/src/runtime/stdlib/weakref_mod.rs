@@ -2,7 +2,7 @@
 // integration still required. Mamba now has a small refcount/GC collection
 // notification path for selected proxy wrappers, so dead proxy access can
 // raise ReferenceError for covered referents, and a narrow global-liveness
-// sweep fires weakref.ref callbacks for covered module-global referents. Most
+// sweep expires weakref.ref objects for covered module-global referents. Most
 // weakref container, finalize, and general ref-expiry semantics still use
 // strong stubs that preserve API shape without the full CPython contract.
 // Closing the remaining gap requires broader liveness tracking.
@@ -35,7 +35,7 @@ use rustc_hash::FxHashMap;
 /// proxy-death and module-global ref-callback subsets:
 ///
 ///   - `ref(obj, callback=None)`: returns an Instance carrying a strong
-///     pointer to `obj` for most referents. Callbacks are stored and fired
+///     pointer to `obj` for most referents. Refs expire, and callbacks fire,
 ///     only for the covered module-global liveness sweep.
 ///   - `proxy(obj, callback=None)`: returns `obj` unchanged for legacy
 ///     live-object alias cases. Hash-sensitive and socket referents receive a
@@ -359,7 +359,7 @@ pub(crate) fn expire_unbound_ref_callbacks() {
             .collect()
     });
     for wref in refs {
-        if ref_callback(wref).is_none() || !ref_tracks_global_liveness(wref) {
+        if !ref_tracks_global_liveness(wref) {
             continue;
         }
         let target = reference_target(wref);
@@ -1730,6 +1730,25 @@ mod tests {
 
         expire_unbound_ref_callbacks();
         assert_eq!(REF_CALLBACK_COUNT.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_plain_ref_expires_after_global_rebind() {
+        let obj = target();
+        let global_id = MbValue::from_bits(9022);
+        crate::runtime::closure::mb_global_set_id(global_id, obj);
+        let wref = mb_weakref_ref(obj, MbValue::none());
+
+        expire_unbound_ref_callbacks();
+        let alive = reference_target(wref);
+        assert_eq!(alive.as_ptr(), obj.as_ptr());
+        unsafe {
+            crate::runtime::rc::release_if_ptr(alive);
+        }
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        expire_unbound_ref_callbacks();
+        assert!(reference_target(wref).is_none());
     }
 
     #[test]
