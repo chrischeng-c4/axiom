@@ -114,6 +114,11 @@ pub(crate) fn repr_string_from_codepoints(codepoints: &[u32]) -> String {
     format!("{quote_char}{escaped}{quote_char}")
 }
 
+pub(crate) fn repr_string(s: &str) -> String {
+    let codepoints: Vec<u32> = s.chars().map(|c| c as u32).collect();
+    repr_string_from_codepoints(&codepoints)
+}
+
 pub(crate) fn ascii_string_from_codepoints(codepoints: &[u32]) -> String {
     format!("'{}'", escape_codepoints_non_ascii(codepoints))
 }
@@ -149,6 +154,10 @@ fn push_escaped_codepoint(
         cp if cp < 0x20 || (0x7F..=0x9F).contains(&cp) => push_codepoint_escape(out, cp),
         cp => {
             if let Some(c) = char::from_u32(cp) {
+                if !is_python_printable_char(c) {
+                    push_codepoint_escape(out, cp);
+                    return;
+                }
                 if c == quote_char && !use_double {
                     out.push('\\');
                 }
@@ -158,6 +167,22 @@ fn push_escaped_codepoint(
             }
         }
     }
+}
+
+fn is_python_printable_char(c: char) -> bool {
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    c == ' '
+        || !matches!(
+            c.general_category(),
+            GeneralCategory::SpaceSeparator
+                | GeneralCategory::LineSeparator
+                | GeneralCategory::ParagraphSeparator
+                | GeneralCategory::Control
+                | GeneralCategory::Format
+                | GeneralCategory::Surrogate
+                | GeneralCategory::PrivateUse
+                | GeneralCategory::Unassigned
+        )
 }
 
 fn push_codepoint_escape(out: &mut String, codepoint: u32) {
@@ -1517,26 +1542,12 @@ pub fn mb_str_isdecimal(s: MbValue) -> MbValue {
 /// str.isprintable() — True if all chars are printable. Empty string is True.
 /// CPython treats space (U+0020) as printable but other whitespace as not.
 pub fn mb_str_isprintable(s: MbValue) -> MbValue {
-    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
     if is_surrogate_backed_string(s) {
         return MbValue::from_bool(false);
     }
     unsafe {
         if let Some(st) = as_str(s) {
-            MbValue::from_bool(st.chars().all(|c| {
-                c == ' '
-                    || !matches!(
-                        c.general_category(),
-                        GeneralCategory::SpaceSeparator
-                            | GeneralCategory::LineSeparator
-                            | GeneralCategory::ParagraphSeparator
-                            | GeneralCategory::Control
-                            | GeneralCategory::Format
-                            | GeneralCategory::Surrogate
-                            | GeneralCategory::PrivateUse
-                            | GeneralCategory::Unassigned
-                    )
-            }))
+            MbValue::from_bool(st.chars().all(is_python_printable_char))
         } else {
             MbValue::from_bool(false)
         }
@@ -4504,33 +4515,7 @@ fn repr_in_container(val: MbValue) -> String {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::Str(s) => {
-                    let has_single = s.contains('\'');
-                    let has_double = s.contains('"');
-                    let use_double = has_single && !has_double;
-                    let quote_char = if use_double { '"' } else { '\'' };
-                    let mut escaped = String::with_capacity(s.len() + 2);
-                    for c in s.chars() {
-                        match c {
-                            '\\' => escaped.push_str("\\\\"),
-                            '\'' if !use_double => escaped.push_str("\\'"),
-                            '"' if use_double => escaped.push_str("\\\""),
-                            '\n' => escaped.push_str("\\n"),
-                            '\r' => escaped.push_str("\\r"),
-                            '\t' => escaped.push_str("\\t"),
-                            c if c.is_control() => {
-                                let cp = c as u32;
-                                if cp < 0x100 {
-                                    escaped.push_str(&format!("\\x{:02x}", cp));
-                                } else {
-                                    escaped.push_str(&format!("\\u{:04x}", cp));
-                                }
-                            }
-                            c => escaped.push(c),
-                        }
-                    }
-                    return format!("{quote_char}{escaped}{quote_char}");
-                }
+                ObjData::Str(s) => return repr_string(s),
                 ObjData::Instance { class_name, .. } => {
                     // In container context Python uses repr, not str — prefer
                     // __repr__ so `print([obj])` shows obj.__repr__() for each

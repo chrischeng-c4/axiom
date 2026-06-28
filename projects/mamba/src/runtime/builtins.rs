@@ -762,24 +762,7 @@ fn print_repr(val: MbValue) {
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => {
-                    let has_single = s.contains('\'');
-                    let has_double = s.contains('"');
-                    let use_double = has_single && !has_double;
-                    let quote_char = if use_double { '"' } else { '\'' };
-                    mb_out!("{}", quote_char);
-                    for c in s.chars() {
-                        match c {
-                            '\\' => mb_out!("\\\\"),
-                            '\'' if !use_double => mb_out!("\\'"),
-                            '"' if use_double => mb_out!("\\\""),
-                            '\n' => mb_out!("\\n"),
-                            '\r' => mb_out!("\\r"),
-                            '\t' => mb_out!("\\t"),
-                            c if (c as u32) < 0x20 => mb_out!("\\x{:02x}", c as u32),
-                            c => mb_out!("{}", c),
-                        }
-                    }
-                    mb_out!("{}", quote_char);
+                    mb_out!("{}", super::string_ops::repr_string(s));
                 }
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
@@ -6167,42 +6150,7 @@ pub fn mb_repr(val: MbValue) -> MbValue {
         }
         unsafe {
             match &(*ptr).data {
-                ObjData::Str(s) => {
-                    // CPython quoting: use single quotes unless string contains '
-                    // but not ", in which case use double quotes.
-                    let has_single = s.contains('\'');
-                    let has_double = s.contains('"');
-                    let use_double = has_single && !has_double;
-                    let quote_char = if use_double { '"' } else { '\'' };
-
-                    let mut escaped = String::with_capacity(s.len() + 2);
-                    for c in s.chars() {
-                        match c {
-                            '\\' => escaped.push_str("\\\\"),
-                            '\'' if !use_double => escaped.push_str("\\'"),
-                            '"' if use_double => escaped.push_str("\\\""),
-                            '\n' => escaped.push_str("\\n"),
-                            '\r' => escaped.push_str("\\r"),
-                            '\t' => escaped.push_str("\\t"),
-                            '\x07' => escaped.push_str("\\a"),
-                            '\x08' => escaped.push_str("\\b"),
-                            '\x0C' => escaped.push_str("\\f"),
-                            '\x0B' => escaped.push_str("\\v"),
-                            c if c.is_control() => {
-                                // C0 (0x00-0x1f) and C1 (0x7f-0x9f) — escape
-                                // as \xNN; higher Unicode controls as \uNNNN.
-                                let cp = c as u32;
-                                if cp < 0x100 {
-                                    escaped.push_str(&format!("\\x{:02x}", cp));
-                                } else {
-                                    escaped.push_str(&format!("\\u{:04x}", cp));
-                                }
-                            }
-                            c => escaped.push(c),
-                        }
-                    }
-                    format!("{quote_char}{escaped}{quote_char}")
-                }
+                ObjData::Str(s) => super::string_ops::repr_string(s),
                 ObjData::Bytes(data) => format!("b{}", format_bytes_inner(data)),
                 ObjData::ByteArray(ref lock) => {
                     let data = lock.read().unwrap();
@@ -13685,6 +13633,22 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref s) = (*r.as_ptr().unwrap()).data {
                 assert_eq!(s, "'hi'");
+            }
+        }
+
+        let printable = MbValue::from_ptr(MbObject::new_str("café".to_string()));
+        let r = mb_repr(printable);
+        unsafe {
+            if let ObjData::Str(ref s) = (*r.as_ptr().unwrap()).data {
+                assert_eq!(s, "'café'");
+            }
+        }
+
+        let unassigned = MbValue::from_ptr(MbObject::new_str("\u{0378}".to_string()));
+        let r = mb_repr(unassigned);
+        unsafe {
+            if let ObjData::Str(ref s) = (*r.as_ptr().unwrap()).data {
+                assert_eq!(s, "'\\u0378'");
             }
         }
     }
