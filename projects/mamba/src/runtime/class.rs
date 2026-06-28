@@ -215,6 +215,19 @@ pub(crate) fn class_members(class_name: &str) -> Vec<(String, MbValue)> {
                 }
             }
         }
+        if let Some(slots_value) = class_slots_value(class_name) {
+            if seen.insert("__slots__".to_string()) {
+                out.push(("__slots__".to_string(), slots_value));
+            }
+        }
+        for slot in class_slot_names(class_name) {
+            if slot == "__dict__" || slot == "__weakref__" {
+                continue;
+            }
+            if seen.insert(slot.clone()) {
+                out.push((slot.clone(), make_member_descriptor(class_name, &slot)));
+            }
+        }
         out
     })
 }
@@ -5842,6 +5855,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             .ok()
                             .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
                         {
+                            if attr_name == "__slots__" {
+                                if let Some(slots) = class_slots_value(&type_name_str) {
+                                    return slots;
+                                }
+                            }
                             if attr_name == "register" && is_collections_abc_name(&type_name_str) {
                                 return make_abc_register_method(&type_name_str);
                             }
@@ -5887,8 +5905,29 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 }
                             }
                             if let Some(val) = mro_lookup_class_attr(&type_name_str, &attr_name) {
-                                super::rc::retain_if_ptr(val);
-                                return val;
+                                let (unwrapped, descriptor_kind) = unwrap_descriptor_method(val);
+                                match descriptor_kind {
+                                    DescriptorKind::ClassMethod => {
+                                        return make_bound_method(
+                                            unwrapped,
+                                            make_type_object(&type_name_str),
+                                        );
+                                    }
+                                    DescriptorKind::StaticMethod => {
+                                        super::rc::retain_if_ptr(unwrapped);
+                                        return unwrapped;
+                                    }
+                                    DescriptorKind::Regular => {
+                                        super::rc::retain_if_ptr(val);
+                                        return val;
+                                    }
+                                }
+                            }
+                            if class_slot_names(&type_name_str)
+                                .iter()
+                                .any(|n| n == &attr_name)
+                            {
+                                return make_member_descriptor(&type_name_str, &attr_name);
                             }
                             // A registered native class's method accessed on its
                             // type-object (`unittest.TestCase.assertEqual`) is an
@@ -5908,7 +5947,20 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 );
                             }
                             if class_is_registered(&type_name_str) && !method.is_none() {
-                                return make_unbound_method(&type_name_str, &attr_name);
+                                let (unwrapped, descriptor_kind) = unwrap_descriptor_method(method);
+                                return match descriptor_kind {
+                                    DescriptorKind::ClassMethod => make_bound_method(
+                                        unwrapped,
+                                        make_type_object(&type_name_str),
+                                    ),
+                                    DescriptorKind::StaticMethod => {
+                                        super::rc::retain_if_ptr(unwrapped);
+                                        unwrapped
+                                    }
+                                    DescriptorKind::Regular => {
+                                        make_unbound_method(&type_name_str, &attr_name)
+                                    }
+                                };
                             }
                             if let Some(method) =
                                 inherited_builtin_unbound_method(&type_name_str, &attr_name)
@@ -6240,6 +6292,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     {
                         return make_bound_native_method(obj, &attr_name);
                     }
+                    if class_name == "member_descriptor"
+                        && matches!(attr_name.as_str(), "__get__" | "__set__" | "__delete__")
+                    {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
                     // R13: __dict__ access suppression.
                     // If class defines __slots__ without '__dict__', raise AttributeError for __dict__.
                     if attr_name == "__dict__" {
@@ -6486,6 +6543,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                     return MbValue::from_ptr(super::rc::MbObject::new_tuple(
                                         items,
                                     ));
+                                }
+                            }
+                            "__slots__" => {
+                                if let Some(slots) = class_slots_value(s) {
+                                    return slots;
                                 }
                             }
                             "register" if is_user_abc(s) => {
@@ -7184,7 +7246,8 @@ fn is_descriptor(val: MbValue) -> bool {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                return class_name == "__property__"
+                return class_name == "member_descriptor"
+                    || class_name == "__property__"
                     || class_name == "__classmethod__"
                     || class_name == "__staticmethod__"
                     || class_name == "__cached_property__"
@@ -7202,7 +7265,8 @@ fn is_data_descriptor(val: MbValue) -> bool {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                return class_name == "__property__"
+                return class_name == "member_descriptor"
+                    || class_name == "__property__"
                     || !lookup_method(class_name, "__set__").is_none()
                     || !lookup_method(class_name, "__delete__").is_none();
             }
@@ -7216,6 +7280,9 @@ fn invoke_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
     if let Some(ptr) = desc.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "member_descriptor" {
+                    return member_descriptor_get(desc, instance);
+                }
                 if class_name == "__property__" {
                     return mb_property_get(desc, instance);
                 }
@@ -7298,6 +7365,10 @@ fn invoke_descriptor_set(desc: MbValue, instance: MbValue, value: MbValue) {
     if let Some(ptr) = desc.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "member_descriptor" {
+                    member_descriptor_set(desc, instance, value);
+                    return;
+                }
                 if class_name == "__property__" {
                     mb_property_set(desc, instance, value);
                     return;
@@ -7322,6 +7393,10 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
     if let Some(ptr) = desc.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "member_descriptor" {
+                    member_descriptor_delete(desc, instance);
+                    return;
+                }
                 if class_name == "__property__" {
                     // property.__delete__: call fdel(instance).
                     // Match mb_property_set's dual-path dispatch: TAG_FUNC
@@ -8398,6 +8473,40 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                     );
                     return;
                 }
+                if class_name == "type"
+                    && !matches!(
+                        attr_name.as_str(),
+                        "__class__"
+                            | "__name__"
+                            | "__qualname__"
+                            | "__module__"
+                            | "__doc__"
+                            | "__bases__"
+                            | "__mro__"
+                            | "__dict__"
+                            | "__abstractmethods__"
+                            | "__subclasscheck__"
+                            | "__instancecheck__"
+                    )
+                {
+                    if let Some(type_name) = fields
+                        .read()
+                        .unwrap()
+                        .get("__name__")
+                        .and_then(|value| extract_str(*value))
+                    {
+                        let is_class =
+                            CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(&type_name));
+                        if is_class {
+                            mb_class_set_class_attr(
+                                MbValue::from_ptr(MbObject::new_str(type_name)),
+                                attr,
+                                value,
+                            );
+                            return;
+                        }
+                    }
+                }
                 if matches!(attr_name.as_str(), "message" | "exceptions")
                     && (class_name == "ExceptionGroup"
                         || class_name == "BaseExceptionGroup"
@@ -8976,6 +9085,9 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
                 {
                     return MbValue::from_bool(true);
                 }
+                if attr_name == "__slots__" && class_slots_value(&type_name).is_some() {
+                    return MbValue::from_bool(true);
+                }
                 // A stdlib exception modeled as a type-object Instance (e.g.
                 // ET.ParseError) may seed chaining dunders (__cause__ /
                 // __context__ / __suppress_context__) directly in its OWN
@@ -9371,6 +9483,24 @@ pub(crate) fn class_own_members(class_name: &str) -> Vec<(String, MbValue, bool)
             .map(|(k, v)| (k.clone(), *v, true))
             .collect();
         out.extend(cls.class_attrs.iter().map(|(k, v)| (k.clone(), *v, false)));
+        let mut seen: HashSet<String> = out.iter().map(|(k, _, _)| k.clone()).collect();
+        if let Some(slots_value) = class_slots_value(class_name) {
+            if seen.insert("__slots__".to_string()) {
+                out.push(("__slots__".to_string(), slots_value, false));
+            }
+        }
+        for slot in class_slot_names(class_name) {
+            if slot == "__dict__" || slot == "__weakref__" {
+                continue;
+            }
+            if seen.insert(slot.clone()) {
+                out.push((
+                    slot.clone(),
+                    make_member_descriptor(class_name, &slot),
+                    false,
+                ));
+            }
+        }
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     })
@@ -9380,6 +9510,18 @@ pub(crate) fn class_own_members(class_name: &str) -> Vec<(String, MbValue, bool)
 /// class declares no slots.
 pub(crate) fn class_slot_names(class_name: &str) -> Vec<String> {
     SLOTS_REGISTRY.with(|reg| reg.borrow().get(class_name).cloned().unwrap_or_default())
+}
+
+fn class_slots_value(class_name: &str) -> Option<MbValue> {
+    let slots = SLOTS_REGISTRY.with(|reg| reg.borrow().get(class_name).cloned());
+    slots.map(|names| {
+        MbValue::from_ptr(MbObject::new_tuple(
+            names
+                .into_iter()
+                .map(|name| MbValue::from_ptr(MbObject::new_str(name)))
+                .collect(),
+        ))
+    })
 }
 
 /// Synthesize a `member_descriptor` instance for a `__slots__` entry —
@@ -9400,6 +9542,132 @@ pub(crate) fn make_member_descriptor(class_name: &str, attr: &str) -> MbValue {
         }
     }
     MbValue::from_ptr(inst)
+}
+
+fn member_descriptor_slot_name(desc: MbValue) -> Option<String> {
+    desc.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+            ..
+        } = (*ptr).data
+        {
+            if class_name == "member_descriptor" {
+                return fields
+                    .read()
+                    .unwrap()
+                    .get("__name__")
+                    .and_then(|name| extract_str(*name));
+            }
+        }
+        None
+    })
+}
+
+fn is_member_descriptor(val: MbValue) -> bool {
+    val.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(&(*ptr).data, ObjData::Instance { class_name, .. } if class_name == "member_descriptor")
+    })
+}
+
+fn member_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
+    if instance.is_none() {
+        unsafe {
+            super::rc::retain_if_ptr(desc);
+        }
+        return desc;
+    }
+    let Some(slot_name) = member_descriptor_slot_name(desc) else {
+        return MbValue::none();
+    };
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+                ..
+            } = (*ptr).data
+            {
+                if let Some(value) = fields.read().unwrap().get(&slot_name).copied() {
+                    super::rc::retain_if_ptr(value);
+                    return value;
+                }
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'{class_name}' object has no attribute '{slot_name}'"
+                    ))),
+                );
+                return MbValue::none();
+            }
+        }
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "descriptor requires an instance".to_string(),
+        )),
+    );
+    MbValue::none()
+}
+
+fn member_descriptor_set(desc: MbValue, instance: MbValue, value: MbValue) {
+    let Some(slot_name) = member_descriptor_slot_name(desc) else {
+        return;
+    };
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::rc::retain_if_ptr(value);
+                let old = fields.write().unwrap().insert(slot_name, value);
+                if let Some(prev) = old {
+                    super::rc::release_if_ptr(prev);
+                }
+                return;
+            }
+        }
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "descriptor requires an instance".to_string(),
+        )),
+    );
+}
+
+fn member_descriptor_delete(desc: MbValue, instance: MbValue) {
+    let Some(slot_name) = member_descriptor_slot_name(desc) else {
+        return;
+    };
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+                ..
+            } = (*ptr).data
+            {
+                let old = fields.write().unwrap().remove(&slot_name);
+                if let Some(prev) = old {
+                    super::rc::release_if_ptr(prev);
+                    return;
+                }
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'{class_name}' object has no attribute '{slot_name}'"
+                    ))),
+                );
+                return;
+            }
+        }
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "descriptor requires an instance".to_string(),
+        )),
+    );
 }
 
 /// Find which registered class's OWN method table holds `func`, returning
@@ -13884,6 +14152,31 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         }
     }
 
+    if is_member_descriptor(receiver) {
+        let name = extract_str(method_name).unwrap_or_default();
+        if matches!(name.as_str(), "__get__" | "__set__" | "__delete__") {
+            let items = super::builtins::extract_items(args);
+            return match name.as_str() {
+                "__get__" => {
+                    let instance = items.first().copied().unwrap_or_else(MbValue::none);
+                    member_descriptor_get(receiver, instance)
+                }
+                "__set__" => {
+                    let instance = items.first().copied().unwrap_or_else(MbValue::none);
+                    let value = items.get(1).copied().unwrap_or_else(MbValue::none);
+                    member_descriptor_set(receiver, instance, value);
+                    MbValue::none()
+                }
+                "__delete__" => {
+                    let instance = items.first().copied().unwrap_or_else(MbValue::none);
+                    member_descriptor_delete(receiver, instance);
+                    MbValue::none()
+                }
+                _ => unreachable!(),
+            };
+        }
+    }
+
     // property descriptor methods: `prop.setter(fn)` / `.deleter(fn)` /
     // `.getter(fn)` each build a NEW property sharing the other accessors.
     // Reached via the `__bound_native_method__` shell from `Base.x.setter`
@@ -15122,6 +15415,32 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     return super::stdlib::functools_mod::mb_singledispatchmethod_call(
                         method, cls_recv, items,
                     );
+                }
+                let class_descriptor = mro_lookup_class_attr(s, &name).or_else(|| {
+                    if method.is_none() {
+                        None
+                    } else {
+                        Some(method)
+                    }
+                });
+                if let Some(descriptor) = class_descriptor {
+                    let (actual, descriptor_kind) = unwrap_descriptor_method(descriptor);
+                    match descriptor_kind {
+                        DescriptorKind::ClassMethod => {
+                            let items = super::builtins::extract_items(args);
+                            let mut all_items = Vec::with_capacity(items.len() + 1);
+                            all_items.push(make_type_object(s));
+                            all_items.extend(items);
+                            return super::builtins::mb_call_spread(
+                                actual,
+                                MbValue::from_ptr(MbObject::new_list(all_items)),
+                            );
+                        }
+                        DescriptorKind::StaticMethod => {
+                            return super::builtins::mb_call_spread(actual, args);
+                        }
+                        DescriptorKind::Regular => {}
+                    }
                 }
                 if matches!(name.as_str(), "extract" | "from_list")
                     && (s == "StackSummary" || class_mro_any(s, |base| base == "StackSummary"))
@@ -20705,6 +21024,113 @@ mod tests {
                 "S11: slot 'b' must be present"
             );
         });
+    }
+
+    #[test]
+    fn test_slots_class_surface_and_member_descriptor_protocol() {
+        crate::runtime::exception::mb_clear_exception();
+
+        mb_class_register("SlotsSurface", vec![], HashMap::new());
+        let cls_name = MbValue::from_ptr(MbObject::new_str("SlotsSurface".to_string()));
+        let slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+            MbObject::new_str("x".to_string()),
+        )]));
+        mb_register_slots(cls_name, slots);
+
+        let class_value = make_type_object("SlotsSurface");
+        assert_eq!(
+            mb_hasattr(
+                class_value,
+                MbValue::from_ptr(MbObject::new_str("__slots__".to_string()))
+            )
+            .as_bool(),
+            Some(true),
+            "hasattr(type, __slots__) must see slot metadata"
+        );
+        let slots_attr = mb_getattr(
+            class_value,
+            MbValue::from_ptr(MbObject::new_str("__slots__".to_string())),
+        );
+        let slots_len = slots_attr.as_ptr().map(|ptr| unsafe {
+            if let ObjData::Tuple(items) = &(*ptr).data {
+                items.len()
+            } else {
+                0
+            }
+        });
+        assert_eq!(slots_len, Some(1), "class must expose __slots__");
+        mb_class_set_class_attr(
+            MbValue::from_ptr(MbObject::new_str("SlotsSurface".to_string())),
+            MbValue::from_ptr(MbObject::new_str("n".to_string())),
+            MbValue::from_int(0),
+        );
+        mb_setattr(
+            class_value,
+            MbValue::from_ptr(MbObject::new_str("n".to_string())),
+            MbValue::from_int(2),
+        );
+        assert_eq!(
+            mb_getattr(
+                class_value,
+                MbValue::from_ptr(MbObject::new_str("n".to_string()))
+            )
+            .as_int(),
+            Some(2),
+            "type-object setattr must update class attrs"
+        );
+
+        let desc = mb_getattr(
+            class_value,
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        );
+        assert!(
+            is_member_descriptor(desc),
+            "class slot read yields descriptor"
+        );
+        assert_eq!(
+            mb_hasattr(
+                desc,
+                MbValue::from_ptr(MbObject::new_str("__get__".to_string()))
+            )
+            .as_bool(),
+            Some(true),
+            "hasattr(member_descriptor, __get__) must be true"
+        );
+        assert!(
+            !mb_getattr(
+                desc,
+                MbValue::from_ptr(MbObject::new_str("__get__".to_string()))
+            )
+            .is_none(),
+            "slot descriptor exposes __get__"
+        );
+        assert!(
+            !mb_getattr(
+                desc,
+                MbValue::from_ptr(MbObject::new_str("__set__".to_string()))
+            )
+            .is_none(),
+            "slot descriptor exposes __set__"
+        );
+
+        let inst_name = MbValue::from_ptr(MbObject::new_str("SlotsSurface".to_string()));
+        let inst = mb_instance_new(inst_name, MbValue::none());
+        member_descriptor_set(desc, inst, MbValue::from_int(42));
+        assert_eq!(
+            member_descriptor_get(desc, inst).as_int(),
+            Some(42),
+            "descriptor __get__ reads slot value"
+        );
+
+        member_descriptor_delete(desc, inst);
+        crate::runtime::exception::mb_clear_exception();
+        let _ = member_descriptor_get(desc, inst);
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("AttributeError"),
+            "deleted slot descriptor access raises AttributeError"
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     // ── S12: Child without __slots__ inherits but gets __dict__ (R13) ──
