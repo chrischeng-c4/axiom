@@ -3583,12 +3583,124 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
     new_str(out)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FormatNumbering {
+    Unset,
+    Auto,
+    Manual,
+}
+
+struct FormatFieldParts<'a> {
+    field_name: &'a str,
+    conversion: Option<char>,
+    fmt_spec: &'a str,
+}
+
+fn raise_format_value_error(message: &str) {
+    super::exception::mb_raise(
+        new_str("ValueError".to_string()),
+        new_str(message.to_string()),
+    );
+}
+
+fn mark_auto_numbering(numbering: &mut FormatNumbering) -> bool {
+    if *numbering == FormatNumbering::Manual {
+        raise_format_value_error(
+            "cannot switch from manual field specification to automatic field numbering",
+        );
+        return false;
+    }
+    *numbering = FormatNumbering::Auto;
+    true
+}
+
+fn mark_manual_numbering(numbering: &mut FormatNumbering) -> bool {
+    if *numbering == FormatNumbering::Auto {
+        raise_format_value_error(
+            "cannot switch from automatic field numbering to manual field specification",
+        );
+        return false;
+    }
+    *numbering = FormatNumbering::Manual;
+    true
+}
+
+fn split_format_field(field: &str) -> Option<FormatFieldParts<'_>> {
+    let mut bracket_depth = 0usize;
+    let mut conversion_pos = None;
+    let mut colon_pos = None;
+    for (idx, ch) in field.char_indices() {
+        match ch {
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '!' if bracket_depth == 0 && conversion_pos.is_none() && colon_pos.is_none() => {
+                conversion_pos = Some(idx);
+            }
+            ':' if bracket_depth == 0 => {
+                colon_pos = Some(idx);
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    let field_end = conversion_pos.or(colon_pos).unwrap_or(field.len());
+    let conversion = if let Some(pos) = conversion_pos {
+        let conv_end = colon_pos.unwrap_or(field.len());
+        let conv = &field[pos + 1..conv_end];
+        let mut chars = conv.chars();
+        let Some(c) = chars.next() else {
+            raise_format_value_error("expected conversion specifier");
+            return None;
+        };
+        if chars.next().is_some() || !matches!(c, 'r' | 's' | 'a') {
+            raise_format_value_error("Unknown conversion specifier");
+            return None;
+        }
+        Some(c)
+    } else {
+        None
+    };
+    let fmt_spec = colon_pos.map(|pos| &field[pos + 1..]).unwrap_or("");
+    Some(FormatFieldParts {
+        field_name: &field[..field_end],
+        conversion,
+        fmt_spec,
+    })
+}
+
+fn format_field_value(value: MbValue, conversion: Option<char>, spec: &str) -> Option<String> {
+    let converted = match conversion {
+        Some('r') => super::builtins::mb_repr(value),
+        Some('s') => super::builtins::mb_str(value),
+        Some('a') => super::builtins::mb_ascii(value),
+        Some(_) => {
+            raise_format_value_error("Unknown conversion specifier");
+            return None;
+        }
+        None => value,
+    };
+    if super::exception::mb_has_exception().as_bool() == Some(true) {
+        return None;
+    }
+    let formatted = mb_format_value(converted, new_str(spec.to_string()));
+    if super::exception::mb_has_exception().as_bool() == Some(true) {
+        return None;
+    }
+    Some(as_str_owned(formatted).unwrap_or_else(|| value_to_string(formatted)))
+}
+
 /// Resolve nested `{...}` inside a format spec. `"{:{}}".format("hi", 10)`
 /// pulls the next positional arg (10) to build the actual spec (`"10"`), then
 /// re-parses that as the real spec. Supports `{}` (auto index) and `{N}`.
-fn resolve_nested_spec(spec: &str, arg_list: &[MbValue], auto_idx: &mut usize) -> String {
+fn resolve_nested_spec(
+    spec: &str,
+    arg_list: &[MbValue],
+    auto_idx: &mut usize,
+    numbering: &mut FormatNumbering,
+) -> Option<String> {
     if !spec.contains('{') {
-        return spec.to_string();
+        return Some(spec.to_string());
     }
     let mut out = String::new();
     let mut chars = spec.chars().peekable();
@@ -3601,24 +3713,37 @@ fn resolve_nested_spec(spec: &str, arg_list: &[MbValue], auto_idx: &mut usize) -
                 }
                 inner.push(ch);
             }
-            let val = if inner.is_empty() {
+            let parts = split_format_field(&inner)?;
+            let resolved_inner_spec =
+                resolve_nested_spec(parts.fmt_spec, arg_list, auto_idx, numbering)?;
+            let val = if parts.field_name.is_empty() {
+                if !mark_auto_numbering(numbering) {
+                    return None;
+                }
                 let v = arg_list
                     .get(*auto_idx)
                     .copied()
                     .unwrap_or_else(MbValue::none);
                 *auto_idx += 1;
                 v
-            } else if let Ok(idx) = inner.parse::<usize>() {
+            } else if let Ok(idx) = parts.field_name.parse::<usize>() {
+                if !mark_manual_numbering(numbering) {
+                    return None;
+                }
                 arg_list.get(idx).copied().unwrap_or_else(MbValue::none)
             } else {
                 MbValue::none()
             };
-            out.push_str(&value_to_string(val));
+            out.push_str(&format_field_value(
+                val,
+                parts.conversion,
+                &resolved_inner_spec,
+            )?);
         } else {
             out.push(c);
         }
     }
-    out
+    Some(out)
 }
 
 /// Resolve a nested format spec for the kwargs-aware path: like
@@ -3631,9 +3756,10 @@ fn resolve_nested_spec_kwargs(
     pos_list: &[MbValue],
     kw_map: &std::collections::HashMap<String, MbValue>,
     auto_idx: &mut usize,
-) -> String {
+    numbering: &mut FormatNumbering,
+) -> Option<String> {
     if !spec.contains('{') {
-        return spec.to_string();
+        return Some(spec.to_string());
     }
     let mut out = String::new();
     let mut chars = spec.chars().peekable();
@@ -3646,27 +3772,40 @@ fn resolve_nested_spec_kwargs(
                 }
                 inner.push(ch);
             }
-            let val = if inner.is_empty() {
+            let parts = split_format_field(&inner)?;
+            let resolved_inner_spec =
+                resolve_nested_spec_kwargs(parts.fmt_spec, pos_list, kw_map, auto_idx, numbering)?;
+            let val = if parts.field_name.is_empty() {
+                if !mark_auto_numbering(numbering) {
+                    return None;
+                }
                 let v = pos_list
                     .get(*auto_idx)
                     .copied()
                     .unwrap_or_else(MbValue::none);
                 *auto_idx += 1;
                 v
-            } else if let Ok(idx) = inner.parse::<usize>() {
+            } else if let Ok(idx) = parts.field_name.parse::<usize>() {
+                if !mark_manual_numbering(numbering) {
+                    return None;
+                }
                 pos_list.get(idx).copied().unwrap_or_else(MbValue::none)
             } else {
                 kw_map
-                    .get(inner.as_str())
+                    .get(parts.field_name)
                     .copied()
                     .unwrap_or_else(MbValue::none)
             };
-            out.push_str(&value_to_string(val));
+            out.push_str(&format_field_value(
+                val,
+                parts.conversion,
+                &resolved_inner_spec,
+            )?);
         } else {
             out.push(c);
         }
     }
-    out
+    Some(out)
 }
 
 /// str.maketrans(x, y=None, z=None) — build a translation table for translate().
@@ -4035,6 +4174,7 @@ pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
         };
         let mut result = String::new();
         let mut auto_idx = 0usize;
+        let mut numbering = FormatNumbering::Unset;
         let mut chars = template.chars().peekable();
         while let Some(ch) = chars.next() {
             if ch == '{' {
@@ -4063,17 +4203,17 @@ pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
                     }
                     field.push(c);
                 }
-                // Split field into name/index and format spec at ':'
-                let (field_name, fmt_spec) = if let Some(colon_pos) = field.find(':') {
-                    (&field[..colon_pos], &field[colon_pos + 1..])
-                } else {
-                    (field.as_str(), "")
+                let Some(parts) = split_format_field(&field) else {
+                    return MbValue::none();
                 };
                 // CPython: the outer field's value comes from auto_idx first,
                 // THEN the nested `{}` inside the spec bumps auto_idx further.
                 // Capture the value slot before resolving the inner spec.
-                let (head, path) = split_field_head(field_name);
+                let (head, path) = split_field_head(parts.field_name);
                 if head.is_empty() {
+                    if !mark_auto_numbering(&mut numbering) {
+                        return MbValue::none();
+                    }
                     if auto_idx < arg_list.len() {
                         let mut value = arg_list[auto_idx];
                         auto_idx += 1;
@@ -4095,11 +4235,33 @@ pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
                                 }
                             };
                         }
-                        let resolved_spec = resolve_nested_spec(fmt_spec, &arg_list, &mut auto_idx);
-                        result.push_str(&apply_format_spec(value, &resolved_spec));
+                        let Some(resolved_spec) = resolve_nested_spec(
+                            parts.fmt_spec,
+                            &arg_list,
+                            &mut auto_idx,
+                            &mut numbering,
+                        ) else {
+                            return MbValue::none();
+                        };
+                        let Some(formatted) =
+                            format_field_value(value, parts.conversion, &resolved_spec)
+                        else {
+                            return MbValue::none();
+                        };
+                        result.push_str(&formatted);
                     }
                 } else if let Ok(idx) = head.parse::<usize>() {
-                    let resolved_spec = resolve_nested_spec(fmt_spec, &arg_list, &mut auto_idx);
+                    if !mark_manual_numbering(&mut numbering) {
+                        return MbValue::none();
+                    }
+                    let Some(resolved_spec) = resolve_nested_spec(
+                        parts.fmt_spec,
+                        &arg_list,
+                        &mut auto_idx,
+                        &mut numbering,
+                    ) else {
+                        return MbValue::none();
+                    };
                     if idx < arg_list.len() {
                         let mut value = arg_list[idx];
                         if !path.is_empty() {
@@ -4120,15 +4282,14 @@ pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
                                 }
                             };
                         }
-                        result.push_str(&apply_format_spec(value, &resolved_spec));
+                        let Some(formatted) =
+                            format_field_value(value, parts.conversion, &resolved_spec)
+                        else {
+                            return MbValue::none();
+                        };
+                        result.push_str(&formatted);
                     }
                 } else {
-                    if head.starts_with('!') {
-                        result.push('{');
-                        result.push_str(&field);
-                        result.push('}');
-                        continue;
-                    }
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
                         MbValue::from_ptr(MbObject::new_str(head.to_string())),
@@ -4201,6 +4362,7 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
         };
         let mut result = String::new();
         let mut auto_idx = 0usize;
+        let mut numbering = FormatNumbering::Unset;
         let mut chars = template.chars().peekable();
         while let Some(ch) = chars.next() {
             if ch == '{' {
@@ -4230,14 +4392,14 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
                     }
                     field.push(c);
                 }
-                // Split field into name/index and format spec at ':'
-                let (field_name, fmt_spec) = if let Some(colon_pos) = field.find(':') {
-                    (&field[..colon_pos], &field[colon_pos + 1..])
-                } else {
-                    (field.as_str(), "")
+                let Some(parts) = split_format_field(&field) else {
+                    return MbValue::none();
                 };
-                let (head, path) = split_field_head(field_name);
+                let (head, path) = split_field_head(parts.field_name);
                 let base: Option<MbValue> = if head.is_empty() {
+                    if !mark_auto_numbering(&mut numbering) {
+                        return MbValue::none();
+                    }
                     if auto_idx < pos_list.len() {
                         let v = pos_list[auto_idx];
                         auto_idx += 1;
@@ -4246,6 +4408,9 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
                         None
                     }
                 } else if let Ok(idx) = head.parse::<usize>() {
+                    if !mark_manual_numbering(&mut numbering) {
+                        return MbValue::none();
+                    }
                     if idx < pos_list.len() {
                         Some(pos_list[idx])
                     } else {
@@ -4270,9 +4435,21 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
                         // Resolve any nested `{...}` inside the spec AFTER the
                         // outer field claimed its auto-index slot, mirroring
                         // CPython's evaluation order.
-                        let resolved_spec =
-                            resolve_nested_spec_kwargs(fmt_spec, &pos_list, &kw_map, &mut auto_idx);
-                        result.push_str(&apply_format_spec(value, &resolved_spec));
+                        let Some(resolved_spec) = resolve_nested_spec_kwargs(
+                            parts.fmt_spec,
+                            &pos_list,
+                            &kw_map,
+                            &mut auto_idx,
+                            &mut numbering,
+                        ) else {
+                            return MbValue::none();
+                        };
+                        let Some(formatted) =
+                            format_field_value(value, parts.conversion, &resolved_spec)
+                        else {
+                            return MbValue::none();
+                        };
+                        result.push_str(&formatted);
                     }
                     None => {
                         result.push('{');
@@ -5149,6 +5326,11 @@ mod tests {
     extern "C" fn format_map_missing_test_fn(_self_v: MbValue, key: MbValue) -> MbValue {
         let key_s = unsafe { as_str(key).unwrap_or_default().to_string() };
         s(&format!("<{key_s}>"))
+    }
+
+    extern "C" fn format_spec_test_fn(_self_v: MbValue, spec: MbValue) -> MbValue {
+        let spec_s = unsafe { as_str(spec).unwrap_or_default().to_string() };
+        s(&format!("spec={spec_s}"))
     }
 
     #[test]
@@ -6989,6 +7171,59 @@ mod tests {
             assert_eq!(as_str(result), Some("Alice <age>"));
         }
         super::super::class::cleanup_all_classes();
+    }
+
+    #[test]
+    fn test_format_kwargs_conversions_custom_format_and_numbering() {
+        let empty_kwargs = MbValue::from_ptr(MbObject::new_dict());
+
+        let converted = mb_str_format_kwargs(
+            s("{!r}/{!s}/{!a}"),
+            MbValue::from_ptr(MbObject::new_list(vec![
+                s("s"),
+                MbValue::from_int(42),
+                s("\u{00e9}"),
+            ])),
+            empty_kwargs,
+        );
+        unsafe {
+            assert_eq!(as_str(converted), Some("'s'/42/'\\xe9'"));
+        }
+
+        super::super::class::cleanup_all_classes();
+        let addr = format_spec_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let mut methods = std::collections::HashMap::new();
+        methods.insert("__format__".to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register("FormatSpec634", vec![], methods);
+        let inst = super::super::class::mb_instance_new(s("FormatSpec634"), MbValue::none());
+        let formatted = mb_str_format_kwargs(
+            s("{:^+10.3f}"),
+            MbValue::from_ptr(MbObject::new_list(vec![inst])),
+            MbValue::from_ptr(MbObject::new_dict()),
+        );
+        unsafe {
+            assert_eq!(as_str(formatted), Some("spec=^+10.3f"));
+        }
+        super::super::class::cleanup_all_classes();
+
+        for bad in ["{}{1}", "{1}{}", "{0:{}}", "{:{1}}"] {
+            super::super::exception::mb_clear_exception();
+            let _ = mb_str_format_kwargs(
+                s(bad),
+                MbValue::from_ptr(MbObject::new_list(vec![
+                    MbValue::from_int(1),
+                    MbValue::from_int(2),
+                ])),
+                MbValue::from_ptr(MbObject::new_dict()),
+            );
+            assert_eq!(
+                super::super::exception::current_exception_type().as_deref(),
+                Some("ValueError"),
+                "{bad} should raise ValueError"
+            );
+            super::super::exception::mb_clear_exception();
+        }
     }
 
     #[test]
