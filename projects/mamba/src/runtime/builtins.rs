@@ -10964,6 +10964,19 @@ struct ExecFunction {
     body: Vec<crate::source::span::Spanned<crate::parser::ast::Stmt>>,
 }
 
+#[derive(Clone)]
+struct ExecFunctionBinding {
+    name: String,
+    is_async: bool,
+    globals: Option<MbValue>,
+    function: ExecFunction,
+}
+
+static EXEC_FUNCTIONS: std::sync::LazyLock<std::sync::RwLock<FxHashMap<u64, ExecFunctionBinding>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(FxHashMap::default()));
+static NEXT_EXEC_FUNCTION_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
 #[derive(Clone, Copy)]
 enum ExecFlow {
     Normal,
@@ -11298,6 +11311,50 @@ fn make_exec_function_value(name: &str, is_async: bool, return_value: MbValue) -
     MbValue::from_ptr(inst)
 }
 
+fn make_exec_function_body_value(
+    name: &str,
+    is_async: bool,
+    function: ExecFunction,
+    globals: Option<MbValue>,
+) -> MbValue {
+    if let Some(globals) = globals {
+        unsafe {
+            super::rc::retain_if_ptr(globals);
+        }
+    }
+    for default in &function.defaults {
+        if let Some(value) = default {
+            unsafe {
+                super::rc::retain_if_ptr(*value);
+            }
+        }
+    }
+    let id = NEXT_EXEC_FUNCTION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    EXEC_FUNCTIONS.write().unwrap().insert(
+        id,
+        ExecFunctionBinding {
+            name: name.to_string(),
+            is_async,
+            globals,
+            function,
+        },
+    );
+
+    let inst = MbObject::new_instance("__exec_function__".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut guard = fields.write().unwrap();
+            guard.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            guard.insert("__is_async__".to_string(), MbValue::from_bool(is_async));
+            guard.insert("__function_id__".to_string(), MbValue::from_int(id as i64));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
 fn exec_function_field(func: MbValue, key: &str) -> Option<MbValue> {
     let ptr = func.as_ptr()?;
     unsafe {
@@ -11322,6 +11379,33 @@ pub fn mb_exec_function_is_async(func: MbValue) -> bool {
 }
 
 pub fn mb_exec_function_call(func: MbValue, args: Vec<MbValue>) -> MbValue {
+    if let Some(id) = exec_function_field(func, "__function_id__").and_then(|value| value.as_int())
+    {
+        if let Some(binding) = EXEC_FUNCTIONS
+            .read()
+            .unwrap()
+            .get(&(id as u64))
+            .cloned()
+        {
+            let mut ctx = ExecContext {
+                globals: binding.globals,
+                ..ExecContext::default()
+            };
+            let return_value = exec_call_function(&mut ctx, &binding.function, &args);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            if binding.is_async {
+                let coro = super::async_rt::mb_coroutine_new(
+                    MbValue::from_ptr(MbObject::new_str(binding.name)),
+                    MbValue::from_ptr(MbObject::new_list(Vec::new())),
+                );
+                super::async_rt::mb_coroutine_complete(coro, return_value);
+                return coro;
+            }
+            return return_value;
+        }
+    }
     if !args.is_empty() {
         exec_raise_type_error(format!(
             "function takes 0 arguments but {} were given",
@@ -11745,6 +11829,23 @@ fn exec_bind_targets(ctx: &mut ExecContext, targets: &[String], value: MbValue) 
     }
 }
 
+fn exec_assignment_target_names(expr: &crate::parser::ast::Expr, out: &mut Vec<String>) -> bool {
+    use crate::parser::ast::Expr;
+    match expr {
+        Expr::Ident(name) => {
+            out.push(name.clone());
+            true
+        }
+        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::UnpackTarget(items) => {
+            items
+                .iter()
+                .all(|item| exec_assignment_target_names(&item.node, out))
+        }
+        Expr::Starred(inner) => exec_assignment_target_names(&inner.node, out),
+        _ => false,
+    }
+}
+
 fn exec_handler_matches(
     ctx: &mut ExecContext,
     handler: &crate::parser::ast::ExceptHandler,
@@ -11832,14 +11933,17 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             ExecFlow::Normal
         }
         Stmt::Assign { target, value } => {
-            if let crate::parser::ast::Expr::Ident(name) = &target.node {
+            let mut target_names = Vec::new();
+            if exec_assignment_target_names(&target.node, &mut target_names) {
                 if exec_is_typevar_constructor(&value.node) {
-                    ctx.type_vars.insert(name.clone());
+                    if let Some(name) = target_names.first() {
+                        ctx.type_vars.insert(name.clone());
+                    }
                 }
                 if ctx.globals.is_some() || !ctx.frames.is_empty() {
                     let assigned = exec_eval_expr(ctx, &value.node);
                     if !exec_has_pending_exception() {
-                        exec_store_name(ctx, name, assigned);
+                        exec_bind_targets(ctx, &target_names, assigned);
                     }
                 }
             }
@@ -11954,12 +12058,14 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                     body: body.clone(),
                 },
             );
-            if decorators.is_empty() && params.is_empty() {
-                let return_value = exec_static_return_value(ctx, body);
-                if !exec_has_pending_exception() {
-                    let func_value = make_exec_function_value(name, false, return_value);
-                    exec_store_name(ctx, name, func_value);
-                }
+            if decorators.is_empty() {
+                let function = ctx.functions.get(name).cloned().unwrap_or(ExecFunction {
+                    params: Vec::new(),
+                    defaults: Vec::new(),
+                    body: body.clone(),
+                });
+                let func_value = make_exec_function_body_value(name, false, function, ctx.globals);
+                exec_store_name(ctx, name, func_value);
             }
             ExecFlow::Normal
         }
@@ -11970,12 +12076,30 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             body,
             ..
         } => {
-            if decorators.is_empty() && params.is_empty() {
-                let return_value = exec_static_return_value(ctx, body);
-                if !exec_has_pending_exception() {
-                    let func_value = make_exec_function_value(name, true, return_value);
-                    exec_store_name(ctx, name, func_value);
+            if decorators.is_empty() {
+                let mut param_names = Vec::with_capacity(params.len());
+                let mut defaults = Vec::with_capacity(params.len());
+                for param in params {
+                    param_names.push(param.name.clone());
+                    let default = match &param.default {
+                        Some(default) => {
+                            let value = exec_eval_expr(ctx, &default.node);
+                            if exec_has_pending_exception() {
+                                return ExecFlow::Normal;
+                            }
+                            Some(value)
+                        }
+                        None => None,
+                    };
+                    defaults.push(default);
                 }
+                let function = ExecFunction {
+                    params: param_names,
+                    defaults,
+                    body: body.clone(),
+                };
+                let func_value = make_exec_function_body_value(name, true, function, ctx.globals);
+                exec_store_name(ctx, name, func_value);
             }
             ExecFlow::Normal
         }
