@@ -1,11 +1,6 @@
-# mamba-xfail: nested classes inside a class body are not bound correctly.
-# `Outer.Inner.flavor` returns `None` (instead of "inner") and the
-# enclosing method `Outer().describe()` returns `None` because the
-# nested-class lookup fails at class-body execution time, then an
-# AttributeError surfaces ("'str' object has no attribute 'Inner'") on
-# the subsequent access. Plain data attribute / method / scoping clauses
-# already pass; the nested-class clause is the runtime gap that gates
-# the xfail.
+# mamba-xfail: class __dict__ key iteration remains incomplete.
+# Nested class binding is covered by nested_class_binding.py; this broader
+# namespace fixture reaches the mappingproxy/key-iteration gap.
 #
 # Class body namespace — #2808.
 #
