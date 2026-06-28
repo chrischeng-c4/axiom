@@ -2350,7 +2350,7 @@ pub fn mb_str_lt(a: MbValue, b: MbValue) -> MbValue {
 // ── Additional String Methods ──
 
 /// splitlines(keepends=False) → list of lines.
-/// Splits on \n, \r, and \r\n (Python semantics).
+/// Splits on CPython's Unicode line-boundary set, treating \r\n as one break.
 pub fn mb_str_splitlines(s: MbValue, keepends: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
@@ -2362,37 +2362,42 @@ pub fn mb_str_splitlines(s: MbValue, keepends: MbValue) -> MbValue {
                 false
             };
             let mut out: Vec<MbValue> = Vec::new();
-            let bytes = st.as_bytes();
             let mut start = 0usize;
             let mut i = 0usize;
-            while i < bytes.len() {
-                let b = bytes[i];
-                if b == b'\n' || b == b'\r' {
-                    // Line terminator length: \r\n = 2, else 1.
-                    let term_len = if b == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-                        2
-                    } else {
-                        1
-                    };
+            while i < st.len() {
+                let c = st[i..].chars().next().unwrap();
+                if let Some(term_len) = unicode_line_break_len(st, i, c) {
                     let end = if keep { i + term_len } else { i };
-                    out.push(new_str(
-                        String::from_utf8_lossy(&bytes[start..end]).into_owned(),
-                    ));
+                    out.push(new_str(st[start..end].to_string()));
                     i += term_len;
                     start = i;
                 } else {
-                    i += 1;
+                    i += c.len_utf8();
                 }
             }
-            if start < bytes.len() {
-                out.push(new_str(
-                    String::from_utf8_lossy(&bytes[start..]).into_owned(),
-                ));
+            if start < st.len() {
+                out.push(new_str(st[start..].to_string()));
             }
             MbValue::from_ptr(MbObject::new_list(out))
         } else {
             MbValue::none()
         }
+    }
+}
+
+fn unicode_line_break_len(s: &str, byte_idx: usize, c: char) -> Option<usize> {
+    match c {
+        '\n' | '\u{0b}' | '\u{0c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}'
+        | '\u{2029}' => Some(c.len_utf8()),
+        '\r' => {
+            let next_idx = byte_idx + c.len_utf8();
+            Some(if next_idx < s.len() && s[next_idx..].starts_with('\n') {
+                2
+            } else {
+                1
+            })
+        }
+        _ => None,
     }
 }
 
@@ -5057,6 +5062,21 @@ mod tests {
         new_str(val.to_string())
     }
 
+    fn str_list(v: MbValue) -> Vec<String> {
+        unsafe {
+            let ptr = v.as_ptr().expect("expected list pointer");
+            if let ObjData::List(ref lock) = (*ptr).data {
+                lock.read()
+                    .unwrap()
+                    .iter()
+                    .map(|item| as_str(*item).unwrap().to_string())
+                    .collect()
+            } else {
+                panic!("expected list")
+            }
+        }
+    }
+
     #[test]
     fn test_concat() {
         let result = mb_str_concat(s("hello"), s(" world"));
@@ -6117,6 +6137,39 @@ mod tests {
                 assert_eq!(items.len(), 0);
             }
         }
+    }
+
+    #[test]
+    fn test_splitlines_uses_unicode_line_boundaries() {
+        let breakers = [
+            "\n", "\u{0b}", "\u{0c}", "\r", "\u{1c}", "\u{1d}", "\u{1e}", "\u{85}", "\u{2028}",
+            "\u{2029}",
+        ];
+
+        for breaker in breakers {
+            let text = format!("a{breaker}b");
+            assert_eq!(
+                str_list(mb_str_splitlines(s(&text), MbValue::none())),
+                vec!["a".to_string(), "b".to_string()],
+                "splitlines should split on {breaker:?}",
+            );
+            assert_eq!(
+                str_list(mb_str_splitlines(s(&text), MbValue::from_bool(true))),
+                vec![format!("a{breaker}"), "b".to_string()],
+                "splitlines(keepends=True) should keep {breaker:?}",
+            );
+        }
+
+        assert_eq!(
+            str_list(mb_str_splitlines(s("a\r\nb"), MbValue::from_bool(true))),
+            vec!["a\r\n".to_string(), "b".to_string()],
+            "CRLF should be one line break",
+        );
+        assert_eq!(
+            str_list(mb_str_splitlines(s("a\tb"), MbValue::none())),
+            vec!["a\tb".to_string()],
+            "horizontal tab is not a line boundary",
+        );
     }
 
     // ── dispatch_str_method ──
