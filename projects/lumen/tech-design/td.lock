@@ -1,8 +1,8 @@
 version = 1
 project = "lumen"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-06-28T05:50:46.378148+00:00"
-digest = "sha256:c09c74ba4e9f1580cbdb4a4fd5397379e485f541d8223de07f47374d2a78564f"
+generated_at = "2026-06-28T12:36:22.817943+00:00"
+digest = "sha256:9c9e6cd835ebbfd56c19090a612fe88f8723dc7f6d869a0231f8754f5ce7aec2"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-consolidation-single-binary-serve-spec-llm-k8s-operato.md"
@@ -230,7 +230,7 @@ digest = "sha256:3a905b2279f15786de5d7a9d455749b97e83fd75b67d4df34dbc73bcb1e5e81
 
 [[files]]
 path = "semantic/source/projects-lumen-src-types-rs.md"
-digest = "sha256:5a1f35bfd504ad2a32c4d8ee43ef9ecc151d94abce95c2489f55494e818e9054"
+digest = "sha256:03cfb769d82af4e228b80957eba2c64e04636f47ac5107c7e050564fac9b6208"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-vector_index-rs.md"
