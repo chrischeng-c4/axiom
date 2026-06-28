@@ -349,12 +349,21 @@ impl Resolver {
                 }
             }
             Stmt::Nonlocal(names) => {
-                // Walk enclosing scopes to find the binding
+                // Walk enclosing function scopes to find the binding. Python
+                // `nonlocal` cannot bind module globals, and class scopes do
+                // not count as enclosing function scopes.
                 for name in names {
                     let current = self.symbols.current_scope_idx();
                     let mut found = false;
                     let mut scope_idx = self.symbols.parent_scope(current);
                     while let Some(si) = scope_idx {
+                        if si == 0 {
+                            break;
+                        }
+                        if !self.function_scope_stack.contains(&si) {
+                            scope_idx = self.symbols.parent_scope(si);
+                            continue;
+                        }
                         if let Some(outer_id) = self.symbols.lookup_in_scope(si, name) {
                             // Mark the outer variable as Cell (captured by inner)
                             self.symbols.set_var_class(outer_id, VariableClass::Cell);
@@ -1733,9 +1742,6 @@ mod tests {
     #[test]
     fn test_nonlocal_does_not_resolve_to_global() {
         // module-level x = 1; def f(): nonlocal x
-        // The resolver walks all parent scopes (including module scope 0), so it finds x
-        // and marks the inner binding as Free — no error is produced.
-        // This documents the current implementation behaviour.
         let module = Module {
             stmts: vec![
                 sp(Stmt::Assign {
@@ -1753,14 +1759,17 @@ mod tests {
             ],
         };
         let result = resolve_module(&module);
-        // The resolver resolves nonlocal against the module-level x — no error.
-        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        // The inner x should be classified as Free (captured from enclosing scope).
-        let free_x = result.name_map.iter().map(|(_, id)| *id).find(|id| {
-            result.symbols.get_symbol(*id).name == "x"
-                && result.symbols.get_var_class(*id) == VariableClass::Free
-        });
-        assert!(free_x.is_some(), "nonlocal x should be classified as Free");
+        assert_eq!(
+            result.errors.len(),
+            1,
+            "module globals must not satisfy nonlocal: {:?}",
+            result.errors
+        );
+        assert!(
+            result.errors[0].to_string().contains("nonlocal"),
+            "error should mention nonlocal: {:?}",
+            result.errors[0]
+        );
     }
 
     // ── Group 5: Class scope ───────────────────────────────────────────────
