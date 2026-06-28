@@ -2037,6 +2037,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_func_set_boxed_params",
+            closure::mb_func_set_boxed_params as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
             "mb_func_set_retanno",
             closure::mb_func_set_retanno as fn(super::MbValue, super::MbValue),
             [I64, I64],

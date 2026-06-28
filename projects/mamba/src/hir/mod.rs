@@ -1,7 +1,7 @@
 use crate::resolve::SymbolId;
 use crate::source::span::Span;
 use crate::types::TypeId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// HIR Module — desugared, all names resolved to SymbolId, types resolved to TypeId.
 #[derive(Debug, Clone)]
@@ -24,6 +24,10 @@ pub struct HirModule {
     /// Primed into the runtime FUNC_PARAMS registry at module init so
     /// `inspect.signature(f)` reflects the real declared signature.
     pub func_sigs: HashMap<u32, HirFuncSig>,
+    /// SymbolId.0 entries whose params use the boxed MbValue ABI even for
+    /// regular positional parameters. Runtime dynamic calls may safely fill
+    /// missing values from boxed `__defaults__` for these functions.
+    pub boxed_param_funcs: HashSet<u32>,
 }
 
 /// Introspection signature metadata for one user-defined function.
@@ -759,6 +763,7 @@ mod tests {
             sym_types: HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
         assert!(module.functions.is_empty());
         assert!(module.classes.is_empty());

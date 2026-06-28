@@ -423,6 +423,7 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
     lowerer.sym_types = hir.sym_types.clone();
     lowerer.sym_names = hir.sym_names.clone();
     lowerer.module_annotations = hir.module_annotations.clone();
+    lowerer.boxed_param_funcs = hir.boxed_param_funcs.clone();
     // Populate user_func_param_types so MirInst::Call sites can selectively box
     // primitive args destined for Any/object-typed parameters (#827 R8).
     // Also populate user_func_return_tys for iter(callable, sentinel) thunk generation.
@@ -632,6 +633,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
     let mut lowerer = HirToMir::new_with_builtins(tcx, user_funcs, builtin_syms);
     lowerer.class_syms = class_syms;
     lowerer.symbol_table = Some(symbols);
+    lowerer.boxed_param_funcs = hir.boxed_param_funcs.clone();
     // Source-location metadata: line-start offsets for span→line conversion
     // plus per-def first lines (co_firstlineno / co_filename priming).
     if let Some((filename, source)) = src {
@@ -1170,6 +1172,7 @@ pub fn lower_hir_to_mir_repl(
     // Populate sym_types for nested pattern capture unboxing (#827).
     lowerer.sym_types = hir.sym_types.clone();
     lowerer.sym_names = hir.sym_names.clone();
+    lowerer.boxed_param_funcs = hir.boxed_param_funcs.clone();
     // Populate user_funcs so call-site dispatch correctly routes accumulated and current
     // session functions through MirInst::Call rather than dynamic mb_call* dispatch.
     for func in extra_functions {
@@ -1368,6 +1371,8 @@ struct HirToMir<'a> {
     /// callee declares the parameter as Any/object, so match-subject comparisons via
     /// mb_eq receive uniform NaN-boxed MbValues (#827 R8).
     user_func_param_types: HashMap<u32, Vec<TypeId>>,
+    /// SymbolId.0 set for user functions whose regular params use boxed MbValue ABI.
+    boxed_param_funcs: HashSet<u32>,
     /// SymbolId.0 → return TypeId for each user-defined function.
     /// Used by iter(callable, sentinel) lowering to detect primitive-returning callables
     /// that need a boxing thunk so mb_call0 receives properly NaN-boxed MbValues.
@@ -1493,6 +1498,7 @@ impl<'a> HirToMir<'a> {
             cell_override: HashSet::new(),
             initialized_capture_cells: HashSet::new(),
             user_func_param_types: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
             user_func_return_tys: HashMap::new(),
             user_func_variadic_info: HashMap::new(),
             user_func_names: HashMap::new(),
@@ -1748,6 +1754,7 @@ impl<'a> HirToMir<'a> {
             cell_override: HashSet::new(),
             initialized_capture_cells: HashSet::new(),
             user_func_param_types: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
             user_func_return_tys: HashMap::new(),
             user_func_variadic_info: HashMap::new(),
             user_func_names: HashMap::new(),
@@ -2819,6 +2826,34 @@ impl<'a> HirToMir<'a> {
             .collect();
         for (func_sym, sig) in &func_sig_pairs {
             self.emit_func_sig_metadata(*func_sym, sig);
+        }
+
+        let boxed_param_funcs: Vec<SymbolId> = self
+            .boxed_param_funcs
+            .iter()
+            .copied()
+            .map(SymbolId)
+            .collect();
+        for func_sym in boxed_param_funcs {
+            let fn_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: fn_vreg,
+                value: MirConst::FuncRef(func_sym),
+                ty: any_ty,
+            });
+            let flag_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: flag_raw,
+                value: MirConst::Int(1),
+                ty: self.tcx.int(),
+            });
+            let flag_boxed = self.box_operand(flag_raw, self.tcx.int());
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_func_set_boxed_params".to_string(),
+                args: vec![fn_vreg, flag_boxed],
+                ty: self.tcx.none(),
+            });
         }
 
         // Prime FUNC_LINES / FUNC_FILES (co_firstlineno / co_filename) for
@@ -11882,6 +11917,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         let mir = lower_hir_to_mir(&hir, &tcx);
@@ -11932,6 +11968,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         let mir = lower_hir_to_mir(&hir, &tcx);
@@ -11950,6 +11987,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         }
     }
 
@@ -12413,6 +12451,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         let mir = lower_hir_to_mir(&hir, &tcx);
@@ -12494,6 +12533,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
@@ -12591,6 +12631,7 @@ mod tests {
             sym_types: HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
@@ -12643,6 +12684,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
         let mir = lower_hir_to_mir(&hir, &tcx);
         assert_eq!(mir.bodies.len(), 1);
@@ -12725,6 +12767,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols)
@@ -12950,6 +12993,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
@@ -13002,6 +13046,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
@@ -13041,6 +13086,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
         let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
         let has_store = mir

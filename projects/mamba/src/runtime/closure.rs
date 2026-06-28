@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 /// - Creating closure objects with captured environments
 /// - Accessing captured variables from within closures
 /// - Decorator application (wrapping functions)
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A closure object — a function paired with its captured environment.
 pub struct MbClosure {
@@ -105,8 +105,11 @@ pub fn mb_closure_new_with_cells(name: MbValue, func: MbValue, capture_ids: MbVa
 /// expressions into the closure. Takes a list MbValue whose elements are the
 /// evaluated default values, in parameter order (defaults fill trailing params).
 pub fn mb_closure_set_defaults(closure_handle: MbValue, defaults_list: MbValue) {
+    set_closure_defaults_values(closure_handle, extract_list(defaults_list));
+}
+
+fn set_closure_defaults_values(closure_handle: MbValue, vals: Vec<MbValue>) {
     if let Some(id) = closure_handle.as_int() {
-        let vals = extract_list(defaults_list);
         CLOSURES.with(|closures| {
             let mut vec = closures.borrow_mut();
             let idx = (id as u64).wrapping_sub(1) as usize;
@@ -115,6 +118,11 @@ pub fn mb_closure_set_defaults(closure_handle: MbValue, defaults_list: MbValue) 
                 for old_val in c.defaults.drain(..) {
                     unsafe {
                         super::rc::release_if_ptr(old_val);
+                    }
+                }
+                for &new_val in &vals {
+                    unsafe {
+                        super::rc::retain_if_ptr(new_val);
                     }
                 }
                 c.defaults = vals;
@@ -443,6 +451,8 @@ thread_local! {
     // init via mb_func_set_params / mb_func_set_retanno emitted by lowering.
     static FUNC_PARAMS: std::cell::RefCell<HashMap<u64, Vec<MbParamInfo>>> =
         std::cell::RefCell::new(HashMap::new());
+    static FUNC_BOXED_PARAMS: std::cell::RefCell<HashSet<u64>> =
+        std::cell::RefCell::new(HashSet::new());
     static FUNC_RET_ANNOS: std::cell::RefCell<HashMap<u64, String>> =
         std::cell::RefCell::new(HashMap::new());
     // Source location metadata: first line number of the `def`/`lambda` and
@@ -515,6 +525,81 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
     });
 }
 
+fn extract_defaults_assignment(value: MbValue) -> Option<Vec<MbValue>> {
+    if value.is_none() {
+        return Some(Vec::new());
+    }
+    let ptr = value.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Tuple(items) => Some(items.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Rewrite a function's live positional defaults from `f.__defaults__`.
+/// Defaults are right-aligned to positional-only + positional-or-keyword
+/// parameters, matching CPython's call-time rule.
+pub fn mb_func_set_pos_defaults(func: MbValue, defaults_value: MbValue) -> bool {
+    let Some(defaults) = extract_defaults_assignment(defaults_value) else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "__defaults__ must be set to a tuple object".to_string(),
+            )),
+        );
+        return true;
+    };
+
+    let key = func.to_bits();
+    let updated = FUNC_PARAMS.with(|m| {
+        let mut map = m.borrow_mut();
+        let Some(params) = map.get_mut(&key) else {
+            return false;
+        };
+        let pos_indices: Vec<usize> = params
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.kind <= 1)
+            .map(|(i, _)| i)
+            .collect();
+        let first_default_ordinal = pos_indices.len().saturating_sub(defaults.len());
+        let default_offset = defaults.len().saturating_sub(pos_indices.len());
+        for (ordinal, param_idx) in pos_indices.into_iter().enumerate() {
+            let p = &mut params[param_idx];
+            let next_default = if ordinal >= first_default_ordinal {
+                Some(defaults[default_offset + ordinal - first_default_ordinal])
+            } else {
+                None
+            };
+            if let Some(v) = next_default {
+                unsafe {
+                    super::rc::retain_if_ptr(v);
+                }
+                let old = p.default;
+                p.default = v;
+                p.has_default = true;
+                unsafe {
+                    super::rc::release_if_ptr(old);
+                }
+            } else {
+                let old = p.default;
+                p.default = MbValue::none();
+                p.has_default = false;
+                unsafe {
+                    super::rc::release_if_ptr(old);
+                }
+            }
+        }
+        true
+    });
+    if updated {
+        set_closure_defaults_values(func, defaults);
+    }
+    updated
+}
+
 /// Register a function's textual return annotation.
 pub fn mb_func_set_retanno(func: MbValue, anno: MbValue) {
     if let Some(s) = extract_str(anno) {
@@ -527,6 +612,24 @@ pub fn mb_func_set_retanno(func: MbValue, anno: MbValue) {
 pub fn func_params(func: MbValue) -> Option<Vec<MbParamInfo>> {
     let key = func.to_bits();
     FUNC_PARAMS.with(|m| m.borrow().get(&key).cloned())
+}
+
+pub fn mb_func_set_boxed_params(func: MbValue, flag: MbValue) {
+    let enabled = flag.as_bool().unwrap_or(false) || flag.as_int().unwrap_or(0) != 0;
+    let key = func.to_bits();
+    FUNC_BOXED_PARAMS.with(|m| {
+        let mut set = m.borrow_mut();
+        if enabled {
+            set.insert(key);
+        } else {
+            set.remove(&key);
+        }
+    });
+}
+
+pub fn func_has_boxed_params(func: MbValue) -> bool {
+    let key = func.to_bits();
+    FUNC_BOXED_PARAMS.with(|m| m.borrow().contains(&key))
 }
 
 /// Textual return annotation for a registered function, or None.
@@ -859,12 +962,8 @@ fn active_cell_for_id(key: i64) -> MbValue {
         if let Some(cell) = cells.get(&key).copied() {
             return cell;
         }
-        let initial = GLOBAL_ID_NAMESPACE.with(|ns| {
-            ns.borrow()
-                .get(&key)
-                .copied()
-                .unwrap_or_else(MbValue::none)
-        });
+        let initial = GLOBAL_ID_NAMESPACE
+            .with(|ns| ns.borrow().get(&key).copied().unwrap_or_else(MbValue::none));
         let cell = mb_cell_new(initial);
         cells.insert(key, cell);
         cell
@@ -886,7 +985,9 @@ pub fn mb_capture_cell_reset_id(id: MbValue, value: MbValue) {
 }
 
 fn active_cell_get_id_raw(key: i64) -> Option<MbValue> {
-    ACTIVE_CELLS.with(|cells| cells.borrow().get(&key).copied()).map(mb_cell_get)
+    ACTIVE_CELLS
+        .with(|cells| cells.borrow().get(&key).copied())
+        .map(mb_cell_get)
 }
 
 fn active_cell_set_id_raw(key: i64, value: MbValue) -> bool {
@@ -1250,6 +1351,7 @@ pub(crate) fn cleanup_all_closures() {
     let _ = FUNC_FLAGS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_FREEVARS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_BOXED_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_RET_ANNOS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_LINES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_FILES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
@@ -1605,6 +1707,64 @@ mod tests {
         // Func still readable
         assert_eq!(mb_closure_get_func(closure).as_int(), Some(7));
         mb_closure_release(closure);
+    }
+
+    #[test]
+    fn test_func_pos_defaults_assignment_updates_params_and_closure_defaults() {
+        cleanup_all_closures();
+        let name = MbValue::from_ptr(MbObject::new_str("pos_defaults".into()));
+        let func = MbValue::from_int(11);
+        let caps = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let closure = mb_closure_new(name, func, caps);
+
+        let params = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str("a".into())),
+                MbValue::from_int(0),
+                MbValue::from_int(0),
+                MbValue::none(),
+                MbValue::none(),
+            ])),
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str("b".into())),
+                MbValue::from_int(0),
+                MbValue::from_int(1),
+                MbValue::from_int(2),
+                MbValue::none(),
+            ])),
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str("c".into())),
+                MbValue::from_int(1),
+                MbValue::from_int(1),
+                MbValue::from_int(3),
+                MbValue::none(),
+            ])),
+        ]));
+        mb_func_set_params(closure, params);
+
+        let assigned = MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+        ]));
+        assert!(mb_func_set_pos_defaults(closure, assigned));
+
+        let defaults = closure_defaults(closure);
+        assert_eq!(
+            defaults
+                .iter()
+                .filter_map(|v| v.as_int())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        let params = func_params(closure).expect("params should remain registered");
+        let got: Vec<(bool, Option<i64>)> = params
+            .iter()
+            .map(|p| (p.has_default, p.default.as_int()))
+            .collect();
+        assert_eq!(got, vec![(true, Some(1)), (true, Some(2)), (true, Some(3))]);
+
+        cleanup_all_closures();
     }
 
     /// REQ: R3(b) — set_capture overwrite releases prior heap-allocated value.

@@ -2281,10 +2281,7 @@ pub(crate) fn append_missing_method_defaults(
         return;
     }
     let provided_user_args = all_args.len().saturating_sub(pos_args_start);
-    let positional_capacity = params
-        .iter()
-        .filter(|p| matches!(p.kind, 0 | 1))
-        .count();
+    let positional_capacity = params.iter().filter(|p| matches!(p.kind, 0 | 1)).count();
     if provided_user_args > positional_capacity {
         return;
     }
@@ -5561,8 +5558,8 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             "__await__" if super::stdlib::types_mod::is_coroutine_generator(obj) => {
                 return make_bound_native_method(obj, &attr_name);
             }
-            "send" | "throw" | "close" | "__iter__" | "__next__" | "__aiter__"
-            | "__anext__" | "aclose" | "asend" | "athrow" => {
+            "send" | "throw" | "close" | "__iter__" | "__next__" | "__aiter__" | "__anext__"
+            | "aclose" | "asend" | "athrow" => {
                 return make_bound_native_method(obj, &attr_name);
             }
             _ => {}
@@ -9041,6 +9038,11 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
     if super::pep695::is_attrable_function(obj) {
         if extract_str(attr).as_deref() == Some("__name__") {
             super::closure::mb_func_set_name(obj, value);
+            return;
+        }
+        if extract_str(attr).as_deref() == Some("__defaults__")
+            && super::closure::mb_func_set_pos_defaults(obj, value)
+        {
             return;
         }
         super::pep695::func_attrs_set(obj, attr, value);
@@ -13680,6 +13682,10 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                 let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(vec![]));
                 return super::builtins::mb_call_spread(func, args_list);
             }
+            if super::closure::func_has_boxed_params(func) {
+                let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(vec![]));
+                return super::builtins::mb_call_spread(func, args_list);
+            }
             // REQ: JIT-compiled functions use SystemV/C calling convention.
             let is_boxed = super::module::is_boxed_return_func(addr as u64);
             let f: extern "C" fn() -> MbValue = unsafe { std::mem::transmute(addr) };
@@ -13983,6 +13989,10 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
             if super::module::is_variadic_func(addr as u64)
                 || super::module::is_kwargs_func(addr as u64)
             {
+                let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(vec![arg]));
+                return super::builtins::mb_call_spread(func, args_list);
+            }
+            if super::closure::func_has_boxed_params(func) {
                 let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(vec![arg]));
                 return super::builtins::mb_call_spread(func, args_list);
             }
