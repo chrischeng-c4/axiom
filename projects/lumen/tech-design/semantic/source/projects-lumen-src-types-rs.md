@@ -278,8 +278,16 @@ pub struct SearchRequest {
     pub cursor: Option<String>,
     /// Sort results by one or more fields instead of by relevance score.
     /// When absent, results are ranked by score (BM25 / constant) then
-    /// external_id. Single number-field sorts use the keyset planner; keyword
-    /// and composite sorts use the materialized fallback.
+    /// external_id. Number and keyword fields are sortable (up to 2 keys);
+    /// single number-field sorts use the keyset planner, keyword and composite
+    /// sorts use the materialized fallback. Rows missing a sort-key value
+    /// follow the per-key `missing` mode: `exclude` (the default) drops them
+    /// from the page and from `total`; `first`/`last` keep them — placed
+    /// before/after all present values and counted in `total`, like SQL
+    /// `NULLS FIRST`/`NULLS LAST`. A `sort`
+    /// cannot be combined with an offset cursor — that returns 400; page a
+    /// sorted result with the keyset cursor returned in the response, or
+    /// over-fetch and slice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<Vec<SortSpec>>,
     /// Whether to compute the exact total match count. Defaults to `true`
