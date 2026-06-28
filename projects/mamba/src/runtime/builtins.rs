@@ -3804,6 +3804,7 @@ pub(crate) fn is_type_name(s: &str) -> bool {
             | "NoneType"
             | "range"
             | "slice"
+            | "super"
     ) || super::class::class_is_registered(s)
 }
 
