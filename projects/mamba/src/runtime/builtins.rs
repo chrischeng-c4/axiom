@@ -9775,6 +9775,144 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     if kw_pairs.is_empty() {
         return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(pos)));
     }
+    if let Some(ptr) = func.as_ptr() {
+        unsafe {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
+                if class_name == "method" {
+                    let guard = fields.read().unwrap();
+                    let func_v = guard.get("__func__").copied().unwrap_or_else(MbValue::none);
+                    let self_v = guard.get("__self__").copied().unwrap_or_else(MbValue::none);
+                    drop(guard);
+                    let addr = resolve_callable(func_v);
+                    let is_native = addr
+                        .map(|a| super::module::is_native_func(a as u64))
+                        .unwrap_or(false);
+                    let (has_star, has_kw) = if is_native {
+                        (
+                            addr.map(|a| super::module::is_variadic_func(a as u64))
+                                .unwrap_or(false),
+                            addr.map(|a| super::module::is_kwargs_func(a as u64))
+                                .unwrap_or(false),
+                        )
+                    } else {
+                        detect_star_kw(func_v, addr)
+                    };
+                    if !has_star && !is_native {
+                        if let Some(params) = super::closure::func_params(func_v) {
+                            let regulars: Vec<&super::closure::MbParamInfo> =
+                                params.iter().filter(|p| p.kind <= 1).collect();
+                            let mut items: Vec<MbValue> =
+                                Vec::with_capacity(regulars.len() + pos.len() + 1);
+                            let mut used = std::collections::HashSet::new();
+                            let mut pos_iter = pos.iter().copied();
+                            for p in &regulars {
+                                if let Some(v) = pos_iter.next() {
+                                    if kw_pairs.iter().any(|(k, _)| *k == p.name) {
+                                        let fname = super::closure::mb_func_get_name(func_v)
+                                            .as_ptr()
+                                            .and_then(|fp| unsafe {
+                                                match &(*fp).data {
+                                                    ObjData::Str(ref s) => Some(s.clone()),
+                                                    _ => None,
+                                                }
+                                            })
+                                            .unwrap_or_default();
+                                        raise_type_error(format!(
+                                            "{fname}() got multiple values for argument '{}'",
+                                            p.name
+                                        ));
+                                        return MbValue::none();
+                                    }
+                                    items.push(v);
+                                } else if let Some((k, v)) =
+                                    kw_pairs.iter().find(|(k, _)| *k == p.name)
+                                {
+                                    used.insert(k.clone());
+                                    items.push(*v);
+                                } else if p.has_default {
+                                    items.push(p.default);
+                                } else {
+                                    items.push(MbValue::none());
+                                }
+                            }
+                            items.extend(pos_iter);
+                            if !has_kw {
+                                let declared: std::collections::HashSet<String> = params
+                                    .iter()
+                                    .filter(|p| p.kind <= 3)
+                                    .map(|p| p.name.clone())
+                                    .collect();
+                                if let Some((bad, _)) = kw_pairs
+                                    .iter()
+                                    .find(|(k, _)| !used.contains(k) && !declared.contains(k))
+                                {
+                                    let fname = super::closure::mb_func_get_name(func_v)
+                                        .as_ptr()
+                                        .and_then(|fp| unsafe {
+                                            match &(*fp).data {
+                                                ObjData::Str(ref s) => Some(s.clone()),
+                                                _ => None,
+                                            }
+                                        })
+                                        .unwrap_or_default();
+                                    raise_type_error(format!(
+                                        "{fname}() got an unexpected keyword argument '{bad}'"
+                                    ));
+                                    return MbValue::none();
+                                }
+                            }
+                            if has_kw {
+                                let extra = super::dict_ops::mb_dict_new();
+                                for (k, v) in &kw_pairs {
+                                    if !used.contains(k) {
+                                        unsafe {
+                                            super::rc::retain_if_ptr(*v);
+                                        }
+                                        super::dict_ops::mb_dict_setitem(
+                                            extra,
+                                            MbValue::from_ptr(MbObject::new_str(k.clone())),
+                                            *v,
+                                        );
+                                    }
+                                }
+                                items.push(extra);
+                            }
+                            let mut bound_items = Vec::with_capacity(items.len() + 1);
+                            bound_items.push(self_v);
+                            bound_items.extend(items);
+                            return mb_call_spread(
+                                func_v,
+                                MbValue::from_ptr(MbObject::new_list(bound_items)),
+                            );
+                        }
+                    }
+                    let mut combined = Vec::with_capacity(pos.len() + 1);
+                    combined.push(self_v);
+                    combined.extend(pos.iter().copied());
+                    return mb_call_spread(func_v, MbValue::from_ptr(MbObject::new_list(combined)));
+                }
+                if class_name == "__bound_native_method__" {
+                    let guard = fields.read().unwrap();
+                    let recv = guard.get("__self__").copied().unwrap_or_else(MbValue::none);
+                    let method = guard
+                        .get("__method__")
+                        .copied()
+                        .unwrap_or_else(MbValue::none);
+                    drop(guard);
+                    return super::class::mb_call_method_kwargs(
+                        recv,
+                        method,
+                        MbValue::from_ptr(MbObject::new_list(pos)),
+                        kwargs_dict,
+                    );
+                }
+            }
+        }
+    }
     if let Some(type_name) = super::class::resolve_class_name(func).or_else(|| {
         func.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Str(ref s) = (*ptr).data {
@@ -9837,6 +9975,22 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
             let mut pos_iter = pos.iter().copied();
             for p in &regulars {
                 if let Some(v) = pos_iter.next() {
+                    if kw_pairs.iter().any(|(k, _)| *k == p.name) {
+                        let fname = super::closure::mb_func_get_name(func)
+                            .as_ptr()
+                            .and_then(|fp| unsafe {
+                                match &(*fp).data {
+                                    ObjData::Str(ref s) => Some(s.clone()),
+                                    _ => None,
+                                }
+                            })
+                            .unwrap_or_default();
+                        raise_type_error(format!(
+                            "{fname}() got multiple values for argument '{}'",
+                            p.name
+                        ));
+                        return MbValue::none();
+                    }
                     items.push(v);
                 } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
                     used.insert(k.clone());
@@ -9848,6 +10002,31 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
                 }
             }
             items.extend(pos_iter);
+            if !has_kw {
+                let declared: std::collections::HashSet<String> = params
+                    .iter()
+                    .filter(|p| p.kind <= 3)
+                    .map(|p| p.name.clone())
+                    .collect();
+                if let Some((bad, _)) = kw_pairs
+                    .iter()
+                    .find(|(k, _)| !used.contains(k) && !declared.contains(k))
+                {
+                    let fname = super::closure::mb_func_get_name(func)
+                        .as_ptr()
+                        .and_then(|fp| unsafe {
+                            match &(*fp).data {
+                                ObjData::Str(ref s) => Some(s.clone()),
+                                _ => None,
+                            }
+                        })
+                        .unwrap_or_default();
+                    raise_type_error(format!(
+                        "{fname}() got an unexpected keyword argument '{bad}'"
+                    ));
+                    return MbValue::none();
+                }
+            }
             if has_kw {
                 let extra = super::dict_ops::mb_dict_new();
                 for (k, v) in &kw_pairs {
