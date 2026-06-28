@@ -3452,13 +3452,13 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
     // every other int-arith hot loop runs `n - 1` through here on every
     // iteration; the set-difference dispatch was paying two as_ptr()
     // bit-tests plus an unsafe deref+matches before falling through.
-    match (a.as_int(), b.as_int()) {
+    match (a.as_int_pyint(), b.as_int_pyint()) {
         (Some(ai), Some(bi)) => return MbValue::from_int(ai.wrapping_sub(bi)),
         _ => {}
     }
     // Float / mixed-numeric fallback.
-    let af = a.as_int().map(|i| i as f64).or(a.as_float());
-    let bf = b.as_int().map(|i| i as f64).or(b.as_float());
+    let af = a.as_int_pyint().map(|i| i as f64).or(a.as_float());
+    let bf = b.as_int_pyint().map(|i| i as f64).or(b.as_float());
     if let (Some(af), Some(bf)) = (af, bf) {
         return MbValue::from_float(af - bf);
     }
@@ -13051,6 +13051,14 @@ mod tests {
         assert_eq!(mb_mul(a, b).as_int(), Some(30));
         assert_eq!(mb_mod(a, b).as_int(), Some(1));
         assert_eq!(mb_neg(a).as_int(), Some(-10));
+        assert_eq!(
+            mb_sub(MbValue::from_bool(true), MbValue::from_bool(false)).as_int(),
+            Some(1)
+        );
+        assert_eq!(
+            mb_sub(MbValue::from_bool(true), MbValue::from_float(0.5)).as_float(),
+            Some(0.5)
+        );
     }
 
     #[test]
