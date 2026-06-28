@@ -614,13 +614,25 @@ impl<'a> Parser<'a> {
             // Handle `self` parameter
             if self.peek_kind() == Some(TokenKind::Self_) {
                 self.advance();
+                let ty = if self.peek_kind() == Some(TokenKind::Colon) {
+                    self.advance();
+                    self.parse_type_expr()?
+                } else {
+                    Spanned::new(TypeExpr::Named("Self".to_string()), self.span_from(p_start))
+                };
+                let default = if self.peek_kind() == Some(TokenKind::Eq) {
+                    self.advance();
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
                 params.push(Param {
                     name: "self".to_string(),
-                    ty: Spanned::new(TypeExpr::Named("Self".to_string()), self.span_from(p_start)),
-                    default: None,
+                    ty,
+                    default,
                     kind: ParamKind::Regular,
                     pos_only: false,
-                    kw_only: false,
+                    kw_only: seen_star,
                     span: self.span_from(p_start),
                 });
             } else if self.peek_kind() == Some(TokenKind::DoubleStar) {
@@ -1313,6 +1325,21 @@ mod tests {
                 assert_eq!(params.len(), 1);
                 assert_eq!(params[0].name, "self");
                 assert_eq!(params[0].kind, ParamKind::Regular);
+            }
+            other => panic!("expected FnDef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_function_self_forward_ref_annotation() {
+        match parse_stmt("def foo(self: 'ForRefExample'):\n    pass\n") {
+            Stmt::FnDef { params, .. } => {
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].name, "self");
+                assert!(matches!(
+                    &params[0].ty.node,
+                    TypeExpr::Named(n) if strip_forward_ref_name(n) == Some("ForRefExample")
+                ));
             }
             other => panic!("expected FnDef, got {other:?}"),
         }
