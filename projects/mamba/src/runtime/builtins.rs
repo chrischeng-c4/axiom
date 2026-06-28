@@ -9124,13 +9124,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     drop(f);
                     return super::stdlib::traceback_mod::mb_traceback_exception_format(receiver);
                 }
-                // weakref.ref(obj)() — return _target. Strong-ref carve-out.
+                // weakref.ref(obj)() — return the live target, or None after expiry.
                 if class_name == "ReferenceType" {
-                    let f = fields.read().unwrap();
-                    let target = f.get("_target").copied().unwrap_or_else(MbValue::none);
-                    drop(f);
-                    super::rc::retain_if_ptr(target);
-                    return target;
+                    return super::stdlib::weakref_mod::reference_target(func);
                 }
                 if class_name == "collections.namedtuple_factory" {
                     return super::stdlib::collections_mod::mb_namedtuple_create(func, &items);
