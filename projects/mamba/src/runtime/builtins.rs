@@ -10854,6 +10854,14 @@ pub fn mb_eval(expr: MbValue) -> MbValue {
     use crate::parser::Parser;
     use crate::source::SourceMap;
 
+    if let Some(ptr) = expr.as_ptr() {
+        unsafe {
+            if let ObjData::CodeObject { mode, ast, .. } = &(*ptr).data {
+                return mb_eval_code_object(mode, ast);
+            }
+        }
+    }
+
     let source = if let Some(ptr) = expr.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -10884,6 +10892,26 @@ pub fn mb_eval(expr: MbValue) -> MbValue {
         }
     };
     eval_expr(&ast.node)
+}
+
+fn mb_eval_code_object(mode: &str, ast: &crate::parser::ast::Module) -> MbValue {
+    let mut ctx = ExecContext::default();
+    if mode == "eval" {
+        if let Some(stmt) = ast.stmts.first() {
+            if let crate::parser::ast::Stmt::ExprStmt(expr) = &stmt.node {
+                return exec_eval_expr(&mut ctx, &expr.node);
+            }
+        }
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "eval() arg 1 must be a string, bytes or code object".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    exec_stmts_with_context(&mut ctx, &ast.stmts);
+    MbValue::none()
 }
 
 /// Pending-exception probe for the eval tree walker: sub-evaluations raise
@@ -12700,11 +12728,23 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>) -> MbValue {
     use crate::parser::Parser;
     use crate::source::SourceMap;
 
+    if let Some(ptr) = code.as_ptr() {
+        unsafe {
+            if let ObjData::CodeObject { ast, .. } = &(*ptr).data {
+                let mut ctx = ExecContext {
+                    globals,
+                    ..ExecContext::default()
+                };
+                exec_stmts_with_context(&mut ctx, &ast.stmts);
+                return MbValue::none();
+            }
+        }
+    }
+
     let source = if let Some(ptr) = code.as_ptr() {
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => s.clone(),
-                ObjData::CodeObject { .. } => return MbValue::none(),
                 _ => return MbValue::none(),
             }
         }
@@ -14546,6 +14586,13 @@ def f():
         }
     }
 
+    #[test]
+    fn test_eval_runs_compile_eval_code_object() {
+        crate::runtime::exception::mb_clear_exception();
+        let code = mb_compile(make_str("40 + 2"), make_str("<test>"), make_str("eval"));
+        assert_eq!(mb_eval(code).as_int(), Some(42));
+    }
+
     /// AC2a: compile("x = 1\ny = 2", "<test>", "exec") succeeds.
     #[test]
     fn test_compile_exec_multi_stmt_ok() {
@@ -14560,6 +14607,22 @@ def f():
             "exec should succeed for multi-statement source"
         );
         assert!(result.is_ptr());
+    }
+
+    #[test]
+    fn test_exec_runs_compile_exec_code_object() {
+        crate::runtime::exception::mb_clear_exception();
+        let code = mb_compile(
+            make_str("x = 5\ny = x * 3"),
+            make_str("<test>"),
+            make_str("exec"),
+        );
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(code, globals);
+        let x = crate::runtime::dict_ops::mb_dict_get(globals, make_str("x"), MbValue::none());
+        let y = crate::runtime::dict_ops::mb_dict_get(globals, make_str("y"), MbValue::none());
+        assert_eq!(x.as_int(), Some(5));
+        assert_eq!(y.as_int(), Some(15));
     }
 
     /// AC2b: compile("x = 1", "<test>", "eval") raises SyntaxError.
