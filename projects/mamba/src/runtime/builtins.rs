@@ -3382,6 +3382,49 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                     if raise_datetime_op_type_error("+", a, b) {
                         return MbValue::none();
                     }
+                    // A builtin sequence subclass on the right that is not
+                    // compatible with the left sequence type still gets the
+                    // sequence-specific TypeError, unless it defines a real
+                    // reflected add hook to take over (`tuple + RHS.__radd__`).
+                    if let Some(kind) = a.as_ptr().and_then(|p| match unsafe { &(*p).data } {
+                        ObjData::List(_) => Some("list"),
+                        ObjData::Tuple(_) => Some("tuple"),
+                        _ => None,
+                    }) {
+                        if let Some(pb) = b.as_ptr() {
+                            unsafe {
+                                if let ObjData::Instance { class_name, .. } = &(*pb).data {
+                                    let is_sequence_subclass =
+                                        ["list", "tuple"].iter().any(|base| {
+                                            class_name == *base
+                                                || super::class::check_class_hierarchy(
+                                                    class_name, base,
+                                                )
+                                        });
+                                    let is_same_sequence = class_name == kind
+                                        || super::class::check_class_hierarchy(class_name, kind);
+                                    let has_reflected_add =
+                                        !super::class::lookup_method(class_name, "__radd__")
+                                            .is_none();
+                                    if is_sequence_subclass
+                                        && !is_same_sequence
+                                        && !has_reflected_add
+                                    {
+                                        super::exception::mb_raise(
+                                            MbValue::from_ptr(MbObject::new_str(
+                                                "TypeError".to_string(),
+                                            )),
+                                            MbValue::from_ptr(MbObject::new_str(format!(
+                                                "can only concatenate {kind} (not \"{}\") to {kind}",
+                                                value_type_name(b)
+                                            ))),
+                                        );
+                                        return MbValue::none();
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // Genuinely unsupported operand pair (e.g. `1.0 + "x"`):
                     // CPython raises TypeError. Preserve the None fallback when
                     // an operand is a user Instance (whose __add__/__radd__ is
@@ -6010,11 +6053,11 @@ fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
     if mb_values_eq(a, b) {
         return std::cmp::Ordering::Equal;
     }
-    if mb_values_lt(a, b) {
-        return std::cmp::Ordering::Less;
-    }
     if mb_values_lt(b, a) {
         return std::cmp::Ordering::Greater;
+    }
+    if mb_values_lt(a, b) {
+        return std::cmp::Ordering::Less;
     }
     std::cmp::Ordering::Equal
 }
@@ -9890,6 +9933,20 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     // 2. No keywords → plain positional spread.
     if kw_pairs.is_empty() {
         return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(pos)));
+    }
+    if let Some(type_name) = super::class::resolve_class_name(func).or_else(|| {
+        func.as_ptr().and_then(|ptr| unsafe {
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+    }) {
+        if type_name == "list" {
+            raise_type_error("list() takes no keyword arguments".to_string());
+            return MbValue::none();
+        }
     }
     if let Some(ptr) = func.as_ptr() {
         unsafe {
