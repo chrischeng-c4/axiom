@@ -7191,15 +7191,16 @@ impl<'a> AstLowerer<'a> {
                     ast::Expr::Ident(name)
                         if self.unittest_mock_kwarg_idents.contains(name.as_str())
                 );
-                // `p(k=1)` where `p` is a local `functools.partial(...)`
-                // instance must keep keyword names alive so call-time kwargs
-                // can override stored kwargs. Do not generalize this to every
-                // bare identifier: builtin constructors and imported classes
-                // still rely on the legacy flattening/trailing-dict conventions.
+                // Dynamic callables such as a bound method stored in a variable
+                // must keep keyword names alive so runtime binding can reject
+                // unknown names (or bind them to FUNC_PARAMS). Known method and
+                // native surfaces above still use their trailing-dict convention.
                 if (has_any_kwargs || has_dstar)
                     && !pack_trailing_kwargs
                     && !has_star
-                    && (is_functools_partial_kwarg_ident || is_unittest_mock_kwarg_ident)
+                    && (matches!(&func.node, ast::Expr::Ident(_))
+                        || is_functools_partial_kwarg_ident
+                        || is_unittest_mock_kwarg_ident)
                 {
                     return Some(self.build_spread_kwargs_call(f, args, any_ty));
                 }
@@ -10609,6 +10610,42 @@ mod tests {
         assert!(matches!(
             &hir.top_level[0],
             HirStmt::Expr { expr: HirExpr::Call { args, .. }, .. } if args.len() == 1
+        ));
+    }
+
+    #[test]
+    fn test_lower_dynamic_ident_call_with_kwargs_preserves_keyword_names() {
+        let hir = helper_lower(vec![
+            sp(Stmt::VarDecl {
+                name: "closure".to_string(),
+                ty: sp(TypeExpr::Named("Any".to_string())),
+                value: sp(Expr::IntLit(0)),
+            }),
+            sp(Stmt::ExprStmt(sp(Expr::Call {
+                func: Box::new(sp(Expr::Ident("closure".to_string()))),
+                args: vec![CallArg::Keyword {
+                    name: "_O2__arg".to_string(),
+                    value: sp(Expr::IntLit(2)),
+                }],
+            }))),
+        ]);
+        let HirStmt::Expr {
+            expr: HirExpr::Call { func, args, .. },
+            ..
+        } = &hir.top_level[1]
+        else {
+            panic!("expected lowered dynamic call");
+        };
+        assert!(matches!(
+            func.as_ref(),
+            HirExpr::StrLit(name, _) if name == "mb_call_spread_kwargs"
+        ));
+        assert_eq!(args.len(), 3);
+        assert!(matches!(&args[1], HirExpr::List { elements, .. } if elements.is_empty()));
+        assert!(matches!(
+            &args[2],
+            HirExpr::Dict { entries, .. }
+                if matches!(entries.as_slice(), [(HirExpr::StrLit(name, _), _)] if name == "_O2__arg")
         ));
     }
 
