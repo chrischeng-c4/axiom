@@ -10008,30 +10008,39 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     //    keyword args to their named positional slots, filling defaults.
     if !has_star && !is_native {
         if let Some(params) = super::closure::func_params(func) {
-            let regulars: Vec<&super::closure::MbParamInfo> =
-                params.iter().filter(|p| p.kind <= 1).collect();
-            let mut items: Vec<MbValue> = Vec::with_capacity(regulars.len() + pos.len());
+            let callable_params: Vec<&super::closure::MbParamInfo> =
+                params.iter().filter(|p| p.kind <= 3).collect();
+            let mut items: Vec<MbValue> = Vec::with_capacity(callable_params.len() + pos.len());
             let mut used = std::collections::HashSet::new();
             let mut pos_iter = pos.iter().copied();
-            for p in &regulars {
-                if let Some(v) = pos_iter.next() {
-                    if kw_pairs.iter().any(|(k, _)| *k == p.name) {
-                        let fname = super::closure::mb_func_get_name(func)
-                            .as_ptr()
-                            .and_then(|fp| unsafe {
-                                match &(*fp).data {
-                                    ObjData::Str(ref s) => Some(s.clone()),
-                                    _ => None,
-                                }
-                            })
-                            .unwrap_or_default();
-                        raise_type_error(format!(
-                            "{fname}() got multiple values for argument '{}'",
-                            p.name
-                        ));
-                        return MbValue::none();
+            for p in &callable_params {
+                if p.kind <= 1 {
+                    if let Some(v) = pos_iter.next() {
+                        if kw_pairs.iter().any(|(k, _)| *k == p.name) {
+                            let fname = super::closure::mb_func_get_name(func)
+                                .as_ptr()
+                                .and_then(|fp| unsafe {
+                                    match &(*fp).data {
+                                        ObjData::Str(ref s) => Some(s.clone()),
+                                        _ => None,
+                                    }
+                                })
+                                .unwrap_or_default();
+                            raise_type_error(format!(
+                                "{fname}() got multiple values for argument '{}'",
+                                p.name
+                            ));
+                            return MbValue::none();
+                        }
+                        items.push(v);
+                    } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
+                        used.insert(k.clone());
+                        items.push(*v);
+                    } else if p.has_default {
+                        items.push(p.default);
+                    } else {
+                        items.push(MbValue::none());
                     }
-                    items.push(v);
                 } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
                     used.insert(k.clone());
                     items.push(*v);
@@ -12922,6 +12931,51 @@ pub fn mb_locals() -> MbValue {
 mod tests {
     use super::super::rc::mb_release;
     use super::*;
+
+    extern "C" fn kwonly_sum_test_fn(a: MbValue, b: MbValue) -> MbValue {
+        MbValue::from_int(a.as_int().unwrap() + b.as_int().unwrap())
+    }
+
+    fn param_sig(name: &str, kind: i64) -> MbValue {
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            MbValue::from_int(kind),
+            MbValue::from_int(0),
+            MbValue::none(),
+            MbValue::none(),
+        ]))
+    }
+
+    #[test]
+    fn test_call_spread_kwargs_binds_keyword_only_params() {
+        let addr = kwonly_sum_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let func = MbValue::from_func(addr);
+        let params = MbValue::from_ptr(MbObject::new_list(vec![
+            param_sig("a", 3),
+            param_sig("b", 3),
+        ]));
+        super::super::closure::mb_func_set_params(func, params);
+
+        let kwargs = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("a".to_string())),
+            MbValue::from_int(2),
+        );
+        super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("b".to_string())),
+            MbValue::from_int(3),
+        );
+
+        let result = mb_call_spread_kwargs(
+            func,
+            MbValue::from_ptr(MbObject::new_list(Vec::new())),
+            kwargs,
+        );
+        assert_eq!(result.as_int(), Some(5));
+    }
 
     #[test]
     fn test_arithmetic() {
