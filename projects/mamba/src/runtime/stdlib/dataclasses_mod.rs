@@ -1030,8 +1030,19 @@ unsafe extern "C" fn dispatch_field(args_ptr: *const MbValue, nargs: usize) -> M
 fn dc_name_of(obj: MbValue) -> Option<String> {
     let direct = extract_str(obj).or_else(|| {
         obj.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                Some(class_name.clone())
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
+                if class_name == "type" {
+                    fields
+                        .read()
+                        .ok()
+                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                } else {
+                    Some(class_name.clone())
+                }
             } else {
                 None
             }
@@ -1432,29 +1443,32 @@ unsafe extern "C" fn dispatch_make_dataclass(args_ptr: *const MbValue, nargs: us
         return name_v;
     };
     let fields_v = a.get(1).copied().unwrap_or_else(MbValue::none);
-    let kwargs = a
-        .iter()
-        .rev()
-        .find(|v| {
-            v.as_ptr()
-                .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
-        })
-        .copied()
+    let kwargs_index = a.iter().enumerate().rev().find_map(|(idx, v)| {
+        v.as_ptr()
+            .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .then_some(idx)
+    });
+    let kwargs = kwargs_index
+        .map(|idx| a[idx])
         .unwrap_or_else(MbValue::none);
+    let positional_bases = a.get(2).copied().filter(|_| kwargs_index != Some(2));
     let bases = get_kwarg(kwargs, "bases")
-        .or_else(|| a.get(2).copied())
+        .or(positional_bases)
         .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_tuple(Vec::new())));
     let namespace = get_kwarg(kwargs, "namespace")
         .or_else(|| get_kwarg(kwargs, "ns"))
         .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
-    let _type_obj = super::super::builtins::mb_type3(name_v, bases, namespace);
+    let type_obj = super::super::builtins::mb_type3(name_v, bases, namespace);
+    if type_obj.is_none() {
+        return type_obj;
+    }
 
     let field_specs = parse_make_dataclass_fields(fields_v);
     PENDING_FIELDS.with(|reg| {
         reg.borrow_mut().insert(name.clone(), field_specs);
     });
     decorate_class(&name, parse_options(kwargs));
-    name_v
+    type_obj
 }
 
 /// Model `dataclasses.FrozenInstanceError` as a type-object Instance
