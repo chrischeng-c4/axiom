@@ -6,6 +6,7 @@
 use crate::hir::*;
 use crate::mir::*;
 use crate::resolve::{SymbolId, SymbolTable, VariableClass};
+use crate::source::span::Span;
 use crate::types::{Ty, TypeContext, TypeId};
 use std::collections::{HashMap, HashSet};
 
@@ -1397,6 +1398,9 @@ struct HirToMir<'a> {
     current_func_src_line: Option<u32>,
     /// Python-visible name for the function body currently being lowered.
     current_func_name: Option<String>,
+    /// True while lowering a normal Python function body with a pushed
+    /// traceback frame. Synthetic bodies such as lambdas opt out.
+    traceback_frame_active: bool,
     /// (class_name, docstring) pairs primed at module-init via
     /// `mb_class_set_doc` so `inspect.getdoc(Cls)` works.
     pending_class_docs: Vec<(String, String)>,
@@ -1478,6 +1482,7 @@ impl<'a> HirToMir<'a> {
             src_filename: None,
             current_func_src_line: None,
             current_func_name: None,
+            traceback_frame_active: false,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
@@ -1643,6 +1648,7 @@ impl<'a> HirToMir<'a> {
             src_filename: None,
             current_func_src_line: None,
             current_func_name: None,
+            traceback_frame_active: false,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
@@ -1680,6 +1686,7 @@ impl<'a> HirToMir<'a> {
         self.in_module_scope = false;
         self.current_func_src_line = None;
         self.current_func_name = None;
+        self.traceback_frame_active = false;
     }
 
     /// `*args` is a tuple in Python, but every call path packs the extra
@@ -1785,6 +1792,17 @@ impl<'a> HirToMir<'a> {
             .collect();
 
         self.emit_star_args_to_tuple(func, any_ty);
+        let frame_filename = self
+            .src_filename
+            .clone()
+            .unwrap_or_else(|| "<string>".to_string());
+        let frame_line = self.current_func_src_line.unwrap_or(1) as i64;
+        let frame_name = self
+            .current_func_name
+            .clone()
+            .unwrap_or_else(|| "<function>".to_string());
+        self.emit_traceback_push_frame(&frame_filename, frame_line, &frame_name);
+        self.traceback_frame_active = true;
 
         // Store parameters to global storage if they are cell variables (captured by inner
         // functions via implicit or explicit nonlocal). This ensures that when an inner
@@ -2452,6 +2470,21 @@ impl<'a> HirToMir<'a> {
             args: vec![],
             ty: self.tcx.none(),
         });
+        self.emit_extern_call(None, "mb_traceback_reset_stack");
+
+        if let Some(filename) = self.src_filename.clone() {
+            if let Some(file_sym) = self.symbol_table.and_then(|st| st.lookup("__file__")) {
+                let file_vreg = self.emit_str_const(&filename);
+                self.current_stmts.push(MirInst::StoreGlobal {
+                    name: file_sym,
+                    value: file_vreg,
+                });
+                self.sym_to_vreg.insert(file_sym, file_vreg);
+            }
+            self.emit_traceback_push_frame(&filename, 1, "<module>");
+        } else {
+            self.emit_traceback_push_frame("<string>", 1, "<module>");
+        }
 
         // Prime the FUNC_NAMES registry for every user-defined function so
         // `f.__name__` works on top-level `def`s (which are hoisted into
@@ -3799,7 +3832,7 @@ impl<'a> HirToMir<'a> {
                     self.emit_exception_propagate();
                 }
             }
-            HirStmt::Raise { value, from, .. } => {
+            HirStmt::Raise { value, from, span } => {
                 let has_context = self.active_except_vreg.is_some();
                 let has_from = from.is_some();
                 // Emit the mb_raise* runtime call. After the call, control flow MUST
@@ -4089,6 +4122,10 @@ impl<'a> HirToMir<'a> {
                 // to that with's exit block so `__exit__` runs (suppression /
                 // re-raise) and the remaining body statements are skipped.
                 if raise_emitted {
+                    if value.is_some() {
+                        let line = self.source_line_for_span(span);
+                        self.emit_traceback_capture_raise(line);
+                    }
                     let inner_try_depth = self.try_handler_stack.len();
                     let with_exit = self.with_exit_stack.last().copied();
                     let with_is_inner = matches!(
@@ -8165,9 +8202,11 @@ impl<'a> HirToMir<'a> {
                         && matches!(args.first(), Some(HirExpr::NoneLit(_)))
                         && self.expr_is_var_named(object, "traceback")
                     {
-                        // Mamba currently exposes module __file__ as None; keep
-                        // the synthetic frame filename aligned with that surface.
-                        let filename = self.emit_str_const("None");
+                        let frame_filename = self
+                            .src_filename
+                            .clone()
+                            .unwrap_or_else(|| "None".to_string());
+                        let filename = self.emit_str_const(&frame_filename);
                         let line_number = self.current_func_src_line.unwrap_or(0) as i64 + 1;
                         let line_raw = self.fresh_vreg();
                         self.current_stmts.push(MirInst::LoadConst {
@@ -9833,6 +9872,7 @@ impl<'a> HirToMir<'a> {
                 let saved_with_exit = std::mem::take(&mut self.with_exit_stack);
                 let saved_with_ctx = std::mem::take(&mut self.with_ctx_stack);
                 let saved_return_ty = self.current_return_ty;
+                let saved_traceback_frame_active = self.traceback_frame_active;
                 let saved_cell_override = std::mem::take(&mut self.cell_override);
                 let saved_initialized_capture_cells =
                     std::mem::take(&mut self.initialized_capture_cells);
@@ -9846,6 +9886,7 @@ impl<'a> HirToMir<'a> {
                 self.async_coro_vreg = None;
                 self.is_gen_body = false;
                 self.current_return_ty = any_ty;
+                self.traceback_frame_active = false;
 
                 // Mark outer variables for cell_override so lambda body reads
                 // them via LoadGlobal instead of looking them up in sym_to_vreg.
@@ -9895,6 +9936,7 @@ impl<'a> HirToMir<'a> {
                 self.with_exit_stack = saved_with_exit;
                 self.with_ctx_stack = saved_with_ctx;
                 self.current_return_ty = saved_return_ty;
+                self.traceback_frame_active = saved_traceback_frame_active;
                 self.cell_override = saved_cell_override;
                 self.initialized_capture_cells = saved_initialized_capture_cells;
 
@@ -10434,7 +10476,42 @@ impl<'a> HirToMir<'a> {
         }
     }
 
+    fn source_line_for_span(&self, span: &Span) -> i64 {
+        self.src_line_starts
+            .as_ref()
+            .and_then(|starts| {
+                (span.end > 0).then(|| starts.partition_point(|&s| s <= span.start) as i64)
+            })
+            .filter(|line| *line > 0)
+            .unwrap_or_else(|| self.current_func_src_line.unwrap_or(1) as i64)
+    }
+
+    fn emit_traceback_push_frame(&mut self, filename: &str, line: i64, name: &str) {
+        let filename_vreg = self.emit_str_const(filename);
+        let line_vreg = self.emit_boxed_int_const(line.max(1));
+        let name_vreg = self.emit_str_const(name);
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_traceback_push_frame".to_string(),
+            args: vec![filename_vreg, line_vreg, name_vreg],
+            ty: self.tcx.none(),
+        });
+    }
+
+    fn emit_traceback_capture_raise(&mut self, line: i64) {
+        let line_vreg = self.emit_boxed_int_const(line.max(1));
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_traceback_capture_raise".to_string(),
+            args: vec![line_vreg],
+            ty: self.tcx.none(),
+        });
+    }
+
     fn finish_block(&mut self, terminator: Terminator) {
+        if matches!(terminator, Terminator::Return(_)) && self.traceback_frame_active {
+            self.emit_extern_call(None, "mb_traceback_pop_frame");
+        }
         let stmts = std::mem::take(&mut self.current_stmts);
         let id = self
             .current_block_id

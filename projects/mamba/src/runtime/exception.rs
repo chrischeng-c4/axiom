@@ -640,6 +640,12 @@ fn store_exception_as_value(exc: MbException) -> MbValue {
         };
         fields.insert("value".to_string(), value_val);
     }
+    if !exc.traceback.is_empty() {
+        fields.insert(
+            "__traceback__".to_string(),
+            super::stdlib::traceback_mod::make_tb_from_traceback_entries(&exc.traceback),
+        );
+    }
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -894,6 +900,14 @@ pub fn set_current_exception(exc: MbException) {
     super::class::clear_last_raised_instance();
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
+    });
+}
+
+pub fn set_current_traceback(entries: Vec<(String, u32, String)>) {
+    CURRENT_EXCEPTION.with(|cell| {
+        if let Some(exc) = cell.borrow_mut().as_mut() {
+            exc.traceback = entries;
+        }
     });
 }
 

@@ -2044,6 +2044,31 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_traceback_reset_stack",
+            traceback_mod::mb_traceback_reset_stack as fn(),
+            [],
+            Void
+        ),
+        rt_sym!(
+            "mb_traceback_push_frame",
+            traceback_mod::mb_traceback_push_frame
+                as fn(super::MbValue, super::MbValue, super::MbValue),
+            [I64, I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_traceback_pop_frame",
+            traceback_mod::mb_traceback_pop_frame as fn(),
+            [],
+            Void
+        ),
+        rt_sym!(
+            "mb_traceback_capture_raise",
+            traceback_mod::mb_traceback_capture_raise as fn(super::MbValue),
+            [I64],
+            Void
+        ),
+        rt_sym!(
             "mb_singledispatch_register_annotation",
             functools_mod::mb_singledispatch_register_annotation
                 as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
