@@ -256,6 +256,99 @@ fn class_namespace_mappingproxy(
     super::dict_ops::mappingproxy_from_mapping(dict)
 }
 
+fn type_tuple_from_names(names: Vec<String>) -> MbValue {
+    MbValue::from_ptr(super::rc::MbObject::new_tuple(
+        names.iter().map(|name| make_type_object(name)).collect(),
+    ))
+}
+
+fn type_surface_mro_names(type_name: &str) -> Option<Vec<String>> {
+    if class_is_registered(type_name) {
+        let mut names = class_mro_list(type_name);
+        if names.first().map_or(true, |name| name != type_name) {
+            names.insert(0, type_name.to_string());
+        }
+        if !names.iter().any(|name| name == "object") {
+            names.push("object".to_string());
+        }
+        return Some(names);
+    }
+    if !is_builtin_type_name(type_name) {
+        return None;
+    }
+    Some(match type_name {
+        "object" => vec!["object".to_string()],
+        "bool" => vec!["bool".to_string(), "int".to_string(), "object".to_string()],
+        _ => vec![type_name.to_string(), "object".to_string()],
+    })
+}
+
+fn type_surface_base_names(type_name: &str) -> Option<Vec<String>> {
+    if class_is_registered(type_name) {
+        let bases = CLASS_REGISTRY.with(|reg| {
+            reg.borrow()
+                .get(type_name)
+                .map(|cls| cls.bases.clone())
+                .unwrap_or_default()
+        });
+        return Some(if bases.is_empty() {
+            vec!["object".to_string()]
+        } else {
+            bases
+        });
+    }
+    if !is_builtin_type_name(type_name) {
+        return None;
+    }
+    Some(match type_name {
+        "object" => Vec::new(),
+        "bool" => vec!["int".to_string()],
+        _ => vec!["object".to_string()],
+    })
+}
+
+fn type_surface_attr_value(
+    type_name: &str,
+    attr_name: &str,
+    type_fields: Option<&super::rc::MbRwLock<super::rc::InstanceFields>>,
+) -> Option<MbValue> {
+    if matches!(attr_name, "__name__" | "__module__" | "__doc__") {
+        if let Some(fields) = type_fields {
+            if let Some(value) = fields.read().ok().and_then(|f| f.get(attr_name).copied()) {
+                unsafe {
+                    super::rc::retain_if_ptr(value);
+                }
+                return Some(value);
+            }
+        }
+    }
+    match attr_name {
+        "__name__" => Some(MbValue::from_ptr(MbObject::new_str(type_name.to_string()))),
+        "__module__" => Some(MbValue::from_ptr(MbObject::new_str("builtins".to_string()))),
+        "__doc__" => Some(MbValue::from_ptr(MbObject::new_str(format!(
+            "{type_name} type object."
+        )))),
+        "__qualname__" => Some(MbValue::from_ptr(MbObject::new_str(
+            type_name
+                .rsplit('.')
+                .next()
+                .unwrap_or(type_name)
+                .to_string(),
+        ))),
+        "__dict__" => Some(class_namespace_mappingproxy(type_name, type_fields)),
+        "__mro__" => type_surface_mro_names(type_name).map(type_tuple_from_names),
+        "__bases__" => type_surface_base_names(type_name).map(type_tuple_from_names),
+        "__abstractmethods__" if is_user_abc(type_name) => {
+            Some(user_abstractmethods_frozenset(type_name))
+        }
+        "mro" => Some(make_unbound_method("type", "mro")),
+        "__thisclass__" | "__self__" | "__self_class__" if type_name == "super" => {
+            Some(make_member_descriptor("super", attr_name))
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn compute_user_abstractmethods(class_name: &str) -> Vec<String> {
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
@@ -477,6 +570,34 @@ fn has_method(class_name: &str, name: &str) -> bool {
     builtin_type_has_dunder(class_name, name)
 }
 
+fn object_builtin_dunder(dunder: &str) -> bool {
+    matches!(
+        dunder,
+        "__init__"
+            | "__new__"
+            | "__repr__"
+            | "__str__"
+            | "__hash__"
+            | "__eq__"
+            | "__ne__"
+            | "__lt__"
+            | "__le__"
+            | "__gt__"
+            | "__ge__"
+            | "__class__"
+            | "__doc__"
+            | "__dir__"
+            | "__getattribute__"
+            | "__setattr__"
+            | "__delattr__"
+            | "__sizeof__"
+            | "__reduce__"
+            | "__reduce_ex__"
+            | "__init_subclass__"
+            | "__subclasshook__"
+    )
+}
+
 /// abc/structural: does the named builtin type provide `dunder`? Builtin types
 /// are not registered in `CLASS_REGISTRY`, so structural ABC checks
 /// (`hasattr(C, "__len__")` → Sized) need this table. Only the dunders that
@@ -485,6 +606,9 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
     // Every Python object carries `__format__` (object.__format__) — surface
     // fixtures probe e.g. `hasattr(str, "__format__")`.
     if dunder == "__format__" {
+        return true;
+    }
+    if type_name != "object" && object_builtin_dunder(dunder) {
         return true;
     }
     match type_name {
@@ -723,31 +847,7 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
         ),
         // object: the universal base dunders every type inherits. Probed via
         // `hasattr(object, "__init__")` etc.
-        "object" => matches!(
-            dunder,
-            "__init__"
-                | "__new__"
-                | "__repr__"
-                | "__str__"
-                | "__hash__"
-                | "__eq__"
-                | "__ne__"
-                | "__lt__"
-                | "__le__"
-                | "__gt__"
-                | "__ge__"
-                | "__class__"
-                | "__doc__"
-                | "__dir__"
-                | "__getattribute__"
-                | "__setattr__"
-                | "__delattr__"
-                | "__sizeof__"
-                | "__reduce__"
-                | "__reduce_ex__"
-                | "__init_subclass__"
-                | "__subclasshook__"
-        ),
+        "object" => object_builtin_dunder(dunder),
         _ => false,
     }
 }
@@ -5932,27 +6032,32 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             } = (*ptr).data
             {
                 if cn == "type" {
-                    // Skip attributes that are actual fields of the type object.
-                    let is_own_field = matches!(
-                        attr_name.as_str(),
-                        "__name__"
-                            | "__doc__"
-                            | "__module__"
-                            | "__qualname__"
-                            | "__bases__"
-                            | "__mro__"
-                            | "__dict__"
-                            | "__abstractmethods__"
-                            | "__subclasscheck__"
-                            | "__instancecheck__"
-                    );
-                    if !is_own_field {
-                        // Try to get the type name from __name__ field.
-                        if let Some(type_name_str) = fields
-                            .read()
-                            .ok()
-                            .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                    // Try to get the type name from __name__ field.
+                    if let Some(type_name_str) = fields
+                        .read()
+                        .ok()
+                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                    {
+                        if let Some(value) =
+                            type_surface_attr_value(&type_name_str, &attr_name, Some(fields))
                         {
+                            return value;
+                        }
+                        // Skip attributes that are actual fields of the type object.
+                        let is_own_field = matches!(
+                            attr_name.as_str(),
+                            "__name__"
+                                | "__doc__"
+                                | "__module__"
+                                | "__qualname__"
+                                | "__bases__"
+                                | "__mro__"
+                                | "__dict__"
+                                | "__abstractmethods__"
+                                | "__subclasscheck__"
+                                | "__instancecheck__"
+                        );
+                        if !is_own_field {
                             if attr_name == "__slots__" {
                                 if let Some(slots) = class_slots_value(&type_name_str) {
                                     return slots;
@@ -7897,6 +8002,9 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "from_bytes",
             "as_integer_ratio",
             "conjugate",
+            "__bool__",
+            "__int__",
+            "__index__",
             "__add__",
             "__sub__",
             "__mul__",
@@ -7939,9 +8047,13 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__repr__",
             "__str__",
         ],
-        "bool" => vec![
-            "__and__", "__or__", "__xor__", "__bool__", "__repr__", "__str__",
-        ],
+        "bool" => {
+            let mut names = builtin_type_method_names_by_name("int");
+            names.extend([
+                "__and__", "__or__", "__xor__", "__bool__", "__repr__", "__str__",
+            ]);
+            names
+        }
         "bytes" => vec![
             "hex",
             "fromhex",
@@ -8133,6 +8245,8 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
                 _ => Vec::new(),
             }
         }
+    } else if obj.is_bool() {
+        builtin_type_method_names_by_name("bool")
     } else if obj.is_int() || obj.is_float() {
         vec![
             "bit_length",
@@ -8141,6 +8255,9 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
             "is_integer",
             "as_integer_ratio",
             "conjugate",
+            "__bool__",
+            "__int__",
+            "__index__",
             "__ceil__",
             "__floor__",
             "__trunc__",
@@ -8162,10 +8279,6 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
             "__hash__",
             "__repr__",
             "__str__",
-        ]
-    } else if obj.is_bool() {
-        vec![
-            "__and__", "__or__", "__xor__", "__bool__", "__repr__", "__str__",
         ]
     } else {
         Vec::new()
@@ -9225,6 +9338,9 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
                         }
                     }
                 }
+                if type_surface_attr_value(&type_name, &attr_name, None).is_some() {
+                    return MbValue::from_bool(true);
+                }
                 return MbValue::from_bool(false);
             }
         }
@@ -9247,23 +9363,12 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
         .filter(|s| !CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(s.as_str())));
         if let Some(s) = builtin_name {
             let names = builtin_type_method_names_by_name(&s);
-            if !names.is_empty() {
-                let attr_name = extract_str(attr).unwrap_or_default();
-                return MbValue::from_bool(
-                    names.contains(&attr_name.as_str())
-                        || builtin_type_has_dunder(&s, &attr_name)
-                        || matches!(
-                            attr_name.as_str(),
-                            "__name__"
-                                | "__doc__"
-                                | "__module__"
-                                | "__qualname__"
-                                | "__mro__"
-                                | "__bases__"
-                                | "__dict__"
-                        ),
-                );
-            }
+            let attr_name = extract_str(attr).unwrap_or_default();
+            return MbValue::from_bool(
+                names.contains(&attr_name.as_str())
+                    || builtin_type_has_dunder(&s, &attr_name)
+                    || type_surface_attr_value(&s, &attr_name, None).is_some(),
+            );
         }
     }
     let result = mb_getattr(obj, attr);
@@ -9414,6 +9519,9 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
                 return MbValue::from_bool(true);
             }
         }
+    }
+    if obj.is_bool() && builtin_type_method_names_by_name("bool").contains(&attr_name.as_str()) {
+        return MbValue::from_bool(true);
     }
     // Iterator handles are stored as integer IDs (not heap objects).
     // `hasattr(iter_handle, '__next__')` / `hasattr(iter_handle, '__iter__')`
@@ -21512,6 +21620,98 @@ mod tests {
             "deleted slot descriptor access raises AttributeError"
         );
         crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_type_surface_metadata_for_builtin_user_and_super() {
+        crate::runtime::exception::mb_clear_exception();
+
+        fn tuple_type_names(value: MbValue) -> Vec<String> {
+            value
+                .as_ptr()
+                .map(|ptr| unsafe {
+                    if let ObjData::Tuple(items) = &(*ptr).data {
+                        items
+                            .iter()
+                            .filter_map(|item| type_object_name(*item))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                })
+                .unwrap_or_default()
+        }
+
+        let int_type = make_type_object("int");
+        let mro = mb_getattr(
+            int_type,
+            MbValue::from_ptr(MbObject::new_str("__mro__".to_string())),
+        );
+        assert_eq!(
+            tuple_type_names(mro),
+            vec!["int".to_string(), "object".to_string()],
+            "builtin type __mro__ must include object root"
+        );
+
+        mb_class_register("SurfaceProbe", vec![], HashMap::new());
+        let probe_type = make_type_object("SurfaceProbe");
+        for attr in ["__name__", "__mro__", "__bases__", "__dict__", "__module__"] {
+            assert_eq!(
+                mb_hasattr(
+                    probe_type,
+                    MbValue::from_ptr(MbObject::new_str(attr.to_string()))
+                )
+                .as_bool(),
+                Some(true),
+                "user type must expose {attr}"
+            );
+        }
+        let bases = mb_getattr(
+            probe_type,
+            MbValue::from_ptr(MbObject::new_str("__bases__".to_string())),
+        );
+        assert_eq!(
+            tuple_type_names(bases),
+            vec!["object".to_string()],
+            "plain user class bases default to object"
+        );
+
+        let super_type = make_type_object("super");
+        for attr in ["__thisclass__", "__self__", "__self_class__"] {
+            assert_eq!(
+                mb_hasattr(
+                    super_type,
+                    MbValue::from_ptr(MbObject::new_str(attr.to_string()))
+                )
+                .as_bool(),
+                Some(true),
+                "super type must expose {attr}"
+            );
+        }
+
+        let bool_type = make_type_object("bool");
+        for attr in ["__new__", "from_bytes", "to_bytes"] {
+            assert_eq!(
+                mb_hasattr(
+                    bool_type,
+                    MbValue::from_ptr(MbObject::new_str(attr.to_string()))
+                )
+                .as_bool(),
+                Some(true),
+                "bool type must inherit int/object surface {attr}"
+            );
+        }
+        for attr in ["__bool__", "__int__"] {
+            assert_eq!(
+                mb_hasattr(
+                    MbValue::from_bool(true),
+                    MbValue::from_ptr(MbObject::new_str(attr.to_string()))
+                )
+                .as_bool(),
+                Some(true),
+                "bool values must expose {attr}"
+            );
+        }
     }
 
     // ── S12: Child without __slots__ inherits but gets __dict__ (R13) ──

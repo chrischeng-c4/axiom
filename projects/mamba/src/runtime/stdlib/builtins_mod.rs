@@ -59,6 +59,7 @@ fn is_builtin_type_surface(name: &str) -> bool {
             | "property"
             | "classmethod"
             | "staticmethod"
+            | "super"
     )
 }
 
