@@ -6357,6 +6357,34 @@ impl<'a> AstLowerer<'a> {
                         }
                     }
                 }
+                if let ast::Expr::Ident(name) = &func.node {
+                    if name == "type"
+                        && args.iter().all(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                            )
+                        })
+                    {
+                        let positional_count = args
+                            .iter()
+                            .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                            .count();
+                        if positional_count != 1 && positional_count != 3 {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    "type() takes 1 or 3 arguments".to_string(),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                    }
+                }
                 // all(x for x in it) / any(x for x in it) must preserve
                 // generator-expression laziness so the builtin can short-circuit.
                 if let ast::Expr::Ident(name) = &func.node {

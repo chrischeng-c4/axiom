@@ -2630,38 +2630,67 @@ fn value_is_abstractmethod_marker(val: MbValue) -> bool {
 // @spec .aw/changes/mamba-type-3arg/groups/mamba-type-3arg-core/specs/mamba-type-3arg-spec.md#R4
 pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     // 1. Extract name string
-    let class_name = name
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "dynamic_class".to_string());
+    let Some(class_name) = name.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    }) else {
+        raise_type_error("type.__new__() argument 1 must be str, not object".to_string());
+        return MbValue::none();
+    };
 
     // 2. Extract bases tuple -> list of base class name strings
-    let base_names: Vec<String> = if let Some(ptr) = bases.as_ptr() {
-        unsafe {
-            match &(*ptr).data {
-                ObjData::Tuple(items) => {
-                    let names: Vec<String> = items
-                        .iter()
-                        .filter_map(|item| super::class::resolve_class_name(*item))
-                        .collect();
-                    if names.is_empty() {
-                        vec!["object".to_string()]
-                    } else {
-                        names
-                    }
-                }
-                _ => vec!["object".to_string()],
-            }
+    let Some(base_items) = bases.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Tuple(items) = &(*ptr).data {
+            Some(items.clone())
+        } else {
+            None
         }
-    } else {
-        vec!["object".to_string()]
+    }) else {
+        raise_type_error("type.__new__() argument 2 must be tuple, not list".to_string());
+        return MbValue::none();
     };
+    let mut base_names = Vec::new();
+    for item in base_items {
+        let Some(base_name) = super::class::resolve_class_name(item) else {
+            raise_type_error(
+                "metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases"
+                    .to_string(),
+            );
+            return MbValue::none();
+        };
+        if base_name == "bool" {
+            raise_type_error("type 'bool' is not an acceptable base type".to_string());
+            return MbValue::none();
+        }
+        base_names.push(base_name);
+    }
+    if base_names.is_empty() {
+        base_names.push("object".to_string());
+    }
+    let layout_bases = base_names
+        .iter()
+        .filter(|name| {
+            matches!(
+                name.as_str(),
+                "int"
+                    | "str"
+                    | "float"
+                    | "complex"
+                    | "list"
+                    | "dict"
+                    | "tuple"
+                    | "set"
+                    | "frozenset"
+            )
+        })
+        .count();
+    if layout_bases > 1 {
+        raise_type_error("multiple bases have instance lay-out conflict".to_string());
+        return MbValue::none();
+    }
 
     // 3. Extract dict -> class attributes and methods
     // #974: Improved callable detection — TAG_FUNC, closure handles (TAG_INT),
@@ -2670,35 +2699,56 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     let mut methods = std::collections::HashMap::new();
     let mut class_attrs: Vec<(String, MbValue)> = Vec::new();
     let mut abstract_names: Vec<String> = Vec::new();
-    if let Some(ptr) = dict.as_ptr() {
+    let namespace_dict = super::dict_ops::mb_dict_new();
+    let dict_source = if dict
+        .as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+    {
+        dict
+    } else if let Some(backing) = super::class::unwrap_dictlike_data(dict) {
+        backing
+    } else {
+        raise_type_error("type.__new__() argument 3 must be dict".to_string());
+        return MbValue::none();
+    };
+    if let Some(ptr) = dict_source.as_ptr() {
         unsafe {
-            if let ObjData::Dict(ref lock) = (*ptr).data {
-                let pairs = lock.read().unwrap();
-                for (k, v) in pairs.iter() {
-                    let key = k.to_string();
-                    if key == "__classcell__" {
-                        if !super::class::consume_classcell_marker_for_type_new(&class_name, *v) {
-                            return MbValue::none();
-                        }
-                        continue;
+            let ObjData::Dict(ref lock) = (*ptr).data else {
+                raise_type_error("type.__new__() argument 3 must be dict".to_string());
+                return MbValue::none();
+            };
+            let pairs = lock.read().unwrap();
+            for (k, v) in pairs.iter() {
+                let key = k.to_string();
+                if key == "__classcell__" {
+                    if !super::class::consume_classcell_marker_for_type_new(&class_name, *v) {
+                        return MbValue::none();
                     }
-                    if value_is_abstractmethod_marker(*v) {
-                        abstract_names.push(key.clone());
-                    }
-                    let is_callable = resolve_callable(*v).is_some();
-                    let is_dunder = key.starts_with("__") && key.ends_with("__");
-                    if is_callable || (is_dunder && !v.is_none()) {
-                        methods.insert(key, *v);
-                    } else {
-                        class_attrs.push((key, *v));
-                    }
+                    continue;
+                }
+                super::dict_ops::mb_dict_setitem(
+                    namespace_dict,
+                    MbValue::from_ptr(MbObject::new_str(key.clone())),
+                    *v,
+                );
+                if value_is_abstractmethod_marker(*v) {
+                    abstract_names.push(key.clone());
+                }
+                let is_callable = resolve_callable(*v).is_some();
+                let is_dunder = key.starts_with("__") && key.ends_with("__");
+                let is_metadata_dunder =
+                    matches!(key.as_str(), "__qualname__" | "__doc__" | "__module__");
+                if is_callable || (is_dunder && !is_metadata_dunder && !v.is_none()) {
+                    methods.insert(key, *v);
+                } else {
+                    class_attrs.push((key, *v));
                 }
             }
         }
     }
 
     // 4. Register the class in the class registry
-    super::class::mb_class_register(&class_name, base_names, methods);
+    super::class::mb_class_register(&class_name, base_names.clone(), methods);
 
     // 5. Set class attributes (non-method entries from dict)
     let cls_name_val = MbValue::from_ptr(MbObject::new_str(class_name.clone()));
@@ -2719,8 +2769,33 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
         );
     }
 
-    // 6. Return a type object
-    make_type_object(&class_name)
+    // 6. Return a type object with CPython-visible class metadata.
+    let type_obj = make_type_object(&class_name);
+    if let Some(ptr) = type_obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let qualname = super::dict_ops::mb_dict_get(
+                    namespace_dict,
+                    MbValue::from_ptr(MbObject::new_str("__qualname__".to_string())),
+                    MbValue::none(),
+                );
+                let doc = super::dict_ops::mb_dict_get(
+                    namespace_dict,
+                    MbValue::from_ptr(MbObject::new_str("__doc__".to_string())),
+                    MbValue::none(),
+                );
+                let mut guard = fields.write().unwrap();
+                guard.insert("__qualname__".to_string(), if qualname.is_none() {
+                    MbValue::from_ptr(MbObject::new_str(class_name.clone()))
+                } else {
+                    qualname
+                });
+                guard.insert("__doc__".to_string(), doc);
+                guard.insert("__mamba_type_namespace__".to_string(), namespace_dict);
+            }
+        }
+    }
+    type_obj
 }
 
 pub fn mb_type3_kwargs(name: MbValue, bases: MbValue, dict: MbValue, kwargs: MbValue) -> MbValue {
@@ -9234,7 +9309,8 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         // preserving the ZoneInfo/Path/... `_arg0`/`key` shape.
                         if super::class::class_is_registered(&name)
                             && (!super::class::lookup_method(&name, "__init__").is_none()
-                                || super::class::class_has_builtin_data_payload_base(&name))
+                                || super::class::class_has_builtin_data_payload_base(&name)
+                                || super::class::check_class_hierarchy(&name, "int"))
                         {
                             let args_list = MbValue::from_ptr(MbObject::new_list(items.clone()));
                             return super::class::mb_instance_new_with_init(
@@ -15506,6 +15582,61 @@ def f():
         let obj_name = MbValue::from_ptr(MbObject::new_str("object".to_string()));
         let result = super::super::class::mb_isinstance(instance, obj_name);
         assert_eq!(result.as_bool(), Some(true), "should be instance of object");
+
+        super::super::class::cleanup_all_classes();
+    }
+
+    #[test]
+    fn test_type3_namespace_mappingproxy_preserves_order_and_metadata() {
+        super::super::class::cleanup_all_classes();
+
+        let name = MbValue::from_ptr(MbObject::new_str("TestType3Namespace".to_string()));
+        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![]));
+        let dict = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            dict,
+            MbValue::from_ptr(MbObject::new_str("b".to_string())),
+            MbValue::from_int(2),
+        );
+        super::super::dict_ops::mb_dict_setitem(
+            dict,
+            MbValue::from_ptr(MbObject::new_str("a".to_string())),
+            MbValue::from_int(1),
+        );
+        super::super::dict_ops::mb_dict_setitem(
+            dict,
+            MbValue::from_ptr(MbObject::new_str("__qualname__".to_string())),
+            MbValue::from_ptr(MbObject::new_str("Outer.TestType3Namespace".to_string())),
+        );
+
+        let type_obj = mb_type3(name, bases, dict);
+        let qualname = super::super::class::mb_getattr(
+            type_obj,
+            MbValue::from_ptr(MbObject::new_str("__qualname__".to_string())),
+        );
+        assert_eq!(
+            mb_str_value(qualname),
+            Some("Outer.TestType3Namespace".to_string())
+        );
+        let doc = super::super::class::mb_getattr(
+            type_obj,
+            MbValue::from_ptr(MbObject::new_str("__doc__".to_string())),
+        );
+        assert!(doc.is_none(), "__doc__ should default to None");
+
+        let proxy = super::super::class::mb_getattr(
+            type_obj,
+            MbValue::from_ptr(MbObject::new_str("__dict__".to_string())),
+        );
+        let namespace = super::super::dict_ops::mappingproxy_mapping(proxy)
+            .expect("type __dict__ should expose namespace mapping");
+        let entries = extract_items(super::super::dict_ops::mb_dict_items(namespace));
+        let first = extract_items(entries[0]);
+        let second = extract_items(entries[1]);
+        assert_eq!(mb_str_value(first[0]).as_deref(), Some("b"));
+        assert_eq!(first[1].as_int(), Some(2));
+        assert_eq!(mb_str_value(second[0]).as_deref(), Some("a"));
+        assert_eq!(second[1].as_int(), Some(1));
 
         super::super::class::cleanup_all_classes();
     }
