@@ -10952,7 +10952,24 @@ fn exec_has_pending_exception() -> bool {
 struct ExecContext {
     class_match_args: FxHashMap<String, Option<MbValue>>,
     type_vars: std::collections::HashSet<String>,
+    functions: FxHashMap<String, ExecFunction>,
+    frames: Vec<FxHashMap<String, MbValue>>,
     globals: Option<MbValue>,
+}
+
+#[derive(Clone)]
+struct ExecFunction {
+    params: Vec<String>,
+    defaults: Vec<Option<MbValue>>,
+    body: Vec<crate::source::span::Spanned<crate::parser::ast::Stmt>>,
+}
+
+#[derive(Clone, Copy)]
+enum ExecFlow {
+    Normal,
+    Return(MbValue),
+    Break,
+    Continue,
 }
 
 fn exec_raise_type_error(message: String) {
@@ -11236,6 +11253,417 @@ fn exec_store_global(ctx: &ExecContext, name: &str, value: MbValue) {
     );
 }
 
+fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
+    if let Some(frame) = ctx.frames.last() {
+        if let Some(&value) = frame.get(name) {
+            return Some(value);
+        }
+    }
+    let globals = ctx.globals?;
+    let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    if super::dict_ops::mb_dict_contains(globals, key)
+        .as_bool()
+        .unwrap_or(false)
+    {
+        Some(super::dict_ops::mb_dict_get(globals, key, MbValue::none()))
+    } else {
+        None
+    }
+}
+
+fn exec_store_name(ctx: &mut ExecContext, name: &str, value: MbValue) {
+    if let Some(frame) = ctx.frames.last_mut() {
+        frame.insert(name.to_string(), value);
+    } else {
+        exec_store_global(ctx, name, value);
+    }
+}
+
+fn exec_truthy(value: MbValue) -> bool {
+    if let Some(b) = value.as_bool() {
+        return b;
+    }
+    if let Some(i) = value.as_int_pyint() {
+        return i != 0;
+    }
+    if let Some(f) = value.as_float() {
+        return f != 0.0;
+    }
+    if value.is_none() {
+        return false;
+    }
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Str(s) => !s.is_empty(),
+                ObjData::Bytes(b) => !b.is_empty(),
+                ObjData::ByteArray(lock) => !lock.read().unwrap().is_empty(),
+                ObjData::List(lock) => !lock.read().unwrap().is_empty(),
+                ObjData::Tuple(items) => !items.is_empty(),
+                ObjData::Dict(lock) => !lock.read().unwrap().is_empty(),
+                ObjData::Set(lock) => !lock.read().unwrap().is_empty(),
+                ObjData::FrozenSet(items) => !items.is_empty(),
+                _ => true,
+            }
+        }
+    } else {
+        true
+    }
+}
+
+fn exec_eval_call_args(
+    ctx: &mut ExecContext,
+    args: &[crate::parser::ast::CallArg],
+) -> Option<Vec<MbValue>> {
+    use crate::parser::ast::CallArg;
+    let mut values = Vec::with_capacity(args.len());
+    for arg in args {
+        match arg {
+            CallArg::Positional(expr) => {
+                values.push(exec_eval_expr(ctx, &expr.node));
+                if exec_has_pending_exception() {
+                    return None;
+                }
+            }
+            CallArg::Keyword { .. } | CallArg::StarArg(_) | CallArg::DoubleStarArg(_) => {
+                return None;
+            }
+        }
+    }
+    Some(values)
+}
+
+fn exec_range_values(args: &[MbValue]) -> MbValue {
+    let (start, stop, step) = match args {
+        [stop] => (0, stop.as_int_pyint().unwrap_or(0), 1),
+        [start, stop] => (
+            start.as_int_pyint().unwrap_or(0),
+            stop.as_int_pyint().unwrap_or(0),
+            1,
+        ),
+        [start, stop, step] => (
+            start.as_int_pyint().unwrap_or(0),
+            stop.as_int_pyint().unwrap_or(0),
+            step.as_int_pyint().unwrap_or(0),
+        ),
+        _ => return MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    };
+    if step == 0 {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("range() arg 3 must not be zero".to_string())),
+        );
+        return MbValue::none();
+    }
+    let mut items = Vec::new();
+    let mut cur = start;
+    if step > 0 {
+        while cur < stop {
+            items.push(MbValue::from_int(cur));
+            cur += step;
+        }
+    } else {
+        while cur > stop {
+            items.push(MbValue::from_int(cur));
+            cur += step;
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+fn exec_call_function(ctx: &mut ExecContext, func: &ExecFunction, args: &[MbValue]) -> MbValue {
+    if args.len() > func.params.len() {
+        exec_raise_type_error(format!(
+            "function takes {} arguments but {} were given",
+            func.params.len(),
+            args.len()
+        ));
+        return MbValue::none();
+    }
+    let mut frame = FxHashMap::default();
+    for (idx, param) in func.params.iter().enumerate() {
+        let value = if let Some(value) = args.get(idx) {
+            *value
+        } else if let Some(Some(default)) = func.defaults.get(idx) {
+            *default
+        } else {
+            exec_raise_type_error(format!("missing required argument: '{param}'"));
+            return MbValue::none();
+        };
+        frame.insert(param.clone(), value);
+    }
+    ctx.frames.push(frame);
+    let flow = exec_block_flow(ctx, &func.body);
+    ctx.frames.pop();
+    match flow {
+        ExecFlow::Return(value) => value,
+        ExecFlow::Normal | ExecFlow::Break | ExecFlow::Continue => MbValue::none(),
+    }
+}
+
+fn exec_eval_fstring_parts(
+    ctx: &mut ExecContext,
+    parts: &[crate::parser::ast::FStringPart],
+) -> Option<String> {
+    let mut out = String::new();
+    for part in parts {
+        match part {
+            crate::parser::ast::FStringPart::Literal(text) => out.push_str(text),
+            crate::parser::ast::FStringPart::Expr(expr, spec) => {
+                let value = exec_eval_expr(ctx, &expr.node);
+                if exec_has_pending_exception() {
+                    return None;
+                }
+                let formatted = match spec {
+                    None => super::string_ops::mb_fstring_value(value),
+                    Some(spec_parts) => {
+                        let spec_text = exec_eval_fstring_parts(ctx, spec_parts)?;
+                        super::string_ops::mb_format_value(
+                            value,
+                            MbValue::from_ptr(MbObject::new_str(spec_text)),
+                        )
+                    }
+                };
+                if exec_has_pending_exception() {
+                    return None;
+                }
+                if let Some(ptr) = formatted.as_ptr() {
+                    unsafe {
+                        if let ObjData::Str(text) = &(*ptr).data {
+                            out.push_str(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbValue {
+    use crate::parser::ast::Expr;
+    match expr {
+        Expr::IntLit(i) => MbValue::from_int(*i),
+        Expr::BigIntLit(s) => super::bigint_ops::bigint_from_literal(s),
+        Expr::FloatLit(f) => MbValue::from_float(*f),
+        Expr::BoolLit(b) => MbValue::from_bool(*b),
+        Expr::NoneLit => MbValue::none(),
+        Expr::StrLit(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
+        Expr::BytesLit(b) => MbValue::from_ptr(MbObject::new_bytes(b.clone())),
+        Expr::ComplexLit(imag) => MbValue::from_ptr(MbObject::new_complex(0.0, *imag)),
+        Expr::Ellipsis => MbValue::ellipsis(),
+        Expr::Ident(name) => {
+            if let Some(value) = exec_lookup_name(ctx, name) {
+                return value;
+            }
+            if super::exception::is_builtin_exception_name(name) {
+                return make_type_object(name);
+            }
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("NameError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!("name '{name}' is not defined"))),
+            );
+            MbValue::none()
+        }
+        Expr::FString(parts) => exec_eval_fstring_parts(ctx, parts)
+            .map(|text| MbValue::from_ptr(MbObject::new_str(text)))
+            .unwrap_or_else(MbValue::none),
+        Expr::BinOp { op, lhs, rhs } => {
+            let left = exec_eval_expr(ctx, &lhs.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            match op {
+                crate::parser::ast::BinOp::And if !exec_truthy(left) => return left,
+                crate::parser::ast::BinOp::Or if exec_truthy(left) => return left,
+                _ => {}
+            }
+            let right = exec_eval_expr(ctx, &rhs.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            eval_binop(*op, left, right)
+        }
+        Expr::UnaryOp { op, operand } => {
+            let value = exec_eval_expr(ctx, &operand.node);
+            eval_unaryop(*op, value)
+        }
+        Expr::ListLit(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                values.push(exec_eval_expr(ctx, &item.node));
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+            }
+            MbValue::from_ptr(MbObject::new_list(values))
+        }
+        Expr::TupleLit(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                values.push(exec_eval_expr(ctx, &item.node));
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+            }
+            MbValue::from_ptr(MbObject::new_tuple(values))
+        }
+        Expr::SetLit(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                values.push(exec_eval_expr(ctx, &item.node));
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+            }
+            super::set_ops::mb_set_from_list(MbValue::from_ptr(MbObject::new_list(values)))
+        }
+        Expr::DictLit(entries) => {
+            let dict = super::dict_ops::mb_dict_new();
+            for (key, value) in entries {
+                if let Some(key_expr) = key {
+                    let key = exec_eval_expr(ctx, &key_expr.node);
+                    if exec_has_pending_exception() {
+                        return MbValue::none();
+                    }
+                    let value = exec_eval_expr(ctx, &value.node);
+                    if exec_has_pending_exception() {
+                        return MbValue::none();
+                    }
+                    super::dict_ops::mb_dict_setitem(dict, key, value);
+                }
+            }
+            dict
+        }
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            let condition = exec_eval_expr(ctx, &condition.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            if exec_truthy(condition) {
+                exec_eval_expr(ctx, &body.node)
+            } else {
+                exec_eval_expr(ctx, &else_body.node)
+            }
+        }
+        Expr::ChainedCompare { operands, ops } => {
+            if operands.is_empty() {
+                return MbValue::from_bool(true);
+            }
+            let mut prev = exec_eval_expr(ctx, &operands[0].node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            for (idx, op) in ops.iter().enumerate() {
+                let next = exec_eval_expr(ctx, &operands[idx + 1].node);
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+                let result = eval_binop(*op, prev, next);
+                if !result.as_bool().unwrap_or(false) {
+                    return MbValue::from_bool(false);
+                }
+                prev = next;
+            }
+            MbValue::from_bool(true)
+        }
+        Expr::Call { func, args } => {
+            let values = match exec_eval_call_args(ctx, args) {
+                Some(values) => values,
+                None => return MbValue::none(),
+            };
+            if let Expr::Ident(name) = &func.node {
+                if name == "range" {
+                    return exec_range_values(&values);
+                }
+                if name == "repr" && values.len() == 1 {
+                    return mb_repr(values[0]);
+                }
+                if name == "str" && values.len() == 1 {
+                    return mb_str(values[0]);
+                }
+                if super::exception::is_builtin_exception_name(name) {
+                    let typ = make_type_object(name);
+                    let args_list = MbValue::from_ptr(MbObject::new_list(values));
+                    return mb_call_spread(typ, args_list);
+                }
+                if let Some(func) = ctx.functions.get(name).cloned() {
+                    return exec_call_function(ctx, &func, &values);
+                }
+            }
+            if let Expr::Attr { object, attr } = &func.node {
+                let receiver = exec_eval_expr(ctx, &object.node);
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+                if attr == "append" && values.len() == 1 {
+                    super::list_ops::mb_list_append(receiver, values[0]);
+                    return MbValue::none();
+                }
+                return super::class::mb_call_method(
+                    receiver,
+                    MbValue::from_ptr(MbObject::new_str(attr.clone())),
+                    MbValue::from_ptr(MbObject::new_list(values)),
+                );
+            }
+            eval_expr(expr)
+        }
+        Expr::Attr { object, attr } => {
+            let receiver = exec_eval_expr(ctx, &object.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            super::class::mb_getattr(receiver, MbValue::from_ptr(MbObject::new_str(attr.clone())))
+        }
+        Expr::Index { object, index } => {
+            let object = exec_eval_expr(ctx, &object.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            let index = exec_eval_expr(ctx, &index.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            super::class::mb_obj_getitem(object, index)
+        }
+        _ => eval_expr(expr),
+    }
+}
+
+fn exec_bind_targets(ctx: &mut ExecContext, targets: &[String], value: MbValue) {
+    if let [name] = targets {
+        exec_store_name(ctx, name, value);
+        return;
+    }
+    let items = extract_items(value);
+    for (name, item) in targets.iter().zip(items) {
+        exec_store_name(ctx, name, item);
+    }
+}
+
+fn exec_handler_matches(
+    ctx: &mut ExecContext,
+    handler: &crate::parser::ast::ExceptHandler,
+    exc: MbValue,
+) -> bool {
+    let Some(exc_type) = &handler.exc_type else {
+        return true;
+    };
+    let expected = exec_eval_expr(ctx, &exc_type.node);
+    if exec_has_pending_exception() {
+        return false;
+    }
+    let matched = super::exception::mb_exception_matches(exc, expected);
+    if exec_has_pending_exception() {
+        return false;
+    }
+    matched.as_bool().unwrap_or(false)
+}
+
 fn exec_import_stmt(
     ctx: &ExecContext,
     module: &[String],
@@ -11291,40 +11719,43 @@ fn exec_import_stmt(
     }
 }
 
-fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
+fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> ExecFlow {
     use crate::parser::ast::Stmt;
     match stmt {
-        Stmt::Pass => {}
+        Stmt::Pass => ExecFlow::Normal,
         Stmt::Import {
             module,
             names,
             module_alias,
-        } => exec_import_stmt(ctx, module, names, module_alias),
+        } => {
+            exec_import_stmt(ctx, module, names, module_alias);
+            ExecFlow::Normal
+        }
         Stmt::Assign { target, value } => {
             if let crate::parser::ast::Expr::Ident(name) = &target.node {
                 if exec_is_typevar_constructor(&value.node) {
                     ctx.type_vars.insert(name.clone());
                 }
-                if ctx.globals.is_some() {
-                    let assigned = eval_expr(&value.node);
-                    if exec_has_pending_exception() {
-                        return;
+                if ctx.globals.is_some() || !ctx.frames.is_empty() {
+                    let assigned = exec_eval_expr(ctx, &value.node);
+                    if !exec_has_pending_exception() {
+                        exec_store_name(ctx, name, assigned);
                     }
-                    exec_store_global(ctx, name, assigned);
                 }
             }
+            ExecFlow::Normal
         }
         Stmt::VarDecl { name, value, .. } => {
             if exec_is_typevar_constructor(&value.node) {
                 ctx.type_vars.insert(name.clone());
             }
-            if ctx.globals.is_some() {
-                let assigned = eval_expr(&value.node);
-                if exec_has_pending_exception() {
-                    return;
+            if ctx.globals.is_some() || !ctx.frames.is_empty() {
+                let assigned = exec_eval_expr(ctx, &value.node);
+                if !exec_has_pending_exception() {
+                    exec_store_name(ctx, name, assigned);
                 }
-                exec_store_global(ctx, name, assigned);
             }
+            ExecFlow::Normal
         }
         Stmt::ClassDef {
             name,
@@ -11335,7 +11766,7 @@ fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
         } => {
             exec_validate_pep695_class_bases(ctx, type_params, bases);
             if exec_has_pending_exception() {
-                return;
+                return ExecFlow::Normal;
             }
             let mut match_args = None;
             for class_stmt in body {
@@ -11343,9 +11774,9 @@ fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
                     Stmt::Assign { target, value } => {
                         if let crate::parser::ast::Expr::Ident(attr) = &target.node {
                             if attr == "__match_args__" {
-                                match_args = Some(eval_expr(&value.node));
+                                match_args = Some(exec_eval_expr(ctx, &value.node));
                                 if exec_has_pending_exception() {
-                                    return;
+                                    return ExecFlow::Normal;
                                 }
                             }
                         }
@@ -11353,28 +11784,132 @@ fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
                     Stmt::VarDecl {
                         name: attr, value, ..
                     } if attr == "__match_args__" => {
-                        match_args = Some(eval_expr(&value.node));
+                        match_args = Some(exec_eval_expr(ctx, &value.node));
                         if exec_has_pending_exception() {
-                            return;
+                            return ExecFlow::Normal;
                         }
                     }
                     _ => {}
                 }
             }
             ctx.class_match_args.insert(name.clone(), match_args);
+            ExecFlow::Normal
+        }
+        Stmt::FnDef {
+            name, params, body, ..
+        } => {
+            let mut param_names = Vec::with_capacity(params.len());
+            let mut defaults = Vec::with_capacity(params.len());
+            for param in params {
+                param_names.push(param.name.clone());
+                let default = match &param.default {
+                    Some(default) => {
+                        let value = exec_eval_expr(ctx, &default.node);
+                        if exec_has_pending_exception() {
+                            return ExecFlow::Normal;
+                        }
+                        Some(value)
+                    }
+                    None => None,
+                };
+                defaults.push(default);
+            }
+            ctx.functions.insert(
+                name.clone(),
+                ExecFunction {
+                    params: param_names,
+                    defaults,
+                    body: body.clone(),
+                },
+            );
+            ExecFlow::Normal
+        }
+        Stmt::Return(value) => {
+            let value = value
+                .as_ref()
+                .map(|expr| exec_eval_expr(ctx, &expr.node))
+                .unwrap_or_else(MbValue::none);
+            ExecFlow::Return(value)
+        }
+        Stmt::Break => ExecFlow::Break,
+        Stmt::Continue => ExecFlow::Continue,
+        Stmt::If {
+            condition,
+            body,
+            elif_clauses,
+            else_body,
+        } => {
+            let condition = exec_eval_expr(ctx, &condition.node);
+            if exec_has_pending_exception() {
+                return ExecFlow::Normal;
+            }
+            if exec_truthy(condition) {
+                return exec_block_flow(ctx, body);
+            }
+            for (elif, elif_body) in elif_clauses {
+                let condition = exec_eval_expr(ctx, &elif.node);
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+                if exec_truthy(condition) {
+                    return exec_block_flow(ctx, elif_body);
+                }
+            }
+            if let Some(else_body) = else_body {
+                exec_block_flow(ctx, else_body)
+            } else {
+                ExecFlow::Normal
+            }
+        }
+        Stmt::For {
+            targets,
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
+            let iterable = exec_eval_expr(ctx, &iter.node);
+            if exec_has_pending_exception() {
+                return ExecFlow::Normal;
+            }
+            let mut broke = false;
+            for item in extract_items(iterable) {
+                exec_bind_targets(ctx, targets, item);
+                let flow = exec_block_flow(ctx, body);
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+                match flow {
+                    ExecFlow::Normal => {}
+                    ExecFlow::Continue => continue,
+                    ExecFlow::Break => {
+                        broke = true;
+                        break;
+                    }
+                    ExecFlow::Return(_) => return flow,
+                }
+            }
+            if !broke {
+                if let Some(else_body) = else_body {
+                    return exec_block_flow(ctx, else_body);
+                }
+            }
+            ExecFlow::Normal
         }
         Stmt::ExprStmt(expr) => {
-            let _ = eval_expr(&expr.node);
+            let _ = exec_eval_expr(ctx, &expr.node);
+            ExecFlow::Normal
         }
         Stmt::Match { expr, arms } => {
             if let Some(subject_class) = exec_subject_class_name(&expr.node) {
                 for arm in arms {
                     exec_validate_class_pattern(ctx, &subject_class, &arm.pattern.node);
                     if exec_has_pending_exception() {
-                        return;
+                        return ExecFlow::Normal;
                     }
                 }
             }
+            ExecFlow::Normal
         }
         Stmt::Raise { value, from } => {
             let Some(value) = value else {
@@ -11384,52 +11919,108 @@ fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
                         "No active exception to reraise".to_string(),
                     )),
                 );
-                return;
+                return ExecFlow::Normal;
             };
-            let raised = eval_expr(&value.node);
+            let raised = exec_eval_expr(ctx, &value.node);
             if exec_has_pending_exception() {
-                return;
+                return ExecFlow::Normal;
             }
             if let Some(cause_expr) = from {
-                let _ = eval_expr(&cause_expr.node);
+                let _ = exec_eval_expr(ctx, &cause_expr.node);
                 if exec_has_pending_exception() {
-                    return;
+                    return ExecFlow::Normal;
                 }
             }
             super::class::mb_raise_instance(raised);
+            ExecFlow::Normal
+        }
+        Stmt::Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+        } => {
+            let mut flow = exec_block_flow(ctx, body);
+            let mut unhandled = None;
+            if exec_has_pending_exception() {
+                let exc = super::exception::mb_catch_exception();
+                let mut handled = false;
+                for handler in handlers {
+                    if exec_handler_matches(ctx, handler, exc) {
+                        if let Some(name) = &handler.name {
+                            exec_store_name(ctx, name, exc);
+                        }
+                        flow = exec_block_flow(ctx, &handler.body);
+                        handled = true;
+                        break;
+                    }
+                }
+                if !handled {
+                    unhandled = Some(exc);
+                    flow = ExecFlow::Normal;
+                }
+            } else if matches!(flow, ExecFlow::Normal) {
+                if let Some(else_body) = else_body {
+                    flow = exec_block_flow(ctx, else_body);
+                }
+            }
+            if let Some(finally_body) = finally_body {
+                let finally_flow = exec_block_flow(ctx, finally_body);
+                if !matches!(finally_flow, ExecFlow::Normal) || exec_has_pending_exception() {
+                    unhandled = None;
+                    flow = finally_flow;
+                }
+            }
+            if let Some(exc) = unhandled {
+                super::exception::mb_reraise(exc);
+            }
+            flow
         }
         Stmt::With { items, body } => {
             let mut managers = Vec::with_capacity(items.len());
             for item in items {
-                let manager = eval_expr(&item.context.node);
+                let manager = exec_eval_expr(ctx, &item.context.node);
                 if exec_has_pending_exception() {
-                    return;
+                    return ExecFlow::Normal;
                 }
                 let _ = super::class::mb_context_enter(manager);
                 if exec_has_pending_exception() {
-                    return;
+                    return ExecFlow::Normal;
                 }
                 managers.push(manager);
             }
-            exec_stmts_with_context(ctx, body);
+            let flow = exec_block_flow(ctx, body);
             for manager in managers.into_iter().rev() {
                 let _ = super::class::mb_context_exit(manager, MbValue::none());
             }
+            flow
         }
-        _ => {}
+        _ => ExecFlow::Normal,
     }
+}
+
+fn exec_block_flow(
+    ctx: &mut ExecContext,
+    stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+) -> ExecFlow {
+    for stmt in stmts {
+        let flow = exec_stmt_flow(ctx, &stmt.node);
+        if exec_has_pending_exception() || !matches!(flow, ExecFlow::Normal) {
+            return flow;
+        }
+    }
+    ExecFlow::Normal
+}
+
+fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
+    let _ = exec_stmt_flow(ctx, stmt);
 }
 
 fn exec_stmts_with_context(
     ctx: &mut ExecContext,
     stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
 ) {
-    for stmt in stmts {
-        exec_stmt(ctx, &stmt.node);
-        if exec_has_pending_exception() {
-            break;
-        }
-    }
+    let _ = exec_block_flow(ctx, stmts);
 }
 
 fn exec_stmts(stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>]) {
@@ -11527,15 +12118,18 @@ fn eval_unaryop(op: crate::parser::ast::UnaryOp, v: MbValue) -> MbValue {
 
 /// exec(code) — execute a string of code (#1256, partial).
 ///
-/// Mamba does not yet expose a runtime scope hook, so this cannot mutate the
-/// caller's locals/globals. It still validates the input so common defensive
-/// patterns (`try: exec(src) except SyntaxError: ...`) behave like CPython:
+/// Mamba does not yet expose a full runtime scope hook, but `exec(src, globals)`
+/// does mutate the supplied globals dict for the supported interpreted subset.
+/// It still validates the input so common defensive patterns
+/// (`try: exec(src) except SyntaxError: ...`) behave like CPython:
 ///   * Non-string input → silent no-op returning None (matches the previous
 ///     stub; raising TypeError here would break benches that already pass
 ///     compiled code objects).
 ///   * String input → parse as a module; raise SyntaxError on failure.
-///   * A narrow runtime subset (import no-op, expression statements, raise,
-///     and with cleanup) is executed so exceptions propagate through `exec`.
+///   * A narrow runtime subset (assignments, imports, interpreted zero-arg
+///     functions, if/for, try/except/else/finally, expression statements,
+///     raise, and with cleanup) is executed so exceptions and control flow
+///     propagate through `exec`.
 /// Remaining side-effecting statements are still dropped on the floor; see #1256.
 pub fn mb_exec(code: MbValue) -> MbValue {
     mb_exec_impl(code, None)
@@ -13080,6 +13674,72 @@ mod tests {
         assert_eq!(private_listed.as_int(), Some(3));
         assert!(public_extra.is_none());
         assert!(private_one.is_none());
+    }
+
+    #[test]
+    fn test_exec_with_globals_try_finally_flow() {
+        crate::runtime::exception::mb_clear_exception();
+        let ns = crate::runtime::dict_ops::mb_dict_new();
+        let trace = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+        crate::runtime::dict_ops::mb_dict_setitem(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("TRACE".to_string())),
+            trace,
+        );
+        let code = MbValue::from_ptr(MbObject::new_str(
+            r#"
+def inner():
+    try:
+        TRACE.append("try-before-return")
+        return "try-return"
+    finally:
+        TRACE.append("finally-overrides")
+        return "finally-return"
+result = inner()
+for i in range(3):
+    try:
+        TRACE.append(f"try:{i}")
+        if i == 1:
+            raise ValueError("trigger")
+    except ValueError:
+        TRACE.append(f"except:{i}")
+    finally:
+        TRACE.append(f"finally:{i}")
+        if i == 1:
+            break
+TRACE.append("after-loop")
+"#
+            .to_string(),
+        ));
+
+        assert!(mb_exec_with_globals(code, ns).is_none());
+        assert_eq!(
+            eval_str_value(crate::runtime::dict_ops::mb_dict_get(
+                ns,
+                MbValue::from_ptr(MbObject::new_str("result".to_string())),
+                MbValue::none(),
+            ))
+            .as_deref(),
+            Some("finally-return")
+        );
+        let got: Vec<String> = extract_items(trace)
+            .into_iter()
+            .map(|value| eval_str_value(value).unwrap_or_default())
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                "try-before-return",
+                "finally-overrides",
+                "try:0",
+                "finally:0",
+                "try:1",
+                "except:1",
+                "finally:1",
+                "after-loop",
+            ]
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
