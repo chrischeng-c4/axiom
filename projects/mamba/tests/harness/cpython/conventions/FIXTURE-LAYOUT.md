@@ -169,7 +169,8 @@ can prove every locally runnable CPython oracle fixture is clean before deciding
 whether to install more packages. The default harness interpreter remains
 overridable with `MAMBA_ORACLE_PYTHON`; otherwise harness code prefers the
 ensured `tests/cpython/.cache/oracle-env/bin/python3` before falling back to
-PATH `python3`.
+PATH `python3`. The ensured interpreter must be a CPython 3.12.x build with
+`ntpath.ALLOW_MISSING`, because current ntpath fixtures import that sentinel.
 
 CPython source-suite inventory is a separate reference denominator:
 
