@@ -1744,6 +1744,11 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
         return;
     }
     let synthesize_typeddict = attr == "__annotations__";
+    let value = if synthesize_typeddict {
+        resolve_class_annotations(value)
+    } else {
+        value
+    };
     // Class-body enums (`class Color(enum.Enum): RED = 1`): convert eligible
     // class-body assignments into singleton member Instances at registration
     // time (Lane-B of #1448). Non-enum classes fall through untouched.
@@ -1776,6 +1781,26 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
     }
     // Invalidate method cache — class attribute change may affect method resolution.
     invalidate_method_cache();
+}
+
+fn resolve_class_annotations(value: MbValue) -> MbValue {
+    let Some(ptr) = value.as_ptr() else {
+        return value;
+    };
+    unsafe {
+        let ObjData::Dict(ref lock) = (*ptr).data else {
+            return value;
+        };
+        let out = MbValue::from_ptr(MbObject::new_dict());
+        for (key, raw) in lock.read().unwrap().iter() {
+            let key_value = super::dict_ops::dict_key_to_mbvalue(key);
+            let resolved = extract_str(*raw)
+                .and_then(|anno| super::stdlib::typing_mod::resolve_annotation(&anno))
+                .unwrap_or(*raw);
+            super::dict_ops::mb_dict_setitem(out, key_value, resolved);
+        }
+        out
+    }
 }
 
 fn synthesize_typeddict_metadata_from_annotations(name: &str, annotations: MbValue) {
@@ -17655,6 +17680,52 @@ mod tests {
         let attr2 = MbValue::from_ptr(MbObject::new_str("name".to_string()));
         let result = mb_getattr(inst, attr2);
         assert!(result.is_ptr());
+    }
+
+    #[test]
+    fn test_class_annotations_resolve_typing_aliases() {
+        mb_class_register("AnnotationAliasHolder408", vec![], HashMap::new());
+
+        let annotations = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            annotations,
+            MbValue::from_ptr(MbObject::new_str("note".to_string())),
+            MbValue::from_ptr(MbObject::new_str("Optional[str]".to_string())),
+        );
+        mb_class_set_class_attr(
+            MbValue::from_ptr(MbObject::new_str("AnnotationAliasHolder408".to_string())),
+            MbValue::from_ptr(MbObject::new_str("__annotations__".to_string())),
+            annotations,
+        );
+
+        let stored = class_attr_lookup("AnnotationAliasHolder408", "__annotations__")
+            .expect("class annotations should be stored");
+        let note = super::super::dict_ops::mb_dict_get(
+            stored,
+            MbValue::from_ptr(MbObject::new_str("note".to_string())),
+            MbValue::none(),
+        );
+        let origin = super::super::stdlib::typing_mod::mb_typing_get_origin(note);
+        let union = super::super::stdlib::typing_mod::special_form("Union");
+        assert_eq!(origin.to_bits(), union.to_bits());
+
+        let args = super::super::stdlib::typing_mod::mb_typing_get_args(note);
+        unsafe {
+            let ObjData::Tuple(items) = &(*args.as_ptr().unwrap()).data else {
+                panic!("expected args tuple");
+            };
+            assert_eq!(items.len(), 2);
+            let str_name = mb_getattr(
+                items[0],
+                MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+            );
+            let none_name = mb_getattr(
+                items[1],
+                MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+            );
+            assert_eq!(extract_str(str_name).as_deref(), Some("str"));
+            assert_eq!(extract_str(none_name).as_deref(), Some("NoneType"));
+        }
     }
 
     #[test]
