@@ -134,6 +134,257 @@ fn raise_timeout_error() {
     );
 }
 
+fn new_str(value: impl Into<String>) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(value.into()))
+}
+
+fn raise_type_error(message: impl Into<String>) -> MbValue {
+    super::exception::mb_raise(new_str("TypeError"), new_str(message.into()));
+    MbValue::none()
+}
+
+fn lookup_dunder(obj: MbValue, name: &str) -> MbValue {
+    super::class::mb_lookup_dunder(obj, new_str(name))
+}
+
+fn has_dunder(obj: MbValue, name: &str) -> bool {
+    !lookup_dunder(obj, name).is_none()
+}
+
+fn is_await_iterator(obj: MbValue) -> bool {
+    if super::iter::is_iter_handle(obj)
+        || super::generator::is_known_generator(obj)
+        || super::async_rt::is_known_coroutine(obj)
+    {
+        return true;
+    }
+    has_dunder(obj, "__next__")
+}
+
+fn is_awaitable_value(obj: MbValue) -> bool {
+    if obj.as_int().is_some_and(|id| {
+        COROUTINES.read().unwrap().contains_key(&(id as u64))
+            || super::generator::is_known_generator(obj)
+    }) {
+        return true;
+    }
+    has_dunder(obj, "__await__")
+}
+
+fn raise_non_awaitable(awaitable: MbValue) -> MbValue {
+    raise_type_error(format!(
+        "object {} can't be used in 'await' expression",
+        super::builtins::value_type_name(awaitable)
+    ))
+}
+
+fn await_iterator(iterator: MbValue) -> MbValue {
+    if super::async_rt::is_known_coroutine(iterator) {
+        match resume_await_iterator(iterator, MbValue::none()) {
+            AwaitResume::Yield(yielded) => {
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
+                }
+                mb_coroutine_suspend_current(iterator);
+                return yielded;
+            }
+            AwaitResume::Complete(result) => return result,
+        }
+    }
+
+    if super::generator::is_known_generator(iterator) {
+        let yielded = super::generator::mb_generator_send(iterator, MbValue::none());
+        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+            super::exception::mb_clear_exception();
+            return super::generator::mb_generator_stop_value();
+        }
+        if super::exception::current_exception_type().is_some() {
+            return MbValue::none();
+        }
+        mb_coroutine_suspend_current(iterator);
+        return yielded;
+    }
+
+    let yielded = super::iter::mb_next_or_stop(iterator);
+    if super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+    if yielded.is_stop_iter_sentinel() {
+        return MbValue::none();
+    }
+    mb_coroutine_suspend_current(iterator);
+    yielded
+}
+
+fn await_via_dunder(awaitable: MbValue, method: MbValue) -> MbValue {
+    let iterator = super::class::mb_call_method1(method, awaitable);
+    if super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+    if !is_await_iterator(iterator) {
+        return raise_type_error(format!(
+            "__await__() returned non-iterator of type '{}'",
+            super::builtins::value_type_name(iterator)
+        ));
+    }
+    await_iterator(iterator)
+}
+
+pub(crate) enum AwaitResume {
+    Yield(MbValue),
+    Complete(MbValue),
+}
+
+fn stop_iteration_exception_value() -> MbValue {
+    let exc = super::exception::mb_get_exception();
+    let Some(ptr) = exc.as_ptr() else {
+        return MbValue::none();
+    };
+    unsafe {
+        let ObjData::Instance { ref fields, .. } = (*ptr).data else {
+            return MbValue::none();
+        };
+        let guard = fields.read().unwrap();
+        if let Some(value) = guard.get("value").copied() {
+            super::rc::retain_if_ptr(value);
+            return value;
+        }
+        if let Some(args) = guard.get("args").copied() {
+            if let Some(args_ptr) = args.as_ptr() {
+                if let ObjData::Tuple(items) = &(*args_ptr).data {
+                    if let Some(value) = items.first().copied() {
+                        super::rc::retain_if_ptr(value);
+                        return value;
+                    }
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+fn resume_await_iterator(iterator: MbValue, value: MbValue) -> AwaitResume {
+    if super::async_rt::is_known_coroutine(iterator) {
+        let yielded = super::async_rt::mb_coroutine_send(iterator, value);
+        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+            let result = stop_iteration_exception_value();
+            super::exception::mb_clear_exception();
+            return AwaitResume::Complete(result);
+        }
+        return AwaitResume::Yield(yielded);
+    }
+    if super::generator::is_known_generator(iterator) {
+        let yielded = super::generator::mb_generator_send(iterator, value);
+        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+            super::exception::mb_clear_exception();
+            return AwaitResume::Complete(super::generator::mb_generator_stop_value());
+        }
+        return AwaitResume::Yield(yielded);
+    }
+    let yielded = super::iter::mb_next_or_stop(iterator);
+    if yielded.is_stop_iter_sentinel() {
+        AwaitResume::Complete(MbValue::none())
+    } else {
+        AwaitResume::Yield(yielded)
+    }
+}
+
+fn throw_await_iterator(iterator: MbValue, exc_type: MbValue, exc_msg: MbValue) -> AwaitResume {
+    if super::async_rt::is_known_coroutine(iterator) {
+        let yielded = super::async_rt::mb_coroutine_throw(iterator, exc_type, exc_msg);
+        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+            let result = stop_iteration_exception_value();
+            super::exception::mb_clear_exception();
+            return AwaitResume::Complete(result);
+        }
+        if super::exception::current_exception_type().is_some() {
+            return AwaitResume::Complete(MbValue::none());
+        }
+        return AwaitResume::Yield(yielded);
+    }
+    if super::generator::is_known_generator(iterator) {
+        let yielded = super::generator::mb_generator_throw(iterator, exc_type, exc_msg);
+        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+            super::exception::mb_clear_exception();
+            return AwaitResume::Complete(super::generator::mb_generator_stop_value());
+        }
+        if super::exception::current_exception_type().is_some() {
+            return AwaitResume::Complete(MbValue::none());
+        }
+        return AwaitResume::Yield(yielded);
+    }
+    super::exception::mb_raise(exc_type, exc_msg);
+    AwaitResume::Complete(MbValue::none())
+}
+
+pub(crate) fn mb_coroutine_resume_pending_await(
+    coro_handle: MbValue,
+    value: MbValue,
+) -> Option<AwaitResume> {
+    let id = coro_handle.as_int()? as u64;
+    let pending = COROUTINES
+        .read()
+        .unwrap()
+        .get(&id)
+        .and_then(|coro| coro.pending_await)?;
+    let resumed = resume_await_iterator(pending, value);
+    if matches!(resumed, AwaitResume::Complete(_)) {
+        if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
+            if let Some(pending) = coro.pending_await.take() {
+                unsafe {
+                    super::rc::release_if_ptr(pending);
+                }
+            }
+            coro.awaiting = false;
+        }
+    }
+    Some(resumed)
+}
+
+pub(crate) fn mb_coroutine_throw_pending_await(
+    coro_handle: MbValue,
+    exc_type: MbValue,
+    exc_msg: MbValue,
+) -> Option<AwaitResume> {
+    let id = coro_handle.as_int()? as u64;
+    let pending = COROUTINES
+        .read()
+        .unwrap()
+        .get(&id)
+        .and_then(|coro| coro.pending_await)?;
+    let resumed = throw_await_iterator(pending, exc_type, exc_msg);
+    if matches!(resumed, AwaitResume::Complete(_)) {
+        if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
+            if let Some(pending) = coro.pending_await.take() {
+                unsafe {
+                    super::rc::release_if_ptr(pending);
+                }
+            }
+            coro.awaiting = false;
+        }
+    }
+    Some(resumed)
+}
+
+pub fn mb_await_async_context(awaitable: MbValue, method_name: &str) -> MbValue {
+    if !is_awaitable_value(awaitable) {
+        return raise_type_error(format!(
+            "async with {} returned an object that does not implement __await__",
+            method_name
+        ));
+    }
+    mb_await(awaitable)
+}
+
+fn mb_await_async_for_anext(awaitable: MbValue) -> MbValue {
+    if !is_awaitable_value(awaitable) {
+        return raise_type_error(
+            "async for __anext__ returned an object that does not implement __await__",
+        );
+    }
+    mb_await(awaitable)
+}
+
 // ── Event Loop ──
 
 /// Event loop state for scheduling tasks.
@@ -336,16 +587,7 @@ pub fn mb_orbit_register_waker(coro: MbValue) -> MbValue {
 pub fn mb_await(awaitable: MbValue) -> MbValue {
     if let Some(id) = awaitable.as_int() {
         if super::generator::is_known_generator(awaitable) {
-            let yielded = super::generator::mb_generator_send(awaitable, MbValue::none());
-            if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
-                super::exception::mb_clear_exception();
-                return super::generator::mb_generator_stop_value();
-            }
-            if super::exception::current_exception_type().is_some() {
-                return MbValue::none();
-            }
-            mb_coroutine_suspend_current(awaitable);
-            return yielded;
+            return await_iterator(awaitable);
         }
         // Distinguish a coroutine handle from a plain int. Async-iter
         // helpers (`g.__anext__()` on a generator-backed async-gen)
@@ -355,7 +597,11 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         // `None` to the caller.
         let known = COROUTINES.read().unwrap().contains_key(&(id as u64));
         if !known {
-            return awaitable;
+            let method = lookup_dunder(awaitable, "__await__");
+            if !method.is_none() {
+                return await_via_dunder(awaitable, method);
+            }
+            return raise_non_awaitable(awaitable);
         }
         let already_awaited = COROUTINES
             .read()
@@ -475,13 +721,60 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         }
         result
     } else {
-        // await on a non-coroutine (e.g. list from asyncio.gather, constant value):
-        // pass through unchanged so users can `await asyncio.gather(...)`.
-        unsafe {
-            super::rc::retain_if_ptr(awaitable);
+        let method = lookup_dunder(awaitable, "__await__");
+        if !method.is_none() {
+            return await_via_dunder(awaitable, method);
         }
-        awaitable
+        raise_non_awaitable(awaitable)
     }
+}
+
+pub fn mb_async_iter(iterable: MbValue) -> MbValue {
+    let method = lookup_dunder(iterable, "__aiter__");
+    if method.is_none() {
+        return raise_type_error(format!(
+            "async for requires an object with __aiter__ method, got '{}'",
+            super::builtins::value_type_name(iterable)
+        ));
+    }
+    let async_iter = super::class::mb_call_method1(method, iterable);
+    if super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+    if lookup_dunder(async_iter, "__anext__").is_none() {
+        return raise_type_error(format!(
+            "async for object from __aiter__ does not implement __anext__ (got '{}')",
+            super::builtins::value_type_name(async_iter)
+        ));
+    }
+    async_iter
+}
+
+pub fn mb_async_next_or_stop(async_iter: MbValue) -> MbValue {
+    let method = lookup_dunder(async_iter, "__anext__");
+    if method.is_none() {
+        return raise_type_error(format!(
+            "async for object '{}' does not implement __anext__",
+            super::builtins::value_type_name(async_iter)
+        ));
+    }
+    let awaitable = super::class::mb_call_method1(method, async_iter);
+    if super::exception::current_exception_type().as_deref() == Some("StopAsyncIteration") {
+        super::exception::mb_clear_exception();
+        return MbValue::stop_iter_sentinel();
+    }
+    if super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+    let value = mb_await_async_for_anext(awaitable);
+    if super::exception::current_exception_type().as_deref() == Some("StopAsyncIteration") {
+        super::exception::mb_clear_exception();
+        return MbValue::stop_iter_sentinel();
+    }
+    if super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+    value
 }
 
 pub fn mb_await_with_timeout(awaitable: MbValue, duration: std::time::Duration) -> MbValue {

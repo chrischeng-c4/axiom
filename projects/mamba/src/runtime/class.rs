@@ -3784,7 +3784,12 @@ pub fn mb_raise_instance_with_context(instance: MbValue, context: MbValue) {
                     )));
                 }
                 super::exception::set_current_exception(exc);
+                super::rc::retain_if_ptr(instance);
                 LAST_RAISED_INSTANCE.with(|cell| {
+                    let prev = cell.borrow_mut().take();
+                    if let Some(p) = prev {
+                        super::rc::release_if_ptr(p);
+                    }
                     *cell.borrow_mut() = Some(instance);
                 });
                 return;
@@ -13100,7 +13105,7 @@ pub fn mb_async_context_enter(obj: MbValue) -> MbValue {
         let coro = mb_call_method1(method, obj);
         // The async method returns a coroutine handle; await it to get the
         // actual entered value (e.g. `async def __aenter__(self): return ...`).
-        let result = super::async_task::mb_await(coro);
+        let result = super::async_task::mb_await_async_context(coro, "__aenter__");
         if result.to_bits() == obj.to_bits() {
             unsafe {
                 super::rc::retain_if_ptr(result);
@@ -13134,7 +13139,7 @@ pub fn mb_async_context_exit(obj: MbValue, _has_exc: MbValue) -> MbValue {
         let method_name = MbValue::from_ptr(MbObject::new_str("__aexit__".to_string()));
         let args = MbValue::from_ptr(MbObject::new_list(vec![exc_type, exc_val, exc_tb]));
         let coro = mb_call_method(obj, method_name, args);
-        super::async_task::mb_await(coro)
+        super::async_task::mb_await_async_context(coro, "__aexit__")
     } else {
         // Restore the exception so mb_context_exit reads the same state and
         // performs its own clear/restore dance.
