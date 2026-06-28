@@ -1018,6 +1018,104 @@ unsafe extern "C" fn wvd_items(self_v: MbValue, _args: MbValue) -> MbValue {
     super::super::dict_ops::mb_dict_items(wk_data(self_v))
 }
 
+fn weak_key_dict_key_is_live(key: &super::super::dict_ops::DictKey) -> bool {
+    let key_val = super::super::dict_ops::dict_key_to_mbvalue(key);
+    let live = value_has_live_global(key_val);
+    unsafe {
+        super::super::rc::release_if_ptr(key_val);
+    }
+    live
+}
+
+fn prune_weak_key_dict_data(data: MbValue) {
+    let Some(ptr) = data.as_ptr() else {
+        return;
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.write()
+                .unwrap()
+                .retain(|key, _| weak_key_dict_key_is_live(key));
+        }
+    }
+}
+
+fn wkd_data_pruned(self_v: MbValue) -> MbValue {
+    let data = wk_data(self_v);
+    prune_weak_key_dict_data(data);
+    data
+}
+
+unsafe extern "C" fn wkd_setitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = wk_args(args);
+    let key = a.first().copied().unwrap_or_else(MbValue::none);
+    let val = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if reject_non_weakreferenceable(key) {
+        return MbValue::none();
+    }
+    super::super::dict_ops::mb_dict_setitem(wkd_data_pruned(self_v), key, val);
+    MbValue::none()
+}
+
+unsafe extern "C" fn wkd_getitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let found = super::super::dict_ops::mb_dict_get(wkd_data_pruned(self_v), key, sentinel);
+    if found.to_bits() == u64::MAX {
+        let key_repr = super::super::builtins::mb_repr(key);
+        let ks = key_repr
+            .as_ptr()
+            .and_then(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(ks)),
+        );
+        return MbValue::none();
+    }
+    found
+}
+
+unsafe extern "C" fn wkd_get(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = wk_args(args);
+    let key = a.first().copied().unwrap_or_else(MbValue::none);
+    let default = a.get(1).copied().unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_get(wkd_data_pruned(self_v), key, default)
+}
+
+unsafe extern "C" fn wkd_contains(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_contains(wkd_data_pruned(self_v), key)
+}
+
+unsafe extern "C" fn wkd_len(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_len(wkd_data_pruned(self_v))
+}
+
+unsafe extern "C" fn wkd_delitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_delitem(wkd_data_pruned(self_v), key);
+    MbValue::none()
+}
+
+unsafe extern "C" fn wkd_keys(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_keys(wkd_data_pruned(self_v))
+}
+
+unsafe extern "C" fn wkd_values(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_values(wkd_data_pruned(self_v))
+}
+
+unsafe extern "C" fn wkd_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_items(wkd_data_pruned(self_v))
+}
+
 // ---------------------------------------------------------------------------
 // Helpers (public surface implementations)
 // ---------------------------------------------------------------------------
@@ -1519,9 +1617,23 @@ fn register_weakref_classes() {
         ("values", wvd_values as usize),
         ("items", wvd_items as usize),
     ];
-    for cls in ["WeakValueDictionary", "WeakKeyDictionary"] {
+    let wkd_methods: &[(&str, usize)] = &[
+        ("__setitem__", wkd_setitem as usize),
+        ("__getitem__", wkd_getitem as usize),
+        ("__delitem__", wkd_delitem as usize),
+        ("__contains__", wkd_contains as usize),
+        ("__len__", wkd_len as usize),
+        ("get", wkd_get as usize),
+        ("keys", wkd_keys as usize),
+        ("values", wkd_values as usize),
+        ("items", wkd_items as usize),
+    ];
+    for (cls, methods) in [
+        ("WeakValueDictionary", wvd_methods),
+        ("WeakKeyDictionary", wkd_methods),
+    ] {
         let mut m: Map<String, MbValue> = Map::new();
-        for (name, addr) in wvd_methods {
+        for (name, addr) in methods {
             m.insert((*name).to_string(), var(*addr));
         }
         super::super::class::mb_class_register(cls, vec![], m);
@@ -1912,6 +2024,29 @@ mod tests {
         unsafe {
             assert!(matches!(&(*data.as_ptr().unwrap()).data, ObjData::Dict(_)));
         }
+    }
+
+    #[test]
+    fn test_weak_key_dict_accepts_plain_value_and_prunes_unbound_key() {
+        let d = mb_weakref_weak_key_dict();
+        let key = target();
+        let global_id = MbValue::from_bits(9201);
+        crate::runtime::closure::mb_global_set_id(global_id, key);
+        let value = MbValue::from_ptr(MbObject::new_str("data".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![key, value]));
+
+        unsafe {
+            wkd_setitem(d, args);
+        }
+        let contains_args = MbValue::from_ptr(MbObject::new_list(vec![key]));
+        assert_eq!(
+            unsafe { wkd_contains(d, contains_args) }.as_bool(),
+            Some(true)
+        );
+        assert_eq!(unsafe { wkd_len(d, MbValue::none()) }.as_int(), Some(1));
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        assert_eq!(unsafe { wkd_len(d, MbValue::none()) }.as_int(), Some(0));
     }
 
     #[test]
