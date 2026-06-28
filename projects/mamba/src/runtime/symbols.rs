@@ -2120,9 +2120,22 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_import_relative",
+            module::mb_import_relative as fn(super::MbValue, i64) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_module_getattr",
             module::mb_module_getattr as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_module_getattr_relative",
+            module::mb_module_getattr_relative
+                as fn(super::MbValue, i64, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
             I64
         ),
         rt_sym!(
@@ -2148,6 +2161,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             "mb_import_star",
             module::mb_import_star as fn(super::MbValue) -> super::MbValue,
             [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_import_relative_star",
+            module::mb_import_relative_star as fn(super::MbValue, i64) -> super::MbValue,
+            [I64, I64],
             I64
         ),
         rt_sym!(
@@ -4255,8 +4274,11 @@ mod tests {
             "mb_cell_get",
             "mb_cell_set",
             "mb_import",
+            "mb_import_relative",
             "mb_module_getattr",
+            "mb_module_getattr_relative",
             "mb_import_star",
+            "mb_import_relative_star",
             "mb_bigint_add",
         ] {
             assert!(
