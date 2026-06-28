@@ -1513,6 +1513,11 @@ impl<'a> HirToMir<'a> {
             value: MirConst::FuncRef(func_sym),
             ty: any_ty,
         });
+        self.emit_func_sig_metadata_for_value(fn_vreg, sig);
+    }
+
+    fn emit_func_sig_metadata_for_value(&mut self, func_vreg: VReg, sig: &crate::hir::HirFuncSig) {
+        let any_ty = self.tcx.any();
         let mut param_vregs: Vec<VReg> = Vec::new();
         for p in &sig.params {
             let name_vreg = self.emit_str_const(&p.name);
@@ -1583,7 +1588,7 @@ impl<'a> HirToMir<'a> {
         self.current_stmts.push(MirInst::CallExtern {
             dest: None,
             name: "mb_func_set_params".to_string(),
-            args: vec![fn_vreg, params_vreg],
+            args: vec![func_vreg, params_vreg],
             ty: self.tcx.none(),
         });
         if let Some(ret_anno) = &sig.return_annotation {
@@ -1591,10 +1596,85 @@ impl<'a> HirToMir<'a> {
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
                 name: "mb_func_set_retanno".to_string(),
-                args: vec![fn_vreg, ra_vreg],
+                args: vec![func_vreg, ra_vreg],
                 ty: self.tcx.none(),
             });
         }
+    }
+
+    fn emit_minimal_func_params_for_value(
+        &mut self,
+        func_vreg: VReg,
+        argcount: i64,
+        varnames: &[String],
+        has_star: bool,
+        has_kwargs: bool,
+    ) {
+        let any_ty = self.tcx.any();
+        let mut param_vregs = Vec::new();
+        for (idx, name) in varnames.iter().enumerate() {
+            let kind = if idx < argcount.max(0) as usize {
+                1
+            } else if has_star && idx == argcount.max(0) as usize {
+                2
+            } else if has_kwargs && idx + 1 == varnames.len() {
+                4
+            } else {
+                1
+            };
+            let name_vreg = self.emit_str_const(name);
+            let kind_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: kind_raw,
+                value: MirConst::Int(kind),
+                ty: self.tcx.int(),
+            });
+            let kind_vreg = self.box_operand(kind_raw, self.tcx.int());
+            let has_default_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: has_default_raw,
+                value: MirConst::Int(0),
+                ty: self.tcx.int(),
+            });
+            let has_default_vreg = self.box_operand(has_default_raw, self.tcx.int());
+            let default_vreg = self.emit_none();
+            let anno_vreg = self.emit_none();
+            let tuple_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeTuple {
+                dest: tuple_vreg,
+                elements: vec![name_vreg, kind_vreg, has_default_vreg, default_vreg, anno_vreg],
+                ty: any_ty,
+            });
+            param_vregs.push(tuple_vreg);
+        }
+        let params_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: params_vreg,
+            elements: param_vregs,
+            ty: any_ty,
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_func_set_params".to_string(),
+            args: vec![func_vreg, params_vreg],
+            ty: self.tcx.none(),
+        });
+    }
+
+    fn lookup_bound_symbol(&self, name: &str) -> Option<SymbolId> {
+        self.sym_names
+            .iter()
+            .filter_map(|(sym, sym_name)| (sym_name == name).then_some(*sym))
+            .max_by_key(|sym| sym.0)
+            .or_else(|| self.symbol_table.and_then(|st| st.lookup(name)))
+            .or_else(|| {
+                self.symbol_table.and_then(|st| {
+                    st.all_symbols()
+                        .iter()
+                        .rev()
+                        .find_map(|info| (info.name == name).then_some(info.id))
+                })
+            })
     }
 
     fn new_with_builtins(
@@ -4306,8 +4386,7 @@ impl<'a> HirToMir<'a> {
                             }
                             // The bound name is the alias if present, otherwise the original name.
                             let bound = alias.as_deref().unwrap_or(name.as_str());
-                            if let Some(sym_id) = self.symbol_table.and_then(|st| st.lookup(bound))
-                            {
+                            if let Some(sym_id) = self.lookup_bound_symbol(bound) {
                                 self.sym_to_vreg.insert(sym_id, attr_dest);
                                 // Also emit StoreGlobal so functions can read via LoadGlobal.
                                 self.current_stmts.push(MirInst::StoreGlobal {
@@ -4353,9 +4432,7 @@ impl<'a> HirToMir<'a> {
                         (import.module.first().cloned().unwrap_or_default(), dest)
                     };
                     if !bound_name.is_empty() {
-                        if let Some(sym_id) =
-                            self.symbol_table.and_then(|st| st.lookup(&bound_name))
-                        {
+                        if let Some(sym_id) = self.lookup_bound_symbol(&bound_name) {
                             self.sym_to_vreg.insert(sym_id, bound_vreg);
                             if self.in_module_scope {
                                 self.current_stmts.push(MirInst::StoreGlobal {
@@ -11192,6 +11269,35 @@ impl<'a> HirToMir<'a> {
             args: vec![name_vreg, fn_vreg, ids_vreg],
             ty: self.tcx.any(),
         });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_func_set_name".to_string(),
+            args: vec![closure_vreg, name_vreg],
+            ty: self.tcx.none(),
+        });
+        if let Some(sig) = self.user_func_sigs.get(&func_sym.0).cloned() {
+            self.emit_func_sig_metadata_for_value(closure_vreg, &sig);
+        } else if let Some(varnames) = self.user_func_varnames.get(&func_sym.0).cloned() {
+            let argcount = self
+                .user_func_argcounts
+                .get(&func_sym.0)
+                .copied()
+                .unwrap_or(0);
+            let (has_star, has_kwargs) = self
+                .user_func_variadic_info
+                .get(&func_sym.0)
+                .copied()
+                .unwrap_or((false, false));
+            if has_star || has_kwargs {
+                self.emit_minimal_func_params_for_value(
+                    closure_vreg,
+                    argcount,
+                    &varnames,
+                    has_star,
+                    has_kwargs,
+                );
+            }
+        }
         closure_vreg
     }
 
