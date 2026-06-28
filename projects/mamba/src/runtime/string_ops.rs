@@ -666,16 +666,29 @@ pub fn mb_str_lower(s: MbValue) -> MbValue {
     }
 }
 
+fn push_casefold_char(out: &mut String, c: char) {
+    match c {
+        '\u{00df}' | '\u{1e9e}' => out.push_str("ss"),
+        '\u{00b5}' => out.push('\u{03bc}'),
+        '\u{fb00}' => out.push_str("ff"),
+        '\u{fb01}' => out.push_str("fi"),
+        '\u{fb02}' => out.push_str("fl"),
+        '\u{fb03}' => out.push_str("ffi"),
+        '\u{fb04}' => out.push_str("ffl"),
+        '\u{fb05}' => out.push_str("st"),
+        '\u{fb06}' => out.push_str("st"),
+        _ => out.extend(c.to_lowercase()),
+    }
+}
+
 /// str.casefold() — aggressive lowercase for caseless comparison.
-/// Python applies the Unicode casefold algorithm, which handles cases like
-/// "ß" → "ss". Rust's `to_lowercase()` does not do this, so we apply common
-/// German special-case mappings on top.
 pub fn mb_str_casefold(s: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
-            let lowered = st.to_lowercase();
-            // Sharp s: both "ß" and "ẞ" (U+1E9E) fold to "ss"
-            let folded = lowered.replace('ß', "ss");
+            let mut folded = String::with_capacity(st.len());
+            for c in st.chars() {
+                push_casefold_char(&mut folded, c);
+            }
             new_str(folded)
         } else {
             MbValue::none()
@@ -1279,8 +1292,15 @@ fn is_unicode_digit_no(c: char) -> bool {
         0x278A..=0x2792) // DINGBAT NEGATIVE CIRCLED SANS-SERIF ONE..NINE
 }
 
+fn is_surrogate_backed_string(s: MbValue) -> bool {
+    surrogate_codepoints(s).is_some()
+}
+
 pub fn mb_str_isdigit(s: MbValue) -> MbValue {
     use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             MbValue::from_bool(
@@ -1297,6 +1317,9 @@ pub fn mb_str_isdigit(s: MbValue) -> MbValue {
 }
 
 pub fn mb_str_isalpha(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             MbValue::from_bool(!st.is_empty() && st.chars().all(|c| c.is_alphabetic()))
@@ -1307,6 +1330,9 @@ pub fn mb_str_isalpha(s: MbValue) -> MbValue {
 }
 
 pub fn mb_str_isalnum(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             MbValue::from_bool(!st.is_empty() && st.chars().all(|c| c.is_alphanumeric()))
@@ -1317,6 +1343,9 @@ pub fn mb_str_isalnum(s: MbValue) -> MbValue {
 }
 
 pub fn mb_str_isspace(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             MbValue::from_bool(!st.is_empty() && st.chars().all(|c| c.is_whitespace()))
@@ -1327,6 +1356,9 @@ pub fn mb_str_isspace(s: MbValue) -> MbValue {
 }
 
 pub fn mb_str_isupper(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             MbValue::from_bool(
@@ -1339,6 +1371,9 @@ pub fn mb_str_isupper(s: MbValue) -> MbValue {
 }
 
 pub fn mb_str_islower(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             MbValue::from_bool(
@@ -1351,6 +1386,9 @@ pub fn mb_str_islower(s: MbValue) -> MbValue {
 }
 
 pub fn mb_str_istitle(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             if st.is_empty() {
@@ -1384,6 +1422,9 @@ pub fn mb_str_istitle(s: MbValue) -> MbValue {
 
 /// str.isascii() — True if string is empty or all chars are ASCII (CPython 3.7+).
 pub fn mb_str_isascii(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             MbValue::from_bool(st.is_ascii())
@@ -1394,10 +1435,13 @@ pub fn mb_str_isascii(s: MbValue) -> MbValue {
 }
 
 /// str.isidentifier() — True if string is a valid Python identifier.
-/// Per PEP 3131: first char `XID_Start` (a letter or underscore), rest `XID_Continue`.
-/// We approximate with ASCII rules + unicode_xid logic: first must be alphabetic or '_',
-/// rest must be alphanumeric or '_'. Empty string returns False.
+/// Per PEP 3131: first char must be `_` or `XID_Start`; the rest must be
+/// `XID_Continue`. Empty string returns False.
 pub fn mb_str_isidentifier(s: MbValue) -> MbValue {
+    use unicode_xid::UnicodeXID;
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             let mut chars = st.chars();
@@ -1405,11 +1449,11 @@ pub fn mb_str_isidentifier(s: MbValue) -> MbValue {
                 Some(c) => c,
                 None => return MbValue::from_bool(false),
             };
-            if !(first == '_' || first.is_alphabetic()) {
+            if !(first == '_' || UnicodeXID::is_xid_start(first)) {
                 return MbValue::from_bool(false);
             }
             for c in chars {
-                if !(c == '_' || c.is_alphanumeric()) {
+                if !UnicodeXID::is_xid_continue(c) {
                     return MbValue::from_bool(false);
                 }
             }
@@ -1425,6 +1469,9 @@ pub fn mb_str_isidentifier(s: MbValue) -> MbValue {
 /// other-number (fractions, superscripts, circled digits, ...).
 pub fn mb_str_isnumeric(s: MbValue) -> MbValue {
     use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             MbValue::from_bool(
@@ -1450,6 +1497,9 @@ pub fn mb_str_isnumeric(s: MbValue) -> MbValue {
 /// superscripts, fractions, Roman numerals.
 pub fn mb_str_isdecimal(s: MbValue) -> MbValue {
     use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             MbValue::from_bool(
@@ -1467,12 +1517,26 @@ pub fn mb_str_isdecimal(s: MbValue) -> MbValue {
 /// str.isprintable() — True if all chars are printable. Empty string is True.
 /// CPython treats space (U+0020) as printable but other whitespace as not.
 pub fn mb_str_isprintable(s: MbValue) -> MbValue {
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    if is_surrogate_backed_string(s) {
+        return MbValue::from_bool(false);
+    }
     unsafe {
         if let Some(st) = as_str(s) {
-            MbValue::from_bool(
-                st.chars()
-                    .all(|c| c == ' ' || (!c.is_whitespace() && !c.is_control())),
-            )
+            MbValue::from_bool(st.chars().all(|c| {
+                c == ' '
+                    || !matches!(
+                        c.general_category(),
+                        GeneralCategory::SpaceSeparator
+                            | GeneralCategory::LineSeparator
+                            | GeneralCategory::ParagraphSeparator
+                            | GeneralCategory::Control
+                            | GeneralCategory::Format
+                            | GeneralCategory::Surrogate
+                            | GeneralCategory::PrivateUse
+                            | GeneralCategory::Unassigned
+                    )
+            }))
         } else {
             MbValue::from_bool(false)
         }
@@ -5250,6 +5314,52 @@ mod tests {
         assert_eq!(mb_str_isdigit(s("12a")).as_bool(), Some(false));
         assert_eq!(mb_str_isalpha(s("abc")).as_bool(), Some(true));
         assert_eq!(mb_str_isspace(s("  \t")).as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_unicode_casefold_edges() {
+        unsafe {
+            assert_eq!(as_str(mb_str_casefold(s("hELlo"))), Some("hello"));
+            assert_eq!(as_str(mb_str_casefold(s("\u{00df}"))), Some("ss"));
+            assert_eq!(as_str(mb_str_casefold(s("\u{fb01}"))), Some("fi"));
+            assert_eq!(as_str(mb_str_casefold(s("\u{03a3}"))), Some("\u{03c3}"));
+            assert_eq!(as_str(mb_str_casefold(s("\u{00b5}"))), Some("\u{03bc}"));
+        }
+    }
+
+    #[test]
+    fn test_unicode_predicate_edges() {
+        assert_eq!(mb_str_isidentifier(s("a")).as_bool(), Some(true));
+        assert_eq!(mb_str_isidentifier(s("_x1")).as_bool(), Some(true));
+        assert_eq!(mb_str_isidentifier(s("\u{00b5}")).as_bool(), Some(true));
+        assert_eq!(
+            mb_str_isidentifier(s("\u{1d518}\u{1d52b}\u{1d526}")).as_bool(),
+            Some(true)
+        );
+        assert_eq!(mb_str_isidentifier(s("0")).as_bool(), Some(false));
+        assert_eq!(mb_str_isspace(s("\u{00a0}")).as_bool(), Some(true));
+        assert_eq!(mb_str_isspace(s("\u{2028}")).as_bool(), Some(true));
+        assert_eq!(mb_str_isprintable(s("")).as_bool(), Some(true));
+        assert_eq!(mb_str_isprintable(s("\u{02b9}")).as_bool(), Some(true));
+        assert_eq!(mb_str_isprintable(s("\u{1f46f}")).as_bool(), Some(true));
+        assert_eq!(mb_str_isprintable(s("abc\n")).as_bool(), Some(false));
+        assert_eq!(mb_str_isprintable(s("\u{0378}")).as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_lone_surrogate_predicates_false() {
+        let surrogate = new_lone_surrogate_str(0xd800);
+        assert_eq!(mb_str_islower(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_isupper(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_istitle(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_isalpha(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_isalnum(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_isdigit(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_isspace(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_isidentifier(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_isprintable(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_isnumeric(surrogate).as_bool(), Some(false));
+        assert_eq!(mb_str_isdecimal(surrogate).as_bool(), Some(false));
     }
 
     #[test]

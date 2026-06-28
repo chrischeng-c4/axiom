@@ -8094,46 +8094,7 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
                     "__setitem__",
                     "__delitem__",
                 ],
-                ObjData::Str(_) => vec![
-                    "upper",
-                    "lower",
-                    "title",
-                    "capitalize",
-                    "swapcase",
-                    "strip",
-                    "lstrip",
-                    "rstrip",
-                    "split",
-                    "rsplit",
-                    "splitlines",
-                    "join",
-                    "replace",
-                    "find",
-                    "rfind",
-                    "index",
-                    "rindex",
-                    "startswith",
-                    "endswith",
-                    "count",
-                    "encode",
-                    "format",
-                    "format_map",
-                    "isdigit",
-                    "isalpha",
-                    "isalnum",
-                    "isspace",
-                    "isupper",
-                    "islower",
-                    "istitle",
-                    "zfill",
-                    "ljust",
-                    "rjust",
-                    "center",
-                    "__iter__",
-                    "__len__",
-                    "__contains__",
-                    "__getitem__",
-                ],
+                ObjData::Str(_) => builtin_type_method_names_by_name("str"),
                 ObjData::Set(_) => vec![
                     "add",
                     "discard",
@@ -18519,6 +18480,10 @@ pub(crate) fn cleanup_all_classes() {
 mod tests {
     use super::*;
 
+    fn s(val: &str) -> MbValue {
+        MbValue::from_ptr(MbObject::new_str(val.to_string()))
+    }
+
     fn bound_method_func_value(method: MbValue) -> MbValue {
         method
             .as_ptr()
@@ -18536,6 +18501,37 @@ mod tests {
                 None
             })
             .unwrap_or_else(MbValue::none)
+    }
+
+    #[test]
+    fn test_getattr_str_uses_canonical_method_surface() {
+        for name in [
+            "casefold",
+            "isidentifier",
+            "isprintable",
+            "isascii",
+            "isdecimal",
+            "isnumeric",
+        ] {
+            assert!(
+                mb_getattr(s("abc"), s(name)).is_ptr(),
+                "str.{name} should be retrievable as a bound method"
+            );
+        }
+
+        let casefold = mb_getattr(s("\u{00df}"), s("casefold"));
+        let result = super::super::builtins::mb_call_spread(
+            casefold,
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(extract_str(result).as_deref(), Some("ss"));
+
+        let isidentifier = mb_getattr(s("\u{1d518}\u{1d52b}\u{1d526}"), s("isidentifier"));
+        let result = super::super::builtins::mb_call_spread(
+            isidentifier,
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(result.as_bool(), Some(true));
     }
 
     #[test]

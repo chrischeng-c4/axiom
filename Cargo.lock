@@ -6532,6 +6532,7 @@ dependencies = [
  "toml 0.8.23",
  "unicode-normalization",
  "unicode-properties",
+ "unicode-xid",
  "wiremock",
  "xz2",
  "zip 0.6.6",
