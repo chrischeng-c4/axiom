@@ -1819,6 +1819,7 @@ pub fn mb_bytes_slice_full(
             let len = data.len() as i64;
             let st = step.as_int().unwrap_or(1);
             if st == 0 {
+                raise_value_error("slice step cannot be zero");
                 return MbValue::from_ptr(MbObject::new_bytes(Vec::new()));
             }
             let (s, e) = if st > 0 {
