@@ -3619,6 +3619,61 @@ fn instance_field_value(instance: MbValue, key: &str) -> Option<MbValue> {
     })
 }
 
+fn is_exception_instance_class(class_name: &str) -> bool {
+    class_name == "BaseException"
+        || class_name == "Exception"
+        || super::exception::is_subclass_of(class_name, "BaseException")
+        || super::exception::is_subclass_of(class_name, "Exception")
+}
+
+fn mb_exception_setstate(receiver: MbValue, state: MbValue) -> MbValue {
+    let entries: Vec<(String, MbValue)> = match state.as_ptr() {
+        Some(ptr) => unsafe {
+            match &(*ptr).data {
+                ObjData::Dict(ref lock) => lock
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|(key, value)| key.as_str().map(|s| (s.to_string(), *value)))
+                    .collect(),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "state is not a dictionary".to_string(),
+                        )),
+                    );
+                    return MbValue::none();
+                }
+            }
+        },
+        None => {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "state is not a dictionary".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    };
+
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut fields = fields.write().unwrap();
+                for (key, value) in entries {
+                    super::rc::retain_if_ptr(value);
+                    if let Some(prev) = fields.insert(key, value) {
+                        super::rc::release_if_ptr(prev);
+                    }
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
 fn break_context_cycle(instance: MbValue, context: MbValue) {
     let target = instance.to_bits();
     let mut cur = context;
@@ -6111,6 +6166,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             .unwrap_or_default();
                         return class_namespace_mappingproxy(&type_name, Some(fields));
                     }
+                    if attr_name == "__setstate__" && is_exception_instance_class(class_name) {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
                     // R13: __dict__ access suppression.
                     // If class defines __slots__ without '__dict__', raise AttributeError for __dict__.
                     if attr_name == "__dict__" {
@@ -6284,7 +6342,7 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             }),
                             None => false,
                         };
-                        if pure_user_hierarchy {
+                        if pure_user_hierarchy || is_exception_instance_class(class_name) {
                             let instance = super::exception::mb_attribute_error_with_name_obj(
                                 &format!(
                                     "'{}' object has no attribute '{}'",
@@ -16255,6 +16313,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 ref fields,
             } = (*ptr).data
             {
+                if name == "__setstate__" && is_exception_instance_class(class_name) {
+                    let state = args
+                        .as_ptr()
+                        .and_then(|p| {
+                            if let ObjData::List(ref lk) = (*p).data {
+                                lk.read().unwrap().first().copied()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(MbValue::none);
+                    return mb_exception_setstate(receiver, state);
+                }
                 // UserDict / UserList / UserString: delegate method calls to
                 // the backing dict/list/str (full builtin method surface for
                 // free). User-defined overrides in subclasses win — only
