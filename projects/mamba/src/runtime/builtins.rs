@@ -1051,6 +1051,12 @@ fn len_type_error(val: MbValue) -> MbValue {
 }
 
 pub fn mb_len(val: MbValue) -> MbValue {
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(val) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_len(target);
+    }
     // Iterator handles encode as tagged ints. For range iterators we can
     // compute the remaining element count in O(1) from (current, stop, step);
     // for other iterators we fall through and return 0 to match the prior
@@ -1814,6 +1820,10 @@ pub fn mb_bool(val: MbValue) -> MbValue {
                         // pending exception (the value below is discarded).
                     } else if let Some((_base, payload)) =
                         super::class::builtin_data_payload_if_unoverridden(val, "__len__")
+                    {
+                        return mb_bool(payload);
+                    } else if let Some((_kind, payload)) =
+                        super::stdlib::collections_mod::user_wrapper_data(val)
                     {
                         return mb_bool(payload);
                     }
@@ -10266,6 +10276,14 @@ pub fn mb_is_truthy(val: MbValue) -> i64 {
                         }
                         // validate_len_result raised: fall through with a
                         // pending exception (the value below is discarded).
+                    } else if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__len__")
+                    {
+                        return mb_is_truthy(payload);
+                    } else if let Some((_kind, payload)) =
+                        super::stdlib::collections_mod::user_wrapper_data(val)
+                    {
+                        return mb_is_truthy(payload);
                     }
                     // Empty Flag members (value 0, e.g. `RED & BLUE`) are
                     // falsy; plain Enum members stay default-truthy.
