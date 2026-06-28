@@ -329,7 +329,7 @@ struct GenActive {
     /// Resume-cache id: bench hot path resumes the same generator
     /// repeatedly, so this cache lets the second-and-subsequent calls
     /// skip the GENERATORS HashMap lookup entirely. `u64::MAX` is the
-    /// empty sentinel (NEXT_GEN_ID starts at 1, never reaches MAX).
+    /// empty sentinel (GEN_ID_BASE is far below MAX).
     /// Invalidated on completion, throw, close, or runtime reset.
     last_resumed_id: std::cell::Cell<u64>,
     /// Resume-cache coro_ctx ptr — paired with last_resumed_id.
@@ -380,8 +380,13 @@ thread_local! {
     static LAST_STOP_VALUE: std::cell::Cell<u64> = std::cell::Cell::new(MbValue::none().to_bits());
 }
 
+/// Generator handles share the integer tag space with Python ints. Keep them
+/// far above ordinary user integers and below coroutine IDs (`1 << 40`) so a
+/// live generator does not make values like `1` look like generator handles.
+const GEN_ID_BASE: u64 = 1 << 39;
+
 /// Atomic generator ID counter (global, for uniqueness across threads).
-static NEXT_GEN_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_GEN_ID: AtomicU64 = AtomicU64::new(GEN_ID_BASE);
 
 fn alloc_gen_id() -> u64 {
     NEXT_GEN_ID.fetch_add(1, Ordering::Relaxed)
@@ -1177,6 +1182,7 @@ pub(crate) fn cleanup_generator_state_for_runtime_reset() {
         a.last_resumed_id.set(u64::MAX);
         a.last_resumed_ctx.set(std::ptr::null_mut());
     });
+    NEXT_GEN_ID.store(GEN_ID_BASE, Ordering::Relaxed);
     GEN_XFER.with(|x| {
         x.yield_v.set(0);
         x.send.set(0);

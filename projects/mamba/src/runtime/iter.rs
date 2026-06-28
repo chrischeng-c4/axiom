@@ -44,6 +44,12 @@ pub enum IterKind {
         expected_len: usize,
         expected_version: u64,
     },
+    /// Iterating over a live set. CPython raises RuntimeError when set size
+    /// changes while an iterator is active, so this must not snapshot.
+    Set {
+        source: MbValue,
+        expected_len: usize,
+    },
     /// Iterating over a tuple
     Tuple(MbValue),
     /// Iterating over string characters
@@ -152,7 +158,8 @@ pub struct GroupByState {
     pub active_group: Option<usize>,
 }
 
-/// Base for iterator IDs — must not overlap with generator IDs (which start at 1).
+/// Base for iterator IDs — below generator/coroutine handle ranges and above
+/// ordinary small ints.
 const ITER_ID_BASE: u64 = 0x1_0000_0000;
 
 // Thread-local iterator storage.
@@ -161,10 +168,9 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     static RANGE_ITERATOR_IDS: std::cell::RefCell<HashSet<u64>> =
         std::cell::RefCell::new(HashSet::new());
-    /// Iterator IDs start at 0x1_0000_0000 to avoid collisions with generator
-    /// handles (which start at 1 from NEXT_GEN_ID). Both live in the same
-    /// thread-local address space, so dispatch in mb_next_raise / mb_has_next
-    /// must be able to distinguish them.
+    /// Iterator IDs start at 0x1_0000_0000 to avoid ordinary small ints. The
+    /// generator and coroutine runtimes use higher disjoint ranges; all three
+    /// handle kinds still share the integer tag space.
     static NEXT_ITER_ID: std::cell::Cell<u64> = std::cell::Cell::new(ITER_ID_BASE);
     /// StopIteration flag — set by __next__ to signal exhaustion.
     /// Separates "yielded None" from "iterator is done".
@@ -202,6 +208,13 @@ fn raise_dict_changed_size_error() {
     ));
 }
 
+fn raise_set_changed_size_error() {
+    super::exception::set_current_exception(super::exception::MbException::new(
+        "RuntimeError",
+        "Set changed size during iteration",
+    ));
+}
+
 fn dict_current_len(source: MbValue) -> Option<usize> {
     let ptr = source.as_ptr()?;
     unsafe {
@@ -216,6 +229,21 @@ fn dict_current_len(source: MbValue) -> Option<usize> {
 fn dict_iter_changed(source: MbValue, expected_len: usize, expected_version: u64) -> bool {
     dict_current_len(source).map_or(true, |len| len != expected_len)
         || super::dict_ops::dict_version(source) != expected_version
+}
+
+fn set_current_len(source: MbValue) -> Option<usize> {
+    let ptr = source.as_ptr()?;
+    unsafe {
+        if let ObjData::Set(ref lock) = (*ptr).data {
+            Some(lock.read().unwrap().len())
+        } else {
+            None
+        }
+    }
+}
+
+fn set_iter_changed(source: MbValue, expected_len: usize) -> bool {
+    set_current_len(source).map_or(true, |len| len != expected_len)
 }
 
 fn list_current_len(source: MbValue) -> Option<usize> {
@@ -453,6 +481,7 @@ pub fn mb_iter_type_name(v: MbValue) -> Option<&'static str> {
             IterKind::Tuple(_) => "tuple_iterator",
             IterKind::DictKeys { .. } => "dict_keyiterator",
             IterKind::DictView { .. } => "dict_iterator",
+            IterKind::Set { .. } => "set_iterator",
             IterKind::Str(_) => "str_ascii_iterator",
             IterKind::Generator(_) => "generator",
             IterKind::UserDefined { .. } => "iterator",
@@ -651,6 +680,34 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             }
             Some(out)
         }
+        IterKind::Set {
+            source,
+            expected_len,
+        } => {
+            let out = if set_iter_changed(source, expected_len) {
+                raise_set_changed_size_error();
+                Vec::new()
+            } else if let Some(ptr) = source.as_ptr() {
+                unsafe {
+                    if let ObjData::Set(ref lock) = (*ptr).data {
+                        let items = lock.read().unwrap();
+                        let start = iter.index.min(items.len());
+                        for &item in &items[start..] {
+                            super::rc::retain_if_ptr(item);
+                        }
+                        items[start..].to_vec()
+                    } else {
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            unsafe {
+                super::rc::release_if_ptr(source);
+            }
+            Some(out)
+        }
         IterKind::Str(ref chars) => {
             let start = iter.index.min(chars.len());
             Some(
@@ -785,10 +842,12 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     }
                 }
                 ObjData::Set(ref lock) => {
-                    let items = lock.read().unwrap();
-                    IterKind::List(MbValue::from_ptr(MbObject::new_list_borrowed(
-                        items.to_vec(),
-                    )))
+                    let expected_len = lock.read().unwrap().len();
+                    super::rc::retain_if_ptr(obj);
+                    IterKind::Set {
+                        source: obj,
+                        expected_len,
+                    }
                 }
                 ObjData::Instance {
                     ref class_name,
@@ -1181,6 +1240,10 @@ pub fn mb_iter_length_hint(handle: MbValue) -> Option<i64> {
                         _ => 0,
                     }
                 })?;
+                Some((total as i64 - it.index as i64).max(0))
+            }
+            IterKind::Set { source, .. } => {
+                let total = set_current_len(*source)?;
                 Some((total as i64 - it.index as i64).max(0))
             }
             IterKind::Reversed {
@@ -3289,6 +3352,9 @@ fn release_iter(iter: &MbIterator) {
             super::rc::release_if_ptr(*source);
             super::rc::release_if_ptr(*items);
         },
+        IterKind::Set { source, .. } => unsafe {
+            super::rc::release_if_ptr(*source);
+        },
         IterKind::Reversed {
             list_source: Some((source, _)),
             ..
@@ -4322,6 +4388,30 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
             iter.exhausted = true;
             MbValue::none()
         }
+        IterKind::Set {
+            source,
+            expected_len,
+        } => {
+            if set_iter_changed(*source, *expected_len) {
+                iter.exhausted = true;
+                raise_set_changed_size_error();
+                return MbValue::none();
+            }
+            if let Some(ptr) = source.as_ptr() {
+                unsafe {
+                    if let ObjData::Set(ref lock) = (*ptr).data {
+                        let items = lock.read().unwrap();
+                        if iter.index < items.len() {
+                            let value = items[iter.index];
+                            iter.index += 1;
+                            return value;
+                        }
+                    }
+                }
+            }
+            iter.exhausted = true;
+            MbValue::none()
+        }
         IterKind::Range {
             current,
             stop,
@@ -4628,6 +4718,30 @@ mod tests {
         let it = mb_iter(obj);
         assert_eq!(mb_next(it).as_int(), Some(1));
         mb_dict_setitem(obj, MbValue::from_int(101), MbValue::from_int(0));
+
+        let val = mb_next_or_stop(it);
+        assert!(val.is_stop_iter_sentinel());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("RuntimeError")
+        );
+        super::super::exception::mb_clear_exception();
+        mb_iter_release(it);
+    }
+
+    #[test]
+    fn test_set_iter_raises_runtime_error_on_size_change() {
+        use super::super::set_ops::mb_set_add;
+
+        super::super::exception::mb_clear_exception();
+        let obj = MbValue::from_ptr(MbObject::new_set(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
+
+        let it = mb_iter(obj);
+        assert!(mb_next(it).as_int().is_some());
+        mb_set_add(obj, MbValue::from_int(101));
 
         let val = mb_next_or_stop(it);
         assert!(val.is_stop_iter_sentinel());
