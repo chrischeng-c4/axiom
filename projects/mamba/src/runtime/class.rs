@@ -248,6 +248,15 @@ fn class_namespace_mappingproxy(
     class_name: &str,
     type_fields: Option<&super::rc::MbRwLock<super::rc::InstanceFields>>,
 ) -> MbValue {
+    if let Some(fields) = type_fields {
+        if let Some(namespace) = fields
+            .read()
+            .ok()
+            .and_then(|f| f.get("__mamba_type_namespace__").copied())
+        {
+            return super::dict_ops::mappingproxy_from_mapping(namespace);
+        }
+    }
     let dict = super::dict_ops::mb_dict_new();
     if let Some(fields) = type_fields {
         let entries: Vec<(String, MbValue)> = fields
@@ -272,6 +281,32 @@ fn type_tuple_from_names(names: Vec<String>) -> MbValue {
     MbValue::from_ptr(super::rc::MbObject::new_tuple(
         names.iter().map(|name| make_type_object(name)).collect(),
     ))
+}
+
+fn type_surface_base_value(type_name: &str) -> Option<MbValue> {
+    if type_name == "object" {
+        return Some(MbValue::none());
+    }
+    let bases = type_surface_base_names(type_name)?;
+    let solid_base = bases
+        .iter()
+        .find(|name| {
+            matches!(
+                name.as_str(),
+                "bool"
+                    | "int"
+                    | "str"
+                    | "float"
+                    | "complex"
+                    | "list"
+                    | "dict"
+                    | "tuple"
+                    | "set"
+                    | "frozenset"
+            )
+        })
+        .or_else(|| bases.first())?;
+    Some(make_type_object(solid_base))
 }
 
 fn type_surface_mro_names(type_name: &str) -> Option<Vec<String>> {
@@ -324,7 +359,10 @@ fn type_surface_attr_value(
     attr_name: &str,
     type_fields: Option<&super::rc::MbRwLock<super::rc::InstanceFields>>,
 ) -> Option<MbValue> {
-    if matches!(attr_name, "__name__" | "__module__" | "__doc__") {
+    if matches!(
+        attr_name,
+        "__name__" | "__module__" | "__doc__" | "__qualname__"
+    ) {
         if let Some(fields) = type_fields {
             if let Some(value) = fields.read().ok().and_then(|f| f.get(attr_name).copied()) {
                 unsafe {
@@ -350,6 +388,7 @@ fn type_surface_attr_value(
         "__dict__" => Some(class_namespace_mappingproxy(type_name, type_fields)),
         "__mro__" => type_surface_mro_names(type_name).map(type_tuple_from_names),
         "__bases__" => type_surface_base_names(type_name).map(type_tuple_from_names),
+        "__base__" => type_surface_base_value(type_name),
         "__abstractmethods__" if is_user_abc(type_name) => {
             Some(user_abstractmethods_frozenset(type_name))
         }
@@ -3926,6 +3965,7 @@ fn seed_int_subclass_value(instance: MbValue, args_list: MbValue) -> bool {
 fn builtin_data_payload_base(class_name: &str) -> Option<&'static str> {
     for ancestor in class_mro_list(class_name).into_iter().skip(1) {
         match ancestor.as_str() {
+            "int" => return Some("int"),
             "str" => return Some("str"),
             "float" => return Some("float"),
             "complex" => return Some("complex"),
@@ -3946,6 +3986,7 @@ pub(crate) fn class_has_builtin_data_payload_base(class_name: &str) -> bool {
 
 fn payload_field_for_base(base: &str) -> &'static str {
     match base {
+        "int" => INT_SUBCLASS_VALUE_FIELD,
         "str" => STR_SUBCLASS_VALUE_FIELD,
         "float" => FLOAT_SUBCLASS_VALUE_FIELD,
         "complex" => COMPLEX_SUBCLASS_VALUE_FIELD,
@@ -3961,7 +4002,8 @@ fn payload_field_for_base(base: &str) -> &'static str {
 pub(crate) fn is_builtin_data_payload_field(name: &str) -> bool {
     matches!(
         name,
-        STR_SUBCLASS_VALUE_FIELD
+        INT_SUBCLASS_VALUE_FIELD
+            | STR_SUBCLASS_VALUE_FIELD
             | FLOAT_SUBCLASS_VALUE_FIELD
             | COMPLEX_SUBCLASS_VALUE_FIELD
             | LIST_SUBCLASS_VALUE_FIELD
@@ -5993,6 +6035,14 @@ fn mb_getattr_impl(
             return proxy;
         }
     }
+    if super::dict_ops::mappingproxy_mapping(obj).is_some()
+        && matches!(
+            attr_name.as_str(),
+            "keys" | "values" | "items" | "get" | "copy" | "__contains__"
+        )
+    {
+        return make_bound_native_method(obj, &attr_name);
+    }
 
     if super::stdlib::weakref_mod::proxy_dead_attr_access(obj, &attr_name) {
         super::stdlib::weakref_mod::raise_reference_error();
@@ -7145,6 +7195,26 @@ fn mb_getattr_impl(
                             .and_then(|v| extract_str(*v))
                             .unwrap_or_default();
                         return class_namespace_mappingproxy(&type_name, Some(fields));
+                    }
+                    if (class_name == "collections.defaultdict"
+                        || class_name == "collections.OrderedDict"
+                        || class_name == "collections.Counter")
+                        && matches!(
+                            attr_name.as_str(),
+                            "keys"
+                                | "values"
+                                | "items"
+                                | "get"
+                                | "pop"
+                                | "setdefault"
+                                | "update"
+                                | "clear"
+                                | "copy"
+                                | "move_to_end"
+                                | "popitem"
+                        )
+                    {
+                        return make_bound_native_method(obj, &attr_name);
                     }
                     if matches!(attr_name.as_str(), "__setstate__" | "add_note")
                         && is_exception_instance_class(class_name)

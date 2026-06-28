@@ -526,6 +526,8 @@ fn int_digits_for_percent(v: MbValue, radix: u32) -> Option<(bool, String)> {
             } else {
                 Some((false, s))
             }
+        } else if let Some(("int", payload)) = super::class::builtin_data_payload(v) {
+            int_digits_for_percent(payload, radix)
         } else {
             None
         }
