@@ -451,6 +451,7 @@ pub enum CallArg {
 pub struct Comprehension {
     pub targets: Vec<Name>,
     pub unpack_target: bool,
+    pub target_reads_before_bind: Vec<Name>,
     pub iter: Spanned<Expr>,
     pub conditions: Vec<Spanned<Expr>>,
     pub is_async: bool,
