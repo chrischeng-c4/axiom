@@ -18,6 +18,7 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 pub(crate) const INT_SUBCLASS_VALUE_FIELD: &str = "__mamba_int_value__";
+pub(crate) const FLOAT_SUBCLASS_VALUE_FIELD: &str = "__mamba_float_value__";
 pub(crate) const STR_SUBCLASS_VALUE_FIELD: &str = "__mamba_str_value__";
 pub(crate) const LIST_SUBCLASS_VALUE_FIELD: &str = "__mamba_list_value__";
 pub(crate) const DICT_SUBCLASS_VALUE_FIELD: &str = "__mamba_dict_value__";
@@ -3318,6 +3319,7 @@ fn builtin_data_payload_base(class_name: &str) -> Option<&'static str> {
     for ancestor in class_mro_list(class_name).into_iter().skip(1) {
         match ancestor.as_str() {
             "str" => return Some("str"),
+            "float" => return Some("float"),
             "list" => return Some("list"),
             "dict" => return Some("dict"),
             "tuple" => return Some("tuple"),
@@ -3330,6 +3332,7 @@ fn builtin_data_payload_base(class_name: &str) -> Option<&'static str> {
 fn payload_field_for_base(base: &str) -> &'static str {
     match base {
         "str" => STR_SUBCLASS_VALUE_FIELD,
+        "float" => FLOAT_SUBCLASS_VALUE_FIELD,
         "list" => LIST_SUBCLASS_VALUE_FIELD,
         "dict" => DICT_SUBCLASS_VALUE_FIELD,
         "tuple" => TUPLE_SUBCLASS_VALUE_FIELD,
@@ -3341,6 +3344,7 @@ pub(crate) fn is_builtin_data_payload_field(name: &str) -> bool {
     matches!(
         name,
         STR_SUBCLASS_VALUE_FIELD
+            | FLOAT_SUBCLASS_VALUE_FIELD
             | LIST_SUBCLASS_VALUE_FIELD
             | DICT_SUBCLASS_VALUE_FIELD
             | TUPLE_SUBCLASS_VALUE_FIELD
@@ -3397,6 +3401,20 @@ fn seed_builtin_data_subclass_value(instance: MbValue, args_list: MbValue, base:
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(format!(
                         "str() takes at most 1 argument ({} given)",
+                        args.len()
+                    ))),
+                );
+                return false;
+            }
+        },
+        "float" => match args.len() {
+            0 => MbValue::from_float(0.0),
+            1 => super::builtins::mb_float(args[0]),
+            _ => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "float expected at most 1 argument, got {}",
                         args.len()
                     ))),
                 );
@@ -9544,6 +9562,9 @@ pub fn mb_imul(a: MbValue, b: MbValue) -> MbValue {
         return a;
     }
     mb_inplace(a, b, "__imul__", 2, super::builtins::mb_mul)
+}
+pub fn mb_ifloordiv(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__ifloordiv__", 4, super::builtins::mb_floordiv)
 }
 pub fn mb_matmul(a: MbValue, b: MbValue) -> MbValue {
     mb_dispatch_binop(MATMUL_OPCODE, a, b)

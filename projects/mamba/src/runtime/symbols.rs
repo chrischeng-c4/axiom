@@ -609,6 +609,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_ifloordiv",
+            class::mb_ifloordiv as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_imatmul",
             class::mb_imatmul as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],

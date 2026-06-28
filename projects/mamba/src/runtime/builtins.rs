@@ -1403,6 +1403,29 @@ fn int_subclass_payload_for_dunder(val: MbValue, dunder: &str) -> Option<MbValue
     })
 }
 
+fn float_subclass_payload_for_dunder(val: MbValue, dunder: &str) -> Option<MbValue> {
+    val.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*p).data
+        {
+            if !super::class::check_class_hierarchy(class_name, "float")
+                || super::class::class_defines_own_method(class_name, dunder)
+            {
+                return None;
+            }
+            fields
+                .read()
+                .unwrap()
+                .get(super::class::FLOAT_SUBCLASS_VALUE_FIELD)
+                .copied()
+        } else {
+            None
+        }
+    })
+}
+
 fn int_subclass_numeric_operands(
     a: MbValue,
     b: MbValue,
@@ -1410,6 +1433,22 @@ fn int_subclass_numeric_operands(
 ) -> Option<(MbValue, MbValue)> {
     let av = int_subclass_payload_for_dunder(a, dunder);
     let bv = int_subclass_payload_for_dunder(b, dunder);
+    if av.is_some() || bv.is_some() {
+        Some((av.unwrap_or(a), bv.unwrap_or(b)))
+    } else {
+        None
+    }
+}
+
+fn numeric_subclass_operands(
+    a: MbValue,
+    b: MbValue,
+    dunder: &str,
+) -> Option<(MbValue, MbValue)> {
+    let av = int_subclass_payload_for_dunder(a, dunder)
+        .or_else(|| float_subclass_payload_for_dunder(a, dunder));
+    let bv = int_subclass_payload_for_dunder(b, dunder)
+        .or_else(|| float_subclass_payload_for_dunder(b, dunder));
     if av.is_some() || bv.is_some() {
         Some((av.unwrap_or(a), bv.unwrap_or(b)))
     } else {
@@ -3061,7 +3100,7 @@ fn numeric_handle_binop(op: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
 pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
     let a = int_enum_like_value(a).unwrap_or(a);
     let b = int_enum_like_value(b).unwrap_or(b);
-    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__add__") {
+    if let Some((na, nb)) = numeric_subclass_operands(a, b, "__add__") {
         return mb_add(na, nb);
     }
     if is_array_handle_value(a) || is_array_handle_value(b) {
