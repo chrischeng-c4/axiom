@@ -5359,6 +5359,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     if attr_name == "__dict__" && super::pep695::is_attrable_function(obj) {
         return super::pep695::func_attrs_dict_proxy(obj);
     }
+    if attr_name == "update" && super::pep695::func_attrs_proxy_func(obj).is_some() {
+        return make_bound_native_method(obj, &attr_name);
+    }
 
     // cell.cell_contents for cells exposed through function.__closure__.
     if attr_name == "cell_contents" {
