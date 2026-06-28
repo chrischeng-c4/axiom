@@ -1112,17 +1112,65 @@ fn referent_type_name(target: MbValue) -> String {
     "object".to_string()
 }
 
+fn weakref_entry_is_publicly_live(
+    wref: MbValue,
+    globals: &std::collections::HashMap<i64, MbValue>,
+) -> bool {
+    if !globals
+        .values()
+        .copied()
+        .any(|value| value.to_bits() == wref.to_bits())
+    {
+        return false;
+    }
+    let Some(ptr) = wref.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields }
+                if matches!(
+                    class_name.as_str(),
+                    "ReferenceType" | "ProxyType" | "CallableProxyType"
+                ) =>
+            {
+                !fields
+                    .read()
+                    .unwrap()
+                    .get("_dead")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+fn live_registry_items(obj: MbValue) -> Vec<MbValue> {
+    let key = referent_key(obj);
+    let globals = super::super::closure::snapshot_global_id_namespace();
+    WEAKREF_REGISTRY.with(|r| {
+        r.borrow()
+            .get(&key)
+            .map(|items| {
+                items
+                    .iter()
+                    .copied()
+                    .filter(|wref| weakref_entry_is_publicly_live(*wref, &globals))
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
 /// weakref.getweakrefcount(obj) -> number of live ref/proxy objects.
 pub fn mb_weakref_getweakrefcount(obj: MbValue) -> MbValue {
-    let key = referent_key(obj);
-    let n = WEAKREF_REGISTRY.with(|r| r.borrow().get(&key).map(|v| v.len()).unwrap_or(0));
-    MbValue::from_int(n as i64)
+    MbValue::from_int(live_registry_items(obj).len() as i64)
 }
 
 /// weakref.getweakrefs(obj) -> list of live ref/proxy objects (creation order).
 pub fn mb_weakref_getweakrefs(obj: MbValue) -> MbValue {
-    let key = referent_key(obj);
-    let items = WEAKREF_REGISTRY.with(|r| r.borrow().get(&key).cloned().unwrap_or_default());
+    let items = live_registry_items(obj);
     for &w in &items {
         unsafe {
             super::super::rc::retain_if_ptr(w);
@@ -1553,6 +1601,24 @@ mod tests {
     fn test_getweakrefcount_zero() {
         let v = MbValue::from_int(1);
         assert_eq!(mb_weakref_getweakrefcount(v).as_int(), Some(0));
+    }
+
+    #[test]
+    fn test_getweakrefcount_drops_deleted_global_ref() {
+        let obj = target();
+        let r1 = mb_weakref_ref(obj, MbValue::from_int(1));
+        let r2 = mb_weakref_ref(obj, MbValue::from_int(2));
+        let r1_global = MbValue::from_bits(9101);
+        let r2_global = MbValue::from_bits(9102);
+        crate::runtime::closure::mb_global_set_id(r1_global, r1);
+        crate::runtime::closure::mb_global_set_id(r2_global, r2);
+
+        assert_eq!(mb_weakref_getweakrefcount(obj).as_int(), Some(2));
+
+        crate::runtime::closure::mb_global_set_id(r1_global, MbValue::none());
+        assert_eq!(mb_weakref_getweakrefcount(obj).as_int(), Some(1));
+
+        crate::runtime::closure::mb_global_set_id(r2_global, MbValue::none());
     }
 
     #[test]
