@@ -6038,6 +6038,11 @@ pub fn extract_items(val: MbValue) -> Vec<MbValue> {
                     if let Some(items) = super::dict_ops::dict_view_elements(val) {
                         return items;
                     }
+                    if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__iter__")
+                    {
+                        return extract_items(payload);
+                    }
                     // User iterable: go through iterator protocol.
                     // Fall through to the iterator handling below.
                 }
@@ -10005,6 +10010,13 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
         if super::exception::is_builtin_exception_name(&type_name) {
             return super::exception::mb_exception_new_with_args_and_kwargs(
                 func,
+                MbValue::from_ptr(MbObject::new_list(pos)),
+                kwargs_dict,
+            );
+        }
+        if super::class::class_is_registered(&type_name) {
+            return super::class::mb_instance_new_with_init_kwargs(
+                MbValue::from_ptr(MbObject::new_str(type_name)),
                 MbValue::from_ptr(MbObject::new_list(pos)),
                 kwargs_dict,
             );

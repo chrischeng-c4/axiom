@@ -33,6 +33,16 @@ fn build_set_like_left(left: MbValue, items: Vec<MbValue>) -> MbValue {
     }
 }
 
+fn is_frozenset_like(value: MbValue) -> bool {
+    if let Some(("frozenset", _)) = super::class::builtin_data_payload(value) {
+        return true;
+    }
+    value
+        .as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::FrozenSet(_)) })
+        .unwrap_or(false)
+}
+
 /// Create a new empty set.
 pub fn mb_set_new() -> MbValue {
     MbValue::from_ptr(MbObject::new_set(Vec::new()))
@@ -502,6 +512,18 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         }
     }
     match name {
+        "__init__" => {
+            if is_frozenset_like(receiver) {
+                return MbValue::none();
+            }
+            if args_len() == 0 {
+                mb_set_clear(receiver);
+            } else {
+                mb_set_clear(receiver);
+                let _ = mb_set_update(receiver, arg(0));
+            }
+            MbValue::none()
+        }
         "add" => {
             mb_set_add(receiver, arg(0));
             MbValue::none()
@@ -587,6 +609,11 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
 
 // REQ: R6 — extract_set_items handles both Set and FrozenSet
 fn extract_set_items(val: MbValue) -> Vec<MbValue> {
+    if let Some((_base, payload)) =
+        super::class::builtin_data_payload_if_unoverridden(val, "__iter__")
+    {
+        return extract_set_items(payload);
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
