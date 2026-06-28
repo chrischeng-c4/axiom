@@ -1237,6 +1237,12 @@ pub fn mb_operator_index(a: MbValue) -> MbValue {
     // operator.index(x) == x.__index__(). True ints (incl. bool) pass through;
     // floats and other non-integers raise TypeError; instances dispatch to
     // their __index__ dunder.
+    if let Some(target) = super::weakref_mod::proxy_target_or_raise(a) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_operator_index(target);
+    }
     if a.is_bool() {
         return MbValue::from_int(if a.as_bool() == Some(true) { 1 } else { 0 });
     }
