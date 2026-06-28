@@ -81,6 +81,28 @@ fn set_field(inst: MbValue, key: &str, val: MbValue) {
     }
 }
 
+fn get_instance_field(inst: MbValue, key: &str) -> Option<MbValue> {
+    inst.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn del_instance_field(inst: MbValue, key: &str) {
+    if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(prev) = fields.write().unwrap().remove(key) {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+}
+
 fn instance_class(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
@@ -1128,12 +1150,39 @@ unsafe extern "C" fn patch_dict_exit(self_v: MbValue, _args: MbValue) -> MbValue
     MbValue::from_bool(false)
 }
 
-/// `patch.object(cls, name, new=..., return_value=...)` → context manager
-/// replacing a registered class's method-table entry.
+fn is_patch_object_instance_target(target: MbValue) -> bool {
+    target.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. } if class_name != "type"
+        )
+    })
+}
+
+fn patch_object_replacement(self_v: MbValue, attr: &str) -> MbValue {
+    let new_v = get_field(self_v, "_new").unwrap_or_else(MbValue::none);
+    if !new_v.is_none() {
+        return new_v;
+    }
+    let m = build_mock("MagicMock", attr);
+    apply_mock_kwargs(
+        m,
+        get_field(self_v, "_kwargs").unwrap_or_else(MbValue::none),
+    );
+    m
+}
+
+/// `patch.object(target, name, new=..., return_value=...)` → context manager
+/// replacing either an instance attribute or a registered class method.
 unsafe extern "C" fn dispatch_patch_object(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let target = a.first().copied().unwrap_or_else(MbValue::none);
     let attr = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let new = a
+        .get(2)
+        .copied()
+        .filter(|v| !is_dict_value(*v))
+        .unwrap_or_else(MbValue::none);
     let kwargs = a
         .iter()
         .copied()
@@ -1142,21 +1191,47 @@ unsafe extern "C" fn dispatch_patch_object(args_ptr: *const MbValue, nargs: usiz
     make_instance(
         "_patch_object",
         vec![
-            ("_cls", target),
+            ("_target", target),
             ("_attr_name", attr),
+            ("_new", new),
             ("_kwargs", kwargs),
             ("_saved", MbValue::none()),
             ("_had", MbValue::from_bool(false)),
+            ("_object_mode", MbValue::from_bool(false)),
         ],
     )
 }
 
 unsafe extern "C" fn patch_object_enter(self_v: MbValue, _args: MbValue) -> MbValue {
-    let cls_v = get_field(self_v, "_cls").unwrap_or_else(MbValue::none);
+    let target = get_field(self_v, "_target").unwrap_or_else(MbValue::none);
+    let attr_v = get_field(self_v, "_attr_name").unwrap_or_else(MbValue::none);
     let attr = get_field(self_v, "_attr_name")
         .and_then(extract_str)
         .unwrap_or_default();
-    let Some(cls) = super::super::class::resolve_class_name(cls_v) else {
+    if is_patch_object_instance_target(target) {
+        let original = get_instance_field(target, &attr);
+        let attr_exists = original.is_some()
+            || super::super::class::mb_instance_hasattr(target, attr_v).as_bool() == Some(true);
+        if !attr_exists {
+            let cls = instance_class(target).unwrap_or_else(|| "object".to_string());
+            return raise(
+                "AttributeError",
+                &format!("<{} object> does not have the attribute '{}'", cls, attr),
+            );
+        }
+        set_field(self_v, "_target_obj", target);
+        set_field(self_v, "_object_mode", MbValue::from_bool(true));
+        set_field(self_v, "_had", MbValue::from_bool(original.is_some()));
+        if let Some(saved) = original {
+            set_field(self_v, "_saved", saved);
+        }
+        let replacement = patch_object_replacement(self_v, &attr);
+        set_field(self_v, "_active_mock", replacement);
+        set_field(target, &attr, replacement);
+        return replacement;
+    }
+
+    let Some(cls) = super::super::class::resolve_class_name(target) else {
         return raise("TypeError", "patch.object target must be a class or object");
     };
     let existing = super::super::class::lookup_method(&cls, &attr);
@@ -1169,16 +1244,30 @@ unsafe extern "C" fn patch_object_enter(self_v: MbValue, _args: MbValue) -> MbVa
     set_field(self_v, "_saved", existing);
     set_field(self_v, "_had", MbValue::from_bool(true));
     set_field(self_v, "_cls_name", new_str(&cls));
-    let m = build_mock("MagicMock", &attr);
-    apply_mock_kwargs(
-        m,
-        get_field(self_v, "_kwargs").unwrap_or_else(MbValue::none),
-    );
+    let m = patch_object_replacement(self_v, &attr);
+    set_field(self_v, "_active_mock", m);
     super::super::class::class_replace_method(&cls, &attr, m);
     m
 }
 
 unsafe extern "C" fn patch_object_exit(self_v: MbValue, _args: MbValue) -> MbValue {
+    if get_field(self_v, "_object_mode").and_then(|v| v.as_bool()) == Some(true) {
+        let target = get_field(self_v, "_target_obj").unwrap_or_else(MbValue::none);
+        let attr = get_field(self_v, "_attr_name")
+            .and_then(extract_str)
+            .unwrap_or_default();
+        let had = get_field(self_v, "_had")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if had {
+            let saved = get_field(self_v, "_saved").unwrap_or_else(MbValue::none);
+            set_field(target, &attr, saved);
+        } else {
+            del_instance_field(target, &attr);
+        }
+        return MbValue::from_bool(false);
+    }
+
     let cls = get_field(self_v, "_cls_name")
         .and_then(extract_str)
         .unwrap_or_default();
@@ -1568,6 +1657,31 @@ mod tests {
         let a = mock_attr_child(m, "foo");
         let b = mock_attr_child(m, "foo");
         assert_eq!(a.to_bits(), b.to_bits());
+    }
+
+    #[test]
+    fn patch_object_instance_field_restores_missing_attr() {
+        register();
+        let mut methods = HashMap::new();
+        methods.insert("fetch".to_string(), MbValue::from_int(7));
+        super::super::super::class::mb_class_register("PatchObjectTarget", vec![], methods);
+        let target = make_instance("PatchObjectTarget", vec![]);
+        let args = [
+            target,
+            new_str("fetch"),
+            MbValue::from_ptr(MbObject::new_str("patched".to_string())),
+        ];
+        let patcher = unsafe { dispatch_patch_object(args.as_ptr(), args.len()) };
+
+        let replacement = unsafe { patch_object_enter(patcher, MbValue::none()) };
+        assert_eq!(extract_str(replacement).as_deref(), Some("patched"));
+        assert_eq!(
+            get_instance_field(target, "fetch").and_then(extract_str).as_deref(),
+            Some("patched")
+        );
+
+        let _ = unsafe { patch_object_exit(patcher, MbValue::none()) };
+        assert!(get_instance_field(target, "fetch").is_none());
     }
 
     #[test]
