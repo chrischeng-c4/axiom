@@ -644,9 +644,9 @@ pub fn register() {
         }
     });
 
-    // http module: HTTPStatus constants exposed as module-level ints AND as
-    // attributes of a HTTPStatus namespace instance so that both
-    // `http.OK` and `http.HTTPStatus.OK` yield the status code.
+    // http module: HTTPStatus constants exposed as IntEnum members at module
+    // level and as attributes of a HTTPStatus namespace instance so that both
+    // `http.OK` and `http.HTTPStatus.OK` yield int-compatible status members.
     //
     // The `(code, name, phrase)` table is owned by `cclab_mamba_registry::http`;
     // we iterate the canonical list rather than maintain a parallel copy in
@@ -654,9 +654,11 @@ pub fn register() {
     // EARLY_HINTS, IM_A_TEAPOT). Binding crates and mamba now agree on the
     // same table.
     let mut http_attrs = HashMap::new();
-    for &(code, name, _phrase) in cclab_mamba_registry::http::canonical_codes() {
-        http_attrs.insert(name.to_string(), MbValue::from_int(code as i64));
-    }
+    let status_defs: Vec<(&str, i64)> = cclab_mamba_registry::http::canonical_codes()
+        .iter()
+        .map(|(code, name, _)| (*name, i64::from(*code)))
+        .collect();
+    let status_members = super::enum_class::register_int_enum("HTTPStatus", &status_defs);
     let http_status = MbObject::new_instance("HTTPStatus".to_string());
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*http_status).data {
@@ -664,8 +666,12 @@ pub fn register() {
             let members = MbObject::new_dict();
             if let ObjData::Dict(ref lock) = (*members).data {
                 let mut map = lock.write().unwrap();
-                for &(code, name, phrase) in cclab_mamba_registry::http::canonical_codes() {
-                    let member = make_status_member(code, name, phrase);
+                for ((code, name, phrase), member) in cclab_mamba_registry::http::canonical_codes()
+                    .iter()
+                    .zip(status_members)
+                {
+                    decorate_status_member(member, *code, name, phrase);
+                    http_attrs.insert((*name).to_string(), member);
                     f.insert(name.to_string(), member);
                     super::super::rc::retain_if_ptr(member);
                     map.insert(
@@ -977,24 +983,14 @@ fn make_handler_responses_dict() -> MbValue {
     MbValue::from_ptr(dict)
 }
 
-/// Build one CPython-like `HTTPStatus` IntEnum member.
-fn make_status_member(code: u16, name: &str, phrase: &str) -> MbValue {
-    let inst_ptr = MbObject::new_instance("HTTPStatus".to_string());
-    let inst = MbValue::from_ptr(inst_ptr);
-    unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+/// Add HTTPStatus-specific fields to a shared IntEnum member.
+fn decorate_status_member(member: MbValue, code: u16, _name: &str, phrase: &str) {
+    if let Some(inst_ptr) = member.as_ptr() {
+        unsafe {
+            let ObjData::Instance { ref fields, .. } = (*inst_ptr).data else {
+                return;
+            };
             let mut f = fields.write().unwrap();
-            let value = MbValue::from_int(code as i64);
-            f.insert("value".to_string(), value);
-            f.insert("_value_".to_string(), value);
-            f.insert(
-                "name".to_string(),
-                MbValue::from_ptr(MbObject::new_str(name.to_string())),
-            );
-            f.insert(
-                "_name_".to_string(),
-                MbValue::from_ptr(MbObject::new_str(name.to_string())),
-            );
             f.insert(
                 "phrase".to_string(),
                 MbValue::from_ptr(MbObject::new_str(phrase.to_string())),
@@ -1003,37 +999,50 @@ fn make_status_member(code: u16, name: &str, phrase: &str) -> MbValue {
                 "description".to_string(),
                 MbValue::from_ptr(MbObject::new_str(phrase.to_string())),
             );
+            let code = i64::from(code);
+            f.insert(
+                "is_informational".to_string(),
+                MbValue::from_bool((100..=199).contains(&code)),
+            );
+            f.insert(
+                "is_success".to_string(),
+                MbValue::from_bool((200..=299).contains(&code)),
+            );
+            f.insert(
+                "is_redirection".to_string(),
+                MbValue::from_bool((300..=399).contains(&code)),
+            );
+            f.insert(
+                "is_client_error".to_string(),
+                MbValue::from_bool((400..=499).contains(&code)),
+            );
+            f.insert(
+                "is_server_error".to_string(),
+                MbValue::from_bool((500..=599).contains(&code)),
+            );
         }
     }
-    inst
 }
 
 /// Underlying integer for a `HTTPStatus` member instance.
 pub fn http_status_member_value(v: MbValue) -> Option<MbValue> {
-    let ptr = v.as_ptr()?;
-    unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
-            if class_name == "HTTPStatus" {
-                let value = fields.read().unwrap().get("value").copied()?;
-                if value.as_int().is_some() {
-                    return Some(value);
-                }
-            }
-        }
-    }
-    None
+    super::enum_class::int_member_value(v)
 }
 
 pub fn mb_httpstatus_call(arg: MbValue) -> MbValue {
-    let Some(code) = arg.as_int() else {
+    let Some(code) = status_code_arg(arg) else {
         raise("ValueError", "None is not a valid HTTPStatus".to_string());
         return MbValue::none();
     };
-    if let Some(&(_, name, phrase)) = cclab_mamba_registry::http::canonical_codes()
+    if cclab_mamba_registry::http::canonical_codes()
         .iter()
         .find(|(known, _, _)| i64::from(*known) == code)
+        .is_some()
     {
-        return make_status_member(code as u16, name, phrase);
+        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(code)]));
+        if let Some(member) = super::enum_class::enum_class_call("HTTPStatus", args) {
+            return member;
+        }
     }
     raise("ValueError", format!("{code} is not a valid HTTPStatus"));
     MbValue::none()
