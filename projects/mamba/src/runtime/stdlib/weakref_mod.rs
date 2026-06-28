@@ -677,7 +677,10 @@ fn reject_non_weakreferenceable(obj: MbValue) -> bool {
         Some("NoneType")
     } else if obj.is_bool() {
         Some("bool")
-    } else if obj.is_int() {
+    } else if obj
+        .as_int()
+        .is_some_and(|id| id < 0 || !super::uuid_mod::is_uuid_handle(id as u64))
+    {
         Some("int")
     } else if obj.is_float() {
         Some("float")
@@ -887,6 +890,12 @@ fn referent_type_name(target: MbValue) -> String {
                 _ => {}
             }
         }
+    }
+    if target
+        .as_int()
+        .is_some_and(|id| id >= 0 && super::uuid_mod::is_uuid_handle(id as u64))
+    {
+        return "UUID".to_string();
     }
     if target.as_int().is_some() {
         return "int".to_string();
@@ -1249,6 +1258,21 @@ mod tests {
         let wref = mb_weakref_ref(obj, MbValue::none());
         let r = mb_weakref_deref(wref);
         assert_eq!(r.as_ptr(), obj.as_ptr());
+    }
+
+    #[test]
+    fn test_ref_accepts_uuid_integer_handle() {
+        let obj = super::super::uuid_mod::mb_uuid_uuid4();
+        let wref = mb_weakref_ref(obj, MbValue::none());
+        assert!(wref.as_ptr().is_some());
+        assert_eq!(get_field(wref, "_target").to_bits(), obj.to_bits());
+        assert_eq!(referent_type_name(obj), "UUID");
+    }
+
+    #[test]
+    fn test_ref_still_rejects_plain_int() {
+        assert!(reject_non_weakreferenceable(MbValue::from_int(1)));
+        crate::runtime::exception::mb_clear_exception();
     }
 
     // -- proxy --
