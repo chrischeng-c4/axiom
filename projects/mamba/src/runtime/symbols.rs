@@ -2245,6 +2245,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_async_iter",
+            async_rt::mb_async_iter as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_async_next_or_stop",
+            async_rt::mb_async_next_or_stop as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_coroutine_complete",
             async_rt::mb_coroutine_complete as fn(super::MbValue, super::MbValue),
             [I64, I64],
@@ -2271,6 +2283,24 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_coroutine_should_suspend",
             async_rt::mb_coroutine_should_suspend as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_coroutine_get_state_i64",
+            async_rt::mb_coroutine_get_state_i64 as fn(super::MbValue) -> i64,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_coroutine_set_state_i64",
+            async_rt::mb_coroutine_set_state_i64 as fn(super::MbValue, i64),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_coroutine_take_resume_value",
+            async_rt::mb_coroutine_take_resume_value as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
         ),

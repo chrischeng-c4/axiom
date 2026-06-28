@@ -222,6 +222,13 @@ pub enum HirStmt {
         else_body: Vec<HirStmt>,
         span: Span,
     },
+    AsyncFor {
+        var: SymbolId,
+        iter: HirExpr,
+        body: Vec<HirStmt>,
+        else_body: Vec<HirStmt>,
+        span: Span,
+    },
     Break {
         span: Span,
     },

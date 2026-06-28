@@ -364,6 +364,12 @@ fn collect_local_names(
                 body,
                 else_body,
                 ..
+            }
+            | HirStmt::AsyncFor {
+                var,
+                body,
+                else_body,
+                ..
             } => {
                 push(*var, resolve, out, seen);
                 collect_local_names(body, resolve, out, seen);
@@ -1230,6 +1236,9 @@ struct HirToMir<'a> {
     current_block_id: Option<BlockId>,
     /// VReg holding coroutine handle for async functions.
     async_coro_vreg: Option<VReg>,
+    /// Async coroutine resume state -> block for lowered await suspension points.
+    async_resume_dispatches: Vec<(u32, BlockId)>,
+    next_async_resume_state: u32,
     /// User-defined function SymbolIds (to distinguish from builtins).
     user_funcs: HashSet<u32>,
     /// SymbolId.0 → mb_* extern name for builtin calls.
@@ -1448,6 +1457,8 @@ impl<'a> HirToMir<'a> {
             loop_header: None,
             current_block_id: None,
             async_coro_vreg: None,
+            async_resume_dispatches: Vec::new(),
+            next_async_resume_state: 2,
             user_funcs: HashSet::new(),
             builtin_syms: HashMap::new(),
             class_syms: HashMap::new(),
@@ -1642,7 +1653,13 @@ impl<'a> HirToMir<'a> {
             let tuple_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tuple_vreg,
-                elements: vec![name_vreg, kind_vreg, has_default_vreg, default_vreg, anno_vreg],
+                elements: vec![
+                    name_vreg,
+                    kind_vreg,
+                    has_default_vreg,
+                    default_vreg,
+                    anno_vreg,
+                ],
                 ty: any_ty,
             });
             param_vregs.push(tuple_vreg);
@@ -1695,6 +1712,8 @@ impl<'a> HirToMir<'a> {
             loop_header: None,
             current_block_id: None,
             async_coro_vreg: None,
+            async_resume_dispatches: Vec::new(),
+            next_async_resume_state: 2,
             user_funcs,
             builtin_syms,
             class_syms: HashMap::new(),
@@ -1774,6 +1793,8 @@ impl<'a> HirToMir<'a> {
         self.loop_header = None;
         self.current_block_id = None;
         self.async_coro_vreg = None;
+        self.async_resume_dispatches.clear();
+        self.next_async_resume_state = 2;
         self.is_gen_body = false;
         self.initialized_capture_cells.clear();
         self.try_handler_stack.clear();
@@ -2181,6 +2202,12 @@ impl<'a> HirToMir<'a> {
                 body,
                 else_body,
                 ..
+            }
+            | HirStmt::AsyncFor {
+                iter,
+                body,
+                else_body,
+                ..
             } => self
                 .first_yield_var_in_expr(iter)
                 .or_else(|| self.first_yield_var_in_stmts(body))
@@ -2357,10 +2384,10 @@ impl<'a> HirToMir<'a> {
     ) -> Option<SymbolId> {
         generators.iter().find_map(|gen| {
             self.first_yield_var_in_expr(&gen.iter).or_else(|| {
-                    gen.conditions
-                        .iter()
-                        .find_map(|cond| self.first_yield_var_in_expr(cond))
-                })
+                gen.conditions
+                    .iter()
+                    .find_map(|cond| self.first_yield_var_in_expr(cond))
+            })
         })
     }
 
@@ -2397,8 +2424,11 @@ impl<'a> HirToMir<'a> {
         // ── Phase 1: Generate body function ──
         self.reset();
         self.cell_override = func.captures.iter().map(|s| s.0).collect();
+        let dispatch_block = self.fresh_block();
         let entry = self.fresh_block();
-        self.current_block_id = Some(entry);
+        self.current_block_id = Some(dispatch_block);
+        self.finish_block(Terminator::Goto(entry));
+        self.start_block(entry);
 
         // Body takes a single param: coroutine handle
         let handle_vreg = self.fresh_vreg();
@@ -2462,6 +2492,8 @@ impl<'a> HirToMir<'a> {
             });
             self.finish_block(Terminator::Return(Some(handle_vreg)));
         }
+
+        self.build_async_resume_dispatch(dispatch_block, entry, handle_vreg);
 
         let body_mir = MirBody {
             name: body_sym,
@@ -3528,6 +3560,15 @@ impl<'a> HirToMir<'a> {
             } => {
                 self.lower_for(*var, iter, body, else_body);
             }
+            HirStmt::AsyncFor {
+                var,
+                iter,
+                body,
+                else_body,
+                ..
+            } => {
+                self.lower_async_for(*var, iter, body, else_body);
+            }
             HirStmt::Break { .. } => {
                 if let Some(exit) = self.loop_exit {
                     // If inside try blocks with finally bodies, inline them before break.
@@ -4475,27 +4516,10 @@ impl<'a> HirToMir<'a> {
                         ty: self.tcx.any(),
                     });
                     // Exception check after __enter__: if raised, skip body + exit
-                    // and propagate to outer try handler.
-                    if let Some(&(handler_block, _)) = self.try_handler_stack.last() {
-                        let exc_check = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(exc_check),
-                            name: "mb_has_exception".to_string(),
-                            args: Vec::new(),
-                            ty: self.tcx.bool(),
-                        });
-                        let continue_block = self.fresh_block();
-                        let exc_block = self.fresh_block();
-                        self.finish_block(Terminator::Branch {
-                            cond: exc_check,
-                            then_block: exc_block,
-                            else_block: continue_block,
-                        });
-                        self.start_block(exc_block);
-                        self.emit_extern_call(None, "mb_pop_handler");
-                        self.finish_block(Terminator::Goto(handler_block));
-                        self.start_block(continue_block);
-                    }
+                    // and propagate to the nearest handler or caller. This must run
+                    // even outside an explicit `try`; otherwise a failed `async with`
+                    // enter falls through into `__aexit__`.
+                    self.emit_exception_propagate();
                     if let Some(sym) = alias {
                         // Mirror the Assign handler's variable-class dispatch so that
                         // with...as bindings are visible at the correct scope.
@@ -5243,84 +5267,84 @@ impl<'a> HirToMir<'a> {
                 current
             } else {
                 match decor_kind {
-                MethodDecorKind::None => addr_vreg,
-                MethodDecorKind::Property => {
-                    let mut w = self.fresh_vreg();
-                    self.current_stmts.push(MirInst::CallExtern {
-                        dest: Some(w),
-                        name: "mb_property_new".to_string(),
-                        args: vec![addr_vreg],
-                        ty: any_ty,
-                    });
-                    // Attach setter if present. mb_property_setter returns a NEW
-                    // property (sharing fget); capture it so the accessor is not
-                    // dropped (it no longer mutates in place). (#82)
-                    if let Some(ssym) = setter_sym {
-                        let setter_addr = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::LoadConst {
-                            dest: setter_addr,
-                            value: MirConst::FuncRef(*ssym),
-                            ty: self.tcx.int(),
-                        });
-                        let next = self.fresh_vreg();
+                    MethodDecorKind::None => addr_vreg,
+                    MethodDecorKind::Property => {
+                        let mut w = self.fresh_vreg();
                         self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(next),
-                            name: "mb_property_setter".to_string(),
-                            args: vec![w, setter_addr],
+                            dest: Some(w),
+                            name: "mb_property_new".to_string(),
+                            args: vec![addr_vreg],
                             ty: any_ty,
                         });
-                        w = next;
+                        // Attach setter if present. mb_property_setter returns a NEW
+                        // property (sharing fget); capture it so the accessor is not
+                        // dropped (it no longer mutates in place). (#82)
+                        if let Some(ssym) = setter_sym {
+                            let setter_addr = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::LoadConst {
+                                dest: setter_addr,
+                                value: MirConst::FuncRef(*ssym),
+                                ty: self.tcx.int(),
+                            });
+                            let next = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: "mb_property_setter".to_string(),
+                                args: vec![w, setter_addr],
+                                ty: any_ty,
+                            });
+                            w = next;
+                        }
+                        // Attach deleter if present (same NEW-property semantics).
+                        if let Some(dsym) = deleter_sym {
+                            let del_addr = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::LoadConst {
+                                dest: del_addr,
+                                value: MirConst::FuncRef(*dsym),
+                                ty: self.tcx.int(),
+                            });
+                            let next = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: "mb_property_deleter".to_string(),
+                                args: vec![w, del_addr],
+                                ty: any_ty,
+                            });
+                            w = next;
+                        }
+                        w
                     }
-                    // Attach deleter if present (same NEW-property semantics).
-                    if let Some(dsym) = deleter_sym {
-                        let del_addr = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::LoadConst {
-                            dest: del_addr,
-                            value: MirConst::FuncRef(*dsym),
-                            ty: self.tcx.int(),
-                        });
-                        let next = self.fresh_vreg();
+                    MethodDecorKind::ClassMethod => {
+                        let w = self.fresh_vreg();
                         self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(next),
-                            name: "mb_property_deleter".to_string(),
-                            args: vec![w, del_addr],
+                            dest: Some(w),
+                            name: "mb_classmethod_new".to_string(),
+                            args: vec![addr_vreg],
                             ty: any_ty,
                         });
-                        w = next;
+                        w
                     }
-                    w
-                }
-                MethodDecorKind::ClassMethod => {
-                    let w = self.fresh_vreg();
-                    self.current_stmts.push(MirInst::CallExtern {
-                        dest: Some(w),
-                        name: "mb_classmethod_new".to_string(),
-                        args: vec![addr_vreg],
-                        ty: any_ty,
-                    });
-                    w
-                }
-                MethodDecorKind::StaticMethod => {
-                    let w = self.fresh_vreg();
-                    self.current_stmts.push(MirInst::CallExtern {
-                        dest: Some(w),
-                        name: "mb_staticmethod_new".to_string(),
-                        args: vec![addr_vreg],
-                        ty: any_ty,
-                    });
-                    w
-                }
-                MethodDecorKind::CachedProperty => {
-                    let name_str = self.emit_str_const(method_name);
-                    let w = self.fresh_vreg();
-                    self.current_stmts.push(MirInst::CallExtern {
-                        dest: Some(w),
-                        name: "mb_cached_property_new".to_string(),
-                        args: vec![addr_vreg, name_str],
-                        ty: any_ty,
-                    });
-                    w
-                }
+                    MethodDecorKind::StaticMethod => {
+                        let w = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(w),
+                            name: "mb_staticmethod_new".to_string(),
+                            args: vec![addr_vreg],
+                            ty: any_ty,
+                        });
+                        w
+                    }
+                    MethodDecorKind::CachedProperty => {
+                        let name_str = self.emit_str_const(method_name);
+                        let w = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(w),
+                            name: "mb_cached_property_new".to_string(),
+                            args: vec![addr_vreg, name_str],
+                            ty: any_ty,
+                        });
+                        w
+                    }
                 }
             };
             if *singledispatchmethod {
@@ -6146,6 +6170,90 @@ impl<'a> HirToMir<'a> {
             args: vec![iter_obj],
             ty: self.tcx.none(),
         });
+    }
+
+    fn lower_async_for(
+        &mut self,
+        var: SymbolId,
+        iter: &HirExpr,
+        body: &[HirStmt],
+        else_body: &[HirStmt],
+    ) {
+        let iterable = self.lower_expr(iter);
+
+        let iter_obj = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(iter_obj),
+            name: "mb_async_iter".to_string(),
+            args: vec![iterable],
+            ty: self.tcx.any(),
+        });
+        self.emit_exception_propagate();
+
+        let header = self.fresh_block();
+        let body_block = self.fresh_block();
+        let cleanup_block = self.fresh_block();
+
+        let natural_exit = if !else_body.is_empty() {
+            self.fresh_block()
+        } else {
+            cleanup_block
+        };
+
+        self.finish_block(Terminator::Goto(header));
+
+        self.start_block(header);
+        let next_val = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(next_val),
+            name: "mb_async_next_or_stop".to_string(),
+            args: vec![iter_obj],
+            ty: self.tcx.any(),
+        });
+        self.emit_exception_propagate();
+        let is_stop = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(is_stop),
+            name: "mb_is_stop_iter".to_string(),
+            args: vec![next_val],
+            ty: self.tcx.bool(),
+        });
+        self.finish_block(Terminator::Branch {
+            cond: is_stop,
+            then_block: natural_exit,
+            else_block: body_block,
+        });
+
+        let old_exit = self.loop_exit.replace(cleanup_block);
+        let old_header = self.loop_header.replace(header);
+        let was_module_scope = self.in_module_scope;
+        self.in_module_scope = false;
+        self.start_block(body_block);
+        if let Some(&orig) = self.sym_to_vreg.get(&var) {
+            self.current_stmts.push(MirInst::Copy {
+                dest: orig,
+                source: next_val,
+            });
+        } else {
+            self.sym_to_vreg.insert(var, next_val);
+        }
+        for s in body {
+            self.lower_stmt(s);
+        }
+        self.in_module_scope = was_module_scope;
+        self.finish_block(Terminator::Goto(header));
+        self.loop_exit = old_exit;
+        self.loop_header = old_header;
+
+        if !else_body.is_empty() {
+            self.start_block(natural_exit);
+            for s in else_body {
+                self.lower_stmt(s);
+            }
+            self.finish_block(Terminator::Goto(cleanup_block));
+        }
+
+        self.start_block(cleanup_block);
     }
 
     /// Desugar tuple/starred unpacking assignment into indexed access (#409).
@@ -8991,7 +9099,7 @@ impl<'a> HirToMir<'a> {
                                 let n_raw = self.emit_int_const(n as i64);
                                 let n_boxed = self.box_operand(n_raw, self.tcx.int());
                                 ("mb_range_too_many_args".to_string(), vec![n_boxed])
-                    }
+                            }
                         };
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: Some(dest),
@@ -9566,8 +9674,7 @@ impl<'a> HirToMir<'a> {
                             ty: *ty,
                         });
                     }
-                } else if self.decorated_func_syms.contains(&func_sym.0) && !is_local_closure_func
-                {
+                } else if self.decorated_func_syms.contains(&func_sym.0) && !is_local_closure_func {
                     // Decorated function: load from global (may be replaced by decorator)
                     // then dispatch dynamically based on arg count.
                     let func_val = self.fresh_vreg();
@@ -10470,7 +10577,8 @@ impl<'a> HirToMir<'a> {
                 dest
             }
             HirExpr::Await { value, ty } => {
-                let val = self.lower_expr(value);
+                let raw_val = self.lower_expr(value);
+                let val = self.box_operand(raw_val, value.ty());
                 // GIL release before await (#313 R3)
                 self.current_stmts.push(MirInst::CallExtern {
                     dest: None,
@@ -10492,7 +10600,13 @@ impl<'a> HirToMir<'a> {
                     args: vec![],
                     ty: self.tcx.none(),
                 });
-                self.emit_async_suspend_check();
+                self.emit_exception_propagate();
+                let resume_state = self.next_async_resume_state;
+                self.next_async_resume_state += 1;
+                let resume_block = self.fresh_block();
+                self.async_resume_dispatches
+                    .push((resume_state, resume_block));
+                self.emit_async_suspend_check(dest, resume_state, resume_block);
                 dest
             }
             HirExpr::ListComp {
@@ -10825,6 +10939,74 @@ impl<'a> HirToMir<'a> {
         });
     }
 
+    fn replace_or_push_block(&mut self, block: BasicBlock) {
+        if let Some(pos) = self.blocks.iter().position(|existing| existing.id == block.id) {
+            self.blocks[pos] = block;
+        } else {
+            self.blocks.push(block);
+        }
+    }
+
+    fn build_async_resume_dispatch(
+        &mut self,
+        dispatch_block: BlockId,
+        initial_block: BlockId,
+        coro_handle: VReg,
+    ) {
+        let dispatches = self.async_resume_dispatches.clone();
+        if dispatches.is_empty() {
+            self.replace_or_push_block(BasicBlock {
+                id: dispatch_block,
+                stmts: Vec::new(),
+                terminator: Terminator::Goto(initial_block),
+            });
+            return;
+        }
+
+        let int_ty = self.tcx.int();
+        let mut current = dispatch_block;
+        for (idx, (state_id, resume_block)) in dispatches.iter().enumerate() {
+            let next = if idx + 1 == dispatches.len() {
+                initial_block
+            } else {
+                self.fresh_block()
+            };
+            let state_vreg = self.fresh_vreg();
+            let expected = self.fresh_vreg();
+            let is_match = self.fresh_vreg();
+            let stmts = vec![
+                MirInst::CallExtern {
+                    dest: Some(state_vreg),
+                    name: "mb_coroutine_get_state_i64".to_string(),
+                    args: vec![coro_handle],
+                    ty: int_ty,
+                },
+                MirInst::LoadConst {
+                    dest: expected,
+                    value: MirConst::Int(*state_id as i64),
+                    ty: int_ty,
+                },
+                MirInst::BinOp {
+                    dest: is_match,
+                    op: MirBinOp::Eq,
+                    lhs: state_vreg,
+                    rhs: expected,
+                    ty: self.tcx.bool(),
+                },
+            ];
+            self.replace_or_push_block(BasicBlock {
+                id: current,
+                stmts,
+                terminator: Terminator::Branch {
+                    cond: is_match,
+                    then_block: *resume_block,
+                    else_block: next,
+                },
+            });
+            current = next;
+        }
+    }
+
     fn start_block(&mut self, id: BlockId) {
         self.current_block_id = Some(id);
     }
@@ -10926,7 +11108,12 @@ impl<'a> HirToMir<'a> {
         self.start_block(continue_block);
     }
 
-    fn emit_async_suspend_check(&mut self) {
+    fn emit_async_suspend_check(
+        &mut self,
+        suspend_value: VReg,
+        resume_state: u32,
+        resume_block: BlockId,
+    ) {
         let Some(coro_handle) = self.async_coro_vreg else {
             return;
         };
@@ -10945,7 +11132,28 @@ impl<'a> HirToMir<'a> {
             else_block: continue_block,
         });
         self.start_block(return_block);
-        self.finish_block(Terminator::Return(Some(coro_handle)));
+        let state_raw = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: state_raw,
+            value: MirConst::Int(resume_state as i64),
+            ty: self.tcx.int(),
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_coroutine_set_state_i64".to_string(),
+            args: vec![coro_handle, state_raw],
+            ty: self.tcx.none(),
+        });
+        self.finish_block(Terminator::Return(Some(suspend_value)));
+        self.start_block(resume_block);
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(suspend_value),
+            name: "mb_coroutine_take_resume_value".to_string(),
+            args: vec![coro_handle],
+            ty: self.tcx.any(),
+        });
+        self.emit_exception_propagate();
+        self.finish_block(Terminator::Goto(continue_block));
         self.start_block(continue_block);
     }
 
@@ -10987,6 +11195,9 @@ impl<'a> HirToMir<'a> {
                 body, else_body, ..
             }
             | HirStmt::For {
+                body, else_body, ..
+            }
+            | HirStmt::AsyncFor {
                 body, else_body, ..
             } => {
                 self.async_body_catches_generator_exit(body)
@@ -11031,6 +11242,12 @@ impl<'a> HirToMir<'a> {
                 body,
                 else_body,
                 ..
+            }
+            | HirStmt::AsyncFor {
+                iter,
+                body,
+                else_body,
+                ..
             } => {
                 self.expr_contains_await(iter)
                     || self.async_body_contains_await(body)
@@ -11050,16 +11267,16 @@ impl<'a> HirToMir<'a> {
                     || self.async_body_contains_await(else_body)
                     || self.async_body_contains_await(finally_body)
             }
-            HirStmt::Raise { value, from, .. } => value
-                .as_ref()
-                .is_some_and(|expr| self.expr_contains_await(expr))
-                || from
+            HirStmt::Raise { value, from, .. } => {
+                value
                     .as_ref()
-                    .is_some_and(|expr| self.expr_contains_await(expr)),
+                    .is_some_and(|expr| self.expr_contains_await(expr))
+                    || from
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+            }
             HirStmt::With { items, body, .. } => {
-                items
-                    .iter()
-                    .any(|(expr, _)| self.expr_contains_await(expr))
+                items.iter().any(|(expr, _)| self.expr_contains_await(expr))
                     || self.async_body_contains_await(body)
             }
             HirStmt::Assert { test, msg, .. } => {
@@ -11095,9 +11312,9 @@ impl<'a> HirToMir<'a> {
             crate::hir::HirLValue::Index { object, index } => {
                 self.expr_contains_await(object) || self.expr_contains_await(index)
             }
-            crate::hir::HirLValue::Unpack { targets, .. } => {
-                targets.iter().any(|target| self.lvalue_contains_await(target))
-            }
+            crate::hir::HirLValue::Unpack { targets, .. } => targets
+                .iter()
+                .any(|target| self.lvalue_contains_await(target)),
         }
     }
 
@@ -11118,9 +11335,9 @@ impl<'a> HirToMir<'a> {
             }
             HirExpr::List { elements, .. }
             | HirExpr::Set { elements, .. }
-            | HirExpr::Tuple { elements, .. } => {
-                elements.iter().any(|element| self.expr_contains_await(element))
-            }
+            | HirExpr::Tuple { elements, .. } => elements
+                .iter()
+                .any(|element| self.expr_contains_await(element)),
             HirExpr::Dict { entries, .. } => entries.iter().any(|(key, value)| {
                 self.expr_contains_await(key) || self.expr_contains_await(value)
             }),
@@ -11172,10 +11389,7 @@ impl<'a> HirToMir<'a> {
                 element,
                 generators,
                 ..
-            } => {
-                self.expr_contains_await(element)
-                    || self.comprehensions_contain_await(generators)
-            }
+            } => self.expr_contains_await(element) || self.comprehensions_contain_await(generators),
             HirExpr::DictComp {
                 key,
                 value,
@@ -11223,7 +11437,10 @@ impl<'a> HirToMir<'a> {
     }
 
     fn relative_import_parts(module: &[String]) -> (usize, String) {
-        let level = module.iter().take_while(|part| part.as_str() == ".").count();
+        let level = module
+            .iter()
+            .take_while(|part| part.as_str() == ".")
+            .count();
         let tail = module[level..].join(".");
         (level, tail)
     }
