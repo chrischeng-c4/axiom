@@ -122,6 +122,9 @@ pub struct HirClass {
     /// Class statements lowered into an executable statement stream must be
     /// registered exactly when their ClassDefPlaceholder executes.
     pub force_textual_registration: bool,
+    /// True when a method body references the implicit class cell via
+    /// `__class__` or zero-arg `super()`.
+    pub class_cell_required: bool,
     /// Literal `namedtuple("T", [...])` base metadata for namedtuple subclasses.
     pub namedtuple_base: Option<NamedTupleBaseSpec>,
     pub fields: Vec<(SymbolId, TypeId)>,
@@ -879,6 +882,7 @@ mod tests {
             runtime_base_exprs: Vec::new(),
             runtime_base_list_expr: None,
             force_textual_registration: false,
+            class_cell_required: false,
             namedtuple_base: None,
             fields: vec![(SymbolId(2), int_ty)],
             methods: vec![],

@@ -4281,6 +4281,253 @@ impl<'a> AstLowerer<'a> {
         self.lower_starred_display(&elems, None)
     }
 
+    fn stmts_need_class_cell(stmts: &[Spanned<ast::Stmt>]) -> bool {
+        stmts
+            .iter()
+            .any(|stmt| Self::stmt_needs_class_cell(&stmt.node))
+    }
+
+    fn stmt_needs_class_cell(stmt: &ast::Stmt) -> bool {
+        match stmt {
+            ast::Stmt::VarDecl { value, .. } => Self::expr_needs_class_cell(&value.node),
+            ast::Stmt::Assign { target, value } | ast::Stmt::AugAssign { target, value, .. } => {
+                Self::expr_needs_class_cell(&target.node)
+                    || Self::expr_needs_class_cell(&value.node)
+            }
+            ast::Stmt::FnDef { body, .. } | ast::Stmt::AsyncFnDef { body, .. } => {
+                Self::stmts_need_class_cell(body)
+            }
+            ast::Stmt::ClassDef { .. } | ast::Stmt::EnumDef { .. } | ast::Stmt::Pass => false,
+            ast::Stmt::If {
+                condition,
+                body,
+                elif_clauses,
+                else_body,
+            } => {
+                Self::expr_needs_class_cell(&condition.node)
+                    || Self::stmts_need_class_cell(body)
+                    || elif_clauses.iter().any(|(cond, stmts)| {
+                        Self::expr_needs_class_cell(&cond.node)
+                            || Self::stmts_need_class_cell(stmts)
+                    })
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+            }
+            ast::Stmt::While {
+                condition,
+                body,
+                else_body,
+            } => {
+                Self::expr_needs_class_cell(&condition.node)
+                    || Self::stmts_need_class_cell(body)
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+            }
+            ast::Stmt::For {
+                iter,
+                body,
+                else_body,
+                ..
+            }
+            | ast::Stmt::AsyncFor {
+                iter,
+                body,
+                else_body,
+                ..
+            } => {
+                Self::expr_needs_class_cell(&iter.node)
+                    || Self::stmts_need_class_cell(body)
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+            }
+            ast::Stmt::Match { expr, arms } => {
+                Self::expr_needs_class_cell(&expr.node)
+                    || arms
+                        .iter()
+                        .any(|arm| Self::stmts_need_class_cell(&arm.body))
+            }
+            ast::Stmt::Return(value) => value
+                .as_ref()
+                .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node)),
+            ast::Stmt::Break | ast::Stmt::Continue => false,
+            ast::Stmt::Import { .. }
+            | ast::Stmt::BareAnnotation { .. }
+            | ast::Stmt::Global(_)
+            | ast::Stmt::Nonlocal(_) => false,
+            ast::Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                Self::stmts_need_class_cell(body)
+                    || handlers
+                        .iter()
+                        .any(|handler| Self::stmts_need_class_cell(&handler.body))
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+                    || finally_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+            }
+            ast::Stmt::Raise { value, from } => {
+                value
+                    .as_ref()
+                    .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+                    || from
+                        .as_ref()
+                        .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+            }
+            ast::Stmt::With { items, body } | ast::Stmt::AsyncWith { items, body } => {
+                items
+                    .iter()
+                    .any(|item| Self::expr_needs_class_cell(&item.context.node))
+                    || Self::stmts_need_class_cell(body)
+            }
+            ast::Stmt::Assert { test, msg } => {
+                Self::expr_needs_class_cell(&test.node)
+                    || msg
+                        .as_ref()
+                        .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+            }
+            ast::Stmt::Del(target) | ast::Stmt::ExprStmt(target) => {
+                Self::expr_needs_class_cell(&target.node)
+            }
+            ast::Stmt::TypeAlias { value, .. } => Self::expr_needs_class_cell(&value.node),
+        }
+    }
+
+    fn expr_needs_class_cell(expr: &ast::Expr) -> bool {
+        match expr {
+            ast::Expr::Ident(name) => name == "__class__",
+            ast::Expr::Call { func, args } => {
+                let is_zero_arg_super = args.is_empty()
+                    && matches!(&func.node, ast::Expr::Ident(name) if name == "super");
+                is_zero_arg_super
+                    || Self::expr_needs_class_cell(&func.node)
+                    || args.iter().any(Self::call_arg_needs_class_cell)
+            }
+            ast::Expr::BinOp { lhs, rhs, .. } => {
+                Self::expr_needs_class_cell(&lhs.node) || Self::expr_needs_class_cell(&rhs.node)
+            }
+            ast::Expr::UnaryOp { operand, .. }
+            | ast::Expr::Starred(operand)
+            | ast::Expr::YieldFrom(operand)
+            | ast::Expr::Await(operand) => Self::expr_needs_class_cell(&operand.node),
+            ast::Expr::Attr { object, .. } => Self::expr_needs_class_cell(&object.node),
+            ast::Expr::Index { object, index } => {
+                Self::expr_needs_class_cell(&object.node)
+                    || Self::expr_needs_class_cell(&index.node)
+            }
+            ast::Expr::Slice { start, stop, step } => {
+                start
+                    .as_ref()
+                    .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+                    || stop
+                        .as_ref()
+                        .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+                    || step
+                        .as_ref()
+                        .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+            }
+            ast::Expr::ListLit(elements)
+            | ast::Expr::SetLit(elements)
+            | ast::Expr::TupleLit(elements)
+            | ast::Expr::UnpackTarget(elements) => elements
+                .iter()
+                .any(|expr| Self::expr_needs_class_cell(&expr.node)),
+            ast::Expr::DictLit(entries) => entries.iter().any(|(key, value)| {
+                key.as_ref()
+                    .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+                    || Self::expr_needs_class_cell(&value.node)
+            }),
+            ast::Expr::IfExpr {
+                body,
+                condition,
+                else_body,
+            } => {
+                Self::expr_needs_class_cell(&body.node)
+                    || Self::expr_needs_class_cell(&condition.node)
+                    || Self::expr_needs_class_cell(&else_body.node)
+            }
+            ast::Expr::Lambda { body, .. } => Self::expr_needs_class_cell(&body.node),
+            ast::Expr::ListComp {
+                element,
+                generators,
+            }
+            | ast::Expr::SetComp {
+                element,
+                generators,
+            }
+            | ast::Expr::GeneratorExpr {
+                element,
+                generators,
+            } => {
+                Self::expr_needs_class_cell(&element.node)
+                    || generators.iter().any(Self::comprehension_needs_class_cell)
+            }
+            ast::Expr::DictComp {
+                key,
+                value,
+                generators,
+            } => {
+                Self::expr_needs_class_cell(&key.node)
+                    || Self::expr_needs_class_cell(&value.node)
+                    || generators.iter().any(Self::comprehension_needs_class_cell)
+            }
+            ast::Expr::FString(parts) => parts.iter().any(Self::fstring_part_needs_class_cell),
+            ast::Expr::Yield(value) => value
+                .as_ref()
+                .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node)),
+            ast::Expr::Walrus { value, .. } => Self::expr_needs_class_cell(&value.node),
+            ast::Expr::ChainedCompare { operands, .. } => operands
+                .iter()
+                .any(|expr| Self::expr_needs_class_cell(&expr.node)),
+            ast::Expr::IntLit(_)
+            | ast::Expr::BigIntLit(_)
+            | ast::Expr::FloatLit(_)
+            | ast::Expr::ComplexLit(_)
+            | ast::Expr::StrLit(_)
+            | ast::Expr::BytesLit(_)
+            | ast::Expr::BoolLit(_)
+            | ast::Expr::NoneLit
+            | ast::Expr::Ellipsis => false,
+        }
+    }
+
+    fn call_arg_needs_class_cell(arg: &ast::CallArg) -> bool {
+        match arg {
+            ast::CallArg::Positional(expr)
+            | ast::CallArg::Keyword { value: expr, .. }
+            | ast::CallArg::StarArg(expr)
+            | ast::CallArg::DoubleStarArg(expr) => Self::expr_needs_class_cell(&expr.node),
+        }
+    }
+
+    fn comprehension_needs_class_cell(comp: &ast::Comprehension) -> bool {
+        Self::expr_needs_class_cell(&comp.iter.node)
+            || comp
+                .conditions
+                .iter()
+                .any(|expr| Self::expr_needs_class_cell(&expr.node))
+    }
+
+    fn fstring_part_needs_class_cell(part: &ast::FStringPart) -> bool {
+        match part {
+            ast::FStringPart::Literal(_) => false,
+            ast::FStringPart::Expr(expr, spec) => {
+                Self::expr_needs_class_cell(&expr.node)
+                    || spec
+                        .as_ref()
+                        .is_some_and(|parts| parts.iter().any(Self::fstring_part_needs_class_cell))
+            }
+        }
+    }
+
     fn lower_class(
         &mut self,
         name: &str,
@@ -4290,12 +4537,17 @@ impl<'a> AstLowerer<'a> {
         dataclass_decorated: bool,
     ) -> Option<HirClass> {
         let name_id = self.resolve_name(name, span)?;
+        self.result
+            .sym_names
+            .entry(name_id)
+            .or_insert_with(|| name.to_string());
         // PEP 557: ordered (field_name, annotation_repr, default_expr) facts
         // from class-body annotations, recorded only for @dataclass classes so
         // the runtime synthesizer can build __init__/__repr__/__eq__/etc.
         let mut dataclass_fields: Vec<(String, String, Option<HirExpr>)> = Vec::new();
         let mut fields = Vec::new();
         let mut methods = Vec::new();
+        let mut class_cell_required = false;
         // Track all method name→SymbolId mappings so they survive scope clears
         let mut method_name_map: Vec<(String, crate::resolve::SymbolId)> = Vec::new();
         // Scan for explicit `__match_args__ = ("x", "y")` in the class body (#827).
@@ -4498,6 +4750,9 @@ impl<'a> AstLowerer<'a> {
                                 }
                             })
                             .collect();
+                    if Self::stmts_need_class_cell(mbody) {
+                        class_cell_required = true;
+                    }
                     let saved_class_cell = self.local_names.get("__class__").copied();
                     self.local_names.insert("__class__".to_string(), name_id);
                     let lowered_method = self.lower_fn_inner(
@@ -4780,6 +5035,7 @@ impl<'a> AstLowerer<'a> {
             runtime_base_exprs: Vec::new(),
             runtime_base_list_expr: None,
             force_textual_registration: false,
+            class_cell_required,
             namedtuple_base: None,
             fields,
             methods,
@@ -9803,6 +10059,41 @@ mod tests {
         );
         assert_eq!(hir.classes.len(), 1);
         assert_eq!(hir.classes[0].methods.len(), 1);
+    }
+
+    #[test]
+    fn test_lower_method_class_cell_preserves_class_symbol_name() {
+        let hir = helper_lower_with_classes(
+            vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "WithClassRef".to_string(),
+                type_params: vec![],
+                bases: vec![],
+                keyword_args: vec![],
+                body: vec![sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "method".to_string(),
+                    type_params: vec![],
+                    params: vec![make_param("self")],
+                    return_ty: None,
+                    body: vec![sp(Stmt::Return(Some(sp(Expr::Ident(
+                        "__class__".to_string(),
+                    )))))],
+                })],
+            })],
+            &["WithClassRef"],
+        );
+
+        let class = &hir.classes[0];
+        assert_eq!(
+            hir.sym_names.get(&class.name).map(String::as_str),
+            Some("WithClassRef")
+        );
+        assert!(
+            class.methods[0].captures.contains(&class.name),
+            "method __class__ reference must capture the enclosing class symbol"
+        );
+        assert!(class.class_cell_required);
     }
 
     #[test]

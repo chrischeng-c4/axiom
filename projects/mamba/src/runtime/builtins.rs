@@ -2663,6 +2663,12 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
                 let pairs = lock.read().unwrap();
                 for (k, v) in pairs.iter() {
                     let key = k.to_string();
+                    if key == "__classcell__" {
+                        if !super::class::consume_classcell_marker_for_type_new(&class_name, *v) {
+                            return MbValue::none();
+                        }
+                        continue;
+                    }
                     if value_is_abstractmethod_marker(*v) {
                         abstract_names.push(key.clone());
                     }
