@@ -1273,20 +1273,28 @@ pub fn mb_list_reverse(list: MbValue) {
 }
 
 /// list.sort() — sorts in place using int/float ordering
+#[inline]
+fn stable_order_for_reverse(order: std::cmp::Ordering, do_reverse: bool) -> std::cmp::Ordering {
+    if do_reverse {
+        order.reverse()
+    } else {
+        order
+    }
+}
+
 pub fn mb_list_sort(list: MbValue) {
     use super::builtins::mb_value_cmp_pub;
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
-                // Type-specialized sort: all-int lists use sort_unstable_by_key
-                // which extracts the key once per element and uses native i64
-                // comparison. This avoids repeated as_int() calls in the comparator.
+                // Type-specialized sort: all-int lists use native i64
+                // comparison while keeping Python's stable-sort contract.
                 if !items.is_empty() && items.iter().all(|v| v.is_int()) {
-                    items.sort_unstable_by_key(|v| v.as_int_unchecked());
+                    items.sort_by_key(|v| v.as_int_unchecked());
                 } else if !items.is_empty() && items.iter().all(|v| v.is_int() || v.is_float()) {
                     // Mixed int/float: use f64 key extraction.
-                    items.sort_unstable_by(|a, b| {
+                    items.sort_by(|a, b| {
                         let af = a.as_int().map(|i| i as f64).or(a.as_float()).unwrap_or(0.0);
                         let bf = b.as_int().map(|i| i as f64).or(b.as_float()).unwrap_or(0.0);
                         af.partial_cmp(&bf).unwrap_or(std::cmp::Ordering::Equal)
@@ -1361,22 +1369,25 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                         }
                         indexed.push((item, k));
                     }
-                    indexed.sort_by(|a, b| mb_value_cmp_pub(a.1, b.1));
-                    if do_reverse {
-                        indexed.reverse();
-                    }
+                    indexed.sort_by(|a, b| {
+                        stable_order_for_reverse(mb_value_cmp_pub(a.1, b.1), do_reverse)
+                    });
                     let mut items = lock.write().unwrap();
                     *items = indexed.into_iter().map(|(v, _)| v).collect();
                 } else {
                     let mut items = lock.write().unwrap();
                     // Type-specialized sort for no-key case.
                     if !items.is_empty() && items.iter().all(|v| v.is_int()) {
-                        items.sort_unstable_by_key(|v| v.as_int_unchecked());
+                        items.sort_by(|a, b| {
+                            stable_order_for_reverse(
+                                a.as_int_unchecked().cmp(&b.as_int_unchecked()),
+                                do_reverse,
+                            )
+                        });
                     } else {
-                        items.sort_by(|a, b| mb_value_cmp_pub(*a, *b));
-                    }
-                    if do_reverse {
-                        items.reverse();
+                        items.sort_by(|a, b| {
+                            stable_order_for_reverse(mb_value_cmp_pub(*a, *b), do_reverse)
+                        });
                     }
                 }
             }
@@ -2576,6 +2587,36 @@ mod tests {
             mb_list_getitem(list, MbValue::from_int(0)).as_int(),
             Some(5)
         );
+    }
+
+    #[test]
+    fn test_sort_kwargs_reverse_preserves_equal_key_order() {
+        let first = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(10),
+        ]));
+        let second = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(2),
+            MbValue::from_int(20),
+        ]));
+        let short = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(3)]));
+        let list = MbValue::from_ptr(MbObject::new_list(vec![first, second, short]));
+        mb_list_sort_kwargs(
+            list,
+            MbValue::from_ptr(MbObject::new_str("len".to_string())),
+            MbValue::from_bool(true),
+        );
+        unsafe {
+            let ptr = list.as_ptr().unwrap();
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items[0].to_bits(), first.to_bits());
+                assert_eq!(items[1].to_bits(), second.to_bits());
+                assert_eq!(items[2].to_bits(), short.to_bits());
+            } else {
+                panic!("expected list");
+            }
+        }
     }
 
     // ── copy ──
