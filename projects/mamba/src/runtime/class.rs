@@ -3456,6 +3456,50 @@ pub(crate) fn object_init_unbound(items: &[MbValue]) -> MbValue {
     MbValue::none()
 }
 
+pub(crate) fn object_setattr_unbound(items: &[MbValue]) -> MbValue {
+    if items.len() != 3 {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "object.__setattr__() takes exactly 3 arguments ({} given)",
+                items.len()
+            ))),
+        );
+        return MbValue::none();
+    }
+    mb_setattr_default(items[0], items[1], items[2]);
+    MbValue::none()
+}
+
+pub(crate) fn object_delattr_unbound(items: &[MbValue]) -> MbValue {
+    if items.len() != 2 {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "object.__delattr__() takes exactly 2 arguments ({} given)",
+                items.len()
+            ))),
+        );
+        return MbValue::none();
+    }
+    mb_delattr_default(items[0], items[1]);
+    MbValue::none()
+}
+
+pub(crate) fn object_getattribute_unbound(items: &[MbValue]) -> MbValue {
+    if items.len() != 2 {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "object.__getattribute__() takes exactly 2 arguments ({} given)",
+                items.len()
+            ))),
+        );
+        return MbValue::none();
+    }
+    mb_object_getattribute_lookup(items[0], items[1])
+}
+
 fn instance_new_with_init_impl(
     class_name: MbValue,
     args_list: MbValue,
@@ -5605,12 +5649,41 @@ fn namedtuple_hidden_dict_fields(fields: &FxHashMap<String, MbValue>) -> HashSet
 /// Get an attribute from an instance (checks instance fields, then class methods via MRO).
 /// Falls back to `__getattr__` dunder if normal lookup fails.
 pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
+    mb_getattr_impl(obj, attr, true, true)
+}
+
+fn mb_object_getattribute_lookup(obj: MbValue, attr: MbValue) -> MbValue {
+    mb_getattr_impl(obj, attr, false, false)
+}
+
+fn mb_getattr_impl(
+    obj: MbValue,
+    attr: MbValue,
+    allow_getattribute: bool,
+    allow_getattr: bool,
+) -> MbValue {
     // obj.__class__ is type(obj): report the class uniformly for user/builtin
     // instances and bare values. An object that explicitly stores a __class__
     // field (e.g. ET.Element stubs, or an assigned __class__) keeps it — the
     // normal field lookup below wins, so only fall back to type(obj) when no
     // such field exists. Module values (modeled as dicts) report ModuleType.
     if let Some(attr_name) = extract_str(attr) {
+        if allow_getattribute && attr_name != "__getattribute__" {
+            if let Some(ptr) = obj.as_ptr() {
+                unsafe {
+                    if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                        let getattribute = lookup_method(class_name, "__getattribute__");
+                        if !getattribute.is_none() {
+                            let method_name = MbValue::from_ptr(MbObject::new_str(
+                                "__getattribute__".to_string(),
+                            ));
+                            let args = MbValue::from_ptr(MbObject::new_list(vec![attr]));
+                            return mb_call_method(obj, method_name, args);
+                        }
+                    }
+                }
+            }
+        }
         if attr_name == "__class__" {
             let has_stored = obj.as_ptr().map_or(false, |p| unsafe {
                 matches!(&(*p).data,
@@ -7068,20 +7141,23 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     // 4. Fallback: __getattr__(self, name) dunder — call if it is a
                     //    TAG_FUNC function pointer; return value directly for other
                     //    stored values (legacy/non-JIT path).
-                    let getattr_dunder = lookup_method(class_name, "__getattr__");
-                    if !getattr_dunder.is_none() {
-                        if let Some(addr) = getattr_dunder.as_func() {
-                            // JIT-compiled function: call __getattr__(self, name)
-                            // REQ: JIT-compiled functions use SystemV/C calling convention.
-                            let attr_str =
-                                MbValue::from_ptr(super::rc::MbObject::new_str(attr_name.clone()));
-                            let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                std::mem::transmute(addr);
-                            return func(obj, attr_str);
+                    if allow_getattr {
+                        let getattr_dunder = lookup_method(class_name, "__getattr__");
+                        if !getattr_dunder.is_none() {
+                            if let Some(addr) = getattr_dunder.as_func() {
+                                // JIT-compiled function: call __getattr__(self, name)
+                                // REQ: JIT-compiled functions use SystemV/C calling convention.
+                                let attr_str = MbValue::from_ptr(super::rc::MbObject::new_str(
+                                    attr_name.clone(),
+                                ));
+                                let func: extern "C" fn(MbValue, MbValue) -> MbValue =
+                                    std::mem::transmute(addr);
+                                return func(obj, attr_str);
+                            }
+                            // Non-callable stored value (e.g. test stubs): return directly.
+                            super::rc::retain_if_ptr(getattr_dunder);
+                            return getattr_dunder;
                         }
-                        // Non-callable stored value (e.g. test stubs): return directly.
-                        super::rc::retain_if_ptr(getattr_dunder);
-                        return getattr_dunder;
                     }
                     // 5. Nothing matched (no instance field, class attr, descriptor,
                     //    or __getattr__): a genuine user-class instance raises
@@ -9034,9 +9110,19 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
 // HANDWRITE-END
 
 /// Set an attribute on an instance.
-/// If the class defines `__setattr__`, compiled code should dispatch through it;
-/// this function implements the default `object.__setattr__` behavior (direct field write).
+/// If the class defines `__setattr__`, dispatch through it; otherwise use the
+/// default `object.__setattr__` behavior.
 pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
+    if let Some(_method) = try_get_dunder(obj, "__setattr__") {
+        let method_name = MbValue::from_ptr(MbObject::new_str("__setattr__".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![attr, value]));
+        let _ = mb_call_method(obj, method_name, args);
+        return;
+    }
+    mb_setattr_default(obj, attr, value);
+}
+
+fn mb_setattr_default(obj: MbValue, attr: MbValue, value: MbValue) {
     // uuid.UUID is immutable: setattr raises TypeError. Handles are
     // int-tagged, so intercept before any pointer path.
     if let Some(id) = obj.as_int() {
@@ -9672,9 +9758,19 @@ pub fn mb_check_setattr_dunder(obj: MbValue) -> MbValue {
 }
 
 /// Delete an attribute from an instance.
-/// If the class defines `__delattr__`, compiled code should dispatch through it;
-/// this function implements the default `object.__delattr__` behavior (direct field removal).
+/// If the class defines `__delattr__`, dispatch through it; otherwise use the
+/// default `object.__delattr__` behavior.
 pub fn mb_delattr(obj: MbValue, attr: MbValue) {
+    if let Some(_method) = try_get_dunder(obj, "__delattr__") {
+        let method_name = MbValue::from_ptr(MbObject::new_str("__delattr__".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![attr]));
+        let _ = mb_call_method(obj, method_name, args);
+        return;
+    }
+    mb_delattr_default(obj, attr);
+}
+
+fn mb_delattr_default(obj: MbValue, attr: MbValue) {
     let attr_name = extract_str(attr).unwrap_or_default();
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
@@ -16402,6 +16498,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             if s == "object" && name == "__init__" {
                 let items = super::builtins::extract_items(args);
                 return object_init_unbound(&items);
+            }
+            if s == "object"
+                && matches!(
+                    name.as_str(),
+                    "__setattr__" | "__delattr__" | "__getattribute__"
+                )
+            {
+                let items = super::builtins::extract_items(args);
+                return match name.as_str() {
+                    "__setattr__" => object_setattr_unbound(&items),
+                    "__delattr__" => object_delattr_unbound(&items),
+                    "__getattribute__" => object_getattribute_unbound(&items),
+                    _ => unreachable!(),
+                };
             }
             if name == "register" && is_collections_abc_name(s) {
                 let items = super::builtins::extract_items(args);

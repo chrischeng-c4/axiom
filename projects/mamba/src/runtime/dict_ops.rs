@@ -2565,6 +2565,26 @@ mod tests {
     }
 
     #[test]
+    fn test_set_get_tuple_key_with_fresh_string_element() {
+        let d = mb_dict_new();
+        let k1 = MbValue::from_ptr(MbObject::new_tuple(vec![
+            str_val("item"),
+            MbValue::from_int(3),
+        ]));
+        let k2 = MbValue::from_ptr(MbObject::new_tuple(vec![
+            str_val("item"),
+            MbValue::from_int(3),
+        ]));
+        assert_ne!(
+            k1.to_bits(),
+            k2.to_bits(),
+            "tuple literals must be distinct objects"
+        );
+        mb_dict_setitem(d, k1, str_val("x"));
+        assert_eq!(extract_str(mb_dict_getitem(d, k2)).as_deref(), Some("x"));
+    }
+
+    #[test]
     fn test_get_missing_key() {
         let d = mb_dict_new();
         assert!(mb_dict_getitem(d, str_val("missing")).is_none());
