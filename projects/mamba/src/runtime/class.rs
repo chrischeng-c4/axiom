@@ -1984,17 +1984,46 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
         Some(member) => member,
         None => value,
     };
+    let method_like = !value.is_none() && super::builtins::resolve_callable_pub(value).is_some();
+    if method_like {
+        let (unwrapped, _dk) = unwrap_descriptor_method(value);
+        for addr in [extract_func_addr(unwrapped), extract_func_addr(value)] {
+            if addr != 0 {
+                CALLABLE_REGISTRY.with(|reg| {
+                    reg.borrow_mut().insert(addr);
+                });
+            }
+        }
+    }
     // Fix C-prime: registry takes its own +1 so JIT epilogue release of the
-    // source VReg cannot UAF the raw reference in `class_attrs`.
+    // source VReg cannot UAF the raw reference in class member tables.
     unsafe {
         super::rc::retain_if_ptr(value);
     }
     CLASS_REGISTRY.with(|reg| {
         let mut reg = reg.borrow_mut();
         if let Some(cls) = reg.get_mut(&name) {
-            if let Some(prev) = cls.class_attrs.insert(attr, value) {
-                unsafe {
-                    super::rc::release_if_ptr(prev);
+            if method_like {
+                if let Some(prev) = cls.methods.insert(attr.clone(), value) {
+                    unsafe {
+                        super::rc::release_if_ptr(prev);
+                    }
+                }
+                if let Some(prev) = cls.class_attrs.remove(&attr) {
+                    unsafe {
+                        super::rc::release_if_ptr(prev);
+                    }
+                }
+            } else {
+                if let Some(prev) = cls.class_attrs.insert(attr.clone(), value) {
+                    unsafe {
+                        super::rc::release_if_ptr(prev);
+                    }
+                }
+                if let Some(prev) = cls.methods.remove(&attr) {
+                    unsafe {
+                        super::rc::release_if_ptr(prev);
+                    }
                 }
             }
         } else {
@@ -9819,6 +9848,27 @@ pub(crate) fn lookup_method(class_name: &str, method_name: &str) -> MbValue {
     let _ = METHOD_CACHE.with(|c| c.try_borrow_mut().map(|mut m| m.insert(cache_key, result)));
 
     result
+}
+
+/// Lookup that distinguishes an explicit class attribute value of None from a
+/// miss. Use for CPython sentinel dunders such as `__hash__ = None`.
+pub(crate) fn lookup_method_including_none(class_name: &str, method_name: &str) -> Option<MbValue> {
+    CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let cls = reg.get(class_name)?;
+        for mro_class in &cls.mro {
+            let Some(mro_cls) = reg.get(mro_class) else {
+                continue;
+            };
+            if let Some(method) = mro_cls.methods.get(method_name) {
+                return Some(*method);
+            }
+            if let Some(attr) = mro_cls.class_attrs.get(method_name) {
+                return Some(*attr);
+            }
+        }
+        None
+    })
 }
 
 /// Walk the MRO to find a class-level attribute (not a method).
@@ -21741,6 +21791,31 @@ mod tests {
             "deleted slot descriptor access raises AttributeError"
         );
         crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_class_attr_assignment_replaces_method_and_preserves_hash_none() {
+        cleanup_all_classes();
+
+        let mut methods = HashMap::new();
+        methods.insert("hello".to_string(), MbValue::from_func(0x12345));
+        mb_class_register("Patchable", vec![], methods);
+
+        mb_class_set_class_attr(s("Patchable"), s("hello"), MbValue::from_func(0x12346));
+        assert_eq!(
+            lookup_method("Patchable", "hello").as_func(),
+            Some(0x12346),
+            "class-level callable assignment must replace the existing method entry"
+        );
+
+        mb_class_set_class_attr(s("Patchable"), s("__hash__"), MbValue::none());
+        let hash_entry = lookup_method_including_none("Patchable", "__hash__");
+        assert!(
+            hash_entry.is_some_and(|value| value.is_none()),
+            "explicit __hash__ = None must be distinguishable from a miss"
+        );
+
+        cleanup_all_classes();
     }
 
     #[test]
