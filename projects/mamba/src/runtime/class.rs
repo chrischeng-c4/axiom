@@ -5905,23 +5905,15 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 }
                             }
                             if let Some(val) = mro_lookup_class_attr(&type_name_str, &attr_name) {
-                                let (unwrapped, descriptor_kind) = unwrap_descriptor_method(val);
-                                match descriptor_kind {
-                                    DescriptorKind::ClassMethod => {
-                                        return make_bound_method(
-                                            unwrapped,
-                                            make_type_object(&type_name_str),
-                                        );
-                                    }
-                                    DescriptorKind::StaticMethod => {
-                                        super::rc::retain_if_ptr(unwrapped);
-                                        return unwrapped;
-                                    }
-                                    DescriptorKind::Regular => {
-                                        super::rc::retain_if_ptr(val);
-                                        return val;
-                                    }
+                                if is_descriptor(val) {
+                                    return invoke_descriptor_get_with_owner(
+                                        val,
+                                        MbValue::none(),
+                                        make_type_object(&type_name_str),
+                                    );
                                 }
+                                super::rc::retain_if_ptr(val);
+                                return val;
                             }
                             if class_slot_names(&type_name_str)
                                 .iter()
@@ -5947,20 +5939,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 );
                             }
                             if class_is_registered(&type_name_str) && !method.is_none() {
-                                let (unwrapped, descriptor_kind) = unwrap_descriptor_method(method);
-                                return match descriptor_kind {
-                                    DescriptorKind::ClassMethod => make_bound_method(
-                                        unwrapped,
+                                if is_descriptor(method) {
+                                    return invoke_descriptor_get_with_owner(
+                                        method,
+                                        MbValue::none(),
                                         make_type_object(&type_name_str),
-                                    ),
-                                    DescriptorKind::StaticMethod => {
-                                        super::rc::retain_if_ptr(unwrapped);
-                                        unwrapped
-                                    }
-                                    DescriptorKind::Regular => {
-                                        make_unbound_method(&type_name_str, &attr_name)
-                                    }
-                                };
+                                    );
+                                }
+                                return make_unbound_method(&type_name_str, &attr_name);
                             }
                             if let Some(method) =
                                 inherited_builtin_unbound_method(&type_name_str, &attr_name)
@@ -6294,6 +6280,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     }
                     if class_name == "member_descriptor"
                         && matches!(attr_name.as_str(), "__get__" | "__set__" | "__delete__")
+                    {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
+                    if matches!(class_name.as_str(), "__classmethod__" | "__staticmethod__")
+                        && attr_name == "__get__"
                     {
                         return make_bound_native_method(obj, &attr_name);
                     }
@@ -7275,8 +7266,29 @@ fn is_data_descriptor(val: MbValue) -> bool {
     false
 }
 
+fn classmethod_descriptor_get(desc: MbValue, instance: MbValue, owner: MbValue) -> MbValue {
+    let bind_owner = if !owner.is_none() {
+        owner
+    } else if !instance.is_none() {
+        super::builtins::mb_type(instance)
+    } else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "classmethod.__get__(None, None) is invalid".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    make_bound_method(mb_descriptor_unwrap(desc), bind_owner)
+}
+
+fn staticmethod_descriptor_get(desc: MbValue) -> MbValue {
+    mb_descriptor_unwrap(desc)
+}
+
 /// Invoke __get__ on a descriptor, or property fget for built-in property.
-fn invoke_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
+fn invoke_descriptor_get_with_owner(desc: MbValue, instance: MbValue, owner: MbValue) -> MbValue {
     if let Some(ptr) = desc.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
@@ -7284,13 +7296,24 @@ fn invoke_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
                     return member_descriptor_get(desc, instance);
                 }
                 if class_name == "__property__" {
+                    if instance.is_none() {
+                        super::rc::retain_if_ptr(desc);
+                        return desc;
+                    }
                     return mb_property_get(desc, instance);
                 }
                 if class_name == "__cached_property__" {
+                    if instance.is_none() {
+                        super::rc::retain_if_ptr(desc);
+                        return desc;
+                    }
                     return mb_cached_property_get(desc, instance);
                 }
-                if class_name == "__classmethod__" || class_name == "__staticmethod__" {
-                    return mb_descriptor_unwrap(desc);
+                if class_name == "__classmethod__" {
+                    return classmethod_descriptor_get(desc, instance, owner);
+                }
+                if class_name == "__staticmethod__" {
+                    return staticmethod_descriptor_get(desc);
                 }
                 if class_name == "functools.partialmethod" {
                     return partialmethod_get(desc, instance);
@@ -7306,11 +7329,24 @@ fn invoke_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
     // General __get__ protocol. try_get_dunder returns the unbound descriptor
     // method; call that callable directly with (desc, instance, owner).
     if let Some(method) = try_get_dunder(desc, "__get__") {
-        let objtype = get_instance_class_name_value(instance);
-        let args = MbValue::from_ptr(MbObject::new_list(vec![desc, instance, objtype]));
+        let resolved_owner = if owner.is_none() && !instance.is_none() {
+            super::builtins::mb_type(instance)
+        } else {
+            owner
+        };
+        let args = MbValue::from_ptr(MbObject::new_list(vec![desc, instance, resolved_owner]));
         return super::builtins::mb_call_spread(method, args);
     }
     desc
+}
+
+fn invoke_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
+    let owner = if instance.is_none() {
+        MbValue::none()
+    } else {
+        super::builtins::mb_type(instance)
+    };
+    invoke_descriptor_get_with_owner(desc, instance, owner)
 }
 
 /// `functools.partialmethod.__get__(instance, owner)`.
@@ -13643,6 +13679,14 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                 if !call_method.is_none() {
                     let addr = extract_func_addr(call_method);
                     if addr > 4096 {
+                        if super::module::is_variadic_func(addr as u64)
+                            || super::module::is_kwargs_func(addr as u64)
+                        {
+                            let method_name =
+                                MbValue::from_ptr(MbObject::new_str("__call__".to_string()));
+                            let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
+                            return mb_call_method(func, method_name, args_list);
+                        }
                         let is_boxed = super::module::is_boxed_return_func(addr as u64);
                         let f: extern "C" fn(MbValue) -> MbValue =
                             std::mem::transmute(addr as usize);
@@ -14174,6 +14218,37 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 }
                 _ => unreachable!(),
             };
+        }
+    }
+
+    if let Some(ptr) = receiver.as_ptr() {
+        let descriptor_kind = unsafe {
+            if let ObjData::Instance { class_name, .. } = &(*ptr).data {
+                match class_name.as_str() {
+                    "__classmethod__" => Some(DescriptorKind::ClassMethod),
+                    "__staticmethod__" => Some(DescriptorKind::StaticMethod),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(descriptor_kind) = descriptor_kind {
+            let name = extract_str(method_name).unwrap_or_default();
+            if name == "__get__" {
+                let items = super::builtins::extract_items(args);
+                let instance = items.first().copied().unwrap_or_else(MbValue::none);
+                let owner = items.get(1).copied().unwrap_or_else(MbValue::none);
+                return match descriptor_kind {
+                    DescriptorKind::ClassMethod => classmethod_descriptor_get(
+                        receiver,
+                        instance,
+                        owner,
+                    ),
+                    DescriptorKind::StaticMethod => staticmethod_descriptor_get(receiver),
+                    DescriptorKind::Regular => unreachable!(),
+                };
+            }
         }
     }
 
@@ -15424,22 +15499,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     }
                 });
                 if let Some(descriptor) = class_descriptor {
-                    let (actual, descriptor_kind) = unwrap_descriptor_method(descriptor);
-                    match descriptor_kind {
-                        DescriptorKind::ClassMethod => {
-                            let items = super::builtins::extract_items(args);
-                            let mut all_items = Vec::with_capacity(items.len() + 1);
-                            all_items.push(make_type_object(s));
-                            all_items.extend(items);
-                            return super::builtins::mb_call_spread(
-                                actual,
-                                MbValue::from_ptr(MbObject::new_list(all_items)),
-                            );
+                    if is_descriptor(descriptor) {
+                        let bound = mb_getattr(receiver, method_name);
+                        let items = super::builtins::extract_items(args);
+                        if items.is_empty() {
+                            return mb_call0(bound);
                         }
-                        DescriptorKind::StaticMethod => {
-                            return super::builtins::mb_call_spread(actual, args);
-                        }
-                        DescriptorKind::Regular => {}
+                        return super::builtins::mb_call_spread(
+                            bound,
+                            MbValue::from_ptr(MbObject::new_list(items)),
+                        );
                     }
                 }
                 if matches!(name.as_str(), "extract" | "from_list")
@@ -17723,9 +17792,24 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             }
                             if super::builtins::mb_callable(fv).as_bool() == Some(true) {
                                 super::rc::retain_if_ptr(fv);
-                                return super::builtins::mb_call_spread(fv, args);
+                                let items = super::builtins::extract_items(args);
+                                return super::builtins::mb_call_spread(
+                                    fv,
+                                    MbValue::from_ptr(MbObject::new_list(items)),
+                                );
                             }
                         }
+                    }
+                    if !method.is_none() && is_descriptor(method) {
+                        let bound = mb_getattr(receiver, method_name);
+                        let items = super::builtins::extract_items(args);
+                        if items.is_empty() {
+                            return mb_call0(bound);
+                        }
+                        return super::builtins::mb_call_spread(
+                            bound,
+                            MbValue::from_ptr(MbObject::new_list(items)),
+                        );
                     }
                     if !method.is_none() {
                         // R1 P1: Unwrap classmethod/staticmethod descriptors.
@@ -18188,6 +18272,25 @@ pub(crate) fn cleanup_all_classes() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bound_method_func_value(method: MbValue) -> MbValue {
+        method
+            .as_ptr()
+            .and_then(|ptr| unsafe {
+                if let ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                    ..
+                } = (*ptr).data
+                {
+                    if class_name == "method" {
+                        return fields.read().unwrap().get("__func__").copied();
+                    }
+                }
+                None
+            })
+            .unwrap_or_else(MbValue::none)
+    }
 
     #[test]
     fn test_class_register_and_instance() {
@@ -19527,14 +19630,13 @@ mod tests {
         let inst = mb_instance_new(name, MbValue::none());
         let attr = MbValue::from_ptr(MbObject::new_str("get_species".to_string()));
 
-        // Descriptor protocol: getattr on instance with classmethod should invoke
-        // invoke_descriptor_get which calls mb_descriptor_unwrap
+        // Descriptor protocol: getattr on instance with classmethod should return
+        // a bound method whose __func__ is the wrapped callable.
         let result = mb_getattr(inst, attr);
-        // The descriptor protocol for __classmethod__ returns the unwrapped __func__
         assert_eq!(
-            result.as_int(),
+            bound_method_func_value(result).as_int(),
             Some(77),
-            "classmethod descriptor should unwrap to original function"
+            "classmethod descriptor should bind original function"
         );
     }
 
@@ -19559,7 +19661,7 @@ mod tests {
         let attr = MbValue::from_ptr(MbObject::new_str("cm_method".to_string()));
         let result = mb_getattr(inst, attr);
         assert_eq!(
-            result.as_int(),
+            bound_method_func_value(result).as_int(),
             Some(55),
             "child should inherit classmethod from parent"
         );
