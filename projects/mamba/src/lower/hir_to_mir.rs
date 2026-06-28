@@ -3329,7 +3329,7 @@ impl<'a> HirToMir<'a> {
                         targets,
                         star_index,
                     } => {
-                        self.lower_unpack_assign(val, targets, *star_index);
+                        self.lower_unpack_assign(val, val_ty, targets, *star_index);
                     }
                 }
             }
@@ -6263,6 +6263,7 @@ impl<'a> HirToMir<'a> {
     fn lower_unpack_assign(
         &mut self,
         rhs_in: VReg,
+        rhs_ty: TypeId,
         targets: &[HirLValue],
         star_index: Option<usize>,
     ) {
@@ -6283,89 +6284,41 @@ impl<'a> HirToMir<'a> {
         // legacy materializing path. Non-star unpack is the dominant case
         // and the hot loop the #2178 cohort actually exercises.
         let rhs = self.fresh_vreg();
+        let rhs_arg = self.box_operand(rhs_in, rhs_ty);
         let materialize_fn = if star_index.is_some() {
-            "mb_list_from_iterable"
+            "mb_list_for_unpack"
         } else {
             "mb_seq_for_unpack"
         };
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(rhs),
             name: materialize_fn.to_string(),
-            args: vec![rhs_in],
+            args: vec![rhs_arg],
             ty: self.tcx.any(),
         });
-        // Raise ValueError on length mismatch (CPython semantics).
-        // - Without star: exactly n values required.
-        // - With star: at least (n-1) values required.
-        // `mb_seq_len_boxed` mirrors `mb_list_len` for lists and adds tuple
-        // support so the zero-copy passthrough above works correctly when the
-        // RHS arrives as a tuple. Returns a NaN-boxed int; mb_ne compares by
-        // bits, so the expected literal must be boxed to match — otherwise the
-        // unpack always "fails" (tagged vs raw bits never equal), silently
-        // setting a ValueError that surfaces at module exit.
-        let actual_len_raw = self.fresh_vreg();
-        self.current_stmts.push(MirInst::CallExtern {
-            dest: Some(actual_len_raw),
-            name: "mb_seq_len_boxed".to_string(),
-            args: vec![rhs],
-            ty: int_ty,
-        });
-        let actual_len = actual_len_raw;
+        self.emit_exception_propagate();
+        // Runtime owns the precise CPython arity diagnostics. Keeping the
+        // check in one helper preserves source exceptions from materialization
+        // (`__iter__` / `__getitem__`) instead of overwriting them here.
         let expected = if star_index.is_some() {
             (n - 1) as i64
         } else {
             n as i64
         };
         let expected_raw = self.emit_int_const(expected);
-        let expected_vreg = self.box_operand(expected_raw, int_ty);
-        let cmp = self.fresh_vreg();
-        if star_index.is_some() {
-            // Need at least (n-1) — raise if actual < expected
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: Some(cmp),
-                name: "mb_lt".to_string(),
-                args: vec![actual_len, expected_vreg],
-                ty: self.tcx.bool(),
-            });
-        } else {
-            // Need exactly n — raise if actual != expected
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: Some(cmp),
-                name: "mb_ne".to_string(),
-                args: vec![actual_len, expected_vreg],
-                ty: self.tcx.bool(),
-            });
-        }
-        let raise_block = self.fresh_block();
-        let ok_block = self.fresh_block();
-        self.finish_block(Terminator::Branch {
-            cond: cmp,
-            then_block: raise_block,
-            else_block: ok_block,
+        let has_star = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: has_star,
+            value: MirConst::Bool(star_index.is_some()),
+            ty: self.tcx.bool(),
         });
-        self.start_block(raise_block);
-        let err_type = self.emit_str_const("ValueError");
-        let err_msg = if star_index.is_some() {
-            self.emit_str_const("not enough values to unpack")
-        } else {
-            // Either too few or too many — CPython distinguishes, but a generic
-            // message still satisfies `except ValueError` handlers.
-            self.emit_str_const("unpack count mismatch")
-        };
         self.current_stmts.push(MirInst::CallExtern {
             dest: None,
-            name: "mb_raise".to_string(),
-            args: vec![err_type, err_msg],
+            name: "mb_unpack_check_arity".to_string(),
+            args: vec![rhs, expected_raw, has_star],
             ty: self.tcx.none(),
         });
-        // If in a try, propagate to handler; otherwise continue (exception check elsewhere)
-        if let Some(&(handler_block, _)) = self.try_handler_stack.last() {
-            self.emit_extern_call(None, "mb_pop_handler");
-            self.finish_block(Terminator::Goto(handler_block));
-        } else {
-            self.finish_block(Terminator::Goto(ok_block));
-        }
-        self.start_block(ok_block);
+        self.emit_exception_propagate();
         match star_index {
             None => {
                 // Simple unpacking: each target gets rhs[i]
@@ -6548,7 +6501,7 @@ impl<'a> HirToMir<'a> {
                 targets,
                 star_index,
             } => {
-                self.lower_unpack_assign(val, targets, *star_index);
+                self.lower_unpack_assign(val, self.tcx.any(), targets, *star_index);
             }
         }
     }
@@ -10956,7 +10909,11 @@ impl<'a> HirToMir<'a> {
     }
 
     fn replace_or_push_block(&mut self, block: BasicBlock) {
-        if let Some(pos) = self.blocks.iter().position(|existing| existing.id == block.id) {
+        if let Some(pos) = self
+            .blocks
+            .iter()
+            .position(|existing| existing.id == block.id)
+        {
             self.blocks[pos] = block;
         } else {
             self.blocks.push(block);
