@@ -1,5 +1,5 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:034badb7" tracker="pending-tracker" reason="Integration test (feature relay-wal): publish WalRecords to an in-process relay and tail them back through RelayWal, asserting in-order delivery."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:034badb7" tracker="standardize-gap-projects-lumen-tests-wal-relay-rs" reason="Integration test (feature relay-wal): publish WalRecords to an in-process relay and tail them back through RelayWal, asserting in-order delivery."
 //! #124 — lumen tails relay's broadcast as its WAL. Only with `--features
 //! relay-wal`. Publishes records to an in-process relay broker and tails them
 //! back through `RelayWal`.
