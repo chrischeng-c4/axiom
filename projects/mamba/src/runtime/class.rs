@@ -6503,6 +6503,11 @@ fn mb_getattr_impl(
         let native_type =
             super::module::NATIVE_TYPE_NAMES.with(|map| map.borrow().get(&(addr as u64)).cloned());
         if let Some(ref nt) = native_type {
+            if attr_name == "__members__" && super::stdlib::enum_class::is_enum_class(nt) {
+                if let Some(d) = super::stdlib::enum_class::members_map_dict(nt) {
+                    return d;
+                }
+            }
             if let Some(value) = numbers_abc_type_attr(nt, &attr_name) {
                 return value;
             }
