@@ -6726,9 +6726,18 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                     if class_name == "UnionType" {
                         return super::stdlib::typing_mod::alias_hash_value(val);
                     }
-                    // __hash__ dunder dispatch
-                    let hash_method = super::class::lookup_method(class_name, "__hash__");
-                    if !hash_method.is_none() {
+                    // __hash__ dunder dispatch. Explicit `__hash__ = None`
+                    // is not a miss: it makes instances unhashable.
+                    if let Some(hash_method) =
+                        super::class::lookup_method_including_none(class_name, "__hash__")
+                    {
+                        if hash_method.is_none() {
+                            raise_type_error(format!(
+                                "unhashable type: '{}'",
+                                value_type_name(val)
+                            ));
+                            return MbValue::none();
+                        }
                         let result = super::class::mb_call_method1(hash_method, val);
                         if super::exception::current_exception_type().is_some() {
                             return MbValue::none();
