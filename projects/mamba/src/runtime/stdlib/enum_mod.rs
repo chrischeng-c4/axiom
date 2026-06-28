@@ -372,6 +372,14 @@ pub fn is_intenum_constructor(value: MbValue) -> bool {
     value.as_func() == Some(dispatch_intenum_create as *const () as usize)
 }
 
+pub fn is_enum_constructor(value: MbValue) -> bool {
+    value.as_func() == Some(dispatch_enum_create as *const () as usize)
+}
+
+pub fn enum_convert_callable() -> MbValue {
+    callable_func(dispatch_enum_convert as *const () as usize)
+}
+
 pub fn intenum_convert_callable() -> MbValue {
     callable_func(dispatch_intenum_convert as *const () as usize)
 }
@@ -385,9 +393,19 @@ pub fn mb_intenum_convert(args: MbValue) -> MbValue {
     enum_convert_from_args(&items, MixinKind::Int)
 }
 
+pub fn mb_enum_convert(args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    enum_convert_from_args(&items, MixinKind::None)
+}
+
 pub fn mb_strenum_convert(args: MbValue) -> MbValue {
     let items = super::super::builtins::extract_items(args);
     enum_convert_from_args(&items, MixinKind::Str)
+}
+
+unsafe extern "C" fn dispatch_enum_convert(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    enum_convert_from_args(a, MixinKind::None)
 }
 
 unsafe extern "C" fn dispatch_intenum_convert(args: *const MbValue, n: usize) -> MbValue {
