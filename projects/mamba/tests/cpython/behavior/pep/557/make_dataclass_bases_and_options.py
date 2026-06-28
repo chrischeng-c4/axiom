@@ -9,7 +9,7 @@
 # case = "make_dataclass_bases_and_options"
 # subject = "dataclasses.make_dataclass"
 # kind = "semantic"
-# xfail = "mamba make_dataclass does not honor bases= or pass-through options (repo memory project_mamba_class_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = "make_dataclass.py"
 # status = "filled"
