@@ -375,7 +375,6 @@ subject   = "weakref.WeakKeyDictionary"
 kind      = "semantic"
 module    = "weakref"
 intent    = "WeakKeyDictionary drops an entry once its key is collected"
-xfail     = "mamba refcount-only: WeakKeyDictionary does not auto-remove collected keys (gh #1466)"
 source    = "Lib/test/test_weakref.py"
 
 [[case]]
