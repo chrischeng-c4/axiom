@@ -985,6 +985,66 @@ unsafe extern "C" fn ws_len(self_v: MbValue, _args: MbValue) -> MbValue {
     super::super::set_ops::mb_set_len(ws_data_pruned(self_v))
 }
 
+fn ws_dispatch_set_method(name: &str, self_v: MbValue, args: MbValue) -> MbValue {
+    super::super::set_ops::dispatch_set_method(name, ws_data_pruned(self_v), args)
+}
+
+unsafe extern "C" fn ws_clear(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("clear", self_v, args)
+}
+
+unsafe extern "C" fn ws_copy(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("copy", self_v, args)
+}
+
+unsafe extern "C" fn ws_difference(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("difference", self_v, args)
+}
+
+unsafe extern "C" fn ws_difference_update(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("difference_update", self_v, args)
+}
+
+unsafe extern "C" fn ws_intersection(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("intersection", self_v, args)
+}
+
+unsafe extern "C" fn ws_intersection_update(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("intersection_update", self_v, args)
+}
+
+unsafe extern "C" fn ws_isdisjoint(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("isdisjoint", self_v, args)
+}
+
+unsafe extern "C" fn ws_issubset(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("issubset", self_v, args)
+}
+
+unsafe extern "C" fn ws_issuperset(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("issuperset", self_v, args)
+}
+
+unsafe extern "C" fn ws_pop(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("pop", self_v, args)
+}
+
+unsafe extern "C" fn ws_symmetric_difference(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("symmetric_difference", self_v, args)
+}
+
+unsafe extern "C" fn ws_symmetric_difference_update(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("symmetric_difference_update", self_v, args)
+}
+
+unsafe extern "C" fn ws_union(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("union", self_v, args)
+}
+
+unsafe extern "C" fn ws_update(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("update", self_v, args)
+}
+
 unsafe extern "C" fn wvd_setitem(self_v: MbValue, args: MbValue) -> MbValue {
     let a = wk_args(args);
     let key = a.first().copied().unwrap_or_else(MbValue::none);
@@ -1665,14 +1725,33 @@ fn register_weakref_classes() {
     super::super::class::mb_class_register("ReferenceType", vec![], rt);
 
     let mut ws: Map<String, MbValue> = Map::new();
-    ws.insert("add".into(), var(ws_add as *const () as usize));
-    ws.insert("discard".into(), var(ws_discard as *const () as usize));
-    ws.insert("remove".into(), var(ws_remove as *const () as usize));
-    ws.insert(
-        "__contains__".into(),
-        var(ws_contains as *const () as usize),
-    );
-    ws.insert("__len__".into(), var(ws_len as *const () as usize));
+    let ws_methods: &[(&str, usize)] = &[
+        ("__contains__", ws_contains as usize),
+        ("__len__", ws_len as usize),
+        ("add", ws_add as usize),
+        ("clear", ws_clear as usize),
+        ("copy", ws_copy as usize),
+        ("difference", ws_difference as usize),
+        ("difference_update", ws_difference_update as usize),
+        ("discard", ws_discard as usize),
+        ("intersection", ws_intersection as usize),
+        ("intersection_update", ws_intersection_update as usize),
+        ("isdisjoint", ws_isdisjoint as usize),
+        ("issubset", ws_issubset as usize),
+        ("issuperset", ws_issuperset as usize),
+        ("pop", ws_pop as usize),
+        ("remove", ws_remove as usize),
+        ("symmetric_difference", ws_symmetric_difference as usize),
+        (
+            "symmetric_difference_update",
+            ws_symmetric_difference_update as usize,
+        ),
+        ("union", ws_union as usize),
+        ("update", ws_update as usize),
+    ];
+    for (name, addr) in ws_methods {
+        ws.insert((*name).into(), var(*addr));
+    }
     super::super::class::mb_class_register("WeakSet", vec![], ws);
 
     let wvd_methods: &[(&str, usize)] = &[
@@ -2102,6 +2181,35 @@ mod tests {
 
         crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
         assert_eq!(unsafe { ws_len(s, MbValue::none()) }.as_int(), Some(0));
+    }
+
+    #[test]
+    fn test_weak_set_registers_public_set_methods() {
+        register_weakref_classes();
+        for method in [
+            "add",
+            "clear",
+            "copy",
+            "difference",
+            "difference_update",
+            "discard",
+            "intersection",
+            "intersection_update",
+            "isdisjoint",
+            "issubset",
+            "issuperset",
+            "pop",
+            "remove",
+            "symmetric_difference",
+            "symmetric_difference_update",
+            "union",
+            "update",
+        ] {
+            assert!(
+                !crate::runtime::class::lookup_method("WeakSet", method).is_none(),
+                "missing WeakSet method {method}"
+            );
+        }
     }
 
     #[test]
