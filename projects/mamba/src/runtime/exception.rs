@@ -570,6 +570,17 @@ pub fn mb_name_error_with_name(name: MbValue) -> MbValue {
     instance
 }
 
+pub fn mb_unbound_local_error_value(name: MbValue) -> MbValue {
+    let name_s = extract_str(name).unwrap_or_default();
+    mb_raise(
+        MbValue::from_ptr(MbObject::new_str("UnboundLocalError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "cannot access local variable '{name_s}' where it is not associated with a value"
+        ))),
+    );
+    MbValue::none()
+}
+
 /// Convert a MbException to a MbValue (stored as an Instance object).
 fn store_exception_as_value(exc: MbException) -> MbValue {
     let mut fields = FxHashMap::default();

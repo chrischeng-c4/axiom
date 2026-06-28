@@ -4479,6 +4479,19 @@ impl<'a> AstLowerer<'a> {
                             .map(|param| param.name.clone())
                             .collect(),
                     );
+                    let hidden_class_locals: Vec<(String, SymbolId, Option<TypeId>)> =
+                        class_attr_locals
+                            .iter()
+                            .filter_map(|(attr_name, attr_sym)| {
+                                if self.local_names.get(attr_name) == Some(attr_sym) {
+                                    let ty = self.local_types.remove(attr_sym);
+                                    self.local_names.remove(attr_name);
+                                    Some((attr_name.clone(), *attr_sym, ty))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
                     let saved_class_cell = self.local_names.get("__class__").copied();
                     self.local_names.insert("__class__".to_string(), name_id);
                     let lowered_method = self.lower_fn_inner(
@@ -4496,6 +4509,12 @@ impl<'a> AstLowerer<'a> {
                         }
                         None => {
                             self.local_names.remove("__class__");
+                        }
+                    }
+                    for (attr_name, attr_sym, attr_ty) in hidden_class_locals {
+                        self.local_names.insert(attr_name, attr_sym);
+                        if let Some(ty) = attr_ty {
+                            self.local_types.insert(attr_sym, ty);
                         }
                     }
                     self.active_type_params = saved_tps;
@@ -5505,21 +5524,24 @@ impl<'a> AstLowerer<'a> {
                 })
             }
             ast::Stmt::Nonlocal(names) => {
-                let syms: Vec<SymbolId> = names
-                    .iter()
-                    .filter_map(|n| {
-                        // Look up in outer scope first to get the same synthetic SymbolId.
-                        // This ensures inner-function references use the same slot as the outer.
-                        if let Some(&outer_sym) = self.outer_scope_names.get(n.as_str()) {
-                            // Bind the name in the current (inner) scope to the outer SymbolId.
-                            self.local_names.insert(n.clone(), outer_sym);
-                            // Mark this SymbolId as a Cell (shared via global storage).
-                            self.cell_override_syms.insert(outer_sym);
-                            return Some(outer_sym);
-                        }
-                        self.resolve_name(n, stmt.span)
-                    })
-                    .collect();
+                let mut syms: Vec<SymbolId> = Vec::new();
+                for n in names {
+                    // Look up in outer function scope first to get the same
+                    // synthetic SymbolId. Module globals do not satisfy
+                    // `nonlocal`; CPython raises SyntaxError for that case.
+                    if let Some(&outer_sym) = self.outer_scope_names.get(n.as_str()) {
+                        // Bind the name in the current (inner) scope to the outer SymbolId.
+                        self.local_names.insert(n.clone(), outer_sym);
+                        // Mark this SymbolId as a Cell (shared via global storage).
+                        self.cell_override_syms.insert(outer_sym);
+                        syms.push(outer_sym);
+                    } else {
+                        self.errors.push(MambaError::syntax(
+                            stmt.span,
+                            format!("no binding for nonlocal '{n}' found"),
+                        ));
+                    }
+                }
                 Some(HirStmt::Nonlocal {
                     names: syms,
                     span: stmt.span,
@@ -5762,6 +5784,9 @@ impl<'a> AstLowerer<'a> {
                 Some(HirExpr::Var(sym, self.checker.tcx.any()))
             }
             ast::Expr::Ident(name) => {
+                if self.is_function_local_unbound_read(name) {
+                    return Some(self.unbound_local_error_expr(name));
+                }
                 let sym = if let Some(&id) = self.local_names.get(name.as_str()) {
                     id
                 } else if let Some(&outer_id) = self.outer_scope_names.get(name.as_str()) {
@@ -8069,10 +8094,16 @@ impl<'a> AstLowerer<'a> {
         for (name, old_sym) in saved {
             match old_sym {
                 Some(id) => {
-                    self.local_names.insert(name, id);
+                    self.local_names.insert(name.clone(), id);
+                    if !self.in_function_body {
+                        self.module_deleted_names.remove(&name);
+                    }
                 }
                 None => {
                     self.local_names.remove(&name);
+                    if !self.in_function_body {
+                        self.module_deleted_names.insert(name);
+                    }
                 }
             }
         }
@@ -8325,6 +8356,25 @@ impl<'a> AstLowerer<'a> {
         }
         // Fall back to global scope (functions, classes — still in checker)
         self.checker.symbols.lookup(name)
+    }
+
+    fn is_function_local_unbound_read(&self, name: &str) -> bool {
+        self.in_function_body
+            && self.local_assigned_names.iter().any(|n| n == name)
+            && !self.local_declared_names.iter().any(|n| n == name)
+            && !self.local_names.contains_key(name)
+    }
+
+    fn unbound_local_error_expr(&self, name: &str) -> HirExpr {
+        let any_ty = self.checker.tcx.any();
+        HirExpr::Call {
+            func: Box::new(HirExpr::StrLit(
+                "mb_unbound_local_error_value".to_string(),
+                any_ty,
+            )),
+            args: vec![HirExpr::StrLit(name.to_string(), self.checker.tcx.str())],
+            ty: any_ty,
+        }
     }
 
     /// Build a `mb_call_spread_kwargs(f, pos_list, kwargs_dict)` call for a
@@ -10588,9 +10638,17 @@ mod tests {
 
     #[test]
     fn test_lower_nonlocal_decl() {
-        // `nonlocal x` at top level — syms vec will be empty (no outer scope)
-        let hir = helper_lower(vec![sp(Stmt::Nonlocal(vec!["n".to_string()]))]);
-        assert!(matches!(&hir.top_level[0], HirStmt::Nonlocal { .. }));
+        // `nonlocal x` at top level is a compile-time SyntaxError.
+        let checker = TypeChecker::new();
+        let module = Module {
+            stmts: vec![sp(Stmt::Nonlocal(vec!["n".to_string()]))],
+        };
+        let err = lower_module(&module, &checker).expect_err("nonlocal must fail");
+        assert!(
+            err[0].to_string().contains("nonlocal"),
+            "error should mention nonlocal: {:?}",
+            err
+        );
     }
 
     // -------------------------------------------------------------------------
