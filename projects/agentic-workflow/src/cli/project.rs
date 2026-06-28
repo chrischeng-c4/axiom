@@ -4407,6 +4407,7 @@ mod tests {
             Some(&manifest),
             &ec_report,
             true,
+            true,
         );
 
         assert_eq!(report.closed_claim_count, 1);

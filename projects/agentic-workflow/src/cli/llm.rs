@@ -254,7 +254,7 @@ mod tests {
     fn llm_outline_uses_cli_std_and_standard_commands() {
         let verbs = registered_verbs();
         assert!(
-            ["llm", "upgrade", "report-issue"]
+            ["llm", "upgrade", "issue"]
                 .iter()
                 .all(|want| verbs.iter().any(|verb| verb == want)),
             "registered verbs should include standard CLI commands, got {verbs:?}"
@@ -269,7 +269,7 @@ mod tests {
         .unwrap();
 
         assert!(outline.contains("aw upgrade"));
-        assert!(outline.contains("aw report-issue"));
+        assert!(outline.contains("aw issue"));
         assert!(outline.contains("`capability`"));
     }
 

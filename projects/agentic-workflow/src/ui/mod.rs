@@ -5,6 +5,8 @@ pub mod progress;
 pub mod tables;
 
 #[cfg(feature = "ui")]
+pub mod native_view;
+#[cfg(feature = "ui")]
 pub mod viewer;
 
 pub use colors::ColorScheme;

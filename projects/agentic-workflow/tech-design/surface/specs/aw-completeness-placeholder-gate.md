@@ -147,7 +147,7 @@ coverage_kind: unit
 strategy: scanner pattern coverage
 evidence:
   source_tests:
-    - projects/agentic-workflow/src/cli/cb_review.rs
+    - projects/agentic-workflow/src/cli/cb.rs
 ---
 requirementDiagram
   requirement placeholder_code {
@@ -178,7 +178,7 @@ e2e_tests:
   - id: completeness-placeholder-unit-command
     capability_id: td-cb-lifecycle-automation
     claim_id: cb-lifecycle-dispatch
-    command: cargo test -p agentic-workflow completeness_placeholder -- --nocapture
+    command: cargo test -p agentic-workflow --lib completeness_placeholder_scanner_contract -- --nocapture
     assertions:
       - placeholder code is rejected
       - omitted prose is rejected
@@ -190,7 +190,7 @@ e2e_tests:
 
 ```yaml
 changes:
-  - path: projects/agentic-workflow/src/cli/cb_review.rs
+  - path: projects/agentic-workflow/src/cli/cb.rs
     action: modify
     section: logic
     impl_mode: hand-written

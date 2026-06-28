@@ -1,5 +1,71 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/core/interfaces/ui/viewer/types.md#source
 // CODEGEN-BEGIN
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::models::{Annotation, AnnotationError, AnnotationResult, AnnotationStore};
+
+use super::render::{render_markdown_to_html, render_not_found_html, render_yaml_to_html};
+
+const BASE_ALLOWED_FILES: &[&str] = &["proposal.md", "CHALLENGE.md", "STATE.yaml", "tasks.md"];
+
+/// Response from loading a file, includes content and annotations.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/ui/viewer/types.md#schema
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FileLoadResponse {
+    /// Rendered HTML content.
+    pub content: String,
+    /// Annotations for this file.
+    pub annotations: Vec<Annotation>,
+    /// Whether the file exists.
+    pub exists: bool,
+}
+
+/// Information about a file in the change directory.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/ui/viewer/types.md#schema
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FileInfo {
+    /// Filename.
+    pub name: String,
+    /// Whether the file exists.
+    pub exists: bool,
+}
+
+/// Hierarchical node for project-level tree view.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/ui/viewer/types.md#schema
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FileNode {
+    /// Unique identifier for the node.
+    pub id: String,
+    /// Display name of the file or directory.
+    pub name: String,
+    /// Relative path from the genesis root.
+    pub path: String,
+    /// Whether this is a directory.
+    pub is_directory: bool,
+    /// Child nodes (None if not a directory).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<FileNode>>,
+}
+
+/// Errors that can occur in the viewer manager.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/ui/viewer/types.md#schema
+#[derive(Debug, thiserror::Error)]
+pub enum ViewerError {
+    #[error("Path traversal attempt detected: {0}")]
+    PathTraversal(String),
+    #[error("File not allowed: {0}")]
+    FileNotAllowed(String),
+    #[error("Failed to read file '{0}': {1}")]
+    FileRead(String, std::io::Error),
+    #[error("Annotation error: {0}")]
+    Annotation(#[from] AnnotationError),
+    #[error("Change not found: {0}")]
+    ChangeNotFound(String),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
 /// Viewer manager for handling file operations
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/ui/viewer/types.md#source
 pub struct ViewerManager {
