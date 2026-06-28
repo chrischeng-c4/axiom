@@ -3698,7 +3698,7 @@ fn instance_new_with_init_impl(
         if let Some(kw) = kwargs_dict {
             if kwargs_dict_has_entries(kw)
                 && !class_overrides_init(&init_class)
-                && (base != "frozenset" || new_func.is_none())
+                && new_func.is_none()
             {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -19602,6 +19602,16 @@ mod tests {
         inst
     }
 
+    extern "C" fn list_payload_new_test(
+        cls: MbValue,
+        arg: MbValue,
+        newarg: MbValue,
+    ) -> MbValue {
+        let inst = builtin_type_new_unbound("list", &[cls, arg]).unwrap_or_else(MbValue::none);
+        mb_setattr(inst, s("newarg"), newarg);
+        inst
+    }
+
     #[test]
     fn test_getattr_str_uses_canonical_method_surface() {
         for name in [
@@ -21672,6 +21682,62 @@ mod tests {
             .expect("frozenset subclass should carry a hidden frozenset payload");
 
         assert_eq!(base, "frozenset");
+        assert_eq!(crate::runtime::builtins::mb_len(payload).as_int(), Some(2));
+        assert_eq!(mb_getattr(inst, s("newarg")).as_int(), Some(7));
+    }
+
+    #[test]
+    fn test_list_subclass_constructor_kwargs_bind_new_but_reject_plain_subclass() {
+        mb_class_register(
+            "ListPayloadKwReject001",
+            vec!["list".to_string()],
+            HashMap::new(),
+        );
+        let kwargs = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(
+            kwargs,
+            s("sequence"),
+            MbValue::from_ptr(MbObject::new_tuple(vec![])),
+        );
+        super::super::exception::mb_clear_exception();
+        let rejected = mb_instance_new_with_init_kwargs(
+            s("ListPayloadKwReject001"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+            kwargs,
+        );
+        assert!(rejected.is_none());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+
+        let new_addr = list_payload_new_test as *const () as usize;
+        super::super::module::register_boxed_return_func(new_addr as u64);
+        let new_func = MbValue::from_func(new_addr);
+        register_test_params(
+            new_func,
+            vec![("cls", false), ("arg", false), ("newarg", true)],
+        );
+        let mut methods = HashMap::new();
+        methods.insert("__new__".to_string(), new_func);
+        mb_class_register("ListPayloadNew001", vec!["list".to_string()], methods);
+
+        let source = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
+        let kwargs = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(kwargs, s("newarg"), MbValue::from_int(7));
+        let inst = mb_instance_new_with_init_kwargs(
+            s("ListPayloadNew001"),
+            MbValue::from_ptr(MbObject::new_list(vec![source])),
+            kwargs,
+        );
+        let (base, payload) =
+            builtin_data_payload(inst).expect("list subclass should carry a hidden list payload");
+
+        assert_eq!(base, "list");
         assert_eq!(crate::runtime::builtins::mb_len(payload).as_int(), Some(2));
         assert_eq!(mb_getattr(inst, s("newarg")).as_int(), Some(7));
     }
