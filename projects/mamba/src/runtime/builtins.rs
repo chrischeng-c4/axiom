@@ -2822,8 +2822,12 @@ pub fn mb_type3_kwargs(name: MbValue, bases: MbValue, dict: MbValue, kwargs: MbV
             return MbValue::none();
         };
         super::class::mb_class_set_metaclass(
-            MbValue::from_ptr(MbObject::new_str(class_name)),
+            MbValue::from_ptr(MbObject::new_str(class_name.clone())),
             MbValue::from_ptr(MbObject::new_str(meta_name)),
+        );
+        super::class::mb_class_finalize_definition_with_namespace(
+            MbValue::from_ptr(MbObject::new_str(class_name)),
+            dict,
         );
     }
     type_obj
@@ -8740,6 +8744,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             return result;
                         }
                     }
+                    if type_name == "type" && method_str == "__init__" {
+                        return super::class::type_init_unbound(&items);
+                    }
                     if type_name == "collections.Counter" && method_str == "fromkeys" {
                         return super::class::mb_counter_fromkeys_not_implemented();
                     }
@@ -10217,6 +10224,13 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     //    already carries them positionally.) Native dispatchers are excluded:
     //    they expect the flattened-positional convention (step 5).
     if has_star && !is_native {
+        return invoke_args_kwargs(
+            func,
+            MbValue::from_ptr(MbObject::new_list(pos)),
+            kwargs_dict,
+        );
+    }
+    if has_kw && !is_native {
         return invoke_args_kwargs(
             func,
             MbValue::from_ptr(MbObject::new_list(pos)),
