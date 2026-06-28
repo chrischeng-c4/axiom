@@ -384,7 +384,6 @@ subject   = "weakref.WeakSet"
 kind      = "semantic"
 module    = "weakref"
 intent    = "WeakSet drops a member once it is collected"
-xfail     = "mamba refcount-only: WeakSet does not auto-remove collected members (gh #1466)"
 source    = "Lib/test/test_weakref.py"
 
 [[case]]
