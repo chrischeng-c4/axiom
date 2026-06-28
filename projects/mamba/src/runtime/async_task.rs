@@ -235,7 +235,7 @@ pub(crate) enum AwaitResume {
     Complete(MbValue),
 }
 
-fn stop_iteration_exception_value() -> MbValue {
+pub(crate) fn stop_iteration_exception_value() -> MbValue {
     let exc = super::exception::mb_get_exception();
     let Some(ptr) = exc.as_ptr() else {
         return MbValue::none();
@@ -645,6 +645,9 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
                 super::rc::retain_if_ptr(result);
             }
             return result;
+        }
+        if super::async_rt::has_current_coroutine() {
+            return await_iterator(awaitable);
         }
         if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
             coro.awaiting = true;

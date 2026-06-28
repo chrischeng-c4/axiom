@@ -126,6 +126,12 @@ pub fn mb_copy_copy(obj: MbValue) -> MbValue {
     if super::super::generator::is_known_generator(obj) {
         return raise_exc("TypeError", "cannot copy 'generator' object");
     }
+    if super::super::async_rt::is_known_coroutine(obj) {
+        return raise_exc("TypeError", "cannot copy 'coroutine' object");
+    }
+    if super::super::async_rt::is_coroutine_wrapper(obj) {
+        return raise_exc("TypeError", "cannot copy 'coroutine_wrapper' object");
+    }
     // Immutable atoms (and tuples — see below) return by identity.
     if is_atomic(obj) {
         return return_identity(obj);
@@ -414,6 +420,12 @@ fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
     if super::super::generator::is_known_generator(obj) {
         return raise_exc("TypeError", "cannot pickle 'generator' object");
     }
+    if super::super::async_rt::is_known_coroutine(obj) {
+        return raise_exc("TypeError", "cannot pickle 'coroutine' object");
+    }
+    if super::super::async_rt::is_coroutine_wrapper(obj) {
+        return raise_exc("TypeError", "cannot pickle 'coroutine_wrapper' object");
+    }
     // A slice is atomic for shallow copy (copy.copy returns it unchanged) but
     // deepcopy rebuilds it: CPython has no _deepcopy_atomic entry for slice, so
     // it reconstructs via slice.__reduce__ with deep-copied start/stop/step.
@@ -427,7 +439,9 @@ fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
             let key = obj.to_bits();
             if let Some(existing) = memo.get(&key) {
                 let v = *existing;
-                unsafe { super::super::rc::retain_if_ptr(v); }
+                unsafe {
+                    super::super::rc::retain_if_ptr(v);
+                }
                 return v;
             }
             let (start, stop, step) = unsafe {
@@ -678,8 +692,14 @@ unsafe fn deepcopy_bound_method(
     let (func, recv, name) = {
         let fields = read_fields(obj);
         (
-            fields.get("__func__").copied().unwrap_or_else(MbValue::none),
-            fields.get("__self__").copied().unwrap_or_else(MbValue::none),
+            fields
+                .get("__func__")
+                .copied()
+                .unwrap_or_else(MbValue::none),
+            fields
+                .get("__self__")
+                .copied()
+                .unwrap_or_else(MbValue::none),
             fields.get("__name__").copied(),
         )
     };

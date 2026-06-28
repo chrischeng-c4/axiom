@@ -891,10 +891,10 @@ fn collections_abc_virtual_match(child: &str, parent: &str) -> bool {
         reg.borrow()
             .iter()
             .any(|(registered_child, registered_parent)| {
-            collections_abc_alias_name(registered_child) == child
-                && (collections_abc_alias_name(registered_parent) == parent
-                    || collections_abc_is_subclass(registered_parent, parent))
-        })
+                collections_abc_alias_name(registered_child) == child
+                    && (collections_abc_alias_name(registered_parent) == parent
+                        || collections_abc_is_subclass(registered_parent, parent))
+            })
     })
 }
 
@@ -2104,12 +2104,59 @@ fn dispatch_coroutine_method(coro: MbValue, method: &str, args: MbValue) -> MbVa
             )
         }
         "close" => super::async_rt::mb_coroutine_close(coro),
-        "__await__" => coro,
+        "__await__" => super::async_rt::mb_coroutine_await_wrapper(coro),
         _ => {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(format!(
                     "'coroutine' object has no attribute '{method}'"
+                ))),
+            );
+            MbValue::none()
+        }
+    }
+}
+
+fn dispatch_coroutine_wrapper_method(wrapper: MbValue, method: &str, args: MbValue) -> MbValue {
+    let Some(coro) = super::async_rt::coroutine_wrapper_target(wrapper) else {
+        return MbValue::none();
+    };
+    let arg_list = extract_args_list(args);
+    match method {
+        "__iter__" | "__await__" => {
+            unsafe {
+                super::rc::retain_if_ptr(wrapper);
+            }
+            wrapper
+        }
+        "__next__" => super::async_rt::mb_coroutine_send(coro, MbValue::none()),
+        "send" => {
+            let value = arg_list.first().copied().unwrap_or(MbValue::none());
+            super::async_rt::mb_coroutine_send(coro, value)
+        }
+        "throw" => {
+            let exc_type = arg_list.first().copied().unwrap_or(MbValue::none());
+            let exc_msg = arg_list.get(1).copied().unwrap_or(MbValue::none());
+            let (type_str, msg_str) = match resolve_generator_throw_args(exc_type, exc_msg) {
+                Ok(parts) => parts,
+                Err(raised) => return raised,
+            };
+            super::async_rt::mb_coroutine_throw(
+                coro,
+                MbValue::from_ptr(MbObject::new_str(type_str)),
+                MbValue::from_ptr(MbObject::new_str(msg_str)),
+            )
+        }
+        "close" => super::async_rt::mb_coroutine_close(coro),
+        "__repr__" | "__str__" => MbValue::from_ptr(MbObject::new_str(format!(
+            "<coroutine_wrapper object at 0x{:x}>",
+            wrapper.as_ptr().map(|p| p as usize).unwrap_or(0)
+        ))),
+        _ => {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "'coroutine_wrapper' object has no attribute '{method}'"
                 ))),
             );
             MbValue::none()
@@ -3213,9 +3260,9 @@ fn instance_new_with_init_impl(
                             let members: Vec<MbValue> = excs
                                 .as_ptr()
                                 .map(|ep| match &(*ep).data {
-                                ObjData::List(ref el) => el.read().unwrap().to_vec(),
-                                ObjData::Tuple(ref t) => t.to_vec(),
-                                _ => Vec::new(),
+                                    ObjData::List(ref el) => el.read().unwrap().to_vec(),
+                                    ObjData::Tuple(ref t) => t.to_vec(),
+                                    _ => Vec::new(),
                                 })
                                 .unwrap_or_default();
                             if members
@@ -3657,9 +3704,7 @@ fn mb_exception_setstate(receiver: MbValue, state: MbValue) -> MbValue {
         None => {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "state is not a dictionary".to_string(),
-                )),
+                MbValue::from_ptr(MbObject::new_str("state is not a dictionary".to_string())),
             );
             return MbValue::none();
         }
@@ -5504,6 +5549,7 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     .unwrap_or(false);
                 return if awaited { obj } else { MbValue::none() };
             }
+            "cr_origin" => return MbValue::none(),
             "send" | "throw" | "close" | "__await__" => {
                 return make_bound_native_method(obj, &attr_name);
             }
@@ -7641,6 +7687,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "cr_frame",
             "cr_running",
             "cr_await",
+            "cr_origin",
         ],
         "list" => vec![
             "append",
@@ -8188,6 +8235,19 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
 
     if obj.is_int() && super::async_rt::is_known_coroutine(obj) {
         for k in builtin_type_method_names_by_name("coroutine") {
+            push(k.to_string(), &mut names, &mut seen);
+        }
+    }
+
+    if super::async_rt::is_coroutine_wrapper(obj) {
+        for k in [
+            "__await__",
+            "__iter__",
+            "__next__",
+            "send",
+            "throw",
+            "close",
+        ] {
             push(k.to_string(), &mut names, &mut seen);
         }
     }
@@ -9355,15 +9415,22 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
             return MbValue::from_bool(true);
         }
     }
-    if obj.is_int()
-        && super::generator::is_known_generator(obj)
-    {
+    if obj.is_int() && super::generator::is_known_generator(obj) {
         let has_generator_attr = matches!(
             attr_name.as_str(),
             "send" | "throw" | "close" | "__iter__" | "__next__" | "gi_frame" | "gi_code"
         ) || (attr_name == "__await__"
             && super::stdlib::types_mod::is_coroutine_generator(obj));
         if has_generator_attr {
+            return MbValue::from_bool(true);
+        }
+    }
+    if super::async_rt::is_coroutine_wrapper(obj) {
+        let has_wrapper_attr = matches!(
+            attr_name.as_str(),
+            "__await__" | "__iter__" | "__next__" | "send" | "throw" | "close"
+        );
+        if has_wrapper_attr {
             return MbValue::from_bool(true);
         }
     }
@@ -12017,7 +12084,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
     let obj_is_typing_form = obj
         .as_ptr()
         .map(|p| unsafe {
-        matches!(&(*p).data,
+            matches!(&(*p).data,
             ObjData::Instance { class_name, .. } if class_name == "typing.SpecialForm")
         })
         .unwrap_or(false);
@@ -12773,14 +12840,14 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                     let sequence_target = obj
                         .as_ptr()
                         .map(|op| {
-                        matches!(
-                            &(*op).data,
-                            super::rc::ObjData::List(_)
-                                | super::rc::ObjData::ByteArray(_)
-                                | super::rc::ObjData::Tuple(_)
-                                | super::rc::ObjData::Bytes(_)
-                                | super::rc::ObjData::Str(_)
-                        )
+                            matches!(
+                                &(*op).data,
+                                super::rc::ObjData::List(_)
+                                    | super::rc::ObjData::ByteArray(_)
+                                    | super::rc::ObjData::Tuple(_)
+                                    | super::rc::ObjData::Bytes(_)
+                                    | super::rc::ObjData::Str(_)
+                            )
                         })
                         .unwrap_or(false);
                     if sequence_target {
@@ -13635,6 +13702,7 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                     || class_name == "__unbound_method__"
                     || class_name == "__bound_native_method__"
                     || class_name == "method"
+                    || class_name == "__exec_function__"
                     || class_name == "collections.namedtuple_factory"
                 {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
@@ -13759,6 +13827,10 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                 // the 1-arg form `str.lower("HELLO")` dispatches correctly.
                 if class_name == "__unbound_method__" || class_name == "__bound_native_method__" {
                     let _ = fields; // suppressed — dispatch via call_spread
+                    let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
+                    return super::builtins::mb_call_spread(func, args_list);
+                }
+                if class_name == "__exec_function__" {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
                 }
@@ -13931,11 +14003,7 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                                     MbValue,
                                 ) -> MbValue = unsafe { std::mem::transmute(addr) };
                                 return super::closure::with_closure_cells(func, || {
-                                    finish_call(
-                                        func,
-                                        f(arg, fill[0], fill[1], fill[2]),
-                                        is_boxed,
-                                    )
+                                    finish_call(func, f(arg, fill[0], fill[1], fill[2]), is_boxed)
                                 });
                             }
                             _ => { /* arity > 4: fall through to plain 1-arg dispatch */ }
@@ -14040,11 +14108,11 @@ pub fn mb_call_method_kwargs(
                     .unwrap()
                     .iter()
                     .filter_map(|(k, v)| {
-                    if let super::dict_ops::DictKey::Str(s) = k {
-                        Some((s.clone(), *v))
-                    } else {
-                        None
-                    }
+                        if let super::dict_ops::DictKey::Str(s) = k {
+                            Some((s.clone(), *v))
+                        } else {
+                            None
+                        }
                     })
                     .collect()
             } else {
@@ -14261,11 +14329,9 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 let instance = items.first().copied().unwrap_or_else(MbValue::none);
                 let owner = items.get(1).copied().unwrap_or_else(MbValue::none);
                 return match descriptor_kind {
-                    DescriptorKind::ClassMethod => classmethod_descriptor_get(
-                        receiver,
-                        instance,
-                        owner,
-                    ),
+                    DescriptorKind::ClassMethod => {
+                        classmethod_descriptor_get(receiver, instance, owner)
+                    }
                     DescriptorKind::StaticMethod => staticmethod_descriptor_get(receiver),
                     DescriptorKind::Regular => unreachable!(),
                 };
@@ -14857,12 +14923,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 return MbValue::none();
                             }
                             let shape_arg = items.get(1).copied().and_then(|candidate| {
-                                    if memoryview_is_dict(candidate) {
-                                        memoryview_dict_str_get(candidate, "shape")
-                                    } else {
-                                        Some(candidate)
-                                    }
-                                });
+                                if memoryview_is_dict(candidate) {
+                                    memoryview_dict_str_get(candidate, "shape")
+                                } else {
+                                    Some(candidate)
+                                }
+                            });
                             let shape = if let Some(shape_arg) = shape_arg {
                                 let Some(shape) = memoryview_i64_items(shape_arg) else {
                                     super::exception::mb_raise(
@@ -15722,6 +15788,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     // Generator protocol: intercept .send() / .throw() / .close() on generator handles
     if receiver.is_int() && super::generator::is_known_generator(receiver) {
         return dispatch_generator_method(receiver, &name, args);
+    }
+
+    if super::async_rt::is_coroutine_wrapper(receiver) {
+        return dispatch_coroutine_wrapper_method(receiver, &name, args);
     }
 
     // Coroutine protocol: intercept .send() / .throw() / .close() on coroutine handles.
@@ -18390,9 +18460,7 @@ mod tests {
         methods.insert("timeout".to_string(), MbValue::from_func(addr));
         mb_class_register("VariadicFloatReturn688", vec![], methods);
 
-        let inst = MbValue::from_ptr(MbObject::new_instance(
-            "VariadicFloatReturn688".to_string(),
-        ));
+        let inst = MbValue::from_ptr(MbObject::new_instance("VariadicFloatReturn688".to_string()));
         let result = mb_call_method(
             inst,
             MbValue::from_ptr(MbObject::new_str("timeout".to_string())),
