@@ -192,7 +192,9 @@ fn referent_needs_proxy_wrapper(obj: MbValue) -> bool {
     unsafe {
         matches!(
             &(*ptr).data,
-            ObjData::Instance { class_name, .. } if class_name == "socket.socket"
+            ObjData::Instance { class_name, .. }
+                if super::super::class::class_is_user_defined(class_name)
+                    || class_name == "socket.socket"
         )
     }
 }
@@ -219,6 +221,7 @@ fn is_internal_proxy_attr(attr_name: &str) -> bool {
             | "_target"
             | "_target_id"
             | "_dead"
+            | "_global_tracked"
             | "_class_object_name"
     )
 }
@@ -382,6 +385,23 @@ fn run_finalize_once(fin: MbValue) {
     }
 }
 
+fn proxy_tracks_global_liveness(proxy: MbValue) -> bool {
+    let Some(ptr) = proxy.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { fields, .. } => fields
+                .read()
+                .unwrap()
+                .get("_global_tracked")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+}
+
 pub(crate) fn expire_unbound_finalizers() {
     let finalizers: Vec<MbValue> = FINALIZE_REGISTRY.with(|registry| {
         registry
@@ -396,6 +416,31 @@ pub(crate) fn expire_unbound_finalizers() {
         };
         if finalizer_target_collectible(target) {
             run_finalize_once(fin);
+        }
+    }
+}
+
+pub(crate) fn expire_unbound_proxies() {
+    let refs: Vec<MbValue> = WEAKREF_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .values()
+            .flat_map(|items| items.iter().copied())
+            .collect()
+    });
+    for wref in refs {
+        if !is_proxy_instance(wref) || proxy_is_dead(wref) {
+            continue;
+        }
+        if !proxy_tracks_global_liveness(wref) {
+            continue;
+        }
+        let Some(target) = proxy_target(wref) else {
+            mark_weakref_dead(wref);
+            continue;
+        };
+        if !value_has_live_global(target) {
+            mark_weakref_dead(wref);
         }
     }
 }
@@ -452,6 +497,14 @@ pub(crate) fn proxy_is_dead(proxy: MbValue) -> bool {
             _ => false,
         }
     }
+}
+
+pub(crate) fn proxy_target_or_raise(proxy: MbValue) -> Option<MbValue> {
+    if is_proxy_instance(proxy) && proxy_is_dead(proxy) {
+        raise_reference_error();
+        return Some(MbValue::none());
+    }
+    proxy_target(proxy)
 }
 
 pub(crate) fn proxy_dead_attr_access(proxy: MbValue, attr_name: &str) -> bool {
@@ -1015,6 +1068,10 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
         let mut fields = FxHashMap::default();
         fields.insert("_target_id".to_string(), target_id);
         fields.insert("_dead".to_string(), MbValue::from_bool(false));
+        fields.insert(
+            "_global_tracked".to_string(),
+            MbValue::from_bool(value_has_live_global(obj)),
+        );
         fields.insert("__callback__".to_string(), callback);
         fields.insert("_callback".to_string(), callback);
         fields.insert(

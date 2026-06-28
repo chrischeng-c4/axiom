@@ -4995,7 +4995,13 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
         if !matches!(
             attr_name.as_str(),
-            "__class__" | "__callback__" | "_callback" | "_target" | "_target_id" | "_dead"
+            "__class__"
+                | "__callback__"
+                | "_callback"
+                | "_target"
+                | "_target_id"
+                | "_dead"
+                | "_global_tracked"
         ) {
             return mb_getattr(target, attr);
         }
@@ -8122,7 +8128,13 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
             if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
                 if !matches!(
                     attr_name.as_str(),
-                    "__class__" | "__callback__" | "_callback" | "_target" | "_target_id" | "_dead"
+                    "__class__"
+                        | "__callback__"
+                        | "_callback"
+                        | "_target"
+                        | "_target_id"
+                        | "_dead"
+                        | "_global_tracked"
                 ) {
                     mb_setattr(target, attr, value);
                     return;
@@ -8668,7 +8680,13 @@ pub fn mb_delattr(obj: MbValue, attr: MbValue) {
             if let Some(target) = super::stdlib::weakref_mod::proxy_target(obj) {
                 if !matches!(
                     attr_name.as_str(),
-                    "__class__" | "__callback__" | "_callback" | "_target" | "_target_id" | "_dead"
+                    "__class__"
+                        | "__callback__"
+                        | "_callback"
+                        | "_target"
+                        | "_target_id"
+                        | "_dead"
+                        | "_global_tracked"
                 ) {
                     mb_delattr(target, attr);
                     return;
@@ -9442,6 +9460,18 @@ pub fn mb_dispatch_binop(op_code: i64, lhs: MbValue, rhs: MbValue) -> MbValue {
             _ => {}
         }
     }
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(lhs) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_dispatch_binop(op_code, target, rhs);
+    }
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(rhs) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_dispatch_binop(op_code, lhs, target);
+    }
     let op_name = BINOP_DUNDERS
         .get(op_code as usize)
         .copied()
@@ -9507,6 +9537,12 @@ fn mb_inplace(
     op_code: i64,
     fallback: fn(MbValue, MbValue) -> MbValue,
 ) -> MbValue {
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(a) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_inplace(target, b, idunder, op_code, fallback);
+    }
     if a.as_ptr().is_some() {
         if let Some(method) = try_get_dunder(a, idunder) {
             if let Some(result) = invoke_binop_method(method, a, b) {
@@ -13546,7 +13582,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if let Some(target) = super::stdlib::weakref_mod::proxy_target(receiver) {
         if !matches!(
             name_for_proxy.as_str(),
-            "__class__" | "__callback__" | "_callback" | "_target" | "_target_id" | "_dead"
+            "__class__"
+                | "__callback__"
+                | "_callback"
+                | "_target"
+                | "_target_id"
+                | "_dead"
+                | "_global_tracked"
         ) {
             return mb_call_method(target, method_name, args);
         }
