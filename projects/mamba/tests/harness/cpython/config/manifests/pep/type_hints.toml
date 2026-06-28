@@ -283,7 +283,6 @@ case      = "get_type_hints_returns_param_dict"
 subject   = "typing.get_type_hints"
 kind      = "semantic"
 intent    = "get_type_hints returns a dict of resolved annotations: for _typed(a:int,b:Optional[str]=None)->List[int] it is a dict containing 'a', 'b' and 'return'"
-xfail     = "mamba diverges on the typing get_type_hints runtime machinery (project_mamba_pep_silent_divergences_2026_05_27)"
 
 # --- List[int] generic alias has __origin__ (behavior.py Rule 9) ----------
 
