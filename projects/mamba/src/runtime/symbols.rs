@@ -3390,6 +3390,32 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_exception_group_construct_and_raise_with_context",
+            exception::mb_exception_group_construct_and_raise_with_context
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exception_group_construct_and_raise_from",
+            exception::mb_exception_group_construct_and_raise_from
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exception_group_construct_and_raise_from_with_context",
+            exception::mb_exception_group_construct_and_raise_from_with_context
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_except_star",
             exception::mb_except_star as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
