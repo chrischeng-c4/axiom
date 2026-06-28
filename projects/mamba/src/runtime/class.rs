@@ -24,6 +24,8 @@ pub(crate) const COMPLEX_SUBCLASS_VALUE_FIELD: &str = "__mamba_complex_value__";
 pub(crate) const LIST_SUBCLASS_VALUE_FIELD: &str = "__mamba_list_value__";
 pub(crate) const DICT_SUBCLASS_VALUE_FIELD: &str = "__mamba_dict_value__";
 pub(crate) const TUPLE_SUBCLASS_VALUE_FIELD: &str = "__mamba_tuple_value__";
+pub(crate) const SET_SUBCLASS_VALUE_FIELD: &str = "__mamba_set_value__";
+pub(crate) const FROZENSET_SUBCLASS_VALUE_FIELD: &str = "__mamba_frozenset_value__";
 
 /// A class definition stored at runtime.
 #[derive(Clone)]
@@ -3140,14 +3142,24 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
 /// `args_list` is a List MbValue containing all constructor arguments.
 /// Used by compiled code for `ClassName(arg1, arg2, ...)`.
 pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbValue {
-    instance_new_with_init_impl(class_name, args_list, false)
+    instance_new_with_init_impl(class_name, args_list, None, false)
+}
+
+/// Create an instance from structurally separated positional and keyword
+/// constructor arguments.
+pub fn mb_instance_new_with_init_kwargs(
+    class_name: MbValue,
+    args_list: MbValue,
+    kwargs_dict: MbValue,
+) -> MbValue {
+    instance_new_with_init_impl(class_name, args_list, Some(kwargs_dict), false)
 }
 
 /// Default instance creation BYPASSING metaclass `__call__` routing — the
 /// `type.__call__(cls, ...)` a metaclass body reaches via `super().__call__()`.
 /// Routing through the public entry from inside the metaclass would recurse.
 pub(crate) fn instance_new_default(class_name: MbValue, args_list: MbValue) -> MbValue {
-    instance_new_with_init_impl(class_name, args_list, true)
+    instance_new_with_init_impl(class_name, args_list, None, true)
 }
 
 fn simple_namespace_subclass_inherits_native_init(name: &str) -> bool {
@@ -3389,6 +3401,52 @@ fn call_init_for_instance(init_class: &str, instance: MbValue, args_list: MbValu
     true
 }
 
+fn call_init_for_instance_kwargs(
+    init_class: &str,
+    instance: MbValue,
+    args_list: MbValue,
+    kwargs_dict: MbValue,
+) -> bool {
+    let init_method = lookup_method(init_class, "__init__");
+    if init_method.is_none() {
+        return false;
+    }
+    unsafe {
+        super::rc::retain_if_ptr(instance);
+    }
+    let mut items = Vec::with_capacity(super::builtins::extract_items(args_list).len() + 1);
+    items.push(instance);
+    items.extend(super::builtins::extract_items(args_list));
+    super::builtins::mb_call_spread_kwargs(
+        init_method,
+        MbValue::from_ptr(MbObject::new_list(items)),
+        kwargs_dict,
+    );
+    true
+}
+
+fn kwargs_dict_has_entries(kwargs_dict: MbValue) -> bool {
+    kwargs_dict.as_ptr().is_some_and(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            !lock.read().unwrap().is_empty()
+        } else {
+            false
+        }
+    })
+}
+
+fn builtin_payload_seed_args(init_class: &str, base: &str, args_list: MbValue) -> MbValue {
+    if !class_overrides_init(init_class) || !matches!(base, "list" | "dict" | "set") {
+        return args_list;
+    }
+    let mut items = super::builtins::extract_items(args_list);
+    if items.len() > 1 {
+        items.truncate(1);
+        return MbValue::from_ptr(MbObject::new_list(items));
+    }
+    args_list
+}
+
 fn class_overrides_init(class_name: &str) -> bool {
     !lookup_method(class_name, "__init__").is_none()
 }
@@ -3503,6 +3561,7 @@ pub(crate) fn object_getattribute_unbound(items: &[MbValue]) -> MbValue {
 fn instance_new_with_init_impl(
     class_name: MbValue,
     args_list: MbValue,
+    kwargs_dict: Option<MbValue>,
     skip_metaclass: bool,
 ) -> MbValue {
     let name = extract_str(class_name).unwrap_or_else(|| "object".to_string());
@@ -3611,7 +3670,12 @@ fn instance_new_with_init_impl(
     let instance = if !new_func.is_none() {
         let mut ctor_args = vec![MbValue::from_ptr(MbObject::new_str(name.clone()))];
         ctor_args.extend(super::builtins::extract_items(args_list));
-        super::builtins::mb_call_spread(new_func, MbValue::from_ptr(MbObject::new_list(ctor_args)))
+        let ctor_args_list = MbValue::from_ptr(MbObject::new_list(ctor_args));
+        if let Some(kw) = kwargs_dict {
+            super::builtins::mb_call_spread_kwargs(new_func, ctor_args_list, kw)
+        } else {
+            super::builtins::mb_call_spread(new_func, ctor_args_list)
+        }
     } else {
         MbValue::from_ptr(MbObject::new_instance_with_capacity(
             name.clone(),
@@ -3631,8 +3695,23 @@ fn instance_new_with_init_impl(
         return MbValue::none();
     }
     if let Some(base) = builtin_data_payload_base(&init_class) {
-        if !seed_builtin_data_subclass_value(instance, args_list, base) {
+        let seed_args = builtin_payload_seed_args(&init_class, base, args_list);
+        if !seed_builtin_data_subclass_value(instance, seed_args, base) {
             return MbValue::none();
+        }
+        if let Some(kw) = kwargs_dict {
+            if kwargs_dict_has_entries(kw)
+                && !class_overrides_init(&init_class)
+                && (base != "frozenset" || new_func.is_none())
+            {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "{base}() takes no keyword arguments"
+                    ))),
+                );
+                return MbValue::none();
+            }
         }
     }
     if let Some(shape) = namedtuple_subclass_shape(&init_class) {
@@ -3661,7 +3740,11 @@ fn instance_new_with_init_impl(
         return instance;
     }
 
-    let has_init = call_init_for_instance(&init_class, instance, args_list);
+    let has_init = if let Some(kw) = kwargs_dict {
+        call_init_for_instance_kwargs(&init_class, instance, args_list, kw)
+    } else {
+        call_init_for_instance(&init_class, instance, args_list)
+    };
 
     if !has_init {
         // No __init__ defined — store args as e.args for Exception-like classes
@@ -3853,6 +3936,8 @@ fn builtin_data_payload_base(class_name: &str) -> Option<&'static str> {
             "list" => return Some("list"),
             "dict" => return Some("dict"),
             "tuple" => return Some("tuple"),
+            "set" => return Some("set"),
+            "frozenset" => return Some("frozenset"),
             _ => {}
         }
     }
@@ -3871,6 +3956,8 @@ fn payload_field_for_base(base: &str) -> &'static str {
         "list" => LIST_SUBCLASS_VALUE_FIELD,
         "dict" => DICT_SUBCLASS_VALUE_FIELD,
         "tuple" => TUPLE_SUBCLASS_VALUE_FIELD,
+        "set" => SET_SUBCLASS_VALUE_FIELD,
+        "frozenset" => FROZENSET_SUBCLASS_VALUE_FIELD,
         _ => "",
     }
 }
@@ -3884,6 +3971,8 @@ pub(crate) fn is_builtin_data_payload_field(name: &str) -> bool {
             | LIST_SUBCLASS_VALUE_FIELD
             | DICT_SUBCLASS_VALUE_FIELD
             | TUPLE_SUBCLASS_VALUE_FIELD
+            | SET_SUBCLASS_VALUE_FIELD
+            | FROZENSET_SUBCLASS_VALUE_FIELD
     )
 }
 
@@ -4014,6 +4103,34 @@ fn seed_builtin_data_subclass_value(instance: MbValue, args_list: MbValue, base:
                 return false;
             }
         },
+        "set" => match args.len() {
+            0 => super::set_ops::mb_set_new(),
+            1 => super::builtins::mb_set_from_iterable(args[0]),
+            _ => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "set expected at most 1 argument, got {}",
+                        args.len()
+                    ))),
+                );
+                return false;
+            }
+        },
+        "frozenset" => match args.len() {
+            0 => super::builtins::mb_frozenset_empty(),
+            1 => super::builtins::mb_frozenset_new(args[0]),
+            _ => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "frozenset expected at most 1 argument, got {}",
+                        args.len()
+                    ))),
+                );
+                return false;
+            }
+        },
         _ => return true,
     };
     if super::exception::mb_has_exception().as_bool() == Some(true) {
@@ -4035,7 +4152,7 @@ fn seed_builtin_data_subclass_value(instance: MbValue, args_list: MbValue, base:
 pub(crate) fn builtin_type_new_unbound(type_name: &str, items: &[MbValue]) -> Option<MbValue> {
     if !matches!(
         type_name,
-        "str" | "int" | "float" | "complex" | "list" | "dict" | "tuple"
+        "str" | "int" | "float" | "complex" | "list" | "dict" | "tuple" | "set" | "frozenset"
     ) {
         return None;
     }
@@ -4152,6 +4269,34 @@ pub(crate) fn builtin_type_new_unbound(type_name: &str, items: &[MbValue]) -> Op
                         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                         MbValue::from_ptr(MbObject::new_str(format!(
                             "tuple expected at most 1 argument, got {}",
+                            ctor_args.len()
+                        ))),
+                    );
+                    MbValue::none()
+                }
+            },
+            "set" => match ctor_args.len() {
+                0 => super::set_ops::mb_set_new(),
+                1 => super::builtins::mb_set_from_iterable(ctor_args[0]),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "set expected at most 1 argument, got {}",
+                            ctor_args.len()
+                        ))),
+                    );
+                    MbValue::none()
+                }
+            },
+            "frozenset" => match ctor_args.len() {
+                0 => super::builtins::mb_frozenset_empty(),
+                1 => super::builtins::mb_frozenset_new(ctor_args[0]),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "frozenset expected at most 1 argument, got {}",
                             ctor_args.len()
                         ))),
                     );
@@ -7455,6 +7600,29 @@ fn mb_getattr_impl(
                 | ObjData::Complex(..)
         )
     });
+    if obj.as_ptr().is_some_and(|p| unsafe {
+        matches!((*p).data, ObjData::FrozenSet(_))
+            && matches!(
+                attr_name.as_str(),
+                "add"
+                    | "remove"
+                    | "discard"
+                    | "pop"
+                    | "clear"
+                    | "update"
+                    | "intersection_update"
+                    | "difference_update"
+                    | "symmetric_difference_update"
+            )
+    }) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "'frozenset' object has no attribute '{attr_name}'"
+            ))),
+        );
+        return MbValue::none();
+    }
     // float is also eligible (`getattr(0.5, "__ceil__")()`): it is a direct
     // f64, never a tagged-int handle, so there is no handle ambiguity. int/bool
     // are excluded — their tag space is shared with closure/range/Fraction/
@@ -8455,6 +8623,8 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__getitem__",
         ],
         "set" => vec![
+            "__new__",
+            "__init__",
             "add",
             "discard",
             "remove",
@@ -8478,6 +8648,8 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
         ],
         // frozenset is immutable: no add/discard/remove/pop/clear/*_update.
         "frozenset" => vec![
+            "__new__",
+            "__init__",
             "copy",
             "union",
             "intersection",
@@ -8775,6 +8947,7 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
                     "update",
                     "intersection_update",
                     "difference_update",
+                    "symmetric_difference_update",
                     "isdisjoint",
                     "issubset",
                     "issuperset",
@@ -10773,11 +10946,11 @@ pub fn mb_dispatch_binop(op_code: i64, lhs: MbValue, rhs: MbValue) -> MbValue {
     let dunder = format!("__{op_name}__");
     let rdunder = format!("__r{op_name}__");
 
-    let rhs_reflected_first = instance_class_name(lhs).zip(instance_class_name(rhs)).is_some_and(
-        |(lhs_class, rhs_class)| {
+    let rhs_reflected_first = instance_class_name(lhs)
+        .zip(instance_class_name(rhs))
+        .is_some_and(|(lhs_class, rhs_class)| {
             lhs_class != rhs_class && class_is_or_inherits(&rhs_class, &lhs_class)
-        },
-    );
+        });
     if rhs_reflected_first {
         if let Some(method) = try_get_dunder(rhs, &rdunder) {
             if let Some(result) = invoke_binop_method(method, rhs, lhs) {
@@ -17700,8 +17873,8 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             "__float__" => return MbValue::from_float(f),
             "__bool__" => return MbValue::from_bool(f != 0.0),
             "__add__" | "__radd__" | "__sub__" | "__rsub__" | "__mul__" | "__rmul__"
-            | "__truediv__" | "__rtruediv__" | "__floordiv__" | "__rfloordiv__"
-            | "__mod__" | "__rmod__" | "__pow__" | "__rpow__" => {
+            | "__truediv__" | "__rtruediv__" | "__floordiv__" | "__rfloordiv__" | "__mod__"
+            | "__rmod__" | "__pow__" | "__rpow__" => {
                 let arg = args
                     .as_ptr()
                     .and_then(|p| unsafe {
@@ -19116,8 +19289,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             ]));
                         }
                         "__add__" | "__radd__" | "__sub__" | "__rsub__" | "__mul__"
-                        | "__rmul__" | "__truediv__" | "__rtruediv__" | "__pow__"
-                        | "__rpow__" => {
+                        | "__rmul__" | "__truediv__" | "__rtruediv__" | "__pow__" | "__rpow__" => {
                             let arg = args
                                 .as_ptr()
                                 .and_then(|p| {
@@ -19367,6 +19539,45 @@ mod tests {
                 None
             })
             .unwrap_or_else(MbValue::none)
+    }
+
+    fn test_param_sig(name: &str, has_default: bool) -> MbValue {
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            s(name),
+            MbValue::from_int(1),
+            MbValue::from_int(if has_default { 1 } else { 0 }),
+            MbValue::none(),
+            MbValue::none(),
+        ]))
+    }
+
+    fn register_test_params(func: MbValue, params: Vec<(&str, bool)>) {
+        let params = MbValue::from_ptr(MbObject::new_list(
+            params
+                .into_iter()
+                .map(|(name, has_default)| test_param_sig(name, has_default))
+                .collect(),
+        ));
+        super::super::closure::mb_func_set_params(func, params);
+    }
+
+    extern "C" fn set_payload_init_test(
+        self_v: MbValue,
+        _arg: MbValue,
+        newarg: MbValue,
+    ) -> MbValue {
+        mb_setattr(self_v, s("newarg"), newarg);
+        MbValue::none()
+    }
+
+    extern "C" fn frozenset_payload_new_test(
+        cls: MbValue,
+        arg: MbValue,
+        newarg: MbValue,
+    ) -> MbValue {
+        let inst = builtin_type_new_unbound("frozenset", &[cls, arg]).unwrap_or_else(MbValue::none);
+        mb_setattr(inst, s("newarg"), newarg);
+        inst
     }
 
     #[test]
@@ -21311,6 +21522,136 @@ mod tests {
             Some(20),
             "tuple(tuple_subclass) should iterate over the hidden tuple payload"
         );
+    }
+
+    #[test]
+    fn test_set_subclass_constructor_preserves_payload_and_init_extra_arg() {
+        let init_addr = set_payload_init_test as *const () as usize;
+        super::super::module::register_boxed_return_func(init_addr as u64);
+        let init_func = MbValue::from_func(init_addr);
+        register_test_params(
+            init_func,
+            vec![("self", false), ("arg", false), ("newarg", true)],
+        );
+        let mut methods = HashMap::new();
+        methods.insert("__init__".to_string(), init_func);
+        mb_class_register("SetPayloadInit001", vec!["set".to_string()], methods);
+
+        let source = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
+        let inst = mb_instance_new_with_init(
+            s("SetPayloadInit001"),
+            MbValue::from_ptr(MbObject::new_list(vec![source, MbValue::from_int(3)])),
+        );
+        let (base, payload) =
+            builtin_data_payload(inst).expect("set subclass should carry a hidden set payload");
+
+        assert_eq!(base, "set");
+        assert_eq!(
+            crate::runtime::set_ops::mb_set_len(payload).as_int(),
+            Some(2),
+            "set subclass payload should ignore init-only extra args"
+        );
+        assert_eq!(
+            mb_getattr(inst, s("newarg")).as_int(),
+            Some(3),
+            "set subclass __init__ should still receive its extra constructor argument"
+        );
+    }
+
+    #[test]
+    fn test_set_subclass_constructor_kwargs_bind_init_but_reject_plain_subclass() {
+        mb_class_register(
+            "SetPayloadKwReject001",
+            vec!["set".to_string()],
+            HashMap::new(),
+        );
+        let kwargs = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(
+            kwargs,
+            s("sequence"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        super::super::exception::mb_clear_exception();
+        let rejected = mb_instance_new_with_init_kwargs(
+            s("SetPayloadKwReject001"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+            kwargs,
+        );
+        assert!(rejected.is_none());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+
+        let init_addr = set_payload_init_test as *const () as usize;
+        super::super::module::register_boxed_return_func(init_addr as u64);
+        let init_func = MbValue::from_func(init_addr);
+        register_test_params(
+            init_func,
+            vec![("self", false), ("arg", false), ("newarg", true)],
+        );
+        let mut methods = HashMap::new();
+        methods.insert("__init__".to_string(), init_func);
+        mb_class_register("SetPayloadKwInit001", vec!["set".to_string()], methods);
+
+        let source = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(4),
+            MbValue::from_int(5),
+        ]));
+        let kwargs = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(kwargs, s("newarg"), MbValue::from_int(9));
+        let inst = mb_instance_new_with_init_kwargs(
+            s("SetPayloadKwInit001"),
+            MbValue::from_ptr(MbObject::new_list(vec![source])),
+            kwargs,
+        );
+        let (_, payload) =
+            builtin_data_payload(inst).expect("set subclass should carry a hidden set payload");
+        assert_eq!(
+            crate::runtime::set_ops::mb_set_len(payload).as_int(),
+            Some(2)
+        );
+        assert_eq!(mb_getattr(inst, s("newarg")).as_int(), Some(9));
+    }
+
+    #[test]
+    fn test_frozenset_subclass_constructor_kwargs_bind_new() {
+        let new_addr = frozenset_payload_new_test as *const () as usize;
+        super::super::module::register_boxed_return_func(new_addr as u64);
+        let new_func = MbValue::from_func(new_addr);
+        register_test_params(
+            new_func,
+            vec![("cls", false), ("arg", false), ("newarg", true)],
+        );
+        let mut methods = HashMap::new();
+        methods.insert("__new__".to_string(), new_func);
+        mb_class_register(
+            "FrozenPayloadNew001",
+            vec!["frozenset".to_string()],
+            methods,
+        );
+
+        let source = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
+        let kwargs = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(kwargs, s("newarg"), MbValue::from_int(7));
+        let inst = mb_instance_new_with_init_kwargs(
+            s("FrozenPayloadNew001"),
+            MbValue::from_ptr(MbObject::new_list(vec![source])),
+            kwargs,
+        );
+        let (base, payload) = builtin_data_payload(inst)
+            .expect("frozenset subclass should carry a hidden frozenset payload");
+
+        assert_eq!(base, "frozenset");
+        assert_eq!(crate::runtime::builtins::mb_len(payload).as_int(), Some(2));
+        assert_eq!(mb_getattr(inst, s("newarg")).as_int(), Some(7));
     }
 
     #[test]
