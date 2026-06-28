@@ -5223,6 +5223,23 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         }
     }
 
+    // cell.cell_contents for cells exposed through function.__closure__.
+    if attr_name == "cell_contents" {
+        let value = super::closure::mb_cell_get(obj);
+        if !value.is_none() {
+            return value;
+        }
+    }
+
+    // __closure__ on closure handles: expose the captured cells as a tuple.
+    if attr_name == "__closure__" {
+        let cells = super::closure::closure_capture_cells(obj);
+        if !cells.is_empty() {
+            return MbValue::from_ptr(MbObject::new_tuple(cells));
+        }
+        return MbValue::none();
+    }
+
     // __wrapped__ on functions: set by functools.wraps / update_wrapper. Only
     // returns a value when the wrapper actually recorded one.
     if attr_name == "__wrapped__" {
@@ -13111,27 +13128,35 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                         1 => {
                             let f: extern "C" fn(MbValue) -> MbValue =
                                 unsafe { std::mem::transmute(addr) };
-                            return finish_call(func, f(defaults[0]), is_boxed);
+                            return super::closure::with_closure_cells(func, || {
+                                finish_call(func, f(defaults[0]), is_boxed)
+                            });
                         }
                         2 => {
                             let f: extern "C" fn(MbValue, MbValue) -> MbValue =
                                 unsafe { std::mem::transmute(addr) };
-                            return finish_call(func, f(defaults[0], defaults[1]), is_boxed);
+                            return super::closure::with_closure_cells(func, || {
+                                finish_call(func, f(defaults[0], defaults[1]), is_boxed)
+                            });
                         }
                         3 => {
                             let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
                                 unsafe { std::mem::transmute(addr) };
-                            return finish_call(
-                                func,
-                                f(defaults[0], defaults[1], defaults[2]),
-                                is_boxed,
-                            );
+                            return super::closure::with_closure_cells(func, || {
+                                finish_call(
+                                    func,
+                                    f(defaults[0], defaults[1], defaults[2]),
+                                    is_boxed,
+                                )
+                            });
                         }
                         _ => { /* fall through to 0-arg call */ }
                     }
                 }
                 let f: extern "C" fn() -> MbValue = unsafe { std::mem::transmute(addr) };
-                return finish_call(func, f(), is_boxed);
+                return super::closure::with_closure_cells(func, || {
+                    finish_call(func, f(), is_boxed)
+                });
             }
         }
     }
@@ -13410,7 +13435,7 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                     || super::module::is_kwargs_func(addr as u64)
                 {
                     let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(vec![arg]));
-                    return super::builtins::mb_call_spread(fn_val, args_list);
+                    return super::builtins::mb_call_spread(func, args_list);
                 }
                 // Partial-default dispatch: if the closure declares more params
                 // than the call supplies, fill the trailing slots from
@@ -13427,12 +13452,16 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                             2 => {
                                 let f: extern "C" fn(MbValue, MbValue) -> MbValue =
                                     unsafe { std::mem::transmute(addr) };
-                                return finish_call(func, f(arg, fill[0]), is_boxed);
+                                return super::closure::with_closure_cells(func, || {
+                                    finish_call(func, f(arg, fill[0]), is_boxed)
+                                });
                             }
                             3 => {
                                 let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
                                     unsafe { std::mem::transmute(addr) };
-                                return finish_call(func, f(arg, fill[0], fill[1]), is_boxed);
+                                return super::closure::with_closure_cells(func, || {
+                                    finish_call(func, f(arg, fill[0], fill[1]), is_boxed)
+                                });
                             }
                             4 => {
                                 let f: extern "C" fn(
@@ -13441,11 +13470,13 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                                     MbValue,
                                     MbValue,
                                 ) -> MbValue = unsafe { std::mem::transmute(addr) };
-                                return finish_call(
-                                    func,
-                                    f(arg, fill[0], fill[1], fill[2]),
-                                    is_boxed,
-                                );
+                                return super::closure::with_closure_cells(func, || {
+                                    finish_call(
+                                        func,
+                                        f(arg, fill[0], fill[1], fill[2]),
+                                        is_boxed,
+                                    )
+                                });
                             }
                             _ => { /* arity > 4: fall through to plain 1-arg dispatch */ }
                         }
@@ -13453,7 +13484,9 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                 }
                 // REQ: JIT-compiled functions use SystemV/C calling convention.
                 let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
-                return finish_call(func, f(arg), is_boxed);
+                return super::closure::with_closure_cells(func, || {
+                    finish_call(func, f(arg), is_boxed)
+                });
             }
         }
     }
