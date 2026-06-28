@@ -9200,15 +9200,54 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
-                    // exec(code, globals) needs the namespace dict at runtime.
+                    // eval(expr, globals[, locals]) needs namespace dicts at
+                    // runtime. The historical mb_eval intrinsic is single-arg,
+                    // so route wider forms through dedicated runtime entries.
+                    if extern_name == "mb_eval" {
+                        let expr_arg = boxed_args
+                            .first()
+                            .copied()
+                            .unwrap_or_else(|| self.emit_none());
+                        if boxed_args.len() >= 3 {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_eval_with_namespaces".to_string(),
+                                args: vec![expr_arg, boxed_args[1], boxed_args[2]],
+                                ty: *ty,
+                            });
+                        } else if boxed_args.len() >= 2 {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_eval_with_globals".to_string(),
+                                args: vec![expr_arg, boxed_args[1]],
+                                ty: *ty,
+                            });
+                        } else {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: extern_name,
+                                args: vec![expr_arg],
+                                ty: *ty,
+                            });
+                        }
+                        return dest;
+                    }
+                    // exec(code, globals[, locals]) needs namespace dicts at runtime.
                     // The historical mb_exec intrinsic is single-arg, so route
-                    // the two-arg form through the dedicated runtime entry.
+                    // wider forms through dedicated runtime entries.
                     if extern_name == "mb_exec" {
                         let code_arg = boxed_args
                             .first()
                             .copied()
                             .unwrap_or_else(|| self.emit_none());
-                        if boxed_args.len() >= 2 {
+                        if boxed_args.len() >= 3 {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_exec_with_globals_locals".to_string(),
+                                args: vec![code_arg, boxed_args[1], boxed_args[2]],
+                                ty: *ty,
+                            });
+                        } else if boxed_args.len() >= 2 {
                             self.current_stmts.push(MirInst::CallExtern {
                                 dest: Some(dest),
                                 name: "mb_exec_with_globals".to_string(),

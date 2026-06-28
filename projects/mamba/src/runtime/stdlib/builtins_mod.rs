@@ -500,12 +500,24 @@ unsafe extern "C" fn dispatch_ascii(args_ptr: *const MbValue, nargs: usize) -> M
 
 unsafe extern "C" fn dispatch_eval(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_eval(args.first().copied().unwrap_or_else(MbValue::none))
+    match args.len() {
+        0 | 1 => super::super::builtins::mb_eval(
+            args.first().copied().unwrap_or_else(MbValue::none),
+        ),
+        2 => super::super::builtins::mb_eval_with_globals(args[0], args[1]),
+        _ => super::super::builtins::mb_eval_with_namespaces(args[0], args[1], args[2]),
+    }
 }
 
 unsafe extern "C" fn dispatch_exec(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_exec(args.first().copied().unwrap_or_else(MbValue::none))
+    match args.len() {
+        0 | 1 => super::super::builtins::mb_exec(
+            args.first().copied().unwrap_or_else(MbValue::none),
+        ),
+        2 => super::super::builtins::mb_exec_with_globals(args[0], args[1]),
+        _ => super::super::builtins::mb_exec_with_globals_locals(args[0], args[1], args[2]),
+    }
 }
 
 unsafe extern "C" fn dispatch_compile(args_ptr: *const MbValue, nargs: usize) -> MbValue {
