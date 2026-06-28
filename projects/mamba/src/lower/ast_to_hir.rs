@@ -4836,7 +4836,7 @@ impl<'a> AstLowerer<'a> {
                         .sym_names
                         .entry(nested_sym)
                         .or_insert_with(|| nested_name.clone());
-                    self.collect_class_stmt(
+                    let nested_placeholder = self.collect_class_stmt(
                         nested_name,
                         nested_body,
                         nested_bases,
@@ -4847,6 +4847,12 @@ impl<'a> AstLowerer<'a> {
                         false,
                         false,
                     );
+                    if let Some(name) = nested_placeholder {
+                        class_body_stmts.push(HirStmt::ClassDefPlaceholder {
+                            name,
+                            span: stmt.span,
+                        });
+                    }
                     push_class_attr!(
                         nested_name.clone(),
                         HirExpr::Var(nested_sym, self.checker.tcx.any())
@@ -10460,6 +10466,48 @@ mod tests {
                 .iter()
                 .any(|(name, value)| name == "Inner" && matches!(value, HirExpr::Var(..)))
         }));
+    }
+
+    #[test]
+    fn test_lower_nested_class_with_attrs_runs_before_outer_attr_binding() {
+        let hir = helper_lower_with_classes(
+            vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "Outer".to_string(),
+                type_params: vec![],
+                bases: vec![],
+                keyword_args: vec![],
+                body: vec![sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Inner".to_string(),
+                    type_params: vec![],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Assign {
+                        target: sp(Expr::Ident("flavor".to_string())),
+                        value: sp(Expr::StrLit("inner".to_string())),
+                    })],
+                })],
+            })],
+            &["Outer"],
+        );
+        let inner_sym = hir
+            .sym_names
+            .iter()
+            .find_map(|(sym, name)| (name == "Inner").then_some(*sym))
+            .expect("Inner symbol should be present");
+        let outer = hir
+            .classes
+            .iter()
+            .find(|class| hir.sym_names.get(&class.name).is_some_and(|name| name == "Outer"))
+            .expect("Outer class should be present");
+        assert!(
+            outer
+                .class_body_stmts
+                .iter()
+                .any(|stmt| matches!(stmt, HirStmt::ClassDefPlaceholder { name, .. } if *name == inner_sym)),
+            "Inner placeholder must run before Outer binds Inner as a class attr"
+        );
     }
 
     #[test]

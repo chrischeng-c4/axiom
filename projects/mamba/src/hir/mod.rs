@@ -146,7 +146,8 @@ pub struct HirClass {
     pub class_attr_locals: Vec<(String, SymbolId)>,
     /// Narrow executable class-body statements that must run at the class
     /// definition point before attributes/decorators. Currently used for
-    /// CPython runtime NameError on unresolved bare-name reads in class bodies.
+    /// CPython runtime NameError on unresolved bare-name reads in class bodies
+    /// and nested class textual materialization before outer class attrs.
     pub class_body_stmts: Vec<HirStmt>,
     /// `__slots__` declaration from class body (R14).
     /// e.g., `__slots__ = ['x', 'y']` → Some(vec!["x", "y"])
