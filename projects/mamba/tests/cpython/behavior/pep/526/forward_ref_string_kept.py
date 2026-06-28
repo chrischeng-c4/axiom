@@ -9,7 +9,7 @@
 # case = "forward_ref_string_kept"
 # subject = "__annotations__"
 # kind = "semantic"
-# xfail = "function __annotations__ returns None on mamba. See project_mamba_pep_silent_divergences_2026_05_27."
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
