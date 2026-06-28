@@ -9,7 +9,7 @@
 # case = "generic_too_many_params_raises"
 # subject = "typing.List"
 # kind = "mechanical"
-# xfail = "mamba does not enforce typing.List parameter arity (project_mamba_class_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -9,7 +9,7 @@
 # case = "generic_stack_lifo_and_size"
 # subject = "typing.Generic"
 # kind = "semantic"
-# xfail = "mamba diverges on the typing Generic runtime machinery (project_mamba_class_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
