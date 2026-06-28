@@ -4814,7 +4814,13 @@ impl<'a> HirToMir<'a> {
                         });
                         vreg
                     };
-                    for dec_expr in decorators.iter().rev() {
+                    let mut evaluated_decorators = Vec::with_capacity(decorators.len());
+                    for dec_expr in decorators.iter() {
+                        let dec_vreg = self.lower_expr(dec_expr);
+                        self.emit_exception_propagate();
+                        evaluated_decorators.push((dec_expr, dec_vreg));
+                    }
+                    for (dec_expr, dec_vreg) in evaluated_decorators.iter().rev() {
                         let result_vreg = self.fresh_vreg();
                         match dec_expr {
                             HirExpr::Var(dec_sym, _)
@@ -4888,11 +4894,10 @@ impl<'a> HirToMir<'a> {
                                 });
                             }
                             _ => {
-                                let dec_vreg = self.lower_expr(dec_expr);
                                 self.current_stmts.push(MirInst::CallExtern {
                                     dest: Some(result_vreg),
                                     name: "mb_call1_val".to_string(),
-                                    args: vec![dec_vreg, func_vreg],
+                                    args: vec![*dec_vreg, func_vreg],
                                     ty: any_ty,
                                 });
                             }
@@ -5003,7 +5008,13 @@ impl<'a> HirToMir<'a> {
                 if let Some((class_name, _cls_sym, decorators)) = decorators {
                     let any_ty = self.tcx.any();
                     let mut cls_vreg = self.emit_str_const(&class_name);
-                    for dec_expr in decorators.iter().rev() {
+                    let mut evaluated_decorators = Vec::with_capacity(decorators.len());
+                    for dec_expr in decorators.iter() {
+                        let dec_vreg = self.lower_expr(dec_expr);
+                        self.emit_exception_propagate();
+                        evaluated_decorators.push((dec_expr, dec_vreg));
+                    }
+                    for (dec_expr, dec_vreg) in evaluated_decorators.iter().rev() {
                         let result_vreg = self.fresh_vreg();
                         match dec_expr {
                             HirExpr::Var(dec_sym, _) if self.user_funcs.contains(&dec_sym.0) => {
@@ -5015,11 +5026,10 @@ impl<'a> HirToMir<'a> {
                                 });
                             }
                             _ => {
-                                let dec_vreg = self.lower_expr(dec_expr);
                                 self.current_stmts.push(MirInst::CallExtern {
                                     dest: Some(result_vreg),
                                     name: "mb_call1_val".to_string(),
-                                    args: vec![dec_vreg, cls_vreg],
+                                    args: vec![*dec_vreg, cls_vreg],
                                     ty: any_ty,
                                 });
                             }
@@ -8620,6 +8630,14 @@ impl<'a> HirToMir<'a> {
                     let recv_ty = object.ty();
                     let receiver = self.box_operand(recv_raw, recv_ty);
                     let method_name = self.emit_str_const(attr);
+                    let method_vreg = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(method_vreg),
+                        name: "mb_getattr".to_string(),
+                        args: vec![receiver, method_name],
+                        ty: self.tcx.any(),
+                    });
+                    self.emit_exception_propagate();
                     let arg_vregs: Vec<VReg> = args
                         .iter()
                         .map(|a| {
@@ -8636,8 +8654,8 @@ impl<'a> HirToMir<'a> {
                     let dest = self.fresh_vreg();
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: Some(dest),
-                        name: "mb_call_method".to_string(),
-                        args: vec![receiver, method_name, args_list],
+                        name: "mb_call_spread".to_string(),
+                        args: vec![method_vreg, args_list],
                         ty: *ty,
                     });
                     // If the method set a pending exception, short-circuit
@@ -8676,6 +8694,14 @@ impl<'a> HirToMir<'a> {
                     return dest;
                 }
                 // Regular function call
+                let indirect_func_vreg = match func.as_ref() {
+                    HirExpr::Var(_, _) => None,
+                    _ => {
+                        let vreg = self.lower_expr(func);
+                        self.emit_exception_propagate();
+                        Some(vreg)
+                    }
+                };
                 let arg_vregs: Vec<VReg> = args.iter().map(|a| self.lower_expr(a)).collect();
                 // If evaluating an argument raised, short-circuit before the
                 // outer call runs — otherwise `print(int("bad"))` would print
@@ -9614,7 +9640,7 @@ impl<'a> HirToMir<'a> {
                     // We cannot use MirInst::Call (requires a statically-known function ID) so
                     // we lower the callee expression to a vreg, box the arguments, and dispatch
                     // through mb_call0 / mb_call1_val / mb_call_spread.
-                    let func_val = self.lower_expr(func);
+                    let func_val = indirect_func_vreg.unwrap_or_else(|| self.lower_expr(func));
                     let boxed_args: Vec<VReg> = args
                         .iter()
                         .zip(arg_vregs.iter())
@@ -10095,6 +10121,22 @@ impl<'a> HirToMir<'a> {
                     })
                     .map(|(sym, vreg)| (*sym, *vreg))
                     .collect();
+                let mut capture_syms: Vec<SymbolId> =
+                    outer_syms.iter().map(|(sym, _)| *sym).collect();
+                let mut seen_capture_syms: std::collections::HashSet<u32> =
+                    capture_syms.iter().map(|sym| sym.0).collect();
+                // Lambdas nested inside closures must also capture cells that
+                // the current function inherited from its own outer scope.
+                let inherited_cell_syms: Vec<SymbolId> = self
+                    .cell_override
+                    .iter()
+                    .copied()
+                    .filter(|sym_id| {
+                        !param_syms.contains(sym_id) && seen_capture_syms.insert(*sym_id)
+                    })
+                    .map(SymbolId)
+                    .collect();
+                capture_syms.extend(inherited_cell_syms);
                 for &(sym, vreg) in &outer_syms {
                     let sym_ty = self.sym_types.get(&sym).copied().unwrap_or(any_ty);
                     let boxed = self.box_operand(vreg, sym_ty);
@@ -10145,7 +10187,7 @@ impl<'a> HirToMir<'a> {
 
                 // Mark outer variables for cell_override so lambda body reads
                 // them via LoadGlobal instead of looking them up in sym_to_vreg.
-                self.cell_override = outer_syms.iter().map(|(sym, _)| sym.0).collect();
+                self.cell_override = capture_syms.iter().map(|sym| sym.0).collect();
 
                 let entry = self.fresh_block();
                 self.current_block_id = Some(entry);
@@ -10205,7 +10247,7 @@ impl<'a> HirToMir<'a> {
                     ty: any_ty,
                 });
                 let closure_vreg = self.fresh_vreg();
-                if outer_syms.is_empty() {
+                if capture_syms.is_empty() {
                     let none_captures = self.emit_none();
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: Some(closure_vreg),
@@ -10214,10 +10256,10 @@ impl<'a> HirToMir<'a> {
                         ty: *ty,
                     });
                 } else {
-                    let id_vregs: Vec<VReg> = outer_syms
-                        .iter()
-                        .map(|(sym, _)| self.emit_boxed_int_const(sym.0 as i64))
-                        .collect();
+                    let mut id_vregs: Vec<VReg> = Vec::with_capacity(capture_syms.len());
+                    for sym in &capture_syms {
+                        id_vregs.push(self.emit_boxed_int_const(sym.0 as i64));
+                    }
                     let ids_vreg = self.fresh_vreg();
                     self.current_stmts.push(MirInst::MakeList {
                         dest: ids_vreg,
