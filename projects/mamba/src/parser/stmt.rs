@@ -309,6 +309,30 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn validate_assign_target(target: &Spanned<Expr>, message: &str) -> crate::error::Result<()> {
+        match &target.node {
+            Expr::Ident(_) | Expr::Attr { .. } | Expr::Index { .. } => Ok(()),
+            Expr::TupleLit(elems) | Expr::ListLit(elems) | Expr::UnpackTarget(elems) => {
+                for elem in elems {
+                    Self::validate_assign_target(elem, message)?;
+                }
+                Ok(())
+            }
+            Expr::Starred(inner) => Self::validate_assign_target(inner, message),
+            _ => Err(MambaError::syntax(target.span, message.to_string())),
+        }
+    }
+
+    fn validate_assign_targets(
+        targets: &[Spanned<Expr>],
+        message: &str,
+    ) -> crate::error::Result<()> {
+        for target in targets {
+            Self::validate_assign_target(target, message)?;
+        }
+        Ok(())
+    }
+
     /// Parse `ident: type = expr` / `ident = expr` / `ident += expr` / expr stmt.
     fn parse_ident_stmt(&mut self) -> crate::error::Result<Spanned<Stmt>> {
         let start = self.peek().unwrap().start;
@@ -396,6 +420,7 @@ impl<'a> Parser<'a> {
                     targets.push(Self::normalize_assign_target(value));
                     value = self.parse_tuple_or_expr()?;
                 }
+                Self::validate_assign_targets(&targets, "cannot assign to expression")?;
                 self.skip_newlines();
                 if targets.len() == 1 {
                     return Ok(Spanned::new(
@@ -439,6 +464,7 @@ impl<'a> Parser<'a> {
 
         // Augmented assignment: `target op= expr`
         if let Some(aug_op) = self.peek_aug_op() {
+            Self::validate_assign_target(&expr, "illegal expression for augmented assignment")?;
             self.advance();
             let value = self.parse_tuple_or_expr()?;
             self.skip_newlines();
@@ -470,6 +496,7 @@ impl<'a> Parser<'a> {
                 .into_iter()
                 .map(Self::normalize_assign_target)
                 .collect();
+            Self::validate_assign_targets(&targets, "cannot assign to expression")?;
             self.skip_newlines();
             let span = self.span_from(start);
             if targets.len() == 1 {
@@ -1226,6 +1253,20 @@ mod tests {
             },
             other => panic!("expected Assign, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_list_comp_assignment_target_rejected_during_parse() {
+        let err = parser::parse("[y for y in (1, 2)] = 10\n", fid())
+            .expect_err("list comprehension cannot be an assignment target");
+        assert!(err.to_string().contains("cannot assign"), "{err}");
+    }
+
+    #[test]
+    fn test_list_comp_augassign_target_rejected_during_parse() {
+        let err = parser::parse("[y for y in (1, 2)] += 10\n", fid())
+            .expect_err("list comprehension cannot be an augassign target");
+        assert!(err.to_string().contains("illegal expression"), "{err}");
     }
 
     #[test]

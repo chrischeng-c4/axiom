@@ -1015,10 +1015,15 @@ pub fn lower_hir_to_mir_with_symbols_src(
         // P2-R3: Store class-level attribute assignments for emission at the
         // class's ClassDefPlaceholder (its textual position in the module).
         for (attr_name, val_expr) in &cls.class_attr_assigns {
+            let attr_local = cls
+                .class_attr_locals
+                .iter()
+                .find_map(|(name, sym)| (name == attr_name).then_some(*sym));
             lowerer.pending_class_attrs.push((
                 class_name.clone(),
                 cls.name,
                 attr_name.clone(),
+                attr_local,
                 val_expr.clone(),
             ));
         }
@@ -1236,11 +1241,11 @@ struct HirToMir<'a> {
     /// e.g. `class Derived[T](*bases): ...`.
     pending_runtime_class_base_lists: Vec<(String, SymbolId, HirExpr)>,
     /// P2-R3: Class-level attribute assignments to emit after class registration.
-    /// (class_name, class_symbol_id, attr_name, value_expr)
+    /// (class_name, class_symbol_id, attr_name, class_body_local_symbol, value_expr)
     /// Emitted at the class's ClassDefPlaceholder position (textual order) so
     /// initializer expressions like `X = enum.auto()` see imports/bindings
     /// established by preceding statements (#1686 motivation).
-    pending_class_attrs: Vec<(String, SymbolId, String, HirExpr)>,
+    pending_class_attrs: Vec<(String, SymbolId, String, Option<SymbolId>, HirExpr)>,
     /// Narrow executable class-body statements emitted at the class placeholder
     /// before attribute assignment/decorators.
     pending_class_body_stmts: Vec<(String, SymbolId, Vec<HirStmt>)>,
@@ -5188,7 +5193,8 @@ impl<'a> HirToMir<'a> {
         let mut i = 0;
         while i < self.pending_class_attrs.len() {
             if cls_sym.map_or(true, |s| self.pending_class_attrs[i].1 == s) {
-                let (class_name, _, attr_name, val_expr) = self.pending_class_attrs.remove(i);
+                let (class_name, _, attr_name, attr_local, val_expr) =
+                    self.pending_class_attrs.remove(i);
                 let cls_vreg = self.emit_str_const(&class_name);
                 let attr_vreg = self.emit_str_const(&attr_name);
                 let val_vreg = self.lower_expr(&val_expr);
@@ -5199,6 +5205,9 @@ impl<'a> HirToMir<'a> {
                     args: vec![cls_vreg, attr_vreg, boxed],
                     ty: self.tcx.none(),
                 });
+                if let Some(sym) = attr_local {
+                    self.sym_to_vreg.insert(sym, val_vreg);
+                }
             } else {
                 i += 1;
             }
@@ -7104,6 +7113,21 @@ impl<'a> HirToMir<'a> {
         });
 
         self.start_block(body_block);
+        if let Some(name) = gen.target_reads_before_bind.first() {
+            let type_vreg = self.emit_str_const("UnboundLocalError");
+            let msg_vreg = self.emit_str_const(&format!(
+                "cannot access local variable '{name}' where it is not associated with a value"
+            ));
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_raise".to_string(),
+                args: vec![type_vreg, msg_vreg],
+                ty: self.tcx.none(),
+            });
+            self.finish_block(Terminator::Goto(exit_block));
+            let dead_block = self.fresh_block();
+            self.start_block(dead_block);
+        }
         // Unpack tuple/sequence targets: `for k, v in pairs` or `for (v,) in pairs`.
         if !gen.unpack_target {
             self.sym_to_vreg.insert(gen_var, next_val);
@@ -11808,6 +11832,7 @@ mod tests {
                         ty: any_ty,
                     },
                 )],
+                class_attr_locals: Vec::new(),
                 class_body_stmts: Vec::new(),
                 slots: None,
                 class_kwargs: Vec::new(),
@@ -12164,6 +12189,7 @@ mod tests {
                         var: c_sym,
                         extra_vars: Vec::new(),
                         unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: HirExpr::Call {
                             func: Box::new(HirExpr::Var(range_sym, tcx.any())),
                             args: vec![HirExpr::IntLit(10, int_ty)],
