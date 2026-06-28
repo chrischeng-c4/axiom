@@ -3674,6 +3674,49 @@ fn mb_exception_setstate(receiver: MbValue, state: MbValue) -> MbValue {
     MbValue::none()
 }
 
+fn mb_exception_add_note(receiver: MbValue, note: MbValue) -> MbValue {
+    if note
+        .as_ptr()
+        .map(|ptr| unsafe { matches!(&(*ptr).data, ObjData::Str(_)) })
+        != Some(true)
+    {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("note must be a str".to_string())),
+        );
+        return MbValue::none();
+    }
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut fields = fields.write().unwrap();
+                if let Some(notes) = fields.get("__notes__").copied() {
+                    if let Some(notes_ptr) = notes.as_ptr() {
+                        if let ObjData::List(ref lock) = (*notes_ptr).data {
+                            super::rc::retain_if_ptr(note);
+                            lock.write().unwrap().push(note);
+                            return MbValue::none();
+                        }
+                    }
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "Cannot add note: __notes__ is not a list".to_string(),
+                        )),
+                    );
+                    return MbValue::none();
+                }
+                super::rc::retain_if_ptr(note);
+                fields.insert(
+                    "__notes__".to_string(),
+                    MbValue::from_ptr(MbObject::new_list(vec![note])),
+                );
+            }
+        }
+    }
+    MbValue::none()
+}
+
 fn break_context_cycle(instance: MbValue, context: MbValue) {
     let target = instance.to_bits();
     let mut cur = context;
@@ -4036,6 +4079,32 @@ fn make_bound_native_method(recv: MbValue, method_name: &str) -> MbValue {
         );
     }
     MbValue::from_ptr(inst)
+}
+
+fn make_generic_alias_instance(origin: MbValue, key: MbValue) -> MbValue {
+    let args_tuple = if let Some(kp) = key.as_ptr() {
+        unsafe {
+            if let ObjData::Tuple(_) = (*kp).data {
+                super::rc::retain_if_ptr(key);
+                key
+            } else {
+                super::rc::retain_if_ptr(key);
+                MbValue::from_ptr(MbObject::new_tuple(vec![key]))
+            }
+        }
+    } else {
+        MbValue::from_ptr(MbObject::new_tuple(vec![key]))
+    };
+    let inst_ptr = MbObject::new_instance("GenericAlias".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+            let mut g = fields.write().unwrap();
+            super::rc::retain_if_ptr(origin);
+            g.insert("__origin__".to_string(), origin);
+            g.insert("__args__".to_string(), args_tuple);
+        }
+    }
+    MbValue::from_ptr(inst_ptr)
 }
 
 pub fn mb_counter_fromkeys_not_implemented() -> MbValue {
@@ -6166,7 +6235,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             .unwrap_or_default();
                         return class_namespace_mappingproxy(&type_name, Some(fields));
                     }
-                    if attr_name == "__setstate__" && is_exception_instance_class(class_name) {
+                    if matches!(attr_name.as_str(), "__setstate__" | "add_note")
+                        && is_exception_instance_class(class_name)
+                    {
                         return make_bound_native_method(obj, &attr_name);
                     }
                     // R13: __dict__ access suppression.
@@ -8324,6 +8395,19 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                         MbValue::from_ptr(MbObject::new_str(format!(
                             "'object' object has no attribute '{attr_name}'"
                         ))),
+                    );
+                    return;
+                }
+                if matches!(attr_name.as_str(), "message" | "exceptions")
+                    && (class_name == "ExceptionGroup"
+                        || class_name == "BaseExceptionGroup"
+                        || class_is_or_inherits(class_name, "BaseExceptionGroup")
+                        || fields.read().unwrap().contains_key("exceptions"))
+                    && fields.read().unwrap().contains_key(&attr_name)
+                {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str("readonly attribute".to_string())),
                     );
                     return;
                 }
@@ -11606,28 +11690,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
         let known =
             super::module::NATIVE_TYPE_NAMES.with(|m| m.borrow().contains_key(&(addr as u64)));
         if known {
-            let args_tuple = if let Some(kp) = key.as_ptr() {
-                unsafe {
-                    if let ObjData::Tuple(_) = (*kp).data {
-                        super::rc::retain_if_ptr(key);
-                        key
-                    } else {
-                        super::rc::retain_if_ptr(key);
-                        MbValue::from_ptr(MbObject::new_tuple(vec![key]))
-                    }
-                }
-            } else {
-                MbValue::from_ptr(MbObject::new_tuple(vec![key]))
-            };
-            let inst_ptr = MbObject::new_instance("GenericAlias".to_string());
-            unsafe {
-                if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
-                    let mut g = fields.write().unwrap();
-                    g.insert("__origin__".to_string(), obj);
-                    g.insert("__args__".to_string(), args_tuple);
-                }
-            }
-            return MbValue::from_ptr(inst_ptr);
+            return make_generic_alias_instance(obj, key);
         }
     }
     // bool is a subclass of int in Python (#1680) — `xs[True]` ≡ `xs[1]`.
@@ -11756,6 +11819,18 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     return super::dict_ops::mb_dict_getitem(obj, key);
                 }
                 super::rc::ObjData::Str(ref s) => {
+                    if matches!(s.as_str(), "ExceptionGroup" | "BaseExceptionGroup") {
+                        return make_generic_alias_instance(obj, key);
+                    }
+                    if super::exception::is_subclass_of(s, "BaseException") {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "type '{s}' is not subscriptable"
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
                     // R11: __class_getitem__ — if obj is a class name, check for subscript support.
                     let is_class = CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(s.as_str()));
                     if is_class {
@@ -11910,8 +11985,20 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                             "typing.Generic" => {
                                 return super::stdlib::typing_mod::generic_subscript(obj, key);
                             }
+                            "ExceptionGroup" | "BaseExceptionGroup" => {
+                                return make_generic_alias_instance(obj, key);
+                            }
                             "int" | "float" | "str" | "bool" | "bytes" | "complex"
                             | "bytearray" | "range" | "NoneType" => {
+                                super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                    MbValue::from_ptr(MbObject::new_str(format!(
+                                        "type '{tn}' is not subscriptable"
+                                    ))),
+                                );
+                                return MbValue::none();
+                            }
+                            _ if super::exception::is_subclass_of(&tn, "BaseException") => {
                                 super::exception::mb_raise(
                                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                                     MbValue::from_ptr(MbObject::new_str(format!(
@@ -16325,6 +16412,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         })
                         .unwrap_or_else(MbValue::none);
                     return mb_exception_setstate(receiver, state);
+                }
+                if name == "add_note" && is_exception_instance_class(class_name) {
+                    let note = args
+                        .as_ptr()
+                        .and_then(|p| {
+                            if let ObjData::List(ref lk) = (*p).data {
+                                lk.read().unwrap().first().copied()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(MbValue::none);
+                    return mb_exception_add_note(receiver, note);
                 }
                 // UserDict / UserList / UserString: delegate method calls to
                 // the backing dict/list/str (full builtin method surface for
