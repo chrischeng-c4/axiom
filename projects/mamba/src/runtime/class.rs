@@ -20,6 +20,7 @@ use std::hash::{Hash, Hasher};
 pub(crate) const INT_SUBCLASS_VALUE_FIELD: &str = "__mamba_int_value__";
 pub(crate) const FLOAT_SUBCLASS_VALUE_FIELD: &str = "__mamba_float_value__";
 pub(crate) const STR_SUBCLASS_VALUE_FIELD: &str = "__mamba_str_value__";
+pub(crate) const COMPLEX_SUBCLASS_VALUE_FIELD: &str = "__mamba_complex_value__";
 pub(crate) const LIST_SUBCLASS_VALUE_FIELD: &str = "__mamba_list_value__";
 pub(crate) const DICT_SUBCLASS_VALUE_FIELD: &str = "__mamba_dict_value__";
 pub(crate) const TUPLE_SUBCLASS_VALUE_FIELD: &str = "__mamba_tuple_value__";
@@ -762,20 +763,30 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
         "int" | "bool" => matches!(
             dunder,
             "__add__"
+                | "__radd__"
                 | "__sub__"
+                | "__rsub__"
                 | "__mul__"
+                | "__rmul__"
                 | "__truediv__"
+                | "__rtruediv__"
                 | "__floordiv__"
+                | "__rfloordiv__"
                 | "__mod__"
+                | "__rmod__"
                 | "__divmod__"
                 | "__pow__"
+                | "__rpow__"
                 | "__neg__"
                 | "__pos__"
                 | "__abs__"
                 | "__invert__"
                 | "__and__"
+                | "__rand__"
                 | "__or__"
+                | "__ror__"
                 | "__xor__"
+                | "__rxor__"
                 | "__lshift__"
                 | "__rshift__"
                 | "__eq__"
@@ -798,13 +809,20 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
         "float" => matches!(
             dunder,
             "__add__"
+                | "__radd__"
                 | "__sub__"
+                | "__rsub__"
                 | "__mul__"
+                | "__rmul__"
                 | "__truediv__"
+                | "__rtruediv__"
                 | "__floordiv__"
+                | "__rfloordiv__"
                 | "__mod__"
+                | "__rmod__"
                 | "__divmod__"
                 | "__pow__"
+                | "__rpow__"
                 | "__neg__"
                 | "__pos__"
                 | "__abs__"
@@ -828,10 +846,15 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
         "complex" => matches!(
             dunder,
             "__add__"
+                | "__radd__"
                 | "__sub__"
+                | "__rsub__"
                 | "__mul__"
+                | "__rmul__"
                 | "__truediv__"
+                | "__rtruediv__"
                 | "__pow__"
+                | "__rpow__"
                 | "__neg__"
                 | "__pos__"
                 | "__abs__"
@@ -3782,6 +3805,7 @@ fn builtin_data_payload_base(class_name: &str) -> Option<&'static str> {
         match ancestor.as_str() {
             "str" => return Some("str"),
             "float" => return Some("float"),
+            "complex" => return Some("complex"),
             "list" => return Some("list"),
             "dict" => return Some("dict"),
             "tuple" => return Some("tuple"),
@@ -3799,6 +3823,7 @@ fn payload_field_for_base(base: &str) -> &'static str {
     match base {
         "str" => STR_SUBCLASS_VALUE_FIELD,
         "float" => FLOAT_SUBCLASS_VALUE_FIELD,
+        "complex" => COMPLEX_SUBCLASS_VALUE_FIELD,
         "list" => LIST_SUBCLASS_VALUE_FIELD,
         "dict" => DICT_SUBCLASS_VALUE_FIELD,
         "tuple" => TUPLE_SUBCLASS_VALUE_FIELD,
@@ -3811,6 +3836,7 @@ pub(crate) fn is_builtin_data_payload_field(name: &str) -> bool {
         name,
         STR_SUBCLASS_VALUE_FIELD
             | FLOAT_SUBCLASS_VALUE_FIELD
+            | COMPLEX_SUBCLASS_VALUE_FIELD
             | LIST_SUBCLASS_VALUE_FIELD
             | DICT_SUBCLASS_VALUE_FIELD
             | TUPLE_SUBCLASS_VALUE_FIELD
@@ -3887,6 +3913,21 @@ fn seed_builtin_data_subclass_value(instance: MbValue, args_list: MbValue, base:
                 return false;
             }
         },
+        "complex" => match args.len() {
+            0 => super::builtins::mb_complex(MbValue::from_int(0), MbValue::none()),
+            1 => super::builtins::mb_complex(args[0], MbValue::none()),
+            2 => super::builtins::mb_complex(args[0], args[1]),
+            _ => {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "complex() takes at most 2 arguments ({} given)",
+                        args.len()
+                    ))),
+                );
+                return false;
+            }
+        },
         "list" => match args.len() {
             0 => MbValue::from_ptr(MbObject::new_list(vec![])),
             1 => super::list_ops::mb_list_from_iterable(args[0]),
@@ -3945,6 +3986,158 @@ fn seed_builtin_data_subclass_value(instance: MbValue, args_list: MbValue, base:
         }
     }
     true
+}
+
+pub(crate) fn builtin_type_new_unbound(type_name: &str, items: &[MbValue]) -> Option<MbValue> {
+    if !matches!(
+        type_name,
+        "str" | "int" | "float" | "complex" | "list" | "dict" | "tuple"
+    ) {
+        return None;
+    }
+    let cls = items.first().copied().unwrap_or_else(MbValue::none);
+    let Some(class_name) = resolve_class_name(cls) else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{type_name}.__new__(X): X is not a type object"
+            ))),
+        );
+        return Some(MbValue::none());
+    };
+    let ctor_args = &items[1..];
+    if class_name == type_name {
+        let result = match type_name {
+            "str" => match ctor_args.len() {
+                0 => MbValue::from_ptr(MbObject::new_str(String::new())),
+                1 => super::builtins::mb_str(ctor_args[0]),
+                2 => super::builtins::mb_str_construct(
+                    ctor_args[0],
+                    ctor_args[1],
+                    MbValue::none(),
+                ),
+                3 => super::builtins::mb_str_construct(ctor_args[0], ctor_args[1], ctor_args[2]),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "str() takes at most 3 arguments ({} given)",
+                            ctor_args.len()
+                        ))),
+                    );
+                    MbValue::none()
+                }
+            },
+            "int" => match ctor_args.len() {
+                0 => MbValue::from_int(0),
+                1 => super::builtins::mb_int(ctor_args[0]),
+                2 => super::builtins::mb_int_base(ctor_args[0], ctor_args[1]),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "int() takes at most 2 arguments ({} given)",
+                            ctor_args.len()
+                        ))),
+                    );
+                    MbValue::none()
+                }
+            },
+            "float" => match ctor_args.len() {
+                0 => MbValue::from_float(0.0),
+                1 => super::builtins::mb_float(ctor_args[0]),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "float expected at most 1 argument, got {}",
+                            ctor_args.len()
+                        ))),
+                    );
+                    MbValue::none()
+                }
+            },
+            "complex" => match ctor_args.len() {
+                0 => super::builtins::mb_complex(MbValue::from_int(0), MbValue::none()),
+                1 => super::builtins::mb_complex(ctor_args[0], MbValue::none()),
+                2 => super::builtins::mb_complex(ctor_args[0], ctor_args[1]),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "complex() takes at most 2 arguments ({} given)",
+                            ctor_args.len()
+                        ))),
+                    );
+                    MbValue::none()
+                }
+            },
+            "list" => match ctor_args.len() {
+                0 => super::list_ops::mb_list_new(),
+                1 => super::list_ops::mb_list_from_iterable(ctor_args[0]),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "list expected at most 1 argument, got {}",
+                            ctor_args.len()
+                        ))),
+                    );
+                    MbValue::none()
+                }
+            },
+            "dict" => match ctor_args.len() {
+                0 => super::dict_ops::mb_dict_new(),
+                1 => super::dict_ops::mb_dict_from_pairs(ctor_args[0]),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "dict expected at most 1 argument, got {}",
+                            ctor_args.len()
+                        ))),
+                    );
+                    MbValue::none()
+                }
+            },
+            "tuple" => match ctor_args.len() {
+                0 => super::tuple_ops::mb_tuple_new(),
+                1 => super::tuple_ops::mb_tuple_from_iterable(ctor_args[0]),
+                _ => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "tuple expected at most 1 argument, got {}",
+                            ctor_args.len()
+                        ))),
+                    );
+                    MbValue::none()
+                }
+            },
+            _ => MbValue::none(),
+        };
+        return Some(result);
+    }
+    if !class_is_or_inherits(&class_name, type_name) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{type_name}.__new__({class_name}): {class_name} is not a subtype of {type_name}"
+            ))),
+        );
+        return Some(MbValue::none());
+    }
+    let instance = MbValue::from_ptr(MbObject::new_instance(class_name));
+    let arg_list = MbValue::from_ptr(MbObject::new_list(ctor_args.to_vec()));
+    let ok = if type_name == "int" {
+        seed_int_subclass_value(instance, arg_list)
+    } else {
+        seed_builtin_data_subclass_value(instance, arg_list, type_name)
+    };
+    if !ok {
+        return Some(MbValue::none());
+    }
+    Some(instance)
 }
 
 /// The `message` field of an exception instance as display text. CPython's
@@ -6257,6 +6450,7 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         | "tuple"
                         | "set"
                         | "frozenset"
+                        | "complex"
                         | "int"
                         | "float"
                         | "bool"
@@ -6333,6 +6527,7 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                     | "tuple"
                                     | "set"
                                     | "frozenset"
+                                    | "complex"
                                     | "int"
                                     | "float"
                                     | "bool"
@@ -8090,6 +8285,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "cr_origin",
         ],
         "list" => vec![
+            "__new__",
             "append",
             "extend",
             "insert",
@@ -8109,6 +8305,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__delitem__",
         ],
         "dict" => vec![
+            "__new__",
             "keys",
             "values",
             "items",
@@ -8128,6 +8325,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__delitem__",
         ],
         "str" => vec![
+            "__new__",
             "upper",
             "lower",
             "title",
@@ -8217,16 +8415,28 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__contains__",
         ],
         "complex" => vec![
+            "__new__",
             "conjugate",
             "real",
             "imag",
             "__getnewargs__",
             "__complex__",
             "__add__",
+            "__radd__",
             "__sub__",
+            "__rsub__",
             "__mul__",
+            "__rmul__",
             "__truediv__",
+            "__rtruediv__",
             "__pow__",
+            "__rpow__",
+            "__and__",
+            "__rand__",
+            "__or__",
+            "__ror__",
+            "__xor__",
+            "__rxor__",
             "__neg__",
             "__abs__",
             "__eq__",
@@ -8239,6 +8449,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__ge__", "__hash__", "__repr__",
         ],
         "tuple" => vec![
+            "__new__",
             "count",
             "index",
             "__iter__",
@@ -8247,6 +8458,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__getitem__",
         ],
         "int" => vec![
+            "__new__",
             "bit_length",
             "bit_count",
             "to_bytes",
@@ -8257,12 +8469,19 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__int__",
             "__index__",
             "__add__",
+            "__radd__",
             "__sub__",
+            "__rsub__",
             "__mul__",
+            "__rmul__",
             "__truediv__",
+            "__rtruediv__",
             "__floordiv__",
+            "__rfloordiv__",
             "__mod__",
+            "__rmod__",
             "__pow__",
+            "__rpow__",
             "__neg__",
             "__abs__",
             "__eq__",
@@ -8275,18 +8494,26 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__str__",
         ],
         "float" => vec![
+            "__new__",
             "hex",
             "fromhex",
             "is_integer",
             "as_integer_ratio",
             "conjugate",
             "__add__",
+            "__radd__",
             "__sub__",
+            "__rsub__",
             "__mul__",
+            "__rmul__",
             "__truediv__",
+            "__rtruediv__",
             "__floordiv__",
+            "__rfloordiv__",
             "__mod__",
+            "__rmod__",
             "__pow__",
+            "__rpow__",
             "__neg__",
             "__abs__",
             "__eq__",
@@ -10450,6 +10677,21 @@ pub fn mb_dispatch_binop(op_code: i64, lhs: MbValue, rhs: MbValue) -> MbValue {
     let dunder = format!("__{op_name}__");
     let rdunder = format!("__r{op_name}__");
 
+    let rhs_reflected_first = instance_class_name(lhs).zip(instance_class_name(rhs)).is_some_and(
+        |(lhs_class, rhs_class)| {
+            lhs_class != rhs_class && class_is_or_inherits(&rhs_class, &lhs_class)
+        },
+    );
+    if rhs_reflected_first {
+        if let Some(method) = try_get_dunder(rhs, &rdunder) {
+            if let Some(result) = invoke_binop_method(method, rhs, lhs) {
+                if !result.is_not_implemented() {
+                    return result;
+                }
+            }
+        }
+    }
+
     // Try lhs.__op__(rhs) first — invoke and use result unless NotImplemented.
     // Method values may be TAG_FUNC (direct address from JIT) or heap-backed
     // (registered in CALLABLE_REGISTRY). Try both paths, matching mb_property_get.
@@ -10461,10 +10703,12 @@ pub fn mb_dispatch_binop(op_code: i64, lhs: MbValue, rhs: MbValue) -> MbValue {
         }
     }
     // Try rhs.__rop__(lhs) as fallback.
-    if let Some(method) = try_get_dunder(rhs, &rdunder) {
-        if let Some(result) = invoke_binop_method(method, rhs, lhs) {
-            if !result.is_not_implemented() {
-                return result;
+    if !rhs_reflected_first {
+        if let Some(method) = try_get_dunder(rhs, &rdunder) {
+            if let Some(result) = invoke_binop_method(method, rhs, lhs) {
+                if !result.is_not_implemented() {
+                    return result;
+                }
             }
         }
     }
@@ -12099,6 +12343,9 @@ fn super_builtin_native_method(
             .any(|method| *method == method_name)
         {
             continue;
+        }
+        if method_name == "__new__" {
+            return Some(make_unbound_method(&mro_class, method_name));
         }
         let receiver = match builtin_data_payload(super_self) {
             Some((base, payload)) if base == mro_class.as_str() => payload,
@@ -16134,6 +16381,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     return result;
                 }
             }
+            if name == "__new__" {
+                let items = super::builtins::extract_items(args);
+                if let Some(result) = builtin_type_new_unbound(s, &items) {
+                    return result;
+                }
+            }
             // <type>.__new__(cls) — allocate a BARE instance of `cls` without
             // running __init__ (CPython's object.__new__). The type wall builds a
             // receiver for instance-method checks via `obj = object.__new__(C)`.
@@ -17095,8 +17348,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // Arithmetic dunders — let `(5).__add__(3)` / `int.__mul__(a, b)`
             // work as method calls. Fall back to builtins::mb_* so the same
             // logic drives both operator form and method form.
-            "__add__" | "__sub__" | "__mul__" | "__floordiv__" | "__mod__" | "__pow__"
-            | "__and__" | "__or__" | "__xor__" | "__truediv__" => {
+            "__add__" | "__radd__" | "__sub__" | "__rsub__" | "__mul__" | "__rmul__"
+            | "__floordiv__" | "__rfloordiv__" | "__mod__" | "__rmod__" | "__pow__"
+            | "__rpow__" | "__and__" | "__rand__" | "__or__" | "__ror__" | "__xor__"
+            | "__rxor__" | "__truediv__" | "__rtruediv__" => {
                 let arg = args
                     .as_ptr()
                     .and_then(|p| unsafe {
@@ -17110,15 +17365,25 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 let receiver_boxed = MbValue::from_int(val);
                 return match name.as_str() {
                     "__add__" => super::builtins::mb_add(receiver_boxed, arg),
+                    "__radd__" => super::builtins::mb_add(arg, receiver_boxed),
                     "__sub__" => super::builtins::mb_sub(receiver_boxed, arg),
+                    "__rsub__" => super::builtins::mb_sub(arg, receiver_boxed),
                     "__mul__" => super::builtins::mb_mul(receiver_boxed, arg),
+                    "__rmul__" => super::builtins::mb_mul(arg, receiver_boxed),
                     "__floordiv__" => super::builtins::mb_floordiv(receiver_boxed, arg),
+                    "__rfloordiv__" => super::builtins::mb_floordiv(arg, receiver_boxed),
                     "__mod__" => super::builtins::mb_mod(receiver_boxed, arg),
+                    "__rmod__" => super::builtins::mb_mod(arg, receiver_boxed),
                     "__pow__" => super::builtins::mb_pow(receiver_boxed, arg),
+                    "__rpow__" => super::builtins::mb_pow(arg, receiver_boxed),
                     "__and__" => super::builtins::mb_bitand(receiver_boxed, arg),
+                    "__rand__" => super::builtins::mb_bitand(arg, receiver_boxed),
                     "__or__" => super::builtins::mb_bitor(receiver_boxed, arg),
+                    "__ror__" => super::builtins::mb_bitor(arg, receiver_boxed),
                     "__xor__" => super::builtins::mb_bitxor(receiver_boxed, arg),
+                    "__rxor__" => super::builtins::mb_bitxor(arg, receiver_boxed),
                     "__truediv__" => super::builtins::mb_div(receiver_boxed, arg),
+                    "__rtruediv__" => super::builtins::mb_div(arg, receiver_boxed),
                     _ => unreachable!(),
                 };
             }
@@ -17324,8 +17589,9 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             "__int__" => return MbValue::from_int(f as i64),
             "__float__" => return MbValue::from_float(f),
             "__bool__" => return MbValue::from_bool(f != 0.0),
-            "__add__" | "__sub__" | "__mul__" | "__truediv__" | "__floordiv__" | "__mod__"
-            | "__pow__" => {
+            "__add__" | "__radd__" | "__sub__" | "__rsub__" | "__mul__" | "__rmul__"
+            | "__truediv__" | "__rtruediv__" | "__floordiv__" | "__rfloordiv__"
+            | "__mod__" | "__rmod__" | "__pow__" | "__rpow__" => {
                 let arg = args
                     .as_ptr()
                     .and_then(|p| unsafe {
@@ -17339,12 +17605,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 let receiver_boxed = MbValue::from_float(f);
                 return match name.as_str() {
                     "__add__" => super::builtins::mb_add(receiver_boxed, arg),
+                    "__radd__" => super::builtins::mb_add(arg, receiver_boxed),
                     "__sub__" => super::builtins::mb_sub(receiver_boxed, arg),
+                    "__rsub__" => super::builtins::mb_sub(arg, receiver_boxed),
                     "__mul__" => super::builtins::mb_mul(receiver_boxed, arg),
+                    "__rmul__" => super::builtins::mb_mul(arg, receiver_boxed),
                     "__truediv__" => super::builtins::mb_div(receiver_boxed, arg),
+                    "__rtruediv__" => super::builtins::mb_div(arg, receiver_boxed),
                     "__floordiv__" => super::builtins::mb_floordiv(receiver_boxed, arg),
+                    "__rfloordiv__" => super::builtins::mb_floordiv(arg, receiver_boxed),
                     "__mod__" => super::builtins::mb_mod(receiver_boxed, arg),
+                    "__rmod__" => super::builtins::mb_mod(arg, receiver_boxed),
                     "__pow__" => super::builtins::mb_pow(receiver_boxed, arg),
+                    "__rpow__" => super::builtins::mb_pow(arg, receiver_boxed),
                     _ => unreachable!(),
                 };
             }
@@ -18731,6 +19004,34 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 MbValue::from_float(*re),
                                 MbValue::from_float(*im),
                             ]));
+                        }
+                        "__add__" | "__radd__" | "__sub__" | "__rsub__" | "__mul__"
+                        | "__rmul__" | "__truediv__" | "__rtruediv__" | "__pow__"
+                        | "__rpow__" => {
+                            let arg = args
+                                .as_ptr()
+                                .and_then(|p| {
+                                    if let ObjData::List(ref lk) = (*p).data {
+                                        lk.read().unwrap().first().copied()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_else(MbValue::none);
+                            let receiver_boxed = MbValue::from_ptr(MbObject::new_complex(*re, *im));
+                            return match name.as_str() {
+                                "__add__" => super::builtins::mb_add(receiver_boxed, arg),
+                                "__radd__" => super::builtins::mb_add(arg, receiver_boxed),
+                                "__sub__" => super::builtins::mb_sub(receiver_boxed, arg),
+                                "__rsub__" => super::builtins::mb_sub(arg, receiver_boxed),
+                                "__mul__" => super::builtins::mb_mul(receiver_boxed, arg),
+                                "__rmul__" => super::builtins::mb_mul(arg, receiver_boxed),
+                                "__truediv__" => super::builtins::mb_div(receiver_boxed, arg),
+                                "__rtruediv__" => super::builtins::mb_div(arg, receiver_boxed),
+                                "__pow__" => super::builtins::mb_pow(receiver_boxed, arg),
+                                "__rpow__" => super::builtins::mb_pow(arg, receiver_boxed),
+                                _ => unreachable!(),
+                            };
                         }
                         _ => {}
                     }
