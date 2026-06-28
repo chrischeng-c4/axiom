@@ -618,6 +618,12 @@ pub fn mb_str_slice_full(s: MbValue, start: MbValue, stop: MbValue, step: MbValu
             let len = chars.len() as i64;
             let step_val = step.as_int().unwrap_or(1);
             if step_val == 0 {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "slice step cannot be zero".to_string(),
+                    )),
+                );
                 return new_str(String::new());
             }
             let (s_idx, e_idx) = if step_val > 0 {
@@ -6992,9 +6998,10 @@ mod tests {
         }
     }
 
-    /// S9: step=0 returns empty string
+    /// S9: step=0 raises ValueError
     #[test]
-    fn test_str_slice_step_zero_returns_empty() {
+    fn test_str_slice_step_zero_raises_value_error() {
+        crate::runtime::exception::mb_clear_exception();
         let result = mb_str_slice_full(
             s("abcdef"),
             MbValue::none(),
@@ -7004,6 +7011,11 @@ mod tests {
         unsafe {
             assert_eq!(as_str(result), Some(""));
         }
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("ValueError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     /// S10: Reverse with explicit start=0, absent stop → 'abcdef'[0::-1] → 'a'

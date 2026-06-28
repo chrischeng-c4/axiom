@@ -16321,6 +16321,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             {
                 if class_name == "slice" && name == "indices" {
                     let arg_items = super::builtins::extract_items(args);
+                    if arg_items.len() != 1 {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "slice.indices() takes exactly one argument ({} given)",
+                                arg_items.len()
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
                     // length accepts any SupportsIndex (int / bool / object with
                     // __index__), matching CPython's PySlice_GetIndices. A
                     // non-integer arg (e.g. `slice(0,5).indices("x")`) raises
@@ -16339,7 +16349,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 return MbValue::none();
                             }
                         },
-                        None => 0,
+                        None => unreachable!("slice.indices arity checked above"),
                     };
                     let (start_v, stop_v, step_v) = {
                         let f = fields.read().unwrap();
@@ -16349,12 +16359,45 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             f.get("step").copied().unwrap_or(MbValue::none()),
                         )
                     };
-                    let step = if step_v.is_none() {
-                        1
-                    } else {
-                        step_v.as_int().unwrap_or(1)
+                    if length < 0 {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "length should not be negative".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
+                    }
+                    let slice_index = |v: MbValue| -> Result<Option<i64>, ()> {
+                        if v.is_none() {
+                            Ok(None)
+                        } else if let Some(i) = super::builtins::resolve_index_value(v) {
+                            Ok(Some(i))
+                        } else {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "slice indices must be integers or None or have an __index__ method"
+                                        .to_string(),
+                                )),
+                            );
+                            Err(())
+                        }
                     };
-                    let step = if step == 0 { 1 } else { step };
+                    let step = match slice_index(step_v) {
+                        Ok(Some(step)) => step,
+                        Ok(None) => 1,
+                        Err(()) => return MbValue::none(),
+                    };
+                    if step == 0 {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "slice step cannot be zero".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
+                    }
                     let (default_start, default_stop) = if step > 0 {
                         (0i64, length)
                     } else {
@@ -16384,12 +16427,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     let start = if start_v.is_none() {
                         default_start
                     } else {
-                        clamp(start_v.as_int().unwrap_or(default_start))
+                        match slice_index(start_v) {
+                            Ok(Some(start)) => clamp(start),
+                            Ok(None) => default_start,
+                            Err(()) => return MbValue::none(),
+                        }
                     };
                     let stop = if stop_v.is_none() {
                         default_stop
                     } else {
-                        clamp(stop_v.as_int().unwrap_or(default_stop))
+                        match slice_index(stop_v) {
+                            Ok(Some(stop)) => clamp(stop),
+                            Ok(None) => default_stop,
+                            Err(()) => return MbValue::none(),
+                        }
                     };
                     return MbValue::from_ptr(super::rc::MbObject::new_tuple(vec![
                         MbValue::from_int(start),
