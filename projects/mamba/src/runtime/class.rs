@@ -1058,6 +1058,12 @@ pub fn class_is_registered(name: &str) -> bool {
     CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(name))
 }
 
+/// Returns true iff `name` is a user-defined class registered by compiled
+/// Python code, not a native/builtin runtime class.
+pub(crate) fn class_is_user_defined(name: &str) -> bool {
+    USER_CLASSES.with(|classes| classes.borrow().contains(name))
+}
+
 pub(crate) fn class_metaclass_name(name: &str) -> Option<String> {
     CLASS_REGISTRY.with(|reg| reg.borrow().get(name).and_then(|cls| cls.metaclass.clone()))
 }
@@ -13078,17 +13084,13 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                         return super::builtins::mb_call_spread(func, args_list);
                     }
                 }
-                // weakref.ref(obj)() — zero-arg invocation of the strong-ref
-                // carve-out. mb_call_spread also has this case (builtins.rs
+                // weakref.ref(obj)() — zero-arg invocation of the weakref
+                // target. mb_call_spread also has this case (builtins.rs
                 // ~3900), but the no-arg call path lands in mb_call0 first and
                 // would otherwise fall through to MbValue::none() because
                 // ReferenceType has no registered __call__ method.
                 if class_name == "ReferenceType" {
-                    let f = fields.read().unwrap();
-                    let target = f.get("_target").copied().unwrap_or_else(MbValue::none);
-                    drop(f);
-                    super::rc::retain_if_ptr(target);
-                    return target;
+                    return super::stdlib::weakref_mod::reference_target(func);
                 }
                 // Generic user-class instance callable — dispatch __call__.
                 // Needed for `iter(c, sentinel)` where c defines __call__, and
