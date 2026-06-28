@@ -63,6 +63,14 @@ unsafe extern "C" fn d_socket_type_stub(_a: *const MbValue, _n: usize) -> MbValu
     MbValue::none()
 }
 
+unsafe extern "C" fn d_address_family(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    socket_enum_class_call("AddressFamily", args_ptr, nargs)
+}
+
+unsafe extern "C" fn d_socket_kind(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    socket_enum_class_call("SocketKind", args_ptr, nargs)
+}
+
 const ADDRESS_FAMILY_MEMBERS: &[(&str, i64)] = &[
     ("AF_UNSPEC", 0),
     ("AF_UNIX", 1),
@@ -96,6 +104,19 @@ pub fn register() {
     let kinds = super::enum_class::register_int_enum("SocketKind", SOCKET_KIND_MEMBERS);
     for ((name, _), member) in SOCKET_KIND_MEMBERS.iter().zip(kinds) {
         attrs.insert((*name).to_string(), member);
+    }
+
+    for (name, addr) in [
+        ("AddressFamily", d_address_family as *const () as usize),
+        ("SocketKind", d_socket_kind as *const () as usize),
+    ] {
+        attrs.insert(name.to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(addr as u64, name.to_string());
+        });
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
     }
 
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -363,10 +384,8 @@ pub fn register() {
     // `callable`, and `type(...)` surface checks pass.
     let type_addr = d_socket_type_stub as *const () as usize;
     let type_names: &[&str] = &[
-        "AddressFamily",
         "AddressInfo",
         "MsgFlag",
-        "SocketKind",
         "SocketType",
         "SocketIO",
         "IntEnum",
@@ -492,6 +511,12 @@ fn socket_enum_member(class_name: &str, members: &[(&str, i64)], value: i64) -> 
     }
     let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(value)]));
     super::enum_class::enum_class_call(class_name, args).unwrap_or_else(|| MbValue::from_int(value))
+}
+
+fn socket_enum_class_call(class_name: &str, args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs).to_vec() };
+    let args_list = MbValue::from_ptr(MbObject::new_list(args));
+    super::enum_class::enum_class_call(class_name, args_list).unwrap_or_else(MbValue::none)
 }
 
 fn socket_family_member(value: i64) -> MbValue {

@@ -831,6 +831,17 @@ impl Encoder {
             return Err(());
         }
 
+        if super::enum_class::is_enum_member(val) {
+            if let Some(raw) = super::enum_class::int_member_value(val) {
+                self.out.push(OP_INST_REDUCE);
+                self.emit_unicode(class_name);
+                self.out.push(MARK);
+                self.encode(raw)?;
+                self.out.push(OP_BUILD);
+                return Ok(());
+            }
+        }
+
         // __reduce__ path.
         let has_reduce = !super::super::class::lookup_method(class_name, "__reduce__").is_none();
         if has_reduce {
