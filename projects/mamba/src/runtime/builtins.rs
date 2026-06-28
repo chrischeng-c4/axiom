@@ -1717,6 +1717,12 @@ pub fn mb_float(val: MbValue) -> MbValue {
 
 /// bool(value) — truthiness check.
 pub fn mb_bool(val: MbValue) -> MbValue {
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(val) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_bool(target);
+    }
     if is_decimal_handle_value(val) {
         return super::stdlib::decimal_mod::mb_decimal_bool(val);
     }
@@ -10118,6 +10124,12 @@ pub fn mb_ne(a: MbValue, b: MbValue) -> MbValue {
 /// Python truthiness for any MbValue — returns 1 (true) or 0 (false) as raw i64.
 /// Used by guards in match/case and other conditions where the value may be a heap object.
 pub fn mb_is_truthy(val: MbValue) -> i64 {
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(val) {
+        if target.is_none() {
+            return 0;
+        }
+        return mb_is_truthy(target);
+    }
     if val.is_none() {
         return 0;
     }
