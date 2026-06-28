@@ -1319,6 +1319,9 @@ pub(crate) fn value_type_name(val: MbValue) -> String {
                 ObjData::List(_) => "list",
                 ObjData::Dict(_) => "dict",
                 ObjData::Tuple(_) => "tuple",
+                ObjData::Instance { class_name, .. } if class_name == "__instance_dict_proxy__" => {
+                    "dict"
+                }
                 ObjData::Set(_) => "set",
                 ObjData::FrozenSet(_) => "frozenset",
                 ObjData::Bytes(_) => "bytes",
@@ -2437,6 +2440,9 @@ pub fn mb_type(val: MbValue) -> MbValue {
                 ObjData::List(_) => "list",
                 ObjData::Dict(_) => "dict",
                 ObjData::Tuple(_) => "tuple",
+                ObjData::Instance { class_name, .. } if class_name == "__instance_dict_proxy__" => {
+                    return make_type_object("dict");
+                }
                 ObjData::Instance { class_name, fields } if class_name == "type" => {
                     if let Some(type_name) = fields.read().ok().and_then(|f| {
                         f.get("__name__").and_then(|v| {
