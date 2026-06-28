@@ -190,6 +190,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_str_construct",
+            builtins::mb_str_construct
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_abs",
             builtins::mb_abs as fn(super::MbValue) -> super::MbValue,
             [I64],
