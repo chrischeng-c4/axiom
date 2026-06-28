@@ -5,6 +5,83 @@ use super::value::MbValue;
 /// Implements Python-compatible list methods. All mutable collection access
 /// goes through RwLock guards for thread-safety.
 use smallvec::smallvec;
+use std::cell::{Cell, RefCell};
+
+#[derive(Clone, Copy)]
+struct SortMutationWatch {
+    guard_id: usize,
+    list_id: usize,
+    mutated: bool,
+}
+
+thread_local! {
+    static SORT_MUTATION_WATCHES: RefCell<Vec<SortMutationWatch>> = RefCell::new(Vec::new());
+    static NEXT_SORT_MUTATION_GUARD_ID: Cell<usize> = const { Cell::new(1) };
+}
+
+struct ActiveSortMutationWatch {
+    guard_id: usize,
+}
+
+impl ActiveSortMutationWatch {
+    fn new(list: MbValue) -> Option<Self> {
+        let list_id = list.as_ptr()? as usize;
+        let guard_id = NEXT_SORT_MUTATION_GUARD_ID.with(|next| {
+            let current = next.get();
+            next.set(current.wrapping_add(1).max(1));
+            current
+        });
+        SORT_MUTATION_WATCHES.with(|watches| {
+            watches.borrow_mut().push(SortMutationWatch {
+                guard_id,
+                list_id,
+                mutated: false,
+            });
+        });
+        Some(Self { guard_id })
+    }
+
+    fn mutated(&self) -> bool {
+        SORT_MUTATION_WATCHES.with(|watches| {
+            watches
+                .borrow()
+                .iter()
+                .find(|watch| watch.guard_id == self.guard_id)
+                .is_some_and(|watch| watch.mutated)
+        })
+    }
+}
+
+impl Drop for ActiveSortMutationWatch {
+    fn drop(&mut self) {
+        SORT_MUTATION_WATCHES.with(|watches| {
+            let mut watches = watches.borrow_mut();
+            if let Some(pos) = watches
+                .iter()
+                .position(|watch| watch.guard_id == self.guard_id)
+            {
+                watches.remove(pos);
+            }
+        });
+    }
+}
+
+fn mark_list_mutated(list: MbValue) {
+    let Some(list_id) = list.as_ptr().map(|ptr| ptr as usize) else {
+        return;
+    };
+    SORT_MUTATION_WATCHES.with(|watches| {
+        for watch in watches.borrow_mut().iter_mut() {
+            if watch.list_id == list_id {
+                watch.mutated = true;
+            }
+        }
+    });
+}
+
+fn raise_list_modified_during_sort() {
+    super::builtins::raise_value_error("list modified during sort".to_string());
+}
 
 fn normalize_index(idx: i64, len: i64) -> i64 {
     let i = if idx < 0 { idx + len } else { idx };
@@ -688,6 +765,7 @@ pub fn mb_list_setitem(list: MbValue, index: MbValue, value: MbValue) {
                             super::rc::retain_if_ptr(value);
                             items[actual as usize] = value;
                             super::rc::release_if_ptr(old);
+                            mark_list_mutated(list);
                         } else {
                             // CPython: out-of-range store raises IndexError.
                             raise_index_error("list assignment index out of range");
@@ -888,6 +966,7 @@ pub fn mb_list_setslice(
                 // drain + insert_from_slice instead.
                 items.drain(s..e);
                 items.insert_from_slice(s, &new_elems);
+                mark_list_mutated(list);
             }
         }
     }
@@ -957,6 +1036,7 @@ pub fn mb_list_delitem(list: MbValue, index: MbValue) {
                                     super::rc::release_if_ptr(removed);
                                 }
                             }
+                            mark_list_mutated(list);
                             return;
                         }
                     }
@@ -967,6 +1047,7 @@ pub fn mb_list_delitem(list: MbValue, index: MbValue) {
                     let actual = if idx < 0 { idx + len } else { idx };
                     if actual >= 0 && actual < len {
                         items.remove(actual as usize);
+                        mark_list_mutated(list);
                     }
                 }
             }
@@ -1079,6 +1160,7 @@ pub fn mb_list_append(list: MbValue, item: MbValue) {
                     Ok(mut items) => items.push(item),
                     Err(_) => lock.write().unwrap().push(item),
                 }
+                mark_list_mutated(list);
             }
         }
     }
@@ -1102,6 +1184,7 @@ pub fn mb_list_append_unchecked(list: MbValue, item: MbValue) {
                 // Single-threaded JIT context: try_write always succeeds, use
                 // unwrap_unchecked to skip the Result branch.
                 lock.try_write().unwrap_unchecked().push(item);
+                mark_list_mutated(list);
             }
         }
     }
@@ -1117,6 +1200,7 @@ pub fn mb_list_insert(list: MbValue, index: MbValue, item: MbValue) {
                     let len = items.len() as i64;
                     let actual = normalize_index(idx, len) as usize;
                     items.insert(actual, item);
+                    mark_list_mutated(list);
                 }
             }
         }
@@ -1137,7 +1221,9 @@ pub fn mb_list_pop(list: MbValue) -> MbValue {
                     );
                     return MbValue::none();
                 }
-                return items.pop().unwrap();
+                let popped = items.pop().unwrap();
+                mark_list_mutated(list);
+                return popped;
             }
         }
     }
@@ -1155,7 +1241,9 @@ pub fn mb_list_pop_at(list: MbValue, index: MbValue) -> MbValue {
                         let len = items.len() as i64;
                         let actual = if idx < 0 { idx + len } else { idx };
                         if actual >= 0 && actual < len {
-                            return items.remove(actual as usize);
+                            let removed = items.remove(actual as usize);
+                            mark_list_mutated(list);
+                            return removed;
                         }
                     }
                     // Out-of-range index → IndexError (CPython: "pop index out
@@ -1194,6 +1282,7 @@ pub fn mb_list_remove(list: MbValue, value: MbValue) {
                     // the found slot still holds the same element.
                     if pos < items.len() && items[pos] == snapshot[pos] {
                         items.remove(pos);
+                        mark_list_mutated(list);
                     }
                     return;
                 }
@@ -1245,6 +1334,7 @@ pub fn mb_list_extend(list: MbValue, other: MbValue) {
                     super::rc::retain_if_ptr(*elem);
                 }
                 lock.write().unwrap().extend(cloned);
+                mark_list_mutated(list);
             }
         }
     }
@@ -1256,6 +1346,7 @@ pub fn mb_list_clear(list: MbValue) {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
                 lock.write().unwrap().clear();
+                mark_list_mutated(list);
             }
         }
     }
@@ -1267,6 +1358,7 @@ pub fn mb_list_reverse(list: MbValue) {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
                 lock.write().unwrap().reverse();
+                mark_list_mutated(list);
             }
         }
     }
@@ -1352,6 +1444,7 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                     // (and even this list) arbitrarily.
                     let snapshot: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
                     let mut indexed: Vec<(MbValue, MbValue)> = Vec::with_capacity(snapshot.len());
+                    let mutation_watch = ActiveSortMutationWatch::new(list);
                     for item in snapshot {
                         let k = if let Some(ref name) = named_key {
                             call_named_callable_pub(name, item).unwrap_or(item)
@@ -1367,11 +1460,28 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                         if super::exception::mb_has_exception().as_bool() == Some(true) {
                             return;
                         }
+                        if mutation_watch
+                            .as_ref()
+                            .is_some_and(|watch| watch.mutated())
+                        {
+                            raise_list_modified_during_sort();
+                            return;
+                        }
                         indexed.push((item, k));
                     }
                     indexed.sort_by(|a, b| {
                         stable_order_for_reverse(mb_value_cmp_pub(a.1, b.1), do_reverse)
                     });
+                    if mutation_watch
+                        .as_ref()
+                        .is_some_and(|watch| watch.mutated())
+                    {
+                        raise_list_modified_during_sort();
+                        return;
+                    }
+                    if super::exception::mb_has_exception().as_bool() == Some(true) {
+                        return;
+                    }
                     let mut items = lock.write().unwrap();
                     *items = indexed.into_iter().map(|(v, _)| v).collect();
                 } else {
@@ -2617,6 +2727,19 @@ mod tests {
                 panic!("expected list");
             }
         }
+    }
+
+    #[test]
+    fn test_sort_mutation_watch_tracks_net_unchanged_mutation() {
+        let list = mb_list_from(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+        ]);
+        let mutation_watch = ActiveSortMutationWatch::new(list).expect("list mutation watch");
+        mb_list_append(list, MbValue::from_int(0));
+        assert_eq!(mb_list_pop(list).as_int(), Some(0));
+        assert!(mutation_watch.mutated());
     }
 
     // ── copy ──
