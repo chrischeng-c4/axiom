@@ -10298,9 +10298,10 @@ impl<'a> HirToMir<'a> {
                     || target.0 < 1_000_000
                     || self.cell_override.contains(&target.0)
                 {
+                    let boxed = self.box_operand(val_vreg, value.ty());
                     self.current_stmts.push(MirInst::StoreGlobal {
                         name: *target,
-                        value: val_vreg,
+                        value: boxed,
                     });
                 }
                 val_vreg
@@ -11621,6 +11622,44 @@ mod tests {
         assert!(all_stmts
             .iter()
             .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == target)));
+    }
+
+    #[test]
+    fn test_module_scope_walrus_stores_boxed_int() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let target = SymbolId(99);
+        let hir = make_top_level_hir(vec![HirStmt::Expr {
+            expr: HirExpr::Walrus {
+                target,
+                value: Box::new(HirExpr::IntLit(5, int_ty)),
+                ty: int_ty,
+            },
+            span: Span::dummy(),
+        }]);
+
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        let all_stmts: Vec<_> = mir.bodies[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .collect();
+        let boxed_dest = all_stmts
+            .iter()
+            .find_map(|s| match s {
+                MirInst::CallExtern {
+                    dest: Some(dest),
+                    name,
+                    ..
+                } if name == "mb_box_int" => Some(*dest),
+                _ => None,
+            })
+            .expect("int walrus target should be boxed before global store");
+
+        assert!(all_stmts.iter().any(|s| matches!(
+            s,
+            MirInst::StoreGlobal { name, value } if *name == target && *value == boxed_dest
+        )));
     }
 
     #[test]
