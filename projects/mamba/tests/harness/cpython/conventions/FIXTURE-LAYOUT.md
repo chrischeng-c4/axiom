@@ -151,9 +151,10 @@ current Python, and keeps each baseline batch bounded.
 CPython authoring workflow:
 
 ```bash
+python3 tests/harness/cpython/tools/ensure_oracle_env.py
 python3 tests/harness/cpython/tools/verify_cpython_oracle.py --bucket std-libs --jobs 8
 python3 tests/harness/cpython/tools/verify_cpython_oracle.py --ready-only --jobs 8 --progress-every 1000
-python3 tests/harness/cpython/tools/verify_cpython_oracle.py --python tests/cpython/.cache/venv/bin/python --jobs 8
+python3 tests/harness/cpython/tools/verify_cpython_oracle.py --python tests/cpython/.cache/oracle-env/bin/python3 --jobs 8
 ```
 
 This gate is intentionally CPython-only: it proves positive runtime fixtures
@@ -165,7 +166,10 @@ strict and treats missing third-party imports as fixture failures. Use
 `--ready-only` for the normal local preflight: it skips only third-party
 fixtures whose import prereqs are unavailable on the selected Python, so agents
 can prove every locally runnable CPython oracle fixture is clean before deciding
-whether to install more packages.
+whether to install more packages. The default harness interpreter remains
+overridable with `MAMBA_ORACLE_PYTHON`; otherwise harness code prefers the
+ensured `tests/cpython/.cache/oracle-env/bin/python3` before falling back to
+PATH `python3`.
 
 CPython source-suite inventory is a separate reference denominator:
 
