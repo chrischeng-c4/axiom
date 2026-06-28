@@ -16,6 +16,11 @@ pub struct MbClosure {
     pub name: String,
     /// Captured variables: name → MbValue
     pub captures: Vec<MbValue>,
+    /// Captured variable SymbolIds. These line up with `capture_cells`.
+    pub capture_ids: Vec<i64>,
+    /// Cell handles backing captured variables. Multiple closures created in
+    /// the same factory call can share these handles.
+    pub capture_cells: Vec<MbValue>,
     /// The function pointer (compiled code entry point).
     /// In practice, this is a MbValue pointing to a Function object.
     pub func: MbValue,
@@ -36,6 +41,8 @@ pub struct MbClosure {
 thread_local! {
     static CLOSURES: std::cell::RefCell<Vec<Option<MbClosure>>> =
         std::cell::RefCell::new(Vec::new());
+    static ACTIVE_CELLS: std::cell::RefCell<HashMap<i64, MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
 // ── Closure Creation ──
@@ -48,6 +55,8 @@ pub fn mb_closure_new(name: MbValue, func: MbValue, captures: MbValue) -> MbValu
     let closure = MbClosure {
         name: closure_name,
         captures: captured_vars,
+        capture_ids: Vec::new(),
+        capture_cells: Vec::new(),
         func,
         defaults: Vec::new(),
         arity: 0,
@@ -55,6 +64,37 @@ pub fn mb_closure_new(name: MbValue, func: MbValue, captures: MbValue) -> MbValu
     CLOSURES.with(|closures| {
         let mut vec = closures.borrow_mut();
         let id = (vec.len() + 1) as u64; // IDs start at 1
+        vec.push(Some(closure));
+        MbValue::from_int(id as i64)
+    })
+}
+
+/// Create a closure whose captures are backed by active cell handles.
+///
+/// `capture_ids` is a list of boxed SymbolId integers. Each id resolves to the
+/// active cell for the current factory call, creating one from the current
+/// global value if needed.
+pub fn mb_closure_new_with_cells(name: MbValue, func: MbValue, capture_ids: MbValue) -> MbValue {
+    let closure_name = extract_str(name).unwrap_or_else(|| "<closure>".to_string());
+    let ids: Vec<i64> = extract_list(capture_ids)
+        .into_iter()
+        .filter_map(|v| v.as_int())
+        .collect();
+    let cells: Vec<MbValue> = ids.iter().map(|&id| active_cell_for_id(id)).collect();
+    let captures: Vec<MbValue> = cells.iter().map(|&cell| mb_cell_get(cell)).collect();
+
+    let closure = MbClosure {
+        name: closure_name,
+        captures,
+        capture_ids: ids,
+        capture_cells: cells,
+        func,
+        defaults: Vec::new(),
+        arity: 0,
+    };
+    CLOSURES.with(|closures| {
+        let mut vec = closures.borrow_mut();
+        let id = (vec.len() + 1) as u64;
         vec.push(Some(closure));
         MbValue::from_int(id as i64)
     })
@@ -137,9 +177,11 @@ pub fn mb_closure_get_capture(closure_handle: MbValue, index: MbValue) -> MbValu
         CLOSURES.with(|closures| {
             let vec = closures.borrow();
             let slot_idx = (id as u64).wrapping_sub(1) as usize;
-            let val = vec
-                .get(slot_idx)
-                .and_then(|slot| slot.as_ref())
+            let closure = vec.get(slot_idx).and_then(|slot| slot.as_ref());
+            if let Some(cell) = closure.and_then(|c| c.capture_cells.get(idx as usize).copied()) {
+                return mb_cell_get(cell);
+            }
+            let val = closure
                 .and_then(|c| c.captures.get(idx as usize).copied())
                 .unwrap_or(MbValue::none());
             unsafe {
@@ -160,6 +202,9 @@ pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: Mb
             let slot_idx = (id as u64).wrapping_sub(1) as usize;
             if let Some(Some(c)) = vec.get_mut(slot_idx) {
                 let idx = idx as usize;
+                if let Some(cell) = c.capture_cells.get(idx).copied() {
+                    mb_cell_set(cell, value);
+                }
                 if idx >= c.captures.len() {
                     c.captures.resize(idx + 1, MbValue::none());
                 }
@@ -171,6 +216,67 @@ pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: Mb
             }
         });
     }
+}
+
+/// Cell handles captured by a closure handle.
+pub fn closure_capture_cells(closure_handle: MbValue) -> Vec<MbValue> {
+    if let Some(id) = closure_handle.as_int() {
+        CLOSURES.with(|closures| {
+            let vec = closures.borrow();
+            let idx = (id as u64).wrapping_sub(1) as usize;
+            vec.get(idx)
+                .and_then(|slot| slot.as_ref())
+                .map(|c| c.capture_cells.clone())
+                .unwrap_or_default()
+        })
+    } else {
+        Vec::new()
+    }
+}
+
+/// Run a closure body with its captured cells installed as the active cell map.
+pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) -> R {
+    let pairs: Vec<(i64, MbValue)> = if let Some(id) = closure_handle.as_int() {
+        CLOSURES.with(|closures| {
+            let vec = closures.borrow();
+            let idx = (id as u64).wrapping_sub(1) as usize;
+            vec.get(idx)
+                .and_then(|slot| slot.as_ref())
+                .map(|c| {
+                    c.capture_ids
+                        .iter()
+                        .copied()
+                        .zip(c.capture_cells.iter().copied())
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    } else {
+        Vec::new()
+    };
+    if pairs.is_empty() {
+        return call();
+    }
+
+    let saved = ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        pairs
+            .iter()
+            .map(|(id, cell)| (*id, cells.insert(*id, *cell)))
+            .collect::<Vec<_>>()
+    });
+    let result = call();
+    ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        for (id, old) in saved {
+            if let Some(old_cell) = old {
+                cells.insert(id, old_cell);
+            } else {
+                cells.remove(&id);
+            }
+        }
+    });
+    result
 }
 
 /// Get the underlying function of a closure.
@@ -747,6 +853,52 @@ pub fn mb_cell_set(cell_handle: MbValue, value: MbValue) {
     }
 }
 
+fn active_cell_for_id(key: i64) -> MbValue {
+    ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        if let Some(cell) = cells.get(&key).copied() {
+            return cell;
+        }
+        let initial = GLOBAL_ID_NAMESPACE.with(|ns| {
+            ns.borrow()
+                .get(&key)
+                .copied()
+                .unwrap_or_else(MbValue::none)
+        });
+        let cell = mb_cell_new(initial);
+        cells.insert(key, cell);
+        cell
+    })
+}
+
+pub fn mb_capture_cell_set_id(id: MbValue, value: MbValue) {
+    let key = id.to_bits() as i64;
+    let cell = active_cell_for_id(key);
+    mb_cell_set(cell, value);
+}
+
+pub fn mb_capture_cell_reset_id(id: MbValue, value: MbValue) {
+    let key = id.to_bits() as i64;
+    let cell = mb_cell_new(value);
+    ACTIVE_CELLS.with(|cells| {
+        cells.borrow_mut().insert(key, cell);
+    });
+}
+
+fn active_cell_get_id_raw(key: i64) -> Option<MbValue> {
+    ACTIVE_CELLS.with(|cells| cells.borrow().get(&key).copied()).map(mb_cell_get)
+}
+
+fn active_cell_set_id_raw(key: i64, value: MbValue) -> bool {
+    let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&key).copied());
+    if let Some(cell) = cell {
+        mb_cell_set(cell, value);
+        true
+    } else {
+        false
+    }
+}
+
 // ── nonlocal/global support ──
 
 // Thread-local global namespace for the current module.
@@ -821,6 +973,9 @@ pub fn mb_global_get_id(id: MbValue) -> MbValue {
 
 /// Read a global-id namespace value by raw SymbolId.
 pub fn mb_global_get_id_raw(key: i64) -> MbValue {
+    if let Some(val) = active_cell_get_id_raw(key) {
+        return val;
+    }
     GLOBAL_ID_NAMESPACE.with(|ns| {
         let val = ns.borrow().get(&key).copied();
         if val.is_none() && missing_global_should_raise_name_error() {
@@ -841,6 +996,9 @@ pub fn mb_global_get_id_raw(key: i64) -> MbValue {
 /// The id is passed as raw i64 (not NaN-boxed).
 pub fn mb_global_set_id(id: MbValue, value: MbValue) {
     let key = id.to_bits() as i64;
+    if active_cell_set_id_raw(key, value) {
+        return;
+    }
     // Retain the value so it survives the JIT epilogue releasing the source VReg.
     unsafe {
         super::rc::retain_if_ptr(value);

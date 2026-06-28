@@ -9385,7 +9385,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
         // unboxed raw i64 values (CheckedAdd unboxes inline ints for perf),
         // so we re-box the result via mb_box_int.
         // REQ: extern "C" ABI required — JIT emits SystemV, not Rust ABI.
-        let raw_result: MbValue = unsafe {
+        let raw_result: MbValue = super::closure::with_closure_cells(func, || unsafe {
             match items.len() {
                 0 => {
                     let f: extern "C" fn() -> MbValue = std::mem::transmute(raw_addr);
@@ -9458,7 +9458,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 }
                 _ => MbValue::none(),
             }
-        };
+        });
         // Re-box: JIT functions may return raw i64 for ints (unboxed by
         // CheckedAdd). If the result has no NaN prefix, treat it as a raw int.
         // Already-boxed values (NaN-boxed ints, ptrs, bools, none) pass through.
