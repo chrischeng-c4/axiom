@@ -9,7 +9,7 @@
 # case = "protocol_direct_instantiation_raises"
 # subject = "typing.Protocol"
 # kind = "mechanical"
-# xfail = "mamba does not block direct instantiation of a Protocol class (project_mamba_class_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

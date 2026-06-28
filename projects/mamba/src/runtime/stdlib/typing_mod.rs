@@ -1617,17 +1617,19 @@ pub fn mb_typing_assert_type(val: MbValue, _typ: MbValue) -> MbValue {
 }
 
 /// `typing.is_typeddict(tp)` — True only for a class created via `TypedDict`.
-/// Mamba represents a user class as its name string; a `class M(TypedDict)`
-/// records `TypedDict` in M's MRO, so we test for it there. A plain `dict`,
-/// an `int`, or a `NamedTuple` class are all False.
+/// Mamba can pass a user class as its name string or as a runtime `type`
+/// object; a `class M(TypedDict)` records `TypedDict` in M's MRO, so we test
+/// for it there. A plain `dict`, an `int`, or a `NamedTuple` class are all
+/// False.
 pub fn mb_typing_is_typeddict(tp: MbValue) -> MbValue {
     if let Some(ptr) = tp.as_ptr() {
         unsafe {
             let name = match &(*ptr).data {
                 super::super::rc::ObjData::Str(name) => Some(name.clone()),
-                super::super::rc::ObjData::Instance { class_name, fields }
-                    if class_name == "type" =>
-                {
+                super::super::rc::ObjData::Instance {
+                    class_name,
+                    fields,
+                } if class_name == "type" => {
                     fields
                         .read()
                         .ok()
@@ -1645,28 +1647,48 @@ pub fn mb_typing_is_typeddict(tp: MbValue) -> MbValue {
     MbValue::from_bool(false)
 }
 
-/// `@runtime_checkable` — mark the Protocol class (a class is represented as
-/// its name string) so isinstance() does structural matching, then return it
-/// unchanged.
+/// `@runtime_checkable` — mark the Protocol class so isinstance()/issubclass()
+/// can use Protocol-specific runtime checks, then return it unchanged.
 pub fn mb_typing_runtime_checkable(cls: MbValue) -> MbValue {
-    if let Some(ptr) = cls.as_ptr() {
+    let class_name = if let Some(ptr) = cls.as_ptr() {
         unsafe {
-            if let super::super::rc::ObjData::Str(ref name) = (*ptr).data {
-                // CPython: @runtime_checkable applies only to Protocol classes.
-                if !super::super::class::is_protocol_class(name) {
-                    super::super::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "@runtime_checkable can be only applied to protocol classes, \
-                             got {name}"
-                        ))),
-                    );
-                    return MbValue::none();
+            match &(*ptr).data {
+                super::super::rc::ObjData::Str(name) => Some(name.clone()),
+                super::super::rc::ObjData::Instance {
+                    class_name,
+                    fields,
+                } if class_name == "type" => {
+                    fields
+                        .read()
+                        .ok()
+                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
                 }
-                super::super::class::mark_runtime_checkable(name);
+                _ => None,
             }
         }
+    } else {
+        None
+    };
+    let Some(name) = class_name else {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "@runtime_checkable can be only applied to protocol classes".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    // CPython: @runtime_checkable applies only to Protocol classes.
+    if !super::super::class::is_protocol_class(&name) {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "@runtime_checkable can be only applied to protocol classes, got {name}"
+            ))),
+        );
+        return MbValue::none();
     }
+    super::super::class::mark_runtime_checkable(&name);
     unsafe {
         super::super::rc::retain_if_ptr(cls);
     }
