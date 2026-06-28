@@ -59,6 +59,8 @@ pub(crate) struct ThreadClassState {
     slots_registry: HashMap<String, Vec<String>>,
     dict_suppressed: HashSet<String>,
     kwargs_registry: HashMap<String, HashMap<String, MbValue>>,
+    classcell_required: HashSet<String>,
+    classcell_consumed: HashSet<String>,
     namedtuple_base_shapes: HashMap<String, NamedTupleBaseShape>,
     runtime_checkable_protocols: HashSet<String>,
     abc_virtual_subclasses: HashSet<(String, String)>,
@@ -92,6 +94,13 @@ thread_local! {
     /// Stored by mb_class_set_kwargs, consumed by mb_class_register.
     static KWARGS_REGISTRY: std::cell::RefCell<HashMap<String, HashMap<String, MbValue>>> =
         std::cell::RefCell::new(HashMap::new());
+    /// Classes whose body needs CPython's implicit __classcell__ contract
+    /// because a method references __class__ or zero-arg super().
+    static CLASSCELL_REQUIRED: std::cell::RefCell<HashSet<String>> =
+        std::cell::RefCell::new(HashSet::new());
+    /// Classcell markers consumed by type.__new__ for their owning class.
+    static CLASSCELL_CONSUMED: std::cell::RefCell<HashSet<String>> =
+        std::cell::RefCell::new(HashSet::new());
     /// Literal namedtuple base metadata for classes declared as
     /// `class Child(namedtuple("Base", ["x"]))`.
     static NAMEDTUPLE_BASE_SHAPES: std::cell::RefCell<HashMap<String, NamedTupleBaseShape>> =
@@ -1182,6 +1191,97 @@ pub(crate) fn class_metaclass_name(name: &str) -> Option<String> {
     CLASS_REGISTRY.with(|reg| reg.borrow().get(name).and_then(|cls| cls.metaclass.clone()))
 }
 
+const CLASSCELL_MARKER_PREFIX: &str = "__mamba_classcell__:";
+
+pub fn mb_class_mark_classcell_required(class_name: MbValue) {
+    let Some(name) = extract_str(class_name) else {
+        return;
+    };
+    CLASSCELL_REQUIRED.with(|required| {
+        required.borrow_mut().insert(name);
+    });
+}
+
+fn classcell_required_for(class_name: &str) -> bool {
+    CLASSCELL_REQUIRED.with(|required| required.borrow().contains(class_name))
+}
+
+fn classcell_marker(class_name: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(format!(
+        "{CLASSCELL_MARKER_PREFIX}{class_name}"
+    )))
+}
+
+fn classcell_owner_from_value(value: MbValue) -> Option<String> {
+    extract_str(value).and_then(|s| {
+        s.strip_prefix(CLASSCELL_MARKER_PREFIX)
+            .map(|owner| owner.to_string())
+    })
+}
+
+pub(crate) fn consume_classcell_marker_for_type_new(class_name: &str, value: MbValue) -> bool {
+    let Some(owner) = classcell_owner_from_value(value) else {
+        return true;
+    };
+    if owner != class_name {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "__class__ set to {owner}, expected {class_name}"
+            ))),
+        );
+        return false;
+    }
+    CLASSCELL_CONSUMED.with(|consumed| {
+        consumed.borrow_mut().insert(owner);
+    });
+    true
+}
+
+fn classcell_owner_from_namespace(namespace: MbValue) -> Option<String> {
+    namespace.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .ok()
+                .and_then(|map| {
+                    map.get(&super::dict_ops::DictKey::Str("__classcell__".to_string()))
+                        .copied()
+                })
+                .and_then(classcell_owner_from_value)
+        } else {
+            None
+        }
+    })
+}
+
+fn clear_classcell_state(class_name: &str) {
+    CLASSCELL_REQUIRED.with(|required| {
+        required.borrow_mut().remove(class_name);
+    });
+    CLASSCELL_CONSUMED.with(|consumed| {
+        consumed.borrow_mut().remove(class_name);
+    });
+}
+
+fn validate_classcell_after_metaclass_new(class_name: &str, namespace: MbValue) {
+    if !classcell_required_for(class_name) {
+        return;
+    }
+    let namespace_owner = classcell_owner_from_namespace(namespace);
+    let consumed = CLASSCELL_CONSUMED.with(|consumed| consumed.borrow().contains(class_name));
+    if namespace_owner.as_deref() != Some(class_name) && !consumed {
+        clear_classcell_state(class_name);
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "__class__ not set defining '{class_name}'"
+            ))),
+        );
+        return;
+    }
+    clear_classcell_state(class_name);
+}
+
 fn registered_class_name_for_func(value: MbValue, addr: usize) -> Option<String> {
     let native_name =
         super::module::NATIVE_TYPE_NAMES.with(|map| map.borrow().get(&(addr as u64)).cloned());
@@ -1637,6 +1737,13 @@ fn build_class_namespace_dict(class_name: &str) -> MbValue {
         let key_val = MbValue::from_ptr(MbObject::new_str(key));
         super::dict_ops::mb_dict_setitem(dict, key_val, value);
     }
+    if classcell_required_for(class_name) {
+        super::dict_ops::mb_dict_setitem(
+            dict,
+            MbValue::from_ptr(MbObject::new_str("__classcell__".to_string())),
+            classcell_marker(class_name),
+        );
+    }
     dict
 }
 
@@ -1651,7 +1758,7 @@ fn sync_class_namespace_from_dict(class_name: &str, namespace: MbValue) {
                         .iter()
                         .filter_map(|(key, value)| {
                             if let super::dict_ops::DictKey::Str(name) = key {
-                                Some((name.clone(), *value))
+                                (name != "__classcell__").then_some((name.clone(), *value))
                             } else {
                                 None
                             }
@@ -1744,6 +1851,14 @@ fn run_metaclass_definition_hooks(class_name: &str, meta: &str) {
     let name_val = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
     let meta_val = make_type_object(meta);
     call_metaclass_method(meta, "__new__", vec![meta_val, name_val, bases, namespace]);
+    if super::exception::current_exception_type().is_some() {
+        clear_classcell_state(class_name);
+        return;
+    }
+    validate_classcell_after_metaclass_new(class_name, namespace);
+    if super::exception::current_exception_type().is_some() {
+        return;
+    }
     sync_class_namespace_from_dict(class_name, namespace);
 
     let namespace = build_class_namespace_dict(class_name);
@@ -18542,6 +18657,8 @@ pub(crate) fn snapshot_thread_class_state() -> ThreadClassState {
         slots_registry: SLOTS_REGISTRY.with(|c| c.borrow().clone()),
         dict_suppressed: DICT_SUPPRESSED.with(|c| c.borrow().clone()),
         kwargs_registry: KWARGS_REGISTRY.with(|c| c.borrow().clone()),
+        classcell_required: CLASSCELL_REQUIRED.with(|c| c.borrow().clone()),
+        classcell_consumed: CLASSCELL_CONSUMED.with(|c| c.borrow().clone()),
         namedtuple_base_shapes: NAMEDTUPLE_BASE_SHAPES.with(|c| c.borrow().clone()),
         runtime_checkable_protocols: RUNTIME_CHECKABLE_PROTOCOLS.with(|c| c.borrow().clone()),
         abc_virtual_subclasses: ABC_VIRTUAL_SUBCLASSES.with(|c| c.borrow().clone()),
@@ -18557,6 +18674,8 @@ pub(crate) fn replace_thread_class_state(next: ThreadClassState) -> ThreadClassS
     SLOTS_REGISTRY.with(|c| *c.borrow_mut() = next.slots_registry);
     DICT_SUPPRESSED.with(|c| *c.borrow_mut() = next.dict_suppressed);
     KWARGS_REGISTRY.with(|c| *c.borrow_mut() = next.kwargs_registry);
+    CLASSCELL_REQUIRED.with(|c| *c.borrow_mut() = next.classcell_required);
+    CLASSCELL_CONSUMED.with(|c| *c.borrow_mut() = next.classcell_consumed);
     NAMEDTUPLE_BASE_SHAPES.with(|c| *c.borrow_mut() = next.namedtuple_base_shapes);
     RUNTIME_CHECKABLE_PROTOCOLS.with(|c| *c.borrow_mut() = next.runtime_checkable_protocols);
     ABC_VIRTUAL_SUBCLASSES.with(|c| *c.borrow_mut() = next.abc_virtual_subclasses);
@@ -18577,6 +18696,8 @@ pub(crate) fn cleanup_all_classes() {
     let _ = SLOTS_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = DICT_SUPPRESSED.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = KWARGS_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = CLASSCELL_REQUIRED.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = CLASSCELL_CONSUMED.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = LAST_RAISED_INSTANCE.with(|c| c.try_borrow_mut().map(|mut m| *m = None));
     let _ = ABSTRACT_METHODS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     cleanup_class_docs();

@@ -54,6 +54,7 @@ type PendingClassRegistration = (
     Vec<String>,
     Option<String>,
     Option<Vec<String>>,
+    bool,
     Vec<(String, HirExpr)>,
 );
 
@@ -1013,6 +1014,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
             match_args,
             cls.metaclass.clone(),
             cls.slots.clone(),
+            cls.class_cell_required,
             cls.class_kwargs.clone(),
         ));
         lowerer
@@ -1251,7 +1253,7 @@ struct HirToMir<'a> {
     /// VReg of the caught exception inside an except handler body (for implicit chaining).
     active_except_vreg: Option<VReg>,
     /// Classes to register at the start of top-level code.
-    /// (class_name, class_symbol_id, all_base_names, namedtuple_base, methods, match_args, metaclass, slots, class_kwargs)
+    /// (class_name, class_symbol_id, all_base_names, namedtuple_base, methods, match_args, metaclass, slots, class_cell_required, class_kwargs)
     pending_classes: Vec<PendingClassRegistration>,
     /// SymbolId.0 of classes whose registration must be emitted at their
     /// textual ClassDefPlaceholder rather than eagerly, because a method
@@ -5111,7 +5113,7 @@ impl<'a> HirToMir<'a> {
                 // #82: skip classes that must register at their textual
                 // placeholder (cross-class chained property decorator).
                 None => {
-                    self.pending_classes[i].8.is_empty()
+                    self.pending_classes[i].9.is_empty()
                         && !self
                             .classes_needing_textual_registration
                             .contains(&self.pending_classes[i].1 .0)
@@ -5129,13 +5131,14 @@ impl<'a> HirToMir<'a> {
     fn emit_class_registration(&mut self, registration: &PendingClassRegistration) {
         let (
             class_name,
-            _class_sym,
+            class_sym,
             all_base_names,
             namedtuple_base,
             methods,
             match_args,
             metaclass,
             slots,
+            class_cell_required,
             class_kwargs,
         ) = registration;
         let name_vreg = self.emit_str_const(class_name);
@@ -5473,6 +5476,25 @@ impl<'a> HirToMir<'a> {
             args: vec![name_vreg, bases_list_vreg, names_list, values_list],
             ty: self.tcx.none(),
         });
+        let class_obj_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(class_obj_vreg),
+            name: "mb_builtin_type_obj".to_string(),
+            args: vec![name_vreg],
+            ty: self.tcx.any(),
+        });
+        self.current_stmts.push(MirInst::StoreGlobal {
+            name: *class_sym,
+            value: class_obj_vreg,
+        });
+        if *class_cell_required {
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_mark_classcell_required".to_string(),
+                args: vec![name_vreg],
+                ty: self.tcx.none(),
+            });
+        }
         if let Some(spec) = namedtuple_base {
             let tuple_name_vreg = self.emit_str_const(&spec.tuple_name);
             let mut field_vregs = Vec::new();
@@ -5624,6 +5646,7 @@ impl<'a> HirToMir<'a> {
                     args: vec![cls_vreg],
                     ty: self.tcx.none(),
                 });
+                self.emit_exception_propagate();
             } else {
                 i += 1;
             }
@@ -12593,6 +12616,7 @@ mod tests {
                 runtime_base_exprs: Vec::new(),
                 runtime_base_list_expr: None,
                 force_textual_registration: false,
+                class_cell_required: false,
                 namedtuple_base: None,
                 fields: Vec::new(),
                 methods: vec![HirFunction {
@@ -12665,6 +12689,80 @@ mod tests {
         assert!(!all_stmts.iter().any(|stmt| matches!(
             stmt,
             MirInst::LoadGlobal { name, .. } if *name == method_sym
+        )));
+    }
+
+    #[test]
+    fn test_class_registration_stores_class_object_global() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let mut symbols = SymbolTable::new();
+        let class_sym = symbols.define("WithClassRef".to_string(), SymbolKind::Class);
+
+        let mut sym_names = HashMap::new();
+        sym_names.insert(class_sym, "WithClassRef".to_string());
+
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: vec![HirClass {
+                name: class_sym,
+                base: None,
+                all_bases: Vec::new(),
+                runtime_base_exprs: Vec::new(),
+                runtime_base_list_expr: None,
+                force_textual_registration: false,
+                class_cell_required: true,
+                namedtuple_base: None,
+                fields: Vec::new(),
+                methods: Vec::new(),
+                span: Span::dummy(),
+                decorators: Vec::new(),
+                explicit_match_args: None,
+                metaclass: None,
+                class_attr_assigns: Vec::new(),
+                class_attr_locals: Vec::new(),
+                class_body_stmts: Vec::new(),
+                slots: None,
+                class_kwargs: Vec::new(),
+                dataclass_fields: Vec::new(),
+                doc: None,
+            }],
+            top_level: Vec::new(),
+            imports: Vec::new(),
+            sym_names,
+            sym_types: HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let all_stmts: Vec<_> = mir
+            .bodies
+            .iter()
+            .flat_map(|body| body.blocks.iter())
+            .flat_map(|block| block.stmts.iter())
+            .collect();
+        let class_obj_vreg = all_stmts
+            .iter()
+            .find_map(|stmt| match stmt {
+                MirInst::CallExtern {
+                    dest: Some(dest),
+                    name,
+                    ..
+                } if name == "mb_builtin_type_obj" => Some(*dest),
+                _ => None,
+            })
+            .expect("class registration should fetch the runtime type object");
+
+        assert!(all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::StoreGlobal { name, value } if *name == class_sym && *value == class_obj_vreg
+        )));
+        assert!(all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::CallExtern { name, .. } if name == "mb_class_mark_classcell_required"
         )));
     }
 

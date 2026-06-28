@@ -1712,6 +1712,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_class_mark_classcell_required",
+            class::mb_class_mark_classcell_required as fn(super::MbValue),
+            [I64],
+            Void
+        ),
+        rt_sym!(
             "mb_class_set_namedtuple_base",
             class::mb_class_set_namedtuple_base
                 as fn(super::MbValue, super::MbValue, super::MbValue),
