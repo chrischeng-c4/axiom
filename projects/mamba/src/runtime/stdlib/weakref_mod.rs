@@ -918,34 +918,71 @@ fn wk_args(args: MbValue) -> Vec<MbValue> {
         .unwrap_or_default()
 }
 
+fn prune_weak_set_data(data: MbValue) {
+    let Some(ptr) = data.as_ptr() else {
+        return;
+    };
+    let stale = unsafe {
+        if let ObjData::Set(ref lock) = (*ptr).data {
+            lock.read()
+                .unwrap()
+                .iter()
+                .copied()
+                .filter(|item| !value_has_live_global(*item))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        }
+    };
+    if stale.is_empty() {
+        return;
+    }
+    unsafe {
+        if let ObjData::Set(ref lock) = (*ptr).data {
+            let mut set = lock.write().unwrap();
+            for item in stale {
+                if let Some(removed) = set.set_remove(item) {
+                    super::super::rc::release_if_ptr(removed);
+                }
+            }
+        }
+    }
+}
+
+fn ws_data_pruned(self_v: MbValue) -> MbValue {
+    let data = wk_data(self_v);
+    prune_weak_set_data(data);
+    data
+}
+
 unsafe extern "C" fn ws_add(self_v: MbValue, args: MbValue) -> MbValue {
     let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
     if reject_non_weakreferenceable(item) {
         return MbValue::none();
     }
-    super::super::set_ops::mb_set_add(wk_data(self_v), item);
+    super::super::set_ops::mb_set_add(ws_data_pruned(self_v), item);
     MbValue::none()
 }
 
 unsafe extern "C" fn ws_discard(self_v: MbValue, args: MbValue) -> MbValue {
     let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::set_ops::mb_set_discard(wk_data(self_v), item);
+    super::super::set_ops::mb_set_discard(ws_data_pruned(self_v), item);
     MbValue::none()
 }
 
 unsafe extern "C" fn ws_remove(self_v: MbValue, args: MbValue) -> MbValue {
     let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::set_ops::mb_set_remove(wk_data(self_v), item);
+    super::super::set_ops::mb_set_remove(ws_data_pruned(self_v), item);
     MbValue::none()
 }
 
 unsafe extern "C" fn ws_contains(self_v: MbValue, args: MbValue) -> MbValue {
     let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::set_ops::mb_set_contains(wk_data(self_v), item)
+    super::super::set_ops::mb_set_contains(ws_data_pruned(self_v), item)
 }
 
 unsafe extern "C" fn ws_len(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::set_ops::mb_set_len(wk_data(self_v))
+    super::super::set_ops::mb_set_len(ws_data_pruned(self_v))
 }
 
 unsafe extern "C" fn wvd_setitem(self_v: MbValue, args: MbValue) -> MbValue {
@@ -2011,6 +2048,28 @@ mod tests {
         unsafe {
             assert!(matches!(&(*data.as_ptr().unwrap()).data, ObjData::Set(_)));
         }
+    }
+
+    #[test]
+    fn test_weak_set_prunes_unbound_member() {
+        let s = mb_weakref_weak_set();
+        let item = target();
+        let global_id = MbValue::from_bits(9202);
+        crate::runtime::closure::mb_global_set_id(global_id, item);
+        let args = MbValue::from_ptr(MbObject::new_list(vec![item]));
+
+        unsafe {
+            ws_add(s, args);
+        }
+        let contains_args = MbValue::from_ptr(MbObject::new_list(vec![item]));
+        assert_eq!(
+            unsafe { ws_contains(s, contains_args) }.as_bool(),
+            Some(true)
+        );
+        assert_eq!(unsafe { ws_len(s, MbValue::none()) }.as_int(), Some(1));
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        assert_eq!(unsafe { ws_len(s, MbValue::none()) }.as_int(), Some(0));
     }
 
     #[test]
