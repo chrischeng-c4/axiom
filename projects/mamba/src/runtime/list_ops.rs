@@ -11,6 +11,75 @@ fn normalize_index(idx: i64, len: i64) -> i64 {
     i.max(0).min(len)
 }
 
+fn raise_unpack_non_iterable(value: MbValue) -> MbValue {
+    let type_name = super::builtins::value_type_name(value);
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "cannot unpack non-iterable {type_name} object"
+        ))),
+    );
+    MbValue::none()
+}
+
+fn instance_method_exists(class_name: &str, method: &str) -> bool {
+    !super::class::lookup_method(class_name, method).is_none()
+}
+
+fn instance_iter_payload_exists(value: MbValue) -> bool {
+    super::class::builtin_data_payload_if_unoverridden(value, "__iter__").is_some()
+}
+
+fn unpack_known_non_iterable(value: MbValue) -> bool {
+    if value.is_bool() || value.as_float().is_some() || value.is_none() {
+        return true;
+    }
+    if let Some(id) = value.as_int() {
+        let id = id as u64;
+        return !super::iter::is_iter_handle(value)
+            && !super::file_io::is_file_handle(id)
+            && !super::stdlib::array_mod::is_array_handle(id);
+    }
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::BigInt(_) | ObjData::Complex(_, _) | ObjData::CodeObject { .. } => true,
+                ObjData::Instance { class_name, .. } => {
+                    !instance_method_exists(class_name, "__iter__")
+                        && !instance_method_exists(class_name, "__getitem__")
+                        && !instance_iter_payload_exists(value)
+                }
+                _ => false,
+            }
+        }
+    } else {
+        false
+    }
+}
+
+fn list_from_getitem_sequence(value: MbValue) -> MbValue {
+    let mut items = Vec::new();
+    let mut index = 0_i64;
+    loop {
+        let item = super::class::mb_obj_getitem(value, MbValue::from_int(index));
+        if let Some(exc_type) = super::exception::current_exception_type() {
+            if exc_type == "IndexError" || super::exception::is_subclass_of(&exc_type, "IndexError")
+            {
+                super::exception::mb_clear_exception();
+                break;
+            }
+            return MbValue::none();
+        }
+        items.push(item);
+        index += 1;
+    }
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+fn unpack_sequence_len(value: MbValue) -> i64 {
+    mb_seq_len_boxed(value).as_int().unwrap_or(0)
+}
+
 // ── Creation ──
 
 /// Create a new empty list.
@@ -338,6 +407,9 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
         // `mb_iter` is idempotent for handles already in ITERATORS, so
         // this wrap is a no-op on the common case.
         let iter_handle = super::iter::mb_iter(val);
+        if iter_handle.is_none() && super::exception::current_exception_type().is_some() {
+            return MbValue::none();
+        }
         let mut items = Vec::new();
         loop {
             if super::iter::mb_has_next(iter_handle).as_bool() != Some(true) {
@@ -453,7 +525,10 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                     }
                     return MbValue::from_ptr(MbObject::new_list(Vec::new()));
                 }
-                ObjData::Instance { ref fields, .. } => {
+                ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                } => {
                     // Struct-sequence-shaped instances (sys.version_info,
                     // urllib ParseResult) iterate over their ordered
                     // `_entries` backing list.
@@ -465,6 +540,15 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                                 ));
                             }
                         }
+                    }
+                    // CPython's sequence fallback: objects with __getitem__
+                    // but no __iter__ can still be unpacked/list()'d by
+                    // fetching indices until IndexError. Other exceptions
+                    // propagate unchanged.
+                    let has_iter = instance_iter_payload_exists(val)
+                        || instance_method_exists(class_name, "__iter__");
+                    if !has_iter && instance_method_exists(class_name, "__getitem__") {
+                        return list_from_getitem_sequence(val);
                     }
                     // User-defined iterable: go through the iterator protocol
                     // via mb_iter → mb_has_next/mb_next loop. mb_iter dispatches
@@ -733,7 +817,8 @@ pub fn mb_list_setslice(
                         drop(data);
                         super::builtins::raise_value_error(format!(
                             "attempt to assign bytes of size {} to extended slice of size {}",
-                            new_bytes.len(), indices.len()
+                            new_bytes.len(),
+                            indices.len()
                         ));
                         return;
                     }
@@ -822,17 +907,31 @@ pub fn mb_list_delitem(list: MbValue, index: MbValue) {
                             if step == 0 {
                                 super::exception::mb_raise(
                                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                                    MbValue::from_ptr(MbObject::new_str("slice step cannot be zero".to_string())),
+                                    MbValue::from_ptr(MbObject::new_str(
+                                        "slice step cannot be zero".to_string(),
+                                    )),
                                 );
                                 return;
                             }
                             let (start, stop) = if step > 0 {
-                                let s = parts[0].as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(0);
-                                let e = parts[1].as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(len);
+                                let s = parts[0]
+                                    .as_int_pyint()
+                                    .map(|i| clamp_index(i, len))
+                                    .unwrap_or(0);
+                                let e = parts[1]
+                                    .as_int_pyint()
+                                    .map(|i| clamp_index(i, len))
+                                    .unwrap_or(len);
                                 (s, e)
                             } else {
-                                let s = parts[0].as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(len - 1);
-                                let e = parts[1].as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(-1);
+                                let s = parts[0]
+                                    .as_int_pyint()
+                                    .map(|i| clamp_index(i, len))
+                                    .unwrap_or(len - 1);
+                                let e = parts[1]
+                                    .as_int_pyint()
+                                    .map(|i| clamp_index(i, len))
+                                    .unwrap_or(-1);
                                 (s, e)
                             };
                             let mut positions = Vec::new();
@@ -1612,6 +1711,9 @@ pub fn mb_is_sequence(val: MbValue) -> MbValue {
 /// Iterators (`mb_iter`-handle ints), strings, dicts, sets, and user
 /// iterables still fall back to full materialization for correctness.
 pub fn mb_seq_for_unpack(val: MbValue) -> MbValue {
+    if unpack_known_non_iterable(val) {
+        return raise_unpack_non_iterable(val);
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -1622,6 +1724,13 @@ pub fn mb_seq_for_unpack(val: MbValue) -> MbValue {
                 _ => {}
             }
         }
+    }
+    mb_list_from_iterable(val)
+}
+
+pub fn mb_list_for_unpack(val: MbValue) -> MbValue {
+    if unpack_known_non_iterable(val) {
+        return raise_unpack_non_iterable(val);
     }
     mb_list_from_iterable(val)
 }
@@ -1644,6 +1753,36 @@ pub fn mb_seq_len_boxed(val: MbValue) -> MbValue {
         }
     }
     MbValue::from_int(0)
+}
+
+pub fn mb_unpack_check_arity(seq: MbValue, expected: i64, has_star: bool) {
+    let actual = unpack_sequence_len(seq);
+    if has_star {
+        if actual < expected {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "not enough values to unpack (expected at least {expected}, got {actual})"
+                ))),
+            );
+        }
+        return;
+    }
+    if actual < expected {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "not enough values to unpack (expected {expected}, got {actual})"
+            ))),
+        );
+    } else if actual > expected {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "too many values to unpack (expected {expected})"
+            ))),
+        );
+    }
 }
 
 /// Sequence-generic length for PEP 634 pattern matching (#827).
@@ -2631,10 +2770,8 @@ mod tests {
     #[test]
     fn test_is_sequence_array_handle() {
         let init = MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec()));
-        let array = array_mod::mb_array_new(
-            MbValue::from_ptr(MbObject::new_str("b".to_string())),
-            init,
-        );
+        let array =
+            array_mod::mb_array_new(MbValue::from_ptr(MbObject::new_str("b".to_string())), init);
         assert_eq!(mb_is_sequence(array).as_bool(), Some(true));
         assert_eq!(mb_seq_len(array), 3);
         assert_eq!(mb_seq_getitem(array, 2).as_int(), Some(99));

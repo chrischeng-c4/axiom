@@ -1062,10 +1062,22 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_list_for_unpack",
+            list_ops::mb_list_for_unpack as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_seq_len_boxed",
             list_ops::mb_seq_len_boxed as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
+        ),
+        rt_sym!(
+            "mb_unpack_check_arity",
+            list_ops::mb_unpack_check_arity as fn(super::MbValue, i64, bool),
+            [I64, I64, I64],
+            Void
         ),
         rt_sym!(
             "mb_seq_len",
