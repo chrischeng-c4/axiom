@@ -78,6 +78,11 @@ thread_local! {
     // ref/proxy MbValue objects created against it.
     static WEAKREF_REGISTRY: std::cell::RefCell<HashMap<u64, Vec<MbValue>>> =
         std::cell::RefCell::new(HashMap::new());
+    // weakref.finalize uses an internal weakref in CPython. Keep it separate
+    // from getweakrefcount/getweakrefs so the public ref/proxy inventory stays
+    // stable while gc.collect can still find pending finalizers.
+    static FINALIZE_REGISTRY: std::cell::RefCell<HashMap<u64, Vec<MbValue>>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
 /// Stable identity key for a referent. Pointer objects use their address;
@@ -112,6 +117,16 @@ fn registry_push(obj: MbValue, wref: MbValue) {
     }
     WEAKREF_REGISTRY.with(|r| {
         r.borrow_mut().entry(key).or_default().push(wref);
+    });
+}
+
+fn finalize_registry_push(obj: MbValue, fin: MbValue) {
+    let key = referent_key(obj);
+    unsafe {
+        super::super::rc::retain_if_ptr(fin);
+    }
+    FINALIZE_REGISTRY.with(|r| {
+        r.borrow_mut().entry(key).or_default().push(fin);
     });
 }
 
@@ -288,6 +303,13 @@ fn class_ref_has_live_global(target: MbValue, target_name: &str) -> bool {
         })
 }
 
+fn value_has_live_global(target: MbValue) -> bool {
+    super::super::closure::snapshot_global_id_namespace()
+        .values()
+        .copied()
+        .any(|value| value.to_bits() == target.to_bits())
+}
+
 pub(crate) fn expire_unbound_class_refs() {
     let refs: Vec<MbValue> = WEAKREF_REGISTRY.with(|registry| {
         registry
@@ -310,6 +332,70 @@ pub(crate) fn expire_unbound_class_refs() {
         }
         unsafe {
             super::super::rc::release_if_ptr(target);
+        }
+    }
+}
+
+fn finalize_is_alive(fin: MbValue) -> bool {
+    let Some(ptr) = fin.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "finalize" => fields
+                .read()
+                .unwrap()
+                .get("alive")
+                .copied()
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+}
+
+fn finalize_target(fin: MbValue) -> Option<MbValue> {
+    let ptr = fin.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "finalize" => fields
+                .read()
+                .unwrap()
+                .get("_obj")
+                .copied()
+                .filter(|target| !target.is_none()),
+            _ => None,
+        }
+    }
+}
+
+fn finalizer_target_collectible(target: MbValue) -> bool {
+    !value_has_live_global(target)
+}
+
+fn run_finalize_once(fin: MbValue) {
+    if !finalize_is_alive(fin) {
+        return;
+    }
+    unsafe {
+        finalize_call(fin, MbValue::none());
+    }
+}
+
+pub(crate) fn expire_unbound_finalizers() {
+    let finalizers: Vec<MbValue> = FINALIZE_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .values()
+            .flat_map(|items| items.iter().copied())
+            .collect()
+    });
+    for fin in finalizers {
+        let Some(target) = finalize_target(fin) else {
+            continue;
+        };
+        if finalizer_target_collectible(target) {
+            run_finalize_once(fin);
         }
     }
 }
@@ -413,15 +499,23 @@ pub(crate) unsafe fn notify_referent_collected(obj: *mut MbObject) {
     let referent = MbValue::from_ptr(obj);
     let key = referent_key(referent);
     let weakrefs = WEAKREF_REGISTRY.with(|r| r.borrow_mut().remove(&key));
-    let Some(weakrefs) = weakrefs else {
-        return;
-    };
-    for wref in weakrefs {
-        mark_weakref_dead(wref);
-        // Do not release the registry's retained weakref/proxy during the
-        // referent's deallocation path. rc/GC sweep can already be walking
-        // the same object graph, and re-entering proxy field cleanup here is
-        // not safe until weakref liveness is fully owned by GC.
+    if let Some(weakrefs) = weakrefs {
+        for wref in weakrefs {
+            mark_weakref_dead(wref);
+            // Do not release the registry's retained weakref/proxy during the
+            // referent's deallocation path. rc/GC sweep can already be walking
+            // the same object graph, and re-entering proxy field cleanup here is
+            // not safe until weakref liveness is fully owned by GC.
+        }
+    }
+    let finalizers = FINALIZE_REGISTRY.with(|r| r.borrow_mut().remove(&key));
+    if let Some(finalizers) = finalizers {
+        for fin in finalizers {
+            run_finalize_once(fin);
+            // The finalize registry owns a retain like WEAKREF_REGISTRY. Keep
+            // it during deallocation to avoid re-entering Instance cleanup from
+            // the referent's release path.
+        }
     }
 }
 
@@ -565,12 +659,18 @@ unsafe extern "C" fn finalize_call(self_v: MbValue, _args: MbValue) -> MbValue {
     if !alive {
         return MbValue::none();
     }
-    unsafe {
+    let old_obj = unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            fields
-                .write()
-                .unwrap()
-                .insert("alive".to_string(), MbValue::from_bool(false));
+            let mut fields = fields.write().unwrap();
+            fields.insert("alive".to_string(), MbValue::from_bool(false));
+            fields.insert("_obj".to_string(), MbValue::none())
+        } else {
+            None
+        }
+    };
+    unsafe {
+        if let Some(old_obj) = old_obj {
+            super::super::rc::release_if_ptr(old_obj);
         }
     }
     super::super::builtins::mb_call_spread(func, call_args)
@@ -1129,9 +1229,11 @@ pub fn mb_weakref_weak_method(method: MbValue) -> MbValue {
 }
 
 /// weakref.finalize(obj, func, /*args*/) -> Instance stub.
-///
-/// Carve-out: the finalizer is stored but never invoked (no GC hook).
 pub fn mb_weakref_finalize(obj: MbValue, func: MbValue) -> MbValue {
+    unsafe {
+        super::super::rc::retain_if_ptr(obj);
+        super::super::rc::retain_if_ptr(func);
+    }
     let mut fields = FxHashMap::default();
     fields.insert("_obj".to_string(), obj);
     fields.insert("_func".to_string(), func);
@@ -1150,7 +1252,9 @@ pub fn mb_weakref_finalize(obj: MbValue, func: MbValue) -> MbValue {
             fields: RwLock::new(fields),
         },
     });
-    MbValue::from_ptr(Box::into_raw(obj_inst))
+    let fin = MbValue::from_ptr(Box::into_raw(obj_inst));
+    finalize_registry_push(obj, fin);
+    fin
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,6 +1409,23 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static FINALIZE_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn finalize_test_callback(
+        _args_ptr: *const MbValue,
+        _nargs: usize,
+    ) -> MbValue {
+        FINALIZE_CALLBACK_COUNT.fetch_add(1, Ordering::SeqCst);
+        MbValue::none()
+    }
+
+    fn finalize_test_func() -> MbValue {
+        let addr = finalize_test_callback as *const () as usize;
+        crate::runtime::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    }
 
     fn get_field(instance: MbValue, field: &str) -> MbValue {
         if let Some(ptr) = instance.as_ptr() {
@@ -1515,6 +1636,30 @@ mod tests {
         assert_eq!(get_field(f, "alive").as_bool(), Some(true));
         assert_eq!(get_field(f, "_obj").as_int(), Some(1));
         assert_eq!(get_field(f, "_func").as_int(), Some(2));
+    }
+
+    #[test]
+    fn test_finalize_expires_once_after_global_rebind() {
+        FINALIZE_CALLBACK_COUNT.store(0, Ordering::SeqCst);
+        let obj = target();
+        let global_id = MbValue::from_bits(9011);
+        crate::runtime::closure::mb_global_set_id(global_id, obj);
+        let f = mb_weakref_finalize(obj, finalize_test_func());
+        unsafe {
+            crate::runtime::rc::release_if_ptr(obj);
+        }
+
+        expire_unbound_finalizers();
+        assert_eq!(get_field(f, "alive").as_bool(), Some(true));
+        assert_eq!(FINALIZE_CALLBACK_COUNT.load(Ordering::SeqCst), 0);
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        expire_unbound_finalizers();
+        assert_eq!(get_field(f, "alive").as_bool(), Some(false));
+        assert_eq!(FINALIZE_CALLBACK_COUNT.load(Ordering::SeqCst), 1);
+
+        expire_unbound_finalizers();
+        assert_eq!(FINALIZE_CALLBACK_COUNT.load(Ordering::SeqCst), 1);
     }
 
     // -- class stubs --
