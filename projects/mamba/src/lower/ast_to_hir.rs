@@ -4296,6 +4296,8 @@ impl<'a> AstLowerer<'a> {
         let mut explicit_match_args: Option<Vec<String>> = None;
         // P2-R3: Class-level attribute assignments (e.g., `attr = Verbose()` in class body).
         let mut class_attr_assigns: Vec<(String, HirExpr)> = Vec::new();
+        let mut class_attr_locals: Vec<(String, SymbolId)> = Vec::new();
+        let mut class_attr_saved_names: HashMap<String, Option<SymbolId>> = HashMap::new();
         let mut class_body_stmts: Vec<HirStmt> = Vec::new();
         let enum_ignored_names = enum_ignore_names_for_class(bases, body);
         // R14: __slots__ declaration from class body.
@@ -4349,6 +4351,27 @@ impl<'a> AstLowerer<'a> {
             }
         }
 
+        macro_rules! push_class_attr {
+            ($attr_name:expr, $val_expr:expr) => {{
+                let attr_name: String = $attr_name;
+                let val_expr: HirExpr = $val_expr;
+                let ty = val_expr.ty();
+                class_attr_assigns.push((attr_name.clone(), val_expr));
+                class_attr_saved_names
+                    .entry(attr_name.clone())
+                    .or_insert_with(|| self.local_names.get(attr_name.as_str()).copied());
+                let sym = self.define_local(&attr_name, ty);
+                self.result
+                    .sym_names
+                    .entry(sym)
+                    .or_insert_with(|| attr_name.clone());
+                self.result.sym_types.entry(sym).or_insert(ty);
+                if !class_attr_locals.iter().any(|(name, _)| name == &attr_name) {
+                    class_attr_locals.push((attr_name, sym));
+                }
+            }};
+        }
+
         for stmt in body {
             match &stmt.node {
                 ast::Stmt::VarDecl {
@@ -4359,7 +4382,7 @@ impl<'a> AstLowerer<'a> {
                     // `__match_args__: tuple = ("x", "y")` — typed var declaration (#827)
                     if fname == "__match_args__" {
                         if let Some(val_expr) = self.lower_expr(value) {
-                            class_attr_assigns.push((fname.clone(), val_expr));
+                            push_class_attr!(fname.clone(), val_expr);
                         }
                         if let ast::Expr::TupleLit(elems) = &value.node {
                             let names: Vec<String> = elems
@@ -4394,7 +4417,7 @@ impl<'a> AstLowerer<'a> {
                             // real class attribute (CPython), unlike a bare `x: int`.
                             // Mirror the plain-assignment path.
                             if let Some(val_expr) = self.lower_expr(value) {
-                                class_attr_assigns.push((fname.clone(), val_expr));
+                                push_class_attr!(fname.clone(), val_expr);
                             }
                         }
                     }
@@ -4456,6 +4479,8 @@ impl<'a> AstLowerer<'a> {
                             .map(|param| param.name.clone())
                             .collect(),
                     );
+                    let saved_class_cell = self.local_names.get("__class__").copied();
+                    self.local_names.insert("__class__".to_string(), name_id);
                     let lowered_method = self.lower_fn_inner(
                         mname,
                         params,
@@ -4465,6 +4490,14 @@ impl<'a> AstLowerer<'a> {
                         true,
                         method_is_decorated,
                     );
+                    match saved_class_cell {
+                        Some(sym) => {
+                            self.local_names.insert("__class__".to_string(), sym);
+                        }
+                        None => {
+                            self.local_names.remove("__class__");
+                        }
+                    }
                     self.active_type_params = saved_tps;
                     // lower_fn_inner enters/leaves function-local scopes and clears
                     // local_names. Re-publish the method immediately so later class
@@ -4534,10 +4567,10 @@ impl<'a> AstLowerer<'a> {
                         false,
                         false,
                     );
-                    class_attr_assigns.push((
+                    push_class_attr!(
                         nested_name.clone(),
-                        HirExpr::Var(nested_sym, self.checker.tcx.any()),
-                    ));
+                        HirExpr::Var(nested_sym, self.checker.tcx.any())
+                    );
                 }
                 // `__match_args__ = ("x", "y")` — explicit tuple assignment (#827)
                 // `__slots__ = ['x', 'y']` or `__slots__ = ('x', 'y')` — R14
@@ -4549,7 +4582,7 @@ impl<'a> AstLowerer<'a> {
                         }
                         if aname == "__match_args__" {
                             if let Some(val_expr) = self.lower_expr(value) {
-                                class_attr_assigns.push((aname.clone(), val_expr));
+                                push_class_attr!(aname.clone(), val_expr);
                             }
                             if let ast::Expr::TupleLit(elems) = &value.node {
                                 let names: Vec<String> = elems
@@ -4593,7 +4626,7 @@ impl<'a> AstLowerer<'a> {
                             // P2-R3: Class-level attribute assignment (e.g., `attr = Verbose()`).
                             // Lower the value expression and store for emission after class registration.
                             if let Some(val_expr) = self.lower_expr(value) {
-                                class_attr_assigns.push((aname.clone(), val_expr));
+                                push_class_attr!(aname.clone(), val_expr);
                             }
                         }
                     }
@@ -4619,7 +4652,7 @@ impl<'a> AstLowerer<'a> {
                 span,
             };
             if let Some(val_expr) = self.lower_expr(&spanned_value) {
-                class_attr_assigns.push((attr_name, val_expr));
+                push_class_attr!(attr_name, val_expr);
             }
         }
 
@@ -4683,13 +4716,24 @@ impl<'a> AstLowerer<'a> {
                     )
                 })
                 .collect();
-            class_attr_assigns.push((
+            push_class_attr!(
                 "__annotations__".to_string(),
                 HirExpr::Dict {
                     entries,
                     ty: any_ty,
-                },
-            ));
+                }
+            );
+        }
+
+        for (attr_name, saved) in class_attr_saved_names {
+            match saved {
+                Some(sym) => {
+                    self.local_names.insert(attr_name, sym);
+                }
+                None => {
+                    self.local_names.remove(&attr_name);
+                }
+            }
         }
 
         // Class-body docstring: first bare string statement (inspect.getdoc).
@@ -4719,6 +4763,7 @@ impl<'a> AstLowerer<'a> {
             explicit_match_args: resolved_match_args,
             metaclass: None,
             class_attr_assigns,
+            class_attr_locals,
             class_body_stmts,
             slots,
             class_kwargs: Vec::new(),
@@ -5123,6 +5168,15 @@ impl<'a> AstLowerer<'a> {
                 })
             }
             ast::Stmt::Return(expr) => {
+                if let Some(ret_expr) = expr {
+                    if let ast::Expr::Ident(name) = &ret_expr.node {
+                        if self.resolve_name(name, ret_expr.span).is_none()
+                            && !self.outer_scope_names.contains_key(name.as_str())
+                        {
+                            return self.name_error_raise(name, stmt.span);
+                        }
+                    }
+                }
                 let val = expr.as_ref().and_then(|e| self.lower_expr(e));
                 Some(HirStmt::Return {
                     value: val,
@@ -7640,29 +7694,33 @@ impl<'a> AstLowerer<'a> {
                     }
                 }
 
-                let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
-                let fn_sym = self.define_local(&fn_name, any_ty);
-                let body = genexpr_body_from_comprehensions(
-                    element,
-                    generators,
-                    &walrus_targets,
-                    expr.span,
-                );
-                let return_ty: Option<Spanned<ast::TypeExpr>> = None;
-                if let Some(mut func) = self.lower_fn(&fn_name, &[], &return_ty, &body, expr.span) {
-                    let int_ty = self.checker.tcx.int();
-                    func.is_generator = true;
-                    func.return_ty = int_ty;
-                    self.func_return_tys.insert(func.name, int_ty);
-                    for sym in &func.captures {
-                        self.cell_override_syms.insert(*sym);
+                if self.in_function_body {
+                    let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
+                    let fn_sym = self.define_local(&fn_name, any_ty);
+                    let body = genexpr_body_from_comprehensions(
+                        element,
+                        generators,
+                        &walrus_targets,
+                        expr.span,
+                    );
+                    let return_ty: Option<Spanned<ast::TypeExpr>> = None;
+                    if let Some(mut func) =
+                        self.lower_fn(&fn_name, &[], &return_ty, &body, expr.span)
+                    {
+                        let int_ty = self.checker.tcx.int();
+                        func.is_generator = true;
+                        func.return_ty = int_ty;
+                        self.func_return_tys.insert(func.name, int_ty);
+                        for sym in &func.captures {
+                            self.cell_override_syms.insert(*sym);
+                        }
+                        self.result.functions.push(func);
+                        return Some(HirExpr::Call {
+                            func: Box::new(HirExpr::Var(fn_sym, any_ty)),
+                            args: Vec::new(),
+                            ty: int_ty,
+                        });
                     }
-                    self.result.functions.push(func);
-                    return Some(HirExpr::Call {
-                        func: Box::new(HirExpr::Var(fn_sym, any_ty)),
-                        args: Vec::new(),
-                        ty: int_ty,
-                    });
                 }
 
                 // Desugar generator expression to an ITERATOR over an eager list
@@ -8046,6 +8104,7 @@ impl<'a> AstLowerer<'a> {
                     var,
                     extra_vars,
                     unpack_target: g.unpack_target,
+                    target_reads_before_bind: g.target_reads_before_bind.clone(),
                     iter,
                     conditions,
                     is_async: g.is_async,
@@ -10142,6 +10201,7 @@ mod tests {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
             unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![sp(Expr::IntLit(1))])),
             conditions: vec![],
             is_async: false,
@@ -10162,6 +10222,7 @@ mod tests {
         let gen = Comprehension {
             targets: vec!["k".to_string()],
             unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: false,
@@ -10185,6 +10246,7 @@ mod tests {
         let gen = Comprehension {
             targets: vec!["s".to_string()],
             unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: false,
@@ -10204,11 +10266,13 @@ mod tests {
 
     #[test]
     fn test_lower_generator_expr_to_synthetic_generator() {
-        // GeneratorExpr lowers to a real generator wrapper so generator
-        // protocol methods such as .send/.throw/.close are available.
+        // Top-level GeneratorExpr lowers to an eager iterator fallback. The
+        // synthetic generator path is reserved for function bodies where the
+        // generator runtime has a valid caller frame context.
         let gen = Comprehension {
             targets: vec!["g".to_string()],
             unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: false,
@@ -10217,17 +10281,17 @@ mod tests {
             element: Box::new(sp(Expr::IntLit(0))),
             generators: vec![gen],
         })))]);
-        assert_eq!(hir.functions.len(), 1);
-        assert!(hir.functions[0].is_generator);
+        assert!(hir.functions.is_empty());
         match &hir.top_level[0] {
             HirStmt::Expr {
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert!(args.is_empty());
-                assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
+                assert_eq!(args.len(), 1);
+                assert!(matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"));
+                assert!(matches!(&args[0], HirExpr::ListComp { .. }));
             }
-            other => panic!("expected synthetic generator call, got {other:?}"),
+            other => panic!("expected iterator fallback call, got {other:?}"),
         }
     }
 
@@ -10236,6 +10300,7 @@ mod tests {
         let gen = Comprehension {
             targets: vec!["g".to_string()],
             unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![sp(Expr::IntLit(1))])),
             conditions: vec![],
             is_async: false,
@@ -10247,18 +10312,17 @@ mod tests {
             })),
             generators: vec![gen],
         })))]);
-        assert_eq!(hir.functions.len(), 1);
-        assert!(hir.functions[0].is_generator);
-        assert_eq!(hir.functions[0].captures.len(), 1);
+        assert!(hir.functions.is_empty());
         match &hir.top_level[0] {
             HirStmt::Expr {
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert!(args.is_empty());
-                assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
+                assert_eq!(args.len(), 1);
+                assert!(matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"));
+                assert!(matches!(&args[0], HirExpr::ListComp { .. }));
             }
-            other => panic!("expected synthetic generator call, got {other:?}"),
+            other => panic!("expected iterator fallback call, got {other:?}"),
         }
     }
 
@@ -10267,6 +10331,7 @@ mod tests {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
             unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![
                 sp(Expr::IntLit(1)),
                 sp(Expr::IntLit(2)),
@@ -10294,6 +10359,7 @@ mod tests {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
             unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: true,

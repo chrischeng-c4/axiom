@@ -133,6 +133,10 @@ pub struct HirClass {
     /// e.g., `attr = Verbose()` in class body → (attr_name, value_expr).
     /// Used for descriptor protocol support.
     pub class_attr_assigns: Vec<(String, HirExpr)>,
+    /// Class-body local symbols for class attributes. These make subsequent
+    /// class-body expressions resolve earlier assignments (`y = [fn() for fn
+    /// in items]`) while final storage still goes through class attributes.
+    pub class_attr_locals: Vec<(String, SymbolId)>,
     /// Narrow executable class-body statements that must run at the class
     /// definition point before attributes/decorators. Currently used for
     /// CPython runtime NameError on unresolved bare-name reads in class bodies.
@@ -465,6 +469,7 @@ pub struct HirComprehension {
     pub var: SymbolId,
     pub extra_vars: Vec<SymbolId>,
     pub unpack_target: bool,
+    pub target_reads_before_bind: Vec<String>,
     pub iter: HirExpr,
     pub conditions: Vec<HirExpr>,
     pub is_async: bool,
@@ -870,6 +875,7 @@ mod tests {
             explicit_match_args: None,
             metaclass: None,
             class_attr_assigns: vec![],
+            class_attr_locals: vec![],
             class_body_stmts: vec![],
             slots: None,
             class_kwargs: vec![],
