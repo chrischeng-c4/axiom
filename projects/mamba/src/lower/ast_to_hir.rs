@@ -6358,6 +6358,75 @@ impl<'a> AstLowerer<'a> {
                     }
                 }
                 if let ast::Expr::Ident(name) = &func.node {
+                    if name == "sorted"
+                        && args.iter().all(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                            )
+                        })
+                    {
+                        let positional_count = args
+                            .iter()
+                            .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                            .count();
+                        if positional_count != 1
+                            || args.iter().any(|a| {
+                                matches!(
+                                    a,
+                                    ast::CallArg::Keyword { name: n, .. } if n == "iterable"
+                                )
+                            })
+                        {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    format!(
+                                        "sorted expected 1 argument, got {}",
+                                        positional_count
+                                    ),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                    }
+                    if name == "divmod"
+                        && args.iter().all(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                            )
+                        })
+                    {
+                        let positional_count = args
+                            .iter()
+                            .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                            .count();
+                        if positional_count != 2
+                            || args
+                                .iter()
+                                .any(|a| matches!(a, ast::CallArg::Keyword { .. }))
+                        {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    format!(
+                                        "divmod expected 2 arguments, got {}",
+                                        positional_count
+                                    ),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                    }
                     if name == "type"
                         && args.iter().all(|a| {
                             matches!(

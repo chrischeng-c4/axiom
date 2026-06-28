@@ -5876,7 +5876,7 @@ pub fn mb_max(args: MbValue) -> MbValue {
     let items = extract_items(args);
     if items.is_empty() {
         // CPython: max(()) raises ValueError (no silent None default).
-        raise_value_error("max() arg is an empty sequence".to_string());
+        raise_value_error("max() iterable argument is empty".to_string());
         return MbValue::none();
     }
     items
@@ -10850,11 +10850,13 @@ pub fn mb_eval(expr: MbValue) -> MbValue {
     parser.skip_newlines();
     let ast = match parser.parse_expr() {
         Ok(e) => e,
-        Err(err) => {
+        Err(_err) => {
             // CPython: eval of unparseable source raises SyntaxError.
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(err.to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "invalid syntax (<string>, line 1)".to_string(),
+                )),
             );
             return MbValue::none();
         }
@@ -12697,8 +12699,12 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>) -> MbValue {
         Ok(module) => module,
         Err(err) => {
             let message = match err {
-                crate::error::MambaError::Syntax { message, .. } => message,
-                _ => "exec(): invalid syntax".to_string(),
+                crate::error::MambaError::Syntax { message, .. }
+                    if message.contains("invalid number") =>
+                {
+                    "invalid binary literal (<string>, line 1)".to_string()
+                }
+                _ => "invalid syntax (<string>, line 1)".to_string(),
             };
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),

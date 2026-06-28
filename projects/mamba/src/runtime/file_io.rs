@@ -832,6 +832,7 @@ fn raise_file_not_found(path: &str) {
         MbValue::from_ptr(MbObject::new_tuple(vec![
             MbValue::from_int(2),
             MbValue::from_ptr(MbObject::new_str(strerror.to_string())),
+            MbValue::from_ptr(MbObject::new_str(path.to_string())),
         ])),
     );
     let obj = Box::new(MbObject {
