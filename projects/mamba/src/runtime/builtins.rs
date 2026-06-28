@@ -8574,6 +8574,12 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     if type_name == "collections.Counter" && method_str == "fromkeys" {
                         return super::class::mb_counter_fromkeys_not_implemented();
                     }
+                    if type_name == "object" && method_str == "__new__" {
+                        return super::class::object_new_unbound(&items);
+                    }
+                    if type_name == "object" && method_str == "__init__" {
+                        return super::class::object_init_unbound(&items);
+                    }
                     if items.is_empty() {
                         if let Some(result) =
                             super::stdlib::string_constants_mod::static_no_self_error(
