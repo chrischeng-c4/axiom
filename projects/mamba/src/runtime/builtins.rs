@@ -9324,6 +9324,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         // preserving the ZoneInfo/Path/... `_arg0`/`key` shape.
                         if super::class::class_is_registered(&name)
                             && (!super::class::lookup_method(&name, "__init__").is_none()
+                                || super::stdlib::dataclasses_mod::dc_has_synth_init(&name)
                                 || super::class::class_has_builtin_data_payload_base(&name)
                                 || super::class::check_class_hierarchy(&name, "int"))
                         {
