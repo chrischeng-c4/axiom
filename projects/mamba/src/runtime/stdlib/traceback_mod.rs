@@ -49,6 +49,18 @@ use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 
+#[derive(Clone)]
+struct TraceFrame {
+    filename: String,
+    lineno: u32,
+    name: String,
+}
+
+thread_local! {
+    static TRACE_FRAME_STACK: std::cell::RefCell<Vec<TraceFrame>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
@@ -615,6 +627,62 @@ pub fn mb_traceback_walk_stack_frame(filename: MbValue, lineno: MbValue, name: M
     MbValue::from_ptr(MbObject::new_list(vec![pair]))
 }
 
+pub fn mb_traceback_reset_stack() {
+    TRACE_FRAME_STACK.with(|stack| stack.borrow_mut().clear());
+}
+
+pub fn mb_traceback_push_frame(filename: MbValue, lineno: MbValue, name: MbValue) {
+    let filename = extract_str(filename).unwrap_or_else(|| "<string>".to_string());
+    let name = extract_str(name).unwrap_or_else(|| "<module>".to_string());
+    let lineno = lineno.as_int().unwrap_or(1).max(1) as u32;
+    TRACE_FRAME_STACK.with(|stack| {
+        stack.borrow_mut().push(TraceFrame {
+            filename,
+            lineno,
+            name,
+        });
+    });
+}
+
+pub fn mb_traceback_pop_frame() {
+    TRACE_FRAME_STACK.with(|stack| {
+        stack.borrow_mut().pop();
+    });
+}
+
+pub fn mb_traceback_capture_raise(lineno: MbValue) {
+    let raise_lineno = lineno.as_int().unwrap_or(1).max(1) as u32;
+    let entries: Vec<(String, u32, String)> = TRACE_FRAME_STACK.with(|stack| {
+        let mut frames = stack.borrow().clone();
+        if frames.is_empty() {
+            frames.push(TraceFrame {
+                filename: "<string>".to_string(),
+                lineno: raise_lineno,
+                name: "<module>".to_string(),
+            });
+        }
+        if let Some(last) = frames.last_mut() {
+            last.lineno = raise_lineno;
+        }
+        frames
+            .into_iter()
+            .map(|frame| (frame.filename, frame.lineno, frame.name))
+            .collect()
+    });
+
+    let tb = make_tb_from_traceback_entries(&entries);
+    super::super::exception::set_current_traceback(entries);
+    if let Some(instance) = super::super::class::peek_last_raised_instance() {
+        unsafe {
+            super::super::rc::retain_if_ptr(tb);
+        }
+        set_instance_field(instance, "__traceback__", tb);
+        unsafe {
+            super::super::rc::release_if_ptr(instance);
+        }
+    }
+}
+
 // ── Class shells ──
 
 /// Build a passive Instance with the given class_name and named fields.
@@ -1064,21 +1132,84 @@ fn make_tb_node(next: MbValue, with_local: bool) -> MbValue {
     )
 }
 
+pub fn make_tb_from_traceback_entries(entries: &[(String, u32, String)]) -> MbValue {
+    if entries.is_empty() {
+        return make_tb_instance();
+    }
+    let mut next = MbValue::none();
+    for (idx, (filename, lineno, name)) in entries.iter().rev().enumerate() {
+        let frame = make_frame_instance_for(filename, *lineno, name, idx == 0);
+        next = make_instance(
+            "traceback",
+            vec![
+                ("tb_lineno", MbValue::from_int((*lineno).max(1) as i64)),
+                ("tb_next", next),
+                ("tb_frame", frame),
+            ],
+        );
+    }
+    set_instance_field(
+        next,
+        "__mamba_walk_depth",
+        MbValue::from_int(entries.len() as i64),
+    );
+    next
+}
+
 fn make_frame_instance(with_local: bool) -> MbValue {
+    make_frame_instance_for("<string>", 1, "<module>", with_local)
+}
+
+fn make_frame_instance_for(filename: &str, lineno: u32, name: &str, with_local: bool) -> MbValue {
     let locals = MbValue::from_ptr(MbObject::new_dict());
     if with_local {
-        super::super::dict_ops::mb_dict_setitem(
-            locals,
-            MbValue::from_ptr(MbObject::new_str("_i".to_string())),
-            MbValue::from_int(1),
-        );
+        if let Some(ptr) = locals.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    lock.write().unwrap().insert(
+                        super::super::dict_ops::DictKey::Str("_i".to_string()),
+                        MbValue::from_int(1),
+                    );
+                }
+            }
+        }
     }
     make_instance(
         "frame",
         vec![
-            ("f_lineno", MbValue::from_int(1)),
+            ("f_lineno", MbValue::from_int(lineno.max(1) as i64)),
             ("f_locals", locals),
             ("f_globals", MbValue::from_ptr(MbObject::new_dict())),
+            ("f_code", make_code_object_for_frame(filename, lineno, name)),
+            (
+                "f_filename",
+                MbValue::from_ptr(MbObject::new_str(filename.to_string())),
+            ),
+            (
+                "f_name",
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            ),
+        ],
+    )
+}
+
+fn make_code_object_for_frame(filename: &str, lineno: u32, name: &str) -> MbValue {
+    make_instance(
+        "code",
+        vec![
+            (
+                "co_name",
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            ),
+            (
+                "co_qualname",
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            ),
+            (
+                "co_filename",
+                MbValue::from_ptr(MbObject::new_str(filename.to_string())),
+            ),
+            ("co_firstlineno", MbValue::from_int(lineno.max(1) as i64)),
         ],
     )
 }
