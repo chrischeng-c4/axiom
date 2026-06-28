@@ -1051,6 +1051,30 @@ mod tests {
     }
 
     #[test]
+    fn test_set_init_kwargs_raise_type_error_through_method_kwargs_path() {
+        super::super::exception::mb_clear_exception();
+        let set = mb_set_new();
+        let kwargs = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("a".to_string())),
+            MbValue::from_int(1),
+        );
+        let result = super::super::class::mb_call_method_kwargs(
+            set,
+            MbValue::from_ptr(MbObject::new_str("__init__".to_string())),
+            make_args(vec![]),
+            kwargs,
+        );
+        assert!(result.is_none());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
     fn test_dispatch_add() {
         let set = mb_set_new();
         let result = dispatch_set_method("add", set, make_args(vec![MbValue::from_int(5)]));

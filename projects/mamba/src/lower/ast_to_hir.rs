@@ -6310,6 +6310,53 @@ impl<'a> AstLowerer<'a> {
                         }
                     }
                 }
+                if let ast::Expr::Ident(name) = &func.node {
+                    if matches!(name.as_str(), "set" | "frozenset")
+                        && args.iter().all(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                            )
+                        })
+                    {
+                        let positional_count = args
+                            .iter()
+                            .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                            .count();
+                        if positional_count > 1 {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    format!(
+                                        "{} expected at most 1 argument, got {}",
+                                        name, positional_count
+                                    ),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                        if args
+                            .iter()
+                            .any(|a| matches!(a, ast::CallArg::Keyword { .. }))
+                        {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    format!("{}() takes no keyword arguments", name),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                    }
+                }
                 // all(x for x in it) / any(x for x in it) must preserve
                 // generator-expression laziness so the builtin can short-circuit.
                 if let ast::Expr::Ident(name) = &func.node {
@@ -11296,6 +11343,33 @@ mod tests {
         assert!(matches!(
             &hir.top_level[0],
             HirStmt::Expr { expr: HirExpr::Call { args, .. }, .. } if args.len() == 1
+        ));
+    }
+
+    #[test]
+    fn test_lower_set_constructor_two_positional_args_raises_type_error() {
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Call {
+            func: Box::new(sp(Expr::Ident("set".to_string()))),
+            args: vec![
+                CallArg::Positional(sp(Expr::ListLit(vec![]))),
+                CallArg::Positional(sp(Expr::IntLit(2))),
+            ],
+        })))]);
+        let HirStmt::Expr {
+            expr: HirExpr::Call { func, args, .. },
+            ..
+        } = &hir.top_level[0]
+        else {
+            panic!("expected lowered TypeError call");
+        };
+        assert!(matches!(
+            func.as_ref(),
+            HirExpr::StrLit(name, _) if name == "mb_arg_bind_error"
+        ));
+        assert!(matches!(
+            args.as_slice(),
+            [HirExpr::StrLit(msg, _)]
+                if msg == "set expected at most 1 argument, got 2"
         ));
     }
 
