@@ -187,6 +187,9 @@ fn referent_needs_proxy_wrapper(obj: MbValue) -> bool {
     if is_int_backed_function_handle(obj) {
         return true;
     }
+    if matches!(super::collections_mod::user_wrapper_data(obj), Some(("list", _))) {
+        return true;
+    }
     if referent_needs_proxy_hash_guard(obj) {
         return true;
     }
@@ -1814,6 +1817,27 @@ mod tests {
     fn test_proxy_returns_object() {
         let v = target();
         assert_eq!(mb_weakref_proxy(v, MbValue::none()).as_ptr(), v.as_ptr());
+    }
+
+    #[test]
+    fn test_proxy_wraps_userlist() {
+        let v = super::super::collections_mod::mb_userlist_new(MbValue::none());
+        let proxy = mb_weakref_proxy(v, MbValue::none());
+        assert!(is_proxy_instance(proxy));
+        assert_eq!(proxy_target(proxy).and_then(|t| t.as_ptr()), v.as_ptr());
+    }
+
+    #[test]
+    fn test_userlist_proxy_bool_forwards_to_backing_list() {
+        let v = super::super::collections_mod::mb_userlist_new(MbValue::none());
+        let proxy = mb_weakref_proxy(v, MbValue::none());
+        assert_eq!(crate::runtime::builtins::mb_bool(proxy).as_bool(), Some(false));
+
+        let backing = super::super::collections_mod::user_wrapper_data(v)
+            .expect("expected UserList backing")
+            .1;
+        crate::runtime::list_ops::mb_list_append(backing, MbValue::from_int(12));
+        assert_eq!(crate::runtime::builtins::mb_bool(proxy).as_bool(), Some(true));
     }
 
     #[test]
