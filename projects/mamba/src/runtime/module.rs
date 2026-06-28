@@ -214,6 +214,10 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
         }
     }
 
+    if !ensure_parent_packages(&name) {
+        return MbValue::none();
+    }
+
     // Pre-cache a sentinel module to prevent circular import recursion.
     MODULES.with(|mods| {
         mods.borrow_mut().insert(
@@ -283,6 +287,27 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
         update_sys_modules(&name, val);
     }
     val
+}
+
+fn ensure_parent_packages(name: &str) -> bool {
+    let parts: Vec<&str> = name.split('.').collect();
+    if parts.len() <= 1 {
+        return true;
+    }
+
+    for idx in 1..parts.len() {
+        let parent = parts[..idx].join(".");
+        let already_loaded = MODULES.with(|mods| mods.borrow().contains_key(&parent));
+        if already_loaded {
+            continue;
+        }
+
+        let value = mb_import(str_value(&parent));
+        if value.is_none() || super::exception::mb_has_exception().as_bool() == Some(true) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Insert `name → val` into `sys.modules` (the dict stored as sys.modules attr).
@@ -469,13 +494,88 @@ pub fn mb_import_star(module_name: MbValue) -> MbValue {
 /// Resolution anchors to the CURRENT_MODULE_PACKAGE thread-local, walking up
 /// `level` directories from the package path to find the target module.
 /// Returns `MbValue::none()` if the level exceeds the package hierarchy.
-pub fn mb_import_relative(module_name: MbValue, level: MbValue) -> MbValue {
+pub fn mb_import_relative(module_name: MbValue, level: i64) -> MbValue {
     let target = extract_str(module_name).unwrap_or_default();
-    let level_n = level.as_int().unwrap_or(0) as usize;
+    let level_n = level.max(0) as usize;
 
     if level_n == 0 {
         // Not actually relative — delegate to regular import.
         return mb_import(module_name);
+    }
+
+    let Some(full_name) = resolve_relative_module_name(&target, level_n) else {
+        return MbValue::none();
+    };
+
+    // Delegate to the standard import mechanism with the resolved name.
+    mb_import(str_value(&full_name))
+}
+
+/// Get an attribute from a module resolved by a relative import.
+pub fn mb_module_getattr_relative(module_name: MbValue, level: i64, attr: MbValue) -> MbValue {
+    let target = extract_str(module_name).unwrap_or_default();
+    let level_n = level.max(0) as usize;
+
+    if level_n == 0 {
+        return mb_module_getattr(module_name, attr);
+    }
+
+    let Some(full_name) = resolve_relative_module_name(&target, level_n) else {
+        return MbValue::none();
+    };
+    let attr_name = extract_str(attr).unwrap_or_default();
+    let full_name_val = str_value(&full_name);
+    let imported = mb_import(full_name_val);
+    if imported.is_none() {
+        return MbValue::none();
+    }
+    let value = mb_module_getattr(str_value(&full_name), str_value(&attr_name));
+    if !value.is_none() || !target.is_empty() || attr_name.is_empty() {
+        return value;
+    }
+
+    // `from . import sibling` means "read sibling from the current package",
+    // and CPython also attempts to load package.sibling as a submodule when the
+    // attribute is absent.
+    super::exception::mb_clear_exception();
+    let child_name = if full_name.is_empty() {
+        attr_name.clone()
+    } else {
+        format!("{}.{}", full_name, attr_name)
+    };
+    let child = mb_import(str_value(&child_name));
+    if !child.is_none() {
+        propagate_submodule_to_parents(&child_name);
+        return child;
+    }
+
+    super::exception::mb_clear_exception();
+    let exc_type = MbValue::from_ptr(MbObject::new_str("ImportError".to_string()));
+    let msg = MbValue::from_ptr(MbObject::new_str(format!(
+        "cannot import name '{attr_name}' from '{full_name}'"
+    )));
+    super::exception::mb_raise(exc_type, msg);
+    MbValue::none()
+}
+
+/// Star import from a module resolved by a relative import.
+pub fn mb_import_relative_star(module_name: MbValue, level: i64) -> MbValue {
+    let target = extract_str(module_name).unwrap_or_default();
+    let level_n = level.max(0) as usize;
+
+    if level_n == 0 {
+        return mb_import_star(module_name);
+    }
+
+    let Some(full_name) = resolve_relative_module_name(&target, level_n) else {
+        return MbValue::none();
+    };
+    mb_import_star(str_value(&full_name))
+}
+
+fn resolve_relative_module_name(target: &str, level_n: usize) -> Option<String> {
+    if level_n == 0 {
+        return Some(target.to_string());
     }
 
     // Get the current module's package to anchor the relative import.
@@ -487,7 +587,7 @@ pub fn mb_import_relative(module_name: MbValue, level: MbValue) -> MbValue {
             let parts: Vec<&str> = pkg.split('.').collect();
             if level_n > parts.len() {
                 // Level exceeds package hierarchy — import error.
-                return MbValue::none();
+                return None;
             }
             // Walk up `level` levels (level=1 stays in current package,
             // level=2 goes to parent, etc.)
@@ -500,22 +600,18 @@ pub fn mb_import_relative(module_name: MbValue, level: MbValue) -> MbValue {
         }
         _ => {
             // No package context (top-level script) — relative import not allowed.
-            return MbValue::none();
+            return None;
         }
     };
 
-    // Build the full module name: anchor + target
-    let full_name = if target.is_empty() {
-        anchor.clone()
+    // Build the full module name: anchor + target.
+    Some(if target.is_empty() {
+        anchor
     } else if anchor.is_empty() {
-        target.clone()
+        target.to_string()
     } else {
         format!("{}.{}", anchor, target)
-    };
-
-    // Delegate to the standard import mechanism with the resolved name.
-    let name_val = MbValue::from_ptr(MbObject::new_str(full_name));
-    mb_import(name_val)
+    })
 }
 
 /// Get an attribute from a module.
@@ -1130,6 +1226,18 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
 
     // 6. Save caller's globals and clear for module execution
     let saved_globals = save_and_clear_global_id_namespace();
+    if let Some(package_sym) = checker.symbols.lookup("__package__") {
+        super::closure::mb_global_set_id(
+            MbValue::from_bits(package_sym.0 as u64),
+            str_value(&package_attr),
+        );
+    }
+    if let Some(name_sym) = checker.symbols.lookup("__name__") {
+        super::closure::mb_global_set_id(
+            MbValue::from_bits(name_sym.0 as u64),
+            str_value(module_name),
+        );
+    }
 
     // 6b. Set CURRENT_MODULE_PACKAGE for relative import resolution — R3.
     let saved_package = CURRENT_MODULE_PACKAGE.with(|cp| cp.borrow().clone());
@@ -2364,7 +2472,7 @@ mod tests {
         CURRENT_MODULE_PACKAGE.with(|cp| {
             *cp.borrow_mut() = None;
         });
-        let result = mb_import_relative(s("foo"), MbValue::from_int(1));
+        let result = mb_import_relative(s("foo"), 1);
         assert!(
             result.is_none(),
             "relative import without package context should return None"
@@ -2379,7 +2487,7 @@ mod tests {
         CURRENT_MODULE_PACKAGE.with(|cp| {
             *cp.borrow_mut() = Some("mypkg".to_string());
         });
-        let result = mb_import_relative(s("foo"), MbValue::from_int(3));
+        let result = mb_import_relative(s("foo"), 3);
         assert!(
             result.is_none(),
             "relative import exceeding hierarchy should return None"
@@ -2395,8 +2503,27 @@ mod tests {
         attrs.insert("val".into(), MbValue::from_int(10));
         mb_module_register("abs_test_mod", attrs);
 
-        let result = mb_import_relative(s("abs_test_mod"), MbValue::from_int(0));
+        let result = mb_import_relative(s("abs_test_mod"), 0);
         assert!(result.is_ptr(), "level=0 should delegate to mb_import");
+        cleanup_all_modules();
+    }
+
+    #[test]
+    fn test_relative_module_getattr_resolves_parent_sibling() {
+        cleanup_all_modules();
+        let mut attrs = HashMap::new();
+        attrs.insert("SENTINEL_A".into(), s("a-value"));
+        mb_module_register("mamba_rel_pkg.sibling_a", attrs);
+        CURRENT_MODULE_PACKAGE.with(|cp| {
+            *cp.borrow_mut() = Some("mamba_rel_pkg.sub".to_string());
+        });
+
+        let value = mb_module_getattr_relative(
+            s("sibling_a"),
+            2,
+            s("SENTINEL_A"),
+        );
+        assert_eq!(extract_str(value).as_deref(), Some("a-value"));
         cleanup_all_modules();
     }
 
@@ -2478,6 +2605,62 @@ mod tests {
                 "simple .py file should not be a package"
             );
         });
+        cleanup_all_modules();
+    }
+
+    #[test]
+    fn test_dotted_import_loads_parent_packages() {
+        cleanup_all_modules();
+
+        let dir = tempfile::tempdir().unwrap();
+        let pkg_dir = dir.path().join("pkg_parent_test");
+        let sub_dir = pkg_dir.join("sub");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(pkg_dir.join("__init__.py"), "PACKAGE_SENTINEL = 'root'\n").unwrap();
+        std::fs::write(sub_dir.join("__init__.py"), "SUB_SENTINEL = 'sub-init'\n").unwrap();
+        std::fs::write(sub_dir.join("leaf.py"), "LEAF_SENTINEL = 'leaf'\n").unwrap();
+
+        mb_set_script_dir(dir.path().to_path_buf());
+        let result = mb_import(s("pkg_parent_test.sub.leaf"));
+        assert!(result.is_ptr(), "leaf import should succeed");
+
+        MODULES.with(|mods| {
+            let mods = mods.borrow();
+            assert!(mods.contains_key("pkg_parent_test"));
+            assert!(mods.contains_key("pkg_parent_test.sub"));
+            assert!(mods.contains_key("pkg_parent_test.sub.leaf"));
+            assert!(
+                mods.get("pkg_parent_test.sub").unwrap().is_package,
+                "parent subpackage should execute __init__.py"
+            );
+        });
+        assert!(
+            lookup_sys_modules("pkg_parent_test.sub").is_some(),
+            "parent subpackage should be visible through sys.modules"
+        );
+        let sentinel = mb_module_getattr(s("pkg_parent_test.sub"), s("SUB_SENTINEL"));
+        assert_eq!(extract_str(sentinel).as_deref(), Some("sub-init"));
+        cleanup_all_modules();
+    }
+
+    #[test]
+    fn test_imported_module_body_reads_package_dunder() {
+        cleanup_all_modules();
+
+        let dir = tempfile::tempdir().unwrap();
+        let pkg_dir = dir.path().join("pkg_dunder_test");
+        let sub_dir = pkg_dir.join("sub");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(pkg_dir.join("__init__.py"), "").unwrap();
+        std::fs::write(sub_dir.join("__init__.py"), "").unwrap();
+        std::fs::write(sub_dir.join("leaf.py"), "LEAF_PACKAGE = __package__\n").unwrap();
+
+        mb_set_script_dir(dir.path().to_path_buf());
+        let result = mb_import(s("pkg_dunder_test.sub.leaf"));
+        assert!(result.is_ptr(), "leaf import should succeed");
+
+        let value = mb_module_getattr(s("pkg_dunder_test.sub.leaf"), s("LEAF_PACKAGE"));
+        assert_eq!(extract_str(value).as_deref(), Some("pkg_dunder_test.sub"));
         cleanup_all_modules();
     }
 
