@@ -441,6 +441,7 @@ pub fn gc_get_full_stats() -> (u64, usize, usize, usize, bool, bool) {
 pub fn mb_gc_collect(_: MbValue) -> MbValue {
     let freed = collect();
     super::stdlib::weakref_mod::expire_unbound_class_refs();
+    super::stdlib::weakref_mod::expire_unbound_finalizers();
     MbValue::from_int(freed as i64)
 }
 
