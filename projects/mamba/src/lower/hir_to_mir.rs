@@ -1401,6 +1401,9 @@ struct HirToMir<'a> {
     /// True while lowering a normal Python function body with a pushed
     /// traceback frame. Synthetic bodies such as lambdas opt out.
     traceback_frame_active: bool,
+    /// True while lowering a normal Python function body that entered the
+    /// runtime recursion-depth guard.
+    recursion_frame_active: bool,
     /// (class_name, docstring) pairs primed at module-init via
     /// `mb_class_set_doc` so `inspect.getdoc(Cls)` works.
     pending_class_docs: Vec<(String, String)>,
@@ -1483,6 +1486,7 @@ impl<'a> HirToMir<'a> {
             current_func_src_line: None,
             current_func_name: None,
             traceback_frame_active: false,
+            recursion_frame_active: false,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
@@ -1649,6 +1653,7 @@ impl<'a> HirToMir<'a> {
             current_func_src_line: None,
             current_func_name: None,
             traceback_frame_active: false,
+            recursion_frame_active: false,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
@@ -1687,6 +1692,7 @@ impl<'a> HirToMir<'a> {
         self.current_func_src_line = None;
         self.current_func_name = None;
         self.traceback_frame_active = false;
+        self.recursion_frame_active = false;
     }
 
     /// `*args` is a tuple in Python, but every call path packs the extra
@@ -1792,6 +1798,18 @@ impl<'a> HirToMir<'a> {
             .collect();
 
         self.emit_star_args_to_tuple(func, any_ty);
+        let _recursion_ok = {
+            let dest = self.fresh_vreg();
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: Some(dest),
+                name: "mb_recursion_enter".to_string(),
+                args: Vec::new(),
+                ty: self.tcx.bool(),
+            });
+            dest
+        };
+        self.emit_exception_propagate();
+        self.recursion_frame_active = true;
         let frame_filename = self
             .src_filename
             .clone()
@@ -9873,6 +9891,7 @@ impl<'a> HirToMir<'a> {
                 let saved_with_ctx = std::mem::take(&mut self.with_ctx_stack);
                 let saved_return_ty = self.current_return_ty;
                 let saved_traceback_frame_active = self.traceback_frame_active;
+                let saved_recursion_frame_active = self.recursion_frame_active;
                 let saved_cell_override = std::mem::take(&mut self.cell_override);
                 let saved_initialized_capture_cells =
                     std::mem::take(&mut self.initialized_capture_cells);
@@ -9887,6 +9906,7 @@ impl<'a> HirToMir<'a> {
                 self.is_gen_body = false;
                 self.current_return_ty = any_ty;
                 self.traceback_frame_active = false;
+                self.recursion_frame_active = false;
 
                 // Mark outer variables for cell_override so lambda body reads
                 // them via LoadGlobal instead of looking them up in sym_to_vreg.
@@ -9937,6 +9957,7 @@ impl<'a> HirToMir<'a> {
                 self.with_ctx_stack = saved_with_ctx;
                 self.current_return_ty = saved_return_ty;
                 self.traceback_frame_active = saved_traceback_frame_active;
+                self.recursion_frame_active = saved_recursion_frame_active;
                 self.cell_override = saved_cell_override;
                 self.initialized_capture_cells = saved_initialized_capture_cells;
 
@@ -10509,6 +10530,9 @@ impl<'a> HirToMir<'a> {
     }
 
     fn finish_block(&mut self, terminator: Terminator) {
+        if matches!(terminator, Terminator::Return(_)) && self.recursion_frame_active {
+            self.emit_extern_call(None, "mb_recursion_leave");
+        }
         if matches!(terminator, Terminator::Return(_)) && self.traceback_frame_active {
             self.emit_extern_call(None, "mb_traceback_pop_frame");
         }
