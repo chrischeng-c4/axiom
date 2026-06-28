@@ -9328,6 +9328,18 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 items.extend_from_slice(&defaults[take_from..]);
             }
         }
+        if super::closure::func_has_boxed_params(func)
+            && !super::module::is_native_func(raw_addr as u64)
+            && !has_star
+            && !has_kwargs
+        {
+            if let Some(frame) = bind_declared_call_frame(func, &items, &[]) {
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
+                }
+                items = frame;
+            }
+        }
         // Native extern functions use (args_ptr, nargs) convention (#1132).
         if super::module::is_native_func(raw_addr as u64) {
             let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
@@ -11002,8 +11014,7 @@ struct ExecFunctionBinding {
 
 static EXEC_FUNCTIONS: std::sync::LazyLock<std::sync::RwLock<FxHashMap<u64, ExecFunctionBinding>>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(FxHashMap::default()));
-static NEXT_EXEC_FUNCTION_ID: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1);
+static NEXT_EXEC_FUNCTION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[derive(Clone, Copy)]
 enum ExecFlow {
@@ -11409,12 +11420,7 @@ pub fn mb_exec_function_is_async(func: MbValue) -> bool {
 pub fn mb_exec_function_call(func: MbValue, args: Vec<MbValue>) -> MbValue {
     if let Some(id) = exec_function_field(func, "__function_id__").and_then(|value| value.as_int())
     {
-        if let Some(binding) = EXEC_FUNCTIONS
-            .read()
-            .unwrap()
-            .get(&(id as u64))
-            .cloned()
-        {
+        if let Some(binding) = EXEC_FUNCTIONS.read().unwrap().get(&(id as u64)).cloned() {
             let mut ctx = ExecContext {
                 globals: binding.globals,
                 ..ExecContext::default()
@@ -11864,11 +11870,9 @@ fn exec_assignment_target_names(expr: &crate::parser::ast::Expr, out: &mut Vec<S
             out.push(name.clone());
             true
         }
-        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::UnpackTarget(items) => {
-            items
-                .iter()
-                .all(|item| exec_assignment_target_names(&item.node, out))
-        }
+        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::UnpackTarget(items) => items
+            .iter()
+            .all(|item| exec_assignment_target_names(&item.node, out)),
         Expr::Starred(inner) => exec_assignment_target_names(&inner.node, out),
         _ => false,
     }

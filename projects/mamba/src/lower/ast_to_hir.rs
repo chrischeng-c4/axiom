@@ -1433,8 +1433,7 @@ fn infer_return_type_from_ast_inner(
                         env,
                         func_ret_float,
                         &mut arm_locals,
-                    )
-                    {
+                    ) {
                         return Some(ty);
                     }
                 }
@@ -2938,6 +2937,7 @@ impl<'a> AstLowerer<'a> {
                 sym_types: std::collections::HashMap::new(),
                 module_annotations: Vec::new(),
                 func_sigs: std::collections::HashMap::new(),
+                boxed_param_funcs: std::collections::HashSet::new(),
             },
             errors: Vec::new(),
             local_assigned_names: Vec::new(),
@@ -3781,7 +3781,11 @@ impl<'a> AstLowerer<'a> {
         // a param only ever called with float arguments is monomorphized as
         // `float` (not the default raw-int) so float NaN-box bits don't leak as
         // ints. Annotated/decorated params are untouched.
-        let param_float_hints = if is_method || is_decorated {
+        let defaults_mutated = self.funcs_with_mutated_defaults.contains(name);
+        if defaults_mutated {
+            self.result.boxed_param_funcs.insert(name_id.0);
+        }
+        let param_float_hints = if is_method || is_decorated || defaults_mutated {
             None
         } else {
             self.func_param_float_hint.get(name).cloned()
@@ -3791,6 +3795,8 @@ impl<'a> AstLowerer<'a> {
             .enumerate()
             .map(|(idx, p)| {
                 let param_ty = if is_method {
+                    any_ty
+                } else if defaults_mutated && p.kind == ast::ParamKind::Regular && !p.kw_only {
                     any_ty
                 } else if p.kind == ast::ParamKind::Star || p.kind == ast::ParamKind::DoubleStar {
                     // *args receives a NaN-boxed MbList, **kwargs receives a NaN-boxed MbDict.
@@ -3861,7 +3867,7 @@ impl<'a> AstLowerer<'a> {
             .collect();
 
         // Return type: use annotation if available; otherwise infer from body.
-        let ret_ty = if is_method {
+        let ret_ty = if is_method || defaults_mutated {
             any_ty
         } else {
             let resolved = _return_ty
@@ -6071,14 +6077,15 @@ impl<'a> AstLowerer<'a> {
                             }
                         }
                     }
-                    if matches!(name.as_str(), "AttributeError" | "NameError" | "ImportError")
-                        && args.iter().any(|a| {
-                            matches!(
-                                a,
-                                ast::CallArg::Keyword { .. } | ast::CallArg::DoubleStarArg(_)
-                            )
-                        })
-                        && args.iter().all(|a| !matches!(a, ast::CallArg::StarArg(_)))
+                    if matches!(
+                        name.as_str(),
+                        "AttributeError" | "NameError" | "ImportError"
+                    ) && args.iter().any(|a| {
+                        matches!(
+                            a,
+                            ast::CallArg::Keyword { .. } | ast::CallArg::DoubleStarArg(_)
+                        )
+                    }) && args.iter().all(|a| !matches!(a, ast::CallArg::StarArg(_)))
                     {
                         let pos = HirExpr::List {
                             elements: args
@@ -7088,6 +7095,17 @@ impl<'a> AstLowerer<'a> {
                             self.func_param_info.get(fname).cloned()
                         };
                         if let Some(param_info) = param_info {
+                            if self.funcs_with_mutated_defaults.contains(fname) {
+                                if let Some(call) = self.build_mutated_defaults_call(
+                                    f.clone(),
+                                    fname,
+                                    &param_info,
+                                    args,
+                                    any_ty,
+                                ) {
+                                    return Some(call);
+                                }
+                            }
                             // A `**mapping` splat has dynamic keys the static
                             // reorder below cannot bind (it only matches literal
                             // keyword names; the splat would be dropped). Route the
@@ -7198,7 +7216,9 @@ impl<'a> AstLowerer<'a> {
                                                     hir_args.push(lowered);
                                                 }
                                             }
-                                            ParamDefault::Frozen(expr) => hir_args.push(expr.clone()),
+                                            ParamDefault::Frozen(expr) => {
+                                                hir_args.push(expr.clone())
+                                            }
                                         }
                                     }
                                 } else if let Some(def_expr) = &param_info[*orig_idx].1 {
@@ -8459,6 +8479,94 @@ impl<'a> AstLowerer<'a> {
         }
     }
 
+    fn build_mutated_defaults_call(
+        &mut self,
+        f: HirExpr,
+        fname: &str,
+        param_info: &[ParamInfo],
+        args: &[ast::CallArg],
+        any_ty: TypeId,
+    ) -> Option<HirExpr> {
+        if args
+            .iter()
+            .any(|a| matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)))
+            || param_info
+                .iter()
+                .any(|(_, _, k)| matches!(k, ast::ParamKind::Star | ast::ParamKind::DoubleStar))
+        {
+            return None;
+        }
+
+        let kwonly_names: std::collections::HashSet<String> = self
+            .arg_bind_sigs
+            .get(fname)
+            .map(|sig| sig.iter().filter(|p| p.2).map(|p| p.0.clone()).collect())
+            .unwrap_or_default();
+        if !kwonly_names.is_empty() {
+            return None;
+        }
+        let posonly_names: std::collections::HashSet<String> = self
+            .arg_bind_sigs
+            .get(fname)
+            .map(|sig| sig.iter().filter(|p| p.5).map(|p| p.0.clone()).collect())
+            .unwrap_or_default();
+        let regular_params: Vec<&ParamInfo> = param_info
+            .iter()
+            .filter(|(name, _, k)| *k == ast::ParamKind::Regular && !kwonly_names.contains(name))
+            .collect();
+        let mut positional_values: Vec<HirExpr> = Vec::new();
+        let mut keyword_values: Vec<(String, HirExpr)> = Vec::new();
+        for a in args {
+            match a {
+                ast::CallArg::Positional(e) => {
+                    positional_values.push(self.lower_expr(e)?);
+                }
+                ast::CallArg::Keyword { name, value } => {
+                    keyword_values.push((name.clone(), self.lower_expr(value)?));
+                }
+                _ => return None,
+            }
+        }
+        if positional_values.len() > regular_params.len() {
+            return None;
+        }
+
+        let defaults_attr = HirExpr::Attr {
+            object: Box::new(f.clone()),
+            attr: "__defaults__".to_string(),
+            ty: any_ty,
+        };
+        let int_ty = self.checker.tcx.int();
+        let regular_count = regular_params.len() as i64;
+        let mut hir_args = Vec::with_capacity(regular_params.len());
+        for (i, (name, _, _)) in regular_params.into_iter().enumerate() {
+            if i < positional_values.len() {
+                hir_args.push(positional_values[i].clone());
+            } else if !posonly_names.contains(name) {
+                if let Some((_kw, expr)) = keyword_values.iter().find(|(kw, _)| kw == name) {
+                    hir_args.push(expr.clone());
+                    continue;
+                }
+                hir_args.push(HirExpr::Index {
+                    object: Box::new(defaults_attr.clone()),
+                    index: Box::new(HirExpr::IntLit(i as i64 - regular_count, int_ty)),
+                    ty: any_ty,
+                });
+            } else {
+                hir_args.push(HirExpr::Index {
+                    object: Box::new(defaults_attr.clone()),
+                    index: Box::new(HirExpr::IntLit(i as i64 - regular_count, int_ty)),
+                    ty: any_ty,
+                });
+            }
+        }
+        Some(HirExpr::Call {
+            func: Box::new(f),
+            args: hir_args,
+            ty: any_ty,
+        })
+    }
+
     /// Build a `mb_call_spread_kwargs(f, pos_list, kwargs_dict)` call for a
     /// call carrying a `**mapping` splat. Positionals (and any `*` splats) form
     /// the ordered positional list; explicit keywords and each `**mapping` merge
@@ -8594,7 +8702,10 @@ impl<'a> AstLowerer<'a> {
     fn name_error_raise(&self, name: &str, span: Span) -> Option<HirStmt> {
         let any_ty = self.checker.tcx.any();
         let call = HirExpr::Call {
-            func: Box::new(HirExpr::StrLit("mb_name_error_with_name".to_string(), any_ty)),
+            func: Box::new(HirExpr::StrLit(
+                "mb_name_error_with_name".to_string(),
+                any_ty,
+            )),
             args: vec![HirExpr::StrLit(name.to_string(), self.checker.tcx.str())],
             ty: any_ty,
         };
@@ -10817,6 +10928,83 @@ mod tests {
             &hir.top_level[0],
             HirStmt::Expr { expr: HirExpr::Call { args, .. }, .. } if args.len() == 1
         ));
+    }
+
+    #[test]
+    fn test_lower_mutated_defaults_call_reads_live_defaults() {
+        let mut a = make_param("a");
+        a.pos_only = true;
+        let mut b = make_param("b");
+        b.pos_only = true;
+        b.default = Some(sp(Expr::IntLit(2)));
+        let mut c = make_param("c");
+        c.default = Some(sp(Expr::IntLit(3)));
+
+        let stmts = vec![
+            sp(Stmt::FnDef {
+                decorators: vec![],
+                name: "m".to_string(),
+                type_params: vec![],
+                params: vec![a, b, c],
+                return_ty: None,
+                body: vec![sp(Stmt::Return(None))],
+            }),
+            sp(Stmt::Assign {
+                target: sp(Expr::Attr {
+                    object: Box::new(sp(Expr::Ident("m".to_string()))),
+                    attr: "__defaults__".to_string(),
+                }),
+                value: sp(Expr::TupleLit(vec![
+                    sp(Expr::IntLit(1)),
+                    sp(Expr::IntLit(2)),
+                    sp(Expr::IntLit(3)),
+                ])),
+            }),
+            sp(Stmt::ExprStmt(sp(Expr::Call {
+                func: Box::new(sp(Expr::Ident("m".to_string()))),
+                args: vec![],
+            }))),
+        ];
+        let mut checker = TypeChecker::new();
+        checker
+            .symbols
+            .define("m".to_string(), crate::resolve::SymbolKind::Function);
+        let any_ty = checker.tcx.any();
+        let module = Module { stmts };
+        let hir = lower_module(&module, &checker).expect("lower failed");
+
+        assert!(
+            !hir.boxed_param_funcs.is_empty(),
+            "defaults-mutated function must be marked for boxed-param runtime calls"
+        );
+        assert!(hir.functions.iter().any(|func| {
+            func.params.iter().all(|(_, ty)| *ty == any_ty) && func.return_ty == any_ty
+        }));
+
+        let Some(HirStmt::Expr {
+            expr: HirExpr::Call { args, .. },
+            ..
+        }) = hir.top_level.last()
+        else {
+            panic!("expected final call expression");
+        };
+        assert_eq!(args.len(), 3);
+        for (idx, arg) in args.iter().enumerate() {
+            assert!(matches!(
+                arg,
+                HirExpr::Index {
+                    object,
+                    index,
+                    ..
+                } if matches!(
+                    (object.as_ref(), index.as_ref()),
+                    (
+                        HirExpr::Attr { attr, .. },
+                        HirExpr::IntLit(n, _),
+                    ) if attr == "__defaults__" && *n == idx as i64 - 3
+                )
+            ));
+        }
     }
 
     #[test]
