@@ -11,6 +11,14 @@ use crate::types::{TypeChecker, TypeId};
 /// (elif chains, augmented assignments).
 use std::collections::{HashMap, HashSet};
 
+#[derive(Clone)]
+enum ParamDefault {
+    Ast(Spanned<ast::Expr>),
+    Frozen(HirExpr),
+}
+
+type ParamInfo = (String, Option<ParamDefault>, ast::ParamKind);
+
 /// Check whether a function body contains `yield` or `yield from` expressions.
 ///
 /// This does NOT recurse into nested function/class/lambda definitions, since a
@@ -2813,8 +2821,8 @@ struct AstLowerer<'a> {
     /// These must be stored/loaded via global storage so both functions share the same slot.
     cell_override_syms: std::collections::HashSet<SymbolId>,
     /// Function parameter info for kwargs resolution at call sites.
-    /// Maps function name → vec of (param_name, default_expr_option).
-    func_param_info: HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
+    /// Maps function name → parameter name/default/kind entries.
+    func_param_info: HashMap<String, Vec<ParamInfo>>,
     /// Static arg-binding validation: top-level function name → param shape
     /// `(name, has_default, kw_only, is_star, is_double_star, pos_only)`,
     /// captured at the def so the call-site validator can raise a
@@ -2832,8 +2840,7 @@ struct AstLowerer<'a> {
     /// PEP 557: per-dataclass synthesized __init__ parameter shapes, kept
     /// separately from `func_param_info` so subclasses can prepend their base
     /// dataclass's params (Derived(Counted) accepts Counted's fields first).
-    dataclass_init_params:
-        HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
+    dataclass_init_params: HashMap<String, Vec<ParamInfo>>,
     /// PEP 557: local names bound to `dataclasses.dataclass` / `field` /
     /// `replace` / `make_dataclass` by a `from dataclasses import ...`
     /// statement. Bare-Ident
@@ -3263,13 +3270,9 @@ impl<'a> AstLowerer<'a> {
                     ..
                 } => {
                     // Register param info for kwargs resolution at call sites.
-                    self.func_param_info.insert(
-                        name.clone(),
-                        params
-                            .iter()
-                            .map(|p| (p.name.clone(), p.default.clone(), p.kind))
-                            .collect(),
-                    );
+                    let (param_info, default_setup) =
+                        self.frozen_param_info(name, params, stmt.span);
+                    self.func_param_info.insert(name.clone(), param_info);
                     // Param shape for static call-site arg-binding validation.
                     // Most decorators can replace the callable with an arbitrary
                     // wrapper whose signature differs. A small allowlist preserves
@@ -3355,6 +3358,7 @@ impl<'a> AstLowerer<'a> {
                             .iter()
                             .filter_map(|d| self.lower_expr(d))
                             .collect();
+                        self.result.top_level.extend(default_setup);
                         if !func.decorators.is_empty() {
                             // Params were already lowered with any_ty (body expressions
                             // route through NaN-aware runtime dispatch). Force the return
@@ -3421,6 +3425,9 @@ impl<'a> AstLowerer<'a> {
                     decorators,
                     ..
                 } => {
+                    let (param_info, default_setup) =
+                        self.frozen_param_info(name, params, stmt.span);
+                    self.func_param_info.insert(name.clone(), param_info);
                     let is_decorated = !decorators.is_empty();
                     let overload_decorated = decorators
                         .iter()
@@ -3484,6 +3491,7 @@ impl<'a> AstLowerer<'a> {
                             .iter()
                             .filter_map(|d| self.lower_expr(d))
                             .collect();
+                        self.result.top_level.extend(default_setup);
                         if !func.decorators.is_empty() {
                             let any_ty = self.checker.tcx.any();
                             let bind_sym = func.name;
@@ -3548,14 +3556,8 @@ impl<'a> AstLowerer<'a> {
                     if let Some(fn_def) =
                         crate::exec_literal::global_literal_exec_fn_def(&stmt.node)
                     {
-                        self.func_param_info.insert(
-                            fn_def.name.clone(),
-                            fn_def
-                                .params
-                                .iter()
-                                .map(|p| (p.name.clone(), p.default.clone(), p.kind))
-                                .collect(),
-                        );
+                        self.func_param_info
+                            .insert(fn_def.name.clone(), Self::ast_param_info(&fn_def.params));
                         self.arg_bind_sigs.insert(
                             fn_def.name,
                             fn_def
@@ -3620,6 +3622,58 @@ impl<'a> AstLowerer<'a> {
         span: Span,
     ) -> Option<HirFunction> {
         self.lower_fn_inner(name, params, _return_ty, body, span, false, false)
+    }
+
+    fn ast_param_info(params: &[ast::Param]) -> Vec<ParamInfo> {
+        params
+            .iter()
+            .map(|p| {
+                (
+                    p.name.clone(),
+                    p.default.as_ref().map(|d| ParamDefault::Ast(d.clone())),
+                    p.kind,
+                )
+            })
+            .collect()
+    }
+
+    fn frozen_param_info(
+        &mut self,
+        func_name: &str,
+        params: &[ast::Param],
+        span: Span,
+    ) -> (Vec<ParamInfo>, Vec<HirStmt>) {
+        let mut setup = Vec::new();
+        let mut info = Vec::with_capacity(params.len());
+
+        for (idx, p) in params.iter().enumerate() {
+            let default = match p.default.as_ref() {
+                Some(default_ast) => match self.lower_expr(default_ast) {
+                    Some(default_expr) => {
+                        let hidden_name =
+                            format!("__mamba_default_{func_name}_{idx}_{}", self.next_local_sym);
+                        let default_ty = default_expr.ty();
+                        let hidden_sym = self.define_local(&hidden_name, default_ty);
+                        self.result
+                            .sym_names
+                            .entry(hidden_sym)
+                            .or_insert(hidden_name);
+                        setup.push(HirStmt::Let {
+                            target: hidden_sym,
+                            ty: default_ty,
+                            value: default_expr,
+                            span,
+                        });
+                        Some(ParamDefault::Frozen(HirExpr::Var(hidden_sym, default_ty)))
+                    }
+                    None => Some(ParamDefault::Ast(default_ast.clone())),
+                },
+                None => None,
+            };
+            info.push((p.name.clone(), default, p.kind));
+        }
+
+        (info, setup)
     }
 
     /// Lower a function whose definition is decorated. Decorated functions
@@ -3979,8 +4033,7 @@ impl<'a> AstLowerer<'a> {
             // registered it).
             if dataclass_decorated && !self.func_param_info.contains_key(name) {
                 self.dataclasses_kwarg_idents.insert(name.to_string());
-                let mut params: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
-                    Vec::new();
+                let mut params: Vec<ParamInfo> = Vec::new();
                 // Inherited dataclass init params first (single
                 // inheritance chains; names overridden by the
                 // subclass are replaced in place below).
@@ -4022,7 +4075,11 @@ impl<'a> AstLowerer<'a> {
                     {
                         continue;
                     }
-                    let entry = (fname.clone(), default, ast::ParamKind::Regular);
+                    let entry = (
+                        fname.clone(),
+                        default.map(ParamDefault::Ast),
+                        ast::ParamKind::Regular,
+                    );
                     if let Some(pos) = params.iter().position(|(n, _, _)| n == fname) {
                         params[pos] = entry;
                     } else {
@@ -4274,12 +4331,17 @@ impl<'a> AstLowerer<'a> {
                     // Register __init__ params (minus self) under the class name so
                     // `ClassName(arg)` call sites can fill defaults via the same
                     // resolution path used for free functions.
-                    let init_param_info: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
-                        params
-                            .iter()
-                            .filter(|p| p.name != "self")
-                            .map(|p| (p.name.clone(), p.default.clone(), p.kind))
-                            .collect();
+                    let init_param_info: Vec<ParamInfo> = params
+                        .iter()
+                        .filter(|p| p.name != "self")
+                        .map(|p| {
+                            (
+                                p.name.clone(),
+                                p.default.as_ref().map(|d| ParamDefault::Ast(d.clone())),
+                                p.kind,
+                            )
+                        })
+                        .collect();
                     self.func_param_info
                         .insert(name.to_string(), init_param_info);
                     break;
@@ -5446,13 +5508,8 @@ impl<'a> AstLowerer<'a> {
                 ..
             } => {
                 // Register param info for kwargs resolution.
-                self.func_param_info.insert(
-                    name.clone(),
-                    params
-                        .iter()
-                        .map(|p| (p.name.clone(), p.default.clone(), p.kind))
-                        .collect(),
-                );
+                self.func_param_info
+                    .insert(name.clone(), Self::ast_param_info(params));
                 // Nested function definition inside a function body.
                 // Define the function name in the current (outer) local scope first so the
                 // outer function body can call it, and so resolve_name works inside lower_fn.
@@ -6919,10 +6976,7 @@ impl<'a> AstLowerer<'a> {
                                 return Some(self.build_spread_kwargs_call(f, args, any_ty));
                             }
                             // Separate regular params from *args/**kwargs for ordered resolution.
-                            let regular_params: Vec<(
-                                usize,
-                                &(String, Option<Spanned<ast::Expr>>, ast::ParamKind),
-                            )> = param_info
+                            let regular_params: Vec<(usize, &ParamInfo)> = param_info
                                 .iter()
                                 .enumerate()
                                 .filter(|(_, (_, _, k))| *k == ast::ParamKind::Regular)
@@ -6992,7 +7046,10 @@ impl<'a> AstLowerer<'a> {
                                 if ordered[i].is_none() {
                                     let (_, ref default, _) = param_info[*orig_idx];
                                     if let Some(ref def_expr) = default {
-                                        ordered[i] = self.lower_expr(def_expr);
+                                        ordered[i] = match def_expr {
+                                            ParamDefault::Ast(expr) => self.lower_expr(expr),
+                                            ParamDefault::Frozen(expr) => Some(expr.clone()),
+                                        };
                                     }
                                 }
                             }
@@ -10998,6 +11055,49 @@ mod tests {
             &hir.top_level[0],
             HirStmt::FuncDefPlaceholder { .. }
         ));
+    }
+
+    #[test]
+    fn test_function_default_is_frozen_at_definition_site() {
+        let mut param = make_param("x");
+        param.default = Some(sp(Expr::Walrus {
+            target: "n".to_string(),
+            value: Box::new(sp(Expr::IntLit(5))),
+        }));
+        let hir = helper_lower_with_fns(
+            vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".to_string(),
+                    type_params: vec![],
+                    params: vec![param],
+                    return_ty: None,
+                    body: vec![sp(Stmt::Return(Some(sp(Expr::Ident("x".to_string())))))],
+                }),
+                sp(Stmt::ExprStmt(sp(Expr::Call {
+                    func: Box::new(sp(Expr::Ident("f".to_string()))),
+                    args: vec![],
+                }))),
+            ],
+            &["f"],
+        );
+
+        let HirStmt::Let {
+            target: default_sym,
+            value: HirExpr::Walrus { .. },
+            ..
+        } = &hir.top_level[0]
+        else {
+            panic!("expected hidden default Let before call");
+        };
+        let HirStmt::Expr {
+            expr: HirExpr::Call { args, .. },
+            ..
+        } = &hir.top_level[1]
+        else {
+            panic!("expected f() call after hidden default Let");
+        };
+        assert!(matches!(args.as_slice(), [HirExpr::Var(sym, _)] if sym == default_sym));
     }
 
     #[test]
