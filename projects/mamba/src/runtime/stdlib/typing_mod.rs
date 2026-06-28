@@ -421,6 +421,8 @@ pub fn register() {
         ("assert_type", d_assert_type as *const () as usize),
         // is_typeddict(cls) -> bool, structural helper.
         ("is_typeddict", d_is_typeddict as *const () as usize),
+        // overload(func) -> shared dummy callable; records func for get_overloads.
+        ("overload", d_overload as *const () as usize),
         // get_overloads(func) -> list of registered @overload stubs.
         ("get_overloads", d_get_overloads as *const () as usize),
         // clear_overloads() -> None, drops the overload registry.
@@ -432,6 +434,10 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
+    let overload_dummy_addr = d_overload_dummy as *const () as usize;
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(overload_dummy_addr as u64);
+    });
     attrs.insert("TYPE_CHECKING".to_string(), MbValue::from_bool(false));
 
     // Remaining CPython 3.12 `typing` public names not covered above. Surface
@@ -440,8 +446,8 @@ pub fn register() {
     // type-erased sentinel (returns None at runtime). This spans special
     // generic aliases (Iterable, IO, Pattern, …), helper classes/metaclasses
     // (ForwardRef, ParamSpecArgs, TypeVarTuple, ABCMeta, defaultdict, …),
-    // TypeVars (T, KT, VT, T_co, …), utility functions (get_args, get_origin,
-    // overload, abstractmethod, reveal_type, …), the re-exported submodules
+    // TypeVars (T, KT, VT, T_co, …), utility functions (abstractmethod,
+    // reveal_type, …), the re-exported submodules
     // (sys, re, types, collections, functools, …), and EXCLUDED_ATTRIBUTES
     // (a frozenset in CPython — registered as a stub since it is not a plain
     // int/str literal).
@@ -489,7 +495,6 @@ pub fn register() {
         "io",
         "no_type_check_decorator",
         "operator",
-        "overload",
         "re",
         "reveal_type",
         "stdlib_re",
