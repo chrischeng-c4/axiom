@@ -4119,16 +4119,26 @@ impl<'a> HirToMir<'a> {
                 }
             }
             HirStmt::Import { import, .. } => {
-                // Lower import as CallExtern to mb_import
-                let mod_name = import.module.join(".");
+                // Lower import as CallExtern to mb_import / mb_import_relative.
+                let (relative_level, mod_name) = Self::relative_import_parts(&import.module);
                 let name_vreg = self.emit_str_const(&mod_name);
                 let dest = self.fresh_vreg();
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: Some(dest),
-                    name: "mb_import".to_string(),
-                    args: vec![name_vreg],
-                    ty: self.tcx.any(),
-                });
+                if relative_level > 0 {
+                    let level_vreg = self.emit_int_const(relative_level as i64);
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(dest),
+                        name: "mb_import_relative".to_string(),
+                        args: vec![name_vreg, level_vreg],
+                        ty: self.tcx.any(),
+                    });
+                } else {
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(dest),
+                        name: "mb_import".to_string(),
+                        args: vec![name_vreg],
+                        ty: self.tcx.any(),
+                    });
+                }
 
                 if let Some(names) = &import.names {
                     // @spec .aw/changes/mamba-all-support/groups/all-support/specs/mamba-all-support-spec.md#R4
@@ -4137,12 +4147,22 @@ impl<'a> HirToMir<'a> {
                     let is_star = names.len() == 1 && names[0].0 == "*";
                     if is_star {
                         let star_name_vreg = self.emit_str_const(&mod_name);
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: None,
-                            name: "mb_import_star".to_string(),
-                            args: vec![star_name_vreg],
-                            ty: self.tcx.any(),
-                        });
+                        if relative_level > 0 {
+                            let level_vreg = self.emit_int_const(relative_level as i64);
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: None,
+                                name: "mb_import_relative_star".to_string(),
+                                args: vec![star_name_vreg, level_vreg],
+                                ty: self.tcx.any(),
+                            });
+                        } else {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: None,
+                                name: "mb_import_star".to_string(),
+                                args: vec![star_name_vreg],
+                                ty: self.tcx.any(),
+                            });
+                        }
                     } else {
                         // `from X import Y, Z as W` (#1132 R3)
                         // For each imported name, extract its value from the module
@@ -4151,12 +4171,22 @@ impl<'a> HirToMir<'a> {
                             let attr_vreg = self.emit_str_const(name);
                             let mod_name_vreg2 = self.emit_str_const(&mod_name);
                             let attr_dest = self.fresh_vreg();
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: Some(attr_dest),
-                                name: "mb_module_getattr".to_string(),
-                                args: vec![mod_name_vreg2, attr_vreg],
-                                ty: self.tcx.any(),
-                            });
+                            if relative_level > 0 {
+                                let level_vreg = self.emit_int_const(relative_level as i64);
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(attr_dest),
+                                    name: "mb_module_getattr_relative".to_string(),
+                                    args: vec![mod_name_vreg2, level_vreg, attr_vreg],
+                                    ty: self.tcx.any(),
+                                });
+                            } else {
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(attr_dest),
+                                    name: "mb_module_getattr".to_string(),
+                                    args: vec![mod_name_vreg2, attr_vreg],
+                                    ty: self.tcx.any(),
+                                });
+                            }
                             // The bound name is the alias if present, otherwise the original name.
                             let bound = alias.as_deref().unwrap_or(name.as_str());
                             if let Some(sym_id) = self.symbol_table.and_then(|st| st.lookup(bound))
@@ -10719,6 +10749,12 @@ impl<'a> HirToMir<'a> {
         })
     }
 
+    fn relative_import_parts(module: &[String]) -> (usize, String) {
+        let level = module.iter().take_while(|part| part.as_str() == ".").count();
+        let tail = module[level..].join(".");
+        (level, tail)
+    }
+
     /// Helper: emit an integer constant and return its vreg.
     fn emit_int_const(&mut self, n: i64) -> VReg {
         let dest = self.fresh_vreg();
@@ -11937,6 +11973,70 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn collect_str_consts(mir: &MirModule) -> Vec<String> {
+        mir.bodies
+            .iter()
+            .flat_map(|b| b.blocks.iter())
+            .flat_map(|blk| blk.stmts.iter())
+            .filter_map(|s| match s {
+                MirInst::LoadConst {
+                    value: MirConst::Str(value),
+                    ..
+                } => Some(value.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_relative_from_import_lowers_without_dot_joined_module_name() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let mut symbols = SymbolTable::new();
+        let alias_sym = symbols.define("LEAF_FROM_PARENT_NAME".to_string(), SymbolKind::Variable);
+        let hir = make_top_level_hir(vec![HirStmt::Import {
+            import: HirImport {
+                module: vec![".".to_string(), ".".to_string(), "sibling_a".to_string()],
+                names: Some(vec![(
+                    "SENTINEL_A".to_string(),
+                    Some("LEAF_FROM_PARENT_NAME".to_string()),
+                )]),
+                module_alias: None,
+                span: Span::dummy(),
+            },
+            span: Span::dummy(),
+        }]);
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let externs = collect_extern_names(&mir);
+        assert!(
+            externs.contains(&"mb_import_relative".to_string()),
+            "relative import must call mb_import_relative: {externs:?}"
+        );
+        assert!(
+            externs.contains(&"mb_module_getattr_relative".to_string()),
+            "relative from-import attrs must call mb_module_getattr_relative: {externs:?}"
+        );
+
+        let strings = collect_str_consts(&mir);
+        assert!(
+            strings.contains(&"sibling_a".to_string()),
+            "relative module tail should remain sibling_a: {strings:?}"
+        );
+        assert!(
+            !strings.contains(&"....sibling_a".to_string()),
+            "relative dots must not be joined into the module name: {strings:?}"
+        );
+        let has_store = mir
+            .bodies
+            .iter()
+            .flat_map(|b| b.blocks.iter())
+            .flat_map(|blk| blk.stmts.iter())
+            .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == alias_sym));
+        assert!(has_store, "alias should still bind as a global");
     }
 
     #[test]
