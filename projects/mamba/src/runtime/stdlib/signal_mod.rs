@@ -1,5 +1,7 @@
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
+#[cfg(unix)]
+use core::ffi::c_void;
 use std::cell::RefCell;
 /// signal module for Mamba (#1470, #1265 Goal 2 / 3-gate).
 ///
@@ -30,10 +32,12 @@ use std::cell::RefCell;
 ///   - **`raise_signal`** synchronously invokes the installed Python-level
 ///     handler when one was registered through `signal.signal`.
 ///   - **`pthread_kill`, `pause`, `sigwait`, `sigpending`, `setitimer`,
-///     `getitimer`, `pthread_sigmask`, `set_wakeup_fd`, `siginterrupt`** —
-///     return `None` or an empty/zero value as CPython would on a no-op fast
-///     path. These are surface-presence stubs; process-wide Unix signal
-///     plumbing remains out of scope.
+///     `getitimer`, `pthread_sigmask`, `siginterrupt`** — return `None` or
+///     an empty/zero value as CPython would on a no-op fast path. These are
+///     surface-presence stubs; process-wide Unix signal plumbing remains out
+///     of scope.
+///   - **`set_wakeup_fd`** records the fd and synchronous `raise_signal`
+///     writes one signal-number byte to it, matching event-loop wakeup usage.
 ///   - **`strsignal(signum)`** returns `None` (CPython returns a localized
 ///     description; surface-presence callers only check callable).
 ///   - **`valid_signals()`** returns an empty set (CPython returns the set
@@ -57,6 +61,11 @@ use std::cell::RefCell;
 ///     Linux-only signal numbers (e.g. `SIGRTMIN`, `SIGPWR`) are not
 ///     exposed; surface-presence does not test them.
 use std::collections::HashMap;
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn write(fd: i32, buf: *const c_void, count: usize) -> isize;
+}
 
 // ── Exception helpers ──
 // Raise catchable Python exceptions through the thread-local exception
@@ -88,6 +97,7 @@ fn raise_os_error(msg: &str) -> MbValue {
 // "returns previous handler" contract holds for pure book-keeping callers.
 thread_local! {
     static HANDLERS: RefCell<HashMap<i64, MbValue>> = RefCell::new(HashMap::new());
+    static WAKEUP_FD: RefCell<i64> = const { RefCell::new(-1) };
 }
 
 /// The distinct, valid signal numbers exposed by this build (mirrors the
@@ -240,6 +250,21 @@ fn handler_sentinel(value: i64) -> MbValue {
 fn as_signum(v: MbValue) -> Option<i64> {
     signal_int_value(v)
 }
+
+#[cfg(unix)]
+fn write_wakeup_byte(signum: i64) {
+    let fd = WAKEUP_FD.with(|w| *w.borrow());
+    if fd < 0 {
+        return;
+    }
+    let byte = [(signum & 0xff) as u8];
+    unsafe {
+        let _ = write(fd as i32, byte.as_ptr().cast::<c_void>(), byte.len());
+    }
+}
+
+#[cfg(not(unix))]
+fn write_wakeup_byte(_signum: i64) {}
 
 /// CPython-style short description for a signal number, mirroring the
 /// `strsignal(3)` keywords callers assert on. Returns `None` for numbers
@@ -506,6 +531,7 @@ pub fn mb_signal_raise_signal(signum: MbValue) -> MbValue {
     if !valid_signal_numbers().contains(&n) {
         return raise_value_error("signal number out of range");
     }
+    write_wakeup_byte(n);
     let handler = HANDLERS
         .with(|h| h.borrow().get(&n).copied())
         .unwrap_or_else(|| MbValue::from_int(0));
@@ -552,7 +578,7 @@ pub(crate) fn mb_signal_deliver_if_registered(signum: MbValue) -> Option<MbValue
 ///   - exactly one positional argument (else `TypeError`);
 ///   - a wildly out-of-range descriptor (e.g. `2**30`) is rejected with
 ///     `ValueError`, matching CPython's "invalid fd" rejection without
-///     actually installing a wakeup fd.
+///     probing host descriptor ownership.
 pub fn mb_signal_set_wakeup_fd(args: &[MbValue]) -> MbValue {
     if args.len() != 1 {
         return raise_type_error(&format!(
@@ -568,7 +594,13 @@ pub fn mb_signal_set_wakeup_fd(args: &[MbValue]) -> MbValue {
             if fd < -1 || fd > 1_000_000 {
                 return raise_value_error(&format!("invalid fd: {fd}"));
             }
-            MbValue::from_int(-1)
+            let previous = WAKEUP_FD.with(|w| {
+                let mut slot = w.borrow_mut();
+                let previous = *slot;
+                *slot = fd;
+                previous
+            });
+            MbValue::from_int(previous)
         }
         None => raise_type_error("an integer is required (got type)"),
     }
@@ -917,9 +949,31 @@ mod tests {
 
     #[test]
     fn test_set_wakeup_fd_returns_minus_one() {
+        let _ = mb_signal_set_wakeup_fd(&[MbValue::from_int(-1)]);
         assert_eq!(
             mb_signal_set_wakeup_fd(&[MbValue::from_int(3)]).as_int(),
             Some(-1)
+        );
+        assert_eq!(
+            mb_signal_set_wakeup_fd(&[MbValue::from_int(-1)]).as_int(),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn test_set_wakeup_fd_returns_previous() {
+        let _ = mb_signal_set_wakeup_fd(&[MbValue::from_int(-1)]);
+        assert_eq!(
+            mb_signal_set_wakeup_fd(&[MbValue::from_int(3)]).as_int(),
+            Some(-1)
+        );
+        assert_eq!(
+            mb_signal_set_wakeup_fd(&[MbValue::from_int(4)]).as_int(),
+            Some(3)
+        );
+        assert_eq!(
+            mb_signal_set_wakeup_fd(&[MbValue::from_int(-1)]).as_int(),
+            Some(4)
         );
     }
 
