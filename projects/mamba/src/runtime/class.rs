@@ -5557,6 +5557,15 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         }
     }
 
+    if super::async_rt::is_coroutine_wrapper(obj) {
+        match attr_name.as_str() {
+            "__await__" | "__iter__" | "__next__" | "send" | "throw" | "close" => {
+                return make_bound_native_method(obj, &attr_name);
+            }
+            _ => {}
+        }
+    }
+
     // Hashlib handles are int-tagged values registered by hashlib_mod.
     // Surface CPython conformance attrs (name, digest_size, block_size).
     if obj.is_int() {

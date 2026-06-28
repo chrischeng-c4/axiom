@@ -155,6 +155,7 @@ fn is_await_iterator(obj: MbValue) -> bool {
     if super::iter::is_iter_handle(obj)
         || super::generator::is_known_generator(obj)
         || super::async_rt::is_known_coroutine(obj)
+        || super::async_rt::is_coroutine_wrapper(obj)
     {
         return true;
     }
@@ -180,6 +181,19 @@ fn raise_non_awaitable(awaitable: MbValue) -> MbValue {
 
 fn await_iterator(iterator: MbValue) -> MbValue {
     if super::async_rt::is_known_coroutine(iterator) {
+        match resume_await_iterator(iterator, MbValue::none()) {
+            AwaitResume::Yield(yielded) => {
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
+                }
+                mb_coroutine_suspend_current(iterator);
+                return yielded;
+            }
+            AwaitResume::Complete(result) => return result,
+        }
+    }
+
+    if super::async_rt::is_coroutine_wrapper(iterator) {
         match resume_await_iterator(iterator, MbValue::none()) {
             AwaitResume::Yield(yielded) => {
                 if super::exception::current_exception_type().is_some() {
@@ -273,6 +287,15 @@ fn resume_await_iterator(iterator: MbValue, value: MbValue) -> AwaitResume {
         }
         return AwaitResume::Yield(yielded);
     }
+    if let Some(coro) = super::async_rt::coroutine_wrapper_target(iterator) {
+        let yielded = super::async_rt::mb_coroutine_send(coro, value);
+        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+            let result = stop_iteration_exception_value();
+            super::exception::mb_clear_exception();
+            return AwaitResume::Complete(result);
+        }
+        return AwaitResume::Yield(yielded);
+    }
     if super::generator::is_known_generator(iterator) {
         let yielded = super::generator::mb_generator_send(iterator, value);
         if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
@@ -292,6 +315,18 @@ fn resume_await_iterator(iterator: MbValue, value: MbValue) -> AwaitResume {
 fn throw_await_iterator(iterator: MbValue, exc_type: MbValue, exc_msg: MbValue) -> AwaitResume {
     if super::async_rt::is_known_coroutine(iterator) {
         let yielded = super::async_rt::mb_coroutine_throw(iterator, exc_type, exc_msg);
+        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+            let result = stop_iteration_exception_value();
+            super::exception::mb_clear_exception();
+            return AwaitResume::Complete(result);
+        }
+        if super::exception::current_exception_type().is_some() {
+            return AwaitResume::Complete(MbValue::none());
+        }
+        return AwaitResume::Yield(yielded);
+    }
+    if let Some(coro) = super::async_rt::coroutine_wrapper_target(iterator) {
+        let yielded = super::async_rt::mb_coroutine_throw(coro, exc_type, exc_msg);
         if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
             let result = stop_iteration_exception_value();
             super::exception::mb_clear_exception();
