@@ -2324,14 +2324,10 @@ fn dispatch_generator_method(gen: MbValue, method: &str, args: MbValue) -> MbVal
                 }
             }
             // Wrap the yielded value in a pre-completed coroutine so that
-            // `await g.__anext__()` survives the generator/coroutine
-            // ID-space collision. NEXT_GEN_ID and NEXT_CORO_ID both count
-            // from 1 independently, so a small yielded int (e.g. `1`) on
-            // a generator with id=1 would be misread by mb_await as the
-            // (still-active) main coroutine, blow the iteration budget,
-            // and surface as None. Boxing the value into a coroutine
-            // marked exhausted with `result = val` makes the await path
-            // unambiguous and round-trips the value cleanly.
+            // `await g.__anext__()` sees a coroutine-like awaitable rather than
+            // a raw yielded value. Boxing the value into a coroutine marked
+            // exhausted with `result = val` makes the await path unambiguous
+            // and round-trips the value cleanly.
             let coro = super::async_rt::mb_coroutine_new(
                 MbValue::from_ptr(MbObject::new_str("__anext_value__".to_string())),
                 MbValue::from_ptr(MbObject::new_list(Vec::new())),
