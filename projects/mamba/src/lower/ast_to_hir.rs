@@ -6203,6 +6203,84 @@ impl<'a> AstLowerer<'a> {
                     if let ast::Expr::Ident(name) = &func.node {
                         let none_hir = HirExpr::NoneLit(any_ty);
 
+                        if name == "str"
+                            && args.iter().all(|a| {
+                                !matches!(
+                                    a,
+                                    ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)
+                                )
+                            })
+                        {
+                            let mut object: Option<HirExpr> = None;
+                            let mut encoding: Option<HirExpr> = None;
+                            let mut errors: Option<HirExpr> = None;
+                            let mut positional_index = 0usize;
+                            for a in args {
+                                match a {
+                                    ast::CallArg::Positional(value) => {
+                                        let lowered = self.lower_expr(value)?;
+                                        match positional_index {
+                                            0 => object = Some(lowered),
+                                            1 => encoding = Some(lowered),
+                                            2 => errors = Some(lowered),
+                                            _ => {
+                                                return Some(HirExpr::Call {
+                                                    func: Box::new(HirExpr::StrLit(
+                                                        "mb_arg_bind_error".to_string(),
+                                                        any_ty,
+                                                    )),
+                                                    args: vec![HirExpr::StrLit(
+                                                        "str() takes at most 3 arguments"
+                                                            .to_string(),
+                                                        str_ty,
+                                                    )],
+                                                    ty: any_ty,
+                                                });
+                                            }
+                                        }
+                                        positional_index += 1;
+                                    }
+                                    ast::CallArg::Keyword { name, value } => {
+                                        let lowered = self.lower_expr(value)?;
+                                        match name.as_str() {
+                                            "object" => object = Some(lowered),
+                                            "encoding" => encoding = Some(lowered),
+                                            "errors" => errors = Some(lowered),
+                                            _ => {
+                                                return Some(HirExpr::Call {
+                                                    func: Box::new(HirExpr::StrLit(
+                                                        "mb_arg_bind_error".to_string(),
+                                                        any_ty,
+                                                    )),
+                                                    args: vec![HirExpr::StrLit(
+                                                        format!(
+                                                            "str() got an unexpected keyword argument '{}'",
+                                                            name
+                                                        ),
+                                                        str_ty,
+                                                    )],
+                                                    ty: any_ty,
+                                                });
+                                            }
+                                        }
+                                    }
+                                    ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_) => {}
+                                }
+                            }
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_str_construct".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![
+                                    object.unwrap_or_else(|| none_hir.clone()),
+                                    encoding.unwrap_or_else(|| none_hir.clone()),
+                                    errors.unwrap_or(none_hir),
+                                ],
+                                ty: any_ty,
+                            });
+                        }
+
                         // print(*args, sep=' ', end='\n') → mb_print_kwargs(args_list, sep, end)
                         if name == "print" {
                             let hir_pos: Vec<HirExpr> = args
@@ -11041,6 +11119,32 @@ mod tests {
             HirExpr::Dict { entries, .. }
                 if matches!(entries.as_slice(), [(HirExpr::StrLit(name, _), _)] if name == "_O2__arg")
         ));
+    }
+
+    #[test]
+    fn test_lower_str_keyword_constructor_uses_decode_helper() {
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Call {
+            func: Box::new(sp(Expr::Ident("str".to_string()))),
+            args: vec![CallArg::Keyword {
+                name: "object".to_string(),
+                value: sp(Expr::StrLit("bar".to_string())),
+            }],
+        })))]);
+        let HirStmt::Expr {
+            expr: HirExpr::Call { func, args, .. },
+            ..
+        } = &hir.top_level[0]
+        else {
+            panic!("expected lowered str call");
+        };
+        assert!(matches!(
+            func.as_ref(),
+            HirExpr::StrLit(name, _) if name == "mb_str_construct"
+        ));
+        assert_eq!(args.len(), 3);
+        assert!(matches!(&args[0], HirExpr::StrLit(value, _) if value == "bar"));
+        assert!(matches!(&args[1], HirExpr::NoneLit(_)));
+        assert!(matches!(&args[2], HirExpr::NoneLit(_)));
     }
 
     #[test]

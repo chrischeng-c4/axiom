@@ -9380,6 +9380,20 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
+                    // Special case: str(object, encoding[, errors]) decodes bytes-like objects.
+                    if extern_name == "mb_str" && (2..=3).contains(&boxed_args.len()) {
+                        let mut call_args = boxed_args;
+                        if call_args.len() == 2 {
+                            call_args.push(self.emit_none());
+                        }
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_str_construct".to_string(),
+                            args: call_args,
+                            ty: *ty,
+                        });
+                        return dest;
+                    }
                     // Special case: map with 3+ args (func + 2+ iterables) → pack
                     // iterables into a list and call mb_map_n(func, iterables).
                     if extern_name == "mb_map" && boxed_args.len() >= 3 {
@@ -12951,6 +12965,24 @@ mod tests {
         assert!(
             !names.contains(&"mb_set_new".to_string()),
             "set(x) with 1 arg should NOT emit mb_set_new"
+        );
+    }
+
+    #[test]
+    fn test_two_arg_str_constructor_emits_decode_helper() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let mir = lower_builtin_call(
+            "str",
+            vec![
+                HirExpr::Var(SymbolId(999), any_ty),
+                HirExpr::StrLit("utf-8".to_string(), tcx.str()),
+            ],
+        );
+        let names = collect_extern_names(&mir);
+        assert!(
+            names.contains(&"mb_str_construct".to_string()),
+            "str(x, encoding) should emit mb_str_construct, got: {names:?}"
         );
     }
 

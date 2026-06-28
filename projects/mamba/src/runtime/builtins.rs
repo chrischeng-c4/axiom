@@ -1911,6 +1911,39 @@ pub fn mb_str(val: MbValue) -> MbValue {
     MbValue::from_ptr(obj)
 }
 
+fn is_str_value(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) })
+}
+
+fn is_bytes_or_bytearray_value(v: MbValue) -> bool {
+    v.as_ptr().is_some_and(|ptr| unsafe {
+        matches!((*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+    })
+}
+
+/// str(object, encoding, errors) constructor form for bytes-like decoding.
+pub fn mb_str_construct(object: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
+    let has_encoding = !encoding.is_none();
+    let has_errors = !errors.is_none();
+    if !has_encoding && !has_errors {
+        return mb_str(object);
+    }
+    if !is_bytes_or_bytearray_value(object) {
+        return type_error_value("decoding to str: need a bytes-like object");
+    }
+    if !has_encoding {
+        return type_error_value("str() missing required argument 'encoding' (pos 2)");
+    }
+    if !is_str_value(encoding) {
+        return type_error_value("str() argument 'encoding' must be str");
+    }
+    if has_errors && !is_str_value(errors) {
+        return type_error_value("str() argument 'errors' must be str");
+    }
+    super::bytes_ops::mb_bytes_decode_with(object, encoding, errors)
+}
+
 /// abs(value) — absolute value.
 pub fn mb_abs(val: MbValue) -> MbValue {
     if is_decimal_handle_value(val) {
@@ -8831,7 +8864,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             }),
                             "str" => Some(match items.len() {
                                 0 => MbValue::from_ptr(MbObject::new_str(String::new())),
-                                1..=3 => mb_str(items[0]),
+                                1 => mb_str(items[0]),
+                                2 => mb_str_construct(items[0], items[1], MbValue::none()),
+                                3 => mb_str_construct(items[0], items[1], items[2]),
                                 n => type_error_value(format!(
                                     "str() takes at most 3 arguments ({n} given)"
                                 )),
@@ -13344,6 +13379,32 @@ mod tests {
                 assert_eq!(s, "hello");
             } else {
                 panic!("expected str object");
+            }
+        }
+    }
+
+    #[test]
+    fn test_str_construct_decodes_bytes_with_encoding_and_errors() {
+        let bytes = MbValue::from_ptr(MbObject::new_bytes(vec![0x63, 0x61, 0x66, 0xc3, 0xa9]));
+        let encoding = MbValue::from_ptr(MbObject::new_str("utf-8".to_string()));
+        let decoded = mb_str_construct(bytes, encoding, MbValue::none());
+        unsafe {
+            if let ObjData::Str(ref s) = (*decoded.as_ptr().unwrap()).data {
+                assert_eq!(s, "café");
+            } else {
+                panic!("expected decoded str object");
+            }
+        }
+
+        let invalid = MbValue::from_ptr(MbObject::new_bytes(vec![0x63, 0x61, 0x66, 0xff]));
+        let encoding = MbValue::from_ptr(MbObject::new_str("utf-8".to_string()));
+        let errors = MbValue::from_ptr(MbObject::new_str("ignore".to_string()));
+        let decoded = mb_str_construct(invalid, encoding, errors);
+        unsafe {
+            if let ObjData::Str(ref s) = (*decoded.as_ptr().unwrap()).data {
+                assert_eq!(s, "caf");
+            } else {
+                panic!("expected decoded str object");
             }
         }
     }
