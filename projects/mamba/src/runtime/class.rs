@@ -5528,7 +5528,8 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             "__await__" if super::stdlib::types_mod::is_coroutine_generator(obj) => {
                 return make_bound_native_method(obj, &attr_name);
             }
-            "send" | "throw" | "close" | "__iter__" | "__next__" => {
+            "send" | "throw" | "close" | "__iter__" | "__next__" | "__aiter__"
+            | "__anext__" | "aclose" | "asend" | "athrow" => {
                 return make_bound_native_method(obj, &attr_name);
             }
             _ => {}
@@ -9427,7 +9428,18 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
     if obj.is_int() && super::generator::is_known_generator(obj) {
         let has_generator_attr = matches!(
             attr_name.as_str(),
-            "send" | "throw" | "close" | "__iter__" | "__next__" | "gi_frame" | "gi_code"
+            "send"
+                | "throw"
+                | "close"
+                | "__iter__"
+                | "__next__"
+                | "__aiter__"
+                | "__anext__"
+                | "aclose"
+                | "asend"
+                | "athrow"
+                | "gi_frame"
+                | "gi_code"
         ) || (attr_name == "__await__"
             && super::stdlib::types_mod::is_coroutine_generator(obj));
         if has_generator_attr {

@@ -208,7 +208,7 @@ impl<'a> Parser<'a> {
         let first = self.parse_expr()?;
 
         // Generator expression: (expr for ...)
-        if self.peek_kind() == Some(TokenKind::For) {
+        if self.at_comprehension_clause_start() {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RParen)?;
             self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
@@ -252,7 +252,7 @@ impl<'a> Parser<'a> {
         let first = self.parse_expr()?;
 
         // List comprehension: [expr for ...]
-        if self.peek_kind() == Some(TokenKind::For) {
+        if self.at_comprehension_clause_start() {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RBracket)?;
             self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
@@ -322,7 +322,7 @@ impl<'a> Parser<'a> {
             let value = self.parse_expr()?;
 
             // Dict comprehension: {k: v for ...}
-            if self.peek_kind() == Some(TokenKind::For) {
+            if self.at_comprehension_clause_start() {
                 let generators = self.parse_comprehension_clauses()?;
                 self.expect(TokenKind::RBrace)?;
                 self.validate_comprehension_assignment_exprs(&[&first, &value], &generators, self.span_from(start))?;
@@ -359,7 +359,7 @@ impl<'a> Parser<'a> {
         }
 
         // Set comprehension: {expr for ...}
-        if self.peek_kind() == Some(TokenKind::For) {
+        if self.at_comprehension_clause_start() {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RBrace)?;
             self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
@@ -383,6 +383,12 @@ impl<'a> Parser<'a> {
         }
         self.expect(TokenKind::RBrace)?;
         Ok(Spanned::new(Expr::SetLit(elems), self.span_from(start)))
+    }
+
+    pub(crate) fn at_comprehension_clause_start(&self) -> bool {
+        self.peek_kind() == Some(TokenKind::For)
+            || (self.peek_kind() == Some(TokenKind::Async)
+                && self.peek_at(1).is_some_and(|kind| *kind == TokenKind::For))
     }
 
     /// Parse comprehension clauses: `for x in iter if cond ...`
@@ -1070,21 +1076,16 @@ mod tests {
         );
     }
 
-    // REQ: tick-132 test-coverage — PEP 530 async-for list comprehension gating gap.
-    // parse_comprehension_clauses has is_async=true handling (this file, line ~328)
-    // but parse_list_or_comp's gating check (line ~190) only peeks TokenKind::For,
-    // not Async — so `[x async for ...]` never reaches the is_async branch and the
-    // parser errors with "expected ], got async". This test LOCKS that current
-    // (buggy) behavior so a future fix widening the gating check must also update
-    // this test. When fixed, replace with a positive assertion of is_async=true.
     #[test]
-    fn test_list_comp_async_for_currently_rejected_by_gating_gap() {
+    fn test_list_comp_accepts_async_for_clause() {
         let src = "[x async for x in aiter]\n";
-        let r = crate::parser::parse(src, fid());
-        assert!(
-            r.is_err(),
-            "gating gap: async-for in list comp should currently error"
-        );
+        match parse_expr(src) {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators.len(), 1);
+                assert!(generators[0].is_async);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
     }
 
     // --- Dict ---
@@ -1118,6 +1119,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_dict_comp_accepts_async_for_clause() {
+        match parse_expr("{k: v async for k, v in items}") {
+            Expr::DictComp { generators, .. } => {
+                assert_eq!(generators.len(), 1);
+                assert!(generators[0].is_async);
+            }
+            other => panic!("expected DictComp, got {other:?}"),
+        }
+    }
+
     // --- Set ---
 
     #[test]
@@ -1138,6 +1150,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_set_comp_accepts_async_for_clause() {
+        match parse_expr("{x async for x in items}") {
+            Expr::SetComp { generators, .. } => {
+                assert_eq!(generators.len(), 1);
+                assert!(generators[0].is_async);
+            }
+            other => panic!("expected SetComp, got {other:?}"),
+        }
+    }
+
     // --- Generator expression ---
 
     #[test]
@@ -1149,6 +1172,17 @@ mod tests {
             } => {
                 assert!(matches!(element.node, Expr::Ident(ref n) if n == "x"));
                 assert_eq!(generators.len(), 1);
+            }
+            other => panic!("expected GeneratorExpr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_generator_expr_accepts_async_for_clause() {
+        match parse_expr("(x async for x in items)") {
+            Expr::GeneratorExpr { generators, .. } => {
+                assert_eq!(generators.len(), 1);
+                assert!(generators[0].is_async);
             }
             other => panic!("expected GeneratorExpr, got {other:?}"),
         }
