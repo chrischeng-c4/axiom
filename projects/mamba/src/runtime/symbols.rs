@@ -3543,6 +3543,19 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_eval_with_globals",
+            builtins::mb_eval_with_globals as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_eval_with_namespaces",
+            builtins::mb_eval_with_namespaces
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_exec",
             builtins::mb_exec as fn(super::MbValue) -> super::MbValue,
             [I64],
@@ -3552,6 +3565,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             "mb_exec_with_globals",
             builtins::mb_exec_with_globals as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exec_with_globals_locals",
+            builtins::mb_exec_with_globals_locals
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
             I64
         ),
         rt_sym!(

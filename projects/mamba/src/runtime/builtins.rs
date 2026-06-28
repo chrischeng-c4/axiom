@@ -10850,6 +10850,18 @@ pub fn mb_assertion_error_no_msg() {
 /// surface; the full scope-bound eval that CPython exposes still
 /// needs the parser+interpreter integration tracked under #1256.
 pub fn mb_eval(expr: MbValue) -> MbValue {
+    mb_eval_impl(expr, None, None)
+}
+
+pub fn mb_eval_with_globals(expr: MbValue, globals: MbValue) -> MbValue {
+    mb_eval_impl(expr, Some(globals), None)
+}
+
+pub fn mb_eval_with_namespaces(expr: MbValue, globals: MbValue, locals: MbValue) -> MbValue {
+    mb_eval_impl(expr, Some(globals), Some(locals))
+}
+
+fn mb_eval_impl(expr: MbValue, globals: Option<MbValue>, locals: Option<MbValue>) -> MbValue {
     use crate::lexer;
     use crate::parser::Parser;
     use crate::source::SourceMap;
@@ -10857,7 +10869,7 @@ pub fn mb_eval(expr: MbValue) -> MbValue {
     if let Some(ptr) = expr.as_ptr() {
         unsafe {
             if let ObjData::CodeObject { mode, ast, .. } = &(*ptr).data {
-                return mb_eval_code_object(mode, ast);
+                return mb_eval_code_object(mode, ast, globals, locals);
             }
         }
     }
@@ -10891,11 +10903,29 @@ pub fn mb_eval(expr: MbValue) -> MbValue {
             return MbValue::none();
         }
     };
-    eval_expr(&ast.node)
+    if globals.is_some() || locals.is_some() {
+        let mut ctx = ExecContext {
+            globals,
+            locals,
+            ..ExecContext::default()
+        };
+        exec_eval_expr(&mut ctx, &ast.node)
+    } else {
+        eval_expr(&ast.node)
+    }
 }
 
-fn mb_eval_code_object(mode: &str, ast: &crate::parser::ast::Module) -> MbValue {
-    let mut ctx = ExecContext::default();
+fn mb_eval_code_object(
+    mode: &str,
+    ast: &crate::parser::ast::Module,
+    globals: Option<MbValue>,
+    locals: Option<MbValue>,
+) -> MbValue {
+    let mut ctx = ExecContext {
+        globals,
+        locals,
+        ..ExecContext::default()
+    };
     if mode == "eval" {
         if let Some(stmt) = ast.stmts.first() {
             if let crate::parser::ast::Stmt::ExprStmt(expr) = &stmt.node {
@@ -11268,6 +11298,7 @@ struct ExecContext {
     functions: FxHashMap<String, ExecFunction>,
     frames: Vec<FxHashMap<String, MbValue>>,
     globals: Option<MbValue>,
+    locals: Option<MbValue>,
 }
 
 #[derive(Clone)]
@@ -11584,6 +11615,15 @@ fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
             return Some(value);
         }
     }
+    if let Some(locals) = ctx.locals {
+        let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+        if super::dict_ops::mb_dict_contains(locals, key)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            return Some(super::dict_ops::mb_dict_get(locals, key, MbValue::none()));
+        }
+    }
     let globals = ctx.globals?;
     let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
     if super::dict_ops::mb_dict_contains(globals, key)
@@ -11599,6 +11639,12 @@ fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
 fn exec_store_name(ctx: &mut ExecContext, name: &str, value: MbValue) {
     if let Some(frame) = ctx.frames.last_mut() {
         frame.insert(name.to_string(), value);
+    } else if let Some(locals) = ctx.locals {
+        super::dict_ops::mb_dict_setitem(
+            locals,
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            value,
+        );
     } else {
         exec_store_global(ctx, name, value);
     }
@@ -12716,14 +12762,18 @@ fn eval_unaryop(op: crate::parser::ast::UnaryOp, v: MbValue) -> MbValue {
 ///     propagate through `exec`.
 /// Remaining side-effecting statements are still dropped on the floor; see #1256.
 pub fn mb_exec(code: MbValue) -> MbValue {
-    mb_exec_impl(code, None)
+    mb_exec_impl(code, None, None)
 }
 
 pub fn mb_exec_with_globals(code: MbValue, globals: MbValue) -> MbValue {
-    mb_exec_impl(code, Some(globals))
+    mb_exec_impl(code, Some(globals), None)
 }
 
-fn mb_exec_impl(code: MbValue, globals: Option<MbValue>) -> MbValue {
+pub fn mb_exec_with_globals_locals(code: MbValue, globals: MbValue, locals: MbValue) -> MbValue {
+    mb_exec_impl(code, Some(globals), Some(locals))
+}
+
+fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>) -> MbValue {
     use crate::lexer;
     use crate::parser::Parser;
     use crate::source::SourceMap;
@@ -12733,6 +12783,7 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>) -> MbValue {
             if let ObjData::CodeObject { ast, .. } = &(*ptr).data {
                 let mut ctx = ExecContext {
                     globals,
+                    locals,
                     ..ExecContext::default()
                 };
                 exec_stmts_with_context(&mut ctx, &ast.stmts);
@@ -12777,6 +12828,7 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>) -> MbValue {
     };
     let mut ctx = ExecContext {
         globals,
+        locals,
         ..ExecContext::default()
     };
     exec_stmts_with_context(&mut ctx, &module.stmts);
@@ -14546,6 +14598,41 @@ def f():
         assert_eq!(mb_eval(s).as_int(), Some(1));
         let s = MbValue::from_ptr(MbObject::new_str("1 if False else 2".to_string()));
         assert_eq!(mb_eval(s).as_int(), Some(2));
+    }
+
+    #[test]
+    fn test_eval_with_globals_resolves_names() {
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(globals, make_str("x"), MbValue::from_int(41));
+        let expr = make_str("x + 1");
+        assert_eq!(mb_eval_with_globals(expr, globals).as_int(), Some(42));
+    }
+
+    #[test]
+    fn test_eval_with_namespaces_prefers_locals() {
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        let locals = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(globals, make_str("x"), MbValue::from_int(1));
+        crate::runtime::dict_ops::mb_dict_setitem(locals, make_str("x"), MbValue::from_int(41));
+        let expr = make_str("x + 1");
+        assert_eq!(
+            mb_eval_with_namespaces(expr, globals, locals).as_int(),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn test_exec_with_globals_locals_stores_in_locals() {
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        let locals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals_locals(make_str("p = 10\nq = p * 2"), globals, locals);
+        let p = crate::runtime::dict_ops::mb_dict_get(locals, make_str("p"), MbValue::none());
+        let q = crate::runtime::dict_ops::mb_dict_get(locals, make_str("q"), MbValue::none());
+        assert_eq!(p.as_int(), Some(10));
+        assert_eq!(q.as_int(), Some(20));
     }
 
     #[test]
