@@ -1019,28 +1019,7 @@ pub fn mb_operator_pow(a: MbValue, b: MbValue) -> MbValue {
     binop_result(builtins::mb_pow(a, b), "** or pow()", a, b)
 }
 pub fn mb_operator_matmul(a: MbValue, b: MbValue) -> MbValue {
-    // No native matmul on numbers — `a @ b` dispatches to __matmul__ when the
-    // left operand defines it, else raises TypeError (matching CPython, where
-    // `int @ int` is unsupported).
-    if let Some(cls) = instance_class_name(a) {
-        if !class::lookup_method(&cls, "__matmul__").is_none() {
-            let args = MbValue::from_ptr(MbObject::new_list(vec![b]));
-            return class::mb_call_method(
-                a,
-                MbValue::from_ptr(MbObject::new_str("__matmul__".to_string())),
-                args,
-            );
-        }
-    }
-    raise(
-        "TypeError",
-        &format!(
-            "unsupported operand type(s) for @: '{}' and '{}'",
-            type_name(a),
-            type_name(b)
-        ),
-    );
-    MbValue::none()
+    binop_result(class::mb_matmul(a, b), "@", a, b)
 }
 
 // ── Bitwise ──

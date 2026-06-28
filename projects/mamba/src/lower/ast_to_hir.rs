@@ -4980,27 +4980,25 @@ impl<'a> AstLowerer<'a> {
                 // `a <op>= b` through a runtime helper that calls the in-place
                 // dunder when present and otherwise falls back to the normal
                 // binary op. Primitive targets (int/float/bool) keep the fast
-                // BinOp path below. Only the six ops with an in-place helper
-                // are rerouted; others fall through.
+                // BinOp path below except for @=, which has no primitive fast
+                // path and must still allow the RHS reflected dunder.
                 {
                     use crate::types::Ty;
                     let lhs_primitive = matches!(
                         self.checker.tcx.get(lhs.ty()),
                         Ty::Int | Ty::Float | Ty::Bool
                     );
-                    let helper = if lhs_primitive {
-                        None
-                    } else {
-                        match op {
-                            ast::AugOp::Add => Some("mb_iadd"),
-                            ast::AugOp::Sub => Some("mb_isub"),
-                            ast::AugOp::Mul => Some("mb_imul"),
-                            ast::AugOp::Pow => Some("mb_ipow"),
-                            ast::AugOp::BitAnd => Some("mb_iand"),
-                            ast::AugOp::BitOr => Some("mb_ior"),
-                            ast::AugOp::BitXor => Some("mb_ixor"),
-                            _ => None,
-                        }
+                    let helper = match op {
+                        ast::AugOp::MatMul => Some("mb_imatmul"),
+                        _ if lhs_primitive => None,
+                        ast::AugOp::Add => Some("mb_iadd"),
+                        ast::AugOp::Sub => Some("mb_isub"),
+                        ast::AugOp::Mul => Some("mb_imul"),
+                        ast::AugOp::Pow => Some("mb_ipow"),
+                        ast::AugOp::BitAnd => Some("mb_iand"),
+                        ast::AugOp::BitOr => Some("mb_ior"),
+                        ast::AugOp::BitXor => Some("mb_ixor"),
+                        _ => None,
                     };
                     if let Some(helper) = helper {
                         let any_ty = self.checker.tcx.any();
@@ -5673,6 +5671,14 @@ impl<'a> AstLowerer<'a> {
             ast::Expr::BinOp { op, lhs, rhs } => {
                 let l = self.lower_expr(lhs)?;
                 let r = self.lower_expr(rhs)?;
+                if matches!(op, ast::BinOp::MatMul) {
+                    let any_ty = self.checker.tcx.any();
+                    return Some(HirExpr::Call {
+                        func: Box::new(HirExpr::StrLit("mb_matmul".to_string(), any_ty)),
+                        args: vec![l, r],
+                        ty: any_ty,
+                    });
+                }
                 let hir_op = lower_bin_op(*op)?;
                 let ty = match hir_op {
                     // `is` / `is not` always use primitive identity comparison
