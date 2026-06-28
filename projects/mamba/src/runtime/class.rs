@@ -5357,6 +5357,254 @@ unsafe extern "C" fn ms_remove(self_v: MbValue, args: MbValue) -> MbValue {
     MbValue::none()
 }
 
+enum MappingLookup {
+    Hit(MbValue),
+    Missing,
+    Error,
+}
+
+fn mapping_lookup(mapping: MbValue, key: MbValue) -> MappingLookup {
+    let value = ms_call(mapping, "__getitem__", vec![key]);
+    match super::exception::current_exception_type().as_deref() {
+        Some("KeyError") => {
+            super::exception::mb_clear_exception();
+            MappingLookup::Missing
+        }
+        Some(_) => MappingLookup::Error,
+        None => MappingLookup::Hit(value),
+    }
+}
+
+fn mapping_keys_vec(mapping: MbValue) -> Vec<MbValue> {
+    let iter = ms_call(mapping, "__iter__", vec![]);
+    if super::exception::current_exception_type().is_some() {
+        return Vec::new();
+    }
+    iter_to_vec(iter)
+}
+
+fn mapping_is_mapping_like(value: MbValue) -> bool {
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Dict(_) => true,
+                ObjData::Instance { class_name, .. } => {
+                    class_matches_collections_abc(class_name, "Mapping")
+                        || class_matches_collections_abc(class_name, "MutableMapping")
+                }
+                _ => false,
+            }
+        }
+    } else {
+        false
+    }
+}
+
+fn mapping_pair_from_value(value: MbValue) -> Option<(MbValue, MbValue)> {
+    let ptr = value.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Tuple(items) if items.len() == 2 => Some((items[0], items[1])),
+            ObjData::List(lock) => {
+                let items = lock.read().unwrap();
+                if items.len() == 2 {
+                    Some((items[0], items[1]))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+fn mapping_raise_key_error(key: MbValue) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+        super::builtins::mb_repr(key),
+    );
+}
+
+unsafe extern "C" fn map_get(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::builtins::extract_items(args);
+    let key = items.first().copied().unwrap_or_else(MbValue::none);
+    let default = items.get(1).copied().unwrap_or_else(MbValue::none);
+    match mapping_lookup(self_v, key) {
+        MappingLookup::Hit(value) => value,
+        MappingLookup::Missing => {
+            super::rc::retain_if_ptr(default);
+            default
+        }
+        MappingLookup::Error => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn map_contains(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = super::builtins::extract_items(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
+    match mapping_lookup(self_v, key) {
+        MappingLookup::Hit(_) => MbValue::from_bool(true),
+        MappingLookup::Missing => MbValue::from_bool(false),
+        MappingLookup::Error => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn map_keys(self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_ptr(MbObject::new_list(mapping_keys_vec(self_v)))
+}
+
+unsafe extern "C" fn map_values(self_v: MbValue, _args: MbValue) -> MbValue {
+    let values = mapping_keys_vec(self_v)
+        .into_iter()
+        .filter_map(|key| match mapping_lookup(self_v, key) {
+            MappingLookup::Hit(value) => Some(value),
+            MappingLookup::Missing | MappingLookup::Error => None,
+        })
+        .collect();
+    MbValue::from_ptr(MbObject::new_list(values))
+}
+
+unsafe extern "C" fn map_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    let items = mapping_keys_vec(self_v)
+        .into_iter()
+        .filter_map(|key| match mapping_lookup(self_v, key) {
+            MappingLookup::Hit(value) => {
+                Some(MbValue::from_ptr(MbObject::new_tuple(vec![key, value])))
+            }
+            MappingLookup::Missing | MappingLookup::Error => None,
+        })
+        .collect();
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+fn mapping_equal(left: MbValue, right: MbValue) -> bool {
+    if !mapping_is_mapping_like(right) {
+        return false;
+    }
+    if super::builtins::mb_len(left).as_int() != super::builtins::mb_len(right).as_int() {
+        return false;
+    }
+    for key in mapping_keys_vec(left) {
+        let left_value = match mapping_lookup(left, key) {
+            MappingLookup::Hit(value) => value,
+            MappingLookup::Missing | MappingLookup::Error => return false,
+        };
+        let right_value = match mapping_lookup(right, key) {
+            MappingLookup::Hit(value) => value,
+            MappingLookup::Missing | MappingLookup::Error => return false,
+        };
+        if super::builtins::mb_eq(left_value, right_value).as_bool() != Some(true) {
+            return false;
+        }
+    }
+    true
+}
+
+unsafe extern "C" fn map_eq(self_v: MbValue, other: MbValue) -> MbValue {
+    MbValue::from_bool(mapping_equal(self_v, other))
+}
+
+unsafe extern "C" fn map_ne(self_v: MbValue, other: MbValue) -> MbValue {
+    MbValue::from_bool(!mapping_equal(self_v, other))
+}
+
+unsafe extern "C" fn mmap_pop(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::builtins::extract_items(args);
+    let key = items.first().copied().unwrap_or_else(MbValue::none);
+    match mapping_lookup(self_v, key) {
+        MappingLookup::Hit(value) => {
+            ms_call(self_v, "__delitem__", vec![key]);
+            value
+        }
+        MappingLookup::Missing if items.len() > 1 => {
+            let default = items[1];
+            super::rc::retain_if_ptr(default);
+            default
+        }
+        MappingLookup::Missing => {
+            mapping_raise_key_error(key);
+            MbValue::none()
+        }
+        MappingLookup::Error => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn mmap_popitem(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(key) = mapping_keys_vec(self_v).first().copied() else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("dictionary is empty".to_string())),
+        );
+        return MbValue::none();
+    };
+    let value = match mapping_lookup(self_v, key) {
+        MappingLookup::Hit(value) => value,
+        MappingLookup::Missing | MappingLookup::Error => return MbValue::none(),
+    };
+    ms_call(self_v, "__delitem__", vec![key]);
+    MbValue::from_ptr(MbObject::new_tuple(vec![key, value]))
+}
+
+unsafe extern "C" fn mmap_clear(self_v: MbValue, _args: MbValue) -> MbValue {
+    for key in mapping_keys_vec(self_v) {
+        ms_call(self_v, "__delitem__", vec![key]);
+        if super::exception::current_exception_type().is_some() {
+            return MbValue::none();
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn mmap_setdefault(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::builtins::extract_items(args);
+    let key = items.first().copied().unwrap_or_else(MbValue::none);
+    let default = items.get(1).copied().unwrap_or_else(MbValue::none);
+    match mapping_lookup(self_v, key) {
+        MappingLookup::Hit(value) => value,
+        MappingLookup::Missing => {
+            ms_call(self_v, "__setitem__", vec![key, default]);
+            super::rc::retain_if_ptr(default);
+            default
+        }
+        MappingLookup::Error => MbValue::none(),
+    }
+}
+
+fn mmap_update_one(self_v: MbValue, other: MbValue) {
+    if mapping_is_mapping_like(other) {
+        for key in mapping_keys_vec(other) {
+            if let MappingLookup::Hit(value) = mapping_lookup(other, key) {
+                ms_call(self_v, "__setitem__", vec![key, value]);
+            }
+            if super::exception::current_exception_type().is_some() {
+                return;
+            }
+        }
+        return;
+    }
+
+    for item in iter_to_vec(other) {
+        if let Some((key, value)) = mapping_pair_from_value(item) {
+            ms_call(self_v, "__setitem__", vec![key, value]);
+            if super::exception::current_exception_type().is_some() {
+                return;
+            }
+        }
+    }
+}
+
+unsafe extern "C" fn mmap_update(self_v: MbValue, args: MbValue) -> MbValue {
+    for other in super::builtins::extract_items(args) {
+        mmap_update_one(self_v, other);
+        if super::exception::current_exception_type().is_some() {
+            return MbValue::none();
+        }
+    }
+    MbValue::none()
+}
+
 // ── MutableSet mixins (delegate to add / discard / __contains__ / __iter__) ──
 
 /// Drain self's current elements into a Vec via the __iter__ mixin path.
@@ -5551,9 +5799,9 @@ unsafe extern "C" fn set_isdisjoint(self_v: MbValue, args: MbValue) -> MbValue {
     MbValue::from_bool(disjoint)
 }
 
-/// Install the MutableSequence / MutableSet / Set mixin methods on a class
+/// Install collections.abc mixin methods on a class
 /// (skipping any the class defines itself), called from mb_class_register when
-/// the class's MRO includes a collections.abc sequence/set ABC.
+/// the class's MRO includes the corresponding collections.abc nominal base.
 fn install_abc_mixins(name: &str, mro: &[String]) {
     let derives = |abc: &str| mro.iter().any(|c| c == abc);
     if derives("MutableSequence") {
@@ -5567,6 +5815,40 @@ fn install_abc_mixins(name: &str, mro: &[String]) {
             ("__iadd__", ms_iadd as *const () as usize),
             ("__iter__", ms_iter as *const () as usize),
             ("__contains__", ms_contains as *const () as usize),
+        ];
+        for (m, addr) in methods {
+            if class_defines_own_method(name, m) {
+                continue;
+            }
+            super::module::register_variadic_func(*addr as u64);
+            class_replace_method(name, m, MbValue::from_func(*addr));
+        }
+    }
+    if derives("Mapping") || derives("MutableMapping") {
+        let methods: &[(&str, usize)] = &[
+            ("get", map_get as *const () as usize),
+            ("__contains__", map_contains as *const () as usize),
+            ("keys", map_keys as *const () as usize),
+            ("items", map_items as *const () as usize),
+            ("values", map_values as *const () as usize),
+            ("__eq__", map_eq as *const () as usize),
+            ("__ne__", map_ne as *const () as usize),
+        ];
+        for (m, addr) in methods {
+            if class_defines_own_method(name, m) {
+                continue;
+            }
+            super::module::register_variadic_func(*addr as u64);
+            class_replace_method(name, m, MbValue::from_func(*addr));
+        }
+    }
+    if derives("MutableMapping") {
+        let methods: &[(&str, usize)] = &[
+            ("pop", mmap_pop as *const () as usize),
+            ("popitem", mmap_popitem as *const () as usize),
+            ("clear", mmap_clear as *const () as usize),
+            ("update", mmap_update as *const () as usize),
+            ("setdefault", mmap_setdefault as *const () as usize),
         ];
         for (m, addr) in methods {
             if class_defines_own_method(name, m) {
@@ -7233,6 +7515,11 @@ fn mb_getattr_impl(
                             .unwrap_or(MbValue::none());
                         super::rc::retain_if_ptr(data);
                         return data;
+                    }
+                    if matches!(class_name.as_str(), "collections.UserDict" | "UserDict")
+                        && matches!(attr_name.as_str(), "keys" | "values" | "items")
+                    {
+                        return make_bound_native_method(obj, &attr_name);
                     }
                     if super::dict_ops::dict_view_kind(obj).is_some()
                         && matches!(attr_name.as_str(), "__contains__" | "isdisjoint")
@@ -18305,6 +18592,21 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 // the backing dict/list/str (full builtin method surface for
                 // free). User-defined overrides in subclasses win — only
                 // forward when the MRO has no such method.
+                if matches!(class_name.as_str(), "collections.UserDict" | "UserDict")
+                    && matches!(name.as_str(), "keys" | "values" | "items")
+                {
+                    let data = fields.read().unwrap().get("_data").copied();
+                    if let Some(data) = data {
+                        if !data.is_none() {
+                            match name.as_str() {
+                                "keys" => return super::dict_ops::mb_dict_keys_abc_view(data),
+                                "values" => return super::dict_ops::mb_dict_values_abc_view(data),
+                                "items" => return super::dict_ops::mb_dict_items_abc_view(data),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 if super::stdlib::collections_mod::user_wrapper_kind(class_name).is_some()
                     && lookup_method(class_name, &name).is_none()
                 {
