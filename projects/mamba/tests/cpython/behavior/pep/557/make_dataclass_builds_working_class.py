@@ -9,7 +9,7 @@
 # case = "make_dataclass_builds_working_class"
 # subject = "dataclasses.make_dataclass"
 # kind = "semantic"
-# xfail = "mamba make_dataclass does not synthesize the dataclass methods (repo memory project_mamba_class_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = "make_dataclass.py"
 # status = "filled"
@@ -18,6 +18,8 @@
 from dataclasses import make_dataclass, fields, is_dataclass
 
 C = make_dataclass("C", [("x", int), ("y", int)])
+assert type(C).__name__ == "type"
+assert C.__name__ == "C"
 obj = C(1, 2)
 assert is_dataclass(C)
 assert (obj.x, obj.y) == (1, 2)
