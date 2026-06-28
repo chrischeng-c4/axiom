@@ -125,6 +125,8 @@ requirement ENVELOPE_COMPAT {
 ```yaml
 e2e_tests:
   - name: artifact_quality_fixture_roundtrip
+    capability_id: td-cb-lifecycle-automation
+    claim_id: td-lifecycle-dispatch
     command: "cargo test -p agentic-workflow artifact_quality -- --nocapture"
 ```
 

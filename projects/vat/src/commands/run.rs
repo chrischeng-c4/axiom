@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-commands.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat run` — direct command mode plus vat.toml runner mode.
 //!
@@ -640,6 +640,7 @@ struct RunnerProc {
 /// applying the `[network].egress` policy), while the process backend is a
 /// passthrough (returns the command verbatim). Services are spawned RAW (not via
 /// this) so they keep the network needed to serve/forward.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
 pub(crate) fn sandbox_wrap(
     backend: &dyn sandbox::Sandbox,
     rootfs: &Path,

@@ -133,3 +133,25 @@ requirementDiagram
 
 - [logic] Correct contract: guard sits after cursor→offset parse; offset>0 AND sort present → 400 UnsupportedSort, else the existing plan/score path is unchanged. Matches the silent-ignore site at storage.rs:7558 / 3390-3397.
 - [unit-test] Requirements R1–R4 cover the reject path, the offset-without-sort regression, the keyset+sort happy path, and the doc-correctness inspection, each bound to a concrete test element.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Reject offset cursor plus sort before silently falling through to score-ranked paging."
+  - path: projects/lumen/src/types.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Keep the SearchRequest.sort documentation aligned with supported sortable field kinds."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Cover offset/sort rejection, offset without sort, keyset sort paging, and sort doc correctness."
+```

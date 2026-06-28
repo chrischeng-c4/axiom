@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:e2e-test:cec6238d" tracker="pending-tracker" reason="Assert runner/step commands are wrapped under seatbelt and services are not; a localhost-only egress smoke for a runner (skips off-macOS)."
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_runner_sandbox-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Integration test for #527: the sandbox (seatbelt isolation + the
 //! `[network].egress` policy) applies to RUNNER-mode commands, not just direct
 //! mode.
@@ -134,4 +135,4 @@ cmd = ["/bin/bash", "-c", "exec 3<>/dev/tcp/1.1.1.1/80"]
         "external runner should be denied under seatbelt localhost-only: {result}"
     );
 }
-// HANDWRITE-END
+// CODEGEN-END

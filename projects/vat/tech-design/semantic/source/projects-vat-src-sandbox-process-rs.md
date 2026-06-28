@@ -1,32 +1,27 @@
 ---
 id: vat-source-projects-vat-src-sandbox-process-rs
-summary: Source replay payload for projects/vat/src/sandbox/process.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/sandbox/process.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/sandbox/process.rs
+# Standardized projects/vat/src/sandbox/process.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/src/sandbox/process.rs` generated from AST during Score force-regeneration standardization.
+Rust source-unit TD for `projects/vat/src/sandbox/process.rs`, captured during #39 vat migration onto td_ast lossless source generation.
 
-### Symbols
-
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `ProcessBackend` | projects/vat/src/sandbox/process.rs | struct | pub | 18 |  |
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
 //! Host-process backend.
 //!
 //! The default and simplest sandbox: the command runs as an ordinary macOS (or
@@ -55,21 +50,17 @@ impl Sandbox for ProcessBackend {
         (program.to_string(), args.to_vec())
     }
 }
-`````
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/sandbox/process.rs"
+  - path: projects/vat/src/sandbox/process.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-sandbox.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-sandbox-process-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/sandbox/process.rs` captured during #39 vat standardization.
 ```

@@ -29,6 +29,7 @@ pub mod remote_push;
 pub mod run;
 pub(crate) mod shell_env;
 pub mod slug_workspace;
+pub mod standard_cli;
 pub mod standardize;
 pub mod sync;
 pub mod td;
@@ -37,6 +38,7 @@ pub mod td_lock;
 pub mod td_migrate;
 pub mod update;
 pub mod validate_spec_structure;
+pub mod view;
 pub mod workflow_guard;
 
 // Legacy modules kept for init.rs / update.rs dependencies

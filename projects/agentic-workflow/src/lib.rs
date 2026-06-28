@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/core/logic/lib.md#source
 // CODEGEN-BEGIN
 // Agentic Workflow - spec-governed workflow engine and CLI

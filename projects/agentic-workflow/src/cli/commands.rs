@@ -12,8 +12,10 @@ use crate::cli::issues;
 use crate::cli::llm;
 use crate::cli::project;
 use crate::cli::run as run_root;
+use crate::cli::standard_cli;
 use crate::cli::standardize;
 use crate::cli::sync;
+use crate::cli::view;
 
 /// Agentic Workflow CLI commands
 #[derive(Subcommand)]
@@ -52,6 +54,9 @@ pub enum Commands {
     /// Root-driven workflow runner for project, capability, epic, or change scopes.
     Run(run_root::RunArgs),
 
+    /// Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app.
+    View(view::ViewArgs),
+
     /// Auto-discover projects and refresh the `.aw/config.toml` registry block.
     Sync(sync::SyncArgs),
 
@@ -65,6 +70,16 @@ pub enum Commands {
 
     /// Offline agent orientation: outline + capability/td/ec pillars + loop.
     Llm(llm::LlmArgs),
+
+    /// Self-update this binary from a published GitHub release.
+    Upgrade(standard_cli::UpgradeArgs),
+
+    /// Search, view, or create Agentic Workflow issues.
+    Issue(standard_cli::IssueArgs),
+
+    /// File a diagnostics-rich GitHub issue for aw.
+    #[command(name = "report-issue")]
+    ReportIssue(standard_cli::ReportIssueArgs),
 
     /// Tech-design and generated-code lifecycle
     Td(crate::cli::td::TdArgs),
@@ -103,6 +118,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Run(args) => {
             run_root::run(args).await?;
         }
+        Commands::View(args) => {
+            view::run(args).await?;
+        }
         Commands::Sync(args) => {
             sync::run(args)?;
         }
@@ -114,6 +132,15 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Llm(args) => {
             llm::run(args)?;
+        }
+        Commands::Upgrade(args) => {
+            standard_cli::run_upgrade(args).await?;
+        }
+        Commands::Issue(args) => {
+            standard_cli::run_issue(args).await?;
+        }
+        Commands::ReportIssue(args) => {
+            standard_cli::run_report_issue(args).await?;
         }
         Commands::Td(args) => {
             crate::cli::td::run(args).await?;

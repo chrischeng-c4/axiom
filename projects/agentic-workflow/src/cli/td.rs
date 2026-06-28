@@ -154,7 +154,6 @@ pub struct ValidateArgs {
     pub check: bool,
 }
 
-
 #[derive(Debug, Args)]
 /// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub struct GenCodeArgs {
@@ -2081,7 +2080,6 @@ fn section_payload_rel(slug: &str, pass: &str, section: &str) -> String {
     format!(".aw/payloads/{}/{}/{}.md", slug, pass, section)
 }
 
-
 fn initialize_td_payload_file(
     project_root: &std::path::Path,
     rel_path: &str,
@@ -2146,7 +2144,6 @@ fn td_section_title(section: &str) -> String {
         .join(" ")
 }
 
-
 fn remaining_after_section(pass: &str, section: &str) -> Vec<String> {
     remaining_after_section_in_queue(td_section_queue(pass), section)
 }
@@ -2184,7 +2181,6 @@ fn remaining_after_section_in_queue(queue: Vec<String>, section: &str) -> Vec<St
 fn lifecycle_pass_phase(pass: &str) -> String {
     format!("td_{}_in_progress", pass.replace('-', "_"))
 }
-
 
 /// Resolve the checkout-relative destination path for a `td claim`
 /// `--from-path` source. If the source already lives under
@@ -3241,9 +3237,7 @@ async fn handle_create_milestone(
     Ok(())
 }
 
-
 // ── Review verdict parsing ───────────────────────────────────────────
-
 
 // ── Git helpers ──────────────────────────────────────────────────────
 
@@ -3258,12 +3252,9 @@ fn rollback_worktree_file(worktree_path: &std::path::Path, rel_path: &str) -> Re
     Ok(())
 }
 
-
 // ── td review ───────────────────────────────────────────────────────
 
-
 // ── td revise ───────────────────────────────────────────────────────
-
 
 // ── td gen ─────────────────────────────────────────────────────────
 

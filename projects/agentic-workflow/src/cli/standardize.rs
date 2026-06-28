@@ -1044,6 +1044,9 @@ async fn run_project_standardize_health_gate(project: &str) -> Result<()> {
 }
 
 fn project_standardize_layers_ready(report: &crate::cli::project::ProjectHealthReport) -> bool {
+    if crate::cli::project::project_health_caps_ec_only(&report.project) {
+        return report.capability_ready && report.ec.check_clean;
+    }
     report.capability_ready
         && report.managed_ready
         && report.semantic_ready
@@ -1081,6 +1084,21 @@ fn project_standardize_parent_summary(
         "payload_path".to_string(),
         serde_json::Value::String(payload_path.to_string()),
     );
+    let criteria = if crate::cli::project::project_health_caps_ec_only(project) {
+        vec![
+            "capability roots are defined and runnable",
+            "capability claims map to production EC cases",
+            "EC inventory/check is clean",
+        ]
+    } else {
+        vec![
+            "capability roots are defined and runnable",
+            "managed source ownership is complete",
+            "semantic TD coverage and stack migration are complete",
+            "TD/source/CB/command traceability is closed",
+            "full project health production gates pass",
+        ]
+    };
 
     serde_json::json!({
         "schema_version": "aw.cli.v1",
@@ -1092,13 +1110,7 @@ fn project_standardize_parent_summary(
             "root_complete": workflow_complete,
             "workflow_complete": workflow_complete,
             "requires_hitl": requires_hitl,
-            "criteria": [
-                "capability roots are defined and runnable",
-                "managed source ownership is complete",
-                "semantic TD coverage and stack migration are complete",
-                "TD/source/CB/command traceability is closed",
-                "full project health production gates pass"
-            ],
+            "criteria": criteria,
             "missing": if workflow_complete { Vec::<String>::new() } else { vec![reason] },
         },
         "next": serde_json::Value::Object(next),
@@ -1111,7 +1123,8 @@ fn project_standardize_parent_summary(
 fn project_standardize_parent_step(
     report: &crate::cli::project::ProjectHealthReport,
 ) -> (&'static str, &'static str, bool, Option<String>, String) {
-    if report.workflow_lock_count > 0 {
+    let caps_ec_only = crate::cli::project::project_health_caps_ec_only(&report.project);
+    if !caps_ec_only && report.workflow_lock_count > 0 {
         let reason = report
             .blockers
             .iter()
@@ -1146,6 +1159,29 @@ fn project_standardize_parent_step(
             "blocked"
         };
         return ("capability", status, false, command, reason);
+    }
+    if caps_ec_only {
+        if !report.ec.check_clean {
+            let reason = report
+                .ec
+                .note
+                .clone()
+                .unwrap_or_else(|| "EC inventory/check is blocked".to_string());
+            return (
+                "ec",
+                "blocked",
+                false,
+                Some(format!("aw health --project {} ec", report.project)),
+                reason,
+            );
+        }
+        return (
+            "health",
+            "continue",
+            false,
+            Some(format!("aw health --project {}", report.project)),
+            "self standardization is gated by capability and EC only".to_string(),
+        );
     }
     if !report.managed_ready {
         return (

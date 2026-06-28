@@ -466,9 +466,11 @@ fn standardize_traceability_report_next_and_run_surface_blockers() {
     );
     let report_json: serde_json::Value =
         serde_json::from_slice(&report.stdout).expect("traceability report JSON");
-    assert_eq!(report_json["project"], "demo");
-    assert!(report_json.get("command_traceability").is_some());
-    assert!(report_json["blocker_count"].as_u64().unwrap() > 0);
+    assert_eq!(report_json["coverage"]["project"], "demo");
+    assert!(report_json["coverage"]
+        .get("command_traceability")
+        .is_some());
+    assert!(report_json["coverage"]["blocker_count"].as_u64().unwrap() > 0);
 
     let next = Command::new(&score)
         .args([
@@ -494,10 +496,11 @@ fn standardize_traceability_report_next_and_run_surface_blockers() {
         next_json["mainthread_task"]["decision_required"],
         "attach_source_or_cb_edge_to_capability_td"
     );
-    assert!(next_json["agent_prompt"]
+    assert!(next_json["agent_prompt"].is_null());
+    assert!(next_json["agent_prompt_path"]
         .as_str()
         .unwrap()
-        .contains("Resolve exactly one AW traceability blocker"));
+        .contains("/tmp/aw/demo/standardize/traceability-next.json"));
 
     let run = Command::new(&score)
         .args([
@@ -519,7 +522,7 @@ fn standardize_traceability_report_next_and_run_surface_blockers() {
     assert_eq!(run_json["layer"], "traceability");
     assert_eq!(
         run_json["invoke"]["command"],
-        "aw standardize traceability next --project demo --json"
+        "aw standardize traceability next --project demo"
     );
     assert!(run_json["mainthread_task"]["success_criteria"]
         .as_array()

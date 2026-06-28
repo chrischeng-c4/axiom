@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-build-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Build script: stamp provenance (`VAT_TARGET` / `VAT_GIT_SHA` /
 //! `VAT_BUILT_AT`) so `vat upgrade` can pick the matching release asset and

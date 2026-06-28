@@ -108,12 +108,16 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "cclab-compass",
+ "cclab-surface",
+ "cclab-ui-runtime",
  "chrono",
  "clap",
  "clap_complete",
+ "cli-std",
  "colored",
  "dialoguer",
  "dirs",
+ "fontdue",
  "fs2",
  "futures",
  "git2",
@@ -121,9 +125,11 @@ dependencies = [
  "globset",
  "heck",
  "ignore",
+ "image",
  "indexmap 2.14.0",
  "jsonschema 0.29.1",
  "libc",
+ "objc",
  "open",
  "pulldown-cmark",
  "ra_ap_syntax",
@@ -1798,6 +1804,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cclab-surface"
+version = "0.4.3"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cclab-text"
 version = "0.4.3"
 dependencies = [
@@ -1816,6 +1830,14 @@ dependencies = [
  "indicatif",
  "parking_lot",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "cclab-ui-runtime"
+version = "0.4.3"
+dependencies = [
+ "cclab-surface",
+ "serde_json",
 ]
 
 [[package]]
@@ -5459,6 +5481,8 @@ version = "0.4.3"
 dependencies = [
  "cclab-grid-render-webgpu",
  "cclab-grid-wasm",
+ "cclab-surface",
+ "cclab-ui-runtime",
  "icu_segmenter",
  "js-sys",
  "pretty_assertions",

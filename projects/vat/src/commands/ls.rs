@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-commands.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-ls-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat ls` — list all vats with a one-line status each.
 //!

@@ -210,7 +210,10 @@ mod tests {
             dimension: "behavior".into(),
             why: "t failed".into(),
         };
-        assert_eq!(decide_next_action(&red), (LoopStatus::Iterating, Some("aw td gen")));
+        assert_eq!(
+            decide_next_action(&red),
+            (LoopStatus::Iterating, Some("aw td gen"))
+        );
     }
 
     #[test]
@@ -336,7 +339,10 @@ mod tests {
             after2.contains("score:workflow-state"),
             "replace must not disturb the workflow-state block"
         );
-        assert_eq!(parse_loop_state(&after2).unwrap().status, LoopStatus::Converged);
+        assert_eq!(
+            parse_loop_state(&after2).unwrap().status,
+            LoopStatus::Converged
+        );
     }
 
     #[test]

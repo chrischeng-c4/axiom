@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! vat — agent-native, GPU-native dev containers.
 //!

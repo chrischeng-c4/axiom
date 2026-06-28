@@ -1,5 +1,5 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#rust-source-unit
-// HANDWRITE-BEGIN gap="missing-generator:logic:54088576" tracker="standardize-gap-projects-lumen-src-wal-relay-rs" reason="RelayWal: a WalLog backed by relay's broadcast. publish POSTs CBOR to relay /v1/{subject}/publish (payload=lumen WalRecord binary envelope); subscribe GETs /v1/{subject}/subscribe and decodes relay's length-prefixed CBOR LogEntry frames (relay::wire::decode_frames), mapping each to (seq+1, WalRecord). Plaintext h2c, no TLS."
+// CODEGEN-BEGIN
 //! #124 — tail **relay**'s broadcast as the WAL backend (behind the `relay-wal`
 //! feature), replacing the legacy NATS deployment backend.
 //!
@@ -104,6 +104,7 @@ fn decode_binary_wal_payload(seq: u64, encoded: &str) -> Result<WalRecord> {
         .map_err(|err| anyhow!("relay WAL binary payload at seq {seq} is invalid: {err}"))
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#source
 impl RelayWal {
     /// Connect to `base_url` (e.g. `http://relay:8080`) for `subject`.
     /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#source
@@ -145,6 +146,7 @@ impl RelayWal {
 }
 
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#source
 impl WalLog for RelayWal {
     /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#source
     async fn publish(&self, record: WalRecord) -> Result<u64> {
@@ -249,4 +251,4 @@ impl WalLog for RelayWal {
             .ok_or_else(|| anyhow!("relay len: no latest_seq in response"))
     }
 }
-// HANDWRITE-END
+// CODEGEN-END
