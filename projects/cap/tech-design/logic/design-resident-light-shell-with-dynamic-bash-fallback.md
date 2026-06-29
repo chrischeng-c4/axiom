@@ -58,15 +58,21 @@ flowchart TB
   managed_run --> boundary
 ```
 
-The resident-light-shell design belongs in this TD because it changes the
-`cap run "<command string>"` execution boundary. The first implementation slice
-is intentionally narrow: a per-invocation `ResidentLightShellSession` owns the
-current cwd/env snapshot, attempts one conservative native stage using the
-existing planner/native runner, and returns a structured fallback for every
-unsupported form. This keeps the daemon/client resource-protection path intact
-for Bash fallback while making an observable in-process native path available
-for future resident/session reuse.
+Contract rules:
 
+- `ResidentLightShellSession::capture` snapshots the cap process cwd and env for
+  planning and future resident reuse. The first slice does not mutate session
+  state.
+- `cap run "<command string>"` uses the resident session only for single
+  command-string mode. `cap run -- <argv...>` and `cap <argv...>` keep their
+  existing argv planning path.
+- A Native planner result is the only resident in-process execution path in
+  this slice. External Original, External Replacement, parse failure, shell
+  syntax, and any unproven shape return `bash -lc <original>`.
+- Bash fallback continues through the existing `managed_run` external path, so
+  daemon protection and fail-open daemon-unavailable behavior are preserved.
+- Cap remains a Bash-compatible optimizer and resource governor. It does not
+  claim sandboxing, full POSIX shell compatibility, or a replacement shell.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
