@@ -915,6 +915,35 @@ fn test_stdlib_map_new_callable_rejected() {
     );
 }
 
+#[test]
+fn test_stdlib_memoryview_method_contracts_rejected() {
+    let errors = check(
+        "from builtins import memoryview\nclass _W:\n    pass\nobj = memoryview(bytearray(b\"abc\"))\nobj.__exit__(_W(), None, None)\nobj.__getitem__(_W())\nobj.__setitem__(_W(), None)\nobj.tobytes(_W())\nobj.__release_buffer__(12345)\n",
+    );
+    let typed_errors = errors
+        .iter()
+        .filter(|e| e.contains("does not satisfy parameter"))
+        .count();
+    assert_eq!(
+        typed_errors, 4,
+        "memoryview typed params should reject bare user instances, got: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `memoryview`, got `int`")),
+        "memoryview.__release_buffer__(int) should reject scalar buffers, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import memoryview\nobj = memoryview(bytearray(b\"abc\"))\nobj.__exit__(None, None, None)\nobj.__getitem__(0)\nobj.__getitem__(slice(0, 1))\nobj.__setitem__(0, 65)\nobj.tobytes()\nobj.tobytes(\"C\")\nbuf: Any = 12345\nobj.__release_buffer__(buf)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid and dynamic memoryview method forms must stay accepted, got: {errors:?}"
+    );
+}
+
 // R9.3: getattr() with default (3-arg form) must be accepted
 #[test]
 fn test_getattr_three_arg_form_accepted() {

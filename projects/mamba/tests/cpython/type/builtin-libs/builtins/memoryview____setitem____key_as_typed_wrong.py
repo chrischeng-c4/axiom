@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import memoryview
-obj = object.__new__(memoryview)
+obj = memoryview(bytearray(b"abc"))
 try:
     obj.__setitem__(_W(), None)  # key: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
