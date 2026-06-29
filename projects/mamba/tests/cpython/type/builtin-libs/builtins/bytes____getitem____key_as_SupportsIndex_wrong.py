@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import bytes
-obj = object.__new__(bytes)
+obj = bytes()
 try:
     obj.__getitem__(_W())  # key: SupportsIndex <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

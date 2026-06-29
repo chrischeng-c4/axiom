@@ -810,8 +810,10 @@ impl TypeChecker {
             if param.star {
                 break; // never enforce past `*args`
             }
-            // Map the param's CoreTy to a concrete scalar; None => skip (Unknown
-            // / Bytes / non-scalar). Still advance param_idx.
+            // Map the param's CoreTy to a concrete scalar; None => no positive
+            // scalar mapping (Unknown / Typed / Bytes). Still advance param_idx.
+            // Bytes is handled below as a negative scalar wall because bytes
+            // literals currently infer to Any.
             let expected = self.core_ty_to_type_id(param.ty);
             let actual = self.check_expr(a);
             // A BARE user class instance (`class _W: pass` → `_W()`) satisfies NO
@@ -846,7 +848,7 @@ impl TypeChecker {
                         param.name,
                     ),
                 );
-            } else if let Some(expected) = expected {
+            } else {
                 // A `None` actual argument is NEVER rejected: typeshed routinely
                 // under-declares Optional (a `host: str` parameter is called with
                 // `None` as a sentinel/clear, `set_proxy(host, None)` etc.), and
@@ -856,20 +858,33 @@ impl TypeChecker {
                 // *scalars* — str-for-int, instance-for-bool — not bare `None`, so
                 // this costs no type gain.)
                 let actual_is_none = matches!(self.tcx.get(actual), Ty::None);
-                // Both must be concrete scalars, and genuinely incompatible
-                // (types_compatible already allows Bool->Int and Int->Float).
-                if !actual_is_none
+                if matches!(param.ty, super::stdlib_sigs::CoreTy::Bytes)
+                    && !actual_is_none
                     && self.is_concrete_scalar(actual)
-                    && !self.types_compatible(expected, actual)
                 {
                     self.error(
                         a.span,
                         format!(
-                            "argument type mismatch: expected `{}`, got `{}`",
-                            self.ty_name(expected),
+                            "argument type mismatch: expected `bytes`, got `{}`",
                             self.ty_name(actual),
                         ),
                     );
+                } else if let Some(expected) = expected {
+                    // Both must be concrete scalars, and genuinely incompatible
+                    // (types_compatible already allows Bool->Int and Int->Float).
+                    if !actual_is_none
+                        && self.is_concrete_scalar(actual)
+                        && !self.types_compatible(expected, actual)
+                    {
+                        self.error(
+                            a.span,
+                            format!(
+                                "argument type mismatch: expected `{}`, got `{}`",
+                                self.ty_name(expected),
+                                self.ty_name(actual),
+                            ),
+                        );
+                    }
                 }
             }
             param_idx += 1;

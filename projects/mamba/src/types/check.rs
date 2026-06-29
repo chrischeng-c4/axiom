@@ -826,8 +826,8 @@ impl TypeChecker {
 
     /// ① Type-wall PoC: map a [`CoreTy`] to a concrete scalar [`TypeId`], or
     /// `None` when the param is non-scalar / unenforceable. `Bytes` has no
-    /// dedicated scalar `Ty` (bytes literals infer to `Any`), so it is treated
-    /// as unenforceable to preserve skip-when-unsure.
+    /// dedicated scalar `Ty` (bytes literals infer to `Any`), so scalar rejection
+    /// for it lives in the stdlib call hook rather than this positive mapper.
     pub(crate) fn core_ty_to_type_id(&self, ct: super::stdlib_sigs::CoreTy) -> Option<TypeId> {
         use super::stdlib_sigs::CoreTy;
         match ct {
@@ -836,7 +836,9 @@ impl TypeChecker {
             CoreTy::Str => Some(self.tcx.str()),
             CoreTy::Bool => Some(self.tcx.bool()),
             CoreTy::None => Some(self.tcx.none()),
-            // No concrete scalar representation — never enforce as a scalar.
+            // No concrete scalar representation — never enforce as a positive
+            // scalar. `Bytes` still rejects impossible concrete scalar actuals in
+            // the call hook.
             // `Typed` is handled by the bare-class branch in the hook, not here.
             CoreTy::Bytes | CoreTy::Typed | CoreTy::Unknown => None,
         }
