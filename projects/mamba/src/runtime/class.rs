@@ -6518,6 +6518,43 @@ fn mb_getattr_impl(
                         super::rc::retain_if_ptr(v);
                         return v;
                     }
+                    if let Some(stub_class) =
+                        guard.get("__class__").copied().and_then(extract_str)
+                    {
+                        let is_xml_method = match stub_class.as_str() {
+                            "Element" => matches!(
+                                attr_s.as_str(),
+                                "get"
+                                    | "set"
+                                    | "keys"
+                                    | "items"
+                                    | "find"
+                                    | "findall"
+                                    | "iterfind"
+                                    | "findtext"
+                                    | "iter"
+                                    | "itertext"
+                                    | "append"
+                                    | "extend"
+                                    | "insert"
+                                    | "remove"
+                                    | "clear"
+                                    | "makeelement"
+                                    | "getroot"
+                                    | "write"
+                            ),
+                            "ElementTree" => matches!(attr_s.as_str(), "getroot" | "write"),
+                            "XMLParser" => matches!(attr_s.as_str(), "feed" | "close"),
+                            "TreeBuilder" => {
+                                matches!(attr_s.as_str(), "start" | "data" | "end" | "close")
+                            }
+                            _ => false,
+                        };
+                        if is_xml_method {
+                            drop(guard);
+                            return make_bound_native_method(obj, attr_s);
+                        }
+                    }
                     // A module namespace (dict carrying __name__) reports a
                     // missing non-dunder attribute as AttributeError, like
                     // CPython. Dunder lookups still fall to the slow path.
