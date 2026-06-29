@@ -1008,6 +1008,37 @@ fn test_stdlib_constructor_wrong_scalar_rejected() {
 }
 
 #[test]
+fn test_stdlib_exception_group_typed_method_rejects_bare_instance() {
+    let errors = check(
+        "from builtins import ExceptionGroup\nclass _W:\n    pass\nobj = ExceptionGroup(\"msg\", [ValueError(\"x\")])\nobj.split(_W())\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `matcher_value`")),
+        "ExceptionGroup.split(_W()) should reject a bare instance, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import BaseExceptionGroup\nclass _W:\n    pass\nobj = BaseExceptionGroup(\"msg\", [ValueError(\"x\")])\nobj.derive(_W())\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `excs`")),
+        "BaseExceptionGroup.derive(_W()) should reject a bare instance, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import ExceptionGroup\nobj = ExceptionGroup(\"msg\", [ValueError(\"x\")])\ndef matcher(exc):\n    return True\nobj.split(matcher)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "ExceptionGroup.split(callable) must remain clean, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_unenforceable_never_rejected() {
     // base64.b64encode(s: ReadableBuffer) -> Unknown: NOT enforceable. Even a
     // blatantly wrong int must NOT be rejected.

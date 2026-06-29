@@ -25,10 +25,10 @@ class _W:
 
 
 from builtins import ExceptionGroup
-obj = object.__new__(ExceptionGroup)
+obj = ExceptionGroup("msg", [ValueError("x")])
 try:
     obj.split(_W())  # matcher_value: typed <- wrong-typed
-    print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
+    print("no_typeerror:")  # mamba must reject the wrong-typed arg
 except TypeError as e:
     print("typeerror:", type(e).__name__)
 except Exception as e:

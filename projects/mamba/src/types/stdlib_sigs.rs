@@ -189,6 +189,50 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("msg", CoreTy::Str), p("details", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: ExceptionGroup matcher/sequence methods use non-scalar
+    // contracts in typeshed. A bare user instance cannot satisfy Callable,
+    // exception type, tuple-of-types, or Sequence, so reject it through the
+    // Typed bare-class path before the runtime method surface is reached.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "BaseExceptionGroup",
+        name: "derive",
+        kind: SigKind::Method,
+        params: &[p("excs", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "BaseExceptionGroup",
+        name: "split",
+        kind: SigKind::Method,
+        params: &[p("matcher_value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "BaseExceptionGroup",
+        name: "subgroup",
+        kind: SigKind::Method,
+        params: &[p("matcher_value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "ExceptionGroup",
+        name: "split",
+        kind: SigKind::Method,
+        params: &[p("matcher_value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "ExceptionGroup",
+        name: "subgroup",
+        kind: SigKind::Method,
+        params: &[p("matcher_value", CoreTy::Typed)],
+        enforceable: true,
+    },
     // NEGATIVE: unicodedata.name(chr[, default]) / category(chr) — a non-str
     // or multi-character argument is a RUNTIME TypeError (the dispatcher
     // requires a single unicode character: `name(123)`), which the fixture
