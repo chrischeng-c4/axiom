@@ -147,3 +147,35 @@ e2e_tests:
     verifies:
       - "The shared-auth adoption does not regress the package test suite."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Depend on libs/service-auth for the shared Verifier and middleware plumbing."
+  - path: projects/lumen/src/auth.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add LumenVerifier, implement service_auth::Verifier, alias AuthErr to the shared AuthError, and delegate auth_middleware to service_auth::auth_middleware while preserving AuthContext and RBAC."
+  - path: projects/lumen/src/api.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Layer the generic service_auth middleware with LumenVerifier over data-plane routes only."
+  - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md
+    action: modify
+    section: logic
+    impl_mode: spec-managed-source-sync
+    description: "Keep the source TD synchronized with the changed auth.rs public API and code block."
+  - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md
+    action: modify
+    section: logic
+    impl_mode: spec-managed-source-sync
+    description: "Keep the source TD synchronized with the changed api.rs import and middleware wiring."
+```
