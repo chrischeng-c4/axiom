@@ -1,6 +1,6 @@
 ---
 id: jet-codegen-openapi
-summary: Standalone jet codegen openapi command reading an OpenAPI 3.0/3.1 spec and emitting stack-aware TypeScript types, a typed client, and optional React Query hooks.
+summary: Standalone jet codegen openapi command reading an OpenAPI 3.0/3.1 spec and emitting stack-aware TypeScript types, a typed client, and optional data-fetching hooks (React Query or SWR).
 capability_refs:
   - id: rust-native-frontend-toolchain
     role: primary
@@ -38,8 +38,8 @@ nodes:
   emit_types: { kind: process, label: "Emit types.ts from component and inline schemas" }
   client_dec: { kind: decision, label: "Emit client? (not --types-only)" }
   emit_client: { kind: process, label: "Emit runtime.ts + client.ts (createClient, one fn per operation)" }
-  hooks_dec: { kind: decision, label: "Emit hooks? (resolved hook runtime is react-query and not --types-only)" }
-  emit_hooks: { kind: process, label: "Emit hooks.ts for React Query (createHooks, useQuery/useMutation)" }
+  hooks_dec: { kind: decision, label: "Emit hooks? (resolved hook runtime is react-query or swr, and not --types-only)" }
+  emit_hooks: { kind: process, label: "Emit hooks.ts for the resolved runtime — React Query (useQuery/useMutation) or SWR (useSWR/useSWRMutation)" }
   write: { kind: process, label: "Write generated files to out dir + index.ts barrel" }
   done: { kind: terminal, label: "Ok (exit 0)" }
 edges:
@@ -98,7 +98,7 @@ requirements:
     risk: high
     verify: unit
   R4:
-    text: "Hooks emit useQuery for GET and useMutation for write methods only when the resolved hook runtime is React Query."
+    text: "Hooks emit per-operation query hooks for GET and mutation hooks for write methods when the resolved hook runtime is React Query (useQuery/useMutation) or SWR (useSWR/useSWRMutation); --hooks none and non-React stacks emit no hooks.ts."
     risk: medium
     verify: unit
   R5:
@@ -219,8 +219,10 @@ changes:
     section: logic
     impl_mode: hand-written
     description: |
-      Emit TanStack Query hooks for GET operations and mutations for write
-      operations only when stack resolution selects React Query hooks.
+      Emit per-operation hooks for GET operations and mutations for write
+      operations when stack resolution selects a hook runtime — TanStack Query
+      (useQuery/useMutation) via emit, or SWR (useSWR/useSWRMutation) via
+      emit_swr.
   - path: "projects/jet/tests/codegen/openapi_golden.rs"
     action: modify
     section: unit-test

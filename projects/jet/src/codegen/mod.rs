@@ -47,6 +47,18 @@ pub enum FrontendStack {
     TypeScript,
 }
 
+/// Data-fetching hook runtime that `hooks.ts` targets.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HookRuntime {
+    /// TanStack Query (`@tanstack/react-query`).
+    #[default]
+    ReactQuery,
+    /// SWR (`swr` for queries, `swr/mutation` for mutations).
+    Swr,
+}
+
 /// Resolved OpenAPI generator behavior for stack-specific output.
 ///
 /// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
@@ -55,6 +67,8 @@ pub struct ResolvedOpenApiStack {
     pub stack: FrontendStack,
     pub http_client: HttpClient,
     pub emit_hooks: bool,
+    /// Which hook runtime to emit when `emit_hooks` is true.
+    pub hooks_runtime: HookRuntime,
 }
 
 /// What the generator emits, selected by CLI flags.
@@ -69,6 +83,8 @@ pub struct GenOptions {
     pub emit_types: bool,
     pub emit_client: bool,
     pub emit_hooks: bool,
+    /// Which hook runtime `hooks.ts` targets (only used when `emit_hooks`).
+    pub hooks_runtime: HookRuntime,
 }
 
 /// A single generated file, relative to the output directory.
@@ -112,7 +128,10 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     if opts.emit_hooks {
         files.push(GeneratedFile {
             rel_path: "hooks.ts".to_string(),
-            contents: hooks_emit::emit(&plans),
+            contents: match opts.hooks_runtime {
+                HookRuntime::ReactQuery => hooks_emit::emit(&plans),
+                HookRuntime::Swr => hooks_emit::emit_swr(&plans),
+            },
         });
     }
     files.push(GeneratedFile {
@@ -164,15 +183,28 @@ pub fn resolve_openapi_stack(
         Some(hooks) => hooks,
         None => match openapi_cfg.hooks {
             Some(OpenApiCodegenHooks::ReactQuery) => HookSelection::ReactQuery,
+            Some(OpenApiCodegenHooks::Swr) => HookSelection::Swr,
             Some(OpenApiCodegenHooks::None) => HookSelection::None,
             Some(OpenApiCodegenHooks::Auto) | None => HookSelection::Auto,
         },
     };
-    let emit_hooks = match hooks {
-        HookSelection::ReactQuery => true,
-        HookSelection::None => false,
+    // `Auto` prefers React Query when declared, then SWR, on a React stack.
+    let (emit_hooks, hooks_runtime) = match hooks {
+        HookSelection::ReactQuery => (true, HookRuntime::ReactQuery),
+        HookSelection::Swr => (true, HookRuntime::Swr),
+        HookSelection::None => (false, HookRuntime::ReactQuery),
         HookSelection::Auto => {
-            stack == FrontendStack::React && manifest.has_dependency("@tanstack/react-query")
+            if stack == FrontendStack::React {
+                if manifest.has_dependency("@tanstack/react-query") {
+                    (true, HookRuntime::ReactQuery)
+                } else if manifest.has_dependency("swr") {
+                    (true, HookRuntime::Swr)
+                } else {
+                    (false, HookRuntime::ReactQuery)
+                }
+            } else {
+                (false, HookRuntime::ReactQuery)
+            }
         }
     };
 
@@ -180,6 +212,7 @@ pub fn resolve_openapi_stack(
         stack,
         http_client,
         emit_hooks,
+        hooks_runtime,
     })
 }
 
@@ -193,6 +226,7 @@ enum FrontendStackConfig {
 enum HookSelection {
     Auto,
     ReactQuery,
+    Swr,
     None,
 }
 
@@ -264,6 +298,7 @@ fn parse_cli_hooks(value: Option<&str>) -> Result<Option<HookSelection>> {
         .map(|value| match value {
             "auto" => Ok(HookSelection::Auto),
             "react-query" => Ok(HookSelection::ReactQuery),
+            "swr" => Ok(HookSelection::Swr),
             "none" => Ok(HookSelection::None),
             other => anyhow::bail!("unsupported OpenAPI hook runtime `{other}`"),
         })
@@ -344,6 +379,7 @@ mod tests {
             emit_types: true,
             emit_client: true,
             emit_hooks: true,
+            hooks_runtime: HookRuntime::ReactQuery,
         }
     }
 
@@ -538,6 +574,50 @@ hooks = "none"
         assert_eq!(resolved.stack, FrontendStack::React);
         assert_eq!(resolved.http_client, HttpClient::Fetch);
         assert!(resolved.emit_hooks);
+    }
+
+    #[test]
+    fn openapi_hooks_cli_flag_selects_swr_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolved =
+            resolve_openapi_stack(dir.path(), &JetConfig::default(), None, None, Some("swr"))
+                .unwrap();
+
+        assert!(resolved.emit_hooks);
+        assert_eq!(resolved.hooks_runtime, HookRuntime::Swr);
+    }
+
+    #[test]
+    fn openapi_stack_auto_detects_swr_hooks_from_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies":{"react":"^18.0.0","swr":"^2.2.5"}}"#,
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_openapi_stack(dir.path(), &JetConfig::default(), None, None, None).unwrap();
+
+        assert_eq!(resolved.stack, FrontendStack::React);
+        assert!(resolved.emit_hooks);
+        assert_eq!(resolved.hooks_runtime, HookRuntime::Swr);
+    }
+
+    #[test]
+    fn openapi_hooks_react_query_wins_over_swr_when_both_declared() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies":{"react":"^18.0.0","@tanstack/react-query":"^5.0.0","swr":"^2.2.5"}}"#,
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_openapi_stack(dir.path(), &JetConfig::default(), None, None, None).unwrap();
+
+        assert!(resolved.emit_hooks);
+        assert_eq!(resolved.hooks_runtime, HookRuntime::ReactQuery);
     }
 }
 // </HANDWRITE>

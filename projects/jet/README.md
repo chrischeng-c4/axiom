@@ -111,9 +111,11 @@ Jet is gated as an all-in-one Basic frontend replacement in dependency order:
 package manager, Browser Bridge, production build, serve, workspace, test,
 e2e, trace, and stack-aware API client codegen. `jet codegen openapi`
 resolves generated output from CLI flags, `jet.toml` `[codegen.openapi]`,
-and `package.json` dependencies so React Query hooks and fetch/axios runtime
-selection match the project tech stack. The current production-readiness gate
-is green.
+and `package.json` dependencies so the hook runtime (React Query or SWR) and
+fetch/axios runtime selection match the project tech stack. See
+`docs/openapi-codegen.md` for the hook/runtime matrix, axios version support,
+and injecting a pre-configured `AxiosInstance`. The current
+production-readiness gate is green.
 Gate Inventory:
 - `projects/jet/scripts/verify-basic-dom-gates.sh --all`
 - projects/jet/tests/fixtures/dom-production-build
