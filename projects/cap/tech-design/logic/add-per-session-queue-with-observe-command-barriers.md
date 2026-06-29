@@ -72,3 +72,71 @@ effect, while `ls`, `cat`, `grep`, and `find` act as observe barriers. All other
 commands remain synchronous until profiled. Queue state is local and per-session,
 not distributed, and observe barriers must report prior queued-job failures
 before running the current observation command.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: cap-session-queue-observe-barriers-tests
+requirements:
+  queued_side_effect:
+    id: SQ-UT-1
+    text: "With CAP_SESSION_ID set, a profiled no-observe touch command returns queued job metadata before an observe command."
+    kind: functional
+    risk: high
+    verify: test
+  observe_barrier:
+    id: SQ-UT-2
+    text: "A following observe command drains prior same-session jobs before returning output."
+    kind: functional
+    risk: high
+    verify: test
+  prior_failure:
+    id: SQ-UT-3
+    text: "A prior queued job failure is reported at the observe barrier with the failed job id and stderr."
+    kind: functional
+    risk: high
+    verify: test
+  unknown_sync:
+    id: SQ-UT-4
+    text: "Unknown command strings remain synchronous unless a profile opts them into queue behavior."
+    kind: functional
+    risk: medium
+    verify: test
+elements:
+  session_queue_unit_tests:
+    kind: test
+    type: "cargo test -p cap session_queue"
+relations:
+  - { from: session_queue_unit_tests, verifies: queued_side_effect }
+  - { from: session_queue_unit_tests, verifies: observe_barrier }
+  - { from: session_queue_unit_tests, verifies: prior_failure }
+  - { from: session_queue_unit_tests, verifies: unknown_sync }
+---
+requirementDiagram
+  requirement queued_side_effect {
+    id: SQ-UT-1
+    text: "no-observe touch returns job metadata"
+    risk: high
+    verifymethod: test
+  }
+  requirement observe_barrier {
+    id: SQ-UT-2
+    text: "observe command drains prior same-session jobs"
+    risk: high
+    verifymethod: test
+  }
+  requirement prior_failure {
+    id: SQ-UT-3
+    text: "observe barrier reports prior queued failure"
+    risk: high
+    verifymethod: test
+  }
+  requirement unknown_sync {
+    id: SQ-UT-4
+    text: "unknown command remains synchronous"
+    risk: medium
+    verifymethod: test
+  }
+```
