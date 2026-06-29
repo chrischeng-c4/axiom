@@ -797,6 +797,10 @@ impl TypeChecker {
         // Walk positional args against params. Stop at the first star/kwarg arg
         // and at the first star/unknown param. Only reject when BOTH the param
         // and the actual arg are concrete-and-disjoint scalars.
+        let bytes_encoding_arg_is_positional = sig.module == "builtins"
+            && sig.qualifier.is_empty()
+            && matches!(sig.name, "bytes" | "bytearray")
+            && matches!(args.get(1), Some(CallArg::Positional(_)));
         let mut param_idx = 0usize;
         for arg in args {
             let CallArg::Positional(a) = arg else {
@@ -831,6 +835,7 @@ impl TypeChecker {
                     | super::stdlib_sigs::CoreTy::Float
                     | super::stdlib_sigs::CoreTy::Str
                     | super::stdlib_sigs::CoreTy::Bytes
+                    | super::stdlib_sigs::CoreTy::MemoryView
                     | super::stdlib_sigs::CoreTy::Bool
                     | super::stdlib_sigs::CoreTy::Typed
             );
@@ -858,14 +863,34 @@ impl TypeChecker {
                 // *scalars* — str-for-int, instance-for-bool — not bare `None`, so
                 // this costs no type gain.)
                 let actual_is_none = matches!(self.tcx.get(actual), Ty::None);
-                if matches!(param.ty, super::stdlib_sigs::CoreTy::Bytes)
+                if bytes_encoding_arg_is_positional
+                    && param_idx == 0
                     && !actual_is_none
                     && self.is_concrete_scalar(actual)
+                    && !matches!(self.tcx.get(actual), Ty::Str)
                 {
                     self.error(
                         a.span,
                         format!(
-                            "argument type mismatch: expected `bytes`, got `{}`",
+                            "argument type mismatch: expected `str` source when `encoding` is provided, got `{}`",
+                            self.ty_name(actual),
+                        ),
+                    );
+                } else if matches!(
+                    param.ty,
+                    super::stdlib_sigs::CoreTy::Bytes | super::stdlib_sigs::CoreTy::MemoryView
+                ) && !actual_is_none
+                    && self.is_concrete_scalar(actual)
+                {
+                    let expected_name = match param.ty {
+                        super::stdlib_sigs::CoreTy::Bytes => "bytes",
+                        super::stdlib_sigs::CoreTy::MemoryView => "memoryview",
+                        _ => unreachable!(),
+                    };
+                    self.error(
+                        a.span,
+                        format!(
+                            "argument type mismatch: expected `{expected_name}`, got `{}`",
                             self.ty_name(actual),
                         ),
                     );
