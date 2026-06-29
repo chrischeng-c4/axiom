@@ -82,13 +82,16 @@ pub fn query_shapes() -> Value {
               ] } }, "limit": 10 } },
             { "name": "hamming_near_dup", "description": "perceptual near-duplicate: hashes within N Hamming bits",
               "request": { "query": { "hamming": { "field": "phash", "hash": "f0e1d2c3b4a59687", "max_distance": 8 } }, "limit": 20 } },
-            { "name": "has_child_nested_group", "description": "rows whose nested group has an element matching a sub-query",
+            { "name": "has_child_nested_group", "description": "rows whose nested group has an element matching a sub-query; may be combined with parent-field sort",
               "request": { "query": { "has_child": {
                   "collection": "orders_items", "field": "parent_row_id",
                   "query": { "and": [
                       { "term": { "field": "sku", "value": "S0" } },
                       { "range": { "field": "qty", "gte": 5 } }
-                  ] } } }, "limit": 20 } },
+                  ] } } },
+                  "sort": [ { "field": "score", "order": "asc" } ],
+                  "track_total": true,
+                  "limit": 20 } },
             { "name": "collapse_group_by", "description": "one hit per distinct keyword value (group-by), scored by the max member",
               "request": { "query": { "term": { "field": "in_stock", "value": "true" } }, "collapse": "brand", "limit": 20 } },
             { "name": "filter_then_sort", "description": "filter, then sort by a field instead of relevance",
@@ -181,7 +184,9 @@ hydrate the hits against your own store.
 - hybrid lexical+semantic → `rrf` (fuse `match` + `knn` by rank; put any filter
   INSIDE each leg so the kNN leg stays filter-correct)
 - which `external_id`s share a value → `POST /duplicates`
-- nested data-table / "parent whose child matches" → `has_child`
+- nested data-table / "parent whose child matches" → `has_child`; combine it
+  with parent-field `sort` for list-row flows that filter by child rows then
+  order/count parent rows
 - compose any of the above under `and` / `or` / `not`
 
 ## Connection
