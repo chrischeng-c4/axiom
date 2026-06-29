@@ -227,25 +227,26 @@ changes:
   - area: "config"
     impl_mode: "codegen"
     files: ["projects/vat/src/config.rs"]
-    summary: "Add ScenarioConfig and ScenarioNetworkMode plus validation helpers."
+    summary: "Add ScenarioConfig, ScenarioNetworkMode, scenario lookup, and scenario validation."
   - area: "cli"
     impl_mode: "codegen"
     files: ["projects/vat/src/cli.rs"]
-    summary: "Add --scenario to vat run and dispatch a scenario target."
+    summary: "Add --scenario to vat run and dispatch Target::Scenario."
   - area: "runner-orchestration"
     impl_mode: "codegen"
     files: ["projects/vat/src/commands/run.rs"]
-    summary: "Resolve scenario service union, require hermetic proxy when requested, and reuse service lifecycle."
+    summary: "Resolve scenario service union, enforce hermetic proxy participation, run one selected runner, and persist scenario evidence."
   - area: "state"
     impl_mode: "codegen"
     files: ["projects/vat/src/state.rs"]
-    summary: "Persist scenario topology evidence under TestRunEvidence."
+    summary: "Add ScenarioRunRecord and RouteRecord under TestRunEvidence."
   - area: "tests"
     impl_mode: "codegen"
     files: ["projects/vat/tests/vat_toml_runner.rs", "projects/vat/tests/vat_concurrent_runners.rs"]
-    summary: "Add focused scenario execution and regression tests."
+    summary: "Add scenario e2e tests and preserve runner/concurrency regressions."
 non_changes:
   - "No VM backend."
   - "No Dockerized runner."
-  - "No service preset expansion."
+  - "No new emulator preset."
+  - "No breaking change to existing vat.toml files."
 ```
