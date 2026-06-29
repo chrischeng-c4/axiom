@@ -729,10 +729,21 @@ impl TypeChecker {
             // The `self` receiver is already stripped from `__init__` param rows,
             // so positional alignment starts at the first real argument. Names not
             // in `import_origins` (user-defined classes, locals) resolve to None.
-            Expr::Ident(name) => self.import_origins.get(name).and_then(|(module, _qual)| {
-                super::stdlib_sigs::get(module, "", name)
-                    .or_else(|| super::stdlib_sigs::get(module, name, "__init__"))
-            }),
+            Expr::Ident(name) => self
+                .import_origins
+                .get(name)
+                .and_then(|(module, _qual)| {
+                    super::stdlib_sigs::get(module, "", name)
+                        .or_else(|| super::stdlib_sigs::get(module, name, "__init__"))
+                })
+                .or_else(|| {
+                    if self.is_unshadowed_builtin(name) {
+                        super::stdlib_sigs::get("builtins", "", name)
+                            .or_else(|| super::stdlib_sigs::get("builtins", name, "__init__"))
+                    } else {
+                        None
+                    }
+                }),
             // Attribute access: `os.strerror(...)` (module fn) or
             // `obj.handle_entityref(...)` (instance method).
             Expr::Attr { object, attr } => {
