@@ -1381,6 +1381,24 @@ fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
 }
 
 #[test]
+fn test_stdlib_function_get_owner_rejected() {
+    let errors =
+        check("class _W:\n    pass\ndef f():\n    pass\nf.__get__(None, _W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `owner`")),
+        "function.__get__(None, _W()) should reject a bare owner operand, got: {errors:?}"
+    );
+
+    let errors = check("def f():\n    pass\nf.__get__(None, None)\n");
+    assert!(
+        errors.is_empty(),
+        "function.__get__(None, None) must stay skip-safe for runtime validation, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_filter_wrong_bare_function_rejected() {
     let errors = check("from builtins import filter\nclass _W:\n    pass\nfilter(_W(), [])\n");
     assert!(

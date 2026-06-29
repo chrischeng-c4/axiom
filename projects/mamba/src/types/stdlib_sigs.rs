@@ -529,6 +529,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("f", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: Python function objects are not importable as
+    // `builtins.function`, but every `def f(): ...` value is an instance of
+    // that internal type. Keep instance permissive for descriptor access while
+    // rejecting a provably bare user object as `owner`.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "function",
+        name: "__get__",
+        kind: SigKind::Method,
+        params: &[p("instance", CoreTy::Unknown), p("owner", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: bool bitwise dunders accept bool/int operands. A single int
     // contract covers both overloads because bool is int-compatible in the type
     // checker, while wrong scalar operands such as str must be rejected.
