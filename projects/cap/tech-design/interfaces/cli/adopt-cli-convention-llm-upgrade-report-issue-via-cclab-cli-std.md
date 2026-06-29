@@ -3,6 +3,12 @@ id: adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std
 summary: Adopt the current shared CLI convention for cap through cli-std, exposing llm, upgrade, and issue commands.
 fill_sections: [logic, unit-test, changes]
 capability_refs:
+  - id: standard-agent-cli-operations
+    role: primary
+    gap: shared-standard-cli-commands
+    claim: shared-standard-cli-commands
+    coverage: full
+    rationale: "This TD implements cap's standard llm, upgrade, issue, and legacy report-issue compatibility command surface through cli-std."
   - id: daemon-lifecycle-and-status
     role: primary
     gap: cli-status-and-wait-surfaces
@@ -162,7 +168,7 @@ requirementDiagram
 changes:
   - path: projects/cap/Cargo.toml
     action: modify
-    section: dependencies
+    section: logic
     impl_mode: hand-written
     description: >
       Add cli-std with default features disabled and expose a release feature
@@ -170,7 +176,7 @@ changes:
 
   - path: projects/cap/build.rs
     action: create
-    section: build-provenance
+    section: logic
     impl_mode: hand-written
     description: >
       Stamp CAP_TARGET, CAP_GIT_SHA, and CAP_BUILT_AT for cli_std::ToolInfo
@@ -178,26 +184,26 @@ changes:
 
   - path: projects/cap/src/cli.rs
     action: modify
-    section: cli-surface
+    section: logic
     impl_mode: hand-written
     description: >
       Register and dispatch llm, upgrade, issue search/view/create, and a
       deprecated report-issue compatibility entrypoint through cli-std while
       preserving existing cap domain command behavior.
 
+  - path: projects/cap/src/cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Cover help registration, shared llm rendering, project-scoped issue
+      create payloads, and report-issue compatibility payloads.
+
   - path: projects/cap/README.md
     action: modify
-    section: cli-convention
+    section: logic
     impl_mode: hand-written
     description: >
       Document the standard agent-facing commands and clarify that issue is the
       current surface while report-issue is legacy compatibility.
-
-  - path: projects/cap/tech-design/semantic/cap-src.md
-    action: modify
-    section: source-metadata
-    impl_mode: hand-written
-    description: >
-      Keep the semantic source manifest aligned with cap's CLI exports and any
-      newly introduced build provenance script.
 ```
