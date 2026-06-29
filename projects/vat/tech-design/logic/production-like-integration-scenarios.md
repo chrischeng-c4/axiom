@@ -18,33 +18,59 @@ capability_refs:
 
 ```mermaid
 ---
-id: production-like-integration-scenarios-applicability
+id: production-like-integration-scenarios-logic
 entry: start
 nodes:
-  start: { kind: start, label: "evaluate WI #701" }
-  schema: { kind: process, label: "extend vat.toml with optional scenarios" }
-  cli: { kind: process, label: "route vat run --scenario <id>" }
-  services: { kind: process, label: "reuse service lifecycle for app + deps" }
-  evidence: { kind: process, label: "extend test-run topology evidence" }
-  tests: { kind: process, label: "add focused scenario tests" }
-  applicable: { kind: terminal, label: "applicable to vat runner protocol" }
+  start: { kind: start, label: "vat run dispatch" }
+  direct: { kind: decision, label: "direct command mode" }
+  scenario_arg: { kind: decision, label: "--scenario supplied" }
+  load_config: { kind: process, label: "load nearest vat.toml" }
+  resolve_scenario: { kind: process, label: "resolve ScenarioConfig" }
+  resolve_runner: { kind: process, label: "resolve scenario runner" }
+  service_union: { kind: process, label: "ordered union: app + scenario.requires + runner.requires" }
+  hermetic_check: { kind: decision, label: "hermetic scenario has http-mock service" }
+  create_vat: { kind: process, label: "create COW vat and TestRunEvidence" }
+  start_services: { kind: process, label: "prepare/start/wait services" }
+  run_runner: { kind: process, label: "run selected runner" }
+  topology: { kind: process, label: "persist scenario topology evidence" }
+  result: { kind: terminal, label: "emit result and forward exit code" }
+  existing_runner: { kind: process, label: "existing runner selection path" }
+  direct_run: { kind: process, label: "existing direct command path" }
+  error: { kind: terminal, label: "structured scenario error" }
 edges:
-  - { from: start, to: schema }
-  - { from: schema, to: cli }
-  - { from: cli, to: services }
-  - { from: services, to: evidence }
-  - { from: evidence, to: tests }
-  - { from: tests, to: applicable }
+  - { from: start, to: direct }
+  - { from: direct, to: direct_run, label: "yes" }
+  - { from: direct, to: scenario_arg, label: "no" }
+  - { from: scenario_arg, to: load_config, label: "yes" }
+  - { from: scenario_arg, to: existing_runner, label: "no" }
+  - { from: load_config, to: resolve_scenario }
+  - { from: resolve_scenario, to: resolve_runner }
+  - { from: resolve_runner, to: service_union }
+  - { from: service_union, to: hermetic_check }
+  - { from: hermetic_check, to: error, label: "missing http-mock" }
+  - { from: hermetic_check, to: create_vat, label: "ok" }
+  - { from: create_vat, to: start_services }
+  - { from: start_services, to: run_runner }
+  - { from: run_runner, to: topology }
+  - { from: topology, to: result }
 ---
 flowchart TD
-    start([evaluate WI #701]) --> schema[extend vat.toml with optional scenarios]
-    schema --> cli[route vat run --scenario id]
-    cli --> services[reuse service lifecycle for app + deps]
-    services --> evidence[extend test-run topology evidence]
-    evidence --> tests[add focused scenario tests]
-    tests --> applicable([applicable to vat runner protocol])
+    start([vat run dispatch]) --> direct{direct command mode}
+    direct -- yes --> direct_run[existing direct command path]
+    direct -- no --> scenario_arg{--scenario supplied}
+    scenario_arg -- no --> existing_runner[existing runner selection path]
+    scenario_arg -- yes --> load_config[load nearest vat.toml]
+    load_config --> resolve_scenario[resolve ScenarioConfig]
+    resolve_scenario --> resolve_runner[resolve scenario runner]
+    resolve_runner --> service_union[ordered union: app + scenario.requires + runner.requires]
+    service_union --> hermetic_check{hermetic scenario has http-mock service}
+    hermetic_check -- missing http-mock --> error([structured scenario error])
+    hermetic_check -- ok --> create_vat[create COW vat and TestRunEvidence]
+    create_vat --> start_services[prepare/start/wait services]
+    start_services --> run_runner[run selected runner]
+    run_runner --> topology[persist scenario topology evidence]
+    topology --> result([emit result and forward exit code])
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
@@ -170,18 +196,23 @@ regression:
 ```yaml
 changes:
   - area: "config"
+    impl_mode: "codegen"
     files: ["projects/vat/src/config.rs"]
     summary: "Add ScenarioConfig and ScenarioNetworkMode plus validation helpers."
   - area: "cli"
+    impl_mode: "codegen"
     files: ["projects/vat/src/cli.rs"]
     summary: "Add --scenario to vat run and dispatch a scenario target."
   - area: "runner-orchestration"
+    impl_mode: "codegen"
     files: ["projects/vat/src/commands/run.rs"]
     summary: "Resolve scenario service union, require hermetic proxy when requested, and reuse service lifecycle."
   - area: "state"
+    impl_mode: "codegen"
     files: ["projects/vat/src/state.rs"]
     summary: "Persist scenario topology evidence under TestRunEvidence."
   - area: "tests"
+    impl_mode: "codegen"
     files: ["projects/vat/tests/vat_toml_runner.rs", "projects/vat/tests/vat_concurrent_runners.rs"]
     summary: "Add focused scenario execution and regression tests."
 non_changes:
