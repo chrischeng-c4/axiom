@@ -9,12 +9,11 @@
 # case = "heappush__heap_as_list_wrong"
 # subject = "_heapq.heappush(heap: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed heap"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_heapq.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed heap
 # mamba-strict-type: TypeError
 """Type wall: _heapq.heappush(heap: list); call it with the wrong type.
 

@@ -6,23 +6,20 @@
 # bucket = "std-libs"
 # lib = "_heapq"
 # dimension = "type"
-# case = "heapreplace__heap_as_list_wrong"
-# subject = "_heapq.heapreplace(heap: list)"
+# case = "_heapreplace_max__heap_as_list_wrong"
+# subject = "_heapq._heapreplace_max(heap: list)"
 # kind = "semantic"
 # xfail = ""
 # mem_carveout = ""
-# source = "vendor/typeshed/stdlib/_heapq.pyi"
+# source = "python3.12:_heapq"
 # status = "filled"
 # ///
 # mamba-strict-type: TypeError
-"""Type wall: _heapq.heapreplace(heap: list); call it with the wrong type.
 
-typeshed contract: heap is list. mamba is force-typed, so a wrong-typed
-argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
+from _heapq import _heapreplace_max
 
-from _heapq import heapreplace
 try:
-    heapreplace(12345, None)  # heap: list <- wrong-typed
+    _heapreplace_max(12345, None)  # heap: list <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
