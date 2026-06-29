@@ -115,7 +115,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/raft_sm.rs"
         language: "rust"
-        ownership_state: "unmanaged"
+        ownership_state: "handwrite"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "OUTCOME_WINDOW"
@@ -140,6 +140,18 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "applied_index"
+            kind: "function"
+            public: false
+          - name: "RaftWriteSink"
+            kind: "struct"
+            public: true
+          - name: "new"
+            kind: "function"
+            public: true
+          - name: "submit"
+            kind: "function"
+            public: false
+          - name: "applied_seq"
             kind: "function"
             public: false
           - name: "tests"
@@ -430,32 +442,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/lumen/src"
-      - path: "projects/lumen/src/raft_store.rs"
-        language: "rust"
-        ownership_state: "unmanaged"
-        generator_primitives: ["data_model", "enum_model", "service_method"]
-        symbols:
-          - name: "FsyncPolicy"
-            kind: "enum"
-            public: true
-          - name: "RaftStore"
-            kind: "struct"
-            public: true
-          - name: "open"
-            kind: "function"
-            public: true
-          - name: "save"
-            kind: "function"
-            public: true
-          - name: "load"
-            kind: "function"
-            public: true
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/lumen/src"
       - path: "projects/lumen/src/config.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -603,16 +589,7 @@ semantic_domain:
           - name: "raft"
             kind: "module"
             public: true
-          - name: "raft_core"
-            kind: "module"
-            public: true
-          - name: "raft_driver"
-            kind: "module"
-            public: true
           - name: "raft_sm"
-            kind: "module"
-            public: true
-          - name: "raft_store"
             kind: "module"
             public: true
           - name: "rdb"
@@ -651,129 +628,9 @@ semantic_domain:
           - name: "wal_nats"
             kind: "module"
             public: true
-          - name: "wal_raft"
-            kind: "module"
-            public: true
           - name: "wal_relay"
             kind: "module"
             public: true
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/lumen/src"
-      - path: "projects/lumen/src/raft_driver.rs"
-        language: "rust"
-        ownership_state: "unmanaged"
-        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method", "ts_type_surface"]
-        symbols:
-          - name: "TICK"
-            kind: "constant"
-            public: false
-          - name: "PUMP"
-            kind: "constant"
-            public: false
-          - name: "RPC_TIMEOUT"
-            kind: "constant"
-            public: false
-          - name: "Committed"
-            kind: "type"
-            public: false
-          - name: "VoteEnvelope"
-            kind: "struct"
-            public: false
-          - name: "AppendEnvelope"
-            kind: "struct"
-            public: false
-          - name: "NotLeader"
-            kind: "struct"
-            public: false
-          - name: "RaftStatus"
-            kind: "struct"
-            public: false
-          - name: "Shared"
-            kind: "struct"
-            public: false
-          - name: "persist"
-            kind: "function"
-            public: false
-          - name: "surface"
-            kind: "function"
-            public: false
-          - name: "leader_url"
-            kind: "function"
-            public: false
-          - name: "flush"
-            kind: "function"
-            public: false
-          - name: "send_request"
-            kind: "function"
-            public: false
-          - name: "propose_committed"
-            kind: "function"
-            public: false
-          - name: "RaftDriver"
-            kind: "struct"
-            public: true
-          - name: "drop"
-            kind: "function"
-            public: false
-          - name: "spawn"
-            kind: "function"
-            public: true
-          - name: "committed"
-            kind: "function"
-            public: true
-          - name: "commit_watch"
-            kind: "function"
-            public: true
-          - name: "latest_committed"
-            kind: "function"
-            public: true
-          - name: "is_leader"
-            kind: "function"
-            public: true
-          - name: "leader"
-            kind: "function"
-            public: true
-          - name: "publish"
-            kind: "function"
-            public: true
-          - name: "forward"
-            kind: "function"
-            public: false
-          - name: "router"
-            kind: "function"
-            public: true
-          - name: "take_reply"
-            kind: "function"
-            public: false
-          - name: "request_vote"
-            kind: "function"
-            public: false
-          - name: "append_entries"
-            kind: "function"
-            public: false
-          - name: "publish_handler"
-            kind: "function"
-            public: false
-          - name: "raftz"
-            kind: "function"
-            public: false
-          - name: "Route"
-            kind: "enum"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/lumen/src"
-      - path: "projects/lumen/src/raft_core.rs"
-        language: "rust"
-        ownership_state: "unmanaged"
-        generator_primitives: ["source_unit"]
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1076,6 +933,12 @@ semantic_domain:
           - name: "applied_seq"
             kind: "function"
             public: true
+          - name: "submit"
+            kind: "function"
+            public: false
+          - name: "applied_seq"
+            kind: "function"
+            public: false
           - name: "tests"
             kind: "module"
             public: false
@@ -1672,35 +1535,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/lumen/src"
-      - path: "projects/lumen/src/wal_raft.rs"
-        language: "rust"
-        ownership_state: "unmanaged"
-        generator_primitives: ["data_model", "service_method"]
-        symbols:
-          - name: "RaftWal"
-            kind: "struct"
-            public: true
-          - name: "new"
-            kind: "function"
-            public: true
-          - name: "publish"
-            kind: "function"
-            public: false
-          - name: "subscribe"
-            kind: "function"
-            public: false
-          - name: "latest_seq"
-            kind: "function"
-            public: false
-          - name: "tests"
-            kind: "module"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/lumen/src"
       - path: "projects/lumen/src/rdb.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -2060,6 +1894,8 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:standardize-gap-projects-lumen-src-raft-sm-rs>"
   - path: "projects/lumen/src/wal.rs"
     action: modify
     section: schema
@@ -2078,12 +1914,6 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/lumen/src/raft_store.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
   - path: "projects/lumen/src/config.rs"
     action: modify
     section: schema
@@ -2097,18 +1927,6 @@ changes:
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
   - path: "projects/lumen/src/lib.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-  - path: "projects/lumen/src/raft_driver.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-  - path: "projects/lumen/src/raft_core.rs"
     action: modify
     section: schema
     description: |
@@ -2175,12 +1993,6 @@ changes:
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
   - path: "projects/lumen/src/routing.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-  - path: "projects/lumen/src/wal_raft.rs"
     action: modify
     section: schema
     description: |

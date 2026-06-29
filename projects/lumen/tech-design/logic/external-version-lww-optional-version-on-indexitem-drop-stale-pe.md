@@ -109,6 +109,28 @@ requirementDiagram
     test_stale_version_dropped - verifies -> R1
 ```
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/types.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Expose optional per-item version fields for last-write-wins stale write suppression."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Apply external-version checks during index writes and ignore stale per-cell updates."
+  - path: projects/lumen/tests/api_e2e.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Verify stale versioned writes do not overwrite newer indexed values."
+```
+
 # Reviews
 
 ### Review 1

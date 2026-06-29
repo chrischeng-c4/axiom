@@ -1,6 +1,91 @@
 ---
 id: lumen-cli-consolidation
 summary: Consolidate lumen into a single agent-first CLI — serve / spec / llm / k8s operator — removing the openapi-dump, bench, and consumer sibling binaries and folding the operator behind the `operator` feature gate so a non-operator build is kube-free.
+capability_refs:
+  - id: "cli-interface"
+    role: primary
+    gap: "service-process-interface"
+    claim: "service-process-interface"
+    coverage: full
+    rationale: "Defines the single long-running service binary and serve/spec/llm/k8s/operator command surface."
+  - id: "cli-interface"
+    role: primary
+    gap: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+    claim: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+    coverage: full
+    rationale: "Defines the offline `lumen spec` schema command surface."
+  - id: "cli-interface"
+    role: primary
+    gap: "query-shape-cookbook-field-analyzer-catalog"
+    claim: "query-shape-cookbook-field-analyzer-catalog"
+    coverage: full
+    rationale: "Defines the query-shape, field, and analyzer catalog command flags."
+  - id: "cli-interface"
+    role: primary
+    gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    coverage: full
+    rationale: "Defines the offline `lumen llm` agent onboarding topics."
+  - id: "cli-interface"
+    role: primary
+    gap: "deployment-operator-command-surface"
+    claim: "deployment-operator-command-surface"
+    coverage: full
+    rationale: "Defines the k8s operator and CRD-generation command surface."
+  - id: "http2-api-list"
+    role: primary
+    gap: "client-search-and-index-route-list"
+    claim: "client-search-and-index-route-list"
+    coverage: full
+    rationale: "Defines the HTTP search/index route inventory exposed by the single service binary."
+  - id: "http2-api-list"
+    role: primary
+    gap: "ops-metadata-probe-and-metrics-route-list"
+    claim: "ops-metadata-probe-and-metrics-route-list"
+    coverage: full
+    rationale: "Defines the health, readiness, OpenAPI, and metrics route inventory for operators."
+  - id: "http2-api-list"
+    role: primary
+    gap: "offline-spec-openapi-list"
+    claim: "offline-spec-openapi-list"
+    coverage: full
+    rationale: "Publishes the offline HTTP API list through the `lumen spec` command."
+  - id: "agent-offline-integration"
+    role: primary
+    gap: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+    claim: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+    coverage: full
+    rationale: "Provides offline machine schemas for agent integration."
+  - id: "agent-offline-integration"
+    role: primary
+    gap: "query-shape-cookbook-field-analyzer-catalog"
+    claim: "query-shape-cookbook-field-analyzer-catalog"
+    coverage: full
+    rationale: "Provides offline query-shape and field/analyzer catalog context for agents."
+  - id: "agent-offline-integration"
+    role: primary
+    gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    coverage: full
+    rationale: "Provides the offline agent onboarding topic set."
+  - id: "kubernetes-native-deployment"
+    role: primary
+    gap: "lumen-crd-reconcile-loop-kube-rs-operator"
+    claim: "lumen-crd-reconcile-loop-kube-rs-operator"
+    coverage: partial
+    rationale: "Defines the operator entrypoint and CRD generation CLI used by the kube-rs operator."
+  - id: "backup-restore"
+    role: primary
+    gap: "periodic-snapshotter-serve"
+    claim: "periodic-snapshotter-serve"
+    coverage: partial
+    rationale: "Defines the `serve` process surface that owns snapshot restore and periodic snapshot loops."
+  - id: "observability"
+    role: primary
+    gap: "otlp-traces-and-metrics"
+    claim: "otlp-traces-and-metrics"
+    coverage: partial
+    rationale: "Defines the service command surface that reads OTLP configuration for long-running telemetry."
 fill_sections: [logic, cli, manifest, unit-test, changes]
 ---
 

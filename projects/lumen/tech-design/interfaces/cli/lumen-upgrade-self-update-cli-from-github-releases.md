@@ -148,6 +148,23 @@ flowchart TD
     r6[R6 decide_action] --> v6{UpToDate vs Install?}
 ```
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Wire the upgrade command to release discovery, asset selection, checksum verification, and atomic binary replacement."
+  - path: projects/lumen/tests/spec_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Cover the offline command surface and pure upgrade helpers that can be verified without replacing the running binary."
+```
+
 # Reviews
 
 ### Review 1

@@ -370,7 +370,11 @@ fn raft_ha_renders_serving_statefulset() {
     let objs = render(&l);
 
     // The serving fleet is now a StatefulSet + headless Service; no Deployment/HPA.
-    assert!(has(&objs, "StatefulSet", "search"), "got {:?}", kinds(&objs));
+    assert!(
+        has(&objs, "StatefulSet", "search"),
+        "got {:?}",
+        kinds(&objs)
+    );
     assert!(has(&objs, "Service", "search-headless"));
     assert!(!has(&objs, "Deployment", "search"));
     assert!(!has(&objs, "HorizontalPodAutoscaler", "search"));

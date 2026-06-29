@@ -1,6 +1,10 @@
 target
+**/target
 target-linux
+**/target-linux
 .git
+.vat
+**/.vat
 **/node_modules
 **/*.md
 pkg

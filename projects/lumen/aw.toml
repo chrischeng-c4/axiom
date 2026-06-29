@@ -27,7 +27,523 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:d6d465539a4e2ef34789b433d3b74db3a72b12fab0b65745be9545c301956486"
+generated_from_td_digest = "sha256:8e188a9cd7e1e61025cb9ad6d98afc92341303875b16b0f8e229a4e21c0e704a"
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-agent-llm-topics"
+capability_id = "agent-offline-integration"
+claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+contract_id = "agent-llm-topics"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-llm-topics"
+test_path = "projects/lumen/tests/behavior_lumen_claim_agent_llm_topics.rs"
+command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
+assertions = ["The offline LLM outline, workflow, integration, quickstart, and recipe topics remain available."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-agent-offline-spec"
+capability_id = "agent-offline-integration"
+claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+contract_id = "agent-offline-spec"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-offline-spec"
+test_path = "projects/lumen/tests/behavior_lumen_claim_agent_offline_spec.rs"
+command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
+assertions = ["Offline schema commands produce valid OpenAPI JSON/YAML and JSON-schema output for agents."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-agent-query-catalog"
+capability_id = "agent-offline-integration"
+claim_id = "query-shape-cookbook-field-analyzer-catalog"
+contract_id = "agent-query-catalog"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-query-catalog"
+test_path = "projects/lumen/tests/behavior_lumen_claim_agent_query_catalog.rs"
+command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
+assertions = ["The offline query-shape and field/analyzer catalogs remain deterministic for agent ingestion."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-backup-periodic-snapshotter"
+capability_id = "backup-restore"
+claim_id = "periodic-snapshotter-serve"
+contract_id = "backup-periodic-snapshotter"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-backup-periodic-snapshotter"
+test_path = "projects/lumen/tests/behavior_lumen_claim_backup_periodic_snapshotter.rs"
+command = "cargo test -p lumen --test backup_restore_e2e -- --nocapture"
+required_for_production = true
+assertions = ["The serving process snapshot loop and restore path remain covered by the backup/restore e2e gate."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-backup-rdb-store"
+capability_id = "backup-restore"
+claim_id = "rdb-snapshot-restore-localfsrdbstore"
+contract_id = "backup-rdb-store"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-backup-rdb-store"
+test_path = "projects/lumen/tests/behavior_lumen_claim_backup_rdb_store.rs"
+command = "cargo test -p lumen --test backup_restore_e2e -- --nocapture"
+required_for_production = true
+assertions = ["RDB snapshots restore through the LocalFsRdbStore baseline."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-cli-deployment-operator-command-surface"
+capability_id = "cli-interface"
+claim_id = "deployment-operator-command-surface"
+contract_id = "cli-deployment-operator-command-surface"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-deployment-operator-command-surface"
+test_path = "projects/lumen/tests/behavior_lumen_claim_cli_deployment_operator_command_surface.rs"
+command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
+required_for_production = true
+assertions = ["The operator-facing command surface renders CRD and serving objects used by the deployment path."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-cli-service-process-interface"
+capability_id = "cli-interface"
+claim_id = "service-process-interface"
+contract_id = "cli-service-process-interface"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-service-process-interface"
+test_path = "projects/lumen/tests/behavior_lumen_claim_cli_service_process_interface.rs"
+command = "cargo test -p lumen --test api_e2e -- --nocapture"
+required_for_production = true
+assertions = ["The long-running service exposes health, readiness, version, metrics, indexing, and search routes through the binary-served API."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-competitor-feature-schema-metadata"
+capability_id = "competitor-feature-parity"
+claim_id = "schema-and-metadata-breadth"
+contract_id = "competitor-feature-schema-metadata"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-feature-schema-metadata"
+test_path = "projects/lumen/tests/behavior_lumen_claim_competitor_feature_schema_metadata.rs"
+command = "cargo test -p lumen --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e -- --nocapture"
+required_for_production = true
+assertions = ["Schema lifecycle, reindex/replay, and stats/metadata behavior pass the production conformance tests."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-competitor-feature-search-breadth"
+capability_id = "competitor-feature-parity"
+claim_id = "search-feature-breadth"
+contract_id = "competitor-feature-search-breadth"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-feature-search-breadth"
+test_path = "projects/lumen/tests/behavior_lumen_claim_competitor_feature_search_breadth.rs"
+command = "cargo test -p lumen --test api_e2e --test vector_e2e --test hash_hamming --test collapse_nested -- --nocapture"
+required_for_production = true
+assertions = ["The API, vector, hash, duplicate, and nested search surfaces execute correctly across the replacement feature set."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-competitor-performance-envelope"
+capability_id = "competitor-performance"
+claim_id = "perf-gate-envelope-absolute-latency-throughput-floors"
+contract_id = "competitor-performance-envelope"
+category = "efficiency"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-envelope"
+test_path = "projects/lumen/tests/efficiency_lumen_claim_competitor_performance_envelope.rs"
+command = "cargo test -p lumen --test perf_gate -- --nocapture"
+required_for_production = true
+assertions = ["Absolute latency and throughput floors stay within the ratcheted perf gate envelope."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-competitor-performance-external-comparison"
+capability_id = "competitor-performance"
+claim_id = "external-pg-and-opensearch-arena-comparison"
+contract_id = "competitor-performance-external-comparison"
+category = "efficiency"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-external-comparison"
+test_path = "projects/lumen/tests/efficiency_lumen_claim_competitor_performance_external_comparison.rs"
+command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
+required_for_production = true
+assertions = ["The vat efficiency runner executes the Postgres/OpenSearch comparison path and resource attribution gate."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-duplicates-group-by"
+capability_id = "duplicate-nested-search"
+claim_id = "duplicates-group-by"
+contract_id = "duplicates-group-by"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-duplicates-group-by"
+test_path = "projects/lumen/tests/behavior_lumen_claim_duplicates_group_by.rs"
+command = "cargo test -p lumen --test api_e2e duplicates_finds_groups -- --exact --nocapture"
+required_for_production = true
+assertions = ["Duplicate detection returns groups of external IDs sharing a field value."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-elastic-disk-tier"
+capability_id = "elastic-scale"
+claim_id = "ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log"
+contract_id = "elastic-disk-tier"
+category = "efficiency"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-elastic-disk-tier"
+test_path = "projects/lumen/tests/efficiency_lumen_claim_elastic_disk_tier.rs"
+command = "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"
+required_for_production = true
+assertions = ["The disk-scale proof keeps the full corpus on disk-backed segments while bounded hot state remains in memory."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-exact-term-range-set"
+capability_id = "exact-filter-search"
+claim_id = "term-range-set-early-termination"
+contract_id = "exact-term-range-set"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-exact-term-range-set"
+test_path = "projects/lumen/tests/behavior_lumen_claim_exact_term_range_set.rs"
+command = "cargo test -p lumen --test perf_gate_vs_db -- --nocapture"
+required_for_production = true
+assertions = ["Term, range, and set filter behavior stays within the exact/filter search gate."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-exact-wide-range-filter"
+capability_id = "exact-filter-search"
+claim_id = "wide-range-filter-index-on-disk-sorted-value-range"
+contract_id = "exact-wide-range-filter"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-exact-wide-range-filter"
+test_path = "projects/lumen/tests/behavior_lumen_claim_exact_wide_range_filter.rs"
+command = "cargo test -p lumen --test perf_gate_vs_db -- --nocapture"
+required_for_production = true
+assertions = ["Wide range filters over sorted disk-backed values pass the exact/filter gate."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-http2-client-route-list"
+capability_id = "http2-api-list"
+claim_id = "client-search-and-index-route-list"
+contract_id = "http2-client-route-list"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-client-route-list"
+test_path = "projects/lumen/tests/behavior_lumen_claim_http2_client_route_list.rs"
+command = "cargo test -p lumen --test api_e2e -- --nocapture"
+required_for_production = true
+assertions = ["Search and index HTTP routes are exposed and exercised through the binary-served API tests."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-http2-offline-spec-list"
+capability_id = "http2-api-list"
+claim_id = "offline-spec-openapi-list"
+contract_id = "http2-offline-spec-list"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-offline-spec-list"
+test_path = "projects/lumen/tests/behavior_lumen_claim_http2_offline_spec_list.rs"
+command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
+assertions = ["The offline spec commands publish the supported HTTP API inventory."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-http2-ops-route-list"
+capability_id = "http2-api-list"
+claim_id = "ops-metadata-probe-and-metrics-route-list"
+contract_id = "http2-ops-route-list"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-ops-route-list"
+test_path = "projects/lumen/tests/behavior_lumen_claim_http2_ops_route_list.rs"
+command = "cargo test -p lumen --test api_e2e -- --nocapture"
+required_for_production = true
+assertions = ["Health, readiness, OpenAPI, metrics, and version routes are exposed and exercised."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-hybrid-rrf"
+capability_id = "hybrid-search"
+claim_id = "rrf-fusion-node-planner-integration"
+contract_id = "hybrid-rrf-planner"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-hybrid-rrf"
+test_path = "projects/lumen/tests/behavior_lumen_claim_hybrid_rrf.rs"
+command = "cargo test -p lumen --test hybrid_rrf -- --nocapture"
+required_for_production = true
+assertions = ["Lexical and semantic result lists are fused through RRF while preserving per-leg filters."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-k8s-kustomize-base"
+capability_id = "kubernetes-native-deployment"
+claim_id = "kustomize-base-overlays-hpa"
+contract_id = "k8s-kustomize-base-overlays"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-kustomize-base"
+test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_kustomize_base.rs"
+command = "kustomize build projects/lumen/k8s/base && kustomize build projects/lumen/k8s/overlays/dev && kustomize build projects/lumen/k8s/overlays/staging && kustomize build projects/lumen/k8s/overlays/prod && kustomize build projects/lumen/k8s/operator"
+required_for_production = true
+assertions = ["The Kubernetes base, overlays, HPA/PDB, and operator manifests render successfully."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-k8s-operator-reconcile"
+capability_id = "kubernetes-native-deployment"
+claim_id = "lumen-crd-reconcile-loop-kube-rs-operator"
+contract_id = "k8s-operator-reconcile"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-operator-reconcile"
+test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_reconcile.rs"
+command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
+required_for_production = true
+assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into serving resources."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-k8s-stateless-kind"
+capability_id = "kubernetes-native-deployment"
+claim_id = "stateless-serving-rebuild-from-log-no-pvc"
+contract_id = "k8s-stateless-kind-dogfood"
+category = "stability"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-stateless-kind"
+test_path = "projects/lumen/tests/stability_lumen_claim_k8s_stateless_kind.rs"
+command = "projects/lumen/scripts/kind-e2e.sh"
+required_for_production = true
+assertions = ["The live kind dogfood path proves stateless serving rebuilds from log without a serving PVC."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-lexical-bm25"
+capability_id = "lexical-search"
+claim_id = "bm25-ranking-and-analyzers"
+contract_id = "lexical-bm25-ranking-analyzers"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-lexical-bm25"
+test_path = "projects/lumen/tests/behavior_lumen_claim_lexical_bm25.rs"
+command = "cargo test -p lumen --test perf_gate_vs_db -- --nocapture"
+required_for_production = true
+assertions = ["BM25 ranking and analyzer behavior pass the ratcheted performance/conformance comparison."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-long-running-kustomize-base"
+capability_id = "long-running-stability"
+claim_id = "kustomize-base-overlays-hpa"
+contract_id = "long-running-kustomize-base-overlays"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-kustomize-base"
+test_path = "projects/lumen/tests/behavior_lumen_claim_long_running_kustomize_base.rs"
+command = "kustomize build projects/lumen/k8s/base && kustomize build projects/lumen/k8s/overlays/dev && kustomize build projects/lumen/k8s/overlays/staging && kustomize build projects/lumen/k8s/overlays/prod && kustomize build projects/lumen/k8s/operator"
+required_for_production = true
+assertions = ["The base, dev, staging, prod, and operator kustomize surfaces render valid Kubernetes manifests."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-long-running-log-fanout"
+capability_id = "long-running-stability"
+claim_id = "log-fan-out-rebuild-from-log"
+contract_id = "long-running-log-fanout"
+category = "stability"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-log-fanout"
+test_path = "projects/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs"
+command = "cargo test -p lumen --test wal_relay --test wal_nats_e2e -- --nocapture"
+required_for_production = true
+assertions = ["A late or second node can replay the published write stream and converge with live writes."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-long-running-stateless-kind"
+capability_id = "long-running-stability"
+claim_id = "stateless-serving-rebuild-from-log-no-pvc"
+contract_id = "long-running-stateless-kind-dogfood"
+category = "stability"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-stateless-kind"
+test_path = "projects/lumen/tests/stability_lumen_claim_long_running_stateless_kind.rs"
+command = "projects/lumen/scripts/kind-e2e.sh"
+required_for_production = true
+assertions = ["The live kind dogfood path proves stateless serving rebuilds from log without a serving PVC."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-nested-collapse"
+capability_id = "duplicate-nested-search"
+claim_id = "nested-group-has-child-collapse"
+contract_id = "nested-group-has-child-collapse"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-nested-collapse"
+test_path = "projects/lumen/tests/behavior_lumen_claim_nested_collapse.rs"
+command = "cargo test -p lumen --test collapse_nested -- --nocapture"
+required_for_production = true
+assertions = ["Nested has_child/group/collapse behavior passes the data-table search tests."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-observability-otlp"
+capability_id = "observability"
+claim_id = "otlp-traces-and-metrics"
+contract_id = "observability-otlp"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-otlp"
+test_path = "projects/lumen/tests/behavior_lumen_claim_observability_otlp.rs"
+command = "cargo test -p lumen --test api_e2e -- --nocapture"
+required_for_production = true
+assertions = ["The serving process keeps observability configuration and metadata routes wired."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-observability-prometheus-metrics"
+capability_id = "observability"
+claim_id = "prometheus-metrics-endpoint"
+contract_id = "observability-prometheus-metrics"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-prometheus-metrics"
+test_path = "projects/lumen/tests/behavior_lumen_claim_observability_prometheus_metrics.rs"
+command = "cargo test -p lumen --test api_e2e metrics_exposes_prometheus_text -- --exact --nocapture"
+required_for_production = true
+assertions = ["The /metrics endpoint emits Prometheus text with the expected scrape content type."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-observability-servicemonitor-rule"
+capability_id = "observability"
+claim_id = "servicemonitor-prometheusrule-bundle"
+contract_id = "observability-servicemonitor-rule"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-servicemonitor-rule"
+test_path = "projects/lumen/tests/behavior_lumen_claim_observability_servicemonitor_rule.rs"
+command = "kustomize build projects/lumen/k8s/overlays/prod"
+required_for_production = true
+assertions = ["The production overlay renders the ServiceMonitor and PrometheusRule bundle."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-schema-ddl-drop-field"
+capability_id = "schema-ops-lifecycle"
+claim_id = "schema-ddl-drop-field-drain"
+contract_id = "schema-ddl-drop-field-drain"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-schema-ddl-drop-field"
+test_path = "projects/lumen/tests/behavior_lumen_claim_schema_ddl_drop_field.rs"
+command = "cargo test -p lumen --test drop_field_e2e --test drop_drain_e2e -- --nocapture"
+required_for_production = true
+assertions = ["Collection DDL, online drop-field drain, and drain readiness semantics pass."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-schema-reindex-replay"
+capability_id = "schema-ops-lifecycle"
+claim_id = "reindex-replay-stream"
+contract_id = "schema-reindex-replay"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-schema-reindex-replay"
+test_path = "projects/lumen/tests/behavior_lumen_claim_schema_reindex_replay.rs"
+command = "cargo test -p lumen --test reindex_stream_e2e -- --nocapture"
+required_for_production = true
+assertions = ["Reindex/replay stream behavior indexes items and reports progress/errors correctly."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-schema-stats-metadata"
+capability_id = "schema-ops-lifecycle"
+claim_id = "stats-metadata"
+contract_id = "schema-stats-metadata"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-schema-stats-metadata"
+test_path = "projects/lumen/tests/behavior_lumen_claim_schema_stats_metadata.rs"
+command = "cargo test -p lumen --test stats_metadata_e2e -- --nocapture"
+required_for_production = true
+assertions = ["Stats and per-field metadata match indexed data and byte attribution."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-search-core-filter-sort"
+capability_id = "search-core"
+claim_id = "filter-sort-early-termination"
+contract_id = "search-core-filter-sort"
+category = "efficiency"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-search-core-filter-sort"
+test_path = "projects/lumen/tests/efficiency_lumen_claim_search_core_filter_sort.rs"
+command = "cargo test -p lumen --test perf_gate_vs_db -- --nocapture"
+required_for_production = true
+assertions = ["Filter/sort early-termination behavior is covered by the ratcheted database comparison gate."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-search-core-planner"
+capability_id = "search-core"
+claim_id = "query-planner-boolean-eval-roaring-postings"
+contract_id = "search-core-planner"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-search-core-planner"
+test_path = "projects/lumen/tests/behavior_lumen_claim_search_core_planner.rs"
+command = "cargo test -p lumen --test planner_diff -- --nocapture"
+required_for_production = true
+assertions = ["The planner keeps boolean evaluation and roaring-posting behavior aligned with brute-force expectations."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-security-bearer-auth"
+capability_id = "security-hardening"
+claim_id = "bearer-token-auth-lumen-auth"
+contract_id = "security-bearer-auth"
+category = "security"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-bearer-auth"
+test_path = "projects/lumen/tests/security_lumen_claim_security_bearer_auth.rs"
+command = "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
+required_for_production = true
+assertions = ["Bearer-token auth rejects invalid callers and accepts valid tokens under LUMEN_AUTH=required."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-security-query-safety"
+capability_id = "security-hardening"
+claim_id = "adversarial-query-safety"
+contract_id = "security-query-safety"
+category = "security"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-query-safety"
+test_path = "projects/lumen/tests/security_lumen_claim_security_query_safety.rs"
+command = "cargo test -p lumen --test coverage_gaps_e2e search_security_query_injection_rejects_bad_queries -- --nocapture"
+required_for_production = true
+assertions = ["Malformed, deeply nested, and adversarial query shapes remain bounded and do not panic."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-security-rbac-matrix"
+capability_id = "security-hardening"
+claim_id = "role-based-authz-matrix-per-route"
+contract_id = "security-rbac-matrix"
+category = "security"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-rbac-matrix"
+test_path = "projects/lumen/tests/security_lumen_claim_security_rbac_matrix.rs"
+command = "cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture"
+required_for_production = true
+assertions = ["Per-route RBAC enforces read/write/admin permissions and bounds result/page sizes."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-security-score-confidentiality"
+capability_id = "security-hardening"
+claim_id = "score-confidentiality"
+contract_id = "security-score-confidentiality"
+category = "security"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-score-confidentiality"
+test_path = "projects/lumen/tests/security_lumen_claim_security_score_confidentiality.rs"
+command = "cargo test -p lumen --test coverage_gaps_e2e search_security_result_leak_respects_collection_boundaries -- --nocapture"
+required_for_production = true
+assertions = ["Scores and hit existence do not leak across collection boundaries."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-security-tls-rustls"
+capability_id = "security-hardening"
+claim_id = "tls-rustls"
+contract_id = "security-tls-rustls"
+category = "security"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-tls-rustls"
+test_path = "projects/lumen/tests/security_lumen_claim_security_tls_rustls.rs"
+command = "cargo test -p lumen tls"
+required_for_production = true
+assertions = ["The rustls-backed TLS surface passes the runtime TLS gate."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-vector-filtered-knn"
+capability_id = "vector-hash-search"
+claim_id = "filtered-knn-no-recall-collapse"
+contract_id = "vector-filtered-knn"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-vector-filtered-knn"
+test_path = "projects/lumen/tests/behavior_lumen_claim_vector_filtered_knn.rs"
+command = "cargo test -p lumen --test vector_e2e -- --nocapture"
+required_for_production = true
+assertions = ["Filtered kNN returns the nearest vector within the filter without recall collapse."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-vector-hash-hamming"
+capability_id = "vector-hash-search"
+claim_id = "hash-hamming-search"
+contract_id = "hash-hamming-search"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-vector-hash-hamming"
+test_path = "projects/lumen/tests/behavior_lumen_claim_vector_hash_hamming.rs"
+command = "cargo test -p lumen --test hash_hamming -- --nocapture"
+required_for_production = true
+assertions = ["Hash Hamming search returns bounded-distance matches over the hash index."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-vector-hnsw"
+capability_id = "vector-hash-search"
+claim_id = "hnsw-vector-knn-cpu"
+contract_id = "vector-hnsw-cpu"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-vector-hnsw"
+test_path = "projects/lumen/tests/behavior_lumen_claim_vector_hnsw.rs"
+command = "cargo test -p lumen --test vector_e2e -- --nocapture"
+required_for_production = true
+assertions = ["CPU vector kNN returns ordered nearest-neighbor results and preserves restore behavior."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-cli-interface-generated-clients"
@@ -37,7 +553,7 @@ contract_id = "spec-gen-generated-clients-public-api-journey"
 category = "behavior"
 td_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-generated-clients"
 test_path = "projects/lumen/tests/behavior_lumen_cli_interface_generated_clients.rs"
-command = "cargo test -p lumen --test behavior_lumen_cli_interface_generated_clients -- --ignored --nocapture"
+command = "PATH=$HOME/.pyenv/shims:$PATH cargo test -p lumen --test spec_gen_e2e generated_client_live_h2c_public_api_journey -- --exact --ignored --nocapture"
 required_for_production = true
 assertions = [
     "lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document.",
@@ -234,7 +750,7 @@ category = "security"
 td_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-security-hardening-access-control"
 test_path = "projects/lumen/tests/security_lumen_security_hardening_access_control.rs"
 command = "cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture"
-required_for_production = false
+required_for_production = true
 assertions = [
     "FILTERING: search over a collection the token cannot read returns 403; results never leak rows outside the caller's RBAC scope.",
     "PAGINATION: bulk/index requests over MAX_INDEX_ITEMS return 413; result pages are bounded (cursor), not unbounded.",
@@ -249,7 +765,7 @@ category = "security"
 td_ref = "projects/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-security-hardening-auth-bearer-rbac"
 test_path = "projects/lumen/tests/security_lumen_security_hardening_auth_bearer_rbac.rs"
 command = "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
-required_for_production = false
+required_for_production = true
 assertions = [
     "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens.",
     "Per-route RBAC authz matrix enforces each token's role permissions on every API route (read vs write vs admin).",
@@ -264,7 +780,7 @@ category = "security"
 td_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-security-hardening-query-injection"
 test_path = "projects/lumen/tests/security_lumen_security_hardening_query_injection.rs"
 command = "cargo test -p lumen --test coverage_gaps_e2e search_security_query_injection_rejects_bad_queries -- --nocapture"
-required_for_production = false
+required_for_production = true
 assertions = ["C2: malformed JSON, deeply-nested JSON query DSL, special-char search text, inverted ranges, and range numeric overflow are rejected or evaluated safely (no panic, no 5xx, bounded work)."]
 
 [[aw.ec.generated.cases]]
@@ -276,7 +792,7 @@ category = "security"
 td_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-security-hardening-result-leak"
 test_path = "projects/lumen/tests/security_lumen_security_hardening_result_leak.rs"
 command = "cargo test -p lumen --test coverage_gaps_e2e search_security_result_leak_respects_collection_boundaries -- --nocapture"
-required_for_production = false
+required_for_production = true
 assertions = ["C3: relevance scores and hit existence do not leak documents across collection boundaries; RBAC denial coverage remains pinned by the authz matrix case."]
 
 [[aw.ec.generated.tool_manifests]]

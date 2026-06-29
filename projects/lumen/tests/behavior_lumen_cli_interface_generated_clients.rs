@@ -7,7 +7,7 @@
 // @contract spec-gen-generated-clients-public-api-journey
 // @category behavior
 // @required_for_production true
-// @command cargo test -p lumen --test behavior_lumen_cli_interface_generated_clients -- --ignored --nocapture
+// @command PATH=$HOME/.pyenv/shims:$PATH cargo test -p lumen --test spec_gen_e2e generated_client_live_h2c_public_api_journey -- --exact --ignored --nocapture
 // AW-EC-END
 
 // Contract: lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document.
@@ -17,7 +17,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_cli_interface_generated_clients() {
     let command =
-        "cargo test -p lumen --test behavior_lumen_cli_interface_generated_clients -- --ignored --nocapture";
+        "PATH=$HOME/.pyenv/shims:$PATH cargo test -p lumen --test spec_gen_e2e generated_client_live_h2c_public_api_journey -- --exact --ignored --nocapture";
     let id = "lumen-cli-interface-generated-clients";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

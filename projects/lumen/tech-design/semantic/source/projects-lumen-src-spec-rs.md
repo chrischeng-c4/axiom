@@ -83,6 +83,8 @@ pub fn query_shapes() -> Value {
               "request": { "query": { "term": { "field": "status", "value": "active" } }, "limit": 20 } },
             { "name": "terms", "description": "keyword in a set (IN)",
               "request": { "query": { "terms": { "field": "status", "values": ["active", "trial"] } }, "limit": 20 } },
+            { "name": "ids", "description": "filter by a set of external_ids (row_id_in); unknown ids skipped",
+              "request": { "query": { "ids": { "values": ["row-42", "row-91"] } }, "limit": 20 } },
             { "name": "range", "description": "numeric range (e.g. 1000 <= price < 5000)",
               "request": { "query": { "range": { "field": "price", "gte": 1000, "lt": 5000 } }, "limit": 20 } },
             { "name": "match_bm25", "description": "lexical BM25 ranking over a text field",
