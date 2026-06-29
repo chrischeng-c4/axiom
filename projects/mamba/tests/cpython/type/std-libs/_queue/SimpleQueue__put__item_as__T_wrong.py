@@ -9,12 +9,11 @@
 # case = "SimpleQueue__put__item_as__T_wrong"
 # subject = "_queue.SimpleQueue.put(item: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed item"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_queue.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed item
 # mamba-strict-type: TypeError
 """Type wall: _queue.SimpleQueue.put(item: _T); call it with the wrong type.
 
