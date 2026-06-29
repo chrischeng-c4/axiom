@@ -22,7 +22,7 @@ typeshed contract: buffer is memoryview. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import bytearray
-obj = object.__new__(bytearray)
+obj = bytearray()
 try:
     obj.__release_buffer__(12345)  # buffer: memoryview <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

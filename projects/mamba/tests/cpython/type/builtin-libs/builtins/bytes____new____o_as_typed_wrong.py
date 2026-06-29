@@ -26,9 +26,8 @@ class _W:
 
 
 from builtins import bytes
-obj = object.__new__(bytes)
 try:
-    obj.__new__(_W())  # o: typed <- wrong-typed
+    bytes(_W())  # bytes.__new__ o: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)

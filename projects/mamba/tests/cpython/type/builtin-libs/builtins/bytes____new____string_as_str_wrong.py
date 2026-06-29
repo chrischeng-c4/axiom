@@ -22,9 +22,8 @@ typeshed contract: string is str. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import bytes
-obj = object.__new__(bytes)
 try:
-    obj.__new__(12345, "")  # string: str <- wrong-typed
+    bytes(12345, "")  # bytes.__new__ string: str <- wrong-typed when encoding is present
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
