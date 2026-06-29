@@ -255,6 +255,23 @@ structured parameters (topic/title/version/tag/state) are flags.
 Full spec: **`CONTRIBUTING.md` → "CLI convention: every CLI ships `llm`,
 `upgrade`, `issue`"**.
 
+## Service CLI Convention: `dockerfile` and layered `k8s`
+
+K8s-native service CLIs also expose deployment artifact commands:
+
+- `<cli> dockerfile render --variant source|release [--version <tag>] [--out <path-or-dir>]`
+  renders image artifacts independently of Kubernetes because the same image is
+  used by compose, kind, and registries.
+- `<cli> k8s crd render [--out <path>]` renders the cluster-scoped API layer.
+- `<cli> k8s operator render [--namespace <ns>] [--out <path-or-dir>]` renders
+  the control-plane namespace/RBAC/deployment layer; `<cli> k8s operator run`
+  is the controller process/container entrypoint.
+- `<cli> k8s instance render --profile dev|staging|prod|template [--out <path-or-dir>]`
+  renders the app-namespace custom resource consumed by the operator.
+
+Do not put Dockerfile generation under `k8s`, and do not collapse the CRD,
+operator, and instance layers into one command.
+
 ## Constraints
 
 Use rustup toolchain, not Homebrew rustc:

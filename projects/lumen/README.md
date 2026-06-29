@@ -46,7 +46,7 @@ agent integration remain first-class domain roots.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| CLI Interface | 4143 | implemented | verified | conformance | ready | mandatory baseline: serve/spec/llm/k8s/operator command surfaces |
+| CLI Interface | 4143 | implemented | verified | conformance | ready | mandatory baseline: serve/spec/llm/dockerfile/k8s command surfaces |
 | Competitive Search Feature Parity | - | implemented | verified | conformance | ready | mandatory baseline: search-side replacement breadth vs pg/OpenSearch/MongoDB |
 | Competitive Search Performance | - | implemented | verified | conformance | ready | mandatory baseline: pg/OpenSearch comparisons and ratchets pass in vat |
 | Long-Running Stability | - | implemented | verified | dogfood | ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
@@ -69,7 +69,7 @@ agent integration remain first-class domain roots.
 
 ID: cli-interface
 Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; CLI: `lumen spec` - offline OpenAPI/JSON-schema contract.; CLI: `lumen llm` - offline agent integration topics.; CLI: `lumen k8s` and `lumen operator` - manifest/operator-facing surfaces.; HTTP: `POST /index`, `POST /search`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - binary-served API surface.
+Surfaces: CLI: `lumen serve` - long-running search service process.; CLI: `lumen spec` - offline OpenAPI/JSON-schema contract.; CLI: `lumen llm` - offline agent integration topics.; CLI: `lumen dockerfile render` - source/release image artifacts.; CLI: `lumen k8s crd render`, `lumen k8s operator render|run`, and `lumen k8s instance render` - cluster API, control-plane, and app-namespace deployment surfaces.; HTTP: `POST /index`, `POST /search`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - binary-served API surface.
 EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline CLI contract; API probe/OpenAPI/metrics evidence is tracked by named api_e2e subtests because the full api_e2e suite currently has an unrelated unsupported-sort regression
 Root WI: 4143
 Status: verified
@@ -135,7 +135,7 @@ Gate Inventory:
 
 ID: long-running-stability
 Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `projects/lumen/k8s` and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Relay WAL - rebuildable derived-index mutation stream.
+Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `projects/lumen/k8s`, `lumen k8s crd/operator/instance`, and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Relay WAL - rebuildable derived-index mutation stream.
 EC Dimensions: stability: `rig` - resilience, endurance, load, and recovery scenarios; behavior: `projects/lumen/scripts/kind-e2e.sh` - k8s/operator dogfood gate
 Root WI: -
 Status: verified

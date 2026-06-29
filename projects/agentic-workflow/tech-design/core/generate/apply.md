@@ -130,15 +130,58 @@ flowchart TD
 // CODEGEN-BEGIN
 //! Apply implementation: run codegen and write CODEGEN blocks to target files.
 //!
-//! `run_apply` reads the spec's `changes` section, runs codegen for each
-//! target file, and updates CODEGEN-BEGIN/END blocks in place.
+//! `run_apply` reads legacy `changes` entries when present; otherwise it
+//! infers target files from existing `@spec <td>#<section>` / CODEGEN
+//! references in the codebase and updates CODEGEN-BEGIN/END blocks in place.
+//! When no deterministic target can be inferred, apply returns a generator-gap
+//! error instead of asking the TD author for an implementation manifest.
 //!
 //! `run_apply_worktree` runs apply scoped to a worktree path.
 //! Both support `dry_run` mode for preview without writing.
 
 // @spec .aw/changes/codegen-td-to-code/groups/codegen-td-to-code-main/specs/sdd-codegen-validation-harness.md#changes
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+
+thread_local! {
+    static APPLY_DIAGNOSTICS_QUIET: Cell<bool> = Cell::new(false);
+}
+
+struct ApplyDiagnosticsQuietGuard {
+    previous: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
+impl ApplyDiagnosticsQuietGuard {
+    fn enter(quiet: bool) -> Self {
+        let previous = APPLY_DIAGNOSTICS_QUIET.with(|cell| {
+            let previous = cell.get();
+            if quiet {
+                cell.set(true);
+            }
+            previous
+        });
+        Self { previous }
+    }
+}
+
+/// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
+impl Drop for ApplyDiagnosticsQuietGuard {
+    fn drop(&mut self) {
+        APPLY_DIAGNOSTICS_QUIET.with(|cell| cell.set(self.previous));
+    }
+}
+
+fn apply_diagnostics_are_quiet() -> bool {
+    APPLY_DIAGNOSTICS_QUIET.with(Cell::get)
+}
+
+/// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
+pub(crate) fn with_quiet_apply_diagnostics<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = ApplyDiagnosticsQuietGuard::enter(true);
+    f()
+}
 
 /// Per-file apply result.
 #[derive(Debug, Clone)]
@@ -181,15 +224,17 @@ impl ApplyReport {
 
 /// Run codegen apply for a spec file against the project root.
 ///
-/// Reads the spec `changes` section, runs codegen for each target,
-/// and updates CODEGEN blocks in the target files.
+/// Runs codegen for a spec file against the project root.
+///
+/// Legacy TDs can still supply explicit `changes` entries. New TDs should let
+/// apply infer existing target files from spec references in the codebase.
 // @spec .aw/changes/codegen-td-to-code/groups/codegen-td-to-code-main/specs/sdd-codegen-validation-harness.md#changes
 pub fn run_apply(
     spec_path: &Path,
     project_root: &Path,
     dry_run: bool,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, project_root, dry_run, None, None)
+    run_apply_inner(spec_path, project_root, dry_run, None, None, false)
 }
 
 /// Run codegen apply for a spec file, skipping change entries whose targets
@@ -210,6 +255,7 @@ pub fn run_apply_scoped(
         dry_run,
         Some(allowed_target_roots),
         None,
+        false,
     )
 }
 
@@ -229,6 +275,7 @@ pub fn run_apply_scoped_sections(
         dry_run,
         Some(allowed_target_roots),
         Some(allowed_sections),
+        false,
     )
 }
 
@@ -245,6 +292,28 @@ pub fn run_apply_scoped_targets(
         dry_run,
         Some(allowed_target_roots),
         None,
+        false,
+    )
+}
+
+/// Run codegen apply for selected target roots without emitting apply diagnostics.
+///
+/// Used by summary/reporting paths such as `aw health`, where stdout owns an
+/// agent-facing event stream and verbose apply diagnostics belong in payloads.
+// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
+pub fn run_apply_scoped_targets_quiet(
+    spec_path: &Path,
+    project_root: &Path,
+    dry_run: bool,
+    allowed_target_roots: &[PathBuf],
+) -> crate::generate::Result<ApplyReport> {
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        Some(allowed_target_roots),
+        None,
+        true,
     )
 }
 
@@ -256,7 +325,7 @@ pub fn run_apply_worktree(
     spec_path: &Path,
     worktree: &Path,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, worktree, false, None, None)
+    run_apply_inner(spec_path, worktree, false, None, None, false)
 }
 
 fn run_apply_inner(
@@ -265,11 +334,18 @@ fn run_apply_inner(
     dry_run: bool,
     allowed_target_roots: Option<&[PathBuf]>,
     allowed_sections: Option<&[&str]>,
+    quiet: bool,
 ) -> crate::generate::Result<ApplyReport> {
     use crate::generate::frontmatter::extract_mermaid_plus_blocks;
-    use crate::generate::marker::{
-        insert_codegen_block, parse_codegen_blocks, replace_codegen_block,
-    };
+    use crate::generate::marker::{parse_codegen_blocks, replace_codegen_block};
+    let _diagnostic_guard = ApplyDiagnosticsQuietGuard::enter(quiet);
+    macro_rules! apply_diagnostic {
+        ($($arg:tt)*) => {
+            if !apply_diagnostics_are_quiet() {
+                eprintln!($($arg)*);
+            }
+        };
+    }
 
     let spec_content =
         std::fs::read_to_string(spec_path).map_err(|e| crate::generate::GenerateError::Io(e))?;
@@ -283,7 +359,7 @@ fn run_apply_inner(
     let td_ast = match crate::td_ast::parse::parse_td_str(&spec_content) {
         Ok(ast) => Some(ast),
         Err(err) => {
-            eprintln!(
+            apply_diagnostic!(
                 "[gen apply] WARNING: typed TD AST parse failed for '{}': {}. \
                  Falling back to legacy section scanners.",
                 spec_path.display(),
@@ -303,16 +379,28 @@ fn run_apply_inner(
         mermaid_blocks = extract_mermaid_plus_blocks(&spec_content);
     }
 
-    let change_entries = extract_change_entries(&spec_content);
-
-    // R4.1: Warn when Changes section has valid YAML but 0 entries extracted.
-    // This prevents silent no-op from masking parser bugs (e.g. unexpected field names).
+    let mut change_entries = extract_change_entries(&spec_content);
     if change_entries.is_empty() {
-        eprintln!(
-            "[gen apply] WARNING: No change entries extracted from spec '{}'. \
-            Check that the Changes YAML uses 'path:' or 'file:' fields.",
-            spec_path.display()
+        change_entries = infer_change_entries_from_existing_spec_refs(
+            root,
+            spec_path,
+            td_ast.as_ref(),
+            &spec_content,
+            allowed_target_roots,
         );
+    }
+
+    // Neither legacy Changes metadata nor codebase refs produced a target. New
+    // TDs should stay free of implementation manifests; missing inference is a
+    // generator policy gap that must be handled by automation or HITL.
+    if change_entries.is_empty() {
+        return Err(crate::generate::GenerateError::InvalidValue(format!(
+            "No target files inferred for spec '{}'. TD-to-codebase requires existing \
+             @spec/CODEGEN refs or a deterministic generator output policy. This is a \
+             generator gap/HANDWRITE gap/HITL error, not a request for new TD authors to \
+             write legacy changes.",
+            spec_path.display()
+        )));
     }
 
     let mut files = Vec::new();
@@ -322,8 +410,15 @@ fn run_apply_inner(
     // route a section's CODEGEN block to exactly one file rather than
     // duplicating the same block into all N. See `should_emit_section_to_entry`.
     let all_entries: Vec<ChangeEntry> = change_entries.clone();
-    let source_from_target_replays_whole_file =
-        source_from_target_directive(&spec_content).is_some();
+    // Whole-file regeneration covers both legacy source-from-target replay and
+    // the rust-source-unit (td_ast) path: in either case the `## Source` section
+    // owns the entire file, so apply must REPLACE the whole file rather than
+    // append a managed block beside pre-existing (unmanaged) content. Without
+    // this, a virgin file with no markers would be duplicated.
+    let source_from_target_replays_whole_file = source_from_target_directive(&spec_content)
+        .is_some()
+        || source_is_rust_source_unit(&spec_content)
+        || source_is_text_source_unit(&spec_content);
     let whole_file_source_targets: std::collections::BTreeSet<String> = all_entries
         .iter()
         .filter(|entry| {
@@ -344,7 +439,7 @@ fn run_apply_inner(
                 .iter()
                 .any(|allowed_root| target_path.starts_with(allowed_root))
             {
-                eprintln!(
+                apply_diagnostic!(
                     "[gen apply] SKIP: '{}' target is outside project source scope",
                     entry.path,
                 );
@@ -361,9 +456,10 @@ fn run_apply_inner(
         if let Some(allowed_sections) = allowed_sections {
             let section_id = entry.section_id.as_deref().unwrap_or_default();
             if !allowed_sections.contains(&section_id) {
-                eprintln!(
+                apply_diagnostic!(
                     "[gen apply] SKIP: '{}' section '{}' is outside selected section scope",
-                    entry.path, section_id,
+                    entry.path,
+                    section_id,
                 );
                 files.push(FileApplyResult {
                     path: PathBuf::from(&entry.path),
@@ -387,9 +483,10 @@ fn run_apply_inner(
                 .flatten()
                 .is_some_and(|content| has_whole_file_source_codegen_block(&content));
         if entry_is_non_source_codegen
+            && entry.replaces.is_empty()
             && (whole_file_source_targets.contains(&entry.path) || existing_whole_file_source_owner)
         {
-            eprintln!(
+            apply_diagnostic!(
                 "[gen apply] SKIP: '{}' section '{}' is covered by whole-file source replay.",
                 entry.path,
                 entry.section_id.as_deref().unwrap_or("changes"),
@@ -404,13 +501,31 @@ fn run_apply_inner(
             continue;
         }
 
+        let handwrite_whole_file_promotion = entry.impl_mode == ImplMode::HandWritten
+            && entry.action == "modify"
+            && !entry.replaces.is_empty()
+            && is_whole_file_codegen_section(
+                entry.section_id.as_deref(),
+                source_from_target_replays_whole_file,
+            )
+            && target_path
+                .exists()
+                .then(|| std::fs::read_to_string(&target_path).ok())
+                .flatten()
+                .is_some_and(|content| is_whole_file_handwrite_content(&content));
+
         // impl_mode: hand-written — rule 2-2 of the codegen policy. Spec
         // tracks requirements + tests + intent; agent edits the target
         // file directly. When the entry carries `anchor:` we additionally
         // scaffold an XML-form handwrite marker
         // marker pair around the anchor symbol so the audit pipeline can
         // detect the region (sdd-handwrite-marker R1).
-        if entry.impl_mode == ImplMode::HandWritten {
+        //
+        // Regenerable promotion is the exception: a semantic TD may still
+        // record the original source as hand-written, but an explicit
+        // `replaces:` tracker on a whole-file artifact proves which
+        // HANDWRITE block is being promoted to CODEGEN.
+        if entry.impl_mode == ImplMode::HandWritten && !handwrite_whole_file_promotion {
             let mut updated = false;
             let mut created = false;
             // Bug 1 fix: `action: create` + `impl_mode: hand-written` previously
@@ -420,7 +535,7 @@ fn run_apply_inner(
             if entry.action == "create" && !target_path.exists() {
                 let scaffold = scaffold_handwrite_file(&entry);
                 if dry_run {
-                    eprintln!(
+                    apply_diagnostic!(
                         "[gen apply] HANDWRITE: would scaffold new file {} ({} bytes, dry_run)",
                         entry.path,
                         scaffold.len(),
@@ -432,7 +547,7 @@ fn run_apply_inner(
                     }
                     std::fs::write(&target_path, &scaffold)
                         .map_err(|e| crate::generate::GenerateError::Io(e))?;
-                    eprintln!(
+                    apply_diagnostic!(
                         "[gen apply] HANDWRITE: scaffolded new file {} ({} bytes)",
                         entry.path,
                         scaffold.len(),
@@ -453,19 +568,20 @@ fn run_apply_inner(
                 ) {
                     Ok(crate::generate::handwrite_scaffold::ScaffoldOutcome::Inserted) => {
                         updated = true;
-                        eprintln!(
+                        apply_diagnostic!(
                             "[gen apply] HANDWRITE: scaffolded marker around '{}' in {}",
-                            anchor, entry.path,
+                            anchor,
+                            entry.path,
                         );
                     }
                     Ok(crate::generate::handwrite_scaffold::ScaffoldOutcome::Skipped) => {
-                        eprintln!(
+                        apply_diagnostic!(
                             "[gen apply] HANDWRITE: marker already present for '{}' in {} (idempotent)",
                             anchor, entry.path,
                         );
                     }
                     Ok(crate::generate::handwrite_scaffold::ScaffoldOutcome::AnchorMissing) => {
-                        eprintln!(
+                        apply_diagnostic!(
                             "[gen apply] HANDWRITE: anchor '{}' not found in {} — agent must insert marker by hand",
                             anchor, entry.path,
                         );
@@ -475,7 +591,7 @@ fn run_apply_inner(
                     }
                 }
             } else {
-                eprintln!(
+                apply_diagnostic!(
                     "[gen apply] SKIP: '{}' impl_mode=hand-written (no anchor; spec tracks intent only)",
                     entry.path,
                 );
@@ -503,7 +619,7 @@ fn run_apply_inner(
 
         let target_lang = target_language(&target_path, entry.section_id.as_deref());
         let Some(target_lang) = target_lang else {
-            eprintln!(
+            apply_diagnostic!(
                 "[gen apply] SKIP: '{}' — no generator matches (extension + section \
                  combination unsupported).",
                 entry.path,
@@ -536,7 +652,7 @@ fn run_apply_inner(
         let section_anchors =
             extract_section_anchors(entry.section_id.as_deref(), &mermaid_blocks, &spec_content);
         if !should_emit_section_to_entry(&entry, &all_entries, &section_anchors) {
-            eprintln!(
+            apply_diagnostic!(
                 "[gen apply] SKIP: '{}' — section '{}' anchors {:?} routed to a \
                  sibling entry via `replaces:` (no over-emit).",
                 entry.path,
@@ -570,11 +686,12 @@ fn run_apply_inner(
                 source_from_target_replays_whole_file,
             )
             && is_whole_file_codegen_content(&file_content, &existing_blocks)
-            && existing_blocks
-                .first()
-                .is_some_and(|block| block.spec_ref != spec_ref)
+            && existing_blocks.first().is_some_and(|block| {
+                block.spec_ref.ends_with("#source") && block.spec_ref != spec_ref
+            })
+            && !entry_promotes_whole_file(&entry)
         {
-            eprintln!(
+            apply_diagnostic!(
                 "[gen apply] SKIP: '{}' section '{}' would nest inside whole-file CODEGEN block '{}'.",
                 entry.path,
                 entry.section_id.as_deref().unwrap_or("changes"),
@@ -612,15 +729,22 @@ fn run_apply_inner(
                 Some("manifest") => {
                     crate::generate::gen::rust::manifest::generate_manifest(&spec_content).code
                 }
-                Some("tests") => {
+                Some("unit-test" | "tests")
+                    if target_lang == crate::generate::marker::Lang::Rust =>
+                {
                     crate::generate::gen::rust::tests_gen::generate_tests(&spec_content).code
                 }
-                Some("source") => generate_source_section_code(
-                    &spec_content,
-                    &spec_path_str,
-                    Some(&entry.path),
-                    root,
-                ),
+                Some("e2e-test") if target_lang == crate::generate::marker::Lang::Rust => {
+                    crate::generate::gen::rust::tests_gen::generate_e2e_tests(&spec_content).code
+                }
+                Some("source" | "rust-source-unit" | "text-source-unit") => {
+                    generate_source_section_code(
+                        &spec_content,
+                        &spec_path_str,
+                        Some(&entry.path),
+                        root,
+                    )
+                }
                 Some("runtime-image" | "deployment") => {
                     let section = entry.section_id.as_deref().unwrap_or("changes");
                     try_generate_operations_artifact(&spec_content, &entry, td_ast.as_ref())
@@ -665,6 +789,12 @@ fn run_apply_inner(
             } else {
                 generated_codegen_body(&generated_code, &spec_ref)
             };
+            let prepared_codegen = prepare_codegen_body_for_target(
+                &target_path,
+                entry.section_id.as_deref(),
+                &generated_body,
+            );
+            let generated_body = prepared_codegen.body.clone();
 
             if let Some(existing_block) = matching_block {
                 if is_whole_file_codegen_section(
@@ -674,8 +804,12 @@ fn run_apply_inner(
                     && entry.action == "modify"
                     && !is_whole_file_codegen_content(&file_content, &blocks)
                 {
-                    let with_block =
-                        insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    let with_block = insert_codegen_block_for_target(
+                        "",
+                        &spec_ref,
+                        &prepared_codegen,
+                        target_lang,
+                    );
                     (with_block, 1)
                 } else {
                     // CODEGEN block exists. First, if the entry has a non-empty
@@ -716,6 +850,13 @@ fn run_apply_inner(
                 && entry.action == "modify"
             {
                 (file_content.clone(), 0)
+            } else if is_whole_file_codegen_content(&file_content, &blocks)
+                && entry_promotes_whole_file(&entry)
+                && entry.action == "modify"
+            {
+                let with_block =
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang);
+                (with_block, 1)
             } else if is_whole_file_codegen_section(
                 entry.section_id.as_deref(),
                 source_from_target_replays_whole_file,
@@ -728,7 +869,19 @@ fn run_apply_inner(
                 // If `replaces:` is present, keep the symbol-level path below
                 // so large files can be split into multiple source fragments.
                 let with_block =
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang);
+                (with_block, 1)
+            } else if entry.section_id.as_deref() == Some("source")
+                && entry.replaces.is_empty()
+                && entry.action == "modify"
+                && is_whole_file_handwrite_content(&file_content)
+            {
+                // A file consisting only of one tracked HANDWRITE block has no
+                // unrelated material to preserve, so source replay can safely
+                // promote it to a whole-file CODEGEN block even without the
+                // source-from-target directive used for preserve-body replay.
+                let with_block =
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang);
                 (with_block, 1)
             } else if !entry.replaces.is_empty() && entry.action == "modify" {
                 // `action: modify` + explicit `replaces:` — remove the named
@@ -750,11 +903,10 @@ fn run_apply_inner(
                         // lists names that don't exist or the file was
                         // already migrated. Fall back to ordinary append so
                         // gen-code is idempotent.
-                        let with_block = insert_codegen_block(
+                        let with_block = insert_codegen_block_for_target(
                             &file_content,
                             &spec_ref,
-                            &generated_body,
-                            None,
+                            &prepared_codegen,
                             target_lang,
                         );
                         (with_block, 1)
@@ -768,11 +920,10 @@ fn run_apply_inner(
                 {
                     insert_cargo_deps_block(&file_content, &spec_ref, &generated_body)
                 } else {
-                    insert_codegen_block(
+                    insert_codegen_block_for_target(
                         &file_content,
                         &spec_ref,
-                        &generated_body,
-                        None,
+                        &prepared_codegen,
                         target_lang,
                     )
                 };
@@ -785,13 +936,18 @@ fn run_apply_inner(
                 entry.section_id.as_deref().unwrap_or("changes")
             );
             let generated_body = generated_codegen_body(&generated_code, &spec_ref);
+            let prepared_codegen = prepare_codegen_body_for_target(
+                &target_path,
+                entry.section_id.as_deref(),
+                &generated_body,
+            );
             let new_content =
                 if entry.section_id.as_deref() == Some("manifest") && is_cargo_toml(&target_path) {
                     // Seed a minimal Cargo.toml skeleton so the block has a home.
                     let skeleton = "[dependencies]\n";
-                    insert_cargo_deps_block(skeleton, &spec_ref, &generated_body)
+                    insert_cargo_deps_block(skeleton, &spec_ref, &prepared_codegen.body)
                 } else {
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang)
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang)
                 };
             (new_content, 1)
         };
@@ -871,7 +1027,11 @@ fn is_whole_file_codegen_section(
     source_from_target_replays_whole_file: bool,
 ) -> bool {
     matches!(section, Some("runtime-image" | "deployment"))
-        || (source_from_target_replays_whole_file && matches!(section, Some("source")))
+        || (source_from_target_replays_whole_file
+            && matches!(
+                section,
+                Some("source" | "rust-source-unit" | "text-source-unit")
+            ))
 }
 
 fn is_whole_file_codegen_content(
@@ -898,6 +1058,34 @@ fn is_whole_file_codegen_content(
         .iter()
         .all(|line| line.trim().is_empty());
     before && after
+}
+
+fn is_whole_file_handwrite_content(content: &str) -> bool {
+    let lines = content.lines().collect::<Vec<_>>();
+    let Some(start) = lines.iter().position(|line| {
+        let body = strip_handwrite_comment_lead(line.trim_start());
+        is_handwrite_open(body)
+    }) else {
+        return false;
+    };
+    if !lines[..start].iter().all(|line| line.trim().is_empty()) {
+        return false;
+    }
+
+    let mut depth = 1usize;
+    for (offset, line) in lines[(start + 1)..].iter().enumerate() {
+        let body = strip_handwrite_comment_lead(line.trim_start());
+        if is_handwrite_open(body) {
+            depth += 1;
+        } else if is_handwrite_close(body) {
+            depth -= 1;
+            if depth == 0 {
+                let end = start + 1 + offset;
+                return lines[(end + 1)..].iter().all(|line| line.trim().is_empty());
+            }
+        }
+    }
+    false
 }
 
 /// Rebuild the Registered Symbols section of the project's README.md.
@@ -1390,6 +1578,15 @@ pub(crate) struct ChangeEntry {
     /// generator. Each entry emits `pub mod <module>;` followed by the listed
     /// `pub use <module>::<symbol>;` re-exports.
     pub(crate) exports: Vec<crate::generate::generators::ExportEntry>,
+    /// Optional raw preamble for the module-facade generator.
+    pub(crate) preamble: Option<String>,
+    /// Optional external pub-use paths for the module-facade generator.
+    pub(crate) pub_uses: Vec<String>,
+    /// Optional whole Rust source-unit body emitted by the `rust_source`
+    /// entry-local generator. Used when a TD AST/Changes entry owns a full
+    /// Rust target file without relying on a Markdown `## Source` replay
+    /// payload.
+    pub(crate) rust_source: Option<String>,
     /// Optional trait-impl declaration consumed by the `trait_impl` section
     /// generator. Emits one `impl <Trait> for <Type>` block.
     pub(crate) trait_impl: Option<crate::generate::generators::TraitImplSpec>,
@@ -1430,6 +1627,202 @@ impl ImplMode {
             _ => None,
         }
     }
+}
+
+fn infer_change_entries_from_existing_spec_refs(
+    root: &Path,
+    spec_path: &Path,
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+    spec_content: &str,
+    allowed_target_roots: Option<&[PathBuf]>,
+) -> Vec<ChangeEntry> {
+    let spec_rel = match spec_path.strip_prefix(root) {
+        Ok(rel) => normalize_path_for_spec_ref(rel),
+        Err(_) => normalize_path_for_spec_ref(spec_path),
+    };
+    if spec_rel.is_empty() {
+        return Vec::new();
+    }
+    let section_ids = inferable_section_ids(td_ast, spec_content);
+    if section_ids.is_empty() {
+        return Vec::new();
+    }
+
+    let scan_roots: Vec<PathBuf> = match allowed_target_roots {
+        Some(roots) if !roots.is_empty() => roots.to_vec(),
+        _ => vec![root.to_path_buf()],
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let mut entries = Vec::new();
+    for scan_root in scan_roots {
+        infer_change_entries_in_dir(
+            root,
+            &scan_root,
+            &spec_rel,
+            &section_ids,
+            &mut seen,
+            &mut entries,
+        );
+    }
+    entries
+}
+
+fn infer_change_entries_in_dir(
+    root: &Path,
+    dir: &Path,
+    spec_rel: &str,
+    section_ids: &[String],
+    seen: &mut std::collections::BTreeSet<(String, String)>,
+    entries: &mut Vec<ChangeEntry>,
+) {
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            if should_skip_inference_dir(&path) {
+                continue;
+            }
+            infer_change_entries_in_dir(root, &path, spec_rel, section_ids, seen, entries);
+            continue;
+        }
+        if !file_type.is_file() || !is_reasonable_inference_file(&path) {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if !(content.contains("CODEGEN-BEGIN") || content.contains("SPEC-MANAGED")) {
+            continue;
+        }
+        let Ok(rel_path) = path.strip_prefix(root) else {
+            continue;
+        };
+        let rel_path = normalize_path_for_spec_ref(rel_path);
+        for section_id in section_ids {
+            let spec_ref = format!("{spec_rel}#{section_id}");
+            if content.contains(&spec_ref) && seen.insert((rel_path.clone(), section_id.clone())) {
+                entries.push(ChangeEntry {
+                    path: rel_path.clone(),
+                    action: "modify".to_string(),
+                    description: Some(
+                        "Inferred from existing codebase @spec reference".to_string(),
+                    ),
+                    section_id: Some(section_id.clone()),
+                    impl_mode: ImplMode::Codegen,
+                    replaces: Vec::new(),
+                    exports: Vec::new(),
+                    preamble: None,
+                    pub_uses: Vec::new(),
+                    rust_source: None,
+                    trait_impl: None,
+                    handwrite_gap: None,
+                    handwrite_tracker: None,
+                    handwrite_reason: None,
+                    handwrite_anchor: None,
+                });
+            }
+        }
+    }
+}
+
+fn inferable_section_ids(
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+    spec_content: &str,
+) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    if let Some(ast) = td_ast {
+        for section in &ast.sections {
+            let id = section.section_type.as_str();
+            if is_inferable_target_section(id) {
+                seen.insert(id.to_string());
+            }
+        }
+    }
+    for id in section_ids_from_type_annotations(spec_content) {
+        if is_inferable_target_section(&id) {
+            seen.insert(id);
+        }
+    }
+    seen.into_iter().collect()
+}
+
+fn section_ids_from_type_annotations(spec_content: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    for line in spec_content.lines() {
+        if !line.contains("<!--") {
+            continue;
+        }
+        let Some(type_pos) = line.find("type:") else {
+            continue;
+        };
+        let after = line[type_pos + "type:".len()..].trim_start();
+        if after.is_empty() {
+            continue;
+        }
+        let end = after
+            .find(|c: char| c.is_whitespace() || c == '>')
+            .unwrap_or(after.len());
+        let id = after[..end].trim_matches(['"', '\'', '>']).trim();
+        if !id.is_empty() {
+            ids.push(id.to_string());
+        }
+    }
+    ids
+}
+
+fn is_inferable_target_section(section_id: &str) -> bool {
+    !matches!(section_id, "overview" | "doc" | "requirements" | "changes")
+}
+
+fn should_skip_inference_dir(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    matches!(
+        name,
+        ".git" | ".aw" | "target" | "node_modules" | "dist" | "build"
+    )
+}
+
+fn is_reasonable_inference_file(path: &Path) -> bool {
+    const MAX_BYTES: u64 = 2 * 1024 * 1024;
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if metadata.len() > MAX_BYTES {
+        return false;
+    }
+    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+        return true;
+    };
+    matches!(
+        ext,
+        "rs" | "py"
+            | "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "mjs"
+            | "cjs"
+            | "md"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "json"
+            | "html"
+            | "css"
+            | "scss"
+            | "sh"
+    )
+}
+
+fn normalize_path_for_spec_ref(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// Count the spec's Changes entries (excluding `action: delete`). Used by
@@ -1730,6 +2123,23 @@ pub(crate) fn extract_change_entries(spec_content: &str) -> Vec<ChangeEntry> {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    let preamble = change
+                        .get("preamble")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let pub_uses: Vec<String> = change
+                        .get("pub_uses")
+                        .and_then(|v| v.as_sequence())
+                        .map(|seq| {
+                            seq.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let rust_source = change
+                        .get("rust_source")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
                     let trait_impl = change.get("trait_impl").cloned().and_then(|v| {
                         serde_yaml::from_value::<crate::generate::generators::TraitImplSpec>(v).ok()
                     });
@@ -1763,6 +2173,9 @@ pub(crate) fn extract_change_entries(spec_content: &str) -> Vec<ChangeEntry> {
                         impl_mode,
                         replaces,
                         exports,
+                        preamble,
+                        pub_uses,
+                        rust_source,
                         trait_impl,
                         handwrite_gap,
                         handwrite_tracker,
@@ -1785,12 +2198,31 @@ use crate::generate::marker::Lang;
 
 const MODULE_PREAMBLE_REPLACE: &str = "<module-preamble>";
 const MODULE_TRAILER_REPLACE: &str = "<module-trailer>";
+const WHOLE_FILE_REPLACE: &str = "<whole-file>";
 const HANDWRITE_GAP_REPLACE_PREFIX: &str = "<handwrite-gap:";
 const HANDWRITE_TRACKER_REPLACE_PREFIX: &str = "<handwrite-tracker:";
 const HANDWRITE_BEGIN_TOKEN: &str = concat!("HANDWRITE-", "BEGIN");
 const HANDWRITE_END_TOKEN: &str = concat!("HANDWRITE-", "END");
 const HANDWRITE_XML_OPEN_PREFIX: &str = concat!("<", "HANDWRITE");
 const HANDWRITE_XML_CLOSE_PREFIX: &str = concat!("</", "HANDWRITE");
+
+fn entry_replaces_module_preamble(entry: &ChangeEntry) -> bool {
+    entry
+        .replaces
+        .iter()
+        .any(|replace| replace == MODULE_PREAMBLE_REPLACE)
+}
+
+fn entry_replaces_whole_file(entry: &ChangeEntry) -> bool {
+    entry
+        .replaces
+        .iter()
+        .any(|replace| replace == WHOLE_FILE_REPLACE)
+}
+
+fn entry_promotes_whole_file(entry: &ChangeEntry) -> bool {
+    entry_replaces_module_preamble(entry) || entry_replaces_whole_file(entry)
+}
 
 /// Rewrite `content` by removing each top-level item listed in `symbols`
 /// and dropping a fresh CODEGEN-BEGIN/END block at the position of the
@@ -1993,6 +2425,9 @@ fn special_module_replace_range(lines: &[&str], symbol: &str) -> Option<(usize, 
 }
 
 fn special_replace_range(lines: &[&str], symbol: &str) -> Option<(usize, usize)> {
+    if symbol == WHOLE_FILE_REPLACE {
+        return Some((0, lines.len().saturating_sub(1)));
+    }
     special_module_replace_range(lines, symbol)
         .or_else(|| {
             let gap = symbol
@@ -2742,6 +3177,9 @@ mod tests {
             impl_mode: ImplMode::HandWritten,
             replaces: vec![],
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -2777,6 +3215,9 @@ mod tests {
             impl_mode: ImplMode::HandWritten,
             replaces: vec![],
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: Some("phase-1-namespace-split".to_string()),
             handwrite_tracker: None,
@@ -2794,10 +3235,13 @@ mod tests {
             path: "tests/github_backend_tests.rs".to_string(),
             action: "create".to_string(),
             description: None,
-            section_id: Some("test-plan".to_string()),
+            section_id: Some("unit-test".to_string()),
             impl_mode: ImplMode::HandWritten,
             replaces: vec![],
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: Some("missing-generator:test".to_string()),
             handwrite_tracker: Some("wi:\"quoted\"".to_string()),
@@ -2842,6 +3286,22 @@ mod tests {
     }
 
     #[test]
+    fn test_runtime_image_supports_dockerfile_variants() {
+        for path in [
+            "projects/lumen/Dockerfile",
+            "projects/lumen/Dockerfile.release",
+            "projects/lumen/Dockerfile.bench",
+            "projects/lumen/service.dockerfile",
+        ] {
+            assert_eq!(
+                target_language(std::path::Path::new(path), Some("runtime-image")),
+                Some(crate::generate::marker::Lang::Toml),
+                "runtime-image target should accept {path}"
+            );
+        }
+    }
+
+    #[test]
     fn test_extract_section_fence_returns_raw_source_payload() {
         let spec = r#"
 ## Source
@@ -2853,7 +3313,7 @@ export function App() {
 }
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 "#;
         let source = extract_section_fence(spec, "Source").expect("source fence");
@@ -2936,6 +3396,195 @@ pub struct MermaidPlusPayload;
 
         assert_eq!(source.matches("@spec ").count(), 1);
         assert!(!source.contains("#[derive(Debug)]\n/// @spec"));
+    }
+
+    #[test]
+    fn rust_source_unit_section_regenerates_from_td_fence_via_item_tree() {
+        // A `## Source` marked rust-source-unit (td_ast) regenerates the
+        // TD-embedded fence through the structured item-tree, WITHOUT reading
+        // the live target — the TD is the source of truth. Pass a target path
+        // that does not exist to prove no target read occurs.
+        let spec = r#"
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+```rust
+//! kept module doc
+pub struct Widget {
+    pub id: u64, // kept comment
+}
+```
+"#;
+        let source = generate_source_section_code(
+            spec,
+            ".aw/tech-design/projects/lumen/widget.md",
+            Some("projects/lumen/src/does-not-exist.rs"),
+            std::path::Path::new("/nonexistent-root"),
+        );
+
+        // Code round-tripped through the IR byte-for-byte (comments preserved),
+        // proving regeneration goes through rust_source_unit::regenerate.
+        assert!(source.contains("//! kept module doc"));
+        assert!(source.contains("pub id: u64, // kept comment"));
+        assert!(source.contains("pub struct Widget {"));
+        // Rust target → per-item @spec breadcrumb is added.
+        assert!(source.contains("#source"));
+    }
+
+    #[test]
+    fn text_source_unit_section_emits_td_fence_verbatim() {
+        // A `## Source` marked text-source-unit (opaque text, e.g. a shell
+        // script) emits the TD-embedded fence VERBATIM — no parsing, no Rust
+        // annotation, no target read. The TD is the source of truth.
+        let spec = r#"
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+echo "build ${1:-debug}"   # kept exactly
+```
+"#;
+        let source = generate_source_section_code(
+            spec,
+            ".aw/tech-design/projects/lumen/build-sh.md",
+            Some("projects/lumen/build.sh"),
+            std::path::Path::new("/nonexistent-root"),
+        );
+        // Fence content is emitted verbatim, trailing newline included (the
+        // file's final newline is preserved for byte-equivalence).
+        let expected =
+            "#!/usr/bin/env bash\nset -euo pipefail\necho \"build ${1:-debug}\"   # kept exactly\n";
+        assert_eq!(source, expected);
+        // No Rust @spec breadcrumbs injected into shell.
+        assert!(!source.contains("@spec"));
+    }
+
+    #[test]
+    fn text_source_unit_apply_preserves_script_shebang_line_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/build.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: build-script
+fill_sections: [text-source-unit, changes]
+---
+
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+echo "build ${1:-debug}"
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: build.sh
+    action: modify
+    section: text-source-unit
+    impl_mode: codegen
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply_scoped_targets(&spec_path, root, false, &[root.to_path_buf()]).unwrap();
+
+        let generated = std::fs::read_to_string(root.join("build.sh")).unwrap();
+        assert!(generated.starts_with("#!/usr/bin/env bash\n# SPEC-MANAGED:"));
+        assert_eq!(generated.matches("#!/usr/bin/env bash").count(), 1);
+        assert_eq!(generated.matches("# CODEGEN-BEGIN").count(), 1);
+        assert!(generated.contains("echo \"build ${1:-debug}\""));
+    }
+
+    #[test]
+    fn whole_file_codegen_detector_tolerates_a_leading_shebang() {
+        // #42: a shell script keeps its `#!` on line 1, above the managed
+        // markers. The whole-file CODEGEN detector must still recognize the
+        // file as wholly owned by the block, so it counts as regenerable
+        // codegen and re-apply is a clean no-op rather than perpetual churn.
+        let with_shebang =
+            "#!/usr/bin/env bash\n# SPEC-MANAGED: x#text-source-unit\n# CODEGEN-BEGIN\nset -euo pipefail\n# CODEGEN-END\n";
+        let blocks = crate::generate::marker::parse_codegen_blocks(with_shebang);
+        assert!(
+            is_whole_file_codegen_content(with_shebang, &blocks),
+            "a single leading shebang must not disqualify whole-file CODEGEN"
+        );
+
+        // A non-shebang, non-empty line above the marker still disqualifies it.
+        let with_preamble =
+            "echo hi\n# SPEC-MANAGED: x#text-source-unit\n# CODEGEN-BEGIN\nset -euo pipefail\n# CODEGEN-END\n";
+        let blocks = crate::generate::marker::parse_codegen_blocks(with_preamble);
+        assert!(!is_whole_file_codegen_content(with_preamble, &blocks));
+
+        // Plain whole-file CODEGEN (no shebang) stays recognized.
+        let plain = "// SPEC-MANAGED: x#source\n// CODEGEN-BEGIN\npub fn f() {}\n// CODEGEN-END\n";
+        let blocks = crate::generate::marker::parse_codegen_blocks(plain);
+        assert!(is_whole_file_codegen_content(plain, &blocks));
+    }
+
+    #[test]
+    fn deployment_artifact_apply_writes_whole_yaml_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/k8s-operator.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: k8s-operator
+fill_sections: [deployment, changes]
+---
+
+## Deployment
+<!-- type: deployment lang: yaml -->
+
+```yaml
+deployment:
+  artifacts:
+    - path: k8s/operator/deployment.yaml
+      kind: kubernetes-deployment
+      content: |
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          template:
+            spec:
+              containers:
+                - name: operator
+                  command: ["/usr/local/bin/lumen-operator"]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: k8s/operator/deployment.yaml
+    action: modify
+    section: deployment
+    impl_mode: codegen
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply_scoped_targets(&spec_path, root, false, &[root.join("k8s")]).unwrap();
+
+        let generated = std::fs::read_to_string(root.join("k8s/operator/deployment.yaml")).unwrap();
+        assert!(generated.contains("# SPEC-MANAGED: tech-design/k8s-operator.md#deployment"));
+        assert_eq!(generated.matches("# CODEGEN-BEGIN").count(), 1);
+        assert!(generated.contains("command: [\"/usr/local/bin/lumen-operator\"]"));
+        assert!(!generated.contains("/usr/bin/tini"));
     }
 
     #[test]
@@ -3303,7 +3952,7 @@ fill_sections: [source, changes]
 pub fn generated() {}
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -3372,7 +4021,7 @@ pub fn replaced() -> u8 {
 }
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -3424,7 +4073,7 @@ fill_sections: [source, changes]
 pub fn generated() {}
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -3493,7 +4142,7 @@ definitions:
     type: string
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -3668,6 +4317,85 @@ changes:
         assert_eq!(entries[0].action, "modify");
     }
 
+    #[test]
+    fn infers_change_entries_from_existing_codegen_spec_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join(".aw/tech-design/projects/score/logic/widget.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        let spec = r#"---
+id: widget
+fill_sections: [schema]
+---
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+title: Widget
+type: object
+properties:
+  name:
+    type: string
+```
+"#;
+        std::fs::write(&spec_path, spec).unwrap();
+        let target = root.join("projects/score/src/widget.rs");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(
+            &target,
+            r#"// CODEGEN-BEGIN
+/// @spec .aw/tech-design/projects/score/logic/widget.md#schema
+pub struct OldWidget;
+// CODEGEN-END
+"#,
+        )
+        .unwrap();
+
+        let entries =
+            infer_change_entries_from_existing_spec_refs(root, &spec_path, None, spec, None);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "projects/score/src/widget.rs");
+        assert_eq!(entries[0].section_id.as_deref(), Some("schema"));
+        assert_eq!(entries[0].impl_mode, ImplMode::Codegen);
+    }
+
+    #[test]
+    fn run_apply_errors_when_target_inference_has_no_policy_or_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join(".aw/tech-design/projects/score/logic/widget.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: widget
+fill_sections: [schema]
+---
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+title: Widget
+type: object
+properties:
+  name:
+    type: string
+```
+"#,
+        )
+        .unwrap();
+
+        let err = run_apply(&spec_path, root, false).expect_err("apply must report generator gap");
+        let message = err.to_string();
+
+        assert!(message.contains("No target files inferred"));
+        assert!(message.contains("generator gap"));
+        assert!(message.contains("not a request for new TD authors"));
+    }
+
     /// End-to-end: spec with `x-mamba-binding` + `x-constructor` drives a clean
     /// codegen run that produces the generated .rs file AND auto-wires the sibling
     /// lib.rs's MambaModule::register() body. Zero hand-written framework code
@@ -3745,7 +4473,7 @@ x-mamba-binding:
   signature: "HTTPException(status_code: int, detail: str | None = None)"
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -3806,9 +4534,9 @@ changes:
         );
     }
 
-    /// End-to-end: `tests` section → runnable `#[test]` file. Verifies the
-    /// extension gate accepts a `tests/<name>.rs` path when section=tests and
-    /// the generated file contains the declared setup + assertions.
+    /// End-to-end: `unit-test` section → runnable `#[test]` file. Verifies the
+    /// extension gate accepts a `tests/<name>.rs` path when section=unit-test
+    /// and the generated file contains the declared setup + assertions.
     #[test]
     fn test_end_to_end_tests_generator() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3827,16 +4555,11 @@ changes:
             &spec_path,
             r#"---
 id: http-exception
-fill_sections: [overview, tests, changes]
+fill_sections: [unit-test, changes]
 ---
 
-## Overview
-<!-- type: overview lang: markdown -->
-
-Tests.
-
-## Tests
-<!-- type: tests lang: yaml -->
+## Unit Test
+<!-- type: unit-test lang: yaml -->
 
 ```yaml
 imports:
@@ -3852,14 +4575,14 @@ tests:
       - "assert!(r.is_err())"
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
 changes:
   - path: projects/httpkit/tests/http_exception_test.rs
     action: create
-    section: tests
+    section: unit-test
 ```
 "#,
         )
@@ -3927,7 +4650,7 @@ x-mamba-binding:
   signature: "HTTPException(status_code: int)"
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -4061,7 +4784,7 @@ x-mamba-binding:
   signature: "HTTPException(status_code: int)"
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -4123,7 +4846,7 @@ dependencies:
   - { name: cclab-mamba-registry, spec: path, path: "../../crates/cclab-mamba-registry" }
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -4324,7 +5047,7 @@ fill_sections: [overview, changes]
 Spec tracks the merge-branch bug fix intent. Rust edit is hand-written
 by the agent — rule 2-2 of the codegen policy.
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -4370,7 +5093,9 @@ changes:
         assert!(!is_rust_source(&PathBuf::from(
             "projects/mamba/mambalibs/httpkit/Cargo.toml"
         )));
-        assert!(!is_rust_source(&PathBuf::from("projects/mamba/mambalibs/httpkit/README.md")));
+        assert!(!is_rust_source(&PathBuf::from(
+            "projects/mamba/mambalibs/httpkit/README.md"
+        )));
         assert!(!is_rust_source(&PathBuf::from("foo.py")));
         assert!(!is_rust_source(&PathBuf::from("foo.ts")));
         assert!(!is_rust_source(&PathBuf::from("no_extension")));
@@ -4567,7 +5292,7 @@ properties:
     type: string
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -4585,6 +5310,9 @@ changes:
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -4622,6 +5350,9 @@ changes:
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -4655,7 +5386,7 @@ properties:
 required: [name]
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -4675,6 +5406,9 @@ changes:
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -4729,6 +5463,9 @@ pydantic_models:
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -4785,6 +5522,9 @@ pydantic_models:
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -4839,6 +5579,9 @@ python_modules:
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -4875,7 +5618,7 @@ runtime_image:
         CMD ["python"]
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -4894,6 +5637,9 @@ changes:
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -4926,7 +5672,7 @@ deployment:
           - deployment.yaml
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -4945,6 +5691,9 @@ changes:
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -4955,6 +5704,74 @@ changes:
         let code = generate_code_for_entry(&entry, "deployment.md", &[], spec, Some(&td_ast));
 
         assert_eq!(code, "resources:\n  - deployment.yaml\n");
+    }
+
+    #[test]
+    fn generate_code_for_entry_dispatches_module_facade_preamble_from_changes() {
+        let entry = ChangeEntry {
+            path: "projects/cap/src/lib.rs".to_string(),
+            action: "modify".to_string(),
+            description: Some("cap crate facade".to_string()),
+            section_id: Some("exports".to_string()),
+            impl_mode: ImplMode::Codegen,
+            replaces: vec![MODULE_PREAMBLE_REPLACE.to_string()],
+            exports: vec![crate::generate::generators::ExportEntry {
+                module: "cli".to_string(),
+                symbols: Vec::new(),
+            }],
+            preamble: Some("//! cap facade\n// shared client re-exports".to_string()),
+            pub_uses: vec!["cap_core::{client, paths}".to_string()],
+            rust_source: None,
+            trait_impl: None,
+            handwrite_gap: None,
+            handwrite_tracker: None,
+            handwrite_reason: None,
+            handwrite_anchor: None,
+        };
+
+        let code = generate_code_for_entry(
+            &entry,
+            "projects/cap/tech-design/semantic/cap-src.md",
+            &[],
+            "",
+            None,
+        );
+
+        assert_eq!(
+            code,
+            "//! cap facade\n// shared client re-exports\n\npub use cap_core::{client, paths};\n\npub mod cli;"
+        );
+    }
+
+    #[test]
+    fn generate_code_for_entry_dispatches_rust_source_payload_from_schema_change() {
+        let entry = ChangeEntry {
+            path: "projects/cap/src/main.rs".to_string(),
+            action: "modify".to_string(),
+            description: Some("cap binary entrypoint".to_string()),
+            section_id: Some("schema".to_string()),
+            impl_mode: ImplMode::Codegen,
+            replaces: vec![WHOLE_FILE_REPLACE.to_string()],
+            exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: Some("use cap::cli;\n\nfn main() {}\n".to_string()),
+            trait_impl: None,
+            handwrite_gap: None,
+            handwrite_tracker: None,
+            handwrite_reason: None,
+            handwrite_anchor: None,
+        };
+
+        let code = generate_code_for_entry(
+            &entry,
+            "projects/cap/tech-design/semantic/cap-src.md",
+            &[],
+            "",
+            None,
+        );
+
+        assert_eq!(code, "use cap::cli;\n\nfn main() {}");
     }
 
     #[test]
@@ -4982,7 +5799,7 @@ flowchart TD
   init([return true])
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -5003,6 +5820,9 @@ changes:
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -5663,6 +6483,9 @@ id: mix
             impl_mode: ImplMode::Codegen,
             replaces: replaces.iter().map(|s| s.to_string()).collect(),
             exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
             trait_impl: None,
             handwrite_gap: None,
             handwrite_tracker: None,
@@ -5919,12 +6742,14 @@ fn extract_schema_yaml(spec_content: &str) -> Vec<serde_yaml::Value> {
         if in_yaml && trimmed == "```" {
             let parsed = serde_yaml::from_str::<serde_yaml::Value>(&yaml_content);
             if let Err(ref e) = parsed {
-                eprintln!(
-                    "[gen apply] WARNING: ## Schema YAML parse failed: {}. \
-                     Block contents (first 200 chars): {}",
-                    e,
-                    &yaml_content.chars().take(200).collect::<String>()
-                );
+                if !apply_diagnostics_are_quiet() {
+                    eprintln!(
+                        "[gen apply] WARNING: ## Schema YAML parse failed: {}. \
+                         Block contents (first 200 chars): {}",
+                        e,
+                        &yaml_content.chars().take(200).collect::<String>()
+                    );
+                }
             }
             if let Ok(yaml) = parsed {
                 results.extend(expand_schema_value(yaml));
@@ -6140,8 +6965,49 @@ pub(crate) fn generate_code_for_entry(
     let target_section = entry.section_id.as_deref();
     let mut code_parts: Vec<String> = Vec::new();
 
+    // Whole Rust source unit (`rust_source:` on a Changes entry). This is
+    // intentionally entry-local so projects can promote source replay payloads
+    // into TD-owned Changes metadata while keeping the semantic section type
+    // (usually `schema`) intact for traceability.
+    if let Some(source) = entry.rust_source.as_deref() {
+        return source.trim_end().to_string();
+    }
+
+    // rust-source-unit (td_ast): regenerate the whole file through the
+    // structured item-tree from the TD-embedded `## Source` fence. Mirrors the
+    // dispatch in the main apply loop so the standardize/gen-apply entry point
+    // produces correct byte-equivalent output instead of a marker-only TODO
+    // stub. The rust-source-unit path reads the TD fence, not the target, so the
+    // root argument is unused here.
+    if matches!(
+        target_section,
+        Some("source" | "rust-source-unit" | "text-source-unit")
+    ) && (source_is_rust_source_unit(spec_content) || source_is_text_source_unit(spec_content))
+    {
+        return generate_source_section_code(
+            spec_content,
+            spec_path,
+            Some(&entry.path),
+            Path::new("."),
+        );
+    }
+
     if matches!(target_section, Some("runtime-image" | "deployment")) {
         if let Some(code) = try_generate_operations_artifact(spec_content, entry, td_ast) {
+            return code;
+        }
+    }
+
+    if matches!(target_section, Some("wireframe")) {
+        if let Some(code) = try_generate_react_wireframe_file(spec_content, entry, td_ast) {
+            return code;
+        }
+    }
+
+    if matches!(target_section, Some("rest-api" | "logic" | "interaction")) {
+        if let Some(code) =
+            try_generate_python_router_module(spec_content, spec_path, entry, td_ast)
+        {
             return code;
         }
     }
@@ -6165,6 +7031,8 @@ pub(crate) fn generate_code_for_entry(
     // `ChangeEntry` metadata rather than by a dedicated Markdown section body.
     if matches!(target_section, Some("exports")) && !entry.exports.is_empty() {
         let spec = crate::generate::generators::ModuleFacadeSpec {
+            preamble: entry.preamble.clone(),
+            pub_uses: entry.pub_uses.clone(),
             exports: entry.exports.clone(),
         };
         let out = crate::generate::generators::run_module_facade(
@@ -6180,7 +7048,7 @@ pub(crate) fn generate_code_for_entry(
         }
     }
 
-    // 0b. Trait impl (`trait_impl:` on a Changes entry → impl Trait for Type).
+    // 0a. Trait impl (`trait_impl:` on a Changes entry → impl Trait for Type).
     if matches!(target_section, Some("trait_impl")) {
         if let Some(spec) = entry.trait_impl.as_ref() {
             let out = crate::generate::generators::run_trait_impl(
@@ -6197,36 +7065,57 @@ pub(crate) fn generate_code_for_entry(
         }
     }
 
+    let target_is_rust = is_rust_source(Path::new(&entry.path));
+
     // 1. Schema (JSON Schema YAML → Rust structs)
-    if matches!(target_section, None | Some("schema")) {
+    if target_is_rust && matches!(target_section, None | Some("schema")) {
         if let Some(code) = try_generate_schema(spec_content, spec_path, td_ast) {
             code_parts.push(code);
         }
     }
 
     // 2. CLI (CLI YAML → clap Subcommand enum)
-    if matches!(target_section, None | Some("cli")) {
+    if target_is_rust && matches!(target_section, None | Some("cli")) {
         if let Some(code) = try_generate_cli(spec_content, td_ast) {
             code_parts.push(code);
         }
     }
 
-    // 2b. Test plan (markdown tables → #[test] stubs)
-    if matches!(target_section, None | Some("test-plan")) {
+    // 2b. Unit test (Mermaid/table/YAML → #[test] stubs)
+    if target_is_rust
+        && matches!(
+            target_section,
+            None | Some("unit-test" | "test-plan" | "tests")
+        )
+    {
+        if let Some(code) = try_generate_unit_test_mermaid(spec_content, spec_path) {
+            code_parts.push(code);
+        }
         if let Some(code) = try_generate_test_plan_markdown(spec_content, spec_path) {
+            code_parts.push(code);
+        }
+        if let Some(code) = try_generate_unit_test_yaml(spec_content) {
             code_parts.push(code);
         }
     }
 
-    // 2c. RPC API (OpenRPC YAML → async fn signatures)
-    if matches!(target_section, None | Some("rpc-api")) {
+    // 2c. E2E test (YAML journey + side-effect assertions → integration tests)
+    if target_is_rust && matches!(target_section, None | Some("e2e-test")) {
+        let output = crate::generate::gen::rust::tests_gen::generate_e2e_tests(spec_content);
+        if output.emitted {
+            code_parts.push(output.code);
+        }
+    }
+
+    // 2d. RPC API (OpenRPC YAML → async fn signatures)
+    if target_is_rust && matches!(target_section, None | Some("rpc-api")) {
         if let Some(code) = try_generate_rpc_api(spec_content, spec_path, td_ast) {
             code_parts.push(code);
         }
     }
 
-    // 2d. Config (Config JSON Schema → struct + Default impl)
-    if matches!(target_section, None | Some("config")) {
+    // 2e. Config (Config JSON Schema → struct + Default impl)
+    if target_is_rust && matches!(target_section, None | Some("config")) {
         if let Some(code) = try_generate_config(spec_content, td_ast) {
             code_parts.push(code);
         }
@@ -6292,11 +7181,13 @@ pub(crate) fn generate_code_for_entry(
 
     // Fallback: marker-only SPEC-REF + TODO
     let section = target_section.unwrap_or("changes");
-    eprintln!(
-        "[gen apply] WARNING: No generator matched for entry '{}' (section: {}) in spec '{}'. \
-        Producing marker-only output (SPEC-REF + TODO).",
-        entry.path, section, spec_path,
-    );
+    if !apply_diagnostics_are_quiet() {
+        eprintln!(
+            "[gen apply] WARNING: No generator matched for entry '{}' (section: {}) in spec '{}'. \
+            Producing marker-only output (SPEC-REF + TODO).",
+            entry.path, section, spec_path,
+        );
+    }
 
     let fallback_lang = if is_python_source(Path::new(&entry.path)) {
         Lang::Python
@@ -6380,6 +7271,41 @@ fn operation_section_yaml(spec_content: &str, section: &str) -> Option<String> {
     extract_section_yaml(spec_content, heading)
 }
 
+fn try_generate_react_wireframe_file(
+    spec_content: &str,
+    entry: &ChangeEntry,
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+) -> Option<String> {
+    if !is_typescript_source(Path::new(&entry.path)) {
+        return None;
+    }
+    let spec = react_wireframe_spec_from_td_ast(td_ast).or_else(|| {
+        let yaml = extract_section_yaml(spec_content, "Wireframe")?;
+        serde_yaml::from_str::<crate::generate::spec_ir::WireframeSpec>(&yaml).ok()
+    })?;
+
+    crate::generate::generators::render_react_wireframe_file(&spec, Path::new(&entry.path))
+}
+
+fn react_wireframe_spec_from_td_ast(
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+) -> Option<crate::generate::spec_ir::WireframeSpec> {
+    let td_ast = td_ast?;
+    td_ast
+        .sections
+        .iter()
+        .filter(|section| section.section_type == crate::models::spec_rules::SectionType::Wireframe)
+        .filter_map(|section| match &section.body {
+            crate::td_ast::types::TypedBody::JsonSchema(payload) => serde_yaml::to_value(payload)
+                .ok()
+                .and_then(|value| serde_yaml::from_value(value).ok()),
+            _ => None,
+        })
+        .find(|spec: &crate::generate::spec_ir::WireframeSpec| {
+            !spec.name.trim().is_empty() || !spec.layout.is_empty()
+        })
+}
+
 fn try_generate_python_pydantic_module(
     spec_content: &str,
     spec_path: &str,
@@ -6390,10 +7316,11 @@ fn try_generate_python_pydantic_module(
         return None;
     }
     let section = entry.section_id.as_deref()?;
-    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path).or_else(|| {
-        let yaml = python_section_yaml(spec_content, section)?;
-        crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
-    })?;
+    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path, Some(&entry.path))
+        .or_else(|| {
+            let yaml = python_section_yaml(spec_content, section)?;
+            crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
+        })?;
 
     if spec.pydantic_models.is_empty() {
         return None;
@@ -6415,10 +7342,11 @@ fn try_generate_python_module(
         return None;
     }
     let section = entry.section_id.as_deref()?;
-    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path).or_else(|| {
-        let yaml = python_section_yaml(spec_content, section)?;
-        crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
-    })?;
+    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path, Some(&entry.path))
+        .or_else(|| {
+            let yaml = python_section_yaml(spec_content, section)?;
+            crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
+        })?;
     let module = spec
         .python_modules
         .iter()
@@ -6427,15 +7355,78 @@ fn try_generate_python_module(
     Some(crate::generate::gen::python::emit_python_module(&spec.spec_id, module).content)
 }
 
+fn try_generate_python_router_module(
+    spec_content: &str,
+    spec_path: &str,
+    entry: &ChangeEntry,
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+) -> Option<String> {
+    if !is_python_source(Path::new(&entry.path)) {
+        return None;
+    }
+    let section = entry.section_id.as_deref()?;
+    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path, Some(&entry.path))
+        .or_else(|| {
+            let yaml = python_section_yaml(spec_content, section)?;
+            crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
+        })?;
+    let router = select_python_router(&spec, &entry.path)?;
+
+    Some(crate::generate::gen::python::emit_router(&spec.spec_id, router).content)
+}
+
+fn select_python_router<'a>(
+    spec: &'a crate::generate::gen::python::PythonBackendSpec,
+    target_path: &str,
+) -> Option<&'a crate::generate::gen::python::RouterIr> {
+    if spec.routers.len() == 1 {
+        return spec.routers.first();
+    }
+
+    let path = Path::new(target_path);
+    let file_stem = path.file_stem().and_then(|name| name.to_str());
+    let parent_name = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str());
+
+    spec.routers.iter().find(|router| {
+        let generated_router_path = format!("{}/router.py", router.name);
+        target_path.ends_with(&generated_router_path)
+            || file_stem == Some(router.name.as_str())
+            || parent_name == Some(router.name.as_str())
+    })
+}
+
 fn python_backend_spec_from_td_ast(
     td_ast: Option<&crate::td_ast::types::TDAst>,
     section: &str,
     spec_path: &str,
+    target_path: Option<&str>,
 ) -> Option<crate::generate::gen::python::PythonBackendSpec> {
+    let td_ast = td_ast?;
+    if matches!(section, "rest-api") {
+        return td_ast
+            .sections
+            .iter()
+            .filter(|section| {
+                section.section_type == crate::models::spec_rules::SectionType::RestApi
+            })
+            .filter_map(|section| match &section.body {
+                crate::td_ast::types::TypedBody::OpenApi(payload) => {
+                    crate::generate::gen::python::lower_openapi_payload(
+                        payload,
+                        spec_path,
+                        target_path,
+                    )
+                }
+                _ => None,
+            })
+            .find(|spec| !spec.routers.is_empty());
+    }
     if !matches!(section, "models" | "schema") {
         return None;
     }
-    let td_ast = td_ast?;
     td_ast
         .sections
         .iter()
@@ -6502,7 +7493,7 @@ fn try_generate_cli(
     }
 }
 
-/// Try markdown-table test plan generator from `## Test Plan` sections.
+/// Try markdown-table unit-test generator from `## Unit Test` sections.
 fn try_generate_test_plan_markdown(spec_content: &str, spec_path: &str) -> Option<String> {
     use crate::generate::gen::rust::generate_test_plan_from_markdown;
     let output = generate_test_plan_from_markdown(spec_content, spec_path)?;
@@ -6510,6 +7501,27 @@ fn try_generate_test_plan_markdown(spec_content: &str, spec_path: &str) -> Optio
         None
     } else {
         Some(output.code)
+    }
+}
+
+/// Try Mermaid Plus unit-test generator from `## Unit Test` or legacy `## Test Plan`.
+fn try_generate_unit_test_mermaid(spec_content: &str, spec_path: &str) -> Option<String> {
+    use crate::generate::gen::rust::generate_unit_tests_from_mermaid;
+    let output = generate_unit_tests_from_mermaid(spec_content, spec_path)?;
+    if output.code.is_empty() {
+        None
+    } else {
+        Some(output.code)
+    }
+}
+
+/// Try unit-test YAML generator from `## Unit Test` or legacy `## Tests`.
+fn try_generate_unit_test_yaml(spec_content: &str) -> Option<String> {
+    let output = crate::generate::gen::rust::tests_gen::generate_tests(spec_content);
+    if output.emitted {
+        Some(output.code)
+    } else {
+        None
     }
 }
 
@@ -6719,10 +7731,12 @@ fn try_generate_logic_emitter(
     let spec = match logic_emitter::parse_yaml(&yaml) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!(
-                "[gen apply] LogicEmitter: frontmatter has `signature:` but \
-                 failed to parse as LogicSpec ({e}); falling back to legacy logic generator."
-            );
+            if !apply_diagnostics_are_quiet() {
+                eprintln!(
+                    "[gen apply] LogicEmitter: frontmatter has `signature:` but \
+                     failed to parse as LogicSpec ({e}); falling back to legacy logic generator."
+                );
+            }
             return None;
         }
     };
@@ -6730,11 +7744,13 @@ fn try_generate_logic_emitter(
     let output = match logic_emitter::emit(&spec) {
         Ok(o) => o,
         Err(e) => {
-            eprintln!(
-                "[gen apply] LogicEmitter: emit failed for spec id `{}` ({e}); \
-                 falling back to legacy logic generator.",
-                spec.id,
-            );
+            if !apply_diagnostics_are_quiet() {
+                eprintln!(
+                    "[gen apply] LogicEmitter: emit failed for spec id `{}` ({e}); \
+                     falling back to legacy logic generator.",
+                    spec.id,
+                );
+            }
             return None;
         }
     };
@@ -6858,7 +7874,7 @@ edges:
     /// logic_emitter::tests::emit_module_facade_body_matches_handwritten_byte_for_byte).
     #[test]
     fn dispatch_emits_byte_equivalent_module_facade_body() {
-        const EXPECTED: &str = "/// @spec spec.md#logic\npub fn run_module_facade(spec: &ModuleFacadeSpec, spec_ref: Option<String>) -> ModuleFacadeOutput {\n    let mut lines: Vec<String> = Vec::new();\n    for entry in &spec.exports {\n        lines.push(format!(\"pub mod {};\", entry.module));\n        for sym in &entry.symbols {\n            lines.push(format!(\"pub use {}::{};\", entry.module, sym));\n        }\n    }\n    ModuleFacadeOutput { lines, spec_ref }\n}";
+        const EXPECTED: &str = "/// @spec spec.md#logic\npub fn run_module_facade(spec: &ModuleFacadeSpec, spec_ref: Option<String>) -> ModuleFacadeOutput {\n    let mut lines: Vec<String> = Vec::new();\n    if let Some(preamble) = spec.preamble.as_deref() {\n        lines.extend(preamble.trim_end().lines().map(str::to_string));\n    }\n    if !lines.is_empty() && (!spec.pub_uses.is_empty() || !spec.exports.is_empty()) {\n        lines.push(String::new());\n    }\n    for path in &spec.pub_uses {\n        lines.push(format!(\"pub use {path};\"));\n    }\n    if !spec.pub_uses.is_empty() && !spec.exports.is_empty() {\n        lines.push(String::new());\n    }\n    for entry in &spec.exports {\n        lines.push(format!(\"pub mod {};\", entry.module));\n        for sym in &entry.symbols {\n            lines.push(format!(\"pub use {}::{};\", entry.module, sym));\n        }\n    }\n    ModuleFacadeOutput { lines, spec_ref }\n}";
 
         let yaml = r#"
 id: run-module-facade
@@ -6867,30 +7883,31 @@ entry: init
 nodes:
   init:
     kind: process
-    code: "let mut lines: Vec<String> = Vec::new();"
-  outer_loop:
-    kind: loop
-    over: "&spec.exports"
-    as: entry
-  emit_mod:
-    kind: process
-    code: 'lines.push(format!("pub mod {};", entry.module));'
-  inner_loop:
-    kind: loop
-    over: "&entry.symbols"
-    as: sym
-  emit_use:
-    kind: process
-    code: 'lines.push(format!("pub use {}::{};", entry.module, sym));'
+    code: |
+      let mut lines: Vec<String> = Vec::new();
+      if let Some(preamble) = spec.preamble.as_deref() {
+          lines.extend(preamble.trim_end().lines().map(str::to_string));
+      }
+      if !lines.is_empty() && (!spec.pub_uses.is_empty() || !spec.exports.is_empty()) {
+          lines.push(String::new());
+      }
+      for path in &spec.pub_uses {
+          lines.push(format!("pub use {path};"));
+      }
+      if !spec.pub_uses.is_empty() && !spec.exports.is_empty() {
+          lines.push(String::new());
+      }
+      for entry in &spec.exports {
+          lines.push(format!("pub mod {};", entry.module));
+          for sym in &entry.symbols {
+              lines.push(format!("pub use {}::{};", entry.module, sym));
+          }
+      }
   return_node:
     kind: terminal
     value: "ModuleFacadeOutput { lines, spec_ref }"
 edges:
-  - { from: init,        to: outer_loop,  kind: next }
-  - { from: outer_loop,  to: emit_mod,    kind: body }
-  - { from: emit_mod,    to: inner_loop,  kind: next }
-  - { from: inner_loop,  to: emit_use,    kind: body }
-  - { from: outer_loop,  to: return_node, kind: after }
+  - { from: init, to: return_node, kind: next }
 "#;
         let frontmatter: serde_yaml::Value =
             serde_yaml::from_str(yaml).expect("frontmatter parses");
@@ -6955,6 +7972,10 @@ fn is_python_source(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("py")
 }
 
+fn is_shell_source(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("sh")
+}
+
 fn is_cargo_toml(path: &Path) -> bool {
     path.file_name().and_then(|s| s.to_str()) == Some("Cargo.toml")
 }
@@ -6967,10 +7988,13 @@ fn is_yaml_source(path: &Path) -> bool {
 }
 
 fn is_docker_artifact(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some("Dockerfile" | ".dockerignore")
-    )
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    file_name == ".dockerignore"
+        || file_name == "Dockerfile"
+        || file_name.starts_with("Dockerfile.")
+        || file_name.ends_with(".dockerfile")
 }
 
 /// Decide whether a target path is writable by a generator, and return the
@@ -6982,17 +8006,16 @@ fn target_language(path: &Path, section: Option<&str>) -> Option<crate::generate
     if is_rust_source(path) {
         return Some(Lang::Rust);
     }
+    if section == Some("text-source-unit") && is_shell_source(path) {
+        return Some(Lang::Toml);
+    }
     if supports_source_backed_replay_path(path, section) {
         return Some(Lang::TypeScript);
     }
     if section == Some("source") && is_typescript_source(path) {
         return Some(Lang::TypeScript);
     }
-    if matches!(
-        section,
-        Some("source" | "models" | "schema" | "logic" | "tests")
-    ) && is_python_source(path)
-    {
+    if is_python_source(path) && is_python_codegen_section(section) {
         return Some(Lang::Python);
     }
     if section == Some("runtime-image") && is_docker_artifact(path) {
@@ -7008,6 +8031,68 @@ fn target_language(path: &Path, section: Option<&str>) -> Option<crate::generate
         return Some(Lang::Toml);
     }
     None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreparedCodegenBody {
+    shebang: Option<String>,
+    body: String,
+}
+
+fn prepare_codegen_body_for_target(
+    path: &Path,
+    section: Option<&str>,
+    generated_body: &str,
+) -> PreparedCodegenBody {
+    if section == Some("text-source-unit") && is_shell_source(path) {
+        if let Some((shebang, body)) = split_shebang(generated_body) {
+            return PreparedCodegenBody {
+                shebang: Some(shebang.to_string()),
+                body: body.to_string(),
+            };
+        }
+    }
+    PreparedCodegenBody {
+        shebang: None,
+        body: generated_body.to_string(),
+    }
+}
+
+fn split_shebang(body: &str) -> Option<(&str, &str)> {
+    if !body.starts_with("#!") {
+        return None;
+    }
+    match body.find('\n') {
+        Some(idx) => Some((&body[..idx], &body[idx + 1..])),
+        None => Some((body, "")),
+    }
+}
+
+fn insert_codegen_block_for_target(
+    file_content: &str,
+    spec_ref: &str,
+    prepared: &PreparedCodegenBody,
+    lang: crate::generate::marker::Lang,
+) -> String {
+    if let Some(shebang) = prepared.shebang.as_deref() {
+        if file_content.trim().is_empty() {
+            let block = crate::generate::marker::insert_codegen_block(
+                "",
+                spec_ref,
+                &prepared.body,
+                None,
+                lang,
+            );
+            return format!("{shebang}\n{block}");
+        }
+    }
+    crate::generate::marker::insert_codegen_block(
+        file_content,
+        spec_ref,
+        &prepared.body,
+        None,
+        lang,
+    )
 }
 
 /// Insert a CODEGEN block for a Cargo `[dependencies]` manifest fragment.
@@ -7085,9 +8170,7 @@ fn check_workspace_language(
     if section == Some("source") {
         return None;
     }
-    if is_python_source(target_path)
-        && matches!(section, Some("models" | "schema" | "logic" | "tests"))
-    {
+    if is_python_source(target_path) && is_python_codegen_section(section) {
         return None;
     }
     if matches!(section, Some("runtime-image" | "deployment")) {
@@ -7139,6 +8222,24 @@ fn check_workspace_language(
     None
 }
 
+fn is_python_codegen_section(section: Option<&str>) -> bool {
+    matches!(
+        section,
+        Some(
+            "source"
+                | "models"
+                | "schema"
+                | "logic"
+                | "interaction"
+                | "rest-api"
+                | "config"
+                | "unit-test"
+                | "e2e-test"
+                | "tests"
+        )
+    )
+}
+
 /// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
 pub(crate) fn supports_source_backed_replay(target_rel_path: &str, section: Option<&str>) -> bool {
     supports_source_backed_replay_path(Path::new(target_rel_path), section)
@@ -7177,7 +8278,15 @@ fn supports_source_backed_replay_path(path: &Path, section: Option<&str>) -> boo
     if section.is_none() {
         return false;
     }
-    if section == Some("tests") && is_rust_source(path) {
+    if matches!(section, Some("schema"))
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "llms.txt")
+    {
+        return true;
+    }
+    if matches!(section, Some("unit-test" | "e2e-test" | "tests")) && is_rust_source(path) {
         return true;
     }
     matches!(
@@ -7229,6 +8338,238 @@ fn has_whole_file_source_codegen_block(content: &str) -> bool {
 }
 
 #[cfg(test)]
+mod python_and_frontend_codegen_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn python_rest_api_apply_generates_fastapi_router() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/api.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r##"---
+id: api
+fill_sections: [rest-api, changes]
+---
+
+## Rest API
+<!-- type: rest-api lang: yaml -->
+
+```yaml
+openapi: 3.1.0
+info:
+  title: Project API
+  version: "0.1.0"
+paths:
+  /projects:
+    post:
+      operationId: create_project
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+components:
+  schemas:
+    ProjectRequest:
+      type: object
+    ProjectResponse:
+      type: object
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/api/router.py
+    action: create
+    section: rest-api
+    description: Generate project API router.
+```
+"##,
+        )
+        .unwrap();
+
+        let report =
+            run_apply_scoped_targets(&spec_path, root, false, &[root.join("src")]).unwrap();
+
+        assert_eq!(report.files_created(), 1);
+        assert_eq!(report.total_blocks_updated(), 1);
+        let generated = std::fs::read_to_string(root.join("src/api/router.py")).unwrap();
+        assert!(generated.contains("# SPEC-MANAGED: tech-design/api.md#rest-api"));
+        assert!(generated.contains("from .models import ProjectRequest"));
+        assert!(generated.contains("from .models import ProjectResponse"));
+        assert!(generated.contains("router = APIRouter(prefix=\"\", tags=[\"Project API\"])"));
+        assert!(generated.contains("@router.post(\"/projects\", response_model=ProjectResponse)"));
+        assert!(generated
+            .contains("async def create_project(payload: ProjectRequest) -> ProjectResponse:"));
+        assert!(!generated.contains("#[test]"));
+    }
+
+    #[test]
+    fn python_unit_test_targets_use_marker_fallback_not_rust_tests() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/test.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: test
+fill_sections: [unit-test, changes]
+---
+
+## Unit Test
+<!-- type: unit-test lang: yaml -->
+
+```yaml
+tests:
+  - name: creates_project_issue
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: tests/test_projects.py
+    action: create
+    section: unit-test
+    description: Verify project creation.
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply_scoped_targets(&spec_path, root, false, &[root.join("tests")]).unwrap();
+
+        let generated = std::fs::read_to_string(root.join("tests/test_projects.py")).unwrap();
+        assert!(generated.contains("# SPEC-REF: tech-design/test.md#unit-test"));
+        assert!(generated.contains("# TODO: Verify project creation."));
+        assert!(!generated.contains("#[test]"));
+        assert!(!generated.contains("fn creates_project_issue"));
+    }
+
+    #[test]
+    fn react_wireframe_apply_generates_tsx_component() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/ui.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: ui
+fill_sections: [wireframe, changes]
+---
+
+## Wireframe
+<!-- type: wireframe lang: yaml -->
+
+```yaml
+name: ProjectList
+component_type: page
+props:
+  - name: projectCount
+    prop_type: number
+    required: true
+layout:
+  - kind: section
+    label: projects
+    children:
+      - kind: text
+        label: Projects
+      - kind: button
+        label: New project
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/ProjectList.tsx
+    action: create
+    section: wireframe
+    description: Generate project list screen.
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply_scoped_targets(&spec_path, root, false, &[root.join("src")]).unwrap();
+
+        let generated = std::fs::read_to_string(root.join("src/ProjectList.tsx")).unwrap();
+        assert!(generated.contains("// SPEC-MANAGED: tech-design/ui.md#wireframe"));
+        assert!(generated.contains("export function ProjectList"));
+        assert!(generated.contains("<span>Projects</span>"));
+        assert!(generated.contains("<button type=\"button\">New project</button>"));
+        assert!(!generated.contains("#[test]"));
+    }
+
+    #[test]
+    fn workspace_guard_allows_python_backend_and_frontend_sections() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("pyproject.toml"), "[project]\nname = \"app\"\n").unwrap();
+        let python_target = root.join("src/api/router.py");
+        for section in [
+            "schema",
+            "models",
+            "rest-api",
+            "logic",
+            "interaction",
+            "config",
+            "unit-test",
+            "e2e-test",
+            "tests",
+        ] {
+            assert_eq!(
+                target_language(&python_target, Some(section)),
+                Some(crate::generate::marker::Lang::Python),
+                "python section {section} should have a marker language"
+            );
+            assert!(
+                check_workspace_language(root, &python_target, Some(section)).is_none(),
+                "python section {section} should not be rejected by workspace guard"
+            );
+        }
+
+        let frontend_root = tempfile::tempdir().unwrap();
+        let frontend = frontend_root.path();
+        std::fs::write(frontend.join("package.json"), "{}\n").unwrap();
+        let tsx_target = frontend.join("src/App.tsx");
+        for section in [
+            "wireframe",
+            "component",
+            "design-token",
+            "unit-test",
+            "e2e-test",
+        ] {
+            assert_eq!(
+                target_language(&tsx_target, Some(section)),
+                Some(crate::generate::marker::Lang::TypeScript),
+                "frontend section {section} should have a marker language"
+            );
+            assert!(
+                check_workspace_language(frontend, &tsx_target, Some(section)).is_none(),
+                "frontend section {section} should not be rejected by workspace guard"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod source_backed_replay_tests {
     use super::*;
 
@@ -7247,6 +8588,15 @@ mod source_backed_replay_tests {
             "projects/jet/tools/manifest/src/lib.rs",
             Some("schema"),
             ".aw/tech-design/projects/jet/specs/jet-tools-manifest-src.md",
+        ));
+    }
+
+    #[test]
+    fn project_root_llms_txt_schema_uses_source_backed_replay() {
+        assert!(supports_source_backed_replay_for_spec(
+            "projects/lumen/llms.txt",
+            Some("schema"),
+            "projects/lumen/tech-design/semantic/lumen-projects-lumen.md",
         ));
     }
 
@@ -7284,7 +8634,7 @@ flowchart TD
   preserve_frontend_behavior --> generator_gap
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -7345,7 +8695,7 @@ fill_sections: [source, changes]
 pub fn generated() {}
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -7407,7 +8757,7 @@ definitions:
     type: object
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -7474,7 +8824,7 @@ definitions:
     type: object
 ```
 
-## Traceability Changes
+## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
@@ -7573,7 +8923,8 @@ pub(crate) fn extract_section_yaml(spec_content: &str, heading: &str) -> Option<
     None
 }
 
-fn extract_typed_section_yaml(spec_content: &str, section_type: &str) -> Option<String> {
+/// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
+pub(crate) fn extract_typed_section_yaml(spec_content: &str, section_type: &str) -> Option<String> {
     let lines: Vec<&str> = spec_content.lines().collect();
     for (idx, line) in lines.iter().enumerate() {
         if !line.starts_with("## ") {
@@ -7666,6 +9017,33 @@ pub(crate) fn generate_source_section_code(
 ) -> String {
     let spec_ref = format!("{spec_path}#source");
     let embedded_source = extract_section_fence(spec_content, "Source").unwrap_or_default();
+
+    // rust-source-unit (td_ast): regenerate the file by routing the TD-embedded
+    // source through the structured lossless item-tree, NOT by replaying a
+    // stored snapshot or re-reading the live target. The TD fence is the source
+    // of truth: for unedited input this is byte-identical; for an edited TD the
+    // structured edit regenerates. A parse failure means the TD fence is not
+    // clean Rust — fall back to the raw embedded source so apply still writes
+    // something inspectable rather than silently dropping the section.
+    if source_is_rust_source_unit(spec_content) {
+        let regenerated = crate::generate::rust_source_unit::regenerate(&embedded_source)
+            .unwrap_or_else(|_| embedded_source.clone());
+        return if target_rel_path.is_some_and(is_rust_path_str) {
+            annotate_rust_source_items(&regenerated, &spec_ref)
+        } else {
+            regenerated
+        };
+    }
+
+    // text-source-unit (td_ast): the language-agnostic sibling of rust-source-unit
+    // for opaque text with no structured AST (shell, dockerfile, plain config).
+    // The TD-embedded fence is the source of truth and is emitted VERBATIM — TD
+    // edits regenerate, which is exactly what source-replay snapshots fail to do.
+    // No parsing, no per-item annotation; byte-equivalent by construction.
+    if source_is_text_source_unit(spec_content) {
+        return embedded_source;
+    }
+
     let source = if let Some(directive) = source_from_target_directive(spec_content) {
         target_rel_path
             .and_then(|path| std::fs::read_to_string(root.join(path)).ok())
@@ -7681,6 +9059,43 @@ pub(crate) fn generate_source_section_code(
     } else {
         source
     }
+}
+
+/// True when the `## Source` section opts into rust-source-unit (td_ast)
+/// regeneration via a `<!-- type: rust-source-unit ... -->` marker. Such a
+/// section carries no `source-snapshot:`/`source-from-target:` directive — the
+/// TD-embedded fence is the source of truth and is regenerated through the
+/// structured item-tree instead of replayed.
+fn source_is_rust_source_unit(spec_content: &str) -> bool {
+    source_section_has_type_marker(spec_content, "type: rust-source-unit")
+}
+
+/// True when the `## Source` section opts into text-source-unit (td_ast)
+/// verbatim regeneration via a `<!-- type: text-source-unit ... -->` marker —
+/// the opaque-text counterpart of rust-source-unit (shell, dockerfile, etc.).
+fn source_is_text_source_unit(spec_content: &str) -> bool {
+    source_section_has_type_marker(spec_content, "type: text-source-unit")
+}
+
+/// Scan the `## Source` section for a `<!-- type: <marker> ... -->` annotation.
+/// `marker` must be the full `type: <kind>` token so `rust-source-unit` does not
+/// accidentally match `text-source-unit` or the legacy `source` probe.
+fn source_section_has_type_marker(spec_content: &str, marker: &str) -> bool {
+    let mut in_source = false;
+    for line in spec_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") {
+            in_source = trimmed
+                .trim_start_matches('#')
+                .trim()
+                .eq_ignore_ascii_case("Source");
+            continue;
+        }
+        if in_source && trimmed.starts_with("<!--") && trimmed.contains(marker) {
+            return true;
+        }
+    }
+    false
 }
 
 enum SourceFromTargetDirective {
