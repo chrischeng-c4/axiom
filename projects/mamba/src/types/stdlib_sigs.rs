@@ -307,6 +307,55 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("buffer", CoreTy::MemoryView)],
         enforceable: true,
     },
+    // POSITIVE: memoryview method contracts. Key/exception/order contracts are
+    // represented as Typed so bare `_W()` probes are rejected while dynamic and
+    // scalar-valid values remain skip-safe. The private release hook requires a
+    // memoryview object, so concrete scalars are rejected by the MemoryView
+    // negative wall.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "memoryview",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[
+            p("exc_type", CoreTy::Typed),
+            p("exc_value", CoreTy::Unknown),
+            p("traceback", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "memoryview",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "memoryview",
+        name: "__release_buffer__",
+        kind: SigKind::Method,
+        params: &[p("buffer", CoreTy::MemoryView)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "memoryview",
+        name: "__setitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "memoryview",
+        name: "tobytes",
+        kind: SigKind::Method,
+        params: &[p("order", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: complex arithmetic dunders accept complex-compatible numeric
     // values. A dedicated negative wall rejects impossible concrete scalars such
     // as str while allowing int/float/bool and dynamic complex-like values.
