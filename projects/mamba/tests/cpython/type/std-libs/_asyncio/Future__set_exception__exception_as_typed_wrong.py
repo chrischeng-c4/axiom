@@ -9,12 +9,11 @@
 # case = "Future__set_exception__exception_as_typed_wrong"
 # subject = "_asyncio.Future.set_exception(exception: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exception"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_asyncio.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exception
 # mamba-strict-type: TypeError
 """Type wall: _asyncio.Future.set_exception(exception: typed); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from _asyncio import Future
-obj = object.__new__(Future)
+obj = Future()
 try:
     obj.set_exception(_W())  # exception: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
