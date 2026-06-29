@@ -146,3 +146,36 @@ e2e_tests:
     verifies:
       - "The local perf gate still exercises the term lookup latency floor."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: projects/lumen/src/storage.rs
+    action: claim
+    section: logic
+    impl_mode: hand-written
+    reason: "Existing `try_plan` standalone Term branch returns a posting-window page and exact bitmap-cardinality total without full-score materialization."
+  - path: projects/lumen/tests/perf_gate.rs
+    action: verify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Existing term latency floor remains the local regression check for exact term lookup cost."
+  - path: projects/lumen/tests/perf_gate_vs_db.rs
+    action: verify
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Existing competitive gate carries kw_term peer evidence through pg-native/OpenSearch comparison."
+  - path: projects/lumen/vat.toml
+    action: verify
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Existing ec-efficiency-meter runner provisions pg/OpenSearch and runs the release competitive gate under meter."
+  - path: projects/lumen/README.md
+    action: claim
+    section: changes
+    impl_mode: hand-written
+    reason: "Existing performance contract documents kw_term pg-native and OpenSearch margins as green."
+```
