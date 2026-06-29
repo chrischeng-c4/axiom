@@ -95,12 +95,11 @@ enum Command {
     /// `--check` reports the available version without changing anything.
     // @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
     Upgrade(UpgradeArgs),
-    /// File a diagnostics-rich GitHub issue. Bundles the build version, target,
-    /// git sha and OS/arch (and an optional running node's status via `--url`)
-    /// with your description, then opens an issue via `GITHUB_TOKEN` — or prints
-    /// a pre-filled `issues/new` URL when no token is set. `--dry-run` previews.
-    // @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
-    ReportIssue(ReportIssueArgs),
+    /// Search, view, and file Lumen issues on the axiom tracker.
+    /// `search` and `view` read existing `project:lumen` issues; `create`
+    /// files a diagnostics-rich issue tagged `project:lumen`.
+    // @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
+    Issue(IssueArgs),
 }
 
 #[derive(clap::Args)]
@@ -135,13 +134,48 @@ struct UpgradeArgs {
     yes: bool,
 }
 
-/// `lumen report-issue` flags.
-/// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
+/// `lumen issue <search|view|create>` flags.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
 #[derive(clap::Args)]
-struct ReportIssueArgs {
+struct IssueArgs {
+    #[command(subcommand)]
+    command: IssueCommand,
+}
+
+#[derive(Subcommand)]
+enum IssueCommand {
+    /// Search Lumen issues (project:lumen); omit the query to list recent.
+    Search(IssueSearchArgs),
+    /// Print one issue by number.
+    View(IssueViewArgs),
+    /// File a diagnostics-rich Lumen issue.
+    Create(IssueCreateArgs),
+}
+
+#[derive(clap::Args)]
+struct IssueSearchArgs {
+    /// Search text. Omit to list recent issues.
+    #[arg(value_name = "QUERY", num_args = 0..)]
+    query: Vec<String>,
+    /// Issue state: open, closed, or all.
+    #[arg(long, default_value = "open", value_parser = ["open", "closed", "all"])]
+    state: String,
+    /// Max results.
+    #[arg(long, default_value_t = 20)]
+    limit: u32,
+}
+
+#[derive(clap::Args)]
+struct IssueViewArgs {
+    /// Issue number.
+    number: u64,
+}
+
+#[derive(clap::Args)]
+struct IssueCreateArgs {
     /// Issue title.
     #[arg(short = 't', long)]
-    title: String,
+    title: Option<String>,
     /// Free-text description of the problem (trailing words; placed above the
     /// diagnostics block). The only positional — parameters are flags.
     #[arg(value_name = "MSG", num_args = 0..)]
@@ -470,12 +504,59 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Command::ReportIssue(args) => {
-            cli_std::report_issue::run(
+        Command::Issue(args) => issue(args).await,
+    }
+}
+
+/// This binary's identity + build provenance for the standard CLI ops
+/// (`upgrade` / `issue`), per the CONTRIBUTING.md CLI convention.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
+const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
+    project: "lumen",
+    repo: "chrischeng-c4/axiom",
+    target: env!("LUMEN_TARGET"),
+    version: env!("CARGO_PKG_VERSION"),
+    git_sha: env!("LUMEN_GIT_SHA"),
+    built_at: env!("LUMEN_BUILT_AT"),
+};
+
+async fn issue(args: IssueArgs) -> Result<()> {
+    match args.command {
+        IssueCommand::Search(args) => {
+            let query = (!args.query.is_empty()).then(|| args.query.join(" "));
+            cli_std::issue::search(
                 &TOOL,
-                cli_std::report_issue::Options {
-                    title: args.title,
-                    message: (!args.message.is_empty()).then(|| args.message.join(" ")),
+                cli_std::issue::SearchOptions {
+                    query,
+                    state: args.state,
+                    limit: args.limit,
+                },
+            )
+            .await
+        }
+        IssueCommand::View(args) => cli_std::issue::view(&TOOL, args.number).await,
+        IssueCommand::Create(args) => {
+            let message = (!args.message.is_empty()).then(|| args.message.join(" "));
+            let title = args.title.unwrap_or_else(|| {
+                if let Some(message) = message.as_deref() {
+                    let head: String = message
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(72)
+                        .collect();
+                    format!("lumen: {head}")
+                } else {
+                    "lumen: issue report".to_string()
+                }
+            });
+            cli_std::issue::create(
+                &TOOL,
+                cli_std::issue::CreateOptions {
+                    title,
+                    message,
                     url: args.url,
                     repo: args.repo,
                     // Always tag with the project label so reports route
@@ -491,19 +572,6 @@ async fn main() -> Result<()> {
         }
     }
 }
-
-/// This binary's identity + build provenance for the standard CLI ops
-/// (`upgrade` / `report-issue`), per the CONTRIBUTING.md CLI convention.
-/// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
-/// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
-const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
-    project: "lumen",
-    repo: "chrischeng-c4/axiom",
-    target: env!("LUMEN_TARGET"),
-    version: env!("CARGO_PKG_VERSION"),
-    git_sha: env!("LUMEN_GIT_SHA"),
-    built_at: env!("LUMEN_BUILT_AT"),
-};
 
 /// `lumen spec gen` — generate a typed client from lumen's own OpenAPI document
 /// (offline; no engine or server) and write it into `--out`.
@@ -1231,7 +1299,6 @@ fn init_otel_meter(
     Ok(())
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

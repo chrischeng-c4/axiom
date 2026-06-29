@@ -46,7 +46,12 @@ impl ManagedService for Lumen {
         let name = self.name_any();
         let serving_ready = ready.ready.get(&name).copied().unwrap_or(0) as i32;
         let broker_ready = if self.spec.broker.is_managed() {
-            ready.ready.get(&format!("{name}-relay")).copied().unwrap_or(0) >= 1
+            ready
+                .ready
+                .get(&format!("{name}-relay"))
+                .copied()
+                .unwrap_or(0)
+                >= 1
         } else {
             true // external broker: assumed up.
         };
