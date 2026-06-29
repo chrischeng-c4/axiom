@@ -112,7 +112,7 @@ elements:
   cap_package_tests:
     kind: test
     type: "cargo test -p cap"
-  cap_online_build:
+  cap_release_feature_build:
     kind: test
     type: "cargo build -p cap --features release"
 relations:
@@ -121,7 +121,7 @@ relations:
   - { from: cli_unit_tests, verifies: issue_create }
   - { from: cli_unit_tests, verifies: legacy_report_issue }
   - { from: cap_package_tests, verifies: help_surface }
-  - { from: cap_online_build, verifies: build_features }
+  - { from: cap_release_feature_build, verifies: build_features }
 ---
 requirementDiagram
   requirement help_surface {
@@ -155,7 +155,6 @@ requirementDiagram
     verifymethod: test
   }
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
