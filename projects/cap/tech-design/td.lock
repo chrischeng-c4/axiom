@@ -1,8 +1,8 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-29T09:00:52.630921+00:00"
-digest = "sha256:ae29610dfb9900570b7f5ba1e46e0653813cf3490d9148780472670e0b95536f"
+generated_at = "2026-06-29T09:14:31.252295+00:00"
+digest = "sha256:e9f85e024a9afa859386b3e8a7d0d8d985ad105d4140d9979cfe0967d851b49e"
 
 [[files]]
 path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
@@ -22,7 +22,7 @@ digest = "sha256:646c91520fdcf634f139e1170e7f72d52db14d8a160ecb94eb5095495d7122b
 
 [[files]]
 path = "logic/design-resident-light-shell-with-dynamic-bash-fallback.md"
-digest = "sha256:50bb7576f093d57f5e6efb7b7346969c767d3d44da6da590bea6048bfee6254a"
+digest = "sha256:5b6173a8fc1ea980604535d3a772a93ae642a11c60e7e0cdbf8ef46d2a839968"
 
 [[files]]
 path = "logic/external-contracts.md"
@@ -102,7 +102,7 @@ digest = "sha256:1ed5ff5d2c2687d4f4d7821330ffeb1e9628584cff7290d7f2a03b654ffb93d
 
 [[files]]
 path = "semantic/source/resident-shell.md"
-digest = "sha256:c1d07f03101d8d10fbde9e4e95a6acefebdc19c1e1a5e3dea6a6cb97fb6546c7"
+digest = "sha256:c9e354f013ea7e09801f33f3a07dada5fd1a1e82ce7d6de9212233c8ff70a698"
 
 [[files]]
 path = "semantic/source/sampler.md"

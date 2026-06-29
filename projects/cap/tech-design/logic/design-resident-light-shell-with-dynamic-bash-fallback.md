@@ -32,7 +32,7 @@ nodes:
   parse: { kind: decision, label: "conservative light-shell subset?" }
   planner: { kind: process, label: "route shell-free argv through command_planner" }
   native_stage: { kind: process, label: "run native command stage in process" }
-  bash_fallback: { kind: process, label: "bash -lc original command" }
+  bash_fallback: { kind: process, label: "bash -c original command" }
   managed_run: { kind: process, label: "existing managed_run lease path for external fallback" }
   boundary: { kind: terminal, label: "Bash-compatible optimizer/resource governor, not full shell or sandbox" }
 edges:
@@ -50,7 +50,7 @@ flowchart TB
   cap_run["cap run receives original command string"] --> session["ResidentLightShellSession captures cwd/env snapshot"]
   session --> parse{"conservative light-shell subset?"}
   parse -->|single shell-free argv| planner["command_planner::plan"]
-  parse -->|unsupported syntax / unproven shape| bash_fallback["bash -lc original command"]
+  parse -->|unsupported syntax / unproven shape| bash_fallback["bash -c original command"]
   planner -->|Native plan| native_stage["run native command stage in process"]
   planner -->|External Original/Replacement plan| bash_fallback
   native_stage --> boundary["Bash-compatible optimizer/resource governor, not full shell or sandbox"]
@@ -68,7 +68,7 @@ Contract rules:
   existing argv planning path.
 - A Native planner result is the only resident in-process execution path in
   this slice. External Original, External Replacement, parse failure, shell
-  syntax, and any unproven shape return `bash -lc <original>`.
+  syntax, and any unproven shape return `bash -c <original>`.
 - Bash fallback continues through the existing `managed_run` external path, so
   daemon protection and fail-open daemon-unavailable behavior are preserved.
 - Cap remains a Bash-compatible optimizer and resource governor. It does not
@@ -98,8 +98,14 @@ requirements:
     kind: functional
     risk: high
     verify: test
-  product_boundary:
+  env_preservation:
     id: RLS-UT-4
+    text: "Bash fallback uses the caller environment without login-shell PATH rewrites."
+    kind: functional
+    risk: high
+    verify: test
+  product_boundary:
+    id: RLS-UT-5
     text: "README/TD state that cap is a Bash-compatible optimizer and resource governor, not a sandbox or full replacement shell."
     kind: functional
     risk: medium
@@ -117,6 +123,7 @@ elements:
 relations:
   - { from: resident_shell_unit_tests, verifies: native_path }
   - { from: resident_shell_unit_tests, verifies: fallback_path }
+  - { from: resident_shell_unit_tests, verifies: env_preservation }
   - { from: resident_run_parity, verifies: parity }
   - { from: readme_boundary_smoke, verifies: product_boundary }
 ---
@@ -129,7 +136,7 @@ requirementDiagram
   }
   requirement fallback_path {
     id: RLS-UT-2
-    text: "unsupported syntax returns bash -lc original"
+    text: "unsupported syntax returns bash -c original"
     risk: high
     verifymethod: test
   }
@@ -140,10 +147,16 @@ requirementDiagram
     verifymethod: test
   }
   requirement product_boundary {
-    id: RLS-UT-4
+    id: RLS-UT-5
     text: "docs keep optimizer/resource-governor boundary"
     risk: medium
     verifymethod: inspection
+  }
+  requirement env_preservation {
+    id: RLS-UT-4
+    text: "bash fallback preserves caller PATH"
+    risk: high
+    verifymethod: test
   }
 ```
 ## Changes

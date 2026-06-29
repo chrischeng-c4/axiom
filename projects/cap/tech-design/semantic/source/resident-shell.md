@@ -25,7 +25,7 @@ capability_refs:
 `````rust
 // ResidentLightShellSession captures cwd/env context for command-string mode.
 // It runs only proven native CommandPlan::Native stages in-process and returns
-// a bash -lc fallback for shell syntax, external plans, and unproven shapes.
+// a bash -c fallback for shell syntax, external plans, and unproven shapes.
 `````
 
 ## Changes

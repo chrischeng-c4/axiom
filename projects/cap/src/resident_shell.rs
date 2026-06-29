@@ -99,11 +99,11 @@ impl ResidentLightShellSession {
 fn bash_fallback(command: &str, label: Option<String>) -> ExternalPlan {
     ExternalPlan {
         program: "bash".to_string(),
-        args: vec!["-lc".to_string(), command.to_string()],
+        args: vec!["-c".to_string(), command.to_string()],
         label,
         original: command.to_string(),
         implementation: ExternalImplementation::Original,
-        reason: "resident light shell could not prove an in-process native stage; falling back to bash -lc original command".to_string(),
+        reason: "resident light shell could not prove an in-process native stage; falling back to bash -c original command".to_string(),
         fallback: None,
     }
 }
@@ -174,14 +174,45 @@ mod tests {
         };
 
         assert_eq!(plan.program, "bash");
-        assert_eq!(plan.args, vec!["-lc".to_string(), command.to_string()]);
+        assert_eq!(plan.args, vec!["-c".to_string(), command.to_string()]);
         assert_eq!(plan.original, command);
 
         let fallback = Command::new(&plan.program).args(&plan.args).output()?;
-        let original = Command::new("bash").args(["-lc", command]).output()?;
+        let original = Command::new("bash").args(["-c", command]).output()?;
         assert_eq!(fallback.status.code(), original.status.code());
         assert_eq!(fallback.stdout, original.stdout);
         assert_eq!(fallback.stderr, original.stderr);
+        Ok(())
+    }
+
+    #[test]
+    fn resident_light_shell_fallback_preserves_caller_path_env() -> Result<()> {
+        let command = "printf '%s' \"$PATH\" | tr ':' '\\n' | head -n 1";
+        let expected_path = "/tmp/cap-path-first";
+        let prior_path = env::var_os("PATH").unwrap_or_default();
+        let mut custom_path = OsString::from(expected_path);
+        custom_path.push(":");
+        custom_path.push(prior_path);
+
+        let session = ResidentLightShellSession::capture();
+        let plan = match session.plan_command_string(command, None) {
+            ResidentLightShellPlan::Native(native) => {
+                panic!("expected Bash fallback, got native: {native:?}")
+            }
+            ResidentLightShellPlan::BashFallback(plan) => plan,
+        };
+
+        assert_eq!(plan.program, "bash");
+        assert_eq!(plan.args, vec!["-c".to_string(), command.to_string()]);
+        let output = Command::new(&plan.program)
+            .args(&plan.args)
+            .env("PATH", custom_path)
+            .output()?;
+        assert_eq!(Some(0), output.status.code());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim_end(),
+            expected_path
+        );
         Ok(())
     }
 }
