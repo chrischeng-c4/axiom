@@ -113,13 +113,33 @@ fn print_preview(repo: &str, title: &str, body: &str, labels: &[String]) {
     println!("{body}");
 }
 
+/// Print the pre-filled-issue URL plus the title/body so the user can file by
+/// hand. The preceding diagnostic note (why we fell back) is the caller's
+/// responsibility — the "no credential" and "offline build" conditions are
+/// distinct and must not be conflated.
 fn print_fallback(repo: &str, title: &str, body: &str, labels: &[String]) {
-    eprintln!(
-        "note: no GITHUB_TOKEN set (or built without the `online` feature) — \
-         open this pre-filled issue, or set GITHUB_TOKEN to file it directly:"
-    );
     println!("{}", prefilled_url(repo, title, body, labels));
     eprintln!("\n--- title ---\n{title}\n--- body ---\n{body}");
+}
+
+/// Online build, but no GitHub credential was found anywhere.
+#[cfg(feature = "online")]
+fn note_no_credential() {
+    eprintln!(
+        "note: no GitHub credential found (checked $GH_TOKEN, $GITHUB_TOKEN, and `gh auth token`). \
+         Run `gh auth login` or set GITHUB_TOKEN to file directly. \
+         Meanwhile, open this pre-filled issue:"
+    );
+}
+
+/// This binary was built without the `online` feature, so it cannot do network
+/// I/O at all — independent of whether a credential exists.
+#[cfg(not(feature = "online"))]
+fn note_offline_build() {
+    eprintln!(
+        "note: this jet build has no `online` feature; it cannot file directly. \
+         Open this pre-filled issue:"
+    );
 }
 
 /// `issue create` — file (or preview) a structured issue.
@@ -142,7 +162,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
         return Ok(());
     }
 
-    match std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty()) {
+    match crate::resolve_github_token() {
         Some(token) => {
             if !opts.yes && !crate::confirm(&format!("file this issue to {repo}?"))? {
                 println!("aborted");
@@ -157,7 +177,10 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
             .await?;
             println!("filed: {url}");
         }
-        None => print_fallback(&repo, &opts.title, &body, &opts.label),
+        None => {
+            note_no_credential();
+            print_fallback(&repo, &opts.title, &body, &opts.label);
+        }
     }
     Ok(())
 }
@@ -170,6 +193,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
     if opts.dry_run {
         print_preview(&repo, &opts.title, &body, &opts.label);
     } else {
+        note_offline_build();
         print_fallback(&repo, &opts.title, &body, &opts.label);
     }
     Ok(())
