@@ -7868,6 +7868,8 @@ fn mb_getattr_impl(
                             if super::module::is_native_func(addr as u64)
                                 || super::module::is_variadic_func(addr as u64)
                                 || super::module::is_kwargs_func(addr as u64)
+                                || CALLABLE_REGISTRY
+                                    .with(|reg| reg.borrow().contains(&(addr as u64)))
                             {
                                 return make_bound_native_method(obj, &attr_name);
                             }
