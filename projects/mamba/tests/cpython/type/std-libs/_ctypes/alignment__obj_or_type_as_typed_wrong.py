@@ -9,12 +9,11 @@
 # case = "alignment__obj_or_type_as_typed_wrong"
 # subject = "_ctypes.alignment(obj_or_type: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj_or_type"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_ctypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj_or_type
 # mamba-strict-type: TypeError
 """Type wall: _ctypes.alignment(obj_or_type: typed); call it with the wrong type.
 
