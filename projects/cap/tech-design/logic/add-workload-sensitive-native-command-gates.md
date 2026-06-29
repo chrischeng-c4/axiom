@@ -1,7 +1,7 @@
 ---
 id: add-workload-sensitive-native-command-gates
 summary: Add workload-sensitive native command gates so cap keeps tiny or unknown command shapes on the original path and promotes only large, parity-covered workloads with benchmark evidence.
-fill_sections: [logic, unit-test]
+fill_sections: [logic, unit-test, changes]
 capability_refs:
   - id: command-lease-throttling
     role: primary
@@ -200,4 +200,67 @@ requirementDiagram
     element readme_wording_smoke {
       type: "cargo test"
     }
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/cap/src/command_planner.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add workload fact probing and command-specific threshold checks before
+      activating native or replacement paths. Supported candidates below their
+      threshold, with probe errors, or with unknown materiality must return an
+      External Original plan. Preserve existing shell-sensitive fallback.
+
+  - path: projects/cap/src/command_planner.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Add planner tests proving below-threshold ls, sort, grep, find, and sed
+      shapes use the original path; above-threshold fixtures use the active
+      native or replacement path; shell-free cap run strings make the same
+      workload-sensitive decision as argv.
+
+  - path: projects/cap/benches/command_resources.rs
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    description: >
+      Extend the benchmark matrix with explicit small and large scenarios for
+      ls, sort, grep, find, and sed -n. Small scenarios document expected
+      original-path behavior; large scenarios remain gated by dual-win or an
+      explicitly approved RSS-fallback policy.
+
+  - path: projects/cap/tests/behavior_cap_command_replacement_parity.rs
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    description: >
+      Keep active replacement parity coverage for promoted large-workload
+      shapes and add regression coverage that below-threshold command shapes
+      do not bypass the original command path.
+
+  - path: projects/cap/README.md
+    action: modify
+    section: docs
+    impl_mode: hand-written
+    description: >
+      Reword native command replacement as workload-sensitive fast paths.
+      Document the threshold policy and make clear that tiny, unknown, or
+      unproven workloads keep original-command behavior.
+
+  - path: projects/cap/BENCHMARKS.md
+    action: modify
+    section: docs
+    impl_mode: hand-written
+    description: >
+      Document small-vs-large benchmark rows and the interpretation that
+      default replacement promotion depends on representative workload size,
+      parity, and resource-gate evidence.
 ```
