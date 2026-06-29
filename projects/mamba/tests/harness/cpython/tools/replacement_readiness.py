@@ -24,6 +24,7 @@ PROMOTION_GATE = TOOLS_DIR / "promotion_gate.py"
 DENOMINATOR_INVENTORY = MAMBA_DIR / "tools" / "cpython_regrtest_inventory.py"
 STRICT_TYPE_ACCOUNTING = TOOLS_DIR / "strict_type_accounting.py"
 GATE_CHECK = TOOLS_DIR / "gate_check.py"
+PLATFORM_READINESS = TOOLS_DIR / "platform_readiness.py"
 
 EXIT_NOT_READY = 70
 
@@ -370,6 +371,53 @@ def safety_dimension(show: int) -> Dimension:
     )
 
 
+def platform_dimension(show: int) -> Dimension:
+    code, payload = run_json(
+        [sys.executable, str(PLATFORM_READINESS), "--json", "--show", str(show)],
+        accepted={0, EXIT_NOT_READY},
+    )
+    counts = payload["counts"]
+    status = "green" if code == 0 and payload["ready"] else "red"
+    return Dimension(
+        id="platform_os_process_network_tls",
+        title="Platform, OS, process, network, and TLS coverage",
+        status=status,
+        owner_issue="#710",
+        summary=(
+            "platform/OS/process/network/TLS readiness is green"
+            if status == "green"
+            else (
+                "platform/OS/process/network/TLS readiness is not replacement-ready: "
+                f"{counts['fixtures']} fixtures, {counts['unmeasured']} unmeasured, "
+                f"{counts['promotion_pending']} promotion-pending, "
+                f"{counts['runtime_failure_debt']} runtime-debt, "
+                f"{counts['sandbox_denied']} sandbox-denied, "
+                f"{counts['unsupported_platform']} unsupported-platform"
+            )
+        ),
+        counts={
+            "fixtures": counts["fixtures"],
+            "target_libs": counts["target_libs"],
+            "missing_target_libs": counts["missing_target_libs"],
+            "pass_candidate": counts["pass_candidate"],
+            "promotion_pending": counts["promotion_pending"],
+            "runtime_failure_debt": counts["runtime_failure_debt"],
+            "sandbox_denied": counts["sandbox_denied"],
+            "unsupported_platform": counts["unsupported_platform"],
+            "runtime_ok": counts["runtime_ok"],
+            "runtime_fail": counts["runtime_fail"],
+            "runtime_timeout": counts["runtime_timeout"],
+            "runtime_crash": counts["runtime_crash"],
+            "unmeasured": counts["unmeasured"],
+            "unowned_gap_count": counts["unowned_gap_count"],
+            "perf_pins": counts["perf_pins"],
+            "malformed_perf_pins": counts["malformed_perf_pins"],
+        },
+        evidence=payload["evidence_commands"],
+        blockers=payload["blockers"][:show],
+    )
+
+
 def blocked_dimension(
     *,
     id: str,
@@ -402,13 +450,7 @@ def dimensions(show: int, type_limit: int) -> list[Dimension]:
         strict_type_dimension(show, type_limit),
         perf_dimension(show),
         safety_dimension(show),
-        blocked_dimension(
-            id="platform_os_process_network_tls",
-            title="Platform, OS, process, network, and TLS coverage",
-            owner_issue="#710",
-            summary="platform/OS/process/network/TLS coverage is not yet proven as a replacement gate",
-            evidence=["cargo test -p mamba --test cpython_status -- --json"],
-        ),
+        platform_dimension(show),
         blocked_dimension(
             id="import_package_module_system",
             title="Import, package, and module-system semantics",
