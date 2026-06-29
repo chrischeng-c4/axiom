@@ -32,7 +32,7 @@ nodes:
   llm: { kind: process, label: "llm renders cap topics through cli_std::llm" }
   upgrade: { kind: process, label: "upgrade delegates to cli_std::upgrade::run" }
   issue: { kind: process, label: "issue search/view/create delegates to cli_std::issue" }
-  legacy_alias: { kind: process, label: "optional report-issue alias forwards to issue create behavior" }
+  legacy_alias: { kind: process, label: "report-issue compatibility forwards to issue create behavior" }
   domain: { kind: process, label: "existing cap run/status/init/hook behavior unchanged" }
   terminal: { kind: terminal, label: "standard help, docs, and diagnostics-rich issue surface" }
 edges:
@@ -62,19 +62,12 @@ flowchart TB
   domain --> terminal
 ```
 
-The current repository contract names the mandatory issue surface `issue`, not
-the older `report-issue` spelling still present in this WI body. Cap should
-therefore make `llm`, `upgrade`, and `issue` visible in `cap --help` and route
-their behavior through `cli-std`. A deprecated `report-issue` compatibility
-entrypoint may remain for the issue's old acceptance text, but it must not
-replace the current `issue search/view/create` surface.
-
-`llm` is offline and owns only agent-facing cap topics. `upgrade` and `issue`
-use `cli_std::ToolInfo` for release asset identity, build provenance, repo
-routing, diagnostics, and the `project:cap` issue label. Existing cap domain
-commands (`run`, passthrough wrapping, daemon, status, init, hook, config,
-ping, wait) keep their current behavior and parse precedence.
-
+Cap adopts the current repo-wide CLI convention through `cli-std`: `llm`,
+`upgrade`, and `issue search/view/create` are the primary standard surface.
+The older `report-issue` spelling in the WI body is implemented only as a
+deprecated compatibility entrypoint that forwards to the same diagnostics-rich
+create path. Existing cap domain commands and passthrough wrapping keep their
+current parse behavior.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
