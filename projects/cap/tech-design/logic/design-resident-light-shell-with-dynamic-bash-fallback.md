@@ -146,3 +146,62 @@ planning boundary plus behavior coverage through the public `cap run` path. A
 minimal test fixture can use a threshold-sized `ls -1 <dir>` native path because
 #117 made the workload gate explicit; fallback parity can use a pipe or `cd &&
 pwd` shape that must remain under Bash semantics.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/cap/src/resident_shell.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add the first resident light-shell session boundary. The session captures
+      cwd/env, plans a command string through the existing command planner, runs
+      native command stages in process, and returns a Bash fallback plan for
+      unsupported or unproven command strings.
+
+  - path: projects/cap/src/resident_shell.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Cover the native observable path and dynamic Bash fallback path with
+      byte-for-byte stdout/stderr/exit parity checks against original system
+      commands.
+
+  - path: projects/cap/src/command_planner.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Expose the native runner's capture helper inside the crate so the
+      resident shell can verify native-stage output without spawning a second
+      cap process.
+
+  - path: projects/cap/src/cli.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Route `cap run "<command string>"` through ResidentLightShellSession
+      before falling back to the existing external managed_run path. Keep argv
+      mode behavior unchanged.
+
+  - path: projects/cap/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Export the resident shell module inside the cap crate.
+
+  - path: projects/cap/README.md
+    action: modify
+    section: overview
+    impl_mode: hand-written
+    description: >
+      Document that cap is adding a resident light-shell optimizer layer with
+      dynamic Bash fallback, while remaining a resource governor rather than a
+      sandbox or full shell replacement.
+```
