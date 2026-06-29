@@ -2768,12 +2768,28 @@ pub(crate) fn append_missing_method_defaults(
     if params.iter().any(|p| matches!(p.kind, 2 | 4)) {
         return;
     }
+    let implicit_receiver_params = if pos_args_start > 0 {
+        params
+            .first()
+            .filter(|p| p.name == "self" || p.name == "cls")
+            .map(|_| 1usize)
+            .unwrap_or(0)
+    } else {
+        0
+    };
     let provided_user_args = all_args.len().saturating_sub(pos_args_start);
-    let positional_capacity = params.iter().filter(|p| matches!(p.kind, 0 | 1)).count();
+    let positional_capacity = params
+        .iter()
+        .skip(implicit_receiver_params)
+        .filter(|p| matches!(p.kind, 0 | 1))
+        .count();
     if provided_user_args > positional_capacity {
         return;
     }
-    for param in params.iter().skip(provided_user_args) {
+    for param in params
+        .iter()
+        .skip(implicit_receiver_params + provided_user_args)
+    {
         if !param.has_default {
             break;
         }

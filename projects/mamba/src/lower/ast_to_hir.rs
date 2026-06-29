@@ -2490,8 +2490,9 @@ fn collect_ast_bindings_inner(pat: &ast::Pattern, names: &mut std::collections::
 /// from the AST parameter list of a `def`. Kinds follow CPython's
 /// `inspect.Parameter` ordinals; defaults are captured only when they are
 /// simple literals (everything else records "has a default" with a None
-/// placeholder). `self` receivers are skipped — CPython bound-method
-/// signatures exclude them.
+/// placeholder). Keep declared receivers in the metadata: unbound functions
+/// such as `Class.__init__` expose `self`, while bound-method presentation
+/// skips it later when the receiver is already supplied.
 fn func_sig_meta(
     params: &[ast::Param],
     return_ty: &Option<Spanned<ast::TypeExpr>>,
@@ -2499,9 +2500,6 @@ fn func_sig_meta(
     use crate::hir::{HirFuncSig, HirParamSig, HirSigDefault};
     let mut out = Vec::new();
     for p in params {
-        if p.name == "self" {
-            continue;
-        }
         let kind = match p.kind {
             ast::ParamKind::Star => 2u8,
             ast::ParamKind::DoubleStar => 4u8,
