@@ -24,6 +24,7 @@
 //! `// TODO(#171 follow-up)` marker rather than crashing the build.
 //!
 //! @issue #171
+//! @issue #722
 
 use anyhow::{anyhow, Result};
 use tree_sitter::Node;
@@ -103,7 +104,7 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
             }
             "class_declaration" | "abstract_class_declaration" => {
                 let is_abstract = child.kind() == "abstract_class_declaration";
-                let decl = emit_class_declaration(child, source);
+                let decl = emit_class_declaration(child, source)?;
                 // Ambient classes are valid as `export declare class` /
                 // `export declare abstract class`; a default-exported class is
                 // emitted as `export default class` (no `declare` — TS forbids
@@ -275,10 +276,9 @@ fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<
 /// Build a function signature string (name + type params + params + return
 /// type) with the body dropped.
 ///
-/// isolatedDeclarations: an exported function should declare its return type
-/// explicitly. We do not hard-error on a missing return type (a `void`-bodied
-/// helper is common); instead the signature is emitted as written and the
-/// return annotation, if present, is preserved verbatim.
+/// isolatedDeclarations: an exported function must declare its return type
+/// explicitly so the emitter never silently turns an inferred return into
+/// implicit `any`.
 fn emit_function_signature(node: Node, source: &str) -> Result<String> {
     let name = node
         .child_by_field_name("name")
@@ -297,6 +297,13 @@ fn emit_function_signature(node: Node, source: &str) -> Result<String> {
         .child_by_field_name("return_type")
         .map(|n| node_text(n, source))
         .unwrap_or("");
+    if ret.is_empty() {
+        return Err(anyhow!(
+            "dts: isolatedDeclarations error — exported function `{name}` \
+             lacks an explicit return type; add `: <Type>` so its declaration \
+             can be emitted without type inference"
+        ));
+    }
 
     Ok(format!("{name}{type_params}{params}{ret}"))
 }
@@ -318,7 +325,7 @@ fn emit_function_signature(node: Node, source: &str) -> Result<String> {
 ///   * `private` / `protected` accessibility members are dropped, as are
 ///     `#private` fields and methods (not part of the public ambient surface
 ///     for an isolatedDeclarations-style emit).
-fn emit_class_declaration(node: Node, source: &str) -> String {
+fn emit_class_declaration(node: Node, source: &str) -> Result<String> {
     let name = node
         .child_by_field_name("name")
         .map(|n| node_text(n, source))
@@ -346,55 +353,59 @@ fn emit_class_declaration(node: Node, source: &str) -> String {
     let Some(body) = node.child_by_field_name("body") else {
         // No body field — emit an empty ambient class shape.
         header.push_str(" {\n}");
-        return header;
+        return Ok(header);
     };
 
     let mut members = String::new();
     let mut cursor = body.walk();
     for member in body.named_children(&mut cursor) {
-        if let Some(line) = reduce_class_member(member, source) {
+        if let Some(line) = reduce_class_member(member, source)? {
             members.push_str("    ");
             members.push_str(&line);
             members.push('\n');
         }
     }
 
-    if members.is_empty() {
+    let decl = if members.is_empty() {
         format!("{header} {{\n}}")
     } else {
         format!("{header} {{\n{members}}}")
-    }
+    };
+    Ok(decl)
 }
 
 /// Reduce one class-body member to its ambient signature line (without the
 /// trailing newline / leading indentation), or `None` when the member is
 /// dropped (`private` / `protected` / `#private`, or an unreducible shape).
-fn reduce_class_member(node: Node, source: &str) -> Option<String> {
-    match node.kind() {
+fn reduce_class_member(node: Node, source: &str) -> Result<Option<String>> {
+    let line = match node.kind() {
         "method_definition" => reduce_method(node, source),
         "public_field_definition" => reduce_field(node, source),
         // index signatures (`[key: string]: T;`) are already declaration-only.
-        "index_signature" => Some(format!(
+        "index_signature" => Ok(Some(format!(
             "{};",
             node_text(node, source).trim_end_matches(';')
-        )),
+        ))),
         // Static initialization blocks, decorators-only members, etc. carry no
         // public type surface — drop them.
-        _ => None,
-    }
+        _ => Ok(None),
+    }?;
+    Ok(line)
 }
 
 /// Reduce a `method_definition` to a signature line. Drops the body and
 /// `async`; keeps `static` / `get` / `set` / `readonly` modifiers.
-fn reduce_method(node: Node, source: &str) -> Option<String> {
+fn reduce_method(node: Node, source: &str) -> Result<Option<String>> {
     // `#private` methods are never part of the public surface.
-    let name_node = node.child_by_field_name("name")?;
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
     if name_node.kind() == "private_property_identifier" {
-        return None;
+        return Ok(None);
     }
     // `private` / `protected` members are dropped from the ambient surface.
     if has_dropped_accessibility(node, source) {
-        return None;
+        return Ok(None);
     }
 
     let name = node_text(name_node, source);
@@ -439,20 +450,31 @@ fn reduce_method(node: Node, source: &str) -> Option<String> {
         .child_by_field_name("return_type")
         .map(|n| node_text(n, source))
         .unwrap_or("");
+    let is_constructor = name == "constructor";
+    let is_setter = has_child_kind(node, "set");
+    if !is_constructor && !is_setter && ret.is_empty() {
+        return Err(anyhow!(
+            "dts: isolatedDeclarations error — exported class member `{name}` \
+             lacks an explicit return type; add `: <Type>` so its declaration \
+             can be emitted without type inference"
+        ));
+    }
 
-    Some(format!("{modifiers}{name}{optional}{params}{ret};"))
+    Ok(Some(format!("{modifiers}{name}{optional}{params}{ret};")))
 }
 
 /// Reduce a `public_field_definition` to a `field: Type;` line, dropping the
 /// initializer. Keeps `static` / `readonly`. Drops `private` / `protected` /
 /// `#private` fields.
-fn reduce_field(node: Node, source: &str) -> Option<String> {
-    let name_node = node.child_by_field_name("name")?;
+fn reduce_field(node: Node, source: &str) -> Result<Option<String>> {
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
     if name_node.kind() == "private_property_identifier" {
-        return None;
+        return Ok(None);
     }
     if has_dropped_accessibility(node, source) {
-        return None;
+        return Ok(None);
     }
 
     let name = node_text(name_node, source);
@@ -492,8 +514,15 @@ fn reduce_field(node: Node, source: &str) -> Option<String> {
         .child_by_field_name("type")
         .map(|n| node_text(n, source).trim().to_string())
         .unwrap_or_default();
+    if ty.is_empty() {
+        return Err(anyhow!(
+            "dts: isolatedDeclarations error — exported class field `{name}` \
+             lacks an explicit type annotation; add `: <Type>` so its \
+             declaration can be emitted without type inference"
+        ));
+    }
 
-    Some(format!("{modifiers}{name}{marker}{ty};"))
+    Ok(Some(format!("{modifiers}{name}{marker}{ty};")))
 }
 
 /// True when the member carries a `private` or `protected` accessibility
