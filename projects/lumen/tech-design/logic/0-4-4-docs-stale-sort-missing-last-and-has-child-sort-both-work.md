@@ -53,62 +53,61 @@ flowchart TD
 
 ```mermaid
 ---
-id: sort-doc-refresh-unit-evidence
+id: sort-doc-refresh-contract-tests
 requirements:
-  sort_missing_schema_docs:
+  openapi_sort_doc_current:
     id: R1
-    text: "SearchRequest.sort schema text documents missing=exclude versus first/last total inclusion"
+    text: "The OpenAPI schema text for SearchRequest.sort is current for missing rows and sort key count"
     kind: documentation
     risk: medium
     verify: test
-  has_child_sort_cookbook:
+  query_shape_has_child_sort_current:
     id: R2
-    text: "The offline query-shape cookbook says has_child can filter parents and sort by a parent field"
+    text: "The query shape cookbook confirms has_child can be combined with parent-field sort"
     kind: documentation
     risk: medium
     verify: test
-  has_child_sort_workflow:
+  llm_workflow_has_child_sort_current:
     id: R3
-    text: "The LLM workflow topic confirms nested data-table rows can be filtered by has_child and sorted by parent fields"
+    text: "The LLM workflow topic confirms nested list-row search can filter via has_child and sort parents"
     kind: documentation
     risk: medium
     verify: test
 elements:
-  spec_cli_docs_assertions:
+  spec_cli_doc_contracts:
     kind: test
     path: projects/lumen/tests/spec_cli.rs
 relations:
-  - { from: spec_cli_docs_assertions, verifies: sort_missing_schema_docs }
-  - { from: spec_cli_docs_assertions, verifies: has_child_sort_cookbook }
-  - { from: spec_cli_docs_assertions, verifies: has_child_sort_workflow }
+  - { from: spec_cli_doc_contracts, verifies: openapi_sort_doc_current }
+  - { from: spec_cli_doc_contracts, verifies: query_shape_has_child_sort_current }
+  - { from: spec_cli_doc_contracts, verifies: llm_workflow_has_child_sort_current }
 ---
 requirementDiagram
     requirement R1 {
       id: R1
-      text: "sort.missing docs are accurate"
+      text: "SearchRequest.sort schema text current"
       risk: medium
       verifymethod: test
     }
     requirement R2 {
       id: R2
-      text: "has_child + sort cookbook documented"
+      text: "query shape says has_child + parent sort"
       risk: medium
       verifymethod: test
     }
     requirement R3 {
       id: R3
-      text: "LLM workflow mentions parent sort"
+      text: "llm workflow says has_child + parent sort"
       risk: medium
       verifymethod: test
     }
-    element spec_cli_docs_assertions {
+    element spec_cli_doc_contracts {
       type: "rs/#[test]"
     }
-    spec_cli_docs_assertions - verifies -> R1
-    spec_cli_docs_assertions - verifies -> R2
-    spec_cli_docs_assertions - verifies -> R3
+    spec_cli_doc_contracts - verifies -> R1
+    spec_cli_doc_contracts - verifies -> R2
+    spec_cli_doc_contracts - verifies -> R3
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
