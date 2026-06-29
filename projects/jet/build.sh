@@ -104,12 +104,16 @@ install_jet release
 TAG="jet@${NEW_VERSION}"
 git add Cargo.lock README.md libs/cli-std projects/jet
 git commit -m "release(jet): ${TAG}"
-git tag -a "$TAG" -m "Release ${TAG}"
 
 echo ""
-echo "Build complete. jet ${TAG} installed and tagged."
-echo "Push the branch and tag to publish:"
-echo "  git push origin HEAD"
-echo "  git push origin ${TAG}"
+echo "Release prepared: ${TAG} built + installed; version-bump commit created."
+echo "NOT tagged and NOT pushed — the tag must be applied AFTER this commit lands"
+echo "on main (git:land rebases/squash-merges and would orphan a pre-land tag)."
+echo "RELEASE_TAG=${TAG}"
+echo ""
+echo "The /jet:build:release skill completes the release:"
+echo "  1. land this commit to main via /git:land"
+echo "  2. git tag -a ${TAG} -m \"Release ${TAG}\" && git push origin ${TAG}"
+echo "     (pushing the ${TAG} tag triggers .github/workflows/jet-release.yml)"
 
 # </HANDWRITE>
