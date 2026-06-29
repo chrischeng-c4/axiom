@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import dict
-obj = object.__new__(dict)
+obj: dict[str, int] = {}
 try:
     obj.__ior__(_W())  # value: Iterable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

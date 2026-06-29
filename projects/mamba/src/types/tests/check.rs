@@ -1288,6 +1288,35 @@ fn test_dict_receiver_generic_key_methods() {
 }
 
 #[test]
+fn test_dict_operator_negative_mapping_walls() {
+    let errors = check("obj: dict[str, int] = {}\nobj.__or__(12345)\nobj.__ror__(\"bad\")\n");
+    assert!(
+        errors
+            .iter()
+            .filter(|e| e.contains("expected `mapping`"))
+            .count()
+            >= 2,
+        "dict union operators should reject concrete scalar operands, got: {errors:?}"
+    );
+
+    let errors = check("class _W:\n    pass\nobj: dict[str, int] = {}\nobj.__ior__(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `mapping`, got `_W`")),
+        "dict.__ior__(_W()) should reject a bare non-mapping operand, got: {errors:?}"
+    );
+
+    let errors = check(
+        "class MappingLike:\n    def keys(self):\n        return []\n    def __getitem__(self, key):\n        return 1\nobj: dict[str, int] = {}\nobj.__or__({\"a\": 1})\nobj.__or__(MappingLike())\nobj.__ior__([(\"b\", 2)])\nvalue: Any = 1\nobj.__ror__(value)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "dict operator wall must stay skip-safe for mapping-like, iterable-pair, and dynamic operands, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
     let errors = check(
         "from builtins import classmethod\nclass _W:\n    pass\nobj = classmethod(lambda cls: None)\nobj.__get__(_W())\n",
