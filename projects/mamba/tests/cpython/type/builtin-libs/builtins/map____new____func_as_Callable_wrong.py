@@ -26,9 +26,8 @@ class _W:
 
 
 from builtins import map
-obj = object.__new__(map)
 try:
-    obj.__new__(_W(), None)  # func: Callable <- wrong-typed
+    map.__new__(map, _W(), None)  # func: Callable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
