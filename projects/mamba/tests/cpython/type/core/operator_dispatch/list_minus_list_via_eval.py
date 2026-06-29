@@ -9,12 +9,11 @@
 # case = "list_minus_list_via_eval"
 # subject = "operator dispatch TypeError"
 # kind = "semantic"
-# xfail = "eval operator TypeError dispatch pending; currently MAMBA_TYPE_LEAKED"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
 # ///
-# mamba-xfail: eval operator TypeError dispatch pending; currently MAMBA_TYPE_LEAKED
 # mamba-strict-type: TypeError
 """Mamba strong-typing contract: list - list via eval().
 

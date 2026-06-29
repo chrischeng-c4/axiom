@@ -3662,6 +3662,16 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
     if raise_datetime_op_type_error("-", a, b) {
         return MbValue::none();
     }
+    if !a.is_none() && !b.is_none() {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "unsupported operand type(s) for -: '{}' and '{}'",
+                value_type_name(a),
+                value_type_name(b)
+            ))),
+        );
+    }
     MbValue::none()
 }
 
