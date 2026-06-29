@@ -3,7 +3,7 @@
 //!
 //! @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#unit-test
 
-use jet::codegen::{generate, GenOptions, GeneratedOutput, HttpClient};
+use jet::codegen::{generate, GenOptions, GeneratedOutput, HookRuntime, HttpClient};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -16,6 +16,7 @@ fn full_opts() -> GenOptions {
         emit_types: true,
         emit_client: true,
         emit_hooks: true,
+        hooks_runtime: HookRuntime::ReactQuery,
     }
 }
 
@@ -103,6 +104,42 @@ fn axios_backend_matches_golden_and_is_surface_invariant() {
         file(&out, "index.ts"),
         snapshot_body(include_str!("../__snapshots__/codegen/minimal__index.ts"))
     );
+}
+
+/// `--hooks swr` swaps only `hooks.ts` for the SWR variant (`useSWR` queries +
+/// `useSWRMutation` mutations); every other file is byte-identical to the
+/// react-query goldens. Regenerate with:
+/// `jet codegen openapi projects/jet/tests/fixtures/codegen/minimal.json
+///  --out <dir> --hooks swr` (then copy `hooks.ts` to `minimal__hooks.swr.ts`).
+#[test]
+fn swr_hooks_match_golden_and_are_surface_invariant() {
+    let spec = include_str!("../fixtures/codegen/minimal.json");
+    let mut opts = full_opts();
+    opts.hooks_runtime = HookRuntime::Swr;
+    let out = generate(spec, &opts).expect("generate minimal (swr)");
+
+    assert_eq!(
+        file(&out, "hooks.ts"),
+        snapshot_body(include_str!(
+            "../__snapshots__/codegen/minimal__hooks.swr.ts"
+        ))
+    );
+    // types/runtime/client/index are hook-runtime-invariant.
+    for name in ["types.ts", "runtime.ts", "client.ts", "index.ts"] {
+        let golden = format!("minimal__{}", name);
+        let expected = match name {
+            "types.ts" => snapshot_body(include_str!("../__snapshots__/codegen/minimal__types.ts")),
+            "runtime.ts" => {
+                snapshot_body(include_str!("../__snapshots__/codegen/minimal__runtime.ts"))
+            }
+            "client.ts" => {
+                snapshot_body(include_str!("../__snapshots__/codegen/minimal__client.ts"))
+            }
+            "index.ts" => snapshot_body(include_str!("../__snapshots__/codegen/minimal__index.ts")),
+            _ => unreachable!(),
+        };
+        assert_eq!(file(&out, name), expected, "{golden} differs for swr hooks");
+    }
 }
 
 #[test]
