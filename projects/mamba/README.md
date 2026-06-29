@@ -22,17 +22,17 @@ For implementation map, see [llms.txt](llms.txt).
 ID: c1-py3-12-functional-parity-axis-1
 Type: RuntimeTool
 Surfaces: CLI: `mamba build` + `mamba check` + `mamba run` + `mamba test` + `mamba test-batch` + `mamba pytest` + `mamba surface-report` - compile, type-check, run, batch, pytest, and surface-conformance entrypoints
-EC Dimensions: behavior: `cargo test -p mamba --test conformance_cpython_lib_test --release` - CPython 3.12 Lib/test oracle; stability: `cargo test -p mamba --test conformance_runtime_shutdown` - runtime shutdown and crash-boundary checks
+EC Dimensions: behavior: `cargo test -p mamba --test conformance_cpython_lib_test` - debug-build CPython 3.12 Lib/test oracle; stability: `cargo test -p mamba --test conformance_runtime_shutdown` - runtime shutdown and crash-boundary checks
 Root WI: #3331
 Status: confirmed
 Required Verification: conformance, corpus, negative
 Promise:
 Run real Python 3.12 programs without semantic divergence across language core, PEP syntax/semantics, builtins and stdlib, plus selected 3rd-party libraries. CPython `Lib/test` and typeshed are the authoritative denominators; declared force-typing divergences must be explicit rather than hidden as ordinary behavior failures.
-Gate Inventory: `cargo test -p mamba --test conformance_cpython_lib_test --release`; `cargo test -p mamba --test conformance_contract`; `cargo test -p mamba --test conformance_real_world`; `cargo test -p mamba --test conformance_runtime_shutdown`; projects/mamba/tests/PRODUCTION-GATE.md
+Gate Inventory: `cargo test -p mamba --test conformance_cpython_lib_test`; `cargo test -p mamba --test conformance_contract`; `cargo test -p mamba --test conformance_real_world`; `cargo test -p mamba --test conformance_runtime_shutdown`; projects/mamba/tests/PRODUCTION-GATE.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Python 3.12 parity gate | epic | #3331 | partial | planned | conformance | `cargo test -p mamba --test conformance_cpython_lib_test --release`; `cargo test -p mamba --test conformance_contract`; `cargo test -p mamba --test conformance_real_world`; `cargo test -p mamba --test conformance_runtime_shutdown`; projects/mamba/tests/PRODUCTION-GATE.md |
+| Python 3.12 parity gate | epic | #3331 | partial | planned | conformance | `cargo test -p mamba --test conformance_cpython_lib_test`; `cargo test -p mamba --test conformance_contract`; `cargo test -p mamba --test conformance_real_world`; `cargo test -p mamba --test conformance_runtime_shutdown`; projects/mamba/tests/PRODUCTION-GATE.md |
 
 ### C2. Less CPU time AND less memory than CPython — Axis 2
 
