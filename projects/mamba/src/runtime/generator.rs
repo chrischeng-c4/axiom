@@ -23,9 +23,15 @@ use super::value::MbValue;
 
 // ── Coroutine stack constants ───────────────────────────────────────────────
 
-/// Default coroutine stack size: 64 KiB.  Sufficient for most generator
-/// bodies.  The guard page adds one extra page of protection.
-const CORO_STACK_SIZE: usize = 64 * 1024;
+/// Default coroutine stack size.
+///
+/// Generator bodies run normal Rust runtime dispatch on this stack. Debug builds
+/// have much larger stack frames, so keep extra headroom for development
+/// validation while preserving a tighter release footprint.
+#[cfg(debug_assertions)]
+const CORO_STACK_SIZE: usize = 1024 * 1024;
+#[cfg(not(debug_assertions))]
+const CORO_STACK_SIZE: usize = 256 * 1024;
 
 /// Page size for guard page allocation.
 const PAGE_SIZE: usize = 16384; // 16 KiB on macOS aarch64
