@@ -19,6 +19,7 @@ from typing import Any
 
 TOOLS_DIR = Path(__file__).resolve().parent
 MAMBA_DIR = TOOLS_DIR.parents[3]
+WORKSPACE_DIR = MAMBA_DIR.parents[1]
 PROMOTION_GATE = TOOLS_DIR / "promotion_gate.py"
 DENOMINATOR_INVENTORY = MAMBA_DIR / "tools" / "cpython_regrtest_inventory.py"
 STRICT_TYPE_ACCOUNTING = TOOLS_DIR / "strict_type_accounting.py"
@@ -50,15 +51,23 @@ class Dimension:
         }
 
 
-def run_json(argv: list[str], *, accepted: set[int]) -> tuple[int, dict[str, Any]]:
-    proc = subprocess.run(argv, text=True, capture_output=True)
+def run_json(
+    argv: list[str], *, accepted: set[int], cwd: Path | None = None
+) -> tuple[int, dict[str, Any]]:
+    proc = subprocess.run(argv, text=True, capture_output=True, cwd=cwd)
     if proc.returncode not in accepted:
         raise RuntimeError(
             f"{' '.join(argv)} exited {proc.returncode}\n"
             f"stdout={proc.stdout}\nstderr={proc.stderr}"
         )
+    candidates = [
+        line.strip()
+        for line in proc.stdout.splitlines()
+        if line.strip().startswith("{") and line.strip().endswith("}")
+    ]
+    stdout = candidates[-1] if candidates else proc.stdout
     try:
-        return proc.returncode, json.loads(proc.stdout)
+        return proc.returncode, json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError(
             f"{' '.join(argv)} did not emit JSON: {exc}\nstdout={proc.stdout}"
@@ -232,6 +241,87 @@ def strict_type_dimension(show: int, type_limit: int) -> Dimension:
     )
 
 
+def perf_dimension(show: int) -> Dimension:
+    _, payload = run_json(
+        ["cargo", "test", "-p", "mamba", "--test", "cpython_status", "--", "--json"],
+        accepted={0},
+        cwd=WORKSPACE_DIR,
+    )
+    perf = payload["perf"]
+    blocker_counts = {
+        "baseline_missing_rows": perf["baseline_missing_rows"],
+        "baseline_stale_rows": perf["baseline_stale_rows"],
+        "baseline_missing_cpu_rows": perf["baseline_missing_cpu_rows"],
+        "baseline_missing_rss_rows": perf["baseline_missing_rss_rows"],
+        "missing_fixture_count": perf["missing_fixture_count"],
+        "missing_prereq_import_count": perf["missing_prereq_import_count"],
+        "malformed_pin_count": perf["malformed_pin_count"],
+        "query_error": 1 if perf["query_error"] else 0,
+    }
+    total_blockers = sum(int(value) for value in blocker_counts.values())
+    status = (
+        "green"
+        if perf["pins"] > 0 and perf["baseline_db_exists"] and total_blockers == 0
+        else "red"
+    )
+
+    blockers: list[dict[str, Any]] = []
+    for source, kind in (
+        ("missing_row_pins", "missing_baseline_row"),
+        ("recordable_missing_row_pins", "recordable_missing_baseline_row"),
+        ("stale_row_pins", "stale_baseline_row"),
+        ("missing_cpu_pins", "missing_cpu_sample"),
+        ("missing_rss_pins", "missing_rss_sample"),
+        ("missing_fixture_pins", "missing_perf_fixture"),
+        ("missing_prereq_import_pins", "missing_prereq_import"),
+    ):
+        for item in perf.get(source, [])[:show]:
+            blockers.append({"kind": kind, "source": source, **item})
+    for item in perf.get("malformed_pins", [])[:show]:
+        blockers.append({"kind": "malformed_perf_pin", "detail": item})
+    if perf["query_error"]:
+        blockers.append(
+            {"kind": "baseline_query_error", "detail": perf["query_error"]}
+        )
+
+    return Dimension(
+        id="perf_rss_baselines",
+        title="Performance and peak-RSS baseline gate",
+        status=status,
+        owner_issue="#707",
+        summary=(
+            "all perf pins have comparable CPython CPU and peak-RSS baseline rows"
+            if status == "green"
+            else (
+                "perf/RSS baseline is not replacement-ready: "
+                f"{perf['baseline_missing_rows']} missing rows, "
+                f"{perf['baseline_missing_cpu_rows']} missing CPU rows, "
+                f"{perf['baseline_missing_rss_rows']} missing RSS rows, "
+                f"{perf['missing_prereq_import_count']} missing prereq imports"
+            )
+        ),
+        counts={
+            "pins": perf["pins"],
+            "baseline_db_exists": perf["baseline_db_exists"],
+            "baseline_rows": perf["baseline_rows"],
+            "baseline_missing_rows": perf["baseline_missing_rows"],
+            "baseline_recordable_missing_rows": perf["baseline_recordable_missing_rows"],
+            "baseline_stale_rows": perf["baseline_stale_rows"],
+            "baseline_missing_cpu_rows": perf["baseline_missing_cpu_rows"],
+            "baseline_missing_rss_rows": perf["baseline_missing_rss_rows"],
+            "missing_fixture_count": perf["missing_fixture_count"],
+            "missing_prereq_import_count": perf["missing_prereq_import_count"],
+            "malformed_pin_count": perf["malformed_pin_count"],
+            "query_error": perf["query_error"],
+        },
+        evidence=[
+            "cargo test -p mamba --test cpython_status -- --json",
+            "python3.12 projects/mamba/tests/harness/cpython/tools/perf_baseline.py record --missing-only --ready-only --limit 10 --keep-going",
+        ],
+        blockers=blockers[:show],
+    )
+
+
 def blocked_dimension(
     *,
     id: str,
@@ -262,13 +352,7 @@ def dimensions(show: int, type_limit: int) -> list[Dimension]:
         denominator_dimension(show),
         promotion_dimension(show),
         strict_type_dimension(show, type_limit),
-        blocked_dimension(
-            id="perf_rss_baselines",
-            title="Performance and peak-RSS baseline gate",
-            owner_issue="#707",
-            summary="perf/RSS baseline completeness is still owned by cpython_status/perf pins and not proven green",
-            evidence=["cargo test -p mamba --test cpython_status -- --json"],
-        ),
+        perf_dimension(show),
         blocked_dimension(
             id="safety_stability_security",
             title="Safety, stability, leak, crash, and secret-leak gates",
