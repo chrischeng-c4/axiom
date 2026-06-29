@@ -1082,6 +1082,28 @@ fn test_stdlib_bool_bitwise_wrong_scalar_rejected() {
 }
 
 #[test]
+fn test_stdlib_frozenset_operator_bare_instance_rejected() {
+    let errors =
+        check("from builtins import frozenset\nclass _W:\n    pass\nobj = frozenset()\nobj.__and__(_W())\nobj.__ge__(_W())\nobj.__gt__(_W())\nobj.__le__(_W())\nobj.__lt__(_W())\nobj.__or__(_W())\nobj.__sub__(_W())\nobj.__xor__(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .filter(|e| e.contains("does not satisfy parameter `value`"))
+            .count()
+            >= 8,
+        "frozenset operators should reject bare non-AbstractSet operands, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import frozenset\nclass SetLike:\n    def __contains__(self, item):\n        return False\nobj = frozenset()\nobj.__and__(frozenset())\nobj.__ge__(SetLike())\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "frozenset operator wall must stay skip-safe for modeled/dynamic set-like operands, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_bytes_bytearray_wall_rejects_impossible_scalars() {
     let errors = check("from builtins import bytes\nobj = bytes()\nobj.__gt__(123)\n");
     assert!(
