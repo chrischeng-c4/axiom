@@ -9,12 +9,11 @@
 # case = "Context__get__key_as_ContextVar_wrong"
 # subject = "_contextvars.Context.get(key: ContextVar)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_contextvars.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key
 # mamba-strict-type: TypeError
 """Type wall: _contextvars.Context.get(key: ContextVar); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from _contextvars import Context
-obj = object.__new__(Context)
+obj = Context()
 try:
     obj.get(_W())  # key: ContextVar <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
