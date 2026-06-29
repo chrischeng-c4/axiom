@@ -1323,10 +1323,15 @@ async fn serve(args: ServeArgs) -> Result<()> {
     tracing::info!(addr = %bind, shard_count = args.shard_count, "lumen serve listening");
 
     let grace = Duration::from_secs(args.grace_secs);
-    // Serve HTTP/1.1 + h2c on one port via the shared h2c transport (hyper
-    // auto-builder), not `axum::serve` (HTTP/1-only). Matches the service
-    // archetype and lets in-cluster h2c clients connect.
-    h2c::serve(listener, app, shutdown_signal(engine.clone(), grace)).await;
+    // Serve HTTP/1.1 + h2c on one port through the shared service HTTP shell,
+    // with the standard SIGTERM drain sequence flipping `/readyz` to 503
+    // before the listener closes.
+    service_http::serve(
+        listener,
+        app,
+        service_http::shutdown_with_drain(move || engine.start_drain(), grace),
+    )
+    .await;
     // Flush any batched spans before exit (no-op when OTLP was never enabled).
     #[cfg(feature = "otel")]
     opentelemetry::global::shutdown_tracer_provider();
@@ -1424,30 +1429,6 @@ async fn connect_nats_with_retry(url: &str, timeout_secs: u64) -> Result<NatsWal
             }
         }
     }
-}
-
-async fn shutdown_signal(engine: Arc<Engine>, grace: Duration) {
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let sigterm = async {
-        use tokio::signal::unix::{signal, SignalKind};
-        if let Ok(mut s) = signal(SignalKind::terminate()) {
-            s.recv().await;
-        }
-    };
-    #[cfg(not(unix))]
-    let sigterm = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c  => tracing::info!("received SIGINT"),
-        _ = sigterm => tracing::info!("received SIGTERM"),
-    }
-    engine.start_drain();
-    tracing::info!(grace_secs = grace.as_secs(), "draining — readyz=503");
-    tokio::time::sleep(grace).await;
-    tracing::info!("grace expired — shutting down");
 }
 
 fn init_tracing(level: &str, format: LogFormat, otlp_endpoint: Option<&str>) {

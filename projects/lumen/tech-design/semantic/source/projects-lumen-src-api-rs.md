@@ -64,11 +64,12 @@ use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,
     middleware::from_fn_with_state,
-    response::{Html, IntoResponse, Json},
+    response::{IntoResponse, Json},
     routing::{delete, get, post, put},
     Router,
 };
 use serde::Deserialize;
+use service_http::{MetricsProvider, ReadinessHook};
 use utoipa::OpenApi;
 
 use axum::http::HeaderMap;
@@ -386,6 +387,20 @@ impl AppState {
 pub struct ApiDoc;
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl ReadinessHook for Engine {
+    fn is_draining(&self) -> bool {
+        Engine::is_draining(self)
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl MetricsProvider for Engine {
+    fn render_metrics(&self) -> String {
+        self.metrics().render()
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub fn router(state: AppState) -> Router {
     // Apply auth middleware only to data-plane routes. Admin/Probe
     // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
@@ -423,24 +438,19 @@ pub fn router(state: AppState) -> Router {
         // bodies with 413 before they hit a handler.
         .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024));
 
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
+    let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
+    let probes = service_http::standard_probe_routes(state.engine.clone(), Some(metrics), openapi);
+    let admin = Router::new()
         .route("/version", get(version))
-        .route("/metrics", get(metrics))
-        .route("/debug/cluster", get(debug_cluster))
-        .route("/openapi.json", get(openapi_spec))
-        .route("/docs", get(docs_swagger))
-        .merge(data_plane)
+        .route("/debug/cluster", get(debug_cluster));
+
+    probes
+        .merge(admin.with_state(state.clone()))
+        .merge(data_plane.with_state(state))
         // One tracing span per HTTP request — structured request logs always, and
         // the source spans the OTLP layer exports as traces when LUMEN_OTLP_ENDPOINT
         // is set. INFO level so the default `info` EnvFilter keeps it.
-        .layer(
-            tower_http::trace::TraceLayer::new_for_http().make_span_with(
-                tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO),
-            ),
-        )
-        .with_state(state)
+        .layer(service_http::trace_layer())
 }
 
 #[utoipa::path(
@@ -449,6 +459,8 @@ pub fn router(state: AppState) -> Router {
     tag = "Admin",
     responses((status = 200, description = "Prometheus text-format metrics", body = String))
 )]
+/// OpenAPI metadata for the shared `/metrics` implementation in service-http.
+#[allow(dead_code)]
 async fn metrics(
     State(state): State<AppState>,
 ) -> (StatusCode, [(&'static str, &'static str); 1], String) {
@@ -501,6 +513,8 @@ fn read_consistency_from(headers: &HeaderMap) -> ReadConsistency {
     tag = "Admin",
     responses((status = 200, description = "Process is alive", body = String))
 )]
+/// OpenAPI metadata for the shared `/healthz` implementation in service-http.
+#[allow(dead_code)]
 async fn healthz() -> &'static str {
     "ok"
 }
@@ -530,6 +544,8 @@ async fn version() -> Json<serde_json::Value> {
         (status = 503, description = "Not ready")
     )
 )]
+/// OpenAPI metadata for the shared `/readyz` implementation in service-http.
+#[allow(dead_code)]
 async fn readyz(State(state): State<AppState>) -> (StatusCode, &'static str) {
     if state.engine.is_draining() {
         (StatusCode::SERVICE_UNAVAILABLE, "draining")
@@ -1090,40 +1106,6 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
     doc.info.version = env!("CARGO_PKG_VERSION").to_string();
     doc
-}
-
-async fn openapi_spec() -> Json<utoipa::openapi::OpenApi> {
-    Json(openapi())
-}
-
-/// Interactive Swagger UI at `/docs` (FastAPI convention). The page
-/// pulls the live spec from `/openapi.json`, so its "Try it out"
-/// buttons fire real requests against this pod — handy for exploring
-/// `match` / `term` / `range` / `knn` queries from a browser.
-async fn docs_swagger() -> Html<&'static str> {
-    Html(
-        r##"<!doctype html>
-<html>
-  <head>
-    <title>lumen API</title>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
-    <style>body { margin: 0; }</style>
-  </head>
-  <body>
-    <div id="swagger-ui"></div>
-    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-    <script>
-      window.ui = SwaggerUIBundle({
-        url: "/openapi.json",
-        dom_id: "#swagger-ui",
-        deepLinking: true,
-      });
-    </script>
-  </body>
-</html>"##,
-    )
 }
 
 // ---------------------------------------------------------------------------

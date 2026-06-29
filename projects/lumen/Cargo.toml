@@ -56,6 +56,9 @@ cli-std = { path = "../../libs/cli-std", default-features = false }
 # Shared request-auth plumbing: Lumen supplies only the static role-map verifier
 # and per-collection RBAC policy.
 service-auth = { path = "../../libs/service-auth" }
+# Shared k8s-native HTTP service shell: standard probe routes, request tracing,
+# h2c serve wrapper, and SIGTERM drain sequencing.
+service-http = { path = "../../libs/service-http" }
 # Lumen-owned HA: writes replicated through the shared raft-core engine (behind
 # the `raft-wal` feature). Peer RPCs ride the same h2c transport.
 raft-core = { path = "../../libs/raft-core", optional = true }

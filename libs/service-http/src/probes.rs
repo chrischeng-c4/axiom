@@ -33,7 +33,7 @@ struct ProbeState {
 /// Build the five standard probe routes:
 ///
 /// - `GET /healthz` → 200 `ok` (process is alive).
-/// - `GET /readyz` → 200 `ready`, or 503 `draining` when
+/// - `GET /readyz` → 200 `ok`, or 503 `draining` when
 ///   [`ReadinessHook::is_draining`] is `true`.
 /// - `GET /metrics` → `text/plain; version=0.0.4` from `metrics`
 ///   ([`MetricsProvider::render_metrics`]), or an empty body when `None`.
@@ -68,12 +68,12 @@ async fn healthz() -> &'static str {
 }
 
 /// `GET /readyz` — readiness. 503 `draining` once shutdown begins so k8s stops
-/// routing during the grace window; 200 `ready` otherwise.
+/// routing during the grace window; 200 `ok` otherwise.
 async fn readyz(State(state): State<ProbeState>) -> (StatusCode, &'static str) {
     if state.readiness.is_draining() {
         (StatusCode::SERVICE_UNAVAILABLE, "draining")
     } else {
-        (StatusCode::OK, "ready")
+        (StatusCode::OK, "ok")
     }
 }
 
@@ -185,7 +185,7 @@ mod tests {
         let router = standard_probe_routes(Arc::new(Draining(false)), None, test_openapi);
         let (status, body) = get(router, "/readyz").await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, "ready");
+        assert_eq!(body, "ok");
     }
 
     #[tokio::test]
