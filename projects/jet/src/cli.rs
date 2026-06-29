@@ -1431,7 +1431,13 @@ pub fn command() -> Command {
 
 fn serve_command() -> Command {
     Command::new("serve")
-        .about("Start an agent-first detached Jet server session")
+        .about("Serve the production frontend (static dist/) as an agent-first detached session")
+        .long_about(
+            "Serve the production frontend as a detached, agent-first Jet server session.\n\n\
+             `jet serve` is the production static-serving surface: it serves the prebuilt \
+             `./dist` artifacts (run `jet build` first). Use `jet dev` for the development \
+             server (HMR, proxy rules, browser log intake).",
+        )
         .arg(
             Arg::new("port")
                 .short('p')
@@ -1445,22 +1451,10 @@ fn serve_command() -> Command {
                 .help("Host to bind to"),
         )
         .arg(
-            Arg::new("prod")
-                .long("prod")
-                .action(ArgAction::SetTrue)
-                .help("Serve production dist artifacts from ./dist"),
-        )
-        .arg(
             Arg::new("wasm")
                 .long("wasm")
                 .action(ArgAction::SetTrue)
-                .help("Serve the FE-on-WASM target through the detached serve session"),
-        )
-        .arg(
-            Arg::new("debug")
-                .long("debug")
-                .action(ArgAction::SetTrue)
-                .help("Build the WASM app with debug info and runtime inspection hooks"),
+                .help("Serve the prebuilt FE-on-WASM production target through the detached session"),
         )
         .subcommand(
             Command::new("shutdown")
@@ -4076,24 +4070,22 @@ async fn handle_serve_command(root_dir: &PathBuf, m: &ArgMatches) -> Result<()> 
         .get_one::<String>("host")
         .cloned()
         .unwrap_or_else(|| "127.0.0.1".to_string());
-    let prod = m.get_flag("prod");
     let wasm = m.get_flag("wasm");
+    // `jet serve` is production-only: it serves the prebuilt static `./dist`.
+    // The detached child re-invocation is signaled by JET_SERVE_CHILD.
     if std::env::var_os("JET_SERVE_CHILD").is_some() {
-        if !prod {
-            anyhow::bail!("JET_SERVE_CHILD is only valid for `jet serve --prod`");
-        }
         return crate::dev_server::prod_static::serve(
             root_dir,
             crate::dev_server::prod_static::ProdOptions {
                 host,
                 port,
-                target: crate::dev_server::serve_process::serve_session_target(prod, wasm),
+                target: crate::dev_server::serve_process::serve_session_target(true, wasm),
             },
         )
         .await;
     }
 
-    launch_detached_serve(root_dir, &host, port, prod, wasm, m.get_flag("debug")).await
+    launch_detached_serve(root_dir, &host, port, true, wasm, false).await
 }
 
 async fn launch_detached_serve(
@@ -5008,8 +5000,16 @@ mod e2e_command_contract_tests {
     fn serve_command_exposes_agent_first_session_surface() {
         let help = help_text(&["jet", "serve", "--help"]);
         assert!(
-            help.contains("detached") && help.contains("--wasm") && help.contains("--prod"),
-            "serve help must expose detached agent mode plus wasm/prod target flags: {help}"
+            help.contains("detached") && help.contains("--wasm"),
+            "serve help must expose detached agent mode plus the wasm target flag: {help}"
+        );
+        assert!(
+            help.to_lowercase().contains("production"),
+            "serve help must name itself as the production serving surface: {help}"
+        );
+        assert!(
+            !help.contains("--prod"),
+            "`jet serve` is production by default; `--prod` must no longer be a flag: {help}"
         );
         assert!(
             help.contains("shutdown"),
