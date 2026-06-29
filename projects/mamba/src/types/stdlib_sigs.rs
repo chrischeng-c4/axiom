@@ -189,6 +189,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("msg", CoreTy::Str), p("details", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: anext(i, default=...) -- generated overload accounting
+    // collapses the first argument to Unknown, but a bare user instance cannot
+    // satisfy either async or synchronous __anext__ protocol.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "",
+        name: "anext",
+        kind: SigKind::ModuleFn,
+        params: &[p("i", CoreTy::Typed), p("default", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // POSITIVE: ExceptionGroup matcher/sequence methods use non-scalar
     // contracts in typeshed. A bare user instance cannot satisfy Callable,
     // exception type, tuple-of-types, or Sequence, so reject it through the

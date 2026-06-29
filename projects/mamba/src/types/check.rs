@@ -4,7 +4,7 @@ use super::ty::TypeVarId;
 use super::{Ty, TypeContext, TypeId};
 use crate::error::MambaError;
 use crate::parser::ast::*;
-use crate::resolve::{SymbolKind, SymbolTable};
+use crate::resolve::{SymbolId, SymbolKind, SymbolTable};
 use crate::source::span::{Span, Spanned};
 use std::collections::{HashMap, HashSet};
 
@@ -178,6 +178,11 @@ pub struct TypeChecker {
     /// `object.__new__(Cls)` or `Cls(...)` where `Cls` is a known imported
     /// stdlib class. Lets `obj.method(arg)` resolve to a `Method` signature.
     pub(crate) instance_origins: HashMap<String, String>,
+    /// Original symbol ids for builtin function names registered during
+    /// TypeChecker construction. If the current lookup no longer matches this
+    /// id, user code has shadowed the builtin and stdlib signature enforcement
+    /// must not apply to the bare name.
+    pub(crate) builtin_symbols: HashMap<String, SymbolId>,
 }
 
 impl TypeChecker {
@@ -204,6 +209,7 @@ impl TypeChecker {
             comprehension_depth: 0,
             import_origins: HashMap::new(),
             instance_origins: HashMap::new(),
+            builtin_symbols: HashMap::new(),
         };
         tc.register_builtins();
         tc
@@ -215,6 +221,13 @@ impl TypeChecker {
             self.sym_types.resize(idx + 1, None);
         }
         self.sym_types[idx] = Some(ty);
+    }
+
+    pub(crate) fn is_unshadowed_builtin(&self, name: &str) -> bool {
+        let Some(builtin_id) = self.builtin_symbols.get(name).copied() else {
+            return false;
+        };
+        self.symbols.lookup(name) == Some(builtin_id)
     }
 
     pub(crate) fn get_sym_type(&self, sym_idx: u32) -> TypeId {
