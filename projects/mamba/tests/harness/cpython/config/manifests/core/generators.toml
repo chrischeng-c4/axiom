@@ -8,3 +8,11 @@ subject = "generator expression"
 kind = "semantic"
 import = "pass"
 intent = "a module-level generator expression is a real generator object, rejects shallow/deep copy, and a walrus target inside it binds in the enclosing module scope"
+
+[[case]]
+dimension = "behavior"
+case = "method_dispatch_in_generator_body"
+subject = "generator method dispatch"
+kind = "semantic"
+import = "pass"
+intent = "generator and generator-expression bodies can call bound/native string methods without corrupting the coroutine stack"
