@@ -1188,7 +1188,31 @@ fn append_parsed_text(elem: MbValue, s: &str) {
     );
 }
 
+fn resolve_xml_name(raw: &str, namespaces: &HashMap<String, String>) -> String {
+    if raw.starts_with('{') {
+        return raw.to_string();
+    }
+    if let Some((prefix, local)) = raw.split_once(':') {
+        if let Some(uri) = namespaces.get(prefix) {
+            return format!("{{{uri}}}{local}");
+        }
+    } else if let Some(uri) = namespaces.get("") {
+        if !uri.is_empty() {
+            return format!("{{{uri}}}{raw}");
+        }
+    }
+    raw.to_string()
+}
+
 fn parse_element(bytes: &[u8], i: &mut usize) -> Option<MbValue> {
+    parse_element_with_ns(bytes, i, &HashMap::new())
+}
+
+fn parse_element_with_ns(
+    bytes: &[u8],
+    i: &mut usize,
+    parent_ns: &HashMap<String, String>,
+) -> Option<MbValue> {
     if *i >= bytes.len() || bytes[*i] != b'<' {
         return None;
     }
@@ -1205,6 +1229,7 @@ fn parse_element(bytes: &[u8], i: &mut usize) -> Option<MbValue> {
         *i += 1;
     }
     let tag = std::str::from_utf8(&bytes[start..*i]).ok()?.to_string();
+    let mut local_ns = parent_ns.clone();
     // Build element with attributes
     let attrib_dict = MbObject::new_dict();
     loop {
@@ -1252,19 +1277,26 @@ fn parse_element(bytes: &[u8], i: &mut usize) -> Option<MbValue> {
         }
         let attr_val = std::str::from_utf8(&bytes[v_start..*i]).ok()?.to_string();
         *i += 1;
+        let decoded_attr_val = decode_entities(&attr_val);
+        if attr_name == "xmlns" {
+            local_ns.insert(String::new(), decoded_attr_val.clone());
+        } else if let Some(prefix) = attr_name.strip_prefix("xmlns:") {
+            local_ns.insert(prefix.to_string(), decoded_attr_val.clone());
+        }
         unsafe {
             if let ObjData::Dict(ref lock) = (*attrib_dict).data {
                 lock.write().unwrap().insert(
                     attr_name.into(),
-                    MbValue::from_ptr(MbObject::new_str(decode_entities(&attr_val))),
+                    MbValue::from_ptr(MbObject::new_str(decoded_attr_val)),
                 );
             }
         }
     }
     let self_closing = *i > 0 && bytes[*i - 1] == b'/';
     *i += 1; // skip '>'
+    let resolved_tag = resolve_xml_name(&tag, &local_ns);
     let elem = mb_xml_element(
-        MbValue::from_ptr(MbObject::new_str(tag.clone())),
+        MbValue::from_ptr(MbObject::new_str(resolved_tag)),
         MbValue::from_ptr(attrib_dict),
     );
     // mb_xml_element retains the attrib arg; release the construction
@@ -1334,7 +1366,7 @@ fn parse_element(bytes: &[u8], i: &mut usize) -> Option<MbValue> {
             skip_prolog(bytes, i);
             continue;
         }
-        let child = parse_element(bytes, i)?;
+        let child = parse_element_with_ns(bytes, i, &local_ns)?;
         if let Some(children) = dict_get_key(elem, "_children") {
             super::super::list_ops::mb_list_append(children, child);
             // The list retains; drop the construction reference.
@@ -1565,15 +1597,86 @@ pub fn mb_xml_register_namespace(prefix: MbValue, uri: MbValue) -> MbValue {
 
 // ── ElementPath matching (find / findall / findtext / iterfind) ──
 
-struct PathSpec {
-    descendant: bool,
-    tag: String,
-    attr_pred: Option<(String, String)>,
+#[derive(Clone, Debug)]
+enum PathPredicate {
+    AttrExists(String),
+    AttrEq(String, String),
+    AttrNe(String, String),
+    TextEq(String),
+    TextNe(String),
+    Position(usize),
+    LastMinus(usize),
 }
 
-/// Parse the fixture-level ElementPath subset: `tag`, `.//tag`, each with an
-/// optional `[@name='value']` predicate.
-fn parse_pathspec(path: &str) -> PathSpec {
+#[derive(Clone, Debug)]
+struct PathStep {
+    tag: String,
+    predicate: Option<PathPredicate>,
+}
+
+#[derive(Clone, Debug)]
+struct PathSpec {
+    descendant: bool,
+    steps: Vec<PathStep>,
+}
+
+fn quote_trimmed(s: &str) -> String {
+    s.trim().trim_matches(|c| c == '\'' || c == '"').to_string()
+}
+
+fn expand_query_tag(tag: &str, namespaces: &HashMap<String, String>) -> String {
+    if tag == "*" || tag.starts_with('{') {
+        return tag.to_string();
+    }
+    if let Some((prefix, local)) = tag.split_once(':') {
+        if let Some(uri) = namespaces.get(prefix) {
+            return format!("{{{uri}}}{local}");
+        }
+    }
+    tag.to_string()
+}
+
+fn parse_predicate(pred: &str) -> Option<PathPredicate> {
+    let pred = pred.trim();
+    if pred == "last()" {
+        return Some(PathPredicate::LastMinus(0));
+    }
+    if let Some(offset) = pred.strip_prefix("last()-") {
+        if let Ok(n) = offset.parse::<usize>() {
+            return Some(PathPredicate::LastMinus(n));
+        }
+    }
+    if let Ok(n) = pred.parse::<usize>() {
+        return Some(PathPredicate::Position(n));
+    }
+    if let Some(rest) = pred.strip_prefix('@') {
+        if let Some(eq) = rest.find("!=") {
+            return Some(PathPredicate::AttrNe(
+                rest[..eq].trim().to_string(),
+                quote_trimmed(&rest[eq + 2..]),
+            ));
+        }
+        if let Some(eq) = rest.find('=') {
+            return Some(PathPredicate::AttrEq(
+                rest[..eq].trim().to_string(),
+                quote_trimmed(&rest[eq + 1..]),
+            ));
+        }
+        return Some(PathPredicate::AttrExists(rest.trim().to_string()));
+    }
+    if let Some(rest) = pred.strip_prefix(".!=") {
+        return Some(PathPredicate::TextNe(quote_trimmed(rest)));
+    }
+    if let Some(rest) = pred.strip_prefix(".=") {
+        return Some(PathPredicate::TextEq(quote_trimmed(rest)));
+    }
+    None
+}
+
+/// Parse the fixture-level ElementPath subset: child paths, `.//tag`,
+/// wildcards, simple predicates, and namespace prefixes supplied by
+/// `namespaces=`.
+fn parse_pathspec(path: &str, namespaces: &HashMap<String, String>) -> PathSpec {
     let mut rest = path.trim();
     let mut descendant = false;
     if let Some(r) = rest.strip_prefix(".//") {
@@ -1582,63 +1685,190 @@ fn parse_pathspec(path: &str) -> PathSpec {
     } else if let Some(r) = rest.strip_prefix("./") {
         rest = r;
     }
-    let mut tag = rest.to_string();
-    let mut attr_pred = None;
-    if let Some(open) = rest.find('[') {
-        let pred = rest[open..].trim_start_matches('[').trim_end_matches(']');
-        tag = rest[..open].to_string();
-        if let Some(p) = pred.strip_prefix('@') {
-            if let Some(eq) = p.find('=') {
-                let name = p[..eq].to_string();
-                let raw_val = p[eq + 1..].trim_matches(|c| c == '\'' || c == '"');
-                attr_pred = Some((name, raw_val.to_string()));
+    let steps = rest
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut tag = segment;
+            let mut predicate = None;
+            if let Some(open) = segment.find('[') {
+                tag = &segment[..open];
+                let pred = segment[open + 1..].trim_end_matches(']');
+                predicate = parse_predicate(pred);
             }
-        }
-    }
+            PathStep {
+                tag: expand_query_tag(tag, namespaces),
+                predicate,
+            }
+        })
+        .collect();
     PathSpec {
         descendant,
-        tag,
-        attr_pred,
+        steps,
     }
 }
 
-fn elem_matches(elem: MbValue, spec: &PathSpec) -> bool {
-    let tag_ok = spec.tag == "*" || element_tag_str(elem).as_deref() == Some(spec.tag.as_str());
-    if !tag_ok {
-        return false;
+fn tag_matches(actual: &str, pattern: &str) -> bool {
+    if pattern == "*" {
+        return true;
     }
-    if let Some((name, want)) = &spec.attr_pred {
-        if let Some(attrib) = dict_get_key(elem, "attrib") {
-            return dict_get_key(attrib, name).and_then(extract_str).as_deref()
-                == Some(want.as_str());
-        }
-        return false;
+    if pattern == "{}*" {
+        return !actual.starts_with('{');
     }
-    true
+    if let Some(local) = pattern.strip_prefix("{*}") {
+        return actual
+            .strip_prefix('{')
+            .and_then(|rest| rest.split_once('}').map(|(_, name)| name))
+            .unwrap_or(actual)
+            == local;
+    }
+    if let Some(uri) = pattern.strip_prefix('{').and_then(|rest| rest.strip_suffix("}*")) {
+        return actual
+            .strip_prefix('{')
+            .and_then(|rest| rest.split_once('}').map(|(actual_uri, _)| actual_uri))
+            == Some(uri);
+    }
+    actual == pattern
 }
 
-fn collect_descendants(elem: MbValue, spec: &PathSpec, out: &mut Vec<MbValue>) {
+fn element_string_value(elem: MbValue) -> String {
+    let mut out = element_text_str(elem).unwrap_or_default();
     for child in children_items(elem) {
-        if elem_matches(child, spec) {
+        out.push_str(&element_string_value(child));
+    }
+    out
+}
+
+fn non_position_predicate_matches(elem: MbValue, predicate: &Option<PathPredicate>) -> bool {
+    match predicate {
+        Some(PathPredicate::AttrExists(name)) => dict_get_key(elem, "attrib")
+            .and_then(|attrib| dict_get_key(attrib, name))
+            .is_some(),
+        Some(PathPredicate::AttrEq(name, want)) => dict_get_key(elem, "attrib")
+            .and_then(|attrib| dict_get_key(attrib, name))
+            .and_then(extract_str)
+            .as_deref()
+            == Some(want.as_str()),
+        Some(PathPredicate::AttrNe(name, want)) => dict_get_key(elem, "attrib")
+            .and_then(|attrib| dict_get_key(attrib, name))
+            .and_then(extract_str)
+            .is_some_and(|value| value != *want),
+        Some(PathPredicate::TextEq(want)) => element_string_value(elem) == *want,
+        Some(PathPredicate::TextNe(want)) => element_string_value(elem) != *want,
+        Some(PathPredicate::Position(_)) | Some(PathPredicate::LastMinus(_)) | None => true,
+    }
+}
+
+fn elem_matches_step(elem: MbValue, step: &PathStep) -> bool {
+    let tag = element_tag_str(elem).unwrap_or_default();
+    tag_matches(&tag, &step.tag) && non_position_predicate_matches(elem, &step.predicate)
+}
+
+fn apply_position_predicate(matches: Vec<MbValue>, step: &PathStep) -> Vec<MbValue> {
+    match step.predicate {
+        Some(PathPredicate::Position(n)) => {
+            if n == 0 {
+                Vec::new()
+            } else {
+                matches.get(n - 1).copied().into_iter().collect()
+            }
+        }
+        Some(PathPredicate::LastMinus(offset)) => {
+            if matches.len() > offset {
+                matches
+                    .get(matches.len() - 1 - offset)
+                    .copied()
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+        _ => matches,
+    }
+}
+
+fn child_step_matches(parent: MbValue, step: &PathStep) -> Vec<MbValue> {
+    let matches: Vec<MbValue> = children_items(parent)
+        .into_iter()
+        .filter(|child| elem_matches_step(*child, step))
+        .collect();
+    apply_position_predicate(matches, step)
+}
+
+fn collect_descendant_step_matches(elem: MbValue, step: &PathStep, out: &mut Vec<MbValue>) {
+    for child in children_items(elem) {
+        if elem_matches_step(child, step) {
             out.push(child);
         }
-        collect_descendants(child, spec, out);
+        collect_descendant_step_matches(child, step, out);
     }
 }
 
-fn path_matches(elem: MbValue, path: &str) -> Vec<MbValue> {
-    let spec = parse_pathspec(path);
-    let mut out = Vec::new();
+fn path_matches_with_namespaces(
+    elem: MbValue,
+    path: &str,
+    namespaces: &HashMap<String, String>,
+) -> Vec<MbValue> {
+    let spec = parse_pathspec(path, namespaces);
+    if spec.steps.is_empty() {
+        return Vec::new();
+    }
     if spec.descendant {
-        collect_descendants(elem, &spec, &mut out);
-    } else {
-        for child in children_items(elem) {
-            if elem_matches(child, &spec) {
-                out.push(child);
+        let mut current = Vec::new();
+        collect_descendant_step_matches(elem, &spec.steps[0], &mut current);
+        current = apply_position_predicate(current, &spec.steps[0]);
+        for step in spec.steps.iter().skip(1) {
+            current = current
+                .into_iter()
+                .flat_map(|parent| child_step_matches(parent, step))
+                .collect();
+        }
+        return current;
+    }
+    let mut current = vec![elem];
+    for step in &spec.steps {
+        current = current
+            .into_iter()
+            .flat_map(|parent| child_step_matches(parent, step))
+            .collect();
+    }
+    current
+}
+
+#[cfg(test)]
+fn path_matches(elem: MbValue, path: &str) -> Vec<MbValue> {
+    path_matches_with_namespaces(elem, path, &HashMap::new())
+}
+
+fn namespace_map_from_value(val: MbValue) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some(ptr) = val.as_ptr() else {
+        return out;
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            for (key, value) in lock.read().unwrap().iter() {
+                if let Some(uri) = extract_str(*value) {
+                    out.insert(super::super::dict_ops::dict_key_raw_str(key), uri);
+                }
             }
         }
     }
     out
+}
+
+fn namespace_map_from_call(items: &[MbValue]) -> HashMap<String, String> {
+    for item in items.iter().copied().skip(1).rev() {
+        if let Some(ns_val) = kwarg_get(item, "namespaces") {
+            return namespace_map_from_value(ns_val);
+        }
+        let direct = namespace_map_from_value(item);
+        if !direct.is_empty() {
+            return direct;
+        }
+    }
+    HashMap::new()
 }
 
 fn preorder(elem: MbValue, out: &mut Vec<MbValue>) {
@@ -1675,6 +1905,7 @@ pub fn dispatch_xml_stub_method(
     args: MbValue,
 ) -> Option<MbValue> {
     let items = seq_items(args);
+    let namespaces = namespace_map_from_call(&items);
     let arg = |i: usize| items.get(i).copied().unwrap_or_else(MbValue::none);
     let retained = |v: MbValue| {
         unsafe { super::super::rc::retain_if_ptr(v) };
@@ -1706,7 +1937,9 @@ pub fn dispatch_xml_stub_method(
                 if let Some(err) = validate_xpath(&path) {
                     return Some(err);
                 }
-                let found = path_matches(receiver, &path).into_iter().next();
+                let found = path_matches_with_namespaces(receiver, &path, &namespaces)
+                    .into_iter()
+                    .next();
                 Some(found.map(retained).unwrap_or_else(MbValue::none))
             }
             "findall" | "iterfind" => {
@@ -1714,12 +1947,15 @@ pub fn dispatch_xml_stub_method(
                 if let Some(err) = validate_xpath(&path) {
                     return Some(err);
                 }
-                let found = path_matches(receiver, &path);
+                let found = path_matches_with_namespaces(receiver, &path, &namespaces);
                 Some(MbValue::from_ptr(MbObject::new_list_borrowed(found)))
             }
             "findtext" => {
                 let path = extract_str(arg(0)).unwrap_or_default();
-                match path_matches(receiver, &path).into_iter().next() {
+                match path_matches_with_namespaces(receiver, &path, &namespaces)
+                    .into_iter()
+                    .next()
+                {
                     Some(e) => {
                         let text = element_text_str(e).unwrap_or_default();
                         Some(MbValue::from_ptr(MbObject::new_str(text)))
@@ -2097,6 +2333,57 @@ mod tests {
         let pred = path_matches(nested, ".//c[@id='y']");
         assert_eq!(pred.len(), 1);
         assert_eq!(element_text_str(pred[0]).as_deref(), Some("more"));
+    }
+
+    #[test]
+    fn test_elementpath_query_language_subset() {
+        let root = mb_xml_fromstring(s(
+            "<body><tag class='a'>text</tag><tag class='b'/>\
+             <section><tag class='b' id='inner'>subtext</tag></section></body>",
+        ));
+        assert_eq!(path_matches(root, "tag").len(), 2);
+        assert_eq!(path_matches(root, "section/tag").len(), 1);
+        assert_eq!(path_matches(root, ".//tag[@class]").len(), 3);
+        assert_eq!(path_matches(root, ".//tag[@class!='a']").len(), 2);
+        assert_eq!(path_matches(root, ".//tag[.='subtext']").len(), 1);
+        assert_eq!(path_matches(root, ".//tag[.!='subtext']").len(), 2);
+
+        let linear = mb_xml_fromstring(s(
+            "<body><tag class='a'/><tag class='b'/><tag class='c'/><tag class='d'/></body>",
+        ));
+        let second = path_matches(linear, "./tag[2]");
+        assert_eq!(
+            dict_get_key(dict_get_key(second[0], "attrib").unwrap(), "class")
+                .and_then(extract_str)
+                .as_deref(),
+            Some("b")
+        );
+        let penultimate = path_matches(linear, "./tag[last()-1]");
+        assert_eq!(
+            dict_get_key(dict_get_key(penultimate[0], "attrib").unwrap(), "class")
+                .and_then(extract_str)
+                .as_deref(),
+            Some("c")
+        );
+
+        let nsroot = mb_xml_fromstring(s(
+            "<a xmlns:x='X' xmlns:y='Y'><x:b><c/></x:b><b/><c><x:b/><b/></c><y:b/></a>",
+        ));
+        let mut ns = HashMap::new();
+        ns.insert("xx".to_string(), "X".to_string());
+        assert_eq!(
+            path_matches_with_namespaces(nsroot, "{*}b", &HashMap::new()).len(),
+            3
+        );
+        assert_eq!(
+            path_matches_with_namespaces(nsroot, "{X}*", &HashMap::new()).len(),
+            1
+        );
+        assert_eq!(
+            path_matches_with_namespaces(nsroot, "{}*", &HashMap::new()).len(),
+            2
+        );
+        assert_eq!(path_matches_with_namespaces(nsroot, ".//xx:b", &ns).len(), 2);
     }
 
     #[test]
