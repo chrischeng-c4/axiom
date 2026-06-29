@@ -3158,6 +3158,22 @@ mod tests {
     }
 
     #[test]
+    fn test_runtime_image_supports_dockerfile_variants() {
+        for path in [
+            "projects/lumen/Dockerfile",
+            "projects/lumen/Dockerfile.release",
+            "projects/lumen/Dockerfile.bench",
+            "projects/lumen/service.dockerfile",
+        ] {
+            assert_eq!(
+                target_language(std::path::Path::new(path), Some("runtime-image")),
+                Some(crate::generate::marker::Lang::Toml),
+                "runtime-image target should accept {path}"
+            );
+        }
+    }
+
+    #[test]
     fn test_extract_section_fence_returns_raw_source_payload() {
         let spec = r#"
 ## Source
@@ -7844,10 +7860,13 @@ fn is_yaml_source(path: &Path) -> bool {
 }
 
 fn is_docker_artifact(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some("Dockerfile" | ".dockerignore")
-    )
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    file_name == ".dockerignore"
+        || file_name == "Dockerfile"
+        || file_name.starts_with("Dockerfile.")
+        || file_name.ends_with(".dockerfile")
 }
 
 /// Decide whether a target path is writable by a generator, and return the

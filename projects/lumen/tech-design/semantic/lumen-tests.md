@@ -386,6 +386,18 @@ semantic_domain:
           - name: "issue_help_lists_search_view_create"
             kind: "function"
             public: false
+          - name: "help_ships_dockerfile_and_layered_k8s_groups"
+            kind: "function"
+            public: false
+          - name: "dockerfile_render_release_sets_version_and_strips_markers"
+            kind: "function"
+            public: false
+          - name: "k8s_crd_render_is_offline"
+            kind: "function"
+            public: false
+          - name: "k8s_instance_render_prod_accepts_app_namespace_overrides"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"

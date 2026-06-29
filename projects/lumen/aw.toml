@@ -27,7 +27,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:8e188a9cd7e1e61025cb9ad6d98afc92341303875b16b0f8e229a4e21c0e704a"
+generated_from_td_digest = "sha256:e6837b7ff67aa8c2a32163db0f53409e12bbc14a86b1145ccdba8413c8dbbbde"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -505,7 +505,7 @@ contract_id = "security-tls-rustls"
 category = "security"
 td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-tls-rustls"
 test_path = "projects/lumen/tests/security_lumen_claim_security_tls_rustls.rs"
-command = "cargo test -p lumen tls"
+command = "cargo test -p lumen --lib tls"
 required_for_production = true
 assertions = ["The rustls-backed TLS surface passes the runtime TLS gate."]
 
