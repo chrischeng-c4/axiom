@@ -75,26 +75,41 @@ flowchart TD
 <!-- type: config lang: yaml -->
 
 ```yaml
-config_changes:
-  - surface: "projects/vat/src/config.rs"
-    change: "Add optional scenarios: Vec<ScenarioConfig> to VatConfig with serde default."
-  - surface: "vat.toml"
-    change: "Introduce compatible [[scenarios]] entries; existing files with only services/runners remain valid."
-  - surface: "validation"
-    change: "Validate unique scenario ids, known app service, known required services, known runner, and supported network mode."
-scenario_shape:
-  fields:
-    id: "non-empty scenario id"
-    app: "service id for the app under test"
-    requires: "additional service ids for dependencies"
-    runner: "runner id to execute after readiness"
-    network: "open | hermetic; default open"
-compatibility:
-  existing_run_modes: "unchanged"
-  scenario_optional: true
-  service_schema_reuse: true
+vat_toml:
+  version: 1
+  additions:
+    - table: "[[scenarios]]"
+      required_fields:
+        id: "unique scenario id"
+        app: "service id of the app under test"
+        runner: "runner id to execute"
+      optional_fields:
+        requires: "Vec<String>, default []"
+        network: "open | hermetic, default open"
+      semantics:
+        - "scenario.app is included in the required service set."
+        - "scenario.requires is additional dependency services."
+        - "runner.requires remains honored and is deduped into the same service set."
+        - "network=hermetic requires a participating http-mock service."
+validation:
+  - "scenario id must not be empty and must be unique"
+  - "scenario.app must reference an existing service"
+  - "scenario.requires entries must reference existing services"
+  - "scenario.runner must reference an existing runner"
+  - "scenario.network must deserialize from open or hermetic"
+backward_compatibility:
+  - "VatConfig.scenarios defaults to empty."
+  - "Existing vat.toml runner selection remains unchanged when --scenario is absent."
+  - "No existing service or runner fields are renamed or removed."
+example:
+  toml: |
+    [[scenarios]]
+    id = "prod-like"
+    app = "api"
+    requires = ["pg", "auth", "tasks", "http"]
+    runner = "e2e"
+    network = "hermetic"
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
