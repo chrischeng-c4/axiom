@@ -26,9 +26,8 @@ class _W:
 
 
 from builtins import reversed
-obj = object.__new__(reversed)
 try:
-    obj.__new__(_W())  # sequence: SupportsLenAndGetItem <- wrong-typed
+    reversed.__new__(reversed, _W())  # sequence: SupportsLenAndGetItem <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
