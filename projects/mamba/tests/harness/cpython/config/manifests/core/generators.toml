@@ -1,0 +1,10 @@
+bucket = "core"
+lib = "generators"
+
+[[case]]
+dimension = "behavior"
+case = "top_level_generator_expression_contract"
+subject = "generator expression"
+kind = "semantic"
+import = "pass"
+intent = "a module-level generator expression is a real generator object, rejects shallow/deep copy, and a walrus target inside it binds in the enclosing module scope"
