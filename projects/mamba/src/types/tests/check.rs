@@ -1105,8 +1105,9 @@ fn test_stdlib_frozenset_operator_bare_instance_rejected() {
 
 #[test]
 fn test_stdlib_frozenset_new_iterable_rejected() {
-    let errors =
-        check("from builtins import frozenset\nclass _W:\n    pass\nfrozenset.__new__(frozenset, _W())\n");
+    let errors = check(
+        "from builtins import frozenset\nclass _W:\n    pass\nfrozenset.__new__(frozenset, _W())\n",
+    );
     assert!(
         errors
             .iter()
@@ -1382,8 +1383,7 @@ fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
 
 #[test]
 fn test_stdlib_function_get_owner_rejected() {
-    let errors =
-        check("class _W:\n    pass\ndef f():\n    pass\nf.__get__(None, _W())\n");
+    let errors = check("class _W:\n    pass\ndef f():\n    pass\nf.__get__(None, _W())\n");
     assert!(
         errors
             .iter()
@@ -1400,8 +1400,7 @@ fn test_stdlib_function_get_owner_rejected() {
 
 #[test]
 fn test_stdlib_int_new_x_rejected() {
-    let errors =
-        check("from builtins import int\nclass _W:\n    pass\nint.__new__(int, _W())\n");
+    let errors = check("from builtins import int\nclass _W:\n    pass\nint.__new__(int, _W())\n");
     assert!(
         errors
             .iter()
@@ -1435,8 +1434,9 @@ fn test_stdlib_int_pow_value_rejected() {
         "int.__pow__(str) should reject a non-int value operand, got: {errors:?}"
     );
 
-    let errors =
-        check("from builtins import int\nclass _W:\n    pass\nobj = int()\nobj.__pow__(_W(), None)\n");
+    let errors = check(
+        "from builtins import int\nclass _W:\n    pass\nobj = int()\nobj.__pow__(_W(), None)\n",
+    );
     assert!(
         errors
             .iter()
@@ -1473,6 +1473,33 @@ fn test_stdlib_filter_wrong_bare_function_rejected() {
     assert!(
         errors.is_empty(),
         "filter(None, iterable) must stay clean, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_isinstance_classinfo_rejected() {
+    let errors = check("class _W:\n    pass\nisinstance(None, _W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `class_or_tuple`")),
+        "isinstance(None, _W()) should reject a bare classinfo operand, got: {errors:?}"
+    );
+
+    let errors = check("class _W:\n    pass\nisinstance(None, (int, _W()))\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `class_or_tuple`")),
+        "isinstance(None, (int, _W())) should reject a bare classinfo tuple element, got: {errors:?}"
+    );
+
+    let errors = check(
+        "class MyType:\n    pass\nisinstance(None, MyType)\nisinstance(None, (MyType, int))\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid class and tuple classinfo operands must stay accepted, got: {errors:?}"
     );
 }
 
