@@ -9,12 +9,11 @@
 # case = "decode__obj_as_ReadableBuffer_wrong"
 # subject = "_codecs.decode(obj: ReadableBuffer)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: _codecs.decode(obj: ReadableBuffer); call it with the wrong type.
 
