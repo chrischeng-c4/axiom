@@ -365,6 +365,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("keepends", CoreTy::Bool)],
         enforceable: true,
     },
+    // POSITIVE: classmethod is descriptor-shaped. These curated rows only
+    // reject a provably bare `_W()` for Callable/type-variable contracts; real
+    // callables and dynamic descriptor uses stay skip-safe.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "classmethod",
+        name: "__get__",
+        kind: SigKind::Method,
+        params: &[p("instance", CoreTy::Typed), p("owner", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "classmethod",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("f", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: bool bitwise dunders accept bool/int operands. A single int
     // contract covers both overloads because bool is int-compatible in the type
     // checker, while wrong scalar operands such as str must be rejected.
