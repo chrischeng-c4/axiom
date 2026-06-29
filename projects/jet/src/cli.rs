@@ -609,7 +609,7 @@ pub fn command() -> Command {
                                 .long("no-hooks")
                                 .action(ArgAction::SetTrue)
                                 .conflicts_with_all(["types-only", "hooks"])
-                                .help("Skip React Query hooks (still emit types + client)."),
+                                .help("Skip data-fetching hooks (still emit types + client)."),
                         )
                         .arg(
                             Arg::new("stack")
@@ -624,9 +624,11 @@ pub fn command() -> Command {
                         .arg(
                             Arg::new("hooks")
                                 .long("hooks")
-                                .value_parser(["auto", "react-query", "none"])
+                                .value_parser(["auto", "react-query", "swr", "none"])
                                 .help(
-                                    "Hook runtime to emit. Default: \
+                                    "Hook runtime to emit: react-query \
+                                     (@tanstack/react-query), swr (swr + \
+                                     swr/mutation), or none. Default: \
                                      [codegen.openapi].hooks or auto-detect \
                                      from package.json.",
                                 ),
@@ -1454,7 +1456,9 @@ fn serve_command() -> Command {
             Arg::new("wasm")
                 .long("wasm")
                 .action(ArgAction::SetTrue)
-                .help("Serve the prebuilt FE-on-WASM production target through the detached session"),
+                .help(
+                    "Serve the prebuilt FE-on-WASM production target through the detached session",
+                ),
         )
         .subcommand(
             Command::new("shutdown")
@@ -1902,6 +1906,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     emit_types: true,
                     emit_client: !types_only,
                     emit_hooks: !types_only && resolved_stack.emit_hooks,
+                    hooks_runtime: resolved_stack.hooks_runtime,
                 };
                 let exit = crate::codegen::run(&opts);
                 std::process::exit(exit);

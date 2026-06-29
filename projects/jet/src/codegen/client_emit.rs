@@ -236,7 +236,7 @@ mod tests {
     use super::*;
     use crate::codegen::openapi::Spec;
     use crate::codegen::plan;
-    use crate::codegen::{build_type_map, GenOptions};
+    use crate::codegen::{build_type_map, GenOptions, HookRuntime};
     use std::path::PathBuf;
 
     fn opts() -> GenOptions {
@@ -248,6 +248,7 @@ mod tests {
             emit_types: true,
             emit_client: true,
             emit_hooks: true,
+            hooks_runtime: HookRuntime::ReactQuery,
         }
     }
 

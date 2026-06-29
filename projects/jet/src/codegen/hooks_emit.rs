@@ -1,10 +1,15 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
 // <HANDWRITE gap="standardize:projects-jet-src-codegen-hooks-emit-rs" tracker="standardize-gap-projects-jet-src-codegen-hooks-emit-rs" reason="Existing hand-written code in projects/jet/src/codegen/hooks_emit.rs requires tracked generator coverage.">
-//! Emits `hooks.ts`: TanStack Query (React Query) hooks bound to the client,
-//! using the per-operation `XxxData` / `XxxResponse` types.
+//! Emits `hooks.ts` bound to the generated client, using the per-operation
+//! `XxxData` / `XxxResponse` types. Two hook runtimes are supported:
 //!
-//! `@tanstack/react-query` is a peer dependency of the *generated output*, not
-//! of jet — only `import` statements reference it.
+//! - [`emit`] — TanStack Query (`@tanstack/react-query`): `useXxxQuery` /
+//!   `useXxxMutation`.
+//! - [`emit_swr`] — SWR (`swr` for queries, `swr/mutation` for mutations):
+//!   `useXxx` returning the SWR/SWRMutation response.
+//!
+//! The hook library is a peer dependency of the *generated output*, not of jet
+//! — only `import` statements reference it.
 
 use crate::codegen::client_emit::type_import;
 use crate::codegen::names::to_pascal;
@@ -66,6 +71,67 @@ fn emit_hook(p: &OperationPlan) -> String {
     }
 }
 
+/// Render `hooks.ts` for SWR.
+///
+/// Queries (`GET`) become `useXxx` over `useSWR`; mutations become `useXxx`
+/// over `useSWRMutation` (from `swr/mutation`). The keys mirror the React
+/// Query variant (`[fnName, data]` for queries, the operation id for
+/// mutations) so the two runtimes are drop-in interchangeable per operation.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
+pub fn emit_swr(plans: &[OperationPlan]) -> String {
+    let mut out = String::from(crate::codegen::types_emit::HEADER);
+    out.push_str("import useSWR from \"swr\";\n");
+    out.push_str("import type { SWRConfiguration } from \"swr\";\n");
+    out.push_str("import useSWRMutation from \"swr/mutation\";\n");
+    out.push_str("import type { SWRMutationConfiguration } from \"swr/mutation\";\n");
+    out.push_str("import type { ApiClient } from \"./client\";\n");
+    out.push_str(&type_import(plans));
+    out.push('\n');
+
+    out.push_str("export function createHooks(client: ApiClient) {\n");
+    out.push_str("  return {\n");
+    for p in plans {
+        out.push_str(&emit_swr_hook(p));
+    }
+    out.push_str("  };\n");
+    out.push_str("}\n");
+    out
+}
+
+fn emit_swr_hook(p: &OperationPlan) -> String {
+    let stem = to_pascal(&p.fn_name);
+    let resp = &p.response_type_name;
+    let fn_name = &p.fn_name;
+    if p.is_query {
+        match &p.data_type_name {
+            Some(data) => format!(
+                "    use{stem}(data: {data}, config?: SWRConfiguration<{resp}>) {{\n\
+                 \x20     return useSWR<{resp}>([\"{fn_name}\", data], () => client.{fn_name}(data), config);\n\
+                 \x20   }},\n",
+            ),
+            None => format!(
+                "    use{stem}(config?: SWRConfiguration<{resp}>) {{\n\
+                 \x20     return useSWR<{resp}>([\"{fn_name}\"], () => client.{fn_name}(), config);\n\
+                 \x20   }},\n",
+            ),
+        }
+    } else {
+        match &p.data_type_name {
+            Some(data) => format!(
+                "    use{stem}(config?: SWRMutationConfiguration<{resp}, Error, string, {data}>) {{\n\
+                 \x20     return useSWRMutation<{resp}, Error, string, {data}>(\"{fn_name}\", (_key, {{ arg }}) => client.{fn_name}(arg), config);\n\
+                 \x20   }},\n",
+            ),
+            None => format!(
+                "    use{stem}(config?: SWRMutationConfiguration<{resp}, Error, string, void>) {{\n\
+                 \x20     return useSWRMutation<{resp}, Error, string, void>(\"{fn_name}\", () => client.{fn_name}(), config);\n\
+                 \x20   }},\n",
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +181,56 @@ mod tests {
         assert!(out.contains("useHealthQuery(options?: Omit<UseQueryOptions<HealthResponse>"));
         assert!(out.contains("queryKey: [\"health\"]"));
         assert!(out.contains("queryFn: () => client.health()"));
+    }
+
+    fn render_swr(json: &str) -> String {
+        let s: Spec = serde_json::from_str(json).unwrap();
+        let tm = build_type_map(&s);
+        let plans = plan::build(&s, &tm);
+        emit_swr(&plans)
+    }
+
+    #[test]
+    fn swr_get_becomes_useswr_query_with_data() {
+        let out = render_swr(
+            r##"{"paths":{"/pets/{petId}":{"get":{"operationId":"getPetById",
+            "parameters":[{"name":"petId","in":"path","required":true,"schema":{"type":"integer"}}],
+            "responses":{"200":{"content":{"application/json":{"schema":{"type":"string"}}}}}}}}}"##,
+        );
+        assert!(out.contains("import useSWR from \"swr\";"));
+        assert!(out.contains(
+            "useGetPetById(data: GetPetByIdData, config?: SWRConfiguration<GetPetByIdResponse>)"
+        ));
+        assert!(out.contains(
+            "return useSWR<GetPetByIdResponse>([\"getPetById\", data], () => client.getPetById(data), config);"
+        ));
+    }
+
+    #[test]
+    fn swr_post_becomes_useswrmutation_with_data() {
+        let out = render_swr(
+            r##"{"paths":{"/pets":{"post":{"operationId":"createPet",
+            "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},
+            "responses":{"201":{"content":{"application/json":{"schema":{"type":"object"}}}}}}}}}"##,
+        );
+        assert!(out.contains("import useSWRMutation from \"swr/mutation\";"));
+        assert!(out.contains(
+            "useCreatePet(config?: SWRMutationConfiguration<CreatePetResponse, Error, string, CreatePetData>)"
+        ));
+        assert!(out.contains(
+            "return useSWRMutation<CreatePetResponse, Error, string, CreatePetData>(\"createPet\", (_key, { arg }) => client.createPet(arg), config);"
+        ));
+    }
+
+    #[test]
+    fn swr_no_input_query_omits_data() {
+        let out = render_swr(
+            r##"{"paths":{"/health":{"get":{"operationId":"health","responses":{"200":{"content":{"application/json":{"schema":{"type":"boolean"}}}}}}}}}"##,
+        );
+        assert!(out.contains("useHealth(config?: SWRConfiguration<HealthResponse>)"));
+        assert!(out.contains(
+            "return useSWR<HealthResponse>([\"health\"], () => client.health(), config);"
+        ));
     }
 }
 // </HANDWRITE>
