@@ -9,12 +9,11 @@
 # case = "BinaryReader__replay__progress_callback_as_typed_wrong"
 # subject = "_remote_debugging.BinaryReader.replay(progress_callback: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed progress_callback"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_remote_debugging.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed progress_callback
 # mamba-strict-type: TypeError
 """Type wall: _remote_debugging.BinaryReader.replay(progress_callback: typed); call it with the wrong type.
 
