@@ -74,6 +74,12 @@ unsafe extern "C" fn dispatch_encode(args_ptr: *const MbValue, nargs: usize) -> 
     if nargs == 0 {
         return raise_type_error("encode() missing 1 required positional argument: 'obj'");
     }
+    if nargs >= 2 && a.get(1).copied().unwrap_or_else(MbValue::none).is_none() {
+        return raise_type_error("encode() argument 'encoding' must be str, not None");
+    }
+    if nargs >= 3 && a.get(2).copied().unwrap_or_else(MbValue::none).is_none() {
+        return raise_type_error("encode() argument 'errors' must be str, not None");
+    }
     mb_codecs_encode3(
         a.get(0).copied().unwrap_or_else(MbValue::none),
         a.get(1).copied().unwrap_or_else(MbValue::none),
@@ -84,6 +90,12 @@ unsafe extern "C" fn dispatch_decode(args_ptr: *const MbValue, nargs: usize) -> 
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     if nargs == 0 {
         return raise_type_error("decode() missing 1 required positional argument: 'obj'");
+    }
+    if nargs >= 2 && a.get(1).copied().unwrap_or_else(MbValue::none).is_none() {
+        return raise_type_error("decode() argument 'encoding' must be str, not None");
+    }
+    if nargs >= 3 && a.get(2).copied().unwrap_or_else(MbValue::none).is_none() {
+        return raise_type_error("decode() argument 'errors' must be str, not None");
     }
     mb_codecs_decode3(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -506,6 +518,7 @@ pub fn register() {
     // IncrementalEncoder/Decoder + their factory wrappers).
     register_codec_classes();
 
+    super::register_module("_codecs", attrs.clone());
     super::register_module("codecs", attrs);
 }
 
@@ -546,6 +559,12 @@ unsafe fn extract_bytes_ref<'a>(val: &'a MbValue) -> Option<&'a [u8]> {
         } else {
             None
         }
+    })
+}
+
+fn is_readable_buffer(val: MbValue) -> bool {
+    val.as_ptr().is_some_and(|ptr| unsafe {
+        matches!((*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
     })
 }
 
@@ -697,7 +716,10 @@ pub fn mb_codecs_encode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
         }
     }
     if unsafe { extract_str_ref(&obj) }.is_none() {
-        return MbValue::none();
+        return raise_type_error(&format!(
+            "encode() argument 1 must be str, not {}",
+            super::super::builtins::value_type_name(obj)
+        ));
     }
     let enc = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
     // Validate the error handler name (CPython resolves it eagerly).
@@ -733,13 +755,11 @@ pub fn mb_codecs_decode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             return b;
         }
     }
-    if unsafe { extract_bytes_ref(&obj) }.is_none() {
-        // str passthrough (CPython coerces str→bytes via the default codec
-        // before decode; we model the identity case the fixtures use).
-        if let Some(s) = unsafe { extract_str_ref(&obj) } {
-            return MbValue::from_ptr(MbObject::new_str(s.to_owned()));
-        }
-        return MbValue::none();
+    if !is_readable_buffer(obj) {
+        return raise_type_error(&format!(
+            "a bytes-like object is required, not '{}'",
+            super::super::builtins::value_type_name(obj)
+        ));
     }
     let enc = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
     let enc_norm = normalize_encoding(&enc);

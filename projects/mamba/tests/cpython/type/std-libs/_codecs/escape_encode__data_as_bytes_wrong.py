@@ -9,12 +9,11 @@
 # case = "escape_encode__data_as_bytes_wrong"
 # subject = "_codecs.escape_encode(data: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data
 # mamba-strict-type: TypeError
 """Type wall: _codecs.escape_encode(data: bytes); call it with the wrong type.
 
