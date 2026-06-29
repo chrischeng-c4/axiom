@@ -232,6 +232,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: filter(function, iterable) routes through filter.__new__ in
+    // CPython. A bare user instance cannot satisfy Callable/None; the second
+    // iterable argument remains Unknown until protocol modeling is richer.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "",
+        name: "filter",
+        kind: SigKind::ModuleFn,
+        params: &[p("function", CoreTy::Typed), p("iterable", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // POSITIVE: bytes/bytearray bytes-like methods accept bytes-like values or
     // tuples thereof. Concrete scalars such as int/str/bool are never bytes,
     // while actual bytes literals infer to Any today and stay skip-when-unsure.

@@ -26,9 +26,8 @@ class _W:
 
 
 from builtins import filter
-obj = object.__new__(filter)
 try:
-    obj.__new__(_W(), None)  # function: Callable <- wrong-typed
+    filter(_W(), [])  # filter.__new__ function: Callable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)

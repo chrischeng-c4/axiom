@@ -1119,9 +1119,8 @@ fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
         "classmethod.__get__(_W()) should be rejected, got: {errors:?}"
     );
 
-    let errors = check(
-        "from builtins import classmethod\nclass _W:\n    pass\nclassmethod(_W())\n",
-    );
+    let errors =
+        check("from builtins import classmethod\nclass _W:\n    pass\nclassmethod(_W())\n");
     assert!(
         errors
             .iter()
@@ -1135,6 +1134,30 @@ fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
     assert!(
         errors.is_empty(),
         "classmethod callable/None descriptor use must stay skip-safe, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_filter_wrong_bare_function_rejected() {
+    let errors = check("from builtins import filter\nclass _W:\n    pass\nfilter(_W(), [])\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `function`")),
+        "filter(_W(), []) should reject a bare non-callable instance, got: {errors:?}"
+    );
+
+    let errors =
+        check("from builtins import filter\ndef pred(value):\n    return True\nfilter(pred, [])\n");
+    assert!(
+        errors.is_empty(),
+        "filter(callable, iterable) must stay clean, got: {errors:?}"
+    );
+
+    let errors = check("from builtins import filter\nfilter(None, [])\n");
+    assert!(
+        errors.is_empty(),
+        "filter(None, iterable) must stay clean, got: {errors:?}"
     );
 }
 
