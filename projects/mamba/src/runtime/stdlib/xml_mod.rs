@@ -181,12 +181,32 @@ unsafe extern "C" fn d_tostring(args_ptr: *const MbValue, nargs: usize) -> MbVal
 /// returns None and write() raises on the missing root.
 unsafe extern "C" fn d_elementtree(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    if nargs == 0 {
+    let empty_tree = || {
         let tree = new_stub_dict("ElementTree");
         dict_set_key(tree, "_root", MbValue::none());
-        return tree;
+        tree
+    };
+    if let Some(kwargs) = a.last().copied() {
+        if let Some(file) = kwarg_get(kwargs, "file") {
+            return mb_xml_parse(file);
+        }
+        if let Some(element) = kwarg_get(kwargs, "element") {
+            if is_element(element) {
+                unsafe { super::super::rc::retain_if_ptr(element) };
+                return element;
+            }
+            if element.is_none() {
+                return empty_tree();
+            }
+        }
+    }
+    if nargs == 0 {
+        return empty_tree();
     }
     let arg = a.get(0).copied().unwrap_or_else(MbValue::none);
+    if arg.is_none() {
+        return empty_tree();
+    }
     if is_element(arg) {
         unsafe { super::super::rc::retain_if_ptr(arg) };
         return arg;
@@ -239,7 +259,9 @@ unsafe extern "C" fn d_iterparse(args_ptr: *const MbValue, nargs: usize) -> MbVa
     let mut want_start = false;
     let mut want_end = true;
     if nargs >= 2 {
-        if let Some(events) = kwarg_get(a[nargs - 1], "events") {
+        if let Some(events) = kwarg_get(a[nargs - 1], "events")
+            .or_else(|| a.get(1).copied())
+        {
             let names: Vec<String> = seq_items(events)
                 .into_iter()
                 .filter_map(extract_str)
@@ -2078,6 +2100,21 @@ pub fn dispatch_xml_stub_method(
                     element_to_string(receiver, 0, true, &method)
                 };
                 let dest = arg(0);
+                if let Some(path) = extract_str(dest) {
+                    let bytes = encode_serialized_bytes(&payload, encoding.as_deref());
+                    if let Err(err) = std::fs::write(&path, bytes) {
+                        let exc = if err.kind() == std::io::ErrorKind::NotFound {
+                            "FileNotFoundError"
+                        } else {
+                            "OSError"
+                        };
+                        super::super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+                            MbValue::from_ptr(MbObject::new_str(err.to_string())),
+                        );
+                    }
+                    return Some(MbValue::none());
+                }
                 if let Some(ptr) = dest.as_ptr() {
                     unsafe {
                         if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
