@@ -541,6 +541,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("type", CoreTy::Typed), p("adapter", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: generated `_ssl.Certificate.public_bytes` currently loses its
+    // `format` enum/int parameter. Enforce the scalar wall here; the
+    // `_ssl.Certificate` export/runtime surface remains separate Py312 work.
+    StdlibSig {
+        module: "_ssl",
+        qualifier: "Certificate",
+        name: "public_bytes",
+        kind: SigKind::Method,
+        params: &[p("format", CoreTy::Int)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
