@@ -1162,6 +1162,49 @@ fn test_stdlib_bytearray_release_buffer_rejects_scalar() {
 }
 
 #[test]
+fn test_stdlib_complex_constructor_and_dunder_walls() {
+    let errors = check("from builtins import complex\nclass _W:\n    pass\ncomplex(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `real`")),
+        "complex(_W()) should reject a bare real argument, got: {errors:?}"
+    );
+
+    let errors = check("from builtins import complex\nobj = complex()\nobj.__add__(\"bad\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `complex`, got `str`")),
+        "complex.__add__(str) should be rejected, got: {errors:?}"
+    );
+
+    let errors = check("from builtins import complex\nobj = complex()\nobj.__pow__(\"bad\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `complex`, got `str`")),
+        "complex.__pow__(str) should be rejected, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import complex\nobj = complex()\nobj.__add__(1)\nobj.__mul__(1.5)\nobj.__truediv__(True)\ncomplex(1)\ncomplex(1.5)\ncomplex(\"1\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "complex numeric/string constructor and numeric dunder uses must stay clean, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import complex\nobj = complex()\nvalue: Any = \"bad\"\nobj.__add__(value)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "dynamic complex-like values must stay skip-safe, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
     let errors = check(
         "from builtins import classmethod\nclass _W:\n    pass\nobj = classmethod(lambda cls: None)\nobj.__get__(_W())\n",
