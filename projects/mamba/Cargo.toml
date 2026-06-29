@@ -8,6 +8,11 @@ description = "Mamba - Force-typed Python compiler with native code generation"
 
 [features]
 default = []
+# Published/release-grade CLI builds enable the online paths for the standard
+# agent-facing commands. Default builds still compile the offline paths.
+release = ["self-update", "report-issue"]
+self-update = ["cli-std/online"]
+report-issue = ["cli-std/online"]
 # Gate real-network integration tests: cargo test -p mamba --features integration -- --test-threads=1 pypi_index_client_integration
 integration = []
 native-modules = [
@@ -47,6 +52,7 @@ clap.workspace = true
 clap_complete = "4"
 tokio.workspace = true
 reqwest.workspace = true
+cli-std = { path = "../../libs/cli-std", default-features = false }
 
 # Native module registry (MambaModule trait, MAMBA_MODULES slice, MbValue)
 cclab-mamba-registry = { path = "../../crates/cclab-mamba-registry" }

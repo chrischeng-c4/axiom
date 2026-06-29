@@ -6,7 +6,7 @@
 //! download + atomic self-replacement live behind the `online` feature.
 
 use crate::ToolInfo;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use semver::Version;
 use std::io::Read;
 
@@ -115,6 +115,22 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
 
     let tags = list_release_tags(&client, tool.repo).await?;
     let Some((tag, selected)) = select_version(&tags, &prefix, opts.tag.as_deref()) else {
+        if opts.check {
+            println!("current: {current}");
+            match opts.tag.as_deref() {
+                Some(t) => println!(
+                    "latest:  unavailable (no {} release matching `{t}`; scanned {} tags)",
+                    tool.project,
+                    tags.len()
+                ),
+                None => println!(
+                    "latest:  unavailable (no stable {} release found; scanned {} tags)",
+                    tool.project,
+                    tags.len()
+                ),
+            }
+            return Ok(());
+        }
         match opts.tag.as_deref() {
             Some(t) => bail!(
                 "no {} release matching `{t}` (scanned {} tags)",
@@ -176,7 +192,16 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
 
 /// Without the `online` feature the HTTP client is not linked.
 #[cfg(not(feature = "online"))]
-pub async fn run(tool: &ToolInfo, _opts: Options) -> Result<()> {
+pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
+    if opts.check {
+        println!("current: {}", tool.version);
+        println!("latest:  unavailable (compiled without `cli-std/online`)");
+        println!(
+            "-> rebuild {} with its self-update/release feature to check GitHub releases",
+            tool.project
+        );
+        return Ok(());
+    }
     anyhow::bail!(
         "this {} build was compiled without self-update support (the `online` feature)",
         tool.project
@@ -266,7 +291,7 @@ mod tests {
 
     #[test]
     fn extract_inner() {
-        use flate2::{write::GzEncoder, Compression};
+        use flate2::{Compression, write::GzEncoder};
         let inner = "lumen-t/lumen";
         let payload = b"ELF...";
         let mut enc = GzEncoder::new(Vec::new(), Compression::fast());

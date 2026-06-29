@@ -6479,6 +6479,7 @@ dependencies = [
  "chrono-tz",
  "clap",
  "clap_complete",
+ "cli-std",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
