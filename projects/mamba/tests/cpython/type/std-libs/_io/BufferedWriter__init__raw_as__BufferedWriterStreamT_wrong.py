@@ -9,12 +9,11 @@
 # case = "BufferedWriter__init__raw_as__BufferedWriterStreamT_wrong"
 # subject = "_io.BufferedWriter.__init__(raw: _BufferedWriterStreamT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed raw"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_io.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed raw
 # mamba-strict-type: TypeError
 """Type wall: _io.BufferedWriter.__init__(raw: _BufferedWriterStreamT); call it with the wrong type.
 
