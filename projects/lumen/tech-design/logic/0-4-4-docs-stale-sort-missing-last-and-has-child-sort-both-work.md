@@ -138,15 +138,15 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Refresh `SearchRequest.sort` schema docs: four sort keys, missing=first/last placement and total inclusion, and has_child parent sort support."
+    description: "Update SearchRequest.sort docs to say up to four keys, missing=first/last keep and count rows, and sorted has_child queries are supported through materialization."
   - path: projects/lumen/src/spec.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Update offline query-shape and LLM workflow wording for has_child + parent-field sort."
+    description: "Update query shape and LLM workflow text for has_child + parent-field sort."
   - path: projects/lumen/tests/spec_cli.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
-    description: "Assert the offline agent docs expose sort.missing and has_child + sort support."
+    description: "Lock the corrected agent-facing docs with spec_cli assertions."
 ```
