@@ -6545,6 +6545,9 @@ fn mb_getattr_impl(
                             ),
                             "ElementTree" => matches!(attr_s.as_str(), "getroot" | "write"),
                             "XMLParser" => matches!(attr_s.as_str(), "feed" | "close"),
+                            "XMLPullParser" => {
+                                matches!(attr_s.as_str(), "feed" | "read_events" | "close")
+                            }
                             "TreeBuilder" => {
                                 matches!(attr_s.as_str(), "start" | "data" | "end" | "close")
                             }
