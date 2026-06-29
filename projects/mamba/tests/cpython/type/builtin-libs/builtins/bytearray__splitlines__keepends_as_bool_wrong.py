@@ -22,7 +22,7 @@ typeshed contract: keepends is bool. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import bytearray
-obj = object.__new__(bytearray)
+obj = bytearray()
 try:
     obj.splitlines("not_a_bool")  # keepends: bool <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

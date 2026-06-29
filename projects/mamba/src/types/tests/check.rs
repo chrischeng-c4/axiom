@@ -1082,6 +1082,32 @@ fn test_stdlib_bool_bitwise_wrong_scalar_rejected() {
 }
 
 #[test]
+fn test_stdlib_bytes_bytearray_wall_rejects_impossible_scalars() {
+    let errors = check("from builtins import bytes\nobj = bytes()\nobj.__gt__(123)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `bytes`, got `int`")),
+        "bytes.__gt__(int) should be rejected, got: {errors:?}"
+    );
+
+    let errors = check("from builtins import bytes\nobj = bytes()\nobj.__gt__(b'ok')\n");
+    assert!(
+        errors.is_empty(),
+        "bytes literal arguments infer to Any today and must stay skip-safe, got: {errors:?}"
+    );
+
+    let errors =
+        check("from builtins import bytearray\nobj = bytearray()\nobj.splitlines(\"not_bool\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `bool`, got `str`")),
+        "bytearray.splitlines(str) should be rejected, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_unenforceable_never_rejected() {
     // base64.b64encode(s: ReadableBuffer) -> Unknown: NOT enforceable. Even a
     // blatantly wrong int must NOT be rejected.
