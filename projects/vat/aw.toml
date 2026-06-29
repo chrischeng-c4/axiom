@@ -54,9 +54,9 @@ test_path = "projects/vat/tests/behavior_vat_cli_convention_help_lists_all_three
 command = "cargo test -p vat --test vat_cli_convention -- --nocapture"
 required_for_production = true
 assertions = [
-    "`vat --help` output contains `llm`, `upgrade`, and `report-issue`.",
+    "`vat --help` output contains `llm`, `upgrade`, and `issue`.",
     "`vat upgrade --check` exits 0 and reports current vs latest without writing the binary (network-permitting; offline it errors cleanly, never panics).",
-    "`vat report-issue --title X --dry-run` prints a body containing the vat version and OS/arch and submits nothing.",
+    "`vat issue create --title X --dry-run` prints a body containing the vat version and OS/arch and submits nothing.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -94,8 +94,8 @@ test_path = "projects/vat/tests/behavior_vat_cli_std_parity.rs"
 command = "cargo test -p vat --test vat_cli_convention -- --nocapture"
 required_for_production = true
 assertions = [
-    "vat --help lists llm, upgrade, report-issue.",
-    "vat report-issue --title X --dry-run prints the diagnostics body incl. the vat version and OS.",
+    "vat --help lists llm, upgrade, issue.",
+    "vat issue create --title X --dry-run prints the diagnostics body incl. the vat version and OS.",
     "vat upgrade --check exits cleanly.",
 ]
 

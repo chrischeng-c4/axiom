@@ -1,6 +1,6 @@
 ---
 id: vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c
-summary: Add the two missing mandatory CLI-convention subcommands to vat — `vat upgrade` (self-update to the latest `vat@*` GitHub release) and `vat report-issue` (file a diagnostics-rich GitHub issue) — modeled on the lumen reference implementation, so vat satisfies the ecosystem contract that every CLI ship llm/upgrade/report-issue.
+summary: Keep vat aligned with the mandatory CLI convention — `vat llm`, `vat upgrade`, and `vat issue search/view/create` — so vat satisfies the ecosystem contract that every CLI ships llm/upgrade/issue.
 fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
@@ -8,10 +8,10 @@ capability_refs:
     gap: local-agent-test-runner-protocol
     claim: local-agent-test-runner-protocol
     coverage: partial
-    rationale: "vat is the agent's dev-container CLI; the mandatory agent-facing contract (self-document, self-update, self-report) is incomplete without upgrade and report-issue, so an agent holding only the binary cannot stay current or file a defect."
+    rationale: "vat is the agent's dev-container CLI; the mandatory agent-facing contract (self-document, self-update, and tracker issue search/read/create) is incomplete unless the binary exposes llm, upgrade, and issue."
 ---
 
-# Vat upgrade and report-issue subcommands (mandatory CLI convention)
+# Vat standard CLI convention subcommands
 
 ## Logic
 <!-- type: logic lang: mermaid -->
@@ -21,7 +21,7 @@ capability_refs:
 id: vat-upgrade-and-report-issue-subcommands-logic
 entry: start
 nodes:
-  start: { kind: start, label: "vat upgrade or vat report-issue invoked" }
+  start: { kind: start, label: "vat llm, vat upgrade, or vat issue invoked" }
   which: { kind: decision, label: "which verb" }
   detect: { kind: process, label: "upgrade detect target from VAT_TARGET stamped at build" }
   releases: { kind: process, label: "query github releases filter vat@ tags" }
@@ -34,7 +34,7 @@ nodes:
   extract: { kind: process, label: "gunzip untar find vat-target/vat inner binary" }
   install: { kind: process, label: "write temp sibling chmod 0755 atomic rename over self" }
   upok: { kind: terminal, label: "upgraded" }
-  diag: { kind: process, label: "report-issue collect version os arch context diagnostics" }
+  diag: { kind: process, label: "issue create collect version os arch context diagnostics" }
   body: { kind: process, label: "assemble body user message plus diagnostics block" }
   dry: { kind: decision, label: "--dry-run" }
   preview: { kind: terminal, label: "print body and exit without submitting" }
@@ -53,7 +53,7 @@ edges:
   - { from: verify, to: extract, label: "yes" }
   - { from: extract, to: install }
   - { from: install, to: upok }
-  - { from: which, to: diag, label: "report-issue" }
+  - { from: which, to: diag, label: "issue create" }
   - { from: diag, to: body }
   - { from: body, to: dry }
   - { from: dry, to: preview, label: "yes" }
@@ -66,7 +66,7 @@ edges:
 ```yaml
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "vat-cli-convention-upgrade-report-issue.schema.json"
-title: "vat upgrade / report-issue evidence shapes"
+title: "vat upgrade / issue evidence shapes"
 type: object
 properties:
   release_asset:
@@ -86,7 +86,7 @@ properties:
       action: { type: string, enum: [checked, upgraded, already-current, aborted-checksum] }
   report_diagnostics:
     type: object
-    description: "Auto-attached to every report-issue body."
+    description: "Auto-attached to every issue create body."
     properties:
       version: { type: string }
       target: { type: string }
@@ -101,7 +101,7 @@ additionalProperties: true
 ```yaml
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "vat-cli-convention-cargo-features.schema.json"
-title: "vat Cargo features for the self-update / report-issue HTTP paths"
+title: "vat Cargo features for the self-update / issue HTTP paths"
 type: object
 properties:
   features:
@@ -112,10 +112,14 @@ properties:
         type: array
         items: { type: string }
         description: "[dep:reqwest] — gates vat upgrade's HTTPS download path."
+      issue:
+        type: array
+        items: { type: string }
+        description: "[cli-std/online] — gates issue search/view/create online GitHub paths."
       report-issue:
         type: array
         items: { type: string }
-        description: "[dep:reqwest] — gates report-issue's GitHub API submit path (gh-cli / prefilled-URL fallback need no network dep)."
+        description: "Deprecated compatibility alias for the issue feature; not a CLI verb."
 additionalProperties: true
 ```
 ## CLI
@@ -131,15 +135,16 @@ commands:
       - "--check reports current vs latest and exits 0 without modifying the binary."
       - "--version <tag> pins an exact release (bare or vat@ prefixed); --force reinstalls the selected version; --yes skips the confirmation prompt."
       - "Fail loudly on checksum mismatch; never leave a half-written binary. The HTTPS download path is behind the self-update Cargo feature."
-  - name: vat report-issue
-    usage: "vat report-issue [--title <t>] [--message <m>] [--repo <o/n>] [--label <l>]... [--dry-run] [--yes] [message...]"
+  - name: vat issue
+    usage: "vat issue search [query] | vat issue view <n> | vat issue create [--title <t>] [--dry-run] [message...]"
     behavior:
-      - "File a structured GitHub issue against the axiom repo (prefer gh issue create; else print a prefilled issues/new URL — never silent-fail)."
-      - "Auto-attach diagnostics: vat --version, target, OS/arch, and the failing command/context."
-      - "--title sets the title; --message / trailing args add a description above the diagnostics block; --repo overrides the target repo; --label is repeatable; --dry-run assembles and prints without submitting; --yes skips confirmation."
+      - "Search and view project:vat issues through read-only GitHub API calls."
+      - "Create a structured GitHub issue against the axiom repo; without a token, print a prefilled issues/new URL — never silent-fail."
+      - "Auto-attach diagnostics: vat version, target, OS/arch, git sha, and build timestamp."
+      - "`create --title` sets the title; trailing args add a description above the diagnostics block; `--dry-run` assembles and prints without submitting."
   - name: vat --help
     behavior:
-      - "List llm, upgrade, and report-issue so all three mandatory CLI-convention verbs are discoverable."
+      - "List llm, upgrade, and issue so all three mandatory CLI-convention verbs are discoverable."
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -169,7 +174,7 @@ requirementDiagram
     }
     requirement assemble_body {
       id: UT4
-      text: "report-issue assembles a body = optional message + separator + diagnostics block (version, target, os, arch)."
+      text: "issue create assembles a body = optional message + separator + diagnostics block (version, target, os, arch)."
       risk: low
       verifymethod: test
     }
@@ -191,11 +196,11 @@ requirementDiagram
       type: functional
       verifies: extract_binary
     }
-    test report_issue_assemble_body_tests {
+    test issue_assemble_body_tests {
       type: functional
       verifies: assemble_body
     }
-    test report_issue_prefilled_url_tests {
+    test issue_prefilled_url_tests {
       type: functional
       verifies: prefilled_url
     }
@@ -206,15 +211,15 @@ requirementDiagram
 ```yaml
 e2e_tests:
   - id: vat-cli-convention-help-lists-all-three
-    name: "vat --help lists llm, upgrade, report-issue"
+    name: "vat --help lists llm, upgrade, issue"
     capability_id: agent-native-gpu-native-dev-containers
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_cli_convention -- --nocapture"
     assertions:
-      - "`vat --help` output contains `llm`, `upgrade`, and `report-issue`."
+      - "`vat --help` output contains `llm`, `upgrade`, and `issue`."
       - "`vat upgrade --check` exits 0 and reports current vs latest without writing the binary (network-permitting; offline it errors cleanly, never panics)."
-      - "`vat report-issue --title X --dry-run` prints a body containing the vat version and OS/arch and submits nothing."
+      - "`vat issue create --title X --dry-run` prints a body containing the vat version and OS/arch and submits nothing."
   - id: vat-cli-convention-lean-build
     name: "lean build still compiles"
     capability_id: agent-native-gpu-native-dev-containers
@@ -234,34 +239,34 @@ changes:
     section: source
     impl_mode: hand-written
     reason: "Port lumen's upgrade self-update implementation (target detect, release query, version select, download, sha256 verify, extract, atomic replace) to vat."
-  - path: projects/vat/src/commands/report_issue.rs
-    action: create
+  - path: libs/cli-std/src/issue.rs
+    action: reuse
     section: source
     impl_mode: hand-written
-    reason: "Port lumen's report-issue implementation (diagnostics, body assemble, gh issue create / prefilled URL fallback) to vat."
+    reason: "Use the shared issue implementation for search/view/create, diagnostics, body assembly, GitHub API submit, and prefilled URL fallback."
   - path: projects/vat/src/commands/mod.rs
     action: modify
     section: source
     impl_mode: hand-written
-    reason: "Export the new upgrade and report_issue command modules."
+    reason: "No vat-local report_issue module is exported; issue routes through cli-std from cli.rs."
   - path: projects/vat/src/cli.rs
     action: modify
     section: source
     impl_mode: hand-written
-    reason: "Add Upgrade and ReportIssue subcommand variants + flags and dispatch them to the command modules."
+    reason: "Add Upgrade and Issue subcommand variants + flags and dispatch them to cli-std-backed handlers."
   - path: projects/vat/build.rs
     action: modify
     section: source
     impl_mode: hand-written
-    reason: "Stamp VAT_TARGET (and VAT_GIT_SHA / VAT_BUILT_AT) for upgrade target detection and report diagnostics."
+    reason: "Stamp VAT_TARGET (and VAT_GIT_SHA / VAT_BUILT_AT) for upgrade target detection and issue diagnostics."
   - path: projects/vat/Cargo.toml
     action: modify
     section: source
     impl_mode: hand-written
-    reason: "Add sha2/tar/flate2/semver (non-optional) + reqwest (optional) and self-update / report-issue features."
+    reason: "Route self-update / issue features through cli-std/online."
   - path: projects/vat/tests/vat_cli_convention.rs
     action: create
     section: e2e-test
     impl_mode: hand-written
-    reason: "Smoke test: --help lists all three mandatory verbs; upgrade --check and report-issue --dry-run behave per contract."
+    reason: "Smoke test: --help lists all three mandatory verbs; upgrade --check and issue create --dry-run behave per contract."
 ```

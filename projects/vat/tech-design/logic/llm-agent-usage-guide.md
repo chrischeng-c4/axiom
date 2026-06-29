@@ -1,6 +1,6 @@
 ---
 id: vat-llm-agent-usage-guide
-summary: Add `vat llm` as the compact agent-facing usage contract.
+summary: Add `vat llm [--topic <t>] [--format md|json]` as the offline agent-facing usage contract.
 fill_sections: [scenarios, cli, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
@@ -23,7 +23,7 @@ scenarios:
     given:
       - "an agent needs to learn how to use vat from the CLI"
     when:
-      - "the agent runs `vat llm`"
+      - "the agent runs `vat llm --topic guide`"
     then:
       - "vat prints a compact markdown guide"
       - "the guide explains `vat run <runner-id> --json` for vat.toml runner mode"
@@ -47,7 +47,8 @@ scenarios:
 commands:
   - name: vat llm
     behavior:
-      - "Print a stable markdown guide for LLM/tool agents."
+      - "Follow the repo-wide convention: default `--topic outline`, `--format md`, with JSON available via `--format json`."
+      - "`--topic guide` prints the stable detailed guide for LLM/tool agents."
       - "Exit successfully without requiring vat.toml or VAT_HOME."
       - "Mention runner mode, direct command mode, evidence commands, retention, and non-Docker boundaries."
   - name: vat --help
@@ -69,7 +70,7 @@ e2e_tests:
     category: behavior
     command: "cargo test -p vat --test vat_toml_runner -- --nocapture"
     assertions:
-      - "`vat llm` exits successfully."
+      - "`vat llm --topic guide` exits successfully."
       - "The guide mentions vat.toml runner mode and direct command mode."
       - "The guide mentions state, diff, and logs evidence commands."
       - "The guide preserves non-Docker and non-daemon boundaries."
@@ -109,7 +110,7 @@ changes:
     action: validate
     section: e2e-test
     impl_mode: hand-written
-    reason: "Verifies the `vat llm` guide mentions the core agent commands and non-Docker boundaries."
+    reason: "Verifies the `vat llm --topic guide` guide mentions the core agent commands and non-Docker boundaries."
   - path: projects/vat/README.md
     action: modify
     section: cli

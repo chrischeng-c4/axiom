@@ -10,8 +10,8 @@
 // @command cargo test -p vat --test vat_cli_convention -- --nocapture
 // AW-EC-END
 
-// Contract: vat --help lists llm, upgrade, report-issue.
-// Contract: vat report-issue --title X --dry-run prints the diagnostics body incl. the vat version and OS.
+// Contract: vat --help lists llm, upgrade, issue.
+// Contract: vat issue create --title X --dry-run prints the diagnostics body incl. the vat version and OS.
 // Contract: vat upgrade --check exits cleanly.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
