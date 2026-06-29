@@ -178,6 +178,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("name", CoreTy::Unknown), p("data", CoreTy::Unknown)],
         enforceable: false,
     },
+    // POSITIVE: SyntaxError(msg: str, details=...) -- generated typeshed rows
+    // collapse the overloaded constructor to Unknown, but the strict type wall
+    // requires rejecting a non-str message argument.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "SyntaxError",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("msg", CoreTy::Str), p("details", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // NEGATIVE: unicodedata.name(chr[, default]) / category(chr) — a non-str
     // or multi-character argument is a RUNTIME TypeError (the dispatcher
     // requires a single unicode character: `name(123)`), which the fixture

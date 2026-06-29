@@ -348,7 +348,9 @@ fn test_user_subscript_assignment_does_not_require_receiver_type() {
 fn test_subscript_assignment_list_index_still_checks_element_type() {
     let errors = check("xs: list[int] = [1]\nxs[0] = \"bad\"\n");
     assert!(
-        errors.iter().any(|e| e.contains("expected `int`, got `str`")),
+        errors
+            .iter()
+            .any(|e| e.contains("expected `int`, got `str`")),
         "list element assignment mismatch should still be rejected: {errors:?}"
     );
 }
@@ -988,6 +990,20 @@ fn test_stdlib_method_wrong_scalar_rejected() {
     assert!(
         errors.is_empty(),
         "handle_entityref(str) must be clean, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_constructor_wrong_scalar_rejected() {
+    let errors = check("from builtins import SyntaxError\nSyntaxError(12345, None)\n");
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "SyntaxError(non_str_msg, details) should be rejected by the strict type wall, got: {errors:?}"
+    );
+    let errors = check("from builtins import SyntaxError\nSyntaxError(\"bad\", None)\n");
+    assert!(
+        errors.is_empty(),
+        "SyntaxError(str_msg, details) must be clean at type-check time, got: {errors:?}"
     );
 }
 
