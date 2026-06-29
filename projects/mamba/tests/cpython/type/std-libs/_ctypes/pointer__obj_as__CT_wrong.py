@@ -9,12 +9,11 @@
 # case = "pointer__obj_as__CT_wrong"
 # subject = "_ctypes.pointer(obj: _CT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_ctypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: _ctypes.pointer(obj: _CT); call it with the wrong type.
 

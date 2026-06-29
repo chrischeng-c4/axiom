@@ -86,6 +86,43 @@ unsafe extern "C" fn ctypes_cfuncptr_new_direct(
     raise_type_error("argument must be callable or integer function address")
 }
 
+unsafe extern "C" fn ctypes_pointer_type_direct(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    raise_type_error("must be a ctypes type")
+}
+
+unsafe extern "C" fn ctypes_pointer_obj_direct(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    raise_type_error("must be a ctypes instance")
+}
+
+unsafe extern "C" fn ctypes_alignment_direct(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    raise_type_error("no alignment info")
+}
+
+unsafe extern "C" fn ctypes_buffer_info_direct(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    raise_type_error("not a ctypes object")
+}
+
+unsafe extern "C" fn ctypes_sizeof_direct(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    raise_type_error("this type has no size")
+}
+
+unsafe extern "C" fn ctypes_py_incref_direct(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::none()
+}
+
+unsafe extern "C" fn ctypes_py_decref_direct(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::none()
+}
+
 fn register_variadic_method_class(class_name: &str, methods: &[(&str, usize)]) {
     let mut map = HashMap::new();
     for (name, addr) in methods {
@@ -559,7 +596,25 @@ fn register_ctypes() {
     let array_getitem = ctypes_array_getitem_direct as *const () as usize;
     let array_setitem = ctypes_array_setitem_direct as *const () as usize;
     let cfuncptr_new = ctypes_cfuncptr_new_direct as *const () as usize;
-    register_addrs(&[array_getitem, array_setitem, cfuncptr_new]);
+    let pointer_type = ctypes_pointer_type_direct as *const () as usize;
+    let pointer_obj = ctypes_pointer_obj_direct as *const () as usize;
+    let alignment = ctypes_alignment_direct as *const () as usize;
+    let buffer_info = ctypes_buffer_info_direct as *const () as usize;
+    let sizeof = ctypes_sizeof_direct as *const () as usize;
+    let py_incref = ctypes_py_incref_direct as *const () as usize;
+    let py_decref = ctypes_py_decref_direct as *const () as usize;
+    register_addrs(&[
+        array_getitem,
+        array_setitem,
+        cfuncptr_new,
+        pointer_type,
+        pointer_obj,
+        alignment,
+        buffer_info,
+        sizeof,
+        py_incref,
+        py_decref,
+    ]);
     ctypes_internal.insert(
         "Array".to_string(),
         make_ctypes_callable_shell(
@@ -577,6 +632,17 @@ fn register_ctypes() {
     );
     for name in ["Structure", "Union"] {
         ctypes_internal.insert(name.to_string(), make_type_obj(name, "_ctypes"));
+    }
+    for (name, addr) in [
+        ("POINTER", pointer_type),
+        ("pointer", pointer_obj),
+        ("alignment", alignment),
+        ("buffer_info", buffer_info),
+        ("sizeof", sizeof),
+        ("Py_INCREF", py_incref),
+        ("Py_DECREF", py_decref),
+    ] {
+        ctypes_internal.insert(name.to_string(), MbValue::from_func(addr));
     }
     super::register_module("_ctypes", ctypes_internal);
     register_with(

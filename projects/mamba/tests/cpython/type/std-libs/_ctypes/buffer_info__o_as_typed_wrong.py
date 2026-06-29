@@ -9,12 +9,11 @@
 # case = "buffer_info__o_as_typed_wrong"
 # subject = "_ctypes.buffer_info(o: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed o"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_ctypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed o
 # mamba-strict-type: TypeError
 """Type wall: _ctypes.buffer_info(o: typed); call it with the wrong type.
 
