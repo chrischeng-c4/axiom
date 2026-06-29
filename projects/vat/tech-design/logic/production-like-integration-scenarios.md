@@ -107,3 +107,30 @@ state_integration:
 compatibility:
   serde_defaults: "new fields default absent for existing metadata"
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: "vat run --scenario <id>"
+    purpose: "Run a named production-like integration scenario."
+    behavior:
+      - "Load nearest vat.toml."
+      - "Resolve scenario id."
+      - "Resolve scenario runner."
+      - "Start app plus dependency services."
+      - "Wait for readiness before runner execution."
+      - "Emit JSONL select/ready/runner/result events."
+      - "Forward runner exit code."
+compatibility:
+  vat_run_default_runner: "unchanged"
+  vat_run_runner_id: "unchanged"
+  vat_run_multiple_runners: "unchanged"
+  vat_run_direct_command: "unchanged"
+errors:
+  - code: "scenario_required"
+    trigger: "unknown scenario id"
+  - code: "scenario_hermetic_proxy_required"
+    trigger: "scenario network hermetic but no http-mock service participates"
+```
