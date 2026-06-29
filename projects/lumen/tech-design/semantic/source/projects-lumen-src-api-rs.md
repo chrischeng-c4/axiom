@@ -27,13 +27,13 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 332 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1081 |  |
+| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 341 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1090 |  |
 | `AppState` | projects/lumen/src/api.rs | struct | pub | 48 |  |
 | `new` | projects/lumen/src/api.rs | function | pub | 228 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
 | `open` | projects/lumen/src/api.rs | function | pub | 249 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 1035 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | projects/lumen/src/api.rs | function | pub | 335 | router(state: AppState) -> Router |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 1044 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | projects/lumen/src/api.rs | function | pub | 344 | router(state: AppState) -> Router |
 | `with_cluster` | projects/lumen/src/api.rs | function | pub | 232 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
 | `with_components` | projects/lumen/src/api.rs | function | pub | 207 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<WriteCoordinator>,     ) -> Self |
 | `with_search_backend` | projects/lumen/src/api.rs | function | pub | 237 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
@@ -73,7 +73,7 @@ use utoipa::OpenApi;
 
 use axum::http::HeaderMap;
 
-use crate::auth::{auth_middleware, AuthConfig, AuthContext, Role};
+use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
 use crate::coordinator::{WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
@@ -391,7 +391,7 @@ pub fn router(state: AppState) -> Router {
     // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
     // `/docs`) stay open so K8s probes and Prometheus scrape can hit
     // them without a token even when auth is required.
-    let auth_state = state.auth.clone();
+    let auth_state = Arc::new(LumenVerifier::new(state.auth.clone()));
     let data_plane = Router::new()
         .route("/collections", get(list_collections))
         .route(

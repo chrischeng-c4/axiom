@@ -6356,6 +6356,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "service-auth",
  "smallvec",
  "tempfile",
  "thiserror 2.0.18",
