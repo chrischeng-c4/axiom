@@ -888,6 +888,7 @@ impl TypeChecker {
             | CoreTy::Complex
             | CoreTy::List
             | CoreTy::Tuple
+            | CoreTy::Dict
             | CoreTy::Typed
             | CoreTy::Unknown => None,
         }
