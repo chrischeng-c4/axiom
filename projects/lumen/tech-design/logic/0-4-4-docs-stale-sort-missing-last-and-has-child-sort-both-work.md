@@ -48,3 +48,64 @@ flowchart TD
     cookbook --> workflow[lumen llm workflow mentions nested filter + parent sort]
     workflow --> verify([spec_cli locks wording])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: sort-doc-refresh-unit-evidence
+requirements:
+  sort_missing_schema_docs:
+    id: R1
+    text: "SearchRequest.sort schema text documents missing=exclude versus first/last total inclusion"
+    kind: documentation
+    risk: medium
+    verify: test
+  has_child_sort_cookbook:
+    id: R2
+    text: "The offline query-shape cookbook says has_child can filter parents and sort by a parent field"
+    kind: documentation
+    risk: medium
+    verify: test
+  has_child_sort_workflow:
+    id: R3
+    text: "The LLM workflow topic confirms nested data-table rows can be filtered by has_child and sorted by parent fields"
+    kind: documentation
+    risk: medium
+    verify: test
+elements:
+  spec_cli_docs_assertions:
+    kind: test
+    path: projects/lumen/tests/spec_cli.rs
+relations:
+  - { from: spec_cli_docs_assertions, verifies: sort_missing_schema_docs }
+  - { from: spec_cli_docs_assertions, verifies: has_child_sort_cookbook }
+  - { from: spec_cli_docs_assertions, verifies: has_child_sort_workflow }
+---
+requirementDiagram
+    requirement R1 {
+      id: R1
+      text: "sort.missing docs are accurate"
+      risk: medium
+      verifymethod: test
+    }
+    requirement R2 {
+      id: R2
+      text: "has_child + sort cookbook documented"
+      risk: medium
+      verifymethod: test
+    }
+    requirement R3 {
+      id: R3
+      text: "LLM workflow mentions parent sort"
+      risk: medium
+      verifymethod: test
+    }
+    element spec_cli_docs_assertions {
+      type: "rs/#[test]"
+    }
+    spec_cli_docs_assertions - verifies -> R1
+    spec_cli_docs_assertions - verifies -> R2
+    spec_cli_docs_assertions - verifies -> R3
+```
