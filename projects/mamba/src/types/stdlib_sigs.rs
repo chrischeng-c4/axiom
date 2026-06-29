@@ -783,6 +783,26 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("f", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: staticmethod mirrors classmethod for force-typed descriptor
+    // contracts: a bare user instance cannot satisfy Callable or a concrete
+    // descriptor instance type, while real callables and None/dynamic owner
+    // values remain skip-safe.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "staticmethod",
+        name: "__get__",
+        kind: SigKind::Method,
+        params: &[p("instance", CoreTy::Typed), p("owner", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "staticmethod",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("f", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: Python function objects are not importable as
     // `builtins.function`, but every `def f(): ...` value is an instance of
     // that internal type. Keep instance permissive for descriptor access while
