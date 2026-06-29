@@ -36,7 +36,7 @@ e2e_tests:
     claim_id: lumen-spec-schema-openapi-json-yaml-json-schema-offline
     contract_id: spec-gen-generated-clients-public-api-journey
     category: behavior
-    command: "cargo test -p lumen --test behavior_lumen_cli_interface_generated_clients -- --ignored --nocapture"
+    command: "PATH=$HOME/.pyenv/shims:$PATH cargo test -p lumen --test spec_gen_e2e generated_client_live_h2c_public_api_journey -- --exact --ignored --nocapture"
     assertions:
       - "lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document."
       - "generated clients drive health, readiness, version, collection creation, indexing, search, duplicates, stats, and forced drop against a live h2c Lumen service."

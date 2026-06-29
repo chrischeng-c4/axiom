@@ -68,10 +68,10 @@ timeout_s = 30
 [[services]]
 id = "pg"
 preset = "postgres"
-port = 5432
+port = 55432
 seed = ["tests/ec/pg/schema.sql"]
 export = { DATABASE_URL = "LUMEN_BENCH_PG_DSN" }
-ready_cmd = ["sh", "-c", "psql -h 127.0.0.1 -p 5432 -U postgres -d lumenbench -tAc 'select 1' >/dev/null 2>&1"]
+ready_cmd = ["sh", "-c", "psql -h 127.0.0.1 -p 55432 -U postgres -d lumenbench -tAc 'select 1' >/dev/null 2>&1"]
 timeout_s = 120
 
 [[services]]

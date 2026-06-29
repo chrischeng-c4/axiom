@@ -26,6 +26,7 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 | `Engine` | projects/lumen/src/storage.rs | struct | pub | 2900 |  |
 | `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 7995 |  |
 | `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 54 |  |
+| `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 60 |  |
 | `Postings` | projects/lumen/src/storage.rs | struct | pub | 313 |  |
 | `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 7976 |  |
 | `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 104 |  |
@@ -117,9 +118,10 @@ use crate::tokenize;
 use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
     DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
-    HammingQuery, HasChildQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp, MatchQuery,
-    QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortOrder, SortSpec,
-    StatsResponse, StorageStats, TermQuery, TermsQuery, VectorSpec,
+    HammingQuery, HasChildQuery, IdsQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp,
+    MatchQuery, QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse,
+    SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
+    VectorSpec,
 };
 use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
 use roaring::RoaringBitmap;
@@ -131,6 +133,11 @@ type FastHashMap<K, V> = FxHashMap<K, V>;
 
 /// Maximum items in a single `POST /index` request (README §1 v1 limit).
 pub const MAX_INDEX_ITEMS: usize = 10_000;
+/// #183: max keys in a multi-key `sort`. The generic plan and keyset cursor carry
+/// a full `Vec<SortValue>` and compare every key in order, so this is a guard
+/// against pathological requests, not a structural limit.
+/// @spec projects/lumen/tech-design/logic/raise-multi-key-sort-cap-beyond-2-keys.md
+pub const MAX_SORT_KEYS: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
@@ -2872,6 +2879,13 @@ struct Collection {
     /// before changing postings so repeated serving queries can skip planner work
     /// without returning stale hits.
     search_cache: RwLock<FastHashMap<String, SearchResponse>>,
+    /// #184: external-version last-write-wins. Sparse `doc-id → field → highest
+    /// applied version`, populated only for cells written with an explicit
+    /// `IndexItem.version`. A strictly-older versioned write is dropped at apply
+    /// time. In-memory only (reconstructed by WAL replay); durability across
+    /// snapshot/seal is a follow-up.
+    /// @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
+    cell_versions: FastHashMap<u32, FastHashMap<String, u64>>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
@@ -2891,6 +2905,7 @@ impl Collection {
             deleted_at: None,
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
+            cell_versions: FastHashMap::default(),
         })
     }
 
@@ -3268,6 +3283,21 @@ impl Engine {
             for pos in cursor..group_end {
                 let field_name = std::mem::take(&mut items[pos].field);
                 let field = field_name.as_str();
+                // #184: external-version LWW — drop a strictly-older versioned
+                // write for this (external_id, field) cell. Absent version means
+                // arrival order (no check, today's behavior).
+                // @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
+                let item_version = items[pos].version;
+                if let Some(v) = item_version {
+                    let stale = coll
+                        .cell_versions
+                        .get(&id)
+                        .and_then(|m| m.get(field))
+                        .is_some_and(|stored| *stored >= v);
+                    if stale {
+                        continue;
+                    }
+                }
                 if !cleared_text_rank_caches || !cleared_number_filter_caches {
                     let field_type = match coll.fields.get(field) {
                         Some(fi) => fi.field_type(),
@@ -3339,6 +3369,14 @@ impl Engine {
                     }
                 };
                 add_bytes_written(&mut bytes_by_field, field, bytes);
+                // #184: record the highest applied version for this cell so a
+                // later strictly-older write is dropped above.
+                if let Some(v) = item_version {
+                    coll.cell_versions
+                        .entry(id)
+                        .or_default()
+                        .insert(field.to_string(), v);
+                }
                 if !field_already_indexed {
                     if new_doc_in_request {
                         new_doc_fields.insert_absent(field_name);
@@ -3474,6 +3512,39 @@ impl Engine {
             Some(PageCursor::Offset(n)) => *n as usize,
             _ => 0,
         };
+        // #180: a sort with any `missing: first|last` key is served by the
+        // materialized missing-aware path below, which paginates with offset
+        // correctly (it never early-terminates). The exclude-only path uses the
+        // keyset planner and is the one the #179 guard protects.
+        let sort_uses_missing = req
+            .sort
+            .as_deref()
+            .is_some_and(|s| s.iter().any(|spec| spec.missing != SortMissing::Exclude));
+        // #181: a sort whose query contains has_child also routes to the
+        // materialized path — has_child resolves to a parent bitmap via
+        // eval_query, then the parents are sorted by their parent fields.
+        let sort_needs_materialize = sort_uses_missing
+            || (req.sort.as_deref().is_some_and(|s| !s.is_empty())
+                && query_has_has_child(&req.query));
+        // #179: an offset cursor cannot drive a field-sorted (exclude) page.
+        // `try_plan` bails for offset != 0, so a non-zero offset would silently
+        // fall through to the score-ranked path and IGNORE `sort`. Reject instead
+        // of returning a mis-ordered page: sequential sorted paging uses the
+        // keyset cursor handed back in the response; random page-jumps use
+        // over-fetch (limit = offset + page_size, then slice client-side).
+        // @spec projects/lumen/tech-design/logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.md
+        if offset != 0
+            && req.sort.as_deref().is_some_and(|s| !s.is_empty())
+            && !sort_needs_materialize
+        {
+            return Err(StorageError::UnsupportedSort(
+                "offset pagination cannot be combined with sort; use a keyset \
+                 cursor (omit the cursor on page 1, then follow the returned \
+                 cursor) or over-fetch (limit = offset + page_size, then slice)"
+                    .into(),
+            )
+            .into());
+        }
         // A sort keyset only continues the single-number-field sorted planner;
         // a score keyset only continues score-ranked pages. A cursor that does
         // not match the request shape degrades to first-page semantics (caller
@@ -3606,6 +3677,102 @@ impl Engine {
                 .map(|(val, score)| SearchHit {
                     external_id: val.to_string(),
                     score,
+                })
+                .collect();
+            let next_offset = offset + hits.len();
+            let cursor = if (next_offset as u64) < total {
+                Some(make_cursor(next_offset))
+            } else {
+                None
+            };
+            let el = start.elapsed();
+            let took_ms = el.as_millis() as u64;
+            self.metrics.observe_search(took_ms);
+            let response = SearchResponse {
+                hits,
+                total,
+                cursor,
+                took_ms,
+                took_us: el.as_micros() as u64,
+            };
+            coll.cache_search_response(cache_key.clone(), &response);
+            return Ok(response);
+        }
+
+        // #180: materialized missing-aware sort. When any sort key is
+        // first/last, include rows lacking that key's value (placed before/after
+        // the present rows per the policy) and count them in an exact total; rows
+        // missing an `exclude` key are dropped. Materializes the full matched set
+        // (no early termination) and paginates by offset.
+        // @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+        if sort_needs_materialize {
+            let sort = req
+                .sort
+                .as_deref()
+                .expect("materialized-sort path has a sort");
+            let universe: BTreeSet<u32> = if query_needs_universe(&req.query) {
+                coll.eid_fields.keys().copied().collect()
+            } else {
+                BTreeSet::new()
+            };
+            let scored = eval_query(coll, collection_id, &req.query, &universe, &state)?;
+            let mut included: Vec<(u32, Vec<Option<SortValue>>)> = Vec::with_capacity(scored.len());
+            'docs: for (id, _score) in scored {
+                let mut tuple = Vec::with_capacity(sort.len());
+                for spec in sort {
+                    let v = sort_value_at(coll, spec, id)?;
+                    if v.is_none() && spec.missing == SortMissing::Exclude {
+                        continue 'docs;
+                    }
+                    tuple.push(v);
+                }
+                included.push((id, tuple));
+            }
+            let total = included.len() as u64;
+            included.sort_by(|(a_id, a_t), (b_id, b_t)| {
+                for (idx, spec) in sort.iter().enumerate() {
+                    let ord = match (&a_t[idx], &b_t[idx]) {
+                        (Some(a), Some(b)) => {
+                            let base = compare_sort_value(a, b);
+                            if matches!(spec.order, SortOrder::Desc) {
+                                base.reverse()
+                            } else {
+                                base
+                            }
+                        }
+                        // NULLS FIRST/LAST placement is independent of asc/desc.
+                        (None, Some(_)) => {
+                            if spec.missing == SortMissing::First {
+                                CmpOrdering::Less
+                            } else {
+                                CmpOrdering::Greater
+                            }
+                        }
+                        (Some(_), None) => {
+                            if spec.missing == SortMissing::First {
+                                CmpOrdering::Greater
+                            } else {
+                                CmpOrdering::Less
+                            }
+                        }
+                        (None, None) => CmpOrdering::Equal,
+                    };
+                    if ord != CmpOrdering::Equal {
+                        return ord;
+                    }
+                }
+                interner.resolve(*a_id).cmp(interner.resolve(*b_id))
+            });
+            let hits: Vec<SearchHit> = included
+                .iter()
+                .skip(offset)
+                .take(limit)
+                .map(|(id, tuple)| SearchHit {
+                    external_id: interner.resolve(*id).to_string(),
+                    score: tuple
+                        .iter()
+                        .find_map(|v| v.as_ref().map(sort_score))
+                        .unwrap_or(0.0),
                 })
                 .collect();
             let next_offset = offset + hits.len();
@@ -4447,6 +4614,7 @@ fn eval_query(
         QueryNode::Match(m) => eval_match(coll, m)?,
         QueryNode::Term(t) => constant_score(eval_term(coll, t)?),
         QueryNode::Terms(t) => constant_score(eval_terms(coll, t)?),
+        QueryNode::Ids(q) => constant_score(eval_ids(coll, q)?),
         QueryNode::Range(r) => constant_score(eval_range(coll, r)?),
         QueryNode::Knn(k) => eval_knn(coll, k)?,
         QueryNode::Hamming(hq) => eval_hamming(coll, hq)?,
@@ -5706,6 +5874,19 @@ fn eval_term(coll: &Collection, t: &TermQuery) -> Result<RoaringBitmap> {
     })
 }
 
+/// #182: resolve an `ids` query to the docid bitmap of the named external_ids.
+/// Unknown ids are skipped (they simply contribute nothing).
+/// @spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
+fn eval_ids(coll: &Collection, q: &IdsQuery) -> Result<RoaringBitmap> {
+    let mut out = RoaringBitmap::new();
+    for eid in &q.values {
+        if let Some(id) = coll.interner.id(eid) {
+            out.insert(id);
+        }
+    }
+    Ok(out)
+}
+
 fn eval_terms(coll: &Collection, t: &TermsQuery) -> Result<RoaringBitmap> {
     let mut acc = RoaringBitmap::new();
     // Fast path: union the in-memory posting bitmaps by reference (word-wise
@@ -5938,6 +6119,7 @@ fn is_predicable(node: &QueryNode) -> bool {
         node,
         QueryNode::Term(_)
             | QueryNode::Terms(_)
+            | QueryNode::Ids(_)
             | QueryNode::Range(_)
             | QueryNode::Match(_)
             | QueryNode::Exists(_)
@@ -6112,6 +6294,9 @@ fn is_unbounded_range_on_field(query: &QueryNode, field: &str) -> bool {
 /// from (so a leaf is always preferred).
 fn estimate_selectivity(coll: &Collection, node: &QueryNode) -> u64 {
     match node {
+        // #182: the id list size is a cheap upper bound on matched docs — a
+        // small ids clause is a good (selective) driver for the AND.
+        QueryNode::Ids(q) => q.values.len() as u64,
         QueryNode::Term(t) => match (coll.fields.get(&t.field), &t.value) {
             (Some(FieldIndex::Keyword(k)), FieldValue::String(s)) => {
                 // Phase 2h-1: df from the active source (segment count-prefix
@@ -6437,6 +6622,7 @@ fn eval_filter_bitmap(coll: &Collection, node: &QueryNode) -> Result<RoaringBitm
     match node {
         QueryNode::Term(t) => eval_term(coll, t),
         QueryNode::Terms(t) => eval_terms(coll, t),
+        QueryNode::Ids(q) => eval_ids(coll, q),
         QueryNode::Range(r) => eval_range(coll, r),
         QueryNode::Exists(e) => eval_field_doc_union(coll, &e.field, 1),
         QueryNode::Duplicated(d) => {
@@ -7128,6 +7314,8 @@ fn query_predicate(coll: &Collection, node: &QueryNode, id: u32) -> Result<bool>
         QueryNode::Term(_) | QueryNode::Terms(_) | QueryNode::Range(_) | QueryNode::Match(_) => {
             clause_matches(coll, node, id)?.is_some()
         }
+        // #182: ids is a direct membership test against the resolved bitmap.
+        QueryNode::Ids(q) => eval_ids(coll, q)?.contains(id),
         QueryNode::And(cs) => {
             for c in cs {
                 if !query_predicate(coll, c, id)? {
@@ -7166,6 +7354,18 @@ fn query_has_knn(node: &QueryNode) -> bool {
         QueryNode::Rrf(_) => true,
         QueryNode::And(cs) | QueryNode::Or(cs) => cs.iter().any(query_has_knn),
         QueryNode::Not(c) => query_has_knn(c),
+        _ => false,
+    }
+}
+
+/// #181: does the query tree contain a `has_child` clause anywhere? Such a query
+/// must be sorted via the materialized path (eval_query resolves the join),
+/// never the per-doc keyset planner.
+fn query_has_has_child(node: &QueryNode) -> bool {
+    match node {
+        QueryNode::HasChild(_) => true,
+        QueryNode::And(cs) | QueryNode::Or(cs) => cs.iter().any(query_has_has_child),
+        QueryNode::Not(c) => query_has_has_child(c),
         _ => false,
     }
 }
@@ -7324,9 +7524,10 @@ fn sort_field_kind(
 
 fn query_can_be_sort_predicate(node: &QueryNode) -> bool {
     match node {
-        QueryNode::Knn(_) | QueryNode::Rrf(_) | QueryNode::HasChild(_) | QueryNode::Hamming(_) => {
-            false
-        }
+        // #181: has_child IS sortable — a query containing it routes to the
+        // materialized sort path, which resolves it via eval_query rather than a
+        // per-doc walk. knn/rrf/hamming remain non-sortable (relevance/fuzzy).
+        QueryNode::Knn(_) | QueryNode::Rrf(_) | QueryNode::Hamming(_) => false,
         QueryNode::And(cs) | QueryNode::Or(cs) => cs.iter().all(query_can_be_sort_predicate),
         QueryNode::Not(c) => query_can_be_sort_predicate(c),
         _ => true,
@@ -7346,9 +7547,9 @@ fn validate_sort_request(
             StorageError::UnsupportedSort("sort must contain at least one key".into()).into(),
         );
     }
-    if sort.len() > 2 {
+    if sort.len() > MAX_SORT_KEYS {
         return Err(StorageError::UnsupportedSort(format!(
-            "multi-key sort supports at most two keys, got {}",
+            "multi-key sort supports at most {MAX_SORT_KEYS} keys, got {}",
             sort.len()
         ))
         .into());
@@ -7361,7 +7562,7 @@ fn validate_sort_request(
     }
     if !query_can_be_sort_predicate(&req.query) {
         return Err(StorageError::UnsupportedSort(
-            "sort cannot be combined with knn, rrf, has_child, or hamming queries".into(),
+            "sort cannot be combined with knn, rrf, or hamming queries".into(),
         )
         .into());
     }
@@ -8286,6 +8487,7 @@ impl Collection {
             deleted_at: None,
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
+            cell_versions: FastHashMap::default(),
         })
     }
 }
@@ -8957,6 +9159,7 @@ impl Collection {
             deleted_at: None,
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
+            cell_versions: FastHashMap::default(),
         })
     }
 }
@@ -9713,6 +9916,7 @@ mod segment_predicate_diff_tests {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(kw.into()),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
@@ -9722,6 +9926,7 @@ mod segment_predicate_diff_tests {
                 } else {
                     "filler".into()
                 }),
+                version: None,
             },
         ];
         if let Some(a) = age {
@@ -9729,6 +9934,7 @@ mod segment_predicate_diff_tests {
                 external_id: eid.into(),
                 field: "age".into(),
                 value: FieldValue::Number(a),
+                version: None,
             });
         }
         e.index(
@@ -9969,12 +10175,14 @@ mod segment_keyword_diff_tests {
             } else {
                 "filler".into()
             }),
+            version: None,
         }];
         if let Some(k) = kw {
             items.push(crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(k.into()),
+                version: None,
             });
         }
         e.index(
@@ -10203,6 +10411,7 @@ mod segment_keyword_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(k.into()),
+                version: None,
             });
         }
         if let Some(c) = cat {
@@ -10210,6 +10419,7 @@ mod segment_keyword_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "cat".into(),
                 value: FieldValue::String(c.into()),
+                version: None,
             });
         }
         // A doc with neither field would have no postings anywhere; ensure at
@@ -10219,6 +10429,7 @@ mod segment_keyword_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String("zzz_filler".into()),
+                version: None,
             });
         }
         e.index(
@@ -10732,6 +10943,7 @@ mod segment_number_range_diff_tests {
             sort: Some(vec![crate::types::SortSpec {
                 field: field.into(),
                 order,
+                missing: SortMissing::Exclude,
             }]),
             track_total: true,
             collapse: None,
@@ -10773,6 +10985,7 @@ mod segment_number_range_diff_tests {
                 external_id: eid.into(),
                 field: "price".into(),
                 value: FieldValue::Number(p),
+                version: None,
             });
         }
         if let Some(c) = cat {
@@ -10780,6 +10993,7 @@ mod segment_number_range_diff_tests {
                 external_id: eid.into(),
                 field: "cat".into(),
                 value: FieldValue::String(c.into()),
+                version: None,
             });
         }
         // Ensure the doc is interned even when both fields are absent.
@@ -10788,6 +11002,7 @@ mod segment_number_range_diff_tests {
                 external_id: eid.into(),
                 field: "cat".into(),
                 value: FieldValue::String("zzz_filler".into()),
+                version: None,
             });
         }
         e.index(
@@ -11611,12 +11826,14 @@ mod segment_set_diff_tests {
             } else {
                 "filler".into()
             }),
+            version: None,
         }];
         if let Some(ts) = tags {
             items.push(crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(ts.iter().map(|s| (*s).to_string()).collect()),
+                version: None,
             });
         }
         e.index(
@@ -11861,6 +12078,7 @@ mod segment_set_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(ts.iter().map(|s| (*s).to_string()).collect()),
+                version: None,
             });
         }
         if let Some(cs) = cat {
@@ -11868,6 +12086,7 @@ mod segment_set_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "cat".into(),
                 value: FieldValue::StringList(cs.iter().map(|s| (*s).to_string()).collect()),
+                version: None,
             });
         }
         if items.is_empty() {
@@ -11875,6 +12094,7 @@ mod segment_set_inverted_diff_tests {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(vec!["zzz_filler".into()]),
+                version: None,
             });
         }
         e.index(
@@ -12422,12 +12642,14 @@ mod segment_text_diff_tests {
             external_id: eid.into(),
             field: "body".into(),
             value: FieldValue::String(body.into()),
+            version: None,
         }];
         if let Some(p) = price {
             items.push(crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "price".into(),
                 value: FieldValue::Number(p),
+                version: None,
             });
         }
         e.index(
@@ -13044,6 +13266,7 @@ mod segment_hash_diff_tests {
                     external_id: eid.into(),
                     field: "sig".into(),
                     value: FieldValue::String(format!("{hash:016x}")),
+                    version: None,
                 }],
                 request_id: None,
             },
@@ -13188,6 +13411,7 @@ mod segment_vector_diff_tests {
                     external_id: eid.into(),
                     field: "emb".into(),
                     value: FieldValue::Vector(v.to_vec()),
+                    version: None,
                 }],
                 request_id: None,
             },
@@ -13357,6 +13581,7 @@ mod tests {
             external_id: eid.into(),
             field: field.into(),
             value,
+            version: None,
         }
     }
 
@@ -13409,6 +13634,7 @@ mod tests {
                     sort: Some(vec![crate::types::SortSpec {
                         field: "bio".into(),
                         order: SortOrder::Asc,
+                        missing: SortMissing::Exclude,
                     }]),
                     track_total: true,
                     collapse: None,
@@ -13466,6 +13692,7 @@ mod tests {
                 sort: Some(vec![crate::types::SortSpec {
                     field: "email".into(),
                     order,
+                    missing: SortMissing::Exclude,
                 }]),
                 track_total: true,
                 collapse: None,
@@ -13520,10 +13747,12 @@ mod tests {
                 crate::types::SortSpec {
                     field: "email".into(),
                     order: SortOrder::Asc,
+                    missing: SortMissing::Exclude,
                 },
                 crate::types::SortSpec {
                     field: "age".into(),
                     order: SortOrder::Desc,
+                    missing: SortMissing::Exclude,
                 },
             ]),
             track_total: true,
@@ -13596,6 +13825,7 @@ mod tests {
             sort: Some(vec![crate::types::SortSpec {
                 field: "email".into(),
                 order: SortOrder::Asc,
+                missing: SortMissing::Exclude,
             }]),
             track_total: true,
             collapse: None,
@@ -13644,6 +13874,7 @@ mod tests {
                 sort: Some(vec![crate::types::SortSpec {
                     field: "age".into(),
                     order,
+                    missing: SortMissing::Exclude,
                 }]),
                 track_total: true,
                 collapse: None,
@@ -13702,6 +13933,7 @@ mod tests {
             sort: Some(vec![crate::types::SortSpec {
                 field: "age".into(),
                 order: SortOrder::Desc,
+                missing: SortMissing::Exclude,
             }]),
             track_total: true,
             collapse: None,
@@ -13873,6 +14105,7 @@ mod tests {
                 sort: Some(vec![crate::types::SortSpec {
                     field: "age".into(),
                     order,
+                    missing: SortMissing::Exclude,
                 }]),
                 track_total: true,
                 collapse: None,
@@ -13927,6 +14160,7 @@ mod tests {
             sort: Some(vec![crate::types::SortSpec {
                 field: "age".into(),
                 order: SortOrder::Asc,
+                missing: SortMissing::Exclude,
             }]),
             track_total: false,
             collapse: None,
@@ -15760,11 +15994,13 @@ mod triple_path_diff_tests {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(kw.into()),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(tags.iter().map(|s| s.to_string()).collect()),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
@@ -15774,16 +16010,19 @@ mod triple_path_diff_tests {
                 } else {
                     "filler".into()
                 }),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "sig".into(),
                 value: FieldValue::String(format!("{sig:016x}")),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "emb".into(),
                 value: FieldValue::Vector(emb.to_vec()),
+                version: None,
             },
         ];
         if let Some(n) = num {
@@ -15791,6 +16030,7 @@ mod triple_path_diff_tests {
                 external_id: eid.into(),
                 field: "num".into(),
                 value: FieldValue::Number(n),
+                version: None,
             });
         }
         e.index(
@@ -16080,16 +16320,19 @@ mod checkpoint_engine_tests {
                 external_id: eid.into(),
                 field: "num".into(),
                 value: FieldValue::Number(n),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "kw".into(),
                 value: FieldValue::String(kw.into()),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "tags".into(),
                 value: FieldValue::StringList(vec![tag.into()]),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
@@ -16099,16 +16342,19 @@ mod checkpoint_engine_tests {
                 } else {
                     "filler".into()
                 }),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "sig".into(),
                 value: FieldValue::String(format!("{sig:016x}")),
+                version: None,
             },
             crate::types::IndexItem {
                 external_id: eid.into(),
                 field: "emb".into(),
                 value: FieldValue::Vector(emb.to_vec()),
+                version: None,
             },
         ];
         e.index(
@@ -16557,6 +16803,848 @@ mod checkpoint_engine_tests {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #179: an offset cursor combined with `sort` must be REJECTED (400), never
+// silently fall through to score ranking and ignore the sort. Sequential
+// sorted paging uses the keyset cursor handed back in the response; random
+// page-jumps use over-fetch + client-side slice.
+// @spec projects/lumen/tech-design/logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.md
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod offset_sort_guard_tests {
+    use super::*;
+    use crate::types::IndexItem;
+
+    fn fieldspec(t: FieldType) -> FieldSpec {
+        FieldSpec {
+            field_type: t,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        }
+    }
+
+    fn schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert("price".into(), fieldspec(FieldType::Number));
+        fields.insert("cat".into(), fieldspec(FieldType::Keyword));
+        CreateCollectionRequest { fields }
+    }
+
+    /// Five docs d0..d4 with prices 10,20,30,40,50, all `cat = "x"`.
+    fn seed() -> Engine {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        for (i, p) in [10.0_f64, 20.0, 30.0, 40.0, 50.0].iter().enumerate() {
+            e.index(
+                "c",
+                IndexRequest {
+                    items: vec![
+                        IndexItem {
+                            external_id: format!("d{i}"),
+                            field: "price".into(),
+                            value: FieldValue::Number(*p),
+                            version: None,
+                        },
+                        IndexItem {
+                            external_id: format!("d{i}"),
+                            field: "cat".into(),
+                            value: FieldValue::String("x".into()),
+                            version: None,
+                        },
+                    ],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+        e
+    }
+
+    fn cat_x() -> QueryNode {
+        QueryNode::Term(TermQuery {
+            field: "cat".into(),
+            value: FieldValue::String("x".into()),
+        })
+    }
+
+    fn base() -> SearchRequest {
+        SearchRequest {
+            query: cat_x(),
+            limit: 2,
+            cursor: None,
+            sort: None,
+            track_total: true,
+            collapse: None,
+        }
+    }
+
+    fn sort_price_asc() -> Vec<SortSpec> {
+        vec![SortSpec {
+            field: "price".into(),
+            order: SortOrder::Asc,
+            missing: SortMissing::Exclude,
+        }]
+    }
+
+    fn ids(resp: &SearchResponse) -> Vec<String> {
+        resp.hits.iter().map(|h| h.external_id.clone()).collect()
+    }
+
+    /// R1: an offset cursor (N>0) + a non-empty sort → 400 UnsupportedSort,
+    /// instead of silently mis-ordering by score.
+    #[test]
+    fn offset_cursor_with_sort_is_rejected() {
+        let e = seed();
+        let mut r = base();
+        r.sort = Some(sort_price_asc());
+        r.cursor = Some(make_cursor(2)); // {"offset":2}
+        let err = e.search("c", r).unwrap_err();
+        let se = err
+            .downcast_ref::<StorageError>()
+            .expect("offset+sort error must be a StorageError");
+        assert!(
+            matches!(se, StorageError::UnsupportedSort(_)),
+            "offset+sort must map to UnsupportedSort (HTTP 400), got {se:?}"
+        );
+    }
+
+    /// R2: an offset cursor WITHOUT sort still paginates relevance/constant
+    /// results — the guard must not regress the unsorted offset path.
+    #[test]
+    fn offset_cursor_without_sort_paginates() {
+        let e = seed();
+        let mut r = base();
+        r.cursor = Some(make_cursor(2));
+        let resp = e
+            .search("c", r)
+            .expect("offset cursor without sort must succeed");
+        assert_eq!(resp.total, 5, "exact total across the unsorted match set");
+        assert!(resp.hits.len() <= 2, "page honors the limit");
+    }
+
+    /// R3: a keyset cursor combined with sort paginates correctly (page 1 with
+    /// no cursor hands back a keyset cursor; following it yields the next page).
+    #[test]
+    fn keyset_cursor_with_sort_paginates() {
+        let e = seed();
+
+        let mut p1 = base();
+        p1.sort = Some(sort_price_asc());
+        let r1 = e.search("c", p1).expect("sorted page 1 must succeed");
+        assert_eq!(ids(&r1), vec!["d0".to_string(), "d1".to_string()]);
+        let cursor = r1
+            .cursor
+            .expect("a full sorted page must hand back a keyset cursor");
+
+        let mut p2 = base();
+        p2.sort = Some(sort_price_asc());
+        p2.cursor = Some(cursor);
+        let r2 = e
+            .search("c", p2)
+            .expect("keyset + sort page 2 must succeed");
+        assert_eq!(ids(&r2), vec!["d2".to_string(), "d3".to_string()]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #184: external-version last-write-wins. An IndexItem may carry an optional
+// `version`; lumen keeps the highest version per (external_id, field) and drops
+// strictly-older writes. Absent version = arrival order (today's behavior).
+// @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod external_version_lww_tests {
+    use super::*;
+    use crate::types::IndexItem;
+
+    fn schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "price".into(),
+            FieldSpec {
+                field_type: FieldType::Number,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        CreateCollectionRequest { fields }
+    }
+
+    fn setup() -> Engine {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        e
+    }
+
+    fn write(e: &Engine, eid: &str, price: f64, version: Option<u64>) {
+        e.index(
+            "c",
+            IndexRequest {
+                items: vec![IndexItem {
+                    external_id: eid.into(),
+                    field: "price".into(),
+                    value: FieldValue::Number(price),
+                    version,
+                }],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// external_ids whose `price` equals `price`.
+    fn matches_price(e: &Engine, price: f64) -> Vec<String> {
+        let req = SearchRequest {
+            query: QueryNode::Term(TermQuery {
+                field: "price".into(),
+                value: FieldValue::Number(price),
+            }),
+            limit: 100,
+            cursor: None,
+            sort: None,
+            track_total: true,
+            collapse: None,
+        };
+        e.search("c", req)
+            .unwrap()
+            .hits
+            .into_iter()
+            .map(|h| h.external_id)
+            .collect()
+    }
+
+    /// R1: a versioned write older than the stored version is dropped.
+    #[test]
+    fn stale_versioned_write_is_dropped() {
+        let e = setup();
+        write(&e, "d0", 10.0, Some(5));
+        write(&e, "d0", 20.0, Some(3)); // stale: 3 < stored 5
+        assert_eq!(
+            matches_price(&e, 10.0),
+            vec!["d0".to_string()],
+            "value must remain at the v5 write"
+        );
+        assert!(
+            matches_price(&e, 20.0).is_empty(),
+            "the stale v3 write must not apply"
+        );
+    }
+
+    /// R2: a newer versioned write advances the cell.
+    #[test]
+    fn newer_versioned_write_wins() {
+        let e = setup();
+        write(&e, "d0", 10.0, Some(5));
+        write(&e, "d0", 20.0, Some(6)); // newer: 6 > stored 5
+        assert_eq!(matches_price(&e, 20.0), vec!["d0".to_string()]);
+        assert!(matches_price(&e, 10.0).is_empty());
+    }
+
+    /// R3: writes without a version apply in arrival order (last wins) —
+    /// unchanged from today.
+    #[test]
+    fn unversioned_writes_keep_arrival_order() {
+        let e = setup();
+        write(&e, "d0", 10.0, None);
+        write(&e, "d0", 20.0, None);
+        assert_eq!(matches_price(&e, 20.0), vec!["d0".to_string()]);
+        assert!(matches_price(&e, 10.0).is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #180: opt-in `missing: first|last|exclude` on a sort key. exclude (default)
+// drops rows lacking the value (today's behavior); first/last keep them, placed
+// before/after the present rows, and count them in an exact total.
+// @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod sort_missing_tests {
+    use super::*;
+    use crate::types::{IndexItem, SortMissing};
+
+    fn fieldspec(t: FieldType) -> FieldSpec {
+        FieldSpec {
+            field_type: t,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        }
+    }
+
+    fn schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert("price".into(), fieldspec(FieldType::Number));
+        fields.insert("cat".into(), fieldspec(FieldType::Keyword));
+        CreateCollectionRequest { fields }
+    }
+
+    fn idx(e: &Engine, eid: &str, price: Option<f64>) {
+        let mut items = vec![IndexItem {
+            external_id: eid.into(),
+            field: "cat".into(),
+            value: FieldValue::String("x".into()),
+            version: None,
+        }];
+        if let Some(p) = price {
+            items.push(IndexItem {
+                external_id: eid.into(),
+                field: "price".into(),
+                value: FieldValue::Number(p),
+                version: None,
+            });
+        }
+        e.index(
+            "c",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// d0=10, d1=20 have a price; d2 has none (all share cat="x").
+    fn seed() -> Engine {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        idx(&e, "d0", Some(10.0));
+        idx(&e, "d1", Some(20.0));
+        idx(&e, "d2", None);
+        e
+    }
+
+    fn search(
+        e: &Engine,
+        missing: SortMissing,
+        limit: u32,
+        cursor: Option<String>,
+    ) -> SearchResponse {
+        e.search(
+            "c",
+            SearchRequest {
+                query: QueryNode::Term(TermQuery {
+                    field: "cat".into(),
+                    value: FieldValue::String("x".into()),
+                }),
+                limit,
+                cursor,
+                sort: Some(vec![SortSpec {
+                    field: "price".into(),
+                    order: SortOrder::Asc,
+                    missing,
+                }]),
+                track_total: true,
+                collapse: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn ids(r: &SearchResponse) -> Vec<String> {
+        r.hits.iter().map(|h| h.external_id.clone()).collect()
+    }
+
+    /// R1: missing:last places the value-less row after present rows, counted.
+    #[test]
+    fn missing_last_placed_after_and_counted() {
+        let e = seed();
+        let r = search(&e, SortMissing::Last, 100, None);
+        assert_eq!(ids(&r), vec!["d0", "d1", "d2"]);
+        assert_eq!(r.total, 3);
+    }
+
+    /// R2: missing:first places the value-less row before present rows.
+    #[test]
+    fn missing_first_placed_before() {
+        let e = seed();
+        let r = search(&e, SortMissing::First, 100, None);
+        assert_eq!(ids(&r), vec!["d2", "d0", "d1"]);
+        assert_eq!(r.total, 3);
+    }
+
+    /// R3: default exclude drops the value-less row from results and total.
+    #[test]
+    fn exclude_default_drops_missing() {
+        let e = seed();
+        let r = search(&e, SortMissing::Exclude, 100, None);
+        assert_eq!(ids(&r), vec!["d0", "d1"]);
+        assert_eq!(r.total, 2);
+    }
+
+    /// R4: the missing-inclusive order paginates, each row once, exact total.
+    #[test]
+    fn missing_paginates_each_once() {
+        let e = seed();
+        let p1 = search(&e, SortMissing::Last, 2, None);
+        assert_eq!(ids(&p1), vec!["d0", "d1"]);
+        assert_eq!(p1.total, 3);
+        let cursor = p1.cursor.expect("a full page hands back a cursor");
+        let p2 = search(&e, SortMissing::Last, 2, Some(cursor));
+        assert_eq!(ids(&p2), vec!["d2"]);
+        assert_eq!(p2.total, 3);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #181: a has_child query may be combined with sort. It resolves to a parent
+// bitmap via the materialized path, which is then sorted by a parent field.
+// knn/rrf/hamming + sort stay rejected.
+// @spec projects/lumen/tech-design/logic/allow-has-child-to-combine-with-sort-by-materializing-parent-bit.md
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod has_child_sort_tests {
+    use super::*;
+    use crate::types::IndexItem;
+
+    fn kw() -> FieldSpec {
+        FieldSpec {
+            field_type: FieldType::Keyword,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        }
+    }
+    fn num() -> FieldSpec {
+        FieldSpec {
+            field_type: FieldType::Number,
+            ..kw()
+        }
+    }
+
+    fn order(e: &Engine, eid: &str, ts: f64, status: &str) {
+        e.index(
+            "orders",
+            IndexRequest {
+                items: vec![
+                    IndexItem {
+                        external_id: eid.into(),
+                        field: "ts".into(),
+                        value: FieldValue::Number(ts),
+                        version: None,
+                    },
+                    IndexItem {
+                        external_id: eid.into(),
+                        field: "status".into(),
+                        value: FieldValue::String(status.into()),
+                        version: None,
+                    },
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    fn child(e: &Engine, parent: &str, sku: &str) {
+        e.index(
+            "items",
+            IndexRequest {
+                items: vec![
+                    IndexItem {
+                        external_id: format!("{parent}#0"),
+                        field: "parent".into(),
+                        value: FieldValue::String(parent.into()),
+                        version: None,
+                    },
+                    IndexItem {
+                        external_id: format!("{parent}#0"),
+                        field: "sku".into(),
+                        value: FieldValue::String(sku.into()),
+                        version: None,
+                    },
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// orders o1(ts100,open) o2(ts200,closed) o3(ts300,open); items link each
+    /// order; o1,o2 have sku=S0, o3 has sku=X.
+    fn setup() -> Engine {
+        let e = Engine::new();
+        let mut pf = BTreeMap::new();
+        pf.insert("status".into(), kw());
+        pf.insert("ts".into(), num());
+        e.create_collection("orders", CreateCollectionRequest { fields: pf })
+            .unwrap();
+        let mut cf = BTreeMap::new();
+        cf.insert("parent".into(), kw());
+        cf.insert("sku".into(), kw());
+        e.create_collection("items", CreateCollectionRequest { fields: cf })
+            .unwrap();
+        order(&e, "o1", 100.0, "open");
+        order(&e, "o2", 200.0, "closed");
+        order(&e, "o3", 300.0, "open");
+        child(&e, "o1", "S0");
+        child(&e, "o2", "S0");
+        child(&e, "o3", "X");
+        e
+    }
+
+    fn has_child_s0() -> QueryNode {
+        QueryNode::HasChild(HasChildQuery {
+            collection: "items".into(),
+            field: "parent".into(),
+            query: Box::new(QueryNode::Term(TermQuery {
+                field: "sku".into(),
+                value: FieldValue::String("S0".into()),
+            })),
+        })
+    }
+
+    fn sort_ts_desc() -> Option<Vec<SortSpec>> {
+        Some(vec![SortSpec {
+            field: "ts".into(),
+            order: SortOrder::Desc,
+            missing: SortMissing::Exclude,
+        }])
+    }
+
+    fn run(e: &Engine, query: QueryNode, sort: Option<Vec<SortSpec>>) -> SearchResponse {
+        e.search(
+            "orders",
+            SearchRequest {
+                query,
+                limit: 100,
+                cursor: None,
+                sort,
+                track_total: true,
+                collapse: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn ids(r: &SearchResponse) -> Vec<String> {
+        r.hits.iter().map(|h| h.external_id.clone()).collect()
+    }
+
+    /// R1: has_child + sort returns matching parents ordered by the parent field.
+    #[test]
+    fn has_child_sort_orders_parents() {
+        let e = setup();
+        let r = run(&e, has_child_s0(), sort_ts_desc());
+        assert_eq!(ids(&r), vec!["o2", "o1"]); // ts 200, 100 desc
+        assert_eq!(r.total, 2);
+    }
+
+    /// R2: has_child AND a parent-field filter, sorted, intersect + exact total.
+    #[test]
+    fn has_child_sort_composes_with_filter() {
+        let e = setup();
+        let q = QueryNode::And(vec![
+            has_child_s0(),
+            QueryNode::Term(TermQuery {
+                field: "status".into(),
+                value: FieldValue::String("open".into()),
+            }),
+        ]);
+        let r = run(&e, q, sort_ts_desc());
+        assert_eq!(ids(&r), vec!["o1"]); // o2 is closed
+        assert_eq!(r.total, 1);
+    }
+
+    /// R3: sort + knn is still rejected (400 UnsupportedSort).
+    #[test]
+    fn knn_sort_still_rejected() {
+        let e = setup();
+        let err = e
+            .search(
+                "orders",
+                SearchRequest {
+                    query: QueryNode::Knn(KnnQuery {
+                        field: "v".into(),
+                        vector: vec![0.1, 0.2],
+                        k: 5,
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    sort: sort_ts_desc(),
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap_err();
+        let se = err.downcast_ref::<StorageError>().expect("StorageError");
+        assert!(
+            matches!(se, StorageError::UnsupportedSort(_)),
+            "knn + sort must stay rejected, got {se:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #182: native `ids` query — filter by a set of external_ids, resolved through
+// the interner. Constant-scored, predicable, composes under and/or/not + sort.
+// @spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod ids_query_tests {
+    use super::*;
+    use crate::types::{IdsQuery, IndexItem};
+
+    fn fieldspec(t: FieldType) -> FieldSpec {
+        FieldSpec {
+            field_type: t,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        }
+    }
+
+    fn schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert("price".into(), fieldspec(FieldType::Number));
+        fields.insert("status".into(), fieldspec(FieldType::Keyword));
+        CreateCollectionRequest { fields }
+    }
+
+    /// d0(10,open) d1(20,closed) d2(30,open).
+    fn seed() -> Engine {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        for (eid, price, status) in [
+            ("d0", 10.0, "open"),
+            ("d1", 20.0, "closed"),
+            ("d2", 30.0, "open"),
+        ] {
+            e.index(
+                "c",
+                IndexRequest {
+                    items: vec![
+                        IndexItem {
+                            external_id: eid.into(),
+                            field: "price".into(),
+                            value: FieldValue::Number(price),
+                            version: None,
+                        },
+                        IndexItem {
+                            external_id: eid.into(),
+                            field: "status".into(),
+                            value: FieldValue::String(status.into()),
+                            version: None,
+                        },
+                    ],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+        e
+    }
+
+    fn ids_q(vals: &[&str]) -> QueryNode {
+        QueryNode::Ids(IdsQuery {
+            values: vals.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+
+    fn run(e: &Engine, query: QueryNode, sort: Option<Vec<SortSpec>>) -> SearchResponse {
+        e.search(
+            "c",
+            SearchRequest {
+                query,
+                limit: 100,
+                cursor: None,
+                sort,
+                track_total: true,
+                collapse: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn id_set(r: &SearchResponse) -> BTreeSet<String> {
+        r.hits.iter().map(|h| h.external_id.clone()).collect()
+    }
+
+    /// R1: returns exactly the named existing ids, skipping unknown ones.
+    #[test]
+    fn ids_returns_named_set_skips_unknown() {
+        let e = seed();
+        let r = run(&e, ids_q(&["d0", "d2", "does-not-exist"]), None);
+        assert_eq!(
+            id_set(&r),
+            ["d0".to_string(), "d2".to_string()].into_iter().collect()
+        );
+        assert_eq!(r.total, 2);
+    }
+
+    /// R2: composes under a boolean AND with another clause.
+    #[test]
+    fn ids_composes_under_and() {
+        let e = seed();
+        let q = QueryNode::And(vec![
+            ids_q(&["d0", "d1", "d2"]),
+            QueryNode::Term(TermQuery {
+                field: "status".into(),
+                value: FieldValue::String("open".into()),
+            }),
+        ]);
+        let r = run(&e, q, None);
+        assert_eq!(
+            id_set(&r),
+            ["d0".to_string(), "d2".to_string()].into_iter().collect(),
+            "d1 is closed, so the AND drops it"
+        );
+    }
+
+    /// R3: combines with sort (ids is a predicable filter).
+    #[test]
+    fn ids_combines_with_sort() {
+        let e = seed();
+        let r = run(
+            &e,
+            ids_q(&["d2", "d0"]),
+            Some(vec![SortSpec {
+                field: "price".into(),
+                order: SortOrder::Asc,
+                missing: SortMissing::Exclude,
+            }]),
+        );
+        let ordered: Vec<String> = r.hits.iter().map(|h| h.external_id.clone()).collect();
+        assert_eq!(ordered, vec!["d0".to_string(), "d2".to_string()]); // 10 then 30
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #183: multi-key sort cap raised to MAX_SORT_KEYS (4). The generic plan
+// compares every key in priority order; > 4 keys is rejected.
+// @spec projects/lumen/tech-design/logic/raise-multi-key-sort-cap-beyond-2-keys.md
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod multikey_sort_cap_tests {
+    use super::*;
+    use crate::types::IndexItem;
+
+    fn schema() -> CreateCollectionRequest {
+        let num = || FieldSpec {
+            field_type: FieldType::Number,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        };
+        let mut fields = BTreeMap::new();
+        fields.insert("a".into(), num());
+        fields.insert("b".into(), num());
+        fields.insert("c".into(), num());
+        CreateCollectionRequest { fields }
+    }
+
+    fn idx(e: &Engine, eid: &str, a: f64, b: f64, c: f64) {
+        let item = |field: &str, v: f64| IndexItem {
+            external_id: eid.into(),
+            field: field.into(),
+            value: FieldValue::Number(v),
+            version: None,
+        };
+        e.index(
+            "c",
+            IndexRequest {
+                items: vec![item("a", a), item("b", b), item("c", c)],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    fn sort_asc(fields: &[&str]) -> Vec<SortSpec> {
+        fields
+            .iter()
+            .map(|f| SortSpec {
+                field: (*f).into(),
+                order: SortOrder::Asc,
+                missing: SortMissing::Exclude,
+            })
+            .collect()
+    }
+
+    fn all() -> QueryNode {
+        QueryNode::Range(RangeQuery {
+            field: "a".into(),
+            gte: None,
+            gt: None,
+            lte: None,
+            lt: None,
+        })
+    }
+
+    /// R1: a 3-key sort orders by each key in priority.
+    #[test]
+    fn three_key_sort_orders() {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        idx(&e, "d0", 1.0, 1.0, 1.0);
+        idx(&e, "d1", 1.0, 1.0, 2.0);
+        idx(&e, "d2", 1.0, 2.0, 1.0);
+        idx(&e, "d3", 2.0, 1.0, 1.0);
+        let r = e
+            .search(
+                "c",
+                SearchRequest {
+                    query: all(),
+                    limit: 100,
+                    cursor: None,
+                    sort: Some(sort_asc(&["a", "b", "c"])),
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        let ordered: Vec<String> = r.hits.iter().map(|h| h.external_id.clone()).collect();
+        assert_eq!(ordered, vec!["d0", "d1", "d2", "d3"]);
+        assert_eq!(r.total, 4);
+    }
+
+    /// R2: more than MAX_SORT_KEYS keys is rejected with UnsupportedSort.
+    #[test]
+    fn over_four_keys_rejected() {
+        let e = Engine::new();
+        e.create_collection("c", schema()).unwrap();
+        idx(&e, "d0", 1.0, 1.0, 1.0);
+        let err = e
+            .search(
+                "c",
+                SearchRequest {
+                    query: all(),
+                    limit: 10,
+                    cursor: None,
+                    sort: Some(sort_asc(&["a", "b", "c", "a", "b"])), // 5 keys
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap_err();
+        let se = err.downcast_ref::<StorageError>().expect("StorageError");
+        assert!(
+            matches!(se, StorageError::UnsupportedSort(_)),
+            "more than {MAX_SORT_KEYS} keys must be rejected, got {se:?}"
+        );
     }
 }
 // CODEGEN-END

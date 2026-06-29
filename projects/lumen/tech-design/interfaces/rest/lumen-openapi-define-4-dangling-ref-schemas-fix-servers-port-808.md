@@ -93,6 +93,23 @@ requirementDiagram
     test_openapi_has_no_dangling_refs - verifies -> R1
 ```
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/spec.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Register the OpenAPI component schemas and emit server URLs with Lumen's actual service port."
+  - path: projects/lumen/tests/spec_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Assert the offline OpenAPI output is self-complete and points at the expected service port."
+```
+
 # Reviews
 
 ### Review 1

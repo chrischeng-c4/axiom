@@ -7,6 +7,8 @@ target/
 target-linux/
 **/target-linux/
 .git/
+.vat/
+**/.vat/
 **/node_modules/
 **/*.log
 pkg/

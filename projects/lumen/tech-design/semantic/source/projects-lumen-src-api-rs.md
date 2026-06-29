@@ -75,7 +75,7 @@ use axum::http::HeaderMap;
 
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
-use crate::coordinator::WriteCoordinator;
+use crate::coordinator::{WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, ReadConsistency};
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
@@ -97,10 +97,10 @@ pub struct AppState {
     /// Read/search backend. Defaults to the local engine; sharded serving can
     /// replace it with a fan-in router while keeping writes/stats local.
     pub search_backend: Arc<dyn SearchBackend>,
-    /// Writes go through the coordinator: publish to the log, wait for
-    /// the local apply loop, return the outcome. Reads use `engine`
-    /// directly. See `coordinator` / `wal`.
-    pub writer: Arc<WriteCoordinator>,
+    /// Writes go through a [`WriteSink`]: the WAL-seam coordinator for
+    /// embedded/nats/relay, or the raft host for `--wal raft`. Reads use
+    /// `engine` directly. See `coordinator` / `wal` / `raft_sm`.
+    pub writer: Arc<dyn WriteSink>,
     /// Write/mutation backend. Defaults to the local coordinator; sharded
     /// serving can replace it with a document-router that fans out writes
     /// across independent shard coordinators.
@@ -149,7 +149,7 @@ impl SearchBackend for LocalEngineSearch {
 
 #[derive(Clone)]
 struct LocalWriteBackend {
-    writer: Arc<WriteCoordinator>,
+    writer: Arc<dyn WriteSink>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
@@ -252,7 +252,7 @@ impl AppState {
     pub fn with_components(
         engine: Arc<Engine>,
         auth: Arc<AuthConfig>,
-        writer: Arc<WriteCoordinator>,
+        writer: Arc<dyn WriteSink>,
     ) -> Self {
         Self {
             search_backend: Arc::new(LocalEngineSearch {
@@ -308,8 +308,8 @@ impl AppState {
         license(name = "MIT")
     ),
     servers(
-        (url = "http://lumen-svc:8080", description = "in-cluster ClusterIP"),
-        (url = "http://localhost:8080", description = "local dev")
+        (url = "http://lumen-svc:7373", description = "in-cluster ClusterIP"),
+        (url = "http://localhost:7373", description = "local dev")
     ),
     tags(
         (name = "Collections", description = "Schema lifecycle"),
@@ -358,6 +358,15 @@ impl AppState {
         crate::types::RrfQuery,
         crate::types::ExistsQuery,
         crate::types::DuplicatedQuery,
+        // #200: these are $ref'd by QueryNode / SearchRequest but were not
+        // registered, so the emitted OpenAPI had dangling refs. SortSpec also
+        // pulls in SortOrder + SortMissing.
+        crate::types::IdsQuery,
+        crate::types::HasChildQuery,
+        crate::types::HammingQuery,
+        crate::types::SortSpec,
+        crate::types::SortOrder,
+        crate::types::SortMissing,
         SearchHit,
         SearchResponse,
         DuplicatesRequest,
@@ -728,7 +737,7 @@ async fn search(
     let _consistency = read_consistency_from(&headers);
     // Standalone and explicit-broker builds satisfy this locally. Primary-
     // replica mode will enforce leader/bounded/any against the live cluster
-    // state once the raftcore-backed surface is wired.
+    // state once the raft_core-backed surface is wired.
     Ok(Json(
         state
             .search_backend

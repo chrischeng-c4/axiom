@@ -6,7 +6,7 @@
 // @claim score-confidentiality
 // @contract search-security-result-leak
 // @category security
-// @required_for_production false
+// @required_for_production true
 // @command cargo test -p lumen --test coverage_gaps_e2e search_security_result_leak_respects_collection_boundaries -- --nocapture
 // AW-EC-END
 

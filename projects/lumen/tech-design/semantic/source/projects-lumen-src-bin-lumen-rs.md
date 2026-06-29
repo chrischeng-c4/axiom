@@ -33,7 +33,7 @@ No public AST symbols.
 //! materialized index and accepts writes by publishing them to the
 //! configured write log. In single-node mode that log is local; in explicit
 //! broker mode it is Relay/NATS; in primary-replica mode Lumen owns ordering
-//! and replication via raftcore. Apply happens in the background subscribe
+//! and replication via raft_core. Apply happens in the background subscribe
 //! loop — see `coordinator` / `wal`.
 //!
 //! ```text
@@ -89,6 +89,18 @@ enum Command {
     /// controller (requires a build with `--features operator`); `gen-crd` prints
     /// the Lumen CustomResourceDefinition YAML for `kubectl apply`.
     K8s(K8sArgs),
+    /// Self-update this binary from a published GitHub release. Resolves the
+    /// running target + version, downloads the matching `lumen-<target>.tar.gz`,
+    /// verifies its sha256, and atomically replaces the running executable.
+    /// `--check` reports the available version without changing anything.
+    // @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
+    Upgrade(UpgradeArgs),
+    /// File a diagnostics-rich GitHub issue. Bundles the build version, target,
+    /// git sha and OS/arch (and an optional running node's status via `--url`)
+    /// with your description, then opens an issue via `GITHUB_TOKEN` — or prints
+    /// a pre-filled `issues/new` URL when no token is set. `--dry-run` previews.
+    // @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
+    ReportIssue(ReportIssueArgs),
 }
 
 #[derive(clap::Args)]
@@ -103,6 +115,52 @@ enum K8sCmd {
     Operator,
     /// Print the Lumen CustomResourceDefinition as YAML and exit.
     GenCrd,
+}
+
+/// `lumen upgrade` flags.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
+#[derive(clap::Args)]
+struct UpgradeArgs {
+    /// Report the current and latest version without modifying the binary.
+    #[arg(long)]
+    check: bool,
+    /// Install this exact version (`0.4.3` or `lumen@0.4.3`) instead of the latest.
+    #[arg(long = "version")]
+    tag: Option<String>,
+    /// Reinstall even when already on the selected version.
+    #[arg(long)]
+    force: bool,
+    /// Skip the confirmation prompt.
+    #[arg(short = 'y', long)]
+    yes: bool,
+}
+
+/// `lumen report-issue` flags.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
+#[derive(clap::Args)]
+struct ReportIssueArgs {
+    /// Issue title.
+    #[arg(short = 't', long)]
+    title: String,
+    /// Free-text description of the problem (trailing words; placed above the
+    /// diagnostics block). The only positional — parameters are flags.
+    #[arg(value_name = "MSG", num_args = 0..)]
+    message: Vec<String>,
+    /// Include a running node's `/version`+`/healthz` (e.g. http://localhost:7373).
+    #[arg(long)]
+    url: Option<String>,
+    /// Target repository (`owner/name`); defaults to lumen's release repo.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Add a label (repeatable).
+    #[arg(long)]
+    label: Vec<String>,
+    /// Assemble and print the report without submitting anything.
+    #[arg(long)]
+    dry_run: bool,
+    /// Skip the confirmation prompt.
+    #[arg(short = 'y', long)]
+    yes: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -130,15 +188,20 @@ enum LlmFormat {
 #[derive(Parser)]
 struct LlmArgs {
     /// Which agent-facing topic to print.
-    #[arg(value_enum, default_value_t = LlmTopic::Outline)]
+    #[arg(long, value_enum, default_value_t = LlmTopic::Outline)]
     topic: LlmTopic,
     /// Output format.
     #[arg(long, value_enum, default_value_t = LlmFormat::Md)]
     format: LlmFormat,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
 enum WalBackend {
+    /// Auto-detect (default, k8s-native): a StatefulSet with
+    /// `REPLICAS_PER_SHARD > 1` runs raft (replica/HA mode); a single replica —
+    /// or no cluster context (local dev) — runs embedded. An explicit
+    /// `--wal <backend>` overrides this.
+    Auto,
     /// In-process log. Single-node / dev. No external dependency.
     Embedded,
     /// NATS JetStream legacy backend.
@@ -146,6 +209,26 @@ enum WalBackend {
     /// relay broadcast (#124). Explicit external broker mode.
     #[cfg(feature = "relay-wal")]
     Relay,
+    /// Lumen-owned raft_core replication (#515). HA without an external broker.
+    #[cfg(feature = "raft-wal")]
+    Raft,
+}
+
+/// Resolve `--wal auto` to a concrete backend, k8s-native: a StatefulSet with
+/// `REPLICAS_PER_SHARD > 1` (the downward-API value) runs raft; one replica — or
+/// no cluster context (the env unset, e.g. local dev) — runs embedded. An
+/// explicit `--wal <backend>` passes through unchanged.
+fn resolve_wal_backend(requested: WalBackend) -> WalBackend {
+    if requested != WalBackend::Auto {
+        return requested;
+    }
+    #[cfg(feature = "raft-wal")]
+    if raft_host::cluster::replica_mode() {
+        tracing::info!("wal=auto → raft (StatefulSet REPLICAS_PER_SHARD > 1)");
+        return WalBackend::Raft;
+    }
+    tracing::info!("wal=auto → embedded (single replica / no cluster context)");
+    WalBackend::Embedded
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -180,6 +263,10 @@ enum SpecFormat {
 
 #[derive(Parser)]
 struct SpecArgs {
+    /// Generate a typed client from this spec instead of printing it.
+    /// @spec projects/lumen/tech-design/interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md
+    #[command(subcommand)]
+    gen: Option<SpecSub>,
     /// Schema format to emit when neither `--shapes` nor `--fields` is set.
     #[arg(long, value_enum, default_value_t = SpecFormat::Openapi)]
     format: SpecFormat,
@@ -189,6 +276,43 @@ struct SpecArgs {
     /// Emit the field-type / analyzer catalog instead.
     #[arg(long)]
     fields: bool,
+}
+
+/// `lumen spec` subcommands.
+#[derive(Subcommand)]
+enum SpecSub {
+    /// Generate a typed API client (TypeScript / Python / Rust) from lumen's
+    /// OpenAPI document, written into `--out`.
+    Gen(GenArgs),
+}
+
+#[derive(Parser)]
+struct GenArgs {
+    /// Target language for the generated client.
+    #[arg(long, value_enum)]
+    lang: GenLang,
+    /// Output directory for the generated files.
+    #[arg(long)]
+    out: PathBuf,
+    /// HTTP backend for the TypeScript client (ignored for py/rust).
+    #[arg(long, value_enum, default_value_t = GenHttp::Fetch)]
+    http: GenHttp,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum GenLang {
+    /// TypeScript: types + fetch/axios client + TanStack Query hooks.
+    Ts,
+    /// Python: pydantic models + generated sync/async HTTP/2 runtime.
+    Py,
+    /// Rust: serde models + reqwest client.
+    Rust,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum GenHttp {
+    Fetch,
+    Axios,
 }
 
 #[derive(Parser)]
@@ -206,7 +330,7 @@ struct ServeArgs {
     #[arg(long, env = "LUMEN_LOG_FORMAT", value_enum, default_value_t = LogFormat::Pretty)]
     log_format: LogFormat,
     /// Write-log backend.
-    #[arg(long = "wal", env = "LUMEN_WAL", value_enum, default_value_t = WalBackend::Embedded)]
+    #[arg(long = "wal", env = "LUMEN_WAL", value_enum, default_value_t = WalBackend::Auto)]
     wal: WalBackend,
     /// NATS URL (used when `--wal nats`).
     #[arg(long, env = "LUMEN_NATS_URL", default_value = "nats://localhost:4222")]
@@ -229,6 +353,18 @@ struct ServeArgs {
     #[cfg(feature = "relay-wal")]
     #[arg(long, env = "LUMEN_RELAY_SUBSCRIBER_ID")]
     relay_subscriber_id: Option<String>,
+    /// Data dir for raft hard state (used when `--wal raft`). A PVC in k8s.
+    #[cfg(feature = "raft-wal")]
+    #[arg(
+        long,
+        env = "LUMEN_RAFT_DATA_DIR",
+        default_value = "/var/lib/lumen/raft"
+    )]
+    raft_data_dir: String,
+    /// Peer port for raft RPCs (used when `--wal raft`; multi-pod, Slice 2).
+    #[cfg(feature = "raft-wal")]
+    #[arg(long, env = "LUMEN_RAFT_PORT", default_value_t = 7374)]
+    raft_port: u16,
     /// Shard count for client-side routing (`crc32(collection) % N`).
     /// Install-time topology constant.
     #[arg(long, env = "SHARD_COUNT", default_value_t = 1)]
@@ -268,6 +404,10 @@ async fn main() -> Result<()> {
     match cli.cmd {
         Command::Serve(args) => serve(args).await,
         Command::Spec(args) => {
+            // `spec gen` writes a typed client; everything else prints to stdout.
+            if let Some(SpecSub::Gen(gen)) = args.gen {
+                return spec_gen(gen);
+            }
             // Offline self-description: no engine, no server, no I/O beyond stdout.
             let out = if args.shapes {
                 serde_json::to_string_pretty(&lumen::spec::query_shapes())?
@@ -318,7 +458,85 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::K8s(args) => k8s(args).await,
+        Command::Upgrade(args) => {
+            cli_std::upgrade::run(
+                &TOOL,
+                cli_std::upgrade::Options {
+                    check: args.check,
+                    tag: args.tag,
+                    force: args.force,
+                    yes: args.yes,
+                },
+            )
+            .await
+        }
+        Command::ReportIssue(args) => {
+            cli_std::report_issue::run(
+                &TOOL,
+                cli_std::report_issue::Options {
+                    title: args.title,
+                    message: (!args.message.is_empty()).then(|| args.message.join(" ")),
+                    url: args.url,
+                    repo: args.repo,
+                    // Always tag with the project label so reports route
+                    // automatically (CLI convention); keep any user labels too.
+                    label: std::iter::once("project:lumen".to_string())
+                        .chain(args.label)
+                        .collect(),
+                    dry_run: args.dry_run,
+                    yes: args.yes,
+                },
+            )
+            .await
+        }
     }
+}
+
+/// This binary's identity + build provenance for the standard CLI ops
+/// (`upgrade` / `report-issue`), per the CONTRIBUTING.md CLI convention.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
+const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
+    project: "lumen",
+    repo: "chrischeng-c4/axiom",
+    target: env!("LUMEN_TARGET"),
+    version: env!("CARGO_PKG_VERSION"),
+    git_sha: env!("LUMEN_GIT_SHA"),
+    built_at: env!("LUMEN_BUILT_AT"),
+};
+
+/// `lumen spec gen` — generate a typed client from lumen's own OpenAPI document
+/// (offline; no engine or server) and write it into `--out`.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md
+fn spec_gen(args: GenArgs) -> Result<()> {
+    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    let lang = match args.lang {
+        GenLang::Ts => Lang::Ts,
+        GenLang::Py => Lang::Py,
+        GenLang::Rust => Lang::Rust,
+    };
+    let opts = GenOptions {
+        lang,
+        spec_path: PathBuf::new(),
+        out_dir: args.out.clone(),
+        client_name: "createClient".to_string(),
+        http_client: match args.http {
+            GenHttp::Fetch => HttpClient::Fetch,
+            GenHttp::Axios => HttpClient::Axios,
+        },
+        emit_types: true,
+        emit_client: true,
+        // TanStack Query hooks are a TypeScript-only concern.
+        emit_hooks: matches!(lang, Lang::Ts),
+    };
+    let output = generate(&lumen::spec::openapi_json(), &opts)?;
+    std::fs::create_dir_all(&args.out)?;
+    for file in &output.files {
+        let path = args.out.join(&file.rel_path);
+        std::fs::write(&path, &file.contents)?;
+        println!("generated {}", path.display());
+    }
+    Ok(())
 }
 
 /// `lumen k8s` — operator control plane. Same binary/image as `serve`; the
@@ -372,19 +590,29 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     }
 
-    // Select the write log.
-    let wal: SharedWal = match args.wal {
+    // Select the write log. `--wal raft` also yields a driver whose router is
+    // merged into the serve app below (peer RPCs ride the h2c port).
+    #[cfg(feature = "raft-wal")]
+    let mut raft_host: Option<Arc<raft_host::RaftHost>> = None;
+    #[cfg(feature = "raft-wal")]
+    let mut raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
+    // k8s-native auto-detect: `--wal auto` (the default) picks raft when the
+    // StatefulSet runs >1 replica per shard, else embedded — so single-node /
+    // local dev needs no flags or cluster env.
+    let backend = resolve_wal_backend(args.wal);
+    let wal: Option<SharedWal> = match backend {
+        WalBackend::Auto => unreachable!("auto is resolved by resolve_wal_backend"),
         WalBackend::Embedded => {
             tracing::info!("wal=embedded (in-process; single-node)");
-            Arc::new(MemWal::new())
+            Some(Arc::new(MemWal::new()))
         }
         WalBackend::Nats => {
             tracing::info!(url = %args.nats_url, "wal=nats (JetStream)");
-            Arc::new(
+            Some(Arc::new(
                 connect_nats_with_retry(&args.nats_url, args.nats_connect_timeout_secs)
                     .await
                     .context("connect NATS write log")?,
-            )
+            ))
         }
         #[cfg(feature = "relay-wal")]
         WalBackend::Relay => {
@@ -403,9 +631,61 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 None => lumen::wal_relay::RelayWal::new(&args.relay_url, &args.relay_subject),
             }
             .context("connect relay write log")?;
-            Arc::new(relay)
+            Some(Arc::new(relay))
+        }
+        #[cfg(feature = "raft-wal")]
+        WalBackend::Raft => {
+            // Topology from the StatefulSet downward API via the shared helper
+            // (node id + membership + peers — no hand-rolled ordinal/DNS math).
+            // Raft RPCs ride the client port (the host's router merges into the
+            // serve app), so the peer port is `args.port`; `LUMEN_PEERS` overrides
+            // host:port to run a multi-node group on one machine.
+            let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
+                .unwrap_or_else(|_| "lumen-headless".to_string());
+            let topo =
+                raft_host::ClusterTopology::from_env("lumen", &headless, args.port, "LUMEN_PEERS")
+                    .context("raft: cluster topology from env")?;
+            tracing::info!(
+                node_id = topo.node_id,
+                voters = ?topo.membership.voters,
+                peers = ?topo.peers.keys().collect::<Vec<_>>(),
+                data_dir = %args.raft_data_dir,
+                "wal=raft (raft_core; multi-pod)"
+            );
+            let store = raft_host::RaftStore::open(
+                &args.raft_data_dir,
+                topo.node_id,
+                raft_host::FsyncPolicy::Always,
+            )
+            .context("open raft store")?;
+            // The host is the sole applier: committed entries fold straight into
+            // the engine (via `EngineSm`), so there is no `WalLog`/coordinator
+            // seam for the raft path. Cold-start (restore + replay) happens in
+            // `RaftHost::spawn`; snapshot/compaction is driven externally below.
+            let sm = lumen::raft_sm::EngineSm::new(engine.clone(), 0);
+            let host = Arc::new(raft_host::RaftHost::spawn(
+                topo.node_id,
+                topo.membership,
+                topo.peers,
+                store,
+                sm.clone() as Arc<dyn raft_host::RaftStateMachine>,
+                raft_host::HostConfig {
+                    snapshot: raft_host::SnapshotPolicy::External,
+                    ..Default::default()
+                },
+            ));
+            raft_host = Some(Arc::clone(&host));
+            raft_writer = Some(Arc::new(lumen::raft_sm::RaftWriteSink::new(host, sm)));
+            None
         }
     };
+
+    // The raft path is the sole applier (no WalLog/coordinator seam): it
+    // cold-starts inside `RaftHost::spawn` and uses the host as its `WriteSink`.
+    #[cfg(feature = "raft-wal")]
+    let is_raft = raft_writer.is_some();
+    #[cfg(not(feature = "raft-wal"))]
+    let is_raft = false;
 
     // Persistence bootstrap: load the latest checkpoint (if any) so we tail from
     // its sequence instead of replaying the whole log. Two modes share the
@@ -442,7 +722,12 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Cold-start sequence: the WAL position the checkpoint is current as of, so
     // the apply loop tails from `start_seq + 1`.
     let mut start_seq = {
-        if let Some(store) = &segment_store {
+        if is_raft {
+            // Raft cold-starts inside `RaftHost::spawn` (snapshot restore + replay
+            // of committed entries); the engine here is fresh and the host owns
+            // the applied seq, so there is nothing to load from `--data-dir`.
+            0
+        } else if let Some(store) = &segment_store {
             // Segment mode: reopen every collection from the newest checkpoint
             // INTO `engine` (no whole-collection load), replacing the CBOR restore.
             match store
@@ -464,7 +749,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // → AOF replay (`start_seq+1 .. A`) → broker tail (`A+1 ..`). After replay the
     // apply loop keeps appending to this same writer, and the checkpoint
     // snapshotter trims it. The default CBOR path never builds one.
-    let aof_writer: Option<lumen::coordinator::SharedAof> = if segment_mode {
+    let aof_writer: Option<lumen::coordinator::SharedAof> = if segment_mode && !is_raft {
         match &args.data_dir {
             Some(dir) => {
                 let aof_path = std::path::Path::new(dir).join("aof.log");
@@ -488,9 +773,21 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     // (c) Start the apply loop. In segment mode with an AOF, the loop appends
     // every applied record to it; otherwise the default loop runs unchanged.
-    let writer = match aof_writer.clone() {
-        Some(aof) => WriteCoordinator::start_from_with_aof(wal, engine.clone(), start_seq, aof),
-        None => WriteCoordinator::start_from(wal, engine.clone(), start_seq),
+    // The raft path uses the `RaftHost` as its `WriteSink`; every other backend
+    // uses the `WriteCoordinator` (sole applier over a `WalLog`). Both are erased
+    // to `Arc<dyn WriteSink>` so the API binds to a single write seam.
+    #[cfg(feature = "raft-wal")]
+    let raft_writer = raft_writer.take();
+    #[cfg(not(feature = "raft-wal"))]
+    let raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
+    let writer: Arc<dyn lumen::coordinator::WriteSink> = if let Some(rw) = raft_writer {
+        rw
+    } else {
+        let wal = wal.expect("non-raft backend yields a WAL");
+        match aof_writer.clone() {
+            Some(aof) => WriteCoordinator::start_from_with_aof(wal, engine.clone(), start_seq, aof),
+            None => WriteCoordinator::start_from(wal, engine.clone(), start_seq),
+        }
     };
 
     let auth = Arc::new(AuthConfig::from_env()?);
@@ -506,10 +803,38 @@ async fn serve(args: ServeArgs) -> Result<()> {
         tracing::info!(shard_count = shards.len(), "search backend=segment-sharded");
         state = state.with_search_backend(Arc::new(lumen::routing::EngineShardSearch::new(shards)));
     }
-    let app = lumen::api::router(state);
+    #[cfg_attr(not(feature = "raft-wal"), allow(unused_mut))]
+    let mut app = lumen::api::router(state);
+    // Peer raft RPCs (`/raft/*`, `/raftz`) share the h2c serve port.
+    #[cfg(feature = "raft-wal")]
+    if let Some(host) = &raft_host {
+        app = app.merge(host.router());
+    }
 
-    // Periodic RDB snapshotter.
-    if let Some(store) = rdb_store {
+    // Periodic snapshotter. Raft mode: the host captures the engine RDB AND
+    // compacts the raft log (bounding it + arming InstallSnapshot for a fresh
+    // replica) — the shared backup layer (#524, closes #522 by construction).
+    // Otherwise the RDB snapshotter writes the `--data-dir` checkpoints the apply
+    // loop tails from on restart.
+    #[cfg(feature = "raft-wal")]
+    if let Some(host) = raft_host.clone() {
+        let period = Duration::from_secs(args.snapshot_secs.max(1));
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(period);
+            ticker.tick().await; // skip immediate fire
+            loop {
+                ticker.tick().await;
+                match host.snapshot_and_compact().await {
+                    Ok(idx) if idx > 0 => {
+                        tracing::info!(snapshot_index = idx, "raft snapshot taken + log compacted")
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "raft snapshot/compact failed"),
+                }
+            }
+        });
+    }
+    if let (false, Some(store)) = (is_raft, rdb_store) {
         let snap_engine = engine.clone();
         let snap_writer = writer.clone();
         let period = Duration::from_secs(args.snapshot_secs.max(1));
@@ -596,9 +921,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
     tracing::info!(addr = %bind, shard_count = args.shard_count, "lumen serve listening");
 
     let grace = Duration::from_secs(args.grace_secs);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(engine.clone(), grace))
-        .await?;
+    // Serve HTTP/1.1 + h2c on one port via the shared h2c transport (hyper
+    // auto-builder), not `axum::serve` (HTTP/1-only). Matches the service
+    // archetype and lets in-cluster h2c clients connect.
+    h2c::serve(listener, app, shutdown_signal(engine.clone(), grace)).await;
     // Flush any batched spans before exit (no-op when OTLP was never enabled).
     #[cfg(feature = "otel")]
     opentelemetry::global::shutdown_tracer_provider();

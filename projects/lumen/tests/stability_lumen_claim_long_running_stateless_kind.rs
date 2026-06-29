@@ -1,0 +1,39 @@
+// SPEC-MANAGED: projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-stateless-kind
+// CODEGEN-BEGIN
+// AW-EC-BEGIN
+// @ec lumen-claim-long-running-stateless-kind
+// @capability long-running-stability
+// @claim stateless-serving-rebuild-from-log-no-pvc
+// @contract long-running-stateless-kind-dogfood
+// @category stability
+// @required_for_production true
+// @command projects/lumen/scripts/kind-e2e.sh
+// AW-EC-END
+
+// Contract: The live kind dogfood path proves stateless serving rebuilds from log without a serving PVC.
+#[test]
+#[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
+fn lumen_claim_long_running_stateless_kind() {
+    let command = "projects/lumen/scripts/kind-e2e.sh";
+    let id = "lumen-claim-long-running-stateless-kind";
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !root.join(".aw").is_dir() {
+        assert!(
+            root.pop(),
+            "AW EC {id}: no .aw/ project root above {}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+    }
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&root)
+        .status()
+        .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    assert!(
+        status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}",
+        status.code()
+    );
+}
+// CODEGEN-END

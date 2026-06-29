@@ -32,6 +32,7 @@ Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Sc
 | `native_wire` | projects/lumen/src/lib.rs | module | pub | 35 |  |
 | `operator` | projects/lumen/src/lib.rs | module | pub | 40 |  |
 | `raft` | projects/lumen/src/lib.rs | module | pub | 43 |  |
+| `raft_sm` | projects/lumen/src/lib.rs | module | pub | 49 |  |
 | `rdb` | projects/lumen/src/lib.rs | module | pub | 44 |  |
 | `routing` | projects/lumen/src/lib.rs | module | pub | 45 |  |
 | `segment_rdb` | projects/lumen/src/lib.rs | module | pub | 57 |  |
@@ -91,6 +92,12 @@ pub mod operator;
 /// Cluster-state view types backing the read/admin API. This surface is the
 /// compatibility bridge for Lumen-owned primary/replica replication.
 pub mod raft;
+/// `EngineSm` — lumen's `Engine` as a shared-`raft_host` state machine: the
+/// convergence onto `libs/raft-host` (#524). The host is the sole applier, so
+/// the per-service driver, durable hard state, and the WAL seam are no longer
+/// lumen's to own — they live in the shared lib.
+#[cfg(feature = "raft-wal")]
+pub mod raft_sm;
 pub mod rdb;
 pub mod routing;
 /// Columnar mmap disk segment (Stage 2 disk-tier): a single Number column
@@ -119,6 +126,7 @@ pub mod wal_nats;
 #[cfg(feature = "relay-wal")]
 pub mod wal_relay;
 // CODEGEN-END
+
 ````
 
 ## Changes
