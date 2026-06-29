@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-build-sh" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+# <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-build-sh" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 set -euo pipefail
 
 usage() {
@@ -112,4 +112,4 @@ echo "Push the branch and tag to publish:"
 echo "  git push origin HEAD"
 echo "  git push origin ${TAG}"
 
-// </HANDWRITE>
+# </HANDWRITE>
