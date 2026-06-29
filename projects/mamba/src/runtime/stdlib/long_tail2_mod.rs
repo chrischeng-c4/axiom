@@ -89,6 +89,10 @@ unsafe extern "C" fn raw_turtle_write(_self_v: MbValue, args: MbValue) -> MbValu
     MbValue::none()
 }
 
+unsafe extern "C" fn curses_bool_flag(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    raise_type_error("curses flag must be bool")
+}
+
 fn register_variadic_method_class(class_name: &str, method_name: &str, addr: usize) {
     super::super::module::register_variadic_func(addr as u64);
     let mut methods = HashMap::new();
@@ -189,8 +193,12 @@ fn build_attrs(
 fn register_asyncio_transports() {
     let mut attrs = build_attrs(
         &[
-            "BaseTransport", "ReadTransport", "WriteTransport", "Transport",
-            "DatagramTransport", "SubprocessTransport",
+            "BaseTransport",
+            "ReadTransport",
+            "WriteTransport",
+            "Transport",
+            "DatagramTransport",
+            "SubprocessTransport",
         ],
         &[],
         &[],
@@ -211,8 +219,15 @@ fn register_asyncio_transports() {
 fn register_turtle() {
     let mut attrs = build_attrs(
         &[
-            "Turtle", "RawTurtle", "Pen", "Screen", "TurtleScreen", "TNavigator",
-            "Vec2D", "ScrolledCanvas", "TurtleGraphicsError",
+            "Turtle",
+            "RawTurtle",
+            "Pen",
+            "Screen",
+            "TurtleScreen",
+            "TNavigator",
+            "Vec2D",
+            "ScrolledCanvas",
+            "TurtleGraphicsError",
         ],
         &[
             ("forward", dispatch_noop as *const () as usize),
@@ -230,11 +245,7 @@ fn register_turtle() {
         &[],
     );
     attrs.insert("RawTurtle".into(), make_type_obj("RawTurtle", "turtle"));
-    register_variadic_method_class(
-        "RawTurtle",
-        "write",
-        raw_turtle_write as *const () as usize,
-    );
+    register_variadic_method_class("RawTurtle", "write", raw_turtle_write as *const () as usize);
     super::register_module("turtle", attrs);
 }
 
@@ -864,6 +875,22 @@ pub fn register() {
             ("KEY_ENTER", 343),
             ("KEY_BACKSPACE", 263),
         ],
+        &[],
+    );
+    register_with(
+        "_curses",
+        &["window", "error"],
+        &[
+            ("cbreak", curses_bool_flag as *const () as usize),
+            ("echo", curses_bool_flag as *const () as usize),
+            ("intrflush", curses_bool_flag as *const () as usize),
+            ("meta", curses_bool_flag as *const () as usize),
+            ("nl", curses_bool_flag as *const () as usize),
+            ("qiflush", curses_bool_flag as *const () as usize),
+            ("raw", curses_bool_flag as *const () as usize),
+            ("use_env", curses_bool_flag as *const () as usize),
+        ],
+        &[],
         &[],
     );
     register_with(
