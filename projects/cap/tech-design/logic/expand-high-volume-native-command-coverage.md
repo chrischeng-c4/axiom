@@ -75,3 +75,106 @@ flowchart TD
     parity --> bench[CPU/RSS large-workload benchmark]
     bench --> done([promoted high-volume shape])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: cap-high-volume-native-command-coverage-tests
+requirements:
+  wc_small_fallback:
+    id: HV-UT-1
+    text: "Planner keeps wc -l small file sets on the original command path."
+    kind: functional
+    risk: high
+    verify: test
+  wc_large_native:
+    id: HV-UT-2
+    text: "Planner promotes wc -l many-file or large-byte regular-file operands to the native aggregate line-count path."
+    kind: functional
+    risk: high
+    verify: test
+  wc_parity_success:
+    id: HV-UT-3
+    text: "Native wc -l preserves stdout and exit status for single-file and multi-file success cases, including total rows."
+    kind: functional
+    risk: high
+    verify: test
+  wc_parity_errors:
+    id: HV-UT-4
+    text: "Missing paths, directories, stdin operands, and unsupported wc flags fail open to the original path."
+    kind: functional
+    risk: high
+    verify: test
+  explain_visibility:
+    id: HV-UT-5
+    text: "cap explain reports native_wc_lines for promoted workloads and original fallback for small or unsupported workloads."
+    kind: functional
+    risk: medium
+    verify: test
+  benchmark_evidence:
+    id: HV-UT-6
+    text: "command_resources includes a large wc -l row comparing cap native aggregate against the original system command with CPU and peak RSS evidence."
+    kind: functional
+    risk: high
+    verify: benchmark
+elements:
+  planner_threshold_tests:
+    kind: test
+    type: "cargo test -p cap command_planner"
+  replacement_parity_tests:
+    kind: test
+    type: "cargo test -p cap behavior_cap_command_replacement_parity"
+  explain_tests:
+    kind: test
+    type: "cargo test -p cap explain"
+  resource_benchmark_matrix:
+    kind: benchmark
+    type: "cargo bench -p cap --bench command_resources"
+relations:
+  - { from: planner_threshold_tests, verifies: wc_small_fallback }
+  - { from: planner_threshold_tests, verifies: wc_large_native }
+  - { from: replacement_parity_tests, verifies: wc_parity_success }
+  - { from: replacement_parity_tests, verifies: wc_parity_errors }
+  - { from: explain_tests, verifies: explain_visibility }
+  - { from: resource_benchmark_matrix, verifies: benchmark_evidence }
+---
+requirementDiagram
+  requirement wc_small_fallback {
+    id: HV-UT-1
+    text: "small wc -l workloads use original path"
+    risk: high
+    verifymethod: test
+  }
+  requirement wc_large_native {
+    id: HV-UT-2
+    text: "large wc -l workloads use native aggregate path"
+    risk: high
+    verifymethod: test
+  }
+  requirement wc_parity_success {
+    id: HV-UT-3
+    text: "native wc -l success output matches system wc"
+    risk: high
+    verifymethod: test
+  }
+  requirement wc_parity_errors {
+    id: HV-UT-4
+    text: "unsupported or error cases fail open"
+    risk: high
+    verifymethod: test
+  }
+  requirement explain_visibility {
+    id: HV-UT-5
+    text: "explain shows promoted versus fallback path"
+    risk: medium
+    verifymethod: test
+  }
+  requirement benchmark_evidence {
+    id: HV-UT-6
+    text: "benchmarks prove high-volume resource win"
+    risk: high
+    verifymethod: benchmark
+  }
+```
