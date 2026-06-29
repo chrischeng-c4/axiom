@@ -117,3 +117,34 @@ requirementDiagram
     }
     test_lumen_bench_sorted_page_deep_smoke - verifies -> R1
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: rig-data-table-browse
+    name: "rig data-table browse"
+    runner: rig
+    path: projects/lumen/tests/rig/cases/load/data_table_browse.toml
+    command: "cd projects/lumen && ../../target/debug/rig run --dir tests/rig/cases/load --case data_table_browse"
+    verifies:
+      - "Seeds a browse corpus over the HTTP API."
+      - "Pages through filter+sort cursor results to exhaustion."
+      - "Asserts page concatenation matches a one-shot sorted oracle."
+      - "Asserts deep-page p99 stays within the shallow-page tolerance."
+  - id: vat-rig-data-table-browse
+    name: "vat rig data-table browse"
+    runner: vat
+    path: projects/lumen/vat.toml
+    command: "cd projects/lumen && ../../target/debug/vat run rig-load"
+    verifies:
+      - "The load runner includes the data_table_browse rig case when vat provisions the lumen service."
+  - id: vat-ec-efficiency-meter
+    name: "vat efficiency meter"
+    runner: vat
+    path: projects/lumen/vat.toml
+    command: "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
+    verifies:
+      - "The strict competitive gate can be run in a vat-owned pg/OpenSearch environment."
+```
