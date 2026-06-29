@@ -209,6 +209,57 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("i", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: CPython 3.12 local builds may not expose the internal module,
+    // but the typeshed-derived strict wall must still reject a bare user object
+    // before import-time behavior is observed.
+    StdlibSig {
+        module: "_interpchannels",
+        qualifier: "",
+        name: "create",
+        kind: SigKind::ModuleFn,
+        params: &[p("unboundop", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_interpreters",
+        qualifier: "",
+        name: "capture_exception",
+        kind: SigKind::ModuleFn,
+        params: &[p("exc", CoreTy::Typed)],
+        enforceable: true,
+    },
+    // POSITIVE: generated rows are too conservative for these extension-class
+    // contracts. Keep the static wall strict and let the runtime shims cover
+    // dynamic execution paths through object.__new__(...).
+    StdlibSig {
+        module: "_lsprof",
+        qualifier: "Profiler",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("timer", CoreTy::Typed),
+            p("timeunit", CoreTy::Float),
+            p("subcalls", CoreTy::Bool),
+            p("builtins", CoreTy::Bool),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_lsprof",
+        qualifier: "Profiler",
+        name: "enable",
+        kind: SigKind::Method,
+        params: &[p("subcalls", CoreTy::Bool), p("builtins", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_multibytecodec",
+        qualifier: "MultibyteIncrementalDecoder",
+        name: "setstate",
+        kind: SigKind::Method,
+        params: &[p("state", CoreTy::Tuple)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
@@ -1747,7 +1798,7 @@ mod tests {
 
     #[test]
     fn curated_overrides_generated() {
-        // The 6 curated rows win over any generated row of the same key, and the
+        // Curated rows win over any generated row of the same key, and the
         // generated table is reachable on a curated miss.
         let s = get("os", "", "strerror").unwrap();
         assert!(

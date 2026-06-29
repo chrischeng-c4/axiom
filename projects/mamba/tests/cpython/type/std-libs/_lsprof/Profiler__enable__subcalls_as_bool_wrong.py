@@ -9,12 +9,11 @@
 # case = "Profiler__enable__subcalls_as_bool_wrong"
 # subject = "_lsprof.Profiler.enable(subcalls: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed subcalls"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_lsprof.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed subcalls
 # mamba-strict-type: TypeError
 """Type wall: _lsprof.Profiler.enable(subcalls: bool); call it with the wrong type.
 

@@ -9,12 +9,11 @@
 # case = "capture_exception__exc_as_BaseException_wrong"
 # subject = "_interpreters.capture_exception(exc: BaseException)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_interpreters.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc
 # mamba-strict-type: TypeError
 """Type wall: _interpreters.capture_exception(exc: BaseException); call it with the wrong type.
 

@@ -62,6 +62,15 @@ fn is_str(v: MbValue) -> bool {
         .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
 }
 
+fn is_tuple(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Tuple(_)) })
+}
+
+fn is_callable_or_none(v: MbValue) -> bool {
+    v.is_none() || super::super::builtins::mb_callable(v).as_bool() == Some(true)
+}
+
 unsafe extern "C" fn dispatch_dbm_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let filename = a.first().copied().unwrap_or_else(MbValue::none);
@@ -93,6 +102,34 @@ unsafe extern "C" fn dispatch_importlib_cache_from_source(
         return raise_type_error("cache_from_source path must be str");
     }
     dispatch_empty_str(args_ptr, nargs)
+}
+
+unsafe extern "C" fn profiler_init(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    let timer = items.first().copied().unwrap_or_else(MbValue::none);
+    if !is_callable_or_none(timer) {
+        return raise_type_error("_lsprof.Profiler timer must be callable or None");
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn profiler_enable(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(subcalls) = items.first().copied() {
+        if !subcalls.is_bool() {
+            return raise_type_error("_lsprof.Profiler.enable subcalls must be bool");
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn multibyte_decoder_setstate(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    let state = items.first().copied().unwrap_or_else(MbValue::none);
+    if !is_tuple(state) {
+        return raise_type_error("_multibytecodec.MultibyteIncrementalDecoder state must be tuple");
+    }
+    MbValue::none()
 }
 
 extern "C" fn ctypes_array_getitem(_self_v: MbValue, _args: MbValue) -> MbValue {
@@ -1587,6 +1624,28 @@ fn register_internals() {
         &[],
         &[],
     );
+    register_variadic_method_class(
+        "Profiler",
+        &[
+            ("__init__", profiler_init as *const () as usize),
+            ("enable", profiler_enable as *const () as usize),
+        ],
+    );
+    let mut lsprof = HashMap::new();
+    lsprof.insert("Profiler".to_string(), make_type_obj("Profiler", "_lsprof"));
+    super::register_module("_lsprof", lsprof);
+
+    register_variadic_method_class(
+        "MultibyteIncrementalDecoder",
+        &[("setstate", multibyte_decoder_setstate as *const () as usize)],
+    );
+    let mut multibytecodec = HashMap::new();
+    multibytecodec.insert(
+        "MultibyteIncrementalDecoder".to_string(),
+        make_type_obj("MultibyteIncrementalDecoder", "_multibytecodec"),
+    );
+    super::register_module("_multibytecodec", multibytecodec);
+
     register_with(
         "_collections_abc",
         &[
