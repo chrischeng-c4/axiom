@@ -9,12 +9,11 @@
 # case = "Certificate__public_bytes__format_as_int_wrong"
 # subject = "_ssl.Certificate.public_bytes(format: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed format"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_ssl.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed format
 # mamba-strict-type: TypeError
 """Type wall: _ssl.Certificate.public_bytes(format: int); call it with the wrong type.
 
