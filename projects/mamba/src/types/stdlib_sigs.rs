@@ -669,6 +669,30 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: range index/new overloads use SupportsIndex/slice protocols.
+    // Typed rejects only a provably bare `_W()` while accepting ints, slices,
+    // classes with __index__, and dynamic values.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "range",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "range",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[
+            p("cls", CoreTy::Typed),
+            p("start_or_stop", CoreTy::Typed),
+            p("stop", CoreTy::Typed),
+            p("step", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: classmethod is descriptor-shaped. These curated rows only
     // reject a provably bare `_W()` for Callable/type-variable contracts; real
     // callables and dynamic descriptor uses stay skip-safe.

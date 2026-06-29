@@ -944,6 +944,29 @@ fn test_stdlib_memoryview_method_contracts_rejected() {
     );
 }
 
+#[test]
+fn test_stdlib_range_method_contracts_rejected() {
+    let errors = check(
+        "from builtins import range\nclass _W:\n    pass\nobj = range(3)\nobj.__getitem__(_W())\nrange.__new__(range, _W())\nrange.__new__(range, _W(), 3)\nrange.__new__(range, 0, _W())\n",
+    );
+    let typed_errors = errors
+        .iter()
+        .filter(|e| e.contains("does not satisfy parameter"))
+        .count();
+    assert_eq!(
+        typed_errors, 4,
+        "range protocol params should reject bare user instances, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import range\nclass _Index:\n    def __index__(self) -> int:\n        return 1\nobj = range(3)\nobj.__getitem__(0)\nobj.__getitem__(slice(0, 1))\nobj.__getitem__(_Index())\nrange.__new__(range, 3)\nrange.__new__(range, 0, 3)\nrange.__new__(range, 0, 3, 1)\nvalue: Any = _Index()\nobj.__getitem__(value)\nrange.__new__(range, value)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid and dynamic range protocol forms must stay accepted, got: {errors:?}"
+    );
+}
+
 // R9.3: getattr() with default (3-arg form) must be accepted
 #[test]
 fn test_getattr_three_arg_form_accepted() {
