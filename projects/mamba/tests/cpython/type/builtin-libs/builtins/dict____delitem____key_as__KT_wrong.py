@@ -26,10 +26,12 @@ class _W:
 
 
 from builtins import dict
-obj = object.__new__(dict)
+obj: dict[str, int] = {}
 try:
     obj.__delitem__(_W())  # key: _KT <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
+except KeyError:
+    print("no_typeerror:")  # CPython accepted the key type and performed lookup/delete
 except TypeError as e:
     print("typeerror:", type(e).__name__)
 except Exception as e:

@@ -932,6 +932,32 @@ impl TypeChecker {
     /// Resolve attribute access (#246).
     fn resolve_attr(&mut self, obj_ty_id: TypeId, attr: &str, _span: Span) -> TypeId {
         match self.tcx.get(obj_ty_id).clone() {
+            Ty::Dict(key, value) => match attr {
+                "__delitem__" => self.tcx.intern(Ty::Fn {
+                    params: vec![key],
+                    ret: self.tcx.none(),
+                    variadic: false,
+                }),
+                "__getitem__" => self.tcx.intern(Ty::Fn {
+                    params: vec![key],
+                    ret: value,
+                    variadic: false,
+                }),
+                "__setitem__" => self.tcx.intern(Ty::Fn {
+                    params: vec![key, value],
+                    ret: self.tcx.none(),
+                    variadic: false,
+                }),
+                "get" | "pop" => {
+                    let any = self.tcx.any();
+                    self.tcx.intern(Ty::Fn {
+                        params: vec![key, any],
+                        ret: any,
+                        variadic: false,
+                    })
+                }
+                _ => self.tcx.any(),
+            },
             Ty::Class { fields, .. } => {
                 for (name, ty) in &fields {
                     if name == attr {
