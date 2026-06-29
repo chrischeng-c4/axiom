@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import float
-obj = object.__new__(float)
+obj = float()
 try:
     obj.__rpow__(_W())  # value: _NegativeInteger <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
