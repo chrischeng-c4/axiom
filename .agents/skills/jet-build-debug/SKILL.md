@@ -6,14 +6,16 @@ user-invocable: true
 
 # /jet:build:debug
 
-Builds the jet CLI in debug mode and installs to `~/.cargo/bin/jet`. Does **not** bump the workspace version.
+Builds the jet CLI in **debug** mode and installs it to `~/.cargo/bin/jet` via
+jet's canonical `projects/jet/build.sh debug`. Does **not** bump the version or
+tag — it is the fast local install for iterating on jet.
 
 ## Instructions
 
-Run the build script:
+Run the build wrapper (delegates to `projects/jet/build.sh debug`):
 
 ```bash
-.Codex/skills/jet-build-debug/scripts/build.sh
+.agents/skills/jet-build-debug/scripts/build.sh
 ```
 
 Report the result to the user.
