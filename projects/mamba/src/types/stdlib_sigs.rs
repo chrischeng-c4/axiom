@@ -693,6 +693,54 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: property descriptors accept callable/dynamic/None values at
+    // runtime. The strict wall only rejects a provably bare `_W()` for the
+    // descriptor target/callable protocol slots.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "property",
+        name: "__get__",
+        kind: SigKind::Method,
+        params: &[p("instance", CoreTy::Typed), p("owner", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "property",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("fget", CoreTy::Typed),
+            p("fset", CoreTy::Typed),
+            p("fdel", CoreTy::Typed),
+            p("doc", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "property",
+        name: "deleter",
+        kind: SigKind::Method,
+        params: &[p("fdel", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "property",
+        name: "getter",
+        kind: SigKind::Method,
+        params: &[p("fget", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "property",
+        name: "setter",
+        kind: SigKind::Method,
+        params: &[p("fset", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: classmethod is descriptor-shaped. These curated rows only
     // reject a provably bare `_W()` for Callable/type-variable contracts; real
     // callables and dynamic descriptor uses stay skip-safe.

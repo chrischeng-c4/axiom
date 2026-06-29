@@ -967,6 +967,29 @@ fn test_stdlib_range_method_contracts_rejected() {
     );
 }
 
+#[test]
+fn test_stdlib_property_descriptor_contracts_rejected() {
+    let errors = check(
+        "from builtins import property\nclass _W:\n    pass\ndef f(self=None):\n    return None\nobj = property(f)\nobj.__get__(_W(), None)\nobj.__get__(None, _W())\nobj.getter(_W())\nobj.setter(_W())\nobj.deleter(_W())\nproperty(_W())\n",
+    );
+    let typed_errors = errors
+        .iter()
+        .filter(|e| e.contains("does not satisfy parameter"))
+        .count();
+    assert_eq!(
+        typed_errors, 6,
+        "property descriptor protocol slots should reject bare user instances, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import property\nclass _Owner:\n    def marker(self):\n        return None\ndef f(self=None):\n    return None\ndef s(self, value):\n    pass\ndef d(self):\n    pass\nobj = property(f)\nobj.__get__(None, None)\nobj.__get__(None, _Owner)\nobj.getter(f)\nobj.setter(s)\nobj.deleter(d)\nproperty(f, s, d, \"doc\")\nvalue: Any = f\nobj.getter(value)\nproperty(value)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid and dynamic property descriptor forms must stay accepted, got: {errors:?}"
+    );
+}
+
 // R9.3: getattr() with default (3-arg form) must be accepted
 #[test]
 fn test_getattr_three_arg_form_accepted() {
