@@ -1083,6 +1083,221 @@ fn collect_call_arg_hints(
     walk_stmts(stmts, env, func_ret, out, seen);
 }
 
+fn collect_functools_partial_targets(stmts: &[Spanned<ast::Stmt>], out: &mut HashSet<String>) {
+    fn is_partial_factory(
+        expr: &ast::Expr,
+        module_idents: &HashSet<String>,
+        factory_idents: &HashSet<String>,
+    ) -> bool {
+        match expr {
+            ast::Expr::Attr { object, attr } if attr == "partial" => {
+                matches!(&object.node, ast::Expr::Ident(name) if module_idents.contains(name))
+            }
+            ast::Expr::Ident(name) => factory_idents.contains(name),
+            _ => false,
+        }
+    }
+
+    fn walk_expr(
+        expr: &Spanned<ast::Expr>,
+        module_idents: &HashSet<String>,
+        factory_idents: &HashSet<String>,
+        out: &mut HashSet<String>,
+    ) {
+        match &expr.node {
+            ast::Expr::Call { func, args } => {
+                if is_partial_factory(&func.node, module_idents, factory_idents) {
+                    if let Some(target) = args.iter().find_map(|arg| match arg {
+                        ast::CallArg::Positional(value) => match &value.node {
+                            ast::Expr::Ident(name) => Some(name.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    }) {
+                        out.insert(target);
+                    }
+                }
+                walk_expr(func, module_idents, factory_idents, out);
+                for arg in args {
+                    match arg {
+                        ast::CallArg::Positional(value)
+                        | ast::CallArg::StarArg(value)
+                        | ast::CallArg::DoubleStarArg(value) => {
+                            walk_expr(value, module_idents, factory_idents, out);
+                        }
+                        ast::CallArg::Keyword { value, .. } => {
+                            walk_expr(value, module_idents, factory_idents, out);
+                        }
+                    }
+                }
+            }
+            ast::Expr::BinOp { lhs, rhs, .. } => {
+                walk_expr(lhs, module_idents, factory_idents, out);
+                walk_expr(rhs, module_idents, factory_idents, out);
+            }
+            ast::Expr::UnaryOp { operand, .. } => {
+                walk_expr(operand, module_idents, factory_idents, out);
+            }
+            ast::Expr::Attr { object, .. } => {
+                walk_expr(object, module_idents, factory_idents, out);
+            }
+            ast::Expr::Index { object, index } => {
+                walk_expr(object, module_idents, factory_idents, out);
+                walk_expr(index, module_idents, factory_idents, out);
+            }
+            ast::Expr::ListLit(items) | ast::Expr::TupleLit(items) | ast::Expr::SetLit(items) => {
+                for item in items {
+                    walk_expr(item, module_idents, factory_idents, out);
+                }
+            }
+            ast::Expr::DictLit(entries) => {
+                for (key, value) in entries {
+                    if let Some(key) = key {
+                        walk_expr(key, module_idents, factory_idents, out);
+                    }
+                    walk_expr(value, module_idents, factory_idents, out);
+                }
+            }
+            ast::Expr::IfExpr {
+                condition,
+                body,
+                else_body,
+            } => {
+                walk_expr(condition, module_idents, factory_idents, out);
+                walk_expr(body, module_idents, factory_idents, out);
+                walk_expr(else_body, module_idents, factory_idents, out);
+            }
+            ast::Expr::Lambda { body, .. } => {
+                walk_expr(body, module_idents, factory_idents, out);
+            }
+            ast::Expr::FString(parts) => {
+                fn walk_parts(
+                    parts: &[ast::FStringPart],
+                    module_idents: &HashSet<String>,
+                    factory_idents: &HashSet<String>,
+                    out: &mut HashSet<String>,
+                ) {
+                    for part in parts {
+                        if let ast::FStringPart::Expr(expr, format_spec) = part {
+                            walk_expr(expr, module_idents, factory_idents, out);
+                            if let Some(parts) = format_spec {
+                                walk_parts(parts, module_idents, factory_idents, out);
+                            }
+                        }
+                    }
+                }
+                walk_parts(parts, module_idents, factory_idents, out);
+            }
+            ast::Expr::Yield(Some(value))
+            | ast::Expr::YieldFrom(value)
+            | ast::Expr::Await(value) => {
+                walk_expr(value, module_idents, factory_idents, out);
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_stmts(
+        stmts: &[Spanned<ast::Stmt>],
+        module_idents: &mut HashSet<String>,
+        factory_idents: &mut HashSet<String>,
+        out: &mut HashSet<String>,
+    ) {
+        for stmt in stmts {
+            match &stmt.node {
+                ast::Stmt::Import {
+                    module,
+                    names,
+                    module_alias,
+                } if module.len() == 1 && module[0] == "functools" => {
+                    if let Some(alias) = module_alias {
+                        module_idents.insert(alias.clone());
+                    }
+                    if let Some(names) = names {
+                        for (orig, alias) in names {
+                            if orig == "partial" {
+                                factory_idents
+                                    .insert(alias.clone().unwrap_or_else(|| orig.clone()));
+                            }
+                        }
+                    }
+                }
+                ast::Stmt::ExprStmt(expr) | ast::Stmt::Return(Some(expr)) => {
+                    walk_expr(expr, module_idents, factory_idents, out);
+                }
+                ast::Stmt::Assign { target, value } => {
+                    walk_expr(target, module_idents, factory_idents, out);
+                    walk_expr(value, module_idents, factory_idents, out);
+                }
+                ast::Stmt::VarDecl { value, .. } | ast::Stmt::AugAssign { value, .. } => {
+                    walk_expr(value, module_idents, factory_idents, out);
+                }
+                ast::Stmt::If {
+                    condition,
+                    body,
+                    elif_clauses,
+                    else_body,
+                } => {
+                    walk_expr(condition, module_idents, factory_idents, out);
+                    walk_stmts(body, module_idents, factory_idents, out);
+                    for (condition, body) in elif_clauses {
+                        walk_expr(condition, module_idents, factory_idents, out);
+                        walk_stmts(body, module_idents, factory_idents, out);
+                    }
+                    if let Some(body) = else_body {
+                        walk_stmts(body, module_idents, factory_idents, out);
+                    }
+                }
+                ast::Stmt::While {
+                    condition,
+                    body,
+                    else_body,
+                } => {
+                    walk_expr(condition, module_idents, factory_idents, out);
+                    walk_stmts(body, module_idents, factory_idents, out);
+                    if let Some(body) = else_body {
+                        walk_stmts(body, module_idents, factory_idents, out);
+                    }
+                }
+                ast::Stmt::For {
+                    iter,
+                    body,
+                    else_body,
+                    ..
+                } => {
+                    walk_expr(iter, module_idents, factory_idents, out);
+                    walk_stmts(body, module_idents, factory_idents, out);
+                    if let Some(body) = else_body {
+                        walk_stmts(body, module_idents, factory_idents, out);
+                    }
+                }
+                ast::Stmt::FnDef { body, .. } | ast::Stmt::AsyncFnDef { body, .. } => {
+                    walk_stmts(body, module_idents, factory_idents, out);
+                }
+                ast::Stmt::ClassDef {
+                    body,
+                    bases,
+                    decorators,
+                    ..
+                } => {
+                    for base in bases {
+                        walk_expr(base, module_idents, factory_idents, out);
+                    }
+                    for decorator in decorators {
+                        walk_expr(decorator, module_idents, factory_idents, out);
+                    }
+                    walk_stmts(body, module_idents, factory_idents, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut module_idents = HashSet::from(["functools".to_string()]);
+    let mut factory_idents = HashSet::new();
+    walk_stmts(stmts, &mut module_idents, &mut factory_idents, out);
+}
+
 /// Merge the float hints of all `return` statements in a body into a single
 /// function-level return hint. `Float` only when at least one return is provably
 /// float and none is provably int.
@@ -2836,6 +3051,10 @@ struct AstLowerer<'a> {
     /// skipped for these — the mutation changes the effective defaults in a way
     /// the source signature can't see (`def f(x): f.__defaults__=(None,); f()`).
     funcs_with_mutated_defaults: std::collections::HashSet<String>,
+    /// Functions whose values flow into `functools.partial(...)`. Later calls
+    /// through the partial are dynamic value-calls and pass NaN-boxed MbValue
+    /// arguments, so the target must not use the raw-int fallback ABI.
+    funcs_wrapped_by_functools_partial: std::collections::HashSet<String>,
     /// PEP 557: per-dataclass synthesized __init__ parameter shapes, kept
     /// separately from `func_param_info` so subclasses can prepend their base
     /// dataclass's params (Derived(Counted) accepts Counted's fields first).
@@ -2953,6 +3172,7 @@ impl<'a> AstLowerer<'a> {
             func_param_info: HashMap::new(),
             arg_bind_sigs: HashMap::new(),
             funcs_with_mutated_defaults: std::collections::HashSet::new(),
+            funcs_wrapped_by_functools_partial: std::collections::HashSet::new(),
             dataclass_init_params: HashMap::new(),
             dataclasses_kwarg_idents: std::collections::HashSet::new(),
             functools_module_idents: std::iter::once("functools".to_string()).collect(),
@@ -3258,6 +3478,10 @@ impl<'a> AstLowerer<'a> {
         // returns are typed correctly (the float-return-inference soundness wall).
         self.collect_float_hints(module);
         collect_mutated_defaults(&module.stmts, &mut self.funcs_with_mutated_defaults);
+        collect_functools_partial_targets(
+            &module.stmts,
+            &mut self.funcs_wrapped_by_functools_partial,
+        );
         for stmt in &module.stmts {
             match &stmt.node {
                 ast::Stmt::FnDef {
@@ -3782,10 +4006,12 @@ impl<'a> AstLowerer<'a> {
         // `float` (not the default raw-int) so float NaN-box bits don't leak as
         // ints. Annotated/decorated params are untouched.
         let defaults_mutated = self.funcs_with_mutated_defaults.contains(name);
-        if defaults_mutated {
+        let dynamic_partial_target = self.funcs_wrapped_by_functools_partial.contains(name);
+        let force_boxed_params = defaults_mutated || dynamic_partial_target;
+        if force_boxed_params {
             self.result.boxed_param_funcs.insert(name_id.0);
         }
-        let param_float_hints = if is_method || is_decorated || defaults_mutated {
+        let param_float_hints = if is_method || is_decorated || force_boxed_params {
             None
         } else {
             self.func_param_float_hint.get(name).cloned()
@@ -3796,7 +4022,7 @@ impl<'a> AstLowerer<'a> {
             .map(|(idx, p)| {
                 let param_ty = if is_method {
                     any_ty
-                } else if defaults_mutated && p.kind == ast::ParamKind::Regular && !p.kw_only {
+                } else if force_boxed_params && p.kind == ast::ParamKind::Regular && !p.kw_only {
                     any_ty
                 } else if p.kind == ast::ParamKind::Star || p.kind == ast::ParamKind::DoubleStar {
                     // *args receives a NaN-boxed MbList, **kwargs receives a NaN-boxed MbDict.
