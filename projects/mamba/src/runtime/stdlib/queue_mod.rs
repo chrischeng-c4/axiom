@@ -16,11 +16,9 @@
 //!
 //! Carve-outs (documented gaps from CPython parity):
 //!
-//! - Threading lock/condvar is a single-threaded fast path — `put`
-//!   never blocks; `get` on empty queue returns `None`. CPython parity
-//!   for *blocking* semantics would require Condvar plumbing that
-//!   nothing in the bench layer exercises.
-//! - `task_done()` / `join()` are no-ops; bookkeeping not implemented.
+//! - Threading lock/condvar is a cooperative fast path — `put` never
+//!   blocks, and worker-thread blocking `get()` / `join()` poll the
+//!   process-global queue state instead of parking on a real Condvar.
 //! - `PriorityQueue` uses a sort-on-get strategy rather than a real
 //!   min-heap — keeps the put hot path O(1) at cost of O(N log N)
 //!   on get. For the bench shape (alternating put/get) total work is
@@ -372,10 +370,28 @@ pub fn mb_queue_task_done(q: MbValue) -> MbValue {
     MbValue::none()
 }
 
+pub fn mb_queue_join(q: MbValue) -> MbValue {
+    let Some(id) = handle_of(q) else {
+        return MbValue::none();
+    };
+    loop {
+        let done = QUEUES
+            .lock()
+            .unwrap()
+            .get(&id)
+            .map(|state| state.unfinished <= 0)
+            .unwrap_or(true);
+        if done {
+            return MbValue::none();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// get with CPython's block/timeout contract: an empty queue raises
-/// queue.Empty for get_nowait/block=False/timeout forms. The plain blocking
-/// get() keeps the legacy None answer (a synchronous runtime cannot wait for
-/// a producer, and existing fixtures rely on the non-raising shape).
+/// queue.Empty for get_nowait/block=False/timeout forms. Plain blocking get()
+/// waits when called from a worker thread, while the main-thread legacy path
+/// still returns None for compatibility with existing synchronous fixtures.
 pub fn mb_queue_get_checked(q: MbValue, blocking: bool, timeout: Option<f64>) -> MbValue {
     if let Some(t) = timeout {
         if t < 0.0 {
@@ -393,7 +409,12 @@ pub fn mb_queue_get_checked(q: MbValue, blocking: bool, timeout: Option<f64>) ->
                 return raise_exc("queue.Empty", "");
             }
             if in_thread_target() {
-                return raise_exc("queue.Empty", "");
+                loop {
+                    if let Some(v) = mb_queue_get_opt(q) {
+                        return v;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
             }
             MbValue::none()
         }
@@ -569,6 +590,15 @@ mod tests {
         assert_eq!(mb_queue_qsize(q).as_int(), Some(1));
         mb_queue_get(q);
         assert_eq!(mb_queue_empty(q).as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_queue_join_returns_after_task_done() {
+        let q = mb_queue_Queue(MbValue::from_int(0));
+        mb_queue_put(q, MbValue::from_int(42));
+        assert_eq!(mb_queue_get(q).as_int(), Some(42));
+        mb_queue_task_done(q);
+        assert!(mb_queue_join(q).is_none());
     }
 
     #[test]
