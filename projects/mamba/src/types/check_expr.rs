@@ -813,6 +813,16 @@ impl TypeChecker {
                         self.import_origins
                             .get(&cls)
                             .and_then(|(module, _q)| super::stdlib_sigs::get(module, &cls, attr))
+                    } else if self
+                        .symbols
+                        .lookup(base)
+                        .is_some_and(|id| self.symbols.get_symbol(id).kind == SymbolKind::Function)
+                    {
+                        // User-defined Python functions are instances of
+                        // builtins.function. This keeps descriptor walls such as
+                        // `f.__get__(..., owner)` enforceable without pretending
+                        // that `builtins.function` is importable in CPython.
+                        super::stdlib_sigs::get("builtins", "function", attr)
                     } else {
                         None
                     }

@@ -25,10 +25,12 @@ class _W:
     pass
 
 
-from builtins import function
-obj = object.__new__(function)
+def _function_probe():
+    pass
+
+
 try:
-    obj.__get__(None, _W())  # owner: typed <- wrong-typed
+    _function_probe.__get__(None, _W())  # owner: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
