@@ -27,30 +27,46 @@ fill_sections: [logic, unit-test, e2e-test, changes]
 
 ```mermaid
 ---
-id: lumen-service-auth-convergence
+id: lumen-service-auth-convergence-contract
 entry: request
 nodes:
-  request: { kind: start, label: "data-plane HTTP request" }
-  middleware: { kind: process, label: "service_auth::auth_middleware<LumenVerifier>" }
-  verifier: { kind: process, label: "LumenVerifier authenticates headers against AuthConfig" }
-  extension: { kind: process, label: "AuthContext inserted into request extensions" }
-  handler: { kind: process, label: "handler calls AuthContext::ensure(collection, role)" }
-  response: { kind: terminal, label: "existing 401/403/open-mode contract preserved" }
+  data_plane: { kind: start, label: "Router data-plane routes only" }
+  state: { kind: process, label: "Arc<LumenVerifier> wraps existing Arc<AuthConfig>" }
+  shared: { kind: process, label: "service_auth::auth_middleware<LumenVerifier>" }
+  bearer: { kind: process, label: "service_auth::bearer_token extracts Authorization: Bearer" }
+  verify: { kind: decision, label: "AuthConfig required/tokens lookup" }
+  open: { kind: process, label: "no token + open mode => AuthContext::Open" }
+  authed: { kind: process, label: "known token => AuthContext::Token(TokenClaims)" }
+  unauth: { kind: terminal, label: "missing required or invalid token => shared 401 JSON" }
+  handler: { kind: process, label: "handler reads Extension<AuthContext>" }
+  rbac: { kind: process, label: "AuthContext::ensure keeps per-collection RBAC + audit 403" }
+  ops: { kind: terminal, label: "probe/metrics/openapi/docs routes bypass auth unchanged" }
 edges:
-  - { from: request, to: middleware }
-  - { from: middleware, to: verifier }
-  - { from: verifier, to: extension }
-  - { from: extension, to: handler }
-  - { from: handler, to: response }
+  - { from: data_plane, to: state }
+  - { from: state, to: shared }
+  - { from: shared, to: bearer }
+  - { from: bearer, to: verify }
+  - { from: verify, to: open }
+  - { from: verify, to: authed }
+  - { from: verify, to: unauth }
+  - { from: open, to: handler }
+  - { from: authed, to: handler }
+  - { from: handler, to: rbac }
+  - { from: data_plane, to: ops }
 ---
 flowchart TD
-    request([data-plane request]) --> middleware[service_auth::auth_middleware<LumenVerifier>]
-    middleware --> verifier[LumenVerifier + AuthConfig role map]
-    verifier --> extension[insert concrete AuthContext]
-    extension --> handler[handler RBAC via AuthContext::ensure]
-    handler --> response([unchanged 401/403/open-mode contract])
+    data_plane([data-plane routes]) --> state[Arc<LumenVerifier> around AuthConfig]
+    state --> shared[service_auth::auth_middleware<LumenVerifier>]
+    shared --> bearer[service_auth::bearer_token]
+    bearer --> verify{required / token lookup}
+    verify -->|open, no token| open[AuthContext::Open]
+    verify -->|known token| authed[AuthContext::Token]
+    verify -->|required missing or invalid| unauth([shared 401 JSON])
+    open --> handler[Extension<AuthContext>]
+    authed --> handler
+    handler --> rbac[AuthContext::ensure + existing 403/audit]
+    data_plane -. router split .-> ops([probe/metrics/openapi/docs bypass auth])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
@@ -171,11 +187,11 @@ changes:
   - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md
     action: modify
     section: logic
-    impl_mode: spec-managed-source-sync
+    impl_mode: hand-written
     description: "Keep the source TD synchronized with the changed auth.rs public API and code block."
   - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md
     action: modify
     section: logic
-    impl_mode: spec-managed-source-sync
+    impl_mode: hand-written
     description: "Keep the source TD synchronized with the changed api.rs import and middleware wiring."
 ```
