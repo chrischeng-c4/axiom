@@ -185,25 +185,25 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Depend on libs/service-auth for the shared Verifier and middleware plumbing."
+    description: "Add the workspace service-auth dependency to the Lumen crate."
   - path: projects/lumen/src/auth.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add LumenVerifier, implement service_auth::Verifier, alias AuthErr to the shared AuthError, and delegate auth_middleware to service_auth::auth_middleware while preserving AuthContext and RBAC."
+    description: "Introduce LumenVerifier, implement service_auth::Verifier<Principal = AuthContext>, use service_auth::bearer_token/shared AuthError for authentication failures, retain AuthContext::ensure for per-collection RBAC and audit logging, and expose an auth_middleware wrapper backed by service_auth::auth_middleware."
   - path: projects/lumen/src/api.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Layer the generic service_auth middleware with LumenVerifier over data-plane routes only."
+    description: "Build Arc<LumenVerifier> from AppState auth and layer the shared auth middleware only over data-plane routes."
   - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Keep the source TD synchronized with the changed auth.rs public API and code block."
+    description: "Synchronize the spec-managed source capture for auth.rs so ownership annotations and source block match the implementation."
   - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Keep the source TD synchronized with the changed api.rs import and middleware wiring."
+    description: "Synchronize the spec-managed source capture for api.rs import and middleware wiring."
 ```
