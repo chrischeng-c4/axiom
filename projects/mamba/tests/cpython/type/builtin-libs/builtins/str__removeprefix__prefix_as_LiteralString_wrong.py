@@ -9,12 +9,11 @@
 # case = "str__removeprefix__prefix_as_LiteralString_wrong"
 # subject = "builtins.str.removeprefix(prefix: LiteralString)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed prefix"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed prefix
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.removeprefix(prefix: LiteralString); call it with the wrong type.
 

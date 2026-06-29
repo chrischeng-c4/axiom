@@ -9,12 +9,11 @@
 # case = "str__split__sep_as_typed_wrong"
 # subject = "builtins.str.split(sep: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sep"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sep
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.split(sep: typed); call it with the wrong type.
 
