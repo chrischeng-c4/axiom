@@ -278,15 +278,25 @@ impl TypeChecker {
                                                 .is_some_and(|m| m.contains_key("__index__")),
                                             _ => false,
                                         };
+                                        let bytes_literal_str_mismatch = matches!(
+                                            (self.tcx.get(expected), &a.node),
+                                            (Ty::Str, Expr::BytesLit(_))
+                                        );
                                         if !index_protocol_ok
-                                            && !self.types_compatible(expected, at)
+                                            && (bytes_literal_str_mismatch
+                                                || !self.types_compatible(expected, at))
                                         {
+                                            let got = if bytes_literal_str_mismatch {
+                                                "bytes".to_string()
+                                            } else {
+                                                self.ty_name(at)
+                                            };
                                             self.error(
                                                 a.span,
                                                 format!(
                                                     "argument type mismatch: expected `{}`, got `{}`",
                                                     self.ty_name(expected),
-                                                    self.ty_name(at),
+                                                    got,
                                                 ),
                                             );
                                         }
