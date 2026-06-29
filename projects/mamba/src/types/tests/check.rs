@@ -810,6 +810,33 @@ fn test_iter_two_arg_form_accepted() {
     );
 }
 
+#[test]
+fn test_stdlib_iter_wrong_bare_object_rejected() {
+    let errors = check("class _W:\n    pass\niter(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `object`")),
+        "iter(_W()) should reject a bare object operand, got: {errors:?}"
+    );
+
+    let errors = check("class _W:\n    pass\niter(_W(), None)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `object`")),
+        "iter(_W(), None) should reject a bare callable operand, got: {errors:?}"
+    );
+
+    let errors = check(
+        "def sentinel() -> int:\n    return -1\niter(sentinel, -1)\niter([])\niter(\"abc\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid iter forms must stay accepted, got: {errors:?}"
+    );
+}
+
 // R9.3: getattr() with default (3-arg form) must be accepted
 #[test]
 fn test_getattr_three_arg_form_accepted() {

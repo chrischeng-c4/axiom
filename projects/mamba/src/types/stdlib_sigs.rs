@@ -270,6 +270,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: iter(object, sentinel) requires a callable object in CPython;
+    // one-arg iter(object) similarly requires an iterable/getitem-capable object.
+    // A bare `_W()` instance satisfies neither contract, while callable values
+    // and dynamic iterable values stay skip-safe.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "",
+        name: "iter",
+        kind: SigKind::ModuleFn,
+        params: &[p("object", CoreTy::Typed), p("sentinel", CoreTy::Unknown)],
+        enforceable: true,
+    },
     StdlibSig {
         module: "builtins",
         qualifier: "bytearray",
