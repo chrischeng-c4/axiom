@@ -383,6 +383,42 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: `_posixsubprocess.fork_exec` accepts argv-like typed values for
+    // `args`; generated typeshed collapses that first parameter to Unknown.
+    // Keep the rest of the generated shape so this curated override does not
+    // weaken the existing scalar walls for descriptor/fd parameters.
+    StdlibSig {
+        module: "_posixsubprocess",
+        qualifier: "",
+        name: "fork_exec",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("args", CoreTy::Typed),
+            p("executable_list", CoreTy::Unknown),
+            p("close_fds", CoreTy::Typed),
+            p("pass_fds", CoreTy::Unknown),
+            p("cwd", CoreTy::Str),
+            p("env", CoreTy::Unknown),
+            p("p2cread", CoreTy::Int),
+            p("p2cwrite", CoreTy::Int),
+            p("c2pread", CoreTy::Int),
+            p("c2pwrite", CoreTy::Int),
+            p("errread", CoreTy::Int),
+            p("errwrite", CoreTy::Int),
+            p("errpipe_read", CoreTy::Int),
+            p("errpipe_write", CoreTy::Int),
+            p("restore_signals", CoreTy::Typed),
+            p("call_setsid", CoreTy::Typed),
+            p("pgid_to_set", CoreTy::Int),
+            p("gid", CoreTy::Typed),
+            p("extra_groups", CoreTy::Unknown),
+            p("uid", CoreTy::Typed),
+            p("child_umask", CoreTy::Int),
+            p("preexec_fn", CoreTy::Unknown),
+            p("allow_vfork", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
