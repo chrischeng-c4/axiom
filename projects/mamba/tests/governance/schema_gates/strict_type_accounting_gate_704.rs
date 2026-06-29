@@ -62,6 +62,37 @@ fn fixture_lint_supports_type_facet_filter() {
 }
 
 #[test]
+fn strict_type_accounting_accepts_compile_time_type_error_marker() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+
+tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(tool.parent))
+spec = importlib.util.spec_from_file_location("strict_type_accounting", tool)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+assert module.is_type_rejection("", "error: type error at 1..2: rejected")
+assert not module.is_type_rejection("", "error: undefined name at 1..2: missing")
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run strict_type_accounting marker smoke");
+    assert!(
+        output.status.success(),
+        "strict_type_accounting marker smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn replacement_readiness_uses_strict_type_accounting_tool() {
     let text = fs::read_to_string(
         mamba_root().join("tests/harness/cpython/tools/replacement_readiness.py"),
