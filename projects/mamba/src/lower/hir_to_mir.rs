@@ -66,6 +66,16 @@ fn method_decorator_marker_attr_name(name: &str) -> Option<&'static str> {
     }
 }
 
+fn method_descriptor_decorator_name(name: &str) -> Option<&'static str> {
+    match name {
+        "property" => Some("property"),
+        "classmethod" => Some("classmethod"),
+        "staticmethod" => Some("staticmethod"),
+        "cached_property" => Some("cached_property"),
+        _ => None,
+    }
+}
+
 /// Mapping from Python builtin name to mb_* runtime extern name.
 fn builtin_extern_map() -> HashMap<&'static str, &'static str> {
     [
@@ -5206,51 +5216,31 @@ impl<'a> HirToMir<'a> {
                 });
             }
             let has_runtime_generic_decorator = all_decorators.iter().any(|dec_expr| {
-                !matches!(
-                    dec_expr,
-                    HirExpr::Var(dec_sym, _)
-                        if self
-                            .class_syms
-                            .get(&dec_sym.0)
-                            .is_some_and(|name| matches!(
-                                name.as_str(),
-                                "property"
-                                    | "classmethod"
-                                    | "staticmethod"
-                                    | "cached_property"
-                                    | "singledispatchmethod"
-                            ))
-                ) && !matches!(
-                    dec_expr,
-                    HirExpr::Attr { attr, .. }
-                        if matches!(attr.as_str(), "setter" | "getter" | "deleter")
-                )
+                self.method_descriptor_decorator_expr_name(dec_expr)
+                    .is_none()
+                    && !matches!(
+                        dec_expr,
+                        HirExpr::Attr { attr, .. }
+                            if matches!(attr.as_str(), "setter" | "getter" | "deleter")
+                    )
             });
             let mut wrapped = if has_runtime_generic_decorator {
                 let mut current = addr_vreg;
                 for dec_expr in all_decorators.iter().rev() {
                     let next = self.fresh_vreg();
                     match dec_expr {
-                        HirExpr::Var(dec_sym, _)
-                            if self.class_syms.get(&dec_sym.0).is_some_and(|name| {
-                                matches!(
-                                    name.as_str(),
-                                    "property"
-                                        | "classmethod"
-                                        | "staticmethod"
-                                        | "cached_property"
-                                        | "singledispatchmethod"
-                                )
-                            }) =>
+                        _ if self
+                            .method_descriptor_decorator_expr_name(dec_expr)
+                            .is_some() =>
                         {
-                            let dec_name =
-                                self.class_syms.get(&dec_sym.0).cloned().unwrap_or_default();
-                            let extern_name = match dec_name.as_str() {
+                            let dec_name = self
+                                .method_descriptor_decorator_expr_name(dec_expr)
+                                .expect("descriptor decorator checked");
+                            let extern_name = match dec_name {
                                 "property" => "mb_property_new",
                                 "classmethod" => "mb_classmethod_new",
                                 "staticmethod" => "mb_staticmethod_new",
                                 "cached_property" => "mb_cached_property_new",
-                                "singledispatchmethod" => "mb_functools_singledispatchmethod",
                                 _ => unreachable!(),
                             };
                             let args = if dec_name == "cached_property" {
@@ -11676,6 +11666,40 @@ impl<'a> HirToMir<'a> {
     /// At module / class scope the runtime helper `mb_locals` is called instead
     /// (returns the module globals dict).
     /// @spec .aw/tech-design/cclab-mamba/logic/introspection-builtins.md#locals_impl
+    fn method_descriptor_decorator_expr_name(&self, expr: &HirExpr) -> Option<&'static str> {
+        match expr {
+            HirExpr::Var(sym_id, _) => {
+                if let Some(name) = self.sym_names.get(sym_id) {
+                    if let Some(kind) = method_descriptor_decorator_name(name) {
+                        return Some(kind);
+                    }
+                }
+                if let Some(name) = self.class_syms.get(&sym_id.0) {
+                    if let Some(kind) = method_descriptor_decorator_name(name) {
+                        return Some(kind);
+                    }
+                }
+                if let Some(symbol_table) = self.symbol_table {
+                    let symbols = symbol_table.all_symbols();
+                    if let Some(symbol) = symbols.get(sym_id.0 as usize) {
+                        return method_descriptor_decorator_name(&symbol.name);
+                    }
+                }
+                None
+            }
+            HirExpr::Attr { object, attr, .. } => {
+                if attr == "property" && self.expr_is_var_named(object, "enum") {
+                    Some("property")
+                } else if attr == "cached_property" && self.expr_is_var_named(object, "functools") {
+                    Some("cached_property")
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn expr_is_var_named(&self, expr: &HirExpr, expected: &str) -> bool {
         if let HirExpr::StrLit(name, _) = expr {
             return name == expected;
