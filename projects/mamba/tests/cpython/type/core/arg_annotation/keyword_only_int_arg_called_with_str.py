@@ -9,12 +9,11 @@
 # case = "keyword_only_int_arg_called_with_str"
 # subject = "function keyword-only parameter annotation"
 # kind = "semantic"
-# xfail = "keyword-only annotation type enforcement pending; currently MAMBA_TYPE_LEAKED"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
 # ///
-# mamba-xfail: keyword-only annotation type enforcement pending; currently MAMBA_TYPE_LEAKED
 # mamba-strict-type: TypeError
 """Mamba rejects a wrong-typed keyword-only argument annotation."""
 

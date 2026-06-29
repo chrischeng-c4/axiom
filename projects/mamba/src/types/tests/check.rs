@@ -76,6 +76,44 @@ fn test_function_str_arg_rejects_bytes_literal() {
 }
 
 #[test]
+fn test_function_extended_arg_annotations_rejected() {
+    let errors = check("def requires_count(*, count: int) -> int:\n    return count\nrequires_count(count=\"3\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `int`, got `str`")),
+        "keyword-only int arg should reject str, got: {errors:?}"
+    );
+
+    let errors =
+        check("def sum_items(*items: int) -> int:\n    return len(items)\nsum_items(\"3\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `int`, got `str`")),
+        "*args int annotation should reject str elements, got: {errors:?}"
+    );
+
+    let errors = check(
+        "def count_items(**items: int) -> int:\n    return len(items)\ncount_items(count=\"3\")\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `int`, got `str`")),
+        "**kwargs int annotation should reject str values, got: {errors:?}"
+    );
+
+    let errors = check(
+        "def ok(*, count: int) -> int:\n    return count\ndef var(*items: int) -> int:\n    return len(items)\ndef kw(**items: int) -> int:\n    return len(items)\nok(count=3)\nvar(1, 2)\nkw(count=3)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid keyword-only, *args, and **kwargs calls should remain accepted, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_return_type_mismatch() {
     // Use a genuinely incompatible return type (str). `bool` is a subtype
     // of `int` per CPython semantics (#1680), so `return True` from an
