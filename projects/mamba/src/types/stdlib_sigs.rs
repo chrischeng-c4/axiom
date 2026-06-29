@@ -7,10 +7,10 @@
 //! is deliberately scalar-only: anything we cannot represent as a concrete
 //! scalar (protocols, unions, typevars, overloads, buffers) collapses to
 //! [`CoreTy::Unknown`], which the hook *skips* — guaranteeing zero false
-//! positives on correct calls. [`CoreTy::Bytes`] and [`CoreTy::MemoryView`] are
-//! represented as negative scalar walls: concrete scalars are never those
-//! buffer-ish values, while bytes/memoryview expressions currently infer to
-//! `Any` and therefore remain skip-when-unsure.
+//! positives on correct calls. [`CoreTy::Bytes`], [`CoreTy::MemoryView`], and
+//! [`CoreTy::Complex`] are represented as negative scalar walls: concrete
+//! incompatible scalars are never those values, while bytes/memoryview/complex
+//! expressions currently infer to `Any` and therefore remain skip-when-unsure.
 
 /// Closed set of argument types the PoC table can express. Anything richer
 /// (Optional, Union, Protocol, TypeVar, overload, ReadableBuffer, SupportsIndex)
@@ -23,6 +23,7 @@ pub enum CoreTy {
     Str,
     Bytes,
     MemoryView,
+    Complex,
     Bool,
     None,
     /// A NOMINAL/protocol type contract (a named typeshed type that is neither a
@@ -205,6 +206,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("i", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
+    // `Typed` only rejects a provably bare user instance and leaves scalar
+    // overload candidates skip-safe.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "",
+        name: "complex",
+        kind: SigKind::ModuleFn,
+        params: &[p("real", CoreTy::Typed), p("imag", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // POSITIVE: bytes/bytearray constructors are overload-heavy. The first
     // argument may be a size int, text str with encoding, bytes-like object, or
     // iterable of ints. A Typed source only rejects a provably bare `_W()` probe
@@ -251,6 +263,89 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         name: "__release_buffer__",
         kind: SigKind::Method,
         params: &[p("buffer", CoreTy::MemoryView)],
+        enforceable: true,
+    },
+    // POSITIVE: complex arithmetic dunders accept complex-compatible numeric
+    // values. A dedicated negative wall rejects impossible concrete scalars such
+    // as str while allowing int/float/bool and dynamic complex-like values.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__add__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__mul__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__pow__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex), p("mod", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__radd__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__rmul__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__rpow__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex), p("mod", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__rsub__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__rtruediv__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__sub__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "complex",
+        name: "__truediv__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Complex)],
         enforceable: true,
     },
     // POSITIVE: bytes/bytearray bytes-like methods accept bytes-like values or
@@ -767,8 +862,9 @@ mod tests {
         // The invariant: every row the hook will ENFORCE must (a) carry at least
         // one checkable param (Int/Float/Str/Typed/Bytes) and (b) have no star
         // param (positional alignment past `*args` is uncertain). Unknown/None
-        // params are skipped, while Bytes is a negative scalar wall that rejects
-        // impossible concrete scalars and leaves bytes-like values as Any-skips.
+        // params are skipped, while Bytes/MemoryView/Complex are negative
+        // scalar walls that reject impossible concrete scalars and leave
+        // dynamic/buffer/object values as Any-skips.
         // This is what lets a scalar param sitting BEHIND an Unknown param
         // enforce at its real position; a full uncapped 28k-fixture ② FP scan
         // confirms 0 false positives from the skipped params. (Earlier the
@@ -785,7 +881,13 @@ mod tests {
             assert!(
                 s.params.iter().any(|p| matches!(
                     p.ty,
-                    CoreTy::Int | CoreTy::Float | CoreTy::Str | CoreTy::Typed | CoreTy::Bytes
+                    CoreTy::Int
+                        | CoreTy::Float
+                        | CoreTy::Str
+                        | CoreTy::Typed
+                        | CoreTy::Bytes
+                        | CoreTy::MemoryView
+                        | CoreTy::Complex
                 )),
                 "{}.{} enforceable with no checkable (scalar/Typed) param",
                 s.module,

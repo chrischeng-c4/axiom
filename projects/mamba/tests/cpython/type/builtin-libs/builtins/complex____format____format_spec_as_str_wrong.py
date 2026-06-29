@@ -21,7 +21,7 @@ typeshed contract: format_spec is str. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import complex
-obj = object.__new__(complex)
+obj = complex()
 try:
     obj.__format__(12345)  # format_spec: str <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

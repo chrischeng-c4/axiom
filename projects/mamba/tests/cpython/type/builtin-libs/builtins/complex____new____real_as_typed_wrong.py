@@ -26,9 +26,8 @@ class _W:
 
 
 from builtins import complex
-obj = object.__new__(complex)
 try:
-    obj.__new__(_W())  # real: typed <- wrong-typed
+    complex(_W())  # complex.__new__ real: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
