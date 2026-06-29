@@ -153,6 +153,9 @@ pub struct TypeChecker {
     pub(crate) next_type_var_id: u32,
     /// Class method signatures for protocol conformance checking (#314).
     pub(crate) class_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
+    /// Class method signatures for bare-class unbound calls such as
+    /// `Box.get(obj, arg)`. These include the explicit receiver parameter.
+    pub(crate) class_unbound_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
     /// User classes declared with `TypedDict` in their base chain. Runtime
     /// instances of these classes are plain dict values, so a variable annotated
     /// as the TypedDict class accepts dict literals/values.
@@ -218,6 +221,7 @@ impl TypeChecker {
             protocol_registry: ProtocolRegistry::new(),
             next_type_var_id: 0,
             class_methods: HashMap::new(),
+            class_unbound_methods: HashMap::new(),
             typed_dict_classes: HashSet::new(),
             user_bare_classes: std::collections::HashSet::new(),
             current_match_subject_ty: None,
@@ -1191,8 +1195,21 @@ impl TypeChecker {
         use super::protocol::MethodSig;
 
         let mut methods = HashMap::new();
+        let mut unbound_methods = HashMap::new();
+        let receiver_ty = self
+            .symbols
+            .lookup(class_name)
+            .map(|sym| self.get_sym_type(sym.0))
+            .unwrap_or_else(|| {
+                self.tcx.intern(Ty::Class {
+                    name: class_name.to_string(),
+                    fields: vec![],
+                    match_args: None,
+                })
+            });
         for stmt in body {
             if let Stmt::FnDef {
+                decorators,
                 name,
                 type_params,
                 params,
@@ -1212,6 +1229,15 @@ impl TypeChecker {
                     .as_ref()
                     .map(|t| self.resolve_type_expr(t))
                     .unwrap_or(self.tcx.any());
+                let unbound_param_types = if decorators.is_empty() && !params.is_empty() {
+                    let mut unbound_param_types = Vec::with_capacity(params.len());
+                    unbound_param_types.push(receiver_ty);
+                    unbound_param_types
+                        .extend(params.iter().skip(1).map(|p| self.resolve_type_expr(&p.ty)));
+                    Some(unbound_param_types)
+                } else {
+                    None
+                };
                 self.unregister_type_params(type_params);
                 methods.insert(
                     name.clone(),
@@ -1220,10 +1246,23 @@ impl TypeChecker {
                         return_type: ret,
                     },
                 );
+                if let Some(unbound_param_types) = unbound_param_types {
+                    unbound_methods.insert(
+                        name.clone(),
+                        MethodSig {
+                            params: unbound_param_types,
+                            return_type: ret,
+                        },
+                    );
+                }
             }
         }
         if !methods.is_empty() {
             self.class_methods.insert(class_name.to_string(), methods);
+        }
+        if !unbound_methods.is_empty() {
+            self.class_unbound_methods
+                .insert(class_name.to_string(), unbound_methods);
         }
     }
 

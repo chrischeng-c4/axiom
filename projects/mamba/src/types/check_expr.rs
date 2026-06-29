@@ -450,6 +450,11 @@ impl TypeChecker {
             }
             Expr::Attr { object, attr } => {
                 let obj_ty_id = self.check_expr(object);
+                if self.strict_type_fixture {
+                    if let Some(method_ty) = self.resolve_unbound_class_method(object, attr) {
+                        return method_ty;
+                    }
+                }
                 self.resolve_attr(obj_ty_id, attr, expr.span)
             }
             Expr::Index { object, index } => {
@@ -1106,6 +1111,31 @@ impl TypeChecker {
                 .find_map(|elem| self.classinfo_bare_instance_name(elem)),
             _ => None,
         }
+    }
+
+    /// Resolve attribute access (#246).
+    fn resolve_unbound_class_method(
+        &mut self,
+        object: &Spanned<Expr>,
+        attr: &str,
+    ) -> Option<TypeId> {
+        let Expr::Ident(class_name) = &object.node else {
+            return None;
+        };
+        let sym = self.symbols.lookup(class_name)?;
+        if self.symbols.get_symbol(sym).kind != SymbolKind::Class {
+            return None;
+        }
+        let sig = self
+            .class_unbound_methods
+            .get(class_name)?
+            .get(attr)?
+            .clone();
+        Some(self.tcx.intern(Ty::Fn {
+            params: sig.params,
+            ret: sig.return_type,
+            variadic: false,
+        }))
     }
 
     /// Resolve attribute access (#246).
