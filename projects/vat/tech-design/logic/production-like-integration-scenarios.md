@@ -160,29 +160,33 @@ compatibility:
 <!-- type: cli lang: yaml -->
 
 ```yaml
-commands:
-  - name: "vat run --scenario <id>"
-    purpose: "Run a named production-like integration scenario."
-    behavior:
-      - "Load nearest vat.toml."
-      - "Resolve scenario id."
-      - "Resolve scenario runner."
-      - "Start app plus dependency services."
-      - "Wait for readiness before runner execution."
-      - "Emit JSONL select/ready/runner/result events."
-      - "Forward runner exit code."
-compatibility:
-  vat_run_default_runner: "unchanged"
-  vat_run_runner_id: "unchanged"
-  vat_run_multiple_runners: "unchanged"
-  vat_run_direct_command: "unchanged"
-errors:
+run_options:
+  new_flag:
+    name: "--scenario <id>"
+    applies_to: "vat run"
+    conflicts:
+      - "direct command after --"
+      - "positional runner ids"
+    dispatch_target: "Target::Scenario { scenario_id }"
+behavior:
+  select_event:
+    type: "select"
+    fields: ["scenario", "app", "runner", "services", "reason"]
+  result_event:
+    type: "result"
+    fields: ["id", "scenario", "app", "runner", "ok", "exit_code", "state", "inspect"]
+  exit_code: "same as selected runner; negative internal setup failure maps to 255"
+structured_errors:
   - code: "scenario_required"
-    trigger: "unknown scenario id"
+    when: "--scenario names an unknown scenario"
   - code: "scenario_hermetic_proxy_required"
-    trigger: "scenario network hermetic but no http-mock service participates"
+    when: "scenario network is hermetic and the service set does not include a http-mock preset"
+unchanged:
+  - "vat run"
+  - "vat run <runner-id>"
+  - "vat run <runner-id> <runner-id>"
+  - "vat run -- <cmd>"
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
