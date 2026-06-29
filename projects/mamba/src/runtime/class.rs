@@ -7142,20 +7142,17 @@ fn mb_getattr_impl(
         }
     }
 
-    // Queue handles are int-tagged values registered by queue_mod. Method
-    // *calls* (`q.put(1)`) route through the call-method protocol directly
-    // (never this getattr path — proven by `q.put(1)` working while bare
-    // `callable(q.put)` was False), so the bare-attribute value only needs
-    // to report callable: return an `__unbound_method__` Instance (which
-    // mb_callable recognizes) rather than the bare int handle (which it
-    // does not). Satisfies `callable(queue.Queue().<m>)` surface probes.
+    // Queue handles are int-tagged values registered by queue_mod. Return a
+    // bound native method so bare attributes (`f = q.put`) and direct calls
+    // (`q.put(1)`) both retain the queue receiver and dispatch through
+    // mb_call_method.
     if obj.is_int() {
         let id = obj.as_int().unwrap_or(0) as u64;
         if super::stdlib::queue_mod::is_queue_handle(id) {
             match attr_name.as_str() {
                 "put" | "put_nowait" | "get" | "get_nowait" | "empty" | "full" | "qsize"
                 | "task_done" | "join" => {
-                    return make_unbound_method("Queue", &attr_name);
+                    return make_bound_native_method(obj, &attr_name);
                 }
                 _ => {}
             }
@@ -17912,7 +17909,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 "qsize" => return super::stdlib::queue_mod::mb_queue_qsize(receiver),
                 "full" => return super::stdlib::queue_mod::mb_queue_full(receiver),
                 "task_done" => return super::stdlib::queue_mod::mb_queue_task_done(receiver),
-                "join" => return MbValue::none(),
+                "join" => return super::stdlib::queue_mod::mb_queue_join(receiver),
                 _ => {}
             }
         }
