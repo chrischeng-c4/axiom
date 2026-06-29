@@ -261,13 +261,13 @@ export * from "./greeter";
     write_file(
         root,
         "src/math.ts",
-        "export function add(a: number, b: number): number { return a + b; }\n",
+        "export function add(a: number, b: number) { return a + b; }\n",
     );
     write_file(
         root,
         "src/greeter.ts",
         r#"export class Greeter {
-    greet(name: string): string { return `hi ${name}`; }
+    greet(name: string) { return `hi ${name}`; }
 }
 "#,
     );
@@ -352,7 +352,8 @@ fn declaration_off_emits_no_dts() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// (e) Untyped exported value fails the build (isolatedDeclarations).
+// (e) Untyped exported values still fail, but locally inferable exported
+//     function/member returns emit tsc-like declarations.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -377,7 +378,7 @@ fn untyped_export_fails_build() {
 }
 
 #[test]
-fn untyped_exported_function_return_fails_build() {
+fn exported_function_infers_number_return_type() {
     let dir = tempdir().unwrap();
     let root = dir.path();
 
@@ -392,17 +393,16 @@ fn untyped_exported_function_return_fails_build() {
         "export function add(a: number, b: number) { return a + b; }\n",
     );
 
-    let err = build_library(lib_options(root))
-        .expect_err("untyped exported function return must fail the build");
-    let msg = format!("{err:#}");
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
     assert!(
-        msg.contains("isolatedDeclarations") && msg.contains("return type"),
-        "error must explain the missing explicit return type, got: {msg}"
+        dts.contains("export declare function add(a: number, b: number): number;"),
+        "inferred numeric return type must be emitted, got:\n{dts}"
     );
 }
 
 #[test]
-fn untyped_exported_class_member_return_fails_build() {
+fn exported_class_member_infers_string_return_type() {
     let dir = tempdir().unwrap();
     let root = dir.path();
 
@@ -420,12 +420,12 @@ fn untyped_exported_class_member_return_fails_build() {
 "#,
     );
 
-    let err = build_library(lib_options(root))
-        .expect_err("untyped exported class member return must fail the build");
-    let msg = format!("{err:#}");
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
     assert!(
-        msg.contains("isolatedDeclarations") && msg.contains("return type"),
-        "error must explain the missing explicit return type, got: {msg}"
+        dts.contains("export declare class Greeter")
+            && dts.contains("greet(name: string): string;"),
+        "inferred string member return type must be emitted, got:\n{dts}"
     );
 }
 
