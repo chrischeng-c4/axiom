@@ -728,6 +728,29 @@ impl TypeChecker {
                     }
                 }
             }
+            (Ty::Set(elem_ty), Expr::SetLit(elems)) => {
+                if self.tcx.get(elem_ty).is_any() {
+                    return;
+                }
+                for elem in elems {
+                    if matches!(elem.node, Expr::Starred(_)) {
+                        continue;
+                    }
+                    let et = self.check_expr(elem);
+                    if !self.types_compatible(elem_ty, et) {
+                        self.error(
+                            elem.span,
+                            format!(
+                                "type mismatch: expected `{}`, got `{}`",
+                                self.ty_name(elem_ty),
+                                self.ty_name(et),
+                            ),
+                        );
+                    } else {
+                        self.check_container_literal_elements(elem_ty, elem);
+                    }
+                }
+            }
             (Ty::Dict(key_ty, val_ty), Expr::DictLit(pairs)) => {
                 let key_any = self.tcx.get(key_ty).is_any();
                 let val_any = self.tcx.get(val_ty).is_any();
@@ -1014,6 +1037,7 @@ impl TypeChecker {
         let iter_ty = self.check_expr(iter);
         match self.tcx.get(iter_ty).clone() {
             Ty::List(elem) => elem,
+            Ty::Set(elem) => elem,
             Ty::Dict(k, _) => k,
             Ty::Str => self.tcx.str(),
             Ty::Tuple(ts) if !ts.is_empty() => {
