@@ -18,6 +18,7 @@
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -39,7 +40,9 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
         );
     }
 
-    let resolved = if looks_like_wheel_path(spec_raw) {
+    let resolved = if let Some(provider) = sub.get_one::<String>("provider") {
+        resolve_with_provider(spec_raw, provider)?
+    } else if looks_like_wheel_path(spec_raw) {
         resolve_with_local_wheel(spec_raw, &project_dir)?
     } else {
         let spec = DepSpec::parse(spec_raw)?;
@@ -53,9 +56,22 @@ pub fn cmd_add(sub: &ArgMatches) -> Result<()> {
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let mut state = ManifestState::parse(&manifest_src)?;
     state.upsert_dependency(&resolved.dep_string());
+    match &resolved.source {
+        SourceMeta::MambaProvider { provider, .. } => {
+            state.upsert_source(
+                &resolved.name,
+                ManifestSource::MambaProvider {
+                    provider: provider.clone(),
+                },
+            );
+        }
+        SourceMeta::Default | SourceMeta::DirectFile { .. } => {
+            state.remove_source(&resolved.name);
+        }
+    }
     let new_manifest = state.render();
 
-    let new_lockfile = render_lockfile_with_hashes(&state.dependencies, &resolved);
+    let new_lockfile = render_lockfile_for_manifest_with_resolved(&state, &resolved)?;
 
     let lock_path = project_dir.join(LOCKFILE_FILE);
     atomic_write(&manifest_path, new_manifest.as_bytes())?;
@@ -115,7 +131,15 @@ impl ResolvedDep {
 #[derive(Debug, Clone)]
 pub(crate) enum SourceMeta {
     Default,
-    DirectFile { path: String },
+    DirectFile {
+        path: String,
+    },
+    MambaProvider {
+        provider: String,
+        provides: Vec<String>,
+        compatibility: String,
+        maturity: String,
+    },
 }
 
 fn resolve_index_dir(sub: &ArgMatches) -> Option<PathBuf> {
@@ -168,6 +192,30 @@ fn resolve_dep(
          or use --offline with NAME==VERSION",
         spec.name
     )
+}
+
+fn resolve_with_provider(raw: &str, provider: &str) -> Result<ResolvedDep> {
+    if provider != "mamba" {
+        bail!("unsupported provider `{provider}` (supported: mamba)");
+    }
+    if looks_like_wheel_path(raw) {
+        bail!("--provider mamba expects a mamba-owned package name, not a path");
+    }
+    let spec = DepSpec::parse(raw)?;
+    let pkg =
+        crate::pkgmanage::provider::resolve_mamba_package(&spec.name, spec.version.as_deref())?;
+    Ok(ResolvedDep {
+        name: pkg.distribution,
+        version: pkg.version,
+        sha256: None,
+        url: None,
+        source: SourceMeta::MambaProvider {
+            provider: pkg.provider,
+            provides: pkg.provides,
+            compatibility: pkg.compatibility,
+            maturity: pkg.maturity,
+        },
+    })
 }
 
 fn resolve_with_local_index(spec: &DepSpec, idx: &Path) -> Result<ResolvedDep> {
@@ -502,6 +550,12 @@ pub(crate) struct ManifestState {
     pub(crate) python_requires: String,
     pub(crate) dependencies: Vec<String>,
     pub(crate) dev_dependencies: Vec<String>,
+    pub(crate) source_overrides: BTreeMap<String, ManifestSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ManifestSource {
+    MambaProvider { provider: String },
 }
 
 impl ManifestState {
@@ -528,6 +582,7 @@ impl ManifestState {
             .to_string();
         let dependencies = extract_string_list(project, "dependencies");
         let dev_dependencies = extract_string_list(project, "dev-dependencies");
+        let source_overrides = extract_source_overrides(&doc)?;
 
         Ok(ManifestState {
             project_name,
@@ -535,6 +590,7 @@ impl ManifestState {
             python_requires,
             dependencies,
             dev_dependencies,
+            source_overrides,
         })
     }
 
@@ -547,8 +603,18 @@ impl ManifestState {
     }
 
     pub(crate) fn remove_dependency(&mut self, name: &str) {
+        let name = name.trim();
         self.dependencies.retain(|d| dep_name(d) != name);
         self.dev_dependencies.retain(|d| dep_name(d) != name);
+        self.source_overrides.remove(name);
+    }
+
+    pub(crate) fn upsert_source(&mut self, name: &str, source: ManifestSource) {
+        self.source_overrides.insert(name.to_string(), source);
+    }
+
+    pub(crate) fn remove_source(&mut self, name: &str) {
+        self.source_overrides.remove(name);
     }
 
     pub(crate) fn render(&self) -> String {
@@ -565,8 +631,56 @@ impl ManifestState {
             "dev-dependencies = {}\n",
             render_string_list(&self.dev_dependencies)
         ));
+        if !self.source_overrides.is_empty() {
+            out.push('\n');
+            out.push_str("[tool.mamba.sources]\n");
+            for (name, source) in &self.source_overrides {
+                match source {
+                    ManifestSource::MambaProvider { provider } => {
+                        out.push_str(&format!(
+                            "{} = {{ provider = \"{}\" }}\n",
+                            render_toml_key(name),
+                            escape_toml_string(provider)
+                        ));
+                    }
+                }
+            }
+        }
         out
     }
+}
+
+fn extract_source_overrides(doc: &toml::Value) -> Result<BTreeMap<String, ManifestSource>> {
+    let mut out = BTreeMap::new();
+    let Some(sources) = doc
+        .get("tool")
+        .and_then(|t| t.get("mamba"))
+        .and_then(|m| m.get("sources"))
+    else {
+        return Ok(out);
+    };
+    let sources = sources
+        .as_table()
+        .context("[tool.mamba.sources] must be a table")?;
+    for (name, value) in sources {
+        let entry = value
+            .as_table()
+            .with_context(|| format!("[tool.mamba.sources] `{name}` must be an inline table"))?;
+        let provider = entry
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .with_context(|| format!("[tool.mamba.sources] `{name}` missing provider"))?;
+        if provider != "mamba" {
+            bail!("[tool.mamba.sources] `{name}` uses unsupported provider `{provider}`");
+        }
+        out.insert(
+            name.clone(),
+            ManifestSource::MambaProvider {
+                provider: provider.to_string(),
+            },
+        );
+    }
+    Ok(out)
 }
 
 fn extract_string_list(tbl: &toml::value::Table, key: &str) -> Vec<String> {
@@ -594,12 +708,41 @@ fn render_string_list(items: &[String]) -> String {
     out
 }
 
+fn render_inline_string_list(items: &[String]) -> String {
+    if items.is_empty() {
+        return "[]".to_string();
+    }
+    let mut sorted = items.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    let mut out = String::from("[");
+    for (i, item) in sorted.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push('"');
+        out.push_str(&escape_toml_string(item));
+        out.push('"');
+    }
+    out.push(']');
+    out
+}
+
+fn render_toml_key(key: &str) -> String {
+    format!("\"{}\"", escape_toml_string(key))
+}
+
+fn escape_toml_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 pub(crate) fn dep_name(spec: &str) -> &str {
     spec.split_once("==")
         .map(|(n, _)| n.trim())
         .unwrap_or(spec.trim())
 }
 
+#[cfg(test)]
 fn render_lockfile_with_hashes(deps: &[String], just_added: &ResolvedDep) -> String {
     let mut hashes = std::collections::BTreeMap::new();
     let mut urls = std::collections::BTreeMap::new();
@@ -619,15 +762,99 @@ fn render_lockfile_with_hashes(deps: &[String], just_added: &ResolvedDep) -> Str
     render_lockfile_with_known_hashes(deps, &hashes, &urls, &sources)
 }
 
-/// Deterministic lockfile rendering for an arbitrary dep list. Sorted +
-/// deduped by package name; byte-identical for the same input.
-pub(crate) fn render_lockfile_from_deps(deps: &[String]) -> String {
-    render_lockfile_with_known_hashes(
-        deps,
-        &std::collections::BTreeMap::new(),
-        &std::collections::BTreeMap::new(),
-        &std::collections::BTreeMap::new(),
-    )
+fn render_lockfile_for_manifest_with_resolved(
+    state: &ManifestState,
+    just_added: &ResolvedDep,
+) -> Result<String> {
+    let mut hashes = BTreeMap::new();
+    let mut urls = BTreeMap::new();
+    let mut sources = collect_manifest_sources(state)?;
+    if let Some(h) = just_added.sha256.as_deref() {
+        hashes.insert(just_added.name.clone(), h.to_string());
+    }
+    if let Some(u) = just_added.url.as_deref() {
+        urls.insert(just_added.name.clone(), u.to_string());
+    }
+    match &just_added.source {
+        SourceMeta::Default => {}
+        SourceMeta::DirectFile { path } => {
+            sources.insert(
+                just_added.name.clone(),
+                SourceMeta::DirectFile { path: path.clone() },
+            );
+        }
+        SourceMeta::MambaProvider {
+            provider,
+            provides,
+            compatibility,
+            maturity,
+        } => {
+            sources.insert(
+                just_added.name.clone(),
+                SourceMeta::MambaProvider {
+                    provider: provider.clone(),
+                    provides: provides.clone(),
+                    compatibility: compatibility.clone(),
+                    maturity: maturity.clone(),
+                },
+            );
+        }
+    }
+    Ok(render_lockfile_with_known_hashes(
+        &state.dependencies,
+        &hashes,
+        &urls,
+        &sources,
+    ))
+}
+
+pub(crate) fn render_lockfile_for_manifest(state: &ManifestState) -> Result<String> {
+    let sources = collect_manifest_sources(state)?;
+    Ok(render_lockfile_with_known_hashes(
+        &state.dependencies,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &sources,
+    ))
+}
+
+fn collect_manifest_sources(state: &ManifestState) -> Result<BTreeMap<String, SourceMeta>> {
+    let mut sources = BTreeMap::new();
+    for dep in &state.dependencies {
+        let Some((name, version)) = dep.split_once("==") else {
+            continue;
+        };
+        let name = name.trim();
+        let version = version.trim();
+        if let Some(source) = state.source_overrides.get(name) {
+            sources.insert(
+                name.to_string(),
+                source_meta_from_manifest(name, version, source)?,
+            );
+        }
+    }
+    Ok(sources)
+}
+
+pub(crate) fn source_meta_from_manifest(
+    name: &str,
+    version: &str,
+    source: &ManifestSource,
+) -> Result<SourceMeta> {
+    match source {
+        ManifestSource::MambaProvider { provider } => {
+            if provider != "mamba" {
+                bail!("unsupported provider `{provider}` for `{name}`");
+            }
+            let pkg = crate::pkgmanage::provider::resolve_mamba_package(name, Some(version))?;
+            Ok(SourceMeta::MambaProvider {
+                provider: pkg.provider,
+                provides: pkg.provides,
+                compatibility: pkg.compatibility,
+                maturity: pkg.maturity,
+            })
+        }
+    }
 }
 
 pub(crate) fn render_lockfile_with_known_hashes(
@@ -660,19 +887,83 @@ pub(crate) fn render_lockfile_with_known_hashes(
         out.push_str(&format!("sha256 = \"{sha}\"\n"));
         match sources.get(name) {
             Some(SourceMeta::DirectFile { path }) => {
-                out.push_str("url = \"\"\n");
-                out.push_str("source_kind = \"direct_file\"\n");
-                out.push_str(&format!("path = \"{path}\"\n"));
-                out.push_str(&format!("source = \"direct-file://{path}\"\n"));
+                append_lock_source_fields(
+                    &mut out,
+                    name,
+                    version,
+                    "",
+                    &SourceMeta::DirectFile { path: path.clone() },
+                );
             }
-            _ => {
-                out.push_str(&format!("url = \"{url}\"\n"));
-                out.push_str(&format!("source = \"pypi://{name}/{version}\"\n"));
+            Some(SourceMeta::MambaProvider { .. }) => {
+                append_lock_source_fields(&mut out, name, version, "", sources.get(name).unwrap());
+            }
+            Some(SourceMeta::Default) | None => {
+                append_lock_source_fields(&mut out, name, version, url, &SourceMeta::Default);
             }
         }
         out.push_str("dependencies = []\n");
     }
     out
+}
+
+pub(crate) fn append_lock_source_fields(
+    out: &mut String,
+    name: &str,
+    version: &str,
+    url: &str,
+    source: &SourceMeta,
+) {
+    match source {
+        SourceMeta::Default => {
+            out.push_str(&format!("url = \"{}\"\n", escape_toml_string(url)));
+            out.push_str(&format!(
+                "source = \"pypi://{}/{}\"\n",
+                escape_toml_string(name),
+                escape_toml_string(version)
+            ));
+        }
+        SourceMeta::DirectFile { path } => {
+            out.push_str("url = \"\"\n");
+            out.push_str("source_kind = \"direct_file\"\n");
+            out.push_str(&format!("path = \"{}\"\n", escape_toml_string(path)));
+            out.push_str(&format!(
+                "source = \"direct-file://{}\"\n",
+                escape_toml_string(path)
+            ));
+        }
+        SourceMeta::MambaProvider {
+            provider,
+            provides,
+            compatibility,
+            maturity,
+        } => {
+            out.push_str("url = \"\"\n");
+            out.push_str("source_kind = \"mamba_provider\"\n");
+            out.push_str(&format!(
+                "provider = \"{}\"\n",
+                escape_toml_string(provider)
+            ));
+            out.push_str(&format!(
+                "provides = {}\n",
+                render_inline_string_list(provides)
+            ));
+            out.push_str(&format!(
+                "compatibility = \"{}\"\n",
+                escape_toml_string(compatibility)
+            ));
+            out.push_str(&format!(
+                "maturity = \"{}\"\n",
+                escape_toml_string(maturity)
+            ));
+            out.push_str(&format!(
+                "source = \"mamba-provider://{}/{}/{}\"\n",
+                escape_toml_string(provider),
+                escape_toml_string(name),
+                escape_toml_string(version)
+            ));
+        }
+    }
 }
 
 fn compute_input_hash(deps: &[String]) -> String {
@@ -751,9 +1042,38 @@ mod tests {
             python_requires: ">=3.12".into(),
             dependencies: vec!["a==1.0".into(), "b==2.0".into()],
             dev_dependencies: vec![],
+            source_overrides: BTreeMap::new(),
         };
         s.upsert_dependency("a==1.1");
         assert_eq!(s.dependencies, vec!["a==1.1", "b==2.0"]);
+    }
+
+    #[test]
+    fn manifest_renders_mamba_provider_source() {
+        let mut s = ManifestState {
+            project_name: "p".into(),
+            project_version: "0.1.0".into(),
+            python_requires: ">=3.12".into(),
+            dependencies: vec!["mamba-httpx-compat==0.1.0".into()],
+            dev_dependencies: vec![],
+            source_overrides: BTreeMap::new(),
+        };
+        s.upsert_source(
+            "mamba-httpx-compat",
+            ManifestSource::MambaProvider {
+                provider: "mamba".into(),
+            },
+        );
+        let rendered = s.render();
+        assert!(rendered.contains("[tool.mamba.sources]"));
+        assert!(rendered.contains("\"mamba-httpx-compat\" = { provider = \"mamba\" }"));
+        let parsed = ManifestState::parse(&rendered).unwrap();
+        assert_eq!(
+            parsed.source_overrides.get("mamba-httpx-compat"),
+            Some(&ManifestSource::MambaProvider {
+                provider: "mamba".into()
+            })
+        );
     }
 
     #[test]

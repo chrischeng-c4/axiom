@@ -27,6 +27,7 @@ pub mod package;
 pub mod pip;
 pub mod pkgmgr;
 pub mod python;
+pub mod provider;
 pub mod remove;
 pub mod run;
 pub mod shell;

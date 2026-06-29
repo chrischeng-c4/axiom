@@ -122,6 +122,13 @@ profile requires twenty-one offline workflow families and keeps live network
 coverage opt-in/report-only. `mamba add` / `mamba lock` do not treat public
 PyPI as an implicit default source; callers must provide a frozen local index,
 direct local wheel file, or explicit registry URL when resolving dependencies.
+First-party pure-Python replacement packages use an explicit provider path:
+`mamba add --provider mamba mamba-httpx-compat` records the mamba-owned
+distribution name, preserves `provides` / compatibility metadata in
+`mamba.lock`, and `mamba sync` installs real pure-Python files into `.venv`
+so the provided import alias (for example `import httpx`) resolves without
+confusing the package with the upstream PyPI distribution. This provider path
+is separate from C3 `mambalibs`, which are Rust/native runtime modules.
 No known release-blocking command-family gaps remain under #519; follow-up
 parity work should be tracked as focused hardening or live-network fixtures.
 
