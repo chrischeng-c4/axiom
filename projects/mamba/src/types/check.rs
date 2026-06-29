@@ -111,6 +111,14 @@ fn is_exception_class_name(name: &str) -> bool {
 }
 
 /// Type checker: walks the AST, resolves names, and checks types.
+#[derive(Debug, Clone)]
+pub(crate) struct FunctionParamSig {
+    pub(crate) name: String,
+    pub(crate) ty: TypeId,
+    pub(crate) kind: ParamKind,
+    pub(crate) kw_only: bool,
+}
+
 pub struct TypeChecker {
     pub tcx: TypeContext,
     pub symbols: SymbolTable,
@@ -135,6 +143,10 @@ pub struct TypeChecker {
     pub diagnostics: Vec<Diagnostic>,
     /// Generic parameter lists for functions/classes (#314).
     pub(crate) generic_defs: HashMap<String, GenericParams>,
+    /// Full user-function parameter metadata. `Ty::Fn` deliberately keeps a
+    /// compact ABI-facing shape, so keyword-only and variadic annotation checks
+    /// live in this checker-only side channel.
+    pub(crate) function_param_sigs: HashMap<String, Vec<FunctionParamSig>>,
     /// Protocol registry for structural subtyping (#314).
     pub(crate) protocol_registry: ProtocolRegistry,
     /// Counter for TypeVarId allocation.
@@ -202,6 +214,7 @@ impl TypeChecker {
             errors: Vec::new(),
             diagnostics: Vec::new(),
             generic_defs: HashMap::new(),
+            function_param_sigs: HashMap::new(),
             protocol_registry: ProtocolRegistry::new(),
             next_type_var_id: 0,
             class_methods: HashMap::new(),
@@ -237,6 +250,29 @@ impl TypeChecker {
             .get(sym_idx as usize)
             .and_then(|t| *t)
             .unwrap_or(self.tcx.error())
+    }
+
+    pub(crate) fn record_function_param_sigs(
+        &mut self,
+        name: &str,
+        params: &[Param],
+        overload_decorated: bool,
+    ) {
+        if overload_decorated {
+            self.function_param_sigs.remove(name);
+            return;
+        }
+
+        let sigs = params
+            .iter()
+            .map(|param| FunctionParamSig {
+                name: param.name.clone(),
+                ty: self.resolve_type_expr(&param.ty),
+                kind: param.kind,
+                kw_only: param.kw_only,
+            })
+            .collect();
+        self.function_param_sigs.insert(name.to_string(), sigs);
     }
 
     pub(crate) fn error(&mut self, span: Span, msg: impl Into<String>) {
@@ -335,6 +371,7 @@ impl TypeChecker {
                     let overload_decorated = decorators
                         .iter()
                         .any(|d| is_typing_overload_decorator(&d.node));
+                    self.record_function_param_sigs(name, params, overload_decorated);
                     let (param_types, ret, is_variadic) = if overload_decorated {
                         (Vec::new(), self.tcx.any(), true)
                     } else {
@@ -456,6 +493,7 @@ impl TypeChecker {
                             self.symbols
                                 .define(fn_def.name.clone(), SymbolKind::Function)
                         });
+                        self.record_function_param_sigs(&fn_def.name, &fn_def.params, false);
                         let star_pos = fn_def
                             .params
                             .iter()

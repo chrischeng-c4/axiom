@@ -230,6 +230,9 @@ impl TypeChecker {
                             }
                         }
                         let mut arg_types = Vec::new();
+                        let user_param_sigs = func_name
+                            .as_deref()
+                            .and_then(|name| self.function_param_sigs.get(name).cloned());
                         let mut param_idx = 0;
                         for arg in args {
                             match arg {
@@ -300,11 +303,48 @@ impl TypeChecker {
                                                 ),
                                             );
                                         }
+                                    } else if let Some(star_param) =
+                                        user_param_sigs.as_ref().and_then(|sigs| {
+                                            sigs.iter().find(|sig| sig.kind == ParamKind::Star)
+                                        })
+                                    {
+                                        self.check_user_fn_argument_type(
+                                            a.span,
+                                            star_param.ty,
+                                            at,
+                                            &a.node,
+                                        );
                                     }
                                     param_idx += 1;
                                 }
-                                CallArg::Keyword { value, .. } => {
-                                    self.check_expr(value);
+                                CallArg::Keyword { name, value } => {
+                                    let at = self.check_expr(value);
+                                    if let Some(param) = user_param_sigs.as_ref().and_then(|sigs| {
+                                        sigs.iter()
+                                            .find(|sig| {
+                                                sig.name == *name
+                                                    && sig.kind == ParamKind::Regular
+                                                    && sig.kw_only
+                                            })
+                                            .or_else(|| {
+                                                sigs.iter().find(|sig| {
+                                                    sig.name == *name
+                                                        && sig.kind == ParamKind::Regular
+                                                        && !sig.kw_only
+                                                })
+                                            })
+                                            .or_else(|| {
+                                                sigs.iter()
+                                                    .find(|sig| sig.kind == ParamKind::DoubleStar)
+                                            })
+                                    }) {
+                                        self.check_user_fn_argument_type(
+                                            value.span,
+                                            param.ty,
+                                            at,
+                                            &value.node,
+                                        );
+                                    }
                                 }
                                 CallArg::StarArg(a) | CallArg::DoubleStarArg(a) => {
                                     self.check_expr(a);
@@ -697,6 +737,34 @@ impl TypeChecker {
                 }
                 self.tcx.error()
             }
+        }
+    }
+
+    fn check_user_fn_argument_type(
+        &mut self,
+        span: Span,
+        expected: TypeId,
+        actual: TypeId,
+        actual_expr: &Expr,
+    ) {
+        let bytes_literal_str_mismatch = matches!(
+            (self.tcx.get(expected), actual_expr),
+            (Ty::Str, Expr::BytesLit(_))
+        );
+        if bytes_literal_str_mismatch || !self.types_compatible(expected, actual) {
+            let got = if bytes_literal_str_mismatch {
+                "bytes".to_string()
+            } else {
+                self.ty_name(actual)
+            };
+            self.error(
+                span,
+                format!(
+                    "argument type mismatch: expected `{}`, got `{}`",
+                    self.ty_name(expected),
+                    got,
+                ),
+            );
         }
     }
 
