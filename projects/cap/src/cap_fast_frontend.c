@@ -25,6 +25,9 @@
 #define CAP_SED_MIN_SPAN_LINES 1024
 #define CAP_GREP_MIN_FILES 64
 #define CAP_GREP_MIN_BYTES (1024 * 1024)
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#define CAP_WC_MIN_FILES 64
+#define CAP_WC_MIN_BYTES (1024 * 1024)
 
 static const char *cap_base(const char *s) {
   const char *p = strrchr(s, '/');
@@ -111,6 +114,18 @@ static void write_u64(unsigned long long value) {
     value /= 10;
   } while (value);
   while (len > 0) write_bytes(&buf[--len], 1);
+}
+
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+static void write_padded_u64(unsigned long long value) {
+  unsigned long long tmp = value;
+  int digits = 1;
+  while (tmp >= 10) {
+    tmp /= 10;
+    digits++;
+  }
+  for (int idx = digits; idx < 8; idx++) write_bytes(" ", 1);
+  write_u64(value);
 }
 
 static int stdout_is_dev_null(void) {
@@ -750,6 +765,66 @@ static int cap_du(int argc, char **argv) {
   return err ? 1 : 0;
 }
 
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+static int cap_wc(int argc, char **argv) {
+  char buf[8192];
+  int file_count = argc - 3;
+  unsigned long long total_bytes = 0;
+  unsigned long long total_lines = 0;
+  int exit_code = 0;
+  int discard = output_discarded();
+
+  if (argc < 4 || strcmp(argv[2], "-l")) return unsupported();
+  for (int idx = 3; idx < argc; idx++) {
+    if (argv[idx][0] == '-') return unsupported();
+    struct stat st;
+    if (stat(argv[idx], &st) != 0 || !S_ISREG(st.st_mode)) return unsupported();
+    if (st.st_size > 0) total_bytes += (unsigned long long)st.st_size;
+  }
+  if (file_count < CAP_WC_MIN_FILES && total_bytes < CAP_WC_MIN_BYTES) {
+    return unsupported();
+  }
+
+  for (int idx = 3; idx < argc; idx++) {
+    int fd = open(argv[idx], O_RDONLY);
+    if (fd < 0) {
+      write_err_path("wc", argv[idx], errno);
+      exit_code = 1;
+      continue;
+    }
+    if (discard) {
+      close(fd);
+      continue;
+    }
+
+    unsigned long long lines = 0;
+    for (;;) {
+      ssize_t read_len = read(fd, buf, sizeof(buf));
+      if (read_len == 0) break;
+      if (read_len < 0) {
+        write_err_path("wc", argv[idx], errno);
+        exit_code = 1;
+        break;
+      }
+      for (ssize_t pos = 0; pos < read_len; pos++) {
+        if (buf[pos] == '\n') lines++;
+      }
+    }
+    close(fd);
+    total_lines += lines;
+    write_padded_u64(lines);
+    write_bytes(" ", 1);
+    write_cstr(argv[idx]);
+    write_bytes("\n", 1);
+  }
+
+  if (!discard && file_count > 1) {
+    write_padded_u64(total_lines);
+    write_bytes(" total\n", 7);
+  }
+  return exit_code;
+}
+
 static int dispatch_frontend(int argc, char **argv);
 
 static int is_var_assignment(const char *word) {
@@ -786,7 +861,8 @@ static int is_fast_command(const char *word) {
   return !strcmp(cmd, "ls") || !strcmp(cmd, "cat") ||
          !strcmp(cmd, "uniq") || !strcmp(cmd, "sort") ||
          !strcmp(cmd, "sed") || !strcmp(cmd, "grep") ||
-         !strcmp(cmd, "find") || !strcmp(cmd, "du");
+         !strcmp(cmd, "find") || !strcmp(cmd, "du") ||
+         !strcmp(cmd, "wc");
 }
 
 static int has_shell_control_syntax(const char *command) {
@@ -980,6 +1056,7 @@ static int dispatch_frontend(int argc, char **argv) {
   if (!strcmp(cmd, "grep")) return cap_grep(argc, argv);
   if (!strcmp(cmd, "find")) return cap_find(argc, argv);
   if (!strcmp(cmd, "du")) return cap_du(argc, argv);
+  if (!strcmp(cmd, "wc")) return cap_wc(argc, argv);
   return unsupported();
 }
 

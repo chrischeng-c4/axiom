@@ -1,6 +1,6 @@
 # Cap Command Resource Benchmarks
 
-Measured on: 2026-06-13 and 2026-06-14, Darwin arm64.
+Measured on: 2026-06-13, 2026-06-14, and 2026-06-29, Darwin arm64.
 
 Run:
 
@@ -55,6 +55,7 @@ promotion gate and must pass `dual-win` or an explicitly documented
 | `sort` | dual-win | 500,000 reverse-sorted lines | 12.345 | 224.055 | 0.06x | 16.84 | 49.55 | 0.34x |
 | `sed` | dual-win | print 5,001 lines from 120,000-line file | 5.989 | 14.312 | 0.42x | 1.34 | 1.39 | 0.97x |
 | `grep` | dual-win | 800 text files, recursive literal search | 35.234 | 53.467 | 0.66x | 1.41 | 1.52 | 0.93x |
+| `wc` | dual-win | 2,000 regular files, `wc -l` aggregate | 36.632 | 42.616 | 0.86x | 1.53 | 1.62 | 0.94x |
 
 ## Hook String Replacement Baseline
 
@@ -166,7 +167,7 @@ temporary directory and compares active replacements against the system command
 for:
 
 - successful stdout and exit-code parity for `ls`, `cat`, `uniq`, `find`, `du`,
-  `sort`, `sed`, and `grep`;
+  `sort`, `sed`, `grep`, and `wc -l`;
 - `cap run "<simple active command>"` parity for the same active replacements,
   using the installed `cap` plus `cap-fast` plus `cap-full` binary shape;
 - missing-path nonzero exit behavior and stderr diagnostics;
@@ -179,7 +180,7 @@ error.
 ## Interpretation
 
 - Dual-win replacements in this baseline: `ls`, `cat`, `uniq`,
-  `find`, `du`, `sort`, `sed`, `grep`.
+  `find`, `du`, `sort`, `sed`, `grep`, `wc -l`.
 - RSS-fallback replacements in this baseline: none.
 - Incomplete candidates in this baseline: `true`, `false`, `pwd`,
   `basename`, `dirname`, `head`, `tail`, `mkdir`, `touch`, `awk`, `xargs`,
@@ -196,6 +197,10 @@ error.
 - `uniq` wins this benchmark through a stdout-discard fast path over a 64 MiB
   single-line regular file; visible stdout still performs adjacent-line
   de-duplication.
+- `wc -l` wins this benchmark on a large many-file aggregate by keeping the
+  installed C frontend path low-overhead and avoiding output work when stdout is
+  discarded; visible stdout still emits system-compatible per-file counts and a
+  total row.
 - `true`, `false`, `pwd`, `basename`, and `dirname` previously showed only
   parity or 1-3% RSS savings with CPU regressions. They are now retired from
   default replacement. `head` and `tail` also remain scout-only because they
