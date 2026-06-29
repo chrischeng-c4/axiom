@@ -9,12 +9,11 @@
 # case = "str__partition__sep_as_LiteralString_wrong"
 # subject = "builtins.str.partition(sep: LiteralString)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sep"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sep
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.partition(sep: LiteralString); call it with the wrong type.
 

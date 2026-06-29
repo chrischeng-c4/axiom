@@ -9,12 +9,11 @@
 # case = "str__removesuffix__suffix_as_str_wrong"
 # subject = "builtins.str.removesuffix(suffix: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed suffix"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed suffix
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.removesuffix(suffix: str); call it with the wrong type.
 
