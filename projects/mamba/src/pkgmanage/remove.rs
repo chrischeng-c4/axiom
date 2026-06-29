@@ -11,11 +11,11 @@
 // Removing a dep that isn't recorded is a soft no-op success (idempotent
 // re-removal), matching uv's behavior.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use std::fs;
 
-use crate::pkgmanage::add::{atomic_write, render_lockfile_from_deps, ManifestState};
+use crate::pkgmanage::add::{ManifestState, atomic_write, render_lockfile_for_manifest};
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
@@ -46,7 +46,7 @@ pub fn cmd_remove(sub: &ArgMatches) -> Result<()> {
     let removed = before.len() != state.dependencies.len();
 
     let new_manifest = state.render();
-    let new_lockfile = render_lockfile_from_deps(&state.dependencies);
+    let new_lockfile = render_lockfile_for_manifest(&state)?;
 
     atomic_write(&manifest_path, new_manifest.as_bytes())?;
     let lock_path = project_dir.join(LOCKFILE_FILE);

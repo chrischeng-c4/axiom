@@ -221,6 +221,10 @@ mod tests {
             sha256: String::new(),
             source_kind: String::new(),
             path: String::new(),
+            provider: String::new(),
+            provides: Vec::new(),
+            compatibility: String::new(),
+            maturity: String::new(),
         }];
         let db = AdvisoryDb {
             advisories: vec![Advisory {

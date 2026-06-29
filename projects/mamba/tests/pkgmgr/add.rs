@@ -625,3 +625,173 @@ fn add_index_url_uses_stored_auth_credentials() {
         "lock must carry sha from authenticated index: {lock}"
     );
 }
+
+#[test]
+fn add_mamba_provider_records_manifest_and_lock_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+
+    let out = run_add(tmp.path(), &["mamba-httpx-compat", "--provider", "mamba"]);
+    assert!(
+        out.status.success(),
+        "provider add must succeed; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    assert!(
+        manifest.contains("\"mamba-httpx-compat==0.1.0\""),
+        "manifest must pin mamba-owned distribution: {manifest}"
+    );
+    assert!(
+        manifest.contains("[tool.mamba.sources]")
+            && manifest.contains("\"mamba-httpx-compat\" = { provider = \"mamba\" }"),
+        "manifest must persist explicit provider selection: {manifest}"
+    );
+
+    let lock = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
+    assert!(lock.contains("name = \"mamba-httpx-compat\""), "{lock}");
+    assert!(!lock.contains("name = \"httpx\""), "{lock}");
+    assert!(lock.contains("source_kind = \"mamba_provider\""), "{lock}");
+    assert!(lock.contains("provider = \"mamba\""), "{lock}");
+    assert!(lock.contains("provides = [\"httpx\"]"), "{lock}");
+    assert!(lock.contains("compatibility = \"httpx\""), "{lock}");
+    assert!(lock.contains("maturity = \"experimental\""), "{lock}");
+    assert!(
+        lock.contains("source = \"mamba-provider://mamba/mamba-httpx-compat/0.1.0\""),
+        "{lock}"
+    );
+}
+
+#[test]
+fn add_mamba_provider_rejects_upstream_import_alias_without_mutation() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
+
+    let out = run_add(tmp.path(), &["httpx", "--provider", "mamba"]);
+    assert!(
+        !out.status.success(),
+        "upstream alias must not be accepted as a mamba distribution"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("mamba-httpx-compat") && stderr.contains("upstream import"),
+        "diagnostic should name the mamba-owned package: {stderr:?}"
+    );
+    assert_eq!(
+        manifest_before,
+        std::fs::read_to_string(&manifest_path).unwrap(),
+        "failed provider add must not mutate mamba.toml"
+    );
+    assert!(
+        !tmp.path().join("mamba.lock").exists(),
+        "failed provider add must not create lockfile"
+    );
+}
+
+#[test]
+fn add_mamba_provider_relocks_offline_and_sync_installs_import_alias() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    assert!(
+        run_add(tmp.path(), &["mamba-httpx-compat", "--provider", "mamba"])
+            .status
+            .success()
+    );
+
+    let relock = Command::new(mamba_bin())
+        .args(["lock", "--offline"])
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba lock");
+    assert!(
+        relock.status.success(),
+        "provider-only lock must not need index; stderr: {}",
+        String::from_utf8_lossy(&relock.stderr)
+    );
+    let lock = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
+    assert!(
+        lock.contains("source_kind = \"mamba_provider\"")
+            && lock.contains("provides = [\"httpx\"]"),
+        "relock must preserve provider metadata: {lock}"
+    );
+
+    let synced = run_sync(tmp.path());
+    assert!(
+        synced.status.success(),
+        "provider sync must succeed; stderr: {}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let site = tmp.path().join(".venv/site-packages");
+    let httpx_init = site.join("httpx/__init__.py");
+    let body = std::fs::read_to_string(&httpx_init).unwrap();
+    assert!(
+        body.contains("__mamba_provider_distribution__ = \"mamba-httpx-compat\"")
+            && body.contains("class Response"),
+        "httpx import alias must be a pure-Python provider file: {body}"
+    );
+    assert!(
+        site.join("mamba_httpx_compat-0.1.0.dist-info/METADATA")
+            .exists(),
+        "provider install must include distribution metadata"
+    );
+
+    let probe = Command::new("python3")
+        .arg("-c")
+        .arg("import httpx; print(httpx.__mamba_provider_distribution__)")
+        .env("PYTHONPATH", &site)
+        .env_remove("PYTHONHOME")
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn python3 import probe");
+    assert!(
+        probe.status.success(),
+        "python import probe must resolve provider alias; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&probe.stdout),
+        String::from_utf8_lossy(&probe.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&probe.stdout).trim(),
+        "mamba-httpx-compat"
+    );
+}
+
+#[test]
+fn add_mamba_provider_sync_refuses_existing_import_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    assert!(
+        run_add(tmp.path(), &["mamba-httpx-compat", "--provider", "mamba"])
+            .status
+            .success()
+    );
+
+    let existing_httpx = tmp.path().join(".venv/site-packages/httpx");
+    std::fs::create_dir_all(&existing_httpx).unwrap();
+    std::fs::write(
+        existing_httpx.join("__init__.py"),
+        "# upstream placeholder\n",
+    )
+    .unwrap();
+
+    let out = run_sync(tmp.path());
+    assert!(
+        !out.status.success(),
+        "sync must refuse to overwrite an existing non-provider import package"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("overwrite existing import package") && stderr.contains("httpx"),
+        "diagnostic must name import-alias collision: {stderr:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(existing_httpx.join("__init__.py")).unwrap(),
+        "# upstream placeholder\n",
+        "failed provider sync must preserve existing import package"
+    );
+}
