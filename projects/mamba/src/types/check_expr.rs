@@ -836,6 +836,7 @@ impl TypeChecker {
                     | super::stdlib_sigs::CoreTy::Str
                     | super::stdlib_sigs::CoreTy::Bytes
                     | super::stdlib_sigs::CoreTy::MemoryView
+                    | super::stdlib_sigs::CoreTy::Complex
                     | super::stdlib_sigs::CoreTy::Bool
                     | super::stdlib_sigs::CoreTy::Typed
             );
@@ -873,6 +874,18 @@ impl TypeChecker {
                         a.span,
                         format!(
                             "argument type mismatch: expected `str` source when `encoding` is provided, got `{}`",
+                            self.ty_name(actual),
+                        ),
+                    );
+                } else if matches!(param.ty, super::stdlib_sigs::CoreTy::Complex)
+                    && !actual_is_none
+                    && self.is_concrete_scalar(actual)
+                    && !matches!(self.tcx.get(actual), Ty::Int | Ty::Float | Ty::Bool)
+                {
+                    self.error(
+                        a.span,
+                        format!(
+                            "argument type mismatch: expected `complex`, got `{}`",
                             self.ty_name(actual),
                         ),
                     );
