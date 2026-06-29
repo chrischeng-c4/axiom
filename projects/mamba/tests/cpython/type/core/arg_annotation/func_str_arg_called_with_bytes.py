@@ -9,12 +9,11 @@
 # case = "func_str_arg_called_with_bytes"
 # subject = "function positional parameter annotation"
 # kind = "semantic"
-# xfail = "str argument annotation type enforcement pending; currently MAMBA_TYPE_LEAKED"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
 # ///
-# mamba-xfail: str argument annotation type enforcement pending; currently MAMBA_TYPE_LEAKED
 # mamba-strict-type: TypeError
 """Mamba runtime-type enforcement: str-annotated arg called with bytes.
 
