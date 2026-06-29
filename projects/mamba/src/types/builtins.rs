@@ -63,6 +63,8 @@ impl TypeChecker {
         self.def_builtin("reversed", &[any], any);
         self.def_builtin_variadic("iter", &[any], any);
         self.def_builtin_variadic("next", &[any], any);
+        self.def_builtin("aiter", &[any], any);
+        self.def_builtin_variadic("anext", &[any], any);
 
         // Introspection — getattr(obj, name[, default])
         self.def_builtin_variadic("type", &[any], any);
@@ -179,6 +181,7 @@ impl TypeChecker {
         });
         let sym = self.symbols.define(name.to_string(), SymbolKind::Function);
         self.set_sym_type(sym.0, fn_ty);
+        self.builtin_symbols.insert(name.to_string(), sym);
     }
 
     fn def_builtin_variadic(&mut self, name: &str, params: &[TypeId], ret: TypeId) {
@@ -189,6 +192,7 @@ impl TypeChecker {
         });
         let sym = self.symbols.define(name.to_string(), SymbolKind::Function);
         self.set_sym_type(sym.0, fn_ty);
+        self.builtin_symbols.insert(name.to_string(), sym);
     }
 
     /// Register Python exception class hierarchy (#249).

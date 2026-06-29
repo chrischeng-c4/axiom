@@ -1039,6 +1039,31 @@ fn test_stdlib_exception_group_typed_method_rejects_bare_instance() {
 }
 
 #[test]
+fn test_direct_builtin_typed_argument_rejected_unless_shadowed() {
+    let errors = check("class _W:\n    pass\naiter(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `async_iterable`")),
+        "direct builtin aiter(_W()) should reject a bare instance, got: {errors:?}"
+    );
+
+    let errors = check("class _W:\n    pass\nanext(_W(), None)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `i`")),
+        "direct builtin anext(_W(), None) should reject a bare instance, got: {errors:?}"
+    );
+
+    let errors = check("class _W:\n    pass\ndef aiter(value):\n    return value\naiter(_W())\n");
+    assert!(
+        errors.is_empty(),
+        "user-shadowed aiter must not use the stdlib signature, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_unenforceable_never_rejected() {
     // base64.b64encode(s: ReadableBuffer) -> Unknown: NOT enforceable. Even a
     // blatantly wrong int must NOT be rejected.
