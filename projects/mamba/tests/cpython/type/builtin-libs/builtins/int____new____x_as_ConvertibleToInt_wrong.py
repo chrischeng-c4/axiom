@@ -26,9 +26,8 @@ class _W:
 
 
 from builtins import int
-obj = object.__new__(int)
 try:
-    obj.__new__(_W())  # x: ConvertibleToInt <- wrong-typed
+    int.__new__(int, _W())  # x: ConvertibleToInt <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
