@@ -26,9 +26,9 @@ class _W:
 
 
 from builtins import dict
-obj = object.__new__(dict)
+obj: dict[str, int] = {}
 try:
-    obj.pop(_W())  # key: _KT <- wrong-typed
+    obj.pop(_W(), None)  # key: _KT <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
