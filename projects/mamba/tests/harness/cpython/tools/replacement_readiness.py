@@ -27,6 +27,7 @@ GATE_CHECK = TOOLS_DIR / "gate_check.py"
 PLATFORM_READINESS = TOOLS_DIR / "platform_readiness.py"
 IMPORT_READINESS = TOOLS_DIR / "import_readiness.py"
 THIRD_PARTY_READINESS = TOOLS_DIR / "third_party_readiness.py"
+DEBUGGER_READINESS = TOOLS_DIR / "debugger_readiness.py"
 
 EXIT_NOT_READY = 70
 
@@ -552,6 +553,57 @@ def third_party_dimension(show: int) -> Dimension:
     )
 
 
+def debugger_dimension(show: int) -> Dimension:
+    code, payload = run_json(
+        [sys.executable, str(DEBUGGER_READINESS), "--json", "--show", str(show)],
+        accepted={0, EXIT_NOT_READY},
+    )
+    counts = payload["counts"]
+    status = "green" if code == 0 and payload["ready"] else "red"
+    return Dimension(
+        id="debugger_introspection_profiling",
+        title="Debugger, introspection, profiling, and tracing surfaces",
+        status=status,
+        owner_issue="#712",
+        summary=(
+            "debugger/introspection/profiling/tracing readiness is green"
+            if status == "green"
+            else (
+                "debugger/introspection/profiling/tracing readiness is not replacement-ready: "
+                f"{counts['fixtures']} fixtures, {counts['unmeasured']} unmeasured, "
+                f"{counts['promotion_pending']} promotion-pending, "
+                f"{counts['runtime_failure_debt']} runtime-debt, "
+                f"{counts['missing_semantic_classes']} missing semantic classes"
+            )
+        ),
+        counts={
+            "fixtures": counts["fixtures"],
+            "scopes": counts["scopes"],
+            "target_libs": counts["target_libs"],
+            "missing_target_libs": counts["missing_target_libs"],
+            "semantic_classes": counts["semantic_classes"],
+            "missing_semantic_classes": counts["missing_semantic_classes"],
+            "parse_errors": counts["parse_errors"],
+            "pass_candidate": counts["pass_candidate"],
+            "promotion_pending": counts["promotion_pending"],
+            "runtime_failure_debt": counts["runtime_failure_debt"],
+            "sandbox_denied": counts["sandbox_denied"],
+            "unsupported_platform": counts["unsupported_platform"],
+            "metadata_error": counts["metadata_error"],
+            "runtime_ok": counts["runtime_ok"],
+            "runtime_fail": counts["runtime_fail"],
+            "runtime_timeout": counts["runtime_timeout"],
+            "runtime_crash": counts["runtime_crash"],
+            "unmeasured": counts["unmeasured"],
+            "unowned_gap_count": counts["unowned_gap_count"],
+            "perf_pins": counts["perf_pins"],
+            "malformed_perf_pins": counts["malformed_perf_pins"],
+        },
+        evidence=payload["evidence_commands"],
+        blockers=payload["blockers"][:show],
+    )
+
+
 def blocked_dimension(
     *,
     id: str,
@@ -587,13 +639,7 @@ def dimensions(show: int, type_limit: int) -> list[Dimension]:
         platform_dimension(show),
         import_dimension(show),
         third_party_dimension(show),
-        blocked_dimension(
-            id="debugger_introspection_profiling",
-            title="Debugger, introspection, profiling, and tracing surfaces",
-            owner_issue="#712",
-            summary="debugger/introspection/profiling/tracing surfaces are not yet replacement-ready",
-            evidence=["cargo test -p mamba --test cpython_status"],
-        ),
+        debugger_dimension(show),
         blocked_dimension(
             id="concurrency_free_threaded",
             title="Concurrency and free-threaded semantics",
