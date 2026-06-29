@@ -4,9 +4,16 @@ summary: Semantic coverage for "projects/lumen/k8s/components/observability"
 capability_refs:
   - id: "long-running-stability"
     role: primary
+    gap: "kustomize-base-overlays-hpa"
     claim: "kustomize-base-overlays-hpa"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/k8s/components/observability`."
+  - id: "observability"
+    role: primary
+    gap: "servicemonitor-prometheusrule-bundle"
+    claim: "servicemonitor-prometheusrule-bundle"
+    coverage: full
+    rationale: "This component owns the ServiceMonitor and PrometheusRule observability bundle."
 fill_sections: [deployment, changes]
 ---
 

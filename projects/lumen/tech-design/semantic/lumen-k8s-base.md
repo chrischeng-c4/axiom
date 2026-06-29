@@ -4,9 +4,16 @@ summary: Semantic coverage for "projects/lumen/k8s/base"
 capability_refs:
   - id: "long-running-stability"
     role: primary
+    gap: "kustomize-base-overlays-hpa"
     claim: "kustomize-base-overlays-hpa"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/k8s/base`."
+  - id: "kubernetes-native-deployment"
+    role: primary
+    gap: "kustomize-base-overlays-hpa"
+    claim: "kustomize-base-overlays-hpa"
+    coverage: partial
+    rationale: "The k8s base is the canonical Kubernetes-native deployment foundation."
 fill_sections: [deployment, changes]
 ---
 

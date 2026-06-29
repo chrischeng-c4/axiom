@@ -142,7 +142,12 @@ changes:
     action: modify
     section: unit-test
     impl_mode: hand-written
-    description: "Shared report-issue diagnostics, body assembly, URL prefill, repo resolution, payload shaping, and pure tests."
+    description: "Shared report-issue compatibility shim forwards to cli_std issue creation while lumen has not migrated to the issue group."
+  - path: projects/lumen/tests/spec_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Verify the CLI-facing diagnostics and issue-report command behavior without relying on live GitHub writes."
 ```
 
 # Reviews

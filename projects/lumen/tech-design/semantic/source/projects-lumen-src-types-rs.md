@@ -39,6 +39,7 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | `IndexItem` | projects/lumen/src/types.rs | struct | pub | 170 |  |
 | `IndexRequest` | projects/lumen/src/types.rs | struct | pub | 160 |  |
 | `IndexResponse` | projects/lumen/src/types.rs | struct | pub | 194 |  |
+| `IdsQuery` | projects/lumen/src/types.rs | struct | pub | 450 |  |
 | `KnnQuery` | projects/lumen/src/types.rs | struct | pub | 410 |  |
 | `MatchOp` | projects/lumen/src/types.rs | enum | pub | 382 |  |
 | `MatchQuery` | projects/lumen/src/types.rs | struct | pub | 372 |  |
@@ -48,6 +49,7 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | `SearchHit` | projects/lumen/src/types.rs | struct | pub | 432 |  |
 | `SearchRequest` | projects/lumen/src/types.rs | struct | pub | 207 |  |
 | `SearchResponse` | projects/lumen/src/types.rs | struct | pub | 439 |  |
+| `SortMissing` | projects/lumen/src/types.rs | enum | pub | 277 |  |
 | `SortOrder` | projects/lumen/src/types.rs | enum | pub | 253 |  |
 | `SortSpec` | projects/lumen/src/types.rs | struct | pub | 244 |  |
 | `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 503 |  |
@@ -237,6 +239,14 @@ pub struct IndexItem {
     pub external_id: String,
     pub field: String,
     pub value: FieldValue,
+    /// Optional external version for last-write-wins. When set, lumen keeps the
+    /// highest version per `(external_id, field)` and drops strictly-older
+    /// writes (cf. Elasticsearch `version_type=external`), so out-of-order
+    /// delivery cannot clobber a newer value. When absent, the write applies in
+    /// arrival order.
+    /// @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
 }
 
 /// Polymorphic field value. Validated against the declared `FieldType`
@@ -319,6 +329,27 @@ pub struct SortSpec {
     pub field: String,
     #[serde(default)]
     pub order: SortOrder,
+    /// How to treat rows that have no value for this sort key. Default
+    /// `exclude` keeps today's behavior (such rows are dropped from results and
+    /// from `total`). `first`/`last` keep them, placed before/after the rows
+    /// that do have a value, and count them in `total`.
+    /// @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+    #[serde(default)]
+    pub missing: SortMissing,
+}
+
+/// Placement of rows missing a value for a sort key (SQL NULLS FIRST/LAST).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+pub enum SortMissing {
+    /// Drop rows that lack a value for this key (default; today's behavior).
+    #[default]
+    Exclude,
+    /// Place rows lacking a value before all rows that have one.
+    First,
+    /// Place rows lacking a value after all rows that have one.
+    Last,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
@@ -345,6 +376,8 @@ pub enum QueryNode {
     Match(MatchQuery),
     Term(TermQuery),
     Terms(TermsQuery),
+    /// Filter to a set of external_ids (#182). Wire: `{"ids": {"values":[...]}}`.
+    Ids(IdsQuery),
     Range(RangeQuery),
     Knn(KnnQuery),
     And(Vec<QueryNode>),
@@ -474,6 +507,16 @@ pub struct TermQuery {
 pub struct TermsQuery {
     pub field: String,
     pub values: Vec<FieldValue>,
+}
+
+/// `ids` query node (#182): filter to a set of external_ids. Each id is resolved
+/// through the collection interner to a docid (unknown ids are skipped). It is
+/// constant-scored and composes under and/or/not like term/terms. Removes the
+/// need to index a redundant row-id keyword field for `row_id_in`.
+/// @spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct IdsQuery {
+    pub values: Vec<String>,
 }
 
 /// kNN vector search node. Returns the `k` external_ids closest to
@@ -808,6 +851,7 @@ mod tests {
     }
 }
 // CODEGEN-END
+
 ````
 
 ## Changes

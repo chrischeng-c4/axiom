@@ -6,7 +6,7 @@
 // @claim role-based-authz-matrix-per-route
 // @contract search-security-rbac-and-limit
 // @category security
-// @required_for_production false
+// @required_for_production true
 // @command cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture
 // AW-EC-END
 

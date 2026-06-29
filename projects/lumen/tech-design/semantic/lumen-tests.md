@@ -50,6 +50,144 @@ capability_refs:
     claim: "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
     coverage: full
     rationale: "perf_gate_vs_db is the ratcheted competitive regression gate used by the efficiency EC."
+  - id: "competitor-feature-parity"
+    role: primary
+    gap: "search-feature-breadth"
+    claim: "search-feature-breadth"
+    coverage: full
+    rationale: "api_e2e, vector_e2e, hash_hamming, and collapse_nested cover the full claimed search feature breadth."
+  - id: "competitor-performance"
+    role: primary
+    gap: "perf-gate-envelope-absolute-latency-throughput-floors"
+    claim: "perf-gate-envelope-absolute-latency-throughput-floors"
+    coverage: full
+    rationale: "perf_gate pins the absolute latency and throughput envelope."
+  - id: "competitor-performance"
+    role: primary
+    gap: "external-pg-and-opensearch-arena-comparison"
+    claim: "external-pg-and-opensearch-arena-comparison"
+    coverage: full
+    rationale: "perf_gate_vs_db and the vat efficiency runner provide the pg/OpenSearch comparison evidence."
+  - id: "security-hardening"
+    role: primary
+    gap: "bearer-token-auth-lumen-auth"
+    claim: "bearer-token-auth-lumen-auth"
+    coverage: full
+    rationale: "auth_e2e pins bearer-token auth behavior."
+  - id: "security-hardening"
+    role: primary
+    gap: "role-based-authz-matrix-per-route"
+    claim: "role-based-authz-matrix-per-route"
+    coverage: full
+    rationale: "authz_matrix_e2e pins per-route RBAC behavior."
+  - id: "security-hardening"
+    role: primary
+    gap: "tls-rustls"
+    claim: "tls-rustls"
+    coverage: full
+    rationale: "the TLS cargo gate pins the rustls serving surface."
+  - id: "search-core"
+    role: primary
+    gap: "query-planner-boolean-eval-roaring-postings"
+    claim: "query-planner-boolean-eval-roaring-postings"
+    coverage: full
+    rationale: "planner_diff covers the search-core boolean planner contract."
+  - id: "search-core"
+    role: primary
+    gap: "filter-sort-early-termination"
+    claim: "filter-sort-early-termination"
+    coverage: full
+    rationale: "perf_gate_vs_db covers filter/sort early termination."
+  - id: "lexical-search"
+    role: primary
+    gap: "bm25-ranking-and-analyzers"
+    claim: "bm25-ranking-and-analyzers"
+    coverage: full
+    rationale: "perf_gate_vs_db covers BM25 ranking and analyzer behavior."
+  - id: "exact-filter-search"
+    role: primary
+    gap: "term-range-set-early-termination"
+    claim: "term-range-set-early-termination"
+    coverage: full
+    rationale: "perf_gate_vs_db covers term, range, and set early termination."
+  - id: "exact-filter-search"
+    role: primary
+    gap: "wide-range-filter-index-on-disk-sorted-value-range"
+    claim: "wide-range-filter-index-on-disk-sorted-value-range"
+    coverage: full
+    rationale: "perf_gate_vs_db covers wide range filters over sorted disk-backed values."
+  - id: "vector-hash-search"
+    role: primary
+    gap: "hnsw-vector-knn-cpu"
+    claim: "hnsw-vector-knn-cpu"
+    coverage: full
+    rationale: "vector_e2e covers CPU vector kNN behavior."
+  - id: "vector-hash-search"
+    role: primary
+    gap: "filtered-knn-no-recall-collapse"
+    claim: "filtered-knn-no-recall-collapse"
+    coverage: full
+    rationale: "vector_e2e covers filtered kNN without recall collapse."
+  - id: "vector-hash-search"
+    role: primary
+    gap: "hash-hamming-search"
+    claim: "hash-hamming-search"
+    coverage: full
+    rationale: "hash_hamming covers Hamming-distance hash search."
+  - id: "hybrid-search"
+    role: primary
+    gap: "rrf-fusion-node-planner-integration"
+    claim: "rrf-fusion-node-planner-integration"
+    coverage: full
+    rationale: "hybrid_rrf covers lexical/vector RRF planner integration."
+  - id: "duplicate-nested-search"
+    role: primary
+    gap: "duplicates-group-by"
+    claim: "duplicates-group-by"
+    coverage: full
+    rationale: "api_e2e covers duplicate group discovery."
+  - id: "duplicate-nested-search"
+    role: primary
+    gap: "nested-group-has-child-collapse"
+    claim: "nested-group-has-child-collapse"
+    coverage: full
+    rationale: "collapse_nested covers nested has_child/group/collapse behavior."
+  - id: "schema-ops-lifecycle"
+    role: primary
+    gap: "schema-ddl-drop-field-drain"
+    claim: "schema-ddl-drop-field-drain"
+    coverage: full
+    rationale: "drop_field_e2e and drop_drain_e2e cover schema DDL and drain behavior."
+  - id: "schema-ops-lifecycle"
+    role: primary
+    gap: "reindex-replay-stream"
+    claim: "reindex-replay-stream"
+    coverage: full
+    rationale: "reindex_stream_e2e covers replay and reindex stream behavior."
+  - id: "schema-ops-lifecycle"
+    role: primary
+    gap: "stats-metadata"
+    claim: "stats-metadata"
+    coverage: full
+    rationale: "stats_metadata_e2e covers stats and metadata behavior."
+  - id: "elastic-scale"
+    role: primary
+    gap: "ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log"
+    claim: "ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log"
+    coverage: full
+    rationale: "disk_scale_proof covers the RAM-hot/disk-all segment tier."
+  - id: "backup-restore"
+    role: primary
+    gap: "rdb-snapshot-restore-localfsrdbstore"
+    claim: "rdb-snapshot-restore-localfsrdbstore"
+    coverage: full
+    rationale: "backup_restore_e2e covers LocalFsRdbStore snapshot restore."
+  - id: "observability"
+    role: primary
+    gap: "prometheus-metrics-endpoint"
+    claim: "prometheus-metrics-endpoint"
+    coverage: full
+    rationale: "api_e2e covers the Prometheus metrics endpoint."
 fill_sections: [schema, unit-test, changes]
 ---
 
