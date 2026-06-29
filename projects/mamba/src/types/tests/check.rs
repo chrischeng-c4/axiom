@@ -940,6 +940,35 @@ fn test_stdlib_slice_new_contracts_rejected() {
 }
 
 #[test]
+fn test_stdlib_str_contracts_rejected() {
+    let errors = check(
+        "from builtins import str\nclass _W:\n    pass\nobj = str.__new__(str)\nobj.__add__(_W())\nobj.__add__(123)\nobj.__getitem__(_W())\nobj.__mod__(_W())\nobj.__mul__(_W())\nobj.__rmul__(_W())\nobj.center(_W())\nobj.endswith(_W())\nobj.expandtabs(_W())\nstr.__new__(str, _W(), \"utf-8\")\n",
+    );
+    let typed_errors = errors
+        .iter()
+        .filter(|e| e.contains("does not satisfy parameter"))
+        .count();
+    assert_eq!(
+        typed_errors, 9,
+        "str protocol/typed walls should reject bare instances, got: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `str`, got `int`")),
+        "str.__add__(int) should be rejected as a scalar mismatch, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import str\nobj = str.__new__(str)\nobj.__add__(\"x\")\nobj.__getitem__(0)\nobj.__getitem__(slice(0, 1))\nobj.__mul__(2)\nobj.__rmul__(2)\nobj.center(3)\nobj.endswith(\"x\")\nobj.endswith((\"x\", \"y\"))\nobj.expandtabs(4)\nstr.__new__(str)\nstr.__new__(str, 123)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid str method forms must stay accepted, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_map_new_callable_rejected() {
     let errors =
         check("from builtins import map\nclass _W:\n    pass\nmap.__new__(map, _W(), None)\n");
