@@ -26,9 +26,9 @@ class _W:
 
 
 from builtins import dict
-obj = object.__new__(dict)
+obj: dict[str, int] = {}
 try:
-    obj.__setitem__(_W(), None)  # key: _KT <- wrong-typed
+    obj.__setitem__(_W(), 1)  # key: _KT <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
