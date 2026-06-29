@@ -9,12 +9,11 @@
 # case = "connect__database_as_StrOrBytesPath_wrong"
 # subject = "_sqlite3.connect(database: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed database"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed database
 # mamba-strict-type: TypeError
 """Type wall: _sqlite3.connect(database: StrOrBytesPath); call it with the wrong type.
 
