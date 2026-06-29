@@ -74,3 +74,91 @@ use `cli_std::ToolInfo` for release asset identity, build provenance, repo
 routing, diagnostics, and the `project:cap` issue label. Existing cap domain
 commands (`run`, passthrough wrapping, daemon, status, init, hook, config,
 ping, wait) keep their current behavior and parse precedence.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: cap-cli-std-convention-tests
+requirements:
+  help_surface:
+    id: CLI-STD-UT-1
+    text: "cap --help lists llm, upgrade, and issue as standard agent-facing commands."
+    kind: functional
+    risk: high
+    verify: test
+  llm_offline:
+    id: CLI-STD-UT-2
+    text: "cap llm renders cap-specific offline docs through cli_std::llm and includes the standard-command footer."
+    kind: functional
+    risk: medium
+    verify: test
+  issue_create:
+    id: CLI-STD-UT-3
+    text: "cap issue create --dry-run builds a diagnostics-rich issue body tagged project:cap without network submission."
+    kind: functional
+    risk: high
+    verify: test
+  legacy_report_issue:
+    id: CLI-STD-UT-4
+    text: "cap report-issue --dry-run remains a deprecated compatibility entrypoint for the stale WI acceptance text."
+    kind: compatibility
+    risk: medium
+    verify: test
+  build_features:
+    id: CLI-STD-UT-5
+    text: "cap builds in the default offline configuration and with the online release feature that enables cli-std network paths."
+    kind: functional
+    risk: medium
+    verify: test
+elements:
+  cli_unit_tests:
+    kind: test
+    type: "cargo test -p cap cli_std_convention"
+  cap_package_tests:
+    kind: test
+    type: "cargo test -p cap"
+  cap_online_build:
+    kind: test
+    type: "cargo build -p cap --features release"
+relations:
+  - { from: cli_unit_tests, verifies: help_surface }
+  - { from: cli_unit_tests, verifies: llm_offline }
+  - { from: cli_unit_tests, verifies: issue_create }
+  - { from: cli_unit_tests, verifies: legacy_report_issue }
+  - { from: cap_package_tests, verifies: help_surface }
+  - { from: cap_online_build, verifies: build_features }
+---
+requirementDiagram
+  requirement help_surface {
+    id: CLI-STD-UT-1
+    text: "help lists llm upgrade issue"
+    risk: high
+    verifymethod: test
+  }
+  requirement llm_offline {
+    id: CLI-STD-UT-2
+    text: "llm uses cli_std offline renderer"
+    risk: medium
+    verifymethod: test
+  }
+  requirement issue_create {
+    id: CLI-STD-UT-3
+    text: "issue create dry-run emits diagnostics and project label"
+    risk: high
+    verifymethod: test
+  }
+  requirement legacy_report_issue {
+    id: CLI-STD-UT-4
+    text: "report-issue dry-run compatibility remains"
+    risk: medium
+    verifymethod: test
+  }
+  requirement build_features {
+    id: CLI-STD-UT-5
+    text: "default and release feature builds work"
+    risk: medium
+    verifymethod: test
+  }
+```
