@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import bytearray
-obj = object.__new__(bytearray)
+obj = bytearray()
 try:
     obj.__getitem__(_W())  # key: slice <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

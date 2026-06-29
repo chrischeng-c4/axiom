@@ -7,11 +7,14 @@
 //! is deliberately scalar-only: anything we cannot represent as a concrete
 //! scalar (protocols, unions, typevars, overloads, buffers) collapses to
 //! [`CoreTy::Unknown`], which the hook *skips* — guaranteeing zero false
-//! positives on correct calls.
+//! positives on correct calls. [`CoreTy::Bytes`] is represented as a negative
+//! scalar wall: concrete scalars are never bytes, while bytes literals currently
+//! infer to `Any` and therefore remain skip-when-unsure.
 
 /// Closed set of argument types the PoC table can express. Anything richer
 /// (Optional, Union, Protocol, TypeVar, overload, ReadableBuffer, SupportsIndex)
-/// must be encoded as [`CoreTy::Unknown`] so the hook never rejects it.
+/// must be encoded as [`CoreTy::Unknown`] or [`CoreTy::Typed`] so the hook does
+/// not over-enforce it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoreTy {
     Int,
@@ -198,6 +201,168 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         name: "anext",
         kind: SigKind::ModuleFn,
         params: &[p("i", CoreTy::Typed), p("default", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    // POSITIVE: bytes/bytearray constructors are overload-heavy. The first
+    // argument may be a size int, text str with encoding, bytes-like object, or
+    // iterable of ints. A Typed source only rejects a provably bare `_W()` probe
+    // and leaves all scalar overload candidates untouched; later scalar params
+    // still enforce when present.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "",
+        name: "bytes",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("source", CoreTy::Typed),
+            p("encoding", CoreTy::Str),
+            p("errors", CoreTy::Str),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "",
+        name: "bytearray",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("source", CoreTy::Typed),
+            p("encoding", CoreTy::Str),
+            p("errors", CoreTy::Str),
+        ],
+        enforceable: true,
+    },
+    // POSITIVE: bytes/bytearray bytes-like methods accept bytes-like values or
+    // tuples thereof. Concrete scalars such as int/str/bool are never bytes,
+    // while actual bytes literals infer to Any today and stay skip-when-unsure.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytes",
+        name: "__ge__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Bytes)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytes",
+        name: "__gt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Bytes)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytes",
+        name: "__le__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Bytes)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytes",
+        name: "__lt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Bytes)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytes",
+        name: "endswith",
+        kind: SigKind::Method,
+        params: &[
+            p("suffix", CoreTy::Bytes),
+            p("start", CoreTy::Typed),
+            p("end", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytes",
+        name: "startswith",
+        kind: SigKind::Method,
+        params: &[
+            p("prefix", CoreTy::Bytes),
+            p("start", CoreTy::Typed),
+            p("end", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytearray",
+        name: "endswith",
+        kind: SigKind::Method,
+        params: &[
+            p("suffix", CoreTy::Bytes),
+            p("start", CoreTy::Typed),
+            p("end", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytearray",
+        name: "startswith",
+        kind: SigKind::Method,
+        params: &[
+            p("prefix", CoreTy::Bytes),
+            p("start", CoreTy::Typed),
+            p("end", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    // POSITIVE: index/slice overloads are represented as Typed so a bare user
+    // object is rejected without claiming a full slice/SupportsIndex model.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytes",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytearray",
+        name: "__delitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytearray",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytearray",
+        name: "__setitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytes",
+        name: "splitlines",
+        kind: SigKind::Method,
+        params: &[p("keepends", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytearray",
+        name: "splitlines",
+        kind: SigKind::Method,
+        params: &[p("keepends", CoreTy::Bool)],
         enforceable: true,
     },
     // POSITIVE: bool bitwise dunders accept bool/int operands. A single int
@@ -560,15 +725,15 @@ mod tests {
     #[test]
     fn generated_enforceable_rows_have_a_scalar_and_no_star() {
         // The invariant: every row the hook will ENFORCE must (a) carry at least
-        // one concrete-scalar (Int/Float/Str) param to check, and (b) have no
-        // star param (positional alignment past `*args` is uncertain). A row MAY
-        // also carry Unknown/None/Bytes params — `core_ty_to_type_id` maps those
-        // to None, so the hook SKIPS them (advancing the positional index) and
-        // never rejects against them. This is what lets a scalar param sitting
-        // BEHIND an Unknown param enforce at its real position; a full uncapped
-        // 28k-fixture ② FP scan confirms 0 false positives from the skipped
-        // params. (Earlier the generator truncated enforceable rows to their
-        // leading scalar prefix to satisfy a stricter all-scalar invariant.)
+        // one checkable param (Int/Float/Str/Typed/Bytes) and (b) have no star
+        // param (positional alignment past `*args` is uncertain). Unknown/None
+        // params are skipped, while Bytes is a negative scalar wall that rejects
+        // impossible concrete scalars and leaves bytes-like values as Any-skips.
+        // This is what lets a scalar param sitting BEHIND an Unknown param
+        // enforce at its real position; a full uncapped 28k-fixture ② FP scan
+        // confirms 0 false positives from the skipped params. (Earlier the
+        // generator truncated enforceable rows to their leading scalar prefix to
+        // satisfy a stricter all-scalar invariant.)
         use super::super::stdlib_sigs_generated::STDLIB_SIGS_GENERATED;
         for s in STDLIB_SIGS_GENERATED.iter().filter(|s| s.enforceable) {
             assert!(
@@ -580,7 +745,7 @@ mod tests {
             assert!(
                 s.params.iter().any(|p| matches!(
                     p.ty,
-                    CoreTy::Int | CoreTy::Float | CoreTy::Str | CoreTy::Typed
+                    CoreTy::Int | CoreTy::Float | CoreTy::Str | CoreTy::Typed | CoreTy::Bytes
                 )),
                 "{}.{} enforceable with no checkable (scalar/Typed) param",
                 s.module,
