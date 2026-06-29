@@ -472,6 +472,59 @@ fn missing_third_party_imports() -> Vec<(String, String)> {
     missing
 }
 
+fn cpython_denominator_summary() -> JsonValue {
+    let script = manifest_dir().join("tools/cpython_regrtest_inventory.py");
+    let output = Command::new(common::python3_bin())
+        .arg(&script)
+        .args(["--json", "--top", "20"])
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(err) => {
+            return json!({
+                "available": false,
+                "error": format!("failed to launch {}: {err}", script.display()),
+            });
+        }
+    };
+    if !output.status.success() {
+        return json!({
+            "available": false,
+            "exit_status": output.status.to_string(),
+            "stdout": String::from_utf8_lossy(&output.stdout),
+            "stderr": String::from_utf8_lossy(&output.stderr),
+        });
+    }
+    let parsed: JsonValue = match serde_json::from_slice(&output.stdout) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            return json!({
+                "available": false,
+                "error": format!("failed to parse denominator JSON: {err}"),
+                "stdout": String::from_utf8_lossy(&output.stdout),
+            });
+        }
+    };
+    let candidates = parsed
+        .get("cpython_test_case_candidates")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    json!({
+        "available": true,
+        "python": parsed.get("python").cloned().unwrap_or(JsonValue::Null),
+        "cpython_test_root": parsed.get("cpython_test_root").cloned().unwrap_or(JsonValue::Null),
+        "test_py_files": candidates.get("test_py_files").cloned().unwrap_or(JsonValue::Null),
+        "regrtest_modules": parsed.get("cpython_regrtest_modules").cloned().unwrap_or(JsonValue::Null),
+        "static_test_defs_in_regrtest_modules": parsed.get("static_test_defs_in_regrtest_modules").cloned().unwrap_or(JsonValue::Null),
+        "static_test_defs_in_all_test_files": parsed.get("static_test_defs_in_all_test_files").cloned().unwrap_or(JsonValue::Null),
+        "exact_fixture_lib_matches": parsed.get("exact_fixture_lib_matches").cloned().unwrap_or(JsonValue::Null),
+        "source_fixture_matches": parsed.get("source_fixture_matches").cloned().unwrap_or(JsonValue::Null),
+        "no_fixture_lib_or_source_match": parsed.get("no_fixture_lib_or_source_match").cloned().unwrap_or(JsonValue::Null),
+        "ownership": parsed.get("denominator_ownership").cloned().unwrap_or_else(|| json!({})),
+        "top_unowned_modules": parsed.get("top_no_fixture_lib_or_source_match").cloned().unwrap_or_else(|| json!([])),
+    })
+}
+
 fn pin_vec_json(pins: &[PerfPin]) -> Vec<JsonValue> {
     pins.iter().map(PerfPin::as_json).collect()
 }
@@ -512,6 +565,7 @@ fn print_pin_imports(label: &str, items: &[(PerfPin, String)]) {
 fn main() {
     let json_mode = std::env::args().any(|arg| arg == "--json");
     let fixtures = fixture_summary();
+    let denominator = cpython_denominator_summary();
     let perf = perf_baseline_summary();
     let missing_3p = missing_third_party_imports();
 
@@ -534,6 +588,7 @@ fn main() {
                     "by_bucket": fixtures.by_bucket,
                     "by_dimension": fixtures.by_dimension,
                 },
+                "cpython_denominator": denominator,
                 "perf": {
                     "pins": perf.pins,
                     "baseline_db": perf.db_path,
@@ -579,6 +634,50 @@ fn main() {
     );
     println!("  by bucket: {:?}", fixtures.by_bucket);
     println!("  by dimension: {:?}", fixtures.by_dimension);
+    println!("  denominator available: {}", denominator["available"]);
+    if denominator["available"].as_bool() == Some(true) {
+        let ownership = &denominator["ownership"];
+        println!("  denominator CPython: {}", denominator["python"]);
+        println!(
+            "  denominator test root: {}",
+            denominator["cpython_test_root"]
+        );
+        println!(
+            "  denominator test .py files: {}",
+            denominator["test_py_files"]
+        );
+        println!(
+            "  denominator regrtest modules: {}",
+            denominator["regrtest_modules"]
+        );
+        println!(
+            "  denominator static test defs: {}",
+            denominator["static_test_defs_in_regrtest_modules"]
+        );
+        println!("  denominator ownership pass: {}", ownership["pass"]);
+        println!(
+            "  denominator owned modules: {}",
+            ownership["owned_modules"]
+        );
+        println!(
+            "  denominator unowned modules: {}",
+            ownership["unowned_modules"]
+        );
+        println!(
+            "  denominator unowned static test defs: {}",
+            ownership["unowned_static_test_defs"]
+        );
+        if let Some(items) = denominator["top_unowned_modules"].as_array() {
+            for item in items.iter().take(10) {
+                println!(
+                    "    unowned denominator: {} defs={} key={}",
+                    item["module"], item["static_test_defs"], item["key"]
+                );
+            }
+        }
+    } else if let Some(err) = denominator["error"].as_str() {
+        println!("  denominator error: {err}");
+    }
     println!("  perf pins: {}", perf.pins);
     println!("  perf baseline db: {}", perf.db_path.display());
     println!("  perf baseline db exists: {}", perf.db_exists);
