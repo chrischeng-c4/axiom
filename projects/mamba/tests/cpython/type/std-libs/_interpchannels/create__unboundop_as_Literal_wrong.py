@@ -9,12 +9,11 @@
 # case = "create__unboundop_as_Literal_wrong"
 # subject = "_interpchannels.create(unboundop: Literal)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed unboundop"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_interpchannels.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed unboundop
 # mamba-strict-type: TypeError
 """Type wall: _interpchannels.create(unboundop: Literal); call it with the wrong type.
 
