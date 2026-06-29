@@ -9,12 +9,11 @@
 # case = "method_self_int_called_with_str"
 # subject = "unbound method receiver contract"
 # kind = "semantic"
-# xfail = "unbound method receiver contract pending; currently MAMBA_TYPE_LEAKED"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
 # ///
-# mamba-xfail: unbound method receiver contract pending; currently MAMBA_TYPE_LEAKED
 # mamba-strict-type: TypeError
 """Mamba runtime-type enforcement: method receiver type mismatch.
 

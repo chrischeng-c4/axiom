@@ -21,6 +21,15 @@ fn check_strict(src: &str) -> Vec<String> {
 }
 
 #[allow(dead_code)]
+fn check_strict_type_fixture(src: &str) -> Vec<String> {
+    let module = parser::parse(src, FileId(0)).expect("parse failed");
+    let mut checker = TypeChecker::new();
+    checker.strict_type_fixture = true;
+    let errors = checker.check_module(&module);
+    errors.into_iter().map(|e| e.to_string()).collect()
+}
+
+#[allow(dead_code)]
 fn check_warnings(src: &str) -> Vec<String> {
     let module = parser::parse(src, FileId(0)).expect("parse failed");
     let mut checker = TypeChecker::new();
@@ -110,6 +119,39 @@ fn test_function_extended_arg_annotations_rejected() {
     assert!(
         errors.is_empty(),
         "valid keyword-only, *args, and **kwargs calls should remain accepted, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_unbound_method_receiver_contract_rejected() {
+    let errors = check("class Box:\n    def get(self, which: int) -> int:\n        return which\nBox.get(\"not_a_box\", 3)\n");
+    assert!(
+        errors.is_empty(),
+        "non-strict code should keep CPython-compatible unbound call semantics, got: {errors:?}"
+    );
+
+    let errors = check_strict_type_fixture("class Box:\n    def get(self, which: int) -> int:\n        return which\nBox.get(\"not_a_box\", 3)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `Box`, got `str`")),
+        "unbound method should reject wrong receiver, got: {errors:?}"
+    );
+
+    let errors = check_strict_type_fixture(
+        "class Box:\n    def get(self, which: int) -> int:\n        return which\nBox.get(Box(), 3)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "unbound method should accept class instance receiver, got: {errors:?}"
+    );
+
+    let errors = check(
+        "class Box:\n    def get(self, which: int) -> int:\n        return which\nbox: Box = Box()\nbox.get(3)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "instance method call should not require an explicit receiver, got: {errors:?}"
     );
 }
 
