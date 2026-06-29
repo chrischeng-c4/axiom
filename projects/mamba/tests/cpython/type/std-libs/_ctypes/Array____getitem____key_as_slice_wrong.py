@@ -9,12 +9,11 @@
 # case = "Array____getitem____key_as_slice_wrong"
 # subject = "_ctypes.Array.__getitem__(key: slice)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_ctypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key
 # mamba-strict-type: TypeError
 """Type wall: _ctypes.Array.__getitem__(key: slice); call it with the wrong type.
 
@@ -25,10 +24,12 @@ class _W:
     pass
 
 
-from _ctypes import Array
-obj = object.__new__(Array)
+import _ctypes
+import ctypes
+
+obj = (ctypes.c_int * 2)(1, 2)
 try:
-    obj.__getitem__(_W())  # key: slice <- wrong-typed
+    _ctypes.Array.__getitem__(obj, _W())  # key: slice <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)

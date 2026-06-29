@@ -9,12 +9,11 @@
 # case = "CFuncPtr____new____address_as_int_wrong"
 # subject = "_ctypes.CFuncPtr.__new__(address: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed address"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_ctypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed address
 # mamba-strict-type: TypeError
 """Type wall: _ctypes.CFuncPtr.__new__(address: int); call it with the wrong type.
 
@@ -22,9 +21,8 @@ typeshed contract: address is int. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from _ctypes import CFuncPtr
-obj = object.__new__(CFuncPtr)
 try:
-    obj.__new__("not_an_int")  # address: int <- wrong-typed
+    CFuncPtr.__new__(CFuncPtr, "not_an_int")  # address: int <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
