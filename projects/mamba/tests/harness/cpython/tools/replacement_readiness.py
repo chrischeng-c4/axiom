@@ -26,6 +26,7 @@ STRICT_TYPE_ACCOUNTING = TOOLS_DIR / "strict_type_accounting.py"
 GATE_CHECK = TOOLS_DIR / "gate_check.py"
 PLATFORM_READINESS = TOOLS_DIR / "platform_readiness.py"
 IMPORT_READINESS = TOOLS_DIR / "import_readiness.py"
+THIRD_PARTY_READINESS = TOOLS_DIR / "third_party_readiness.py"
 
 EXIT_NOT_READY = 70
 
@@ -469,6 +470,88 @@ def import_dimension(show: int) -> Dimension:
     )
 
 
+def third_party_dimension(show: int) -> Dimension:
+    code, payload = run_json(
+        [sys.executable, str(THIRD_PARTY_READINESS), "--json", "--show", str(show)],
+        accepted={0, EXIT_NOT_READY},
+    )
+    counts = payload["counts"]
+    status = "green" if code == 0 and payload["ready"] else "red"
+    return Dimension(
+        id="third_party_c_extension_strategy",
+        title="Third-party and C-extension compatibility strategy",
+        status=status,
+        owner_issue="#711",
+        summary=(
+            "third-party package and C-extension readiness is green"
+            if status == "green"
+            else (
+                "third-party/C-extension readiness is not replacement-ready: "
+                f"{counts['packages']} packages, {counts['ready_packages']} ready, "
+                f"{counts['unmeasured']} unmeasured fixture rows, "
+                f"{counts['blocked_c_extension_packages']} mandatory C-extension packages, "
+                f"{counts['blocked_optional_native_packages']} optional-native packages"
+            )
+        ),
+        counts={
+            "packages": counts["packages"],
+            "fixtures": counts["fixtures"],
+            "tiers": counts["tiers"],
+            "missing_tiers": counts["missing_tiers"],
+            "ready_packages": counts["ready_packages"],
+            "not_ready_packages": counts["not_ready_packages"],
+            "blocked_c_extension_packages": counts["blocked_c_extension_packages"],
+            "blocked_optional_native_packages": counts[
+                "blocked_optional_native_packages"
+            ],
+            "unclassified_packages": counts["unclassified_packages"],
+            "mamba_native_replacement_packages": counts[
+                "mamba_native_replacement_packages"
+            ],
+            "pure_python_packages": counts["pure_python_packages"],
+            "optional_native_acceleration_packages": counts[
+                "optional_native_acceleration_packages"
+            ],
+            "mandatory_c_extension_packages": counts[
+                "mandatory_c_extension_packages"
+            ],
+            "managed_environment_gates": counts["managed_environment_gates"],
+            "missing_managed_environment_gates": counts[
+                "missing_managed_environment_gates"
+            ],
+            "schema_manifest_packages": counts["schema_manifest_packages"],
+            "ecosystem_required_3p_packages": counts[
+                "ecosystem_required_3p_packages"
+            ],
+            "provider_packages": counts["provider_packages"],
+            "mambalibs_native_fixture_count": counts[
+                "mambalibs_native_fixture_count"
+            ],
+            "mambalibs_native_import_gate_count": counts[
+                "mambalibs_native_import_gate_count"
+            ],
+            "runtime_ok": counts["runtime_ok"],
+            "runtime_fail": counts["runtime_fail"],
+            "runtime_timeout": counts["runtime_timeout"],
+            "runtime_crash": counts["runtime_crash"],
+            "unmeasured": counts["unmeasured"],
+            "stub_real_world_fixtures": counts["stub_real_world_fixtures"],
+            "missing_import_smoke_packages": counts[
+                "missing_import_smoke_packages"
+            ],
+            "missing_behavior_smoke_packages": counts[
+                "missing_behavior_smoke_packages"
+            ],
+            "missing_install_run_manifest_packages": counts[
+                "missing_install_run_manifest_packages"
+            ],
+            "unowned_gap_count": counts["unowned_gap_count"],
+        },
+        evidence=payload["evidence_commands"],
+        blockers=payload["blockers"][:show],
+    )
+
+
 def blocked_dimension(
     *,
     id: str,
@@ -503,13 +586,7 @@ def dimensions(show: int, type_limit: int) -> list[Dimension]:
         safety_dimension(show),
         platform_dimension(show),
         import_dimension(show),
-        blocked_dimension(
-            id="third_party_c_extension_strategy",
-            title="Third-party and C-extension compatibility strategy",
-            owner_issue="#711",
-            summary="third-party and C-extension strategy is not yet green for replacement readiness",
-            evidence=["cargo test -p mamba --test cpython_status -- --json"],
-        ),
+        third_party_dimension(show),
         blocked_dimension(
             id="debugger_introspection_profiling",
             title="Debugger, introspection, profiling, and tracing surfaces",
