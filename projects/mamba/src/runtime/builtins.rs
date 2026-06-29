@@ -1851,6 +1851,9 @@ pub fn mb_str(val: MbValue) -> MbValue {
     if let Some((_, data)) = super::stdlib::collections_mod::user_wrapper_data(val) {
         return mb_str(data);
     }
+    if let Some(text) = super::stdlib::xml_mod::qname_text_value(val) {
+        return MbValue::from_ptr(MbObject::new_str(text));
+    }
     let s = if let Some(i) = val.as_int() {
         // UUID handles are int-tagged but render as the canonical
         // 8-4-4-4-12 form (#1475 — keep `print(uuid.uuid4())` honest
@@ -4731,6 +4734,9 @@ fn bound_method_parts(v: MbValue) -> Option<(MbValue, MbValue)> {
 
 /// Deep structural equality for MbValues.
 fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
+    if let Some(eq) = super::stdlib::xml_mod::qname_eq_value(a, b) {
+        return eq;
+    }
     // UserList / UserDict / UserString compare by their backing payload, so
     // `UserList([0,1]) == [0,1]` and `UserList(x) == UserList(x)` hold (CPython
     // forwards __eq__ to self.data). Unwrap any wrapper operand, then recurse.
