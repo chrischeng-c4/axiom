@@ -9,12 +9,11 @@
 # case = "mul__a_as_SupportsMul_wrong"
 # subject = "_operator.mul(a: SupportsMul)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: _operator.mul(a: SupportsMul); call it with the wrong type.
 

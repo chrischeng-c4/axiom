@@ -260,6 +260,94 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("state", CoreTy::Tuple)],
         enforceable: true,
     },
+    // POSITIVE: `_operator` has many protocol/typevar rows that generated
+    // typeshed keeps Unknown-skipped. A bare user instance cannot satisfy these
+    // operator protocols, so reject the first operand/callable object statically
+    // while leaving the right-hand side dynamic where overloads vary.
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "add",
+        kind: SigKind::ModuleFn,
+        params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "call",
+        kind: SigKind::ModuleFn,
+        params: &[p("obj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "concat",
+        kind: SigKind::ModuleFn,
+        params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "delitem",
+        kind: SigKind::ModuleFn,
+        params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "getitem",
+        kind: SigKind::ModuleFn,
+        params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "is_not_none",
+        kind: SigKind::ModuleFn,
+        params: &[p("a", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "mod",
+        kind: SigKind::ModuleFn,
+        params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "mul",
+        kind: SigKind::ModuleFn,
+        params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "setitem",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("a", CoreTy::Typed),
+            p("b", CoreTy::Unknown),
+            p("c", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_operator",
+        qualifier: "",
+        name: "sub",
+        kind: SigKind::ModuleFn,
+        params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.

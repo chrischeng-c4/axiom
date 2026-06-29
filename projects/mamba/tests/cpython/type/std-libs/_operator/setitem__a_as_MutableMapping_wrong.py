@@ -9,12 +9,11 @@
 # case = "setitem__a_as_MutableMapping_wrong"
 # subject = "_operator.setitem(a: MutableMapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: _operator.setitem(a: MutableMapping); call it with the wrong type.
 

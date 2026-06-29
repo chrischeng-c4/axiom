@@ -9,12 +9,11 @@
 # case = "getitem__a_as_Sequence_wrong"
 # subject = "_operator.getitem(a: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: _operator.getitem(a: Sequence); call it with the wrong type.
 
