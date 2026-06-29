@@ -1250,6 +1250,44 @@ fn test_stdlib_float_pow_round_walls() {
 }
 
 #[test]
+fn test_dict_receiver_generic_key_methods() {
+    let errors = check("class _W:\n    pass\nobj: dict[str, int] = {}\nobj.__getitem__(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `str`, got `_W`")),
+        "dict[str, int].__getitem__(_W()) should reject the key type, got: {errors:?}"
+    );
+
+    let errors = check("class _W:\n    pass\nobj: dict[str, int] = {}\nobj.__setitem__(_W(), 1)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `str`, got `_W`")),
+        "dict[str, int].__setitem__(_W(), 1) should reject the key type, got: {errors:?}"
+    );
+
+    let errors = check(
+        "class _W:\n    pass\nobj: dict[str, int] = {}\nobj.__delitem__(_W())\nobj.get(_W())\nobj.pop(_W(), None)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .filter(|e| e.contains("expected `str`, got `_W`"))
+            .count()
+            >= 3,
+        "dict key methods should reject wrong typed keys, got: {errors:?}"
+    );
+
+    let errors =
+        check("class _K:\n    pass\nobj = {_K(): 1}\nobj.__getitem__(_K())\nobj.get(_K())\n");
+    assert!(
+        errors.is_empty(),
+        "dicts keyed by a user class must stay valid when the receiver key type matches, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
     let errors = check(
         "from builtins import classmethod\nclass _W:\n    pass\nobj = classmethod(lambda cls: None)\nobj.__get__(_W())\n",
