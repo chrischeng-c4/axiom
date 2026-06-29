@@ -887,15 +887,17 @@ impl TypeChecker {
                 param_idx += 1;
                 continue;
             }
-            // A BARE user class instance (`class _W: pass` → `_W()`) satisfies NO
+            // A BARE user class instance (`class _W: pass` -> `_W()`) satisfies NO
             // concrete parameter contract: it is not a scalar (str/int/float/
-            // bytes/bool — no relevant dunder), not a protocol (no dunders), and
+            // bytes/bool; no relevant dunder), not a protocol (no dunders), and
             // not a nominal class (object is its only base). Reject it against any
-            // param whose CoreTy names such a contract. FP-clean by construction:
-            // `user_bare_classes` holds only classes with `object` as the sole
-            // base and no methods, so the instance provably cannot be the declared
-            // type. `None`/`Unknown` params are excluded — `None` because typeshed
-            // under-declares Optional, `Unknown` because we skip-when-unsure.
+            // param whose CoreTy names such a contract. Use expression shape,
+            // not just `Ty::Class`: the current type model represents both `C`
+            // and `C()` as `Ty::Class`, and descriptor/type params must accept
+            // class objects such as `f.__get__(None, C)` and
+            // `object.__subclasshook__(C)`. `None`/`Unknown` params are excluded
+            // because `None` is frequently an under-declared Optional sentinel
+            // and Unknown remains skip-when-unsure.
             let concrete_param = matches!(
                 param.ty,
                 super::stdlib_sigs::CoreTy::Int
@@ -908,12 +910,7 @@ impl TypeChecker {
                     | super::stdlib_sigs::CoreTy::Bool
                     | super::stdlib_sigs::CoreTy::Typed
             );
-            let bare_arg = match self.tcx.get(actual) {
-                Ty::Class { name, .. } if self.user_bare_classes.contains(name) => {
-                    Some(name.clone())
-                }
-                _ => None,
-            };
+            let bare_arg = self.classinfo_bare_instance_name(a);
             if let (true, Some(name)) = (concrete_param, &bare_arg) {
                 self.error(
                     a.span,
