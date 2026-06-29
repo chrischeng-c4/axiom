@@ -20,6 +20,7 @@ A coverage % can't be gamed: the denominator is an external standard
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -170,7 +171,10 @@ def safety_cases() -> int:
     return sum(1 for _ in d.rglob("*.py")) if d.exists() else 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.parse_args(argv)
+
     sigs, cases = type_wall_signatures_and_cases()
     cov1 = 100 * cases / sigs if sigs else 0.0
 
