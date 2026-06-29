@@ -7628,6 +7628,8 @@ fn mb_getattr_impl(
                             | "peek"
                             | "readline"
                             | "readlines"
+                            | "seek"
+                            | "tell"
                             | "readable"
                             | "writable"
                             | "seekable"
@@ -17231,6 +17233,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         "read" => {
                             return super::stdlib::io_mod::mb_textiowrapper_read(receiver);
                         }
+                        "seek" => {
+                            let p = arg_items.first().copied().unwrap_or_else(MbValue::none);
+                            let w = arg_items
+                                .get(1)
+                                .copied()
+                                .unwrap_or_else(|| MbValue::from_int(0));
+                            return super::stdlib::io_mod::mb_textiowrapper_seek_with_whence(
+                                receiver, p, w,
+                            );
+                        }
+                        "tell" => {
+                            return super::stdlib::io_mod::mb_textiowrapper_tell(receiver);
+                        }
+                        "readable" | "writable" | "seekable" => return MbValue::from_bool(true),
                         "flush" => return super::stdlib::io_mod::mb_textiowrapper_flush(receiver),
                         "close" => return MbValue::none(),
                         "__enter__" => {
