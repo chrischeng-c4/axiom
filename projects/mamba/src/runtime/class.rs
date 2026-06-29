@@ -7527,6 +7527,15 @@ fn mb_getattr_impl(
                     class_name,
                     ref fields,
                 } => {
+                    if class_name == "Token" && attr_name == "__exit__" {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "'Token' object has no attribute '__exit__'".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
+                    }
                     // property descriptor: `.setter` / `.deleter` / `.getter`
                     // are bound callables that each return a NEW property
                     // sharing the other accessors (e.g. cross-class
@@ -7639,6 +7648,11 @@ fn mb_getattr_impl(
                     }
                     if super::dict_ops::dict_view_kind(obj).is_some()
                         && matches!(attr_name.as_str(), "__contains__" | "isdisjoint")
+                    {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
+                    if class_name == "Context"
+                        && matches!(attr_name.as_str(), "run" | "get" | "__getitem__" | "copy")
                     {
                         return make_bound_native_method(obj, &attr_name);
                     }
@@ -14274,10 +14288,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         // contextvars.Context: `ctx[var]` reads the captured
                         // ContextVar → value snapshot held in `_data` (KeyError
                         // on a var that was not set in this context). Issue #282.
-                        let guard = fields.read().unwrap();
-                        let data = guard.get("_data").copied().unwrap_or(MbValue::none());
-                        drop(guard);
-                        return super::dict_ops::mb_dict_getitem(data, key);
+                        return super::stdlib::contextvars_mod::mb_context_getitem(obj, key);
                     }
                     if class_name == "collections.defaultdict" {
                         let guard = fields.read().unwrap();
@@ -18795,6 +18806,15 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 ref fields,
             } = (*ptr).data
             {
+                if class_name == "Token" && name == "__exit__" {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "'Token' object has no attribute '__exit__'".to_string(),
+                        )),
+                    );
+                    return MbValue::none();
+                }
                 if name == "__setstate__" && is_exception_instance_class(class_name) {
                     let state = args
                         .as_ptr()
@@ -19215,6 +19235,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             let rest: Vec<MbValue> = arg_items.iter().skip(1).copied().collect();
                             return super::stdlib::contextvars_mod::mb_context_run(
                                 receiver, func, rest,
+                            );
+                        }
+                        ("Context", "get") => {
+                            let key = arg_items.first().copied().unwrap_or(MbValue::none());
+                            let default = arg_items.get(1).copied().unwrap_or(MbValue::none());
+                            return super::stdlib::contextvars_mod::mb_context_get(
+                                receiver, key, default,
+                            );
+                        }
+                        ("Context", "__getitem__") => {
+                            let key = arg_items.first().copied().unwrap_or(MbValue::none());
+                            return super::stdlib::contextvars_mod::mb_context_getitem(
+                                receiver, key,
                             );
                         }
                         ("Context", "copy") => {
