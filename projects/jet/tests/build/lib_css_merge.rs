@@ -17,6 +17,7 @@
 //!       no extra asset files appear in the output.
 
 use jet::bundler::types::OutputFormat;
+use jet::bundler::types::SourceMapOption;
 use jet::bundler::{build_library, LibBuildOptions, LibBuildResult, RawCopyDir};
 use std::collections::HashSet;
 use tempfile::tempdir;
@@ -65,6 +66,7 @@ fn run_lib_build(
         entry: Vec::new(),
         css_merge,
         raw_copy,
+        sourcemap: SourceMapOption::None,
     };
     build_library(options).expect("library build must succeed")
 }
@@ -188,6 +190,45 @@ fn raw_copy_default_dest_mirrors_from_path() {
         "absent `to` must mirror the `from` path: dist/assets/images/logo.png"
     );
     assert_eq!(std::fs::read_to_string(&copied).unwrap(), "PNGDATA");
+}
+
+#[test]
+fn wildcard_asset_exports_copy_matching_src_assets_to_dist_prefix() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "wildcard-assets",
+            "version": "1.0.0",
+            "module": "./src/index.js",
+            "exports": {
+                ".": "./dist/index.js",
+                "./icons/*": "./dist/icons/*"
+            }
+        }"#,
+    );
+    write_file(root, "src/index.js", "export const ok = true;\n");
+    let svg = "<svg><path d=\"M0 0h1v1H0z\"/></svg>\n";
+    write_file(root, "src/icons/star.svg", svg);
+
+    let result = run_lib_build(root, Vec::new(), Vec::new());
+
+    let copied = root.join("dist/icons/star.svg");
+    assert!(
+        copied.is_file(),
+        "wildcard export ./icons/* -> ./dist/icons/* must copy src/icons/star.svg"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&copied).unwrap(),
+        svg,
+        "wildcard-copied asset must be byte-identical"
+    );
+    assert!(
+        result.assets.iter().any(|a| a.path == copied),
+        "wildcard-copied asset should be recorded in LibBuildResult.assets"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
