@@ -22,7 +22,7 @@ typeshed contract: old is str. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import str
-obj = object.__new__(str)
+obj = str.__new__(str)
 try:
     obj.replace(12345, "")  # old: str <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

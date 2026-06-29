@@ -44,8 +44,9 @@ impl TypeChecker {
 
     /// ① Type-wall PoC: if `value` constructs an instance of a known imported
     /// stdlib class, return that class's qualifier. Recognizes
-    /// `object.__new__(Cls)` and `Cls(...)` where `Cls` is a from-imported stdlib
-    /// class with a `Method` signature in the sig table.
+    /// `object.__new__(Cls)`, `Cls.__new__(Cls, ...)`, and `Cls(...)` where
+    /// `Cls` is a from-imported stdlib class with a `Method` signature in the
+    /// sig table.
     fn stdlib_instance_class(&self, value: &Spanned<Expr>) -> Option<String> {
         let Expr::Call { func, args } = &value.node else {
             return None;
@@ -61,6 +62,14 @@ impl TypeChecker {
                     if base == "object" {
                         if let Some(CallArg::Positional(arg0)) = args.first() {
                             if let Expr::Ident(cls) = &arg0.node {
+                                return self.stdlib_method_class(cls);
+                            }
+                        }
+                    } else if let Some(CallArg::Positional(arg0)) = args.first() {
+                        // `Cls.__new__(Cls, ...)` is CPython-safe for classes
+                        // such as str where `object.__new__(Cls)` is rejected.
+                        if let Expr::Ident(cls) = &arg0.node {
+                            if cls == base {
                                 return self.stdlib_method_class(cls);
                             }
                         }
