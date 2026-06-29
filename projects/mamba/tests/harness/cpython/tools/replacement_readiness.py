@@ -25,6 +25,7 @@ DENOMINATOR_INVENTORY = MAMBA_DIR / "tools" / "cpython_regrtest_inventory.py"
 STRICT_TYPE_ACCOUNTING = TOOLS_DIR / "strict_type_accounting.py"
 GATE_CHECK = TOOLS_DIR / "gate_check.py"
 PLATFORM_READINESS = TOOLS_DIR / "platform_readiness.py"
+IMPORT_READINESS = TOOLS_DIR / "import_readiness.py"
 
 EXIT_NOT_READY = 70
 
@@ -418,6 +419,56 @@ def platform_dimension(show: int) -> Dimension:
     )
 
 
+def import_dimension(show: int) -> Dimension:
+    code, payload = run_json(
+        [sys.executable, str(IMPORT_READINESS), "--json", "--show", str(show)],
+        accepted={0, EXIT_NOT_READY},
+    )
+    counts = payload["counts"]
+    status = "green" if code == 0 and payload["ready"] else "red"
+    return Dimension(
+        id="import_package_module_system",
+        title="Import, package, and module-system semantics",
+        status=status,
+        owner_issue="#708",
+        summary=(
+            "import/package/module-system readiness is green"
+            if status == "green"
+            else (
+                "import/package/module-system readiness is not replacement-ready: "
+                f"{counts['fixtures']} fixtures, {counts['unmeasured']} unmeasured, "
+                f"{counts['promotion_pending']} promotion-pending, "
+                f"{counts['runtime_failure_debt']} runtime-debt, "
+                f"{counts['legacy_regression_unaccounted']} legacy-regression, "
+                f"{counts['missing_semantic_classes']} missing semantic classes"
+            )
+        ),
+        counts={
+            "fixtures": counts["fixtures"],
+            "scopes": counts["scopes"],
+            "missing_scopes": counts["missing_scopes"],
+            "semantic_classes": counts["semantic_classes"],
+            "missing_semantic_classes": counts["missing_semantic_classes"],
+            "pass_candidate": counts["pass_candidate"],
+            "promotion_pending": counts["promotion_pending"],
+            "runtime_failure_debt": counts["runtime_failure_debt"],
+            "legacy_regression_unaccounted": counts[
+                "legacy_regression_unaccounted"
+            ],
+            "sandbox_denied": counts["sandbox_denied"],
+            "unsupported_platform": counts["unsupported_platform"],
+            "runtime_ok": counts["runtime_ok"],
+            "runtime_fail": counts["runtime_fail"],
+            "runtime_timeout": counts["runtime_timeout"],
+            "runtime_crash": counts["runtime_crash"],
+            "unmeasured": counts["unmeasured"],
+            "unowned_gap_count": counts["unowned_gap_count"],
+        },
+        evidence=payload["evidence_commands"],
+        blockers=payload["blockers"][:show],
+    )
+
+
 def blocked_dimension(
     *,
     id: str,
@@ -451,13 +502,7 @@ def dimensions(show: int, type_limit: int) -> list[Dimension]:
         perf_dimension(show),
         safety_dimension(show),
         platform_dimension(show),
-        blocked_dimension(
-            id="import_package_module_system",
-            title="Import, package, and module-system semantics",
-            owner_issue="#708",
-            summary="import/package/module-system semantics need dedicated denominator and runtime evidence",
-            evidence=["python3.12 projects/mamba/tests/harness/cpython/tools/gate_status.py --help"],
-        ),
+        import_dimension(show),
         blocked_dimension(
             id="third_party_c_extension_strategy",
             title="Third-party and C-extension compatibility strategy",
