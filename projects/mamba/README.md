@@ -86,6 +86,7 @@ Gate Inventory: `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test
 |---|---|---:|---|---|---|---|
 | Local-first package manager baseline | epic | #459 | implemented | verified | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
 | Full uv package-manager parity and beyond | epic | #519 | implemented | verified | uv-parity | `cargo test -p mamba --test pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/src/pkgmanage/pkgmgr; projects/mamba/tests/pkgmgr |
+| `mamba run` command mode | change | #525 | implemented | verified | uv-parity | `cargo test -p mamba --test pkgmgr run_preflight::run_command_mode`; projects/mamba/src/main.rs; projects/mamba/src/pkgmanage/run.rs |
 
 Current state: `mamba init/auth/index/add/remove/lock/export/tree/version/package/publish/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache`
 plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
@@ -130,6 +131,10 @@ distribution name, preserves `provides` / compatibility metadata in
 so the provided import alias (for example `import httpx`) resolves without
 confusing the package with the upstream PyPI distribution. This provider path
 is separate from C3 `mambalibs`, which are Rust/native runtime modules.
+`mamba run <file.py|file.tp>` remains the mamba runtime/compiler path, while
+`mamba run -- <cmd> [args...]` runs arbitrary commands inside the synced project
+environment with `.venv` executables and site-packages preferred before host
+fallbacks.
 No known release-blocking command-family gaps remain under #519; follow-up
 parity work should be tracked as focused hardening or live-network fixtures.
 
