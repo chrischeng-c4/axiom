@@ -89,6 +89,7 @@ fn concurrency_readiness_emits_required_state_vocabulary() {
     );
 
     for scope in [
+        "free_threaded_atomicity",
         "thread_primitives",
         "async_context",
         "process_parallelism",
@@ -128,12 +129,24 @@ fn concurrency_readiness_emits_required_state_vocabulary() {
         "concurrent_futures",
         "queue",
         "signal",
+        "list",
+        "dict",
+        "set",
+        "lock",
+        "threading_primitives",
     ] {
         assert!(
             payload["by_lib"].get(lib).is_some(),
             "missing concurrency target lib {lib}"
         );
     }
+    assert!(
+        payload["by_dimension"]["concurrency"]["fixtures"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 5,
+        "#713 readiness must include all dedicated concurrency facet fixtures"
+    );
 
     let commands = payload["evidence_commands"]
         .as_array()
