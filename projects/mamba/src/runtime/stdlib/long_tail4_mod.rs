@@ -860,29 +860,4 @@ fn register_c_extensions() {
         ],
         &[("__version__", "1.0")],
     );
-    register_with(
-        "_codecs",
-        &["__doc__"],
-        &[
-            ("encode", dispatch_empty_str as *const () as usize),
-            ("decode", dispatch_empty_str as *const () as usize),
-            ("lookup", dispatch_class_shell as *const () as usize),
-            ("lookup_error", dispatch_class_shell as *const () as usize),
-            ("register", dispatch_noop as *const () as usize),
-            ("register_error", dispatch_noop as *const () as usize),
-            ("charmap_build", dispatch_class_shell as *const () as usize),
-            ("escape_encode", dispatch_empty_list as *const () as usize),
-            ("escape_decode", dispatch_empty_list as *const () as usize),
-            ("utf_8_encode", dispatch_empty_list as *const () as usize),
-            ("utf_8_decode", dispatch_empty_list as *const () as usize),
-            ("utf_16_encode", dispatch_empty_list as *const () as usize),
-            ("utf_16_decode", dispatch_empty_list as *const () as usize),
-            ("ascii_encode", dispatch_empty_list as *const () as usize),
-            ("ascii_decode", dispatch_empty_list as *const () as usize),
-            ("latin_1_encode", dispatch_empty_list as *const () as usize),
-            ("latin_1_decode", dispatch_empty_list as *const () as usize),
-        ],
-        &[],
-        &[],
-    );
 }
