@@ -123,36 +123,29 @@ relations:
 requirementDiagram
   requirement native_path {
     id: RLS-UT-1
-    text: "A shell-free command string with a workload-qualified native plan runs through ResidentLightShellSession without spawning Bash."
+    text: "resident native path does not spawn Bash"
     risk: medium
     verifymethod: test
   }
   requirement fallback_path {
     id: RLS-UT-2
-    text: "Unsupported shell syntax returns a Bash fallback plan that preserves the original command string exactly."
+    text: "unsupported syntax returns bash -lc original"
     risk: high
     verifymethod: test
   }
   requirement parity {
     id: RLS-UT-3
-    text: "The first resident native path and the Bash fallback path both preserve stdout, stderr, and exit status against the original command."
+    text: "native and fallback paths preserve stdout stderr and exit status"
     risk: high
     verifymethod: test
   }
   requirement product_boundary {
     id: RLS-UT-4
-    text: "README/TD state that cap is a Bash-compatible optimizer and resource governor, not a sandbox or full replacement shell."
+    text: "docs keep optimizer/resource-governor boundary"
     risk: medium
     verifymethod: inspection
   }
 ```
-
-The applicability proof requires unit coverage on the resident session's
-planning boundary plus behavior coverage through the public `cap run` path. A
-minimal test fixture can use a threshold-sized `ls -1 <dir>` native path because
-#117 made the workload gate explicit; fallback parity can use a pipe or `cd &&
-pwd` shape that must remain under Bash semantics.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
