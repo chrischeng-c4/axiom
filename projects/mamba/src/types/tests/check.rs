@@ -896,6 +896,27 @@ fn test_list_generic_method_contracts_rejected() {
 }
 
 #[test]
+fn test_set_generic_method_contracts_rejected() {
+    let errors = check(
+        "class _W:\n    def __hash__(self):\n        return hash(1)\n    def __eq__(self, other):\n        return True\nobj: set[int] = {1}\nobj.add(_W())\nobj.remove(_W())\n",
+    );
+    let element_errors = errors
+        .iter()
+        .filter(|e| e.contains("expected `int`, got `_W`"))
+        .count();
+    assert_eq!(
+        element_errors, 2,
+        "set[T] methods should reject values outside the element type, got: {errors:?}"
+    );
+
+    let errors = check("obj: set[int] = {1}\nobj.add(2)\nobj.remove(1)\n");
+    assert!(
+        errors.is_empty(),
+        "valid set[T] method forms must stay accepted, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_map_new_callable_rejected() {
     let errors =
         check("from builtins import map\nclass _W:\n    pass\nmap.__new__(map, _W(), None)\n");

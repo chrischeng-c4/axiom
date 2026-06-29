@@ -22,11 +22,15 @@ typeshed contract: element is _T. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 class _W:
-    pass
+    def __hash__(self):
+        return hash(1)
+
+    def __eq__(self, other):
+        return True
 
 
 from builtins import set
-obj = object.__new__(set)
+obj: set[int] = {1}
 try:
     obj.remove(_W())  # element: _T <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

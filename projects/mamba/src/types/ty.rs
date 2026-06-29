@@ -26,6 +26,7 @@ pub enum Ty {
     /// Dynamic type — compatible with all types (#240).
     Any,
     List(TypeId),
+    Set(TypeId),
     Dict(TypeId, TypeId),
     Tuple(Vec<TypeId>),
     Union(Vec<TypeId>),
