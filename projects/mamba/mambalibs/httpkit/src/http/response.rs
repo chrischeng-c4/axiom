@@ -89,6 +89,14 @@ impl Response {
         Duration::from_millis(self.latency_ms)
     }
 
+    pub fn protocol_version(&self) -> &str {
+        &self.version
+    }
+
+    pub fn is_http2(&self) -> bool {
+        self.version == "HTTP/2"
+    }
+
     pub fn header(&self, name: &str) -> Option<&str> {
         let lower = name.to_lowercase();
         self.headers
