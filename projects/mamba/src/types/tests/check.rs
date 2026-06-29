@@ -990,6 +990,31 @@ fn test_stdlib_property_descriptor_contracts_rejected() {
     );
 }
 
+#[test]
+fn test_stdlib_object_subclasshook_rejects_instance_not_type() {
+    let errors =
+        check("from builtins import object\nclass _W:\n    pass\nobject.__subclasshook__(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `subclass`")),
+        "object.__subclasshook__(_W()) should reject a bare instance, got: {errors:?}"
+    );
+
+    let errors =
+        check("from builtins import object\nclass _W:\n    pass\nobject.__subclasshook__(_W)\n");
+    assert!(
+        errors.is_empty(),
+        "object.__subclasshook__(_W) must accept class objects, got: {errors:?}"
+    );
+
+    let errors = check("def f():\n    pass\nclass C:\n    pass\nf.__get__(None, C)\n");
+    assert!(
+        errors.is_empty(),
+        "descriptor owner params must accept class objects, got: {errors:?}"
+    );
+}
+
 // R9.3: getattr() with default (3-arg form) must be accepted
 #[test]
 fn test_getattr_three_arg_form_accepted() {

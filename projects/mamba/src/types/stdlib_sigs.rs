@@ -741,6 +741,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("fset", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: object.__subclasshook__(subclass) expects a type object. Reject
+    // only a direct bare instance probe; class objects remain accepted by the
+    // expression-shape guard in the stdlib hook.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "object",
+        name: "__subclasshook__",
+        kind: SigKind::Method,
+        params: &[p("subclass", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: classmethod is descriptor-shaped. These curated rows only
     // reject a provably bare `_W()` for Callable/type-variable contracts; real
     // callables and dynamic descriptor uses stay skip-safe.
