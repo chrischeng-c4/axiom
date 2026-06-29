@@ -1504,6 +1504,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_reraise_handled",
+            exception::mb_reraise_handled as fn(),
+            [],
+            Void
+        ),
+        rt_sym!(
             "mb_has_exception",
             exception::mb_has_exception as fn() -> super::MbValue,
             [],

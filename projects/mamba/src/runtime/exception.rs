@@ -800,6 +800,33 @@ pub fn mb_reraise(exc: MbValue) {
     super::class::mb_raise_instance(exc);
 }
 
+/// Re-raise the currently handled exception for a bare `raise` that executes
+/// outside the lexical except body that originally caught it. Generator bodies
+/// can resume while the caller is inside an except handler, so their bare
+/// `raise` must consult the runtime handled-exception slot rather than trap.
+pub fn mb_reraise_handled() {
+    let caught = super::class::last_caught_exception_value();
+    if !caught.is_none() {
+        super::class::mb_raise_instance(caught);
+        unsafe {
+            super::rc::release_if_ptr(caught);
+        }
+        return;
+    }
+
+    if let Some(exc) = LAST_HANDLED_EXCEPTION.with(|cell| cell.borrow().clone()) {
+        set_current_exception(exc);
+        return;
+    }
+
+    mb_raise(
+        MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "No active exception to reraise".to_string(),
+        )),
+    );
+}
+
 /// Check if there's a pending exception.
 pub fn mb_has_exception() -> MbValue {
     CURRENT_EXCEPTION.with(|cell| MbValue::from_bool(cell.borrow().is_some()))

@@ -389,6 +389,7 @@ fn genexpr_body_from_comprehensions(
     element: &Spanned<ast::Expr>,
     generators: &[ast::Comprehension],
     walrus_targets: &[String],
+    walrus_targets_are_nonlocal: bool,
     span: Span,
 ) -> Vec<Spanned<ast::Stmt>> {
     let yield_expr = Spanned::new(
@@ -431,10 +432,12 @@ fn genexpr_body_from_comprehensions(
     }
 
     if !walrus_targets.is_empty() {
-        body.insert(
-            0,
-            Spanned::new(ast::Stmt::Nonlocal(walrus_targets.to_vec()), span),
-        );
+        let scope_stmt = if walrus_targets_are_nonlocal {
+            ast::Stmt::Nonlocal(walrus_targets.to_vec())
+        } else {
+            ast::Stmt::Global(walrus_targets.to_vec())
+        };
+        body.insert(0, Spanned::new(scope_stmt, span));
     }
 
     body
@@ -3122,6 +3125,9 @@ struct AstLowerer<'a> {
     /// the symbol, so statement lowering must emit the CPython NameError path
     /// for direct reads until a later assignment rebinds the name.
     module_deleted_names: std::collections::HashSet<String>,
+    /// Temporary name→SymbolId overrides for synthetic function bodies whose
+    /// `global` declaration must bind to a module-local synthetic SymbolId.
+    forced_global_names: HashMap<String, SymbolId>,
     /// Top-level names previously bound by a DECORATED `def`. A later
     /// non-decorated `def` that redefines such a name must re-store the global
     /// (the impl wins the name); otherwise the name stays bound to the
@@ -3184,6 +3190,7 @@ impl<'a> AstLowerer<'a> {
             module_float_globals: HashMap::new(),
             module_unbound_annotation_names: std::collections::HashSet::new(),
             module_deleted_names: std::collections::HashSet::new(),
+            forced_global_names: HashMap::new(),
             decorated_top_level_names: std::collections::HashMap::new(),
             in_function_body: false,
         }
@@ -6042,10 +6049,18 @@ impl<'a> AstLowerer<'a> {
                 })
             }
             ast::Stmt::Global(names) => {
-                let syms: Vec<SymbolId> = names
-                    .iter()
-                    .filter_map(|n| self.resolve_name(n, stmt.span))
-                    .collect();
+                let mut syms: Vec<SymbolId> = Vec::new();
+                for n in names {
+                    let sym = self
+                        .forced_global_names
+                        .get(n)
+                        .copied()
+                        .or_else(|| self.resolve_name(n, stmt.span));
+                    if let Some(sym) = sym {
+                        self.local_names.insert(n.clone(), sym);
+                        syms.push(sym);
+                    }
+                }
                 Some(HirStmt::Global {
                     names: syms,
                     span: stmt.span,
@@ -8421,7 +8436,10 @@ impl<'a> AstLowerer<'a> {
                     })
                     .collect();
 
+                let saved_in_function_body = self.in_function_body;
+                self.in_function_body = true;
                 let body_result = self.lower_expr(body);
+                self.in_function_body = saved_in_function_body;
 
                 // Restore local_names to pre-lambda state.
                 for (name, old) in saved {
@@ -8528,57 +8546,65 @@ impl<'a> AstLowerer<'a> {
                         self.define_local(target, any_ty);
                     }
                 }
-
-                if self.in_function_body {
-                    let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
-                    let fn_sym = self.define_local(&fn_name, any_ty);
-                    let body = genexpr_body_from_comprehensions(
-                        element,
-                        generators,
-                        &walrus_targets,
-                        expr.span,
-                    );
-                    let return_ty: Option<Spanned<ast::TypeExpr>> = None;
-                    if let Some(mut func) =
-                        self.lower_fn(&fn_name, &[], &return_ty, &body, expr.span)
-                    {
-                        let int_ty = self.checker.tcx.int();
-                        func.is_generator = true;
-                        func.return_ty = int_ty;
-                        self.func_return_tys.insert(func.name, int_ty);
-                        for sym in &func.captures {
-                            self.cell_override_syms.insert(*sym);
-                        }
-                        self.result.functions.push(func);
-                        return Some(HirExpr::Call {
-                            func: Box::new(HirExpr::Var(fn_sym, any_ty)),
-                            args: Vec::new(),
-                            ty: int_ty,
-                        });
-                    }
-                }
-
-                // Desugar generator expression to an ITERATOR over an eager list
-                // comprehension. A genexpr is a single-use iterator in CPython, so
-                // `next(genexpr)` must work and the value must not be reusable/
-                // subscriptable/len-able like a plain list. Wrapping the materialized
-                // ListComp in mb_iter gives it iterator identity while keeping the
-                // eager element evaluation. (Full lazy state-machine codegen deferred.)
-                let saved = self.save_comp_scope(generators);
-                let gens = self.lower_comprehensions(generators);
-                let elem = self.lower_expr(element)?;
-                let ty = self.checker.tcx.any();
-                self.restore_comp_scope(saved);
-                let list = HirExpr::ListComp {
-                    element: Box::new(elem),
-                    generators: gens,
-                    ty,
+                let module_walrus_target_syms: Vec<SymbolId> = if self.in_function_body {
+                    Vec::new()
+                } else {
+                    walrus_targets
+                        .iter()
+                        .filter_map(|target| self.local_names.get(target).copied())
+                        .collect()
                 };
-                Some(HirExpr::Call {
-                    func: Box::new(HirExpr::StrLit("mb_iter".to_string(), ty)),
-                    args: vec![list],
-                    ty,
-                })
+                let module_walrus_target_names: Vec<(String, SymbolId)> = if self.in_function_body {
+                    Vec::new()
+                } else {
+                    walrus_targets
+                        .iter()
+                        .filter_map(|target| {
+                            self.local_names
+                                .get(target)
+                                .copied()
+                                .map(|sym| (target.clone(), sym))
+                        })
+                        .collect()
+                };
+
+                let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
+                let fn_sym = self.define_local(&fn_name, any_ty);
+                let body = genexpr_body_from_comprehensions(
+                    element,
+                    generators,
+                    &walrus_targets,
+                    self.in_function_body,
+                    expr.span,
+                );
+                let return_ty: Option<Spanned<ast::TypeExpr>> = None;
+                let saved_forced_global_names = std::mem::take(&mut self.forced_global_names);
+                for (target, sym) in &module_walrus_target_names {
+                    self.forced_global_names.insert(target.clone(), *sym);
+                }
+                if let Some(mut func) = self.lower_fn(&fn_name, &[], &return_ty, &body, expr.span) {
+                    self.forced_global_names = saved_forced_global_names;
+                    if !module_walrus_target_syms.is_empty() {
+                        if let Some(HirStmt::Global { names, .. }) = func.body.first_mut() {
+                            *names = module_walrus_target_syms.clone();
+                        }
+                    }
+                    let int_ty = self.checker.tcx.int();
+                    func.is_generator = true;
+                    func.return_ty = int_ty;
+                    self.func_return_tys.insert(func.name, int_ty);
+                    for sym in &func.captures {
+                        self.cell_override_syms.insert(*sym);
+                    }
+                    self.result.functions.push(func);
+                    return Some(HirExpr::Call {
+                        func: Box::new(HirExpr::Var(fn_sym, any_ty)),
+                        args: Vec::new(),
+                        ty: int_ty,
+                    });
+                }
+                self.forced_global_names = saved_forced_global_names;
+                None
             }
             ast::Expr::DictComp {
                 key,
@@ -11294,9 +11320,9 @@ mod tests {
 
     #[test]
     fn test_lower_generator_expr_to_synthetic_generator() {
-        // Top-level GeneratorExpr lowers to an eager iterator fallback. The
-        // synthetic generator path is reserved for function bodies where the
-        // generator runtime has a valid caller frame context.
+        // Top-level GeneratorExpr must still produce a real generator object,
+        // not an eager list iterator fallback, so native generator operations
+        // like copy/pickle/type checks observe CPython semantics.
         let gen = Comprehension {
             targets: vec!["g".to_string()],
             unpack_target: false,
@@ -11309,17 +11335,17 @@ mod tests {
             element: Box::new(sp(Expr::IntLit(0))),
             generators: vec![gen],
         })))]);
-        assert!(hir.functions.is_empty());
+        assert_eq!(hir.functions.len(), 1);
+        assert!(hir.functions[0].is_generator);
         match &hir.top_level[0] {
             HirStmt::Expr {
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert_eq!(args.len(), 1);
-                assert!(matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"));
-                assert!(matches!(&args[0], HirExpr::ListComp { .. }));
+                assert!(args.is_empty());
+                assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
             }
-            other => panic!("expected iterator fallback call, got {other:?}"),
+            other => panic!("expected synthetic generator call, got {other:?}"),
         }
     }
 
@@ -11340,17 +11366,41 @@ mod tests {
             })),
             generators: vec![gen],
         })))]);
-        assert!(hir.functions.is_empty());
+        assert_eq!(hir.functions.len(), 1);
+        assert!(hir.functions[0].is_generator);
+        let global_sym = match &hir.functions[0].body[0] {
+            HirStmt::Global { names, .. } => {
+                assert_eq!(names.len(), 1);
+                names[0]
+            }
+            other => panic!("expected generator body global declaration, got {other:?}"),
+        };
+        let for_body = match &hir.functions[0].body[1] {
+            HirStmt::For { body, .. } => body,
+            other => panic!("expected generator loop body, got {other:?}"),
+        };
+        let walrus_sym = match &for_body[0] {
+            HirStmt::Expr {
+                expr: HirExpr::Yield {
+                    value: Some(value), ..
+                },
+                ..
+            } => match value.as_ref() {
+                HirExpr::Walrus { target, .. } => *target,
+                other => panic!("expected yielded walrus, got {other:?}"),
+            },
+            other => panic!("expected yielded walrus statement, got {other:?}"),
+        };
+        assert_eq!(walrus_sym, global_sym);
         match &hir.top_level[0] {
             HirStmt::Expr {
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert_eq!(args.len(), 1);
-                assert!(matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"));
-                assert!(matches!(&args[0], HirExpr::ListComp { .. }));
+                assert!(args.is_empty());
+                assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
             }
-            other => panic!("expected iterator fallback call, got {other:?}"),
+            other => panic!("expected synthetic generator call, got {other:?}"),
         }
     }
 

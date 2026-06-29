@@ -427,6 +427,65 @@ fn collect_local_names(
     }
 }
 
+fn collect_global_decl_syms(stmts: &[HirStmt], out: &mut HashSet<u32>) {
+    for stmt in stmts {
+        match stmt {
+            HirStmt::Global { names, .. } => {
+                out.extend(names.iter().map(|sym| sym.0));
+            }
+            HirStmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_global_decl_syms(then_body, out);
+                collect_global_decl_syms(else_body, out);
+            }
+            HirStmt::While {
+                body, else_body, ..
+            }
+            | HirStmt::For {
+                body, else_body, ..
+            }
+            | HirStmt::AsyncFor {
+                body, else_body, ..
+            } => {
+                collect_global_decl_syms(body, out);
+                collect_global_decl_syms(else_body, out);
+            }
+            HirStmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+                ..
+            } => {
+                collect_global_decl_syms(body, out);
+                for handler in handlers {
+                    collect_global_decl_syms(&handler.body, out);
+                }
+                collect_global_decl_syms(else_body, out);
+                collect_global_decl_syms(finally_body, out);
+            }
+            HirStmt::With { body, .. } => collect_global_decl_syms(body, out),
+            HirStmt::Match { cases, .. } => {
+                for case in cases {
+                    collect_global_decl_syms(&case.body, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_function_global_decl_syms(functions: &[HirFunction]) -> HashSet<u32> {
+    let mut out = HashSet::new();
+    for func in functions {
+        collect_global_decl_syms(&func.body, &mut out);
+    }
+    out
+}
+
 /// Lower a complete HIR module to a MIR module.
 pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
     let mut lowerer = HirToMir::new(tcx);
@@ -435,6 +494,7 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
     lowerer.sym_names = hir.sym_names.clone();
     lowerer.module_annotations = hir.module_annotations.clone();
     lowerer.boxed_param_funcs = hir.boxed_param_funcs.clone();
+    lowerer.module_reload_global_syms = collect_function_global_decl_syms(&hir.functions);
     // Populate user_func_param_types so MirInst::Call sites can selectively box
     // primitive args destined for Any/object-typed parameters (#827 R8).
     // Also populate user_func_return_tys for iter(callable, sentinel) thunk generation.
@@ -675,6 +735,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
     lowerer.sym_types = hir.sym_types.clone();
     lowerer.sym_names = hir.sym_names.clone();
     lowerer.module_annotations = hir.module_annotations.clone();
+    lowerer.module_reload_global_syms = collect_function_global_decl_syms(&hir.functions);
     // Populate user_func_param_types so MirInst::Call sites can selectively box
     // primitive args destined for Any/object-typed parameters (#827 R8).
     // Also populate user_func_return_tys for iter(callable, sentinel) thunk generation.
@@ -1185,6 +1246,7 @@ pub fn lower_hir_to_mir_repl(
     lowerer.sym_types = hir.sym_types.clone();
     lowerer.sym_names = hir.sym_names.clone();
     lowerer.boxed_param_funcs = hir.boxed_param_funcs.clone();
+    lowerer.module_reload_global_syms = collect_function_global_decl_syms(&hir.functions);
     // Populate user_funcs so call-site dispatch correctly routes accumulated and current
     // session functions through MirInst::Call rather than dynamic mb_call* dispatch.
     for func in extra_functions {
@@ -1375,6 +1437,14 @@ struct HirToMir<'a> {
     /// These must use global storage (StoreGlobal/LoadGlobal) so outer and inner functions
     /// share the same variable slot regardless of stack frames.
     cell_override: HashSet<u32>,
+    /// SymbolIds declared by `global` in the current function body. Some
+    /// module-level bindings are synthetic (>= 1M) in HIR, so symbol-table
+    /// classification alone cannot identify them as global stores.
+    declared_global_syms: HashSet<u32>,
+    /// Module-scope symbols that may be modified from a nested generated
+    /// function/generator through `global`. Module reads for these names must
+    /// reload from global storage instead of trusting stale top-level vregs.
+    module_reload_global_syms: HashSet<u32>,
     /// Capture cells initialized in the current function lowering. First bind
     /// gets a fresh cell for this call; later binds update the same cell.
     initialized_capture_cells: HashSet<u32>,
@@ -1508,6 +1578,8 @@ impl<'a> HirToMir<'a> {
             decorated_func_syms: HashSet::new(),
             decorated_func_return_tys: HashMap::new(),
             cell_override: HashSet::new(),
+            declared_global_syms: HashSet::new(),
+            module_reload_global_syms: HashSet::new(),
             initialized_capture_cells: HashSet::new(),
             user_func_param_types: HashMap::new(),
             boxed_param_funcs: HashSet::new(),
@@ -1764,6 +1836,8 @@ impl<'a> HirToMir<'a> {
             decorated_func_syms: HashSet::new(),
             decorated_func_return_tys: HashMap::new(),
             cell_override: HashSet::new(),
+            declared_global_syms: HashSet::new(),
+            module_reload_global_syms: HashSet::new(),
             initialized_capture_cells: HashSet::new(),
             user_func_param_types: HashMap::new(),
             boxed_param_funcs: HashSet::new(),
@@ -1815,6 +1889,7 @@ impl<'a> HirToMir<'a> {
         self.async_resume_dispatches.clear();
         self.next_async_resume_state = 2;
         self.is_gen_body = false;
+        self.declared_global_syms.clear();
         self.initialized_capture_cells.clear();
         self.try_handler_stack.clear();
         self.finally_body_stack.clear();
@@ -3283,6 +3358,12 @@ impl<'a> HirToMir<'a> {
                             // was first written by a param or an assignment.
                             let boxed = self.box_operand(val, val_ty);
                             self.emit_capture_cell_set(*sym, boxed);
+                        } else if self.declared_global_syms.contains(&sym.0) {
+                            let boxed = self.box_operand(val, val_ty);
+                            self.current_stmts.push(MirInst::StoreGlobal {
+                                name: *sym,
+                                value: boxed,
+                            });
                         } else {
                             let var_class = self
                                 .symbol_table
@@ -4349,6 +4430,13 @@ impl<'a> HirToMir<'a> {
                             args: vec![exc_vreg],
                             ty: self.tcx.none(),
                         });
+                    } else if self.is_gen_body {
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: None,
+                            name: "mb_reraise_handled".to_string(),
+                            args: Vec::new(),
+                            ty: self.tcx.none(),
+                        });
                     } else {
                         self.current_stmts.push(MirInst::Raise { value: None });
                     }
@@ -4794,8 +4882,14 @@ impl<'a> HirToMir<'a> {
                 self.start_block(pass_block);
             }
             HirStmt::Del { target, .. } => self.lower_delete_lvalue(target),
-            HirStmt::Global { .. } | HirStmt::Nonlocal { .. } => {
-                // Scope declarations — no MIR instructions needed
+            HirStmt::Global { names, .. } => {
+                for sym in names {
+                    self.declared_global_syms.insert(sym.0);
+                }
+                // Scope declarations — no MIR instructions needed.
+            }
+            HirStmt::Nonlocal { .. } => {
+                // Scope declarations — no MIR instructions needed.
             }
             HirStmt::FuncDefPlaceholder {
                 name: func_sym,
@@ -6464,6 +6558,14 @@ impl<'a> HirToMir<'a> {
                     self.emit_capture_cell_set(*sym, boxed);
                     return;
                 }
+                if self.declared_global_syms.contains(&sym.0) {
+                    let boxed = self.box_operand(val, val_ty);
+                    self.current_stmts.push(MirInst::StoreGlobal {
+                        name: *sym,
+                        value: boxed,
+                    });
+                    return;
+                }
                 let var_class = self
                     .symbol_table
                     .map(|st| st.get_var_class(*sym))
@@ -7974,6 +8076,16 @@ impl<'a> HirToMir<'a> {
                         name: *sym,
                         ty: *ty,
                     });
+                    return dest;
+                }
+                if self.in_module_scope && self.module_reload_global_syms.contains(&sym.0) {
+                    let dest = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadGlobal {
+                        dest,
+                        name: *sym,
+                        ty: *ty,
+                    });
+                    self.sym_to_vreg.insert(*sym, dest);
                     return dest;
                 }
                 if let Some(&vreg) = self.sym_to_vreg.get(sym) {
@@ -10347,6 +10459,7 @@ impl<'a> HirToMir<'a> {
                 let saved_traceback_frame_active = self.traceback_frame_active;
                 let saved_recursion_frame_active = self.recursion_frame_active;
                 let saved_cell_override = std::mem::take(&mut self.cell_override);
+                let saved_declared_global_syms = std::mem::take(&mut self.declared_global_syms);
                 let saved_initialized_capture_cells =
                     std::mem::take(&mut self.initialized_capture_cells);
 
@@ -10381,6 +10494,9 @@ impl<'a> HirToMir<'a> {
 
                 // Lower the body expression and box the result.
                 let body_vreg = self.lower_expr(body);
+                if self.current_block_id.is_some() {
+                    self.emit_exception_propagate();
+                }
                 let boxed_result = self.box_operand(body_vreg, body.ty());
                 if self.current_block_id.is_some() {
                     self.finish_block(Terminator::Return(Some(boxed_result)));
@@ -10413,6 +10529,7 @@ impl<'a> HirToMir<'a> {
                 self.traceback_frame_active = saved_traceback_frame_active;
                 self.recursion_frame_active = saved_recursion_frame_active;
                 self.cell_override = saved_cell_override;
+                self.declared_global_syms = saved_declared_global_syms;
                 self.initialized_capture_cells = saved_initialized_capture_cells;
 
                 // ── Create closure wrapping the lambda's entry point ──
@@ -10946,6 +11063,12 @@ impl<'a> HirToMir<'a> {
                 if self.cell_override.contains(&target.0) {
                     let boxed = self.box_operand(val_vreg, value.ty());
                     self.emit_capture_cell_set(*target, boxed);
+                } else if self.declared_global_syms.contains(&target.0) {
+                    let boxed = self.box_operand(val_vreg, value.ty());
+                    self.current_stmts.push(MirInst::StoreGlobal {
+                        name: *target,
+                        value: boxed,
+                    });
                 } else if self.in_module_scope || target.0 < 1_000_000 {
                     let boxed = self.box_operand(val_vreg, value.ty());
                     self.current_stmts.push(MirInst::StoreGlobal {
@@ -12561,9 +12684,133 @@ mod tests {
             .find(|body| body.name == SymbolId(3_000_010))
             .expect("synthetic generator body should be lowered");
         let all_stmts: Vec<_> = body.blocks.iter().flat_map(|b| b.stmts.iter()).collect();
-        assert!(all_stmts
+        let cell_set_id = all_stmts.iter().find_map(|stmt| match stmt {
+            MirInst::CallExtern { name, args, .. }
+                if name == "mb_capture_cell_set_id" && args.len() == 2 =>
+            {
+                Some(args[0])
+            }
+            _ => None,
+        });
+        let Some(cell_set_id) = cell_set_id else {
+            panic!("generator body walrus should update the captured cell");
+        };
+        assert!(all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::LoadConst {
+                dest,
+                value: MirConst::Int(id),
+                ..
+            } if *dest == cell_set_id && *id == target.0 as i64
+        )));
+    }
+
+    #[test]
+    fn test_generator_body_global_walrus_stores_declared_global_target() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let target = SymbolId(1_000_099);
+        let hir = HirModule {
+            functions: vec![HirFunction {
+                name: SymbolId(10),
+                params: Vec::new(),
+                return_ty: int_ty,
+                func_sig: None,
+                bind_name: None,
+                body: vec![
+                    HirStmt::Global {
+                        names: vec![target],
+                        span: Span::dummy(),
+                    },
+                    HirStmt::Expr {
+                        expr: HirExpr::Yield {
+                            value: Some(Box::new(HirExpr::Walrus {
+                                target,
+                                value: Box::new(HirExpr::IntLit(5, int_ty)),
+                                ty: int_ty,
+                            })),
+                            ty: int_ty,
+                        },
+                        span: Span::dummy(),
+                    },
+                ],
+                span: Span::dummy(),
+                captures: Vec::new(),
+                is_async: false,
+                is_generator: true,
+                decorators: Vec::new(),
+                has_star_args: false,
+                star_param_pos: None,
+                has_kwargs: false,
+            }],
+            classes: Vec::new(),
+            top_level: Vec::new(),
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        let body = mir
+            .bodies
             .iter()
-            .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == target)));
+            .find(|body| body.name == SymbolId(3_000_010))
+            .expect("synthetic generator body should be lowered");
+        let all_stmts: Vec<_> = body.blocks.iter().flat_map(|b| b.stmts.iter()).collect();
+        assert!(all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::StoreGlobal { name, .. } if *name == target
+        )));
+    }
+
+    #[test]
+    fn test_module_read_reloads_function_declared_global_target() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let target = SymbolId(1_000_099);
+        let hir = HirModule {
+            functions: vec![HirFunction {
+                name: SymbolId(10),
+                params: Vec::new(),
+                return_ty: int_ty,
+                func_sig: None,
+                bind_name: None,
+                body: vec![HirStmt::Global {
+                    names: vec![target],
+                    span: Span::dummy(),
+                }],
+                span: Span::dummy(),
+                captures: Vec::new(),
+                is_async: false,
+                is_generator: false,
+                decorators: Vec::new(),
+                has_star_args: false,
+                star_param_pos: None,
+                has_kwargs: false,
+            }],
+            classes: Vec::new(),
+            top_level: vec![HirStmt::Expr {
+                expr: HirExpr::Var(target, int_ty),
+                span: Span::dummy(),
+            }],
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        let main = mir.bodies.last().expect("module body should be lowered");
+        let all_stmts: Vec<_> = main.blocks.iter().flat_map(|b| b.stmts.iter()).collect();
+        assert!(all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::LoadGlobal { name, .. } if *name == target
+        )));
     }
 
     #[test]

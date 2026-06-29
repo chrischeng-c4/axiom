@@ -31,6 +31,16 @@ fn exception_pending() -> bool {
     super::super::exception::mb_has_exception().as_bool() == Some(true)
 }
 
+/// Promote a pending type/message-only exception into an exception instance so
+/// an outer Python `try` can match it after this native copy dispatcher returns.
+fn reraise_pending_exception() -> MbValue {
+    let pending = super::super::exception::mb_get_exception();
+    if !pending.is_none() {
+        super::super::exception::mb_reraise(pending);
+    }
+    MbValue::none()
+}
+
 /// Set a pending exception of `kind` (a builtin/exception class name) with
 /// `msg`, then return None so the runtime re-raises at the call site.
 fn raise_exc(kind: &str, msg: &str) -> MbValue {
@@ -186,7 +196,11 @@ unsafe fn copy_instance(obj: MbValue, class_name: &str) -> MbValue {
     // 1. __copy__ hook.
     if has_method(class_name, "__copy__") {
         let empty = MbValue::from_ptr(MbObject::new_list(vec![]));
-        return call_method(obj, "__copy__", empty);
+        let result = call_method(obj, "__copy__", empty);
+        if exception_pending() {
+            return reraise_pending_exception();
+        }
+        return result;
     }
     // 2. copyreg / __reduce_ex__ / __reduce__ reconstruction.
     match reduce(obj, class_name) {
@@ -229,9 +243,9 @@ unsafe fn copy_instance(obj: MbValue, class_name: &str) -> MbValue {
             return inst;
         }
         // Exception pending (e.g. ValueError from __getstate__): bail with the
-        // original object; the runtime sees the pending exception and raises.
+        // original exception promoted so an outer try can match it.
         if exception_pending() {
-            return return_identity(obj);
+            return reraise_pending_exception();
         }
     }
     if own_new_requires_constructor_args(class_name) {
@@ -605,6 +619,9 @@ unsafe fn deepcopy_instance(
         let memo_dict = MbValue::from_ptr(MbObject::new_dict());
         let args = MbValue::from_ptr(MbObject::new_list(vec![memo_dict]));
         let result = call_method(obj, "__deepcopy__", args);
+        if exception_pending() {
+            return reraise_pending_exception();
+        }
         memo.insert(key, result);
         record_memoized(obj, result);
         unsafe {
@@ -655,9 +672,7 @@ unsafe fn deepcopy_instance(
             return inst;
         }
         if exception_pending() {
-            let v = return_identity(obj);
-            memo.insert(key, v);
-            return v;
+            return reraise_pending_exception();
         }
     }
     if own_new_requires_constructor_args(class_name) {
@@ -956,10 +971,17 @@ unsafe fn reducer_blocked_by_getattribute(obj: MbValue, class_name: &str) -> boo
 }
 
 /// Call `obj.method(*args)` where `args` is a list MbValue. Self-binding is
-/// handled by mb_call_method.
+/// handled by attribute binding plus `mb_call_spread`, matching Python-level
+/// `obj.method(...)` lowering. This matters for closures/lambdas stored as
+/// class attributes: the direct `mb_call_method` fast path can bypass closure
+/// metadata that `mb_call_spread` preserves.
 fn call_method(obj: MbValue, method: &str, args: MbValue) -> MbValue {
     let name = MbValue::from_ptr(MbObject::new_str(method.to_string()));
-    super::super::class::mb_call_method(obj, name, args)
+    let bound = super::super::class::mb_getattr(obj, name);
+    if exception_pending() {
+        return MbValue::none();
+    }
+    super::super::builtins::mb_call_spread(bound, args)
 }
 
 /// Snapshot an instance's field map.
