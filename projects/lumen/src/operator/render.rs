@@ -154,10 +154,7 @@ fn serving_statefulset(lumen: &Lumen) -> Value {
     spec.remove("strategy"); // Deployment-only
     spec.insert("serviceName".into(), json!(format!("{name}-headless")));
     spec.insert("podManagementPolicy".into(), json!("Parallel"));
-    spec.insert(
-        "updateStrategy".into(),
-        json!({ "type": "RollingUpdate" }),
-    );
+    spec.insert("updateStrategy".into(), json!({ "type": "RollingUpdate" }));
     spec.insert(
         "replicas".into(),
         json!(lumen.spec.shard_count * lumen.spec.replicas_per_shard),

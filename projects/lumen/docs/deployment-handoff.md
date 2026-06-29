@@ -40,7 +40,7 @@ docker run --rm -p 7373:7373 lumen:0.4.4            # serves by default
 | `lumen llm` | Print agent-facing integration topics — offline. |
 | `lumen k8s` | Operator controller + CRD generation (`k8s operator`, `k8s gen-crd`). |
 | `lumen upgrade` | Self-update from the published GitHub release. |
-| `lumen issue` | Search / view / file lumen issues. (Currently shipped as `lumen report-issue`; migrating to the `issue` group — see #542.) |
+| `lumen issue` | Search / view / file Lumen issues through the standard `issue search`, `issue view`, and `issue create` group. |
 
 ---
 

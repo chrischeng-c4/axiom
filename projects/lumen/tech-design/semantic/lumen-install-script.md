@@ -4,9 +4,16 @@ summary: Lossless source-unit coverage for the lumen project install script.
 capability_refs:
   - id: "long-running-stability"
     role: primary
+    gap: "stateless-serving-rebuild-from-log-no-pvc"
     claim: "stateless-serving-rebuild-from-log-no-pvc"
     coverage: partial
     rationale: "The installer is part of the user-facing operability workflow for acquiring and verifying the lumen binary."
+  - id: "kubernetes-native-deployment"
+    role: primary
+    gap: "stateless-serving-rebuild-from-log-no-pvc"
+    claim: "stateless-serving-rebuild-from-log-no-pvc"
+    coverage: partial
+    rationale: "The installer participates in the stateless serving dogfood path by acquiring the binary used in deployment workflows."
 fill_sections: [text-source-unit, changes]
 ---
 

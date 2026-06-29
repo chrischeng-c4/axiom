@@ -111,6 +111,28 @@ requirementDiagram
     test_ids_returns_set - verifies -> R1
 ```
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/types.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Add the external-id set query shape to the public query model."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Resolve external ids through the interner and filter the row-id bitmap natively."
+  - path: projects/lumen/tests/planner_diff.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Verify native ids query semantics against the planner/oracle cases."
+```
+
 # Reviews
 
 ### Review 1

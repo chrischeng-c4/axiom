@@ -269,6 +269,7 @@ fn decode_fast_record(bytes: &[u8]) -> Result<WalRecord> {
             external_id,
             field,
             value,
+            version: None,
         });
     }
     cur.expect_eof()?;
@@ -563,6 +564,7 @@ mod tests {
                     external_id: eid.into(),
                     field: field.into(),
                     value: FieldValue::String(val.into()),
+                    version: None,
                 }],
                 request_id: None,
             },
@@ -589,21 +591,25 @@ mod tests {
                         external_id: "doc-1".into(),
                         field: "title".into(),
                         value: FieldValue::String("lumen".into()),
+                        version: None,
                     },
                     IndexItem {
                         external_id: "doc-1".into(),
                         field: "score".into(),
                         value: FieldValue::Number(42.5),
+                        version: None,
                     },
                     IndexItem {
                         external_id: "doc-1".into(),
                         field: "embedding".into(),
                         value: FieldValue::Vector(vec![0.25, 0.5, 0.75]),
+                        version: None,
                     },
                     IndexItem {
                         external_id: "doc-1".into(),
                         field: "tags".into(),
                         value: FieldValue::StringList(vec!["rust".into(), "search".into()]),
+                        version: None,
                     },
                 ],
             },

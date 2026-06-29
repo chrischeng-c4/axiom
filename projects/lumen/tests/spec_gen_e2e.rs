@@ -5,7 +5,10 @@
 //!
 //! @spec projects/lumen/tech-design/interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md
 
-use std::process::Command;
+use std::net::TcpListener;
+use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 fn lumen() -> Command {
     Command::new(env!("CARGO_BIN_EXE_lumen"))
@@ -97,4 +100,173 @@ fn plain_spec_still_prints_openapi() {
     assert!(stdout.trim_start().starts_with('{'));
     assert!(stdout.contains("\"openapi\""));
 }
+
+/// R4: generated Python h2c client drives a live Lumen public API journey.
+#[test]
+#[ignore = "AW EC gate: opens a local h2c listener; run explicitly with --ignored"]
+fn generated_client_live_h2c_public_api_journey() {
+    let dir = tempfile::tempdir().unwrap();
+    let package_dir = dir.path().join("lumen_client");
+    std::fs::create_dir(&package_dir).unwrap();
+
+    let status = lumen()
+        .args(["spec", "gen", "--lang", "py", "--out"])
+        .arg(&package_dir)
+        .status()
+        .unwrap();
+    assert!(status.success(), "spec gen --lang py failed");
+
+    let port = free_local_port();
+    let mut child = ChildGuard::spawn(port);
+
+    let script = dir.path().join("generated_client_live_smoke.py");
+    std::fs::write(&script, GENERATED_CLIENT_LIVE_SMOKE).unwrap();
+    let output = Command::new("python3")
+        .arg(&script)
+        .arg(format!("http://127.0.0.1:{port}"))
+        .env("PYTHONPATH", dir.path())
+        .output()
+        .unwrap();
+
+    child.stop();
+    assert!(
+        output.status.success(),
+        "generated Python client live smoke failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn free_local_port() -> u16 {
+    TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+struct ChildGuard {
+    child: Child,
+}
+
+impl ChildGuard {
+    fn spawn(port: u16) -> Self {
+        let child = lumen()
+            .args([
+                "serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &port.to_string(),
+                "--wal",
+                "embedded",
+                "--log-level",
+                "warn",
+            ])
+            .env("LUMEN_AUTH", "off")
+            .env("LUMEN_LOG_FORMAT", "json")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        thread::sleep(Duration::from_millis(100));
+        Self { child }
+    }
+
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+const GENERATED_CLIENT_LIVE_SMOKE: &str = r#"
+import sys
+import time
+
+from lumen_client import (
+    Client,
+    CreateCollectionRequest,
+    DuplicatesRequest,
+    FieldSpec,
+    IndexItem,
+    IndexRequest,
+    QueryNode,
+    SearchRequest,
+)
+
+
+def wait_ready(client: Client) -> None:
+    last = None
+    for _ in range(80):
+        try:
+            client.healthz()
+            client.readyz()
+            return
+        except Exception as exc:
+            last = exc
+            time.sleep(0.1)
+    raise RuntimeError(f"lumen did not become ready: {last!r}")
+
+
+base_url = sys.argv[1]
+collection_id = "generated_client_smoke"
+
+with Client(base_url) as client:
+    wait_ready(client)
+    assert client.version() is not None
+    client.metrics()
+
+    try:
+        client.drop_collection(collection_id=collection_id, force=True)
+    except Exception:
+        pass
+
+    created = client.create_collection(
+        collection_id=collection_id,
+        body=CreateCollectionRequest(
+            fields={
+                "body": FieldSpec(type="text"),
+                "email": FieldSpec(type="keyword"),
+            }
+        ),
+    )
+    assert created.collection_id == collection_id
+
+    indexed = client.index(
+        collection_id=collection_id,
+        body=IndexRequest(
+            items=[
+                IndexItem(external_id="u1", field="body", value="blue search one"),
+                IndexItem(external_id="u1", field="email", value="dup@example.test"),
+                IndexItem(external_id="u2", field="body", value="green search two"),
+                IndexItem(external_id="u2", field="email", value="dup@example.test"),
+            ]
+        ),
+    )
+    assert indexed.indexed == 4
+
+    query = QueryNode.model_validate({"match": {"field": "body", "text": "blue", "op": "or"}})
+    search = client.search(
+        collection_id=collection_id,
+        body=SearchRequest(query=query, limit=10, track_total=True),
+    )
+    assert [hit.external_id for hit in search.hits] == ["u1"], search
+
+    dupes = client.duplicates(
+        collection_id=collection_id,
+        body=DuplicatesRequest(field="email", min_group_size=2),
+    )
+    assert dupes.groups and dupes.groups[0].external_ids == ["u1", "u2"], dupes
+
+    stats = client.stats(collection_id=collection_id)
+    assert stats.fields["body"].type == "text"
+
+    client.drop_collection(collection_id=collection_id, force=True)
+"#;
 // HANDWRITE-END
