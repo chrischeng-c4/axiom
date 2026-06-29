@@ -7,10 +7,11 @@
 //! is deliberately scalar-only: anything we cannot represent as a concrete
 //! scalar (protocols, unions, typevars, overloads, buffers) collapses to
 //! [`CoreTy::Unknown`], which the hook *skips* — guaranteeing zero false
-//! positives on correct calls. [`CoreTy::Bytes`], [`CoreTy::MemoryView`], and
-//! [`CoreTy::Complex`] are represented as negative scalar walls: concrete
-//! incompatible scalars are never those values, while bytes/memoryview/complex
-//! expressions currently infer to `Any` and therefore remain skip-when-unsure.
+//! positives on correct calls. [`CoreTy::Bytes`], [`CoreTy::MemoryView`],
+//! [`CoreTy::Complex`], and [`CoreTy::List`] are represented as negative scalar
+//! walls: concrete incompatible scalars are never those values, while
+//! bytes/memoryview/complex/list expressions currently infer to dynamic or
+//! collection types and therefore remain skip-when-unsure.
 
 /// Closed set of argument types the PoC table can express. Anything richer
 /// (Optional, Union, Protocol, TypeVar, overload, ReadableBuffer, SupportsIndex)
@@ -24,6 +25,7 @@ pub enum CoreTy {
     Bytes,
     MemoryView,
     Complex,
+    List,
     Bool,
     None,
     /// A NOMINAL/protocol type contract (a named typeshed type that is neither a
@@ -535,6 +537,74 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("keepends", CoreTy::Bool)],
         enforceable: true,
     },
+    // POSITIVE: list dunders have overloads for list-vs-list operations and
+    // index/slice operations. Use a dedicated List negative scalar wall for
+    // list-valued operands, and Typed for index/slice protocol operands where a
+    // bare `_W()` cannot satisfy either SupportsIndex or slice.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "list",
+        name: "__add__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "list",
+        name: "__ge__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "list",
+        name: "__gt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "list",
+        name: "__le__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "list",
+        name: "__lt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "list",
+        name: "__delitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "list",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "list",
+        name: "__setitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // POSITIVE: classmethod is descriptor-shaped. These curated rows only
     // reject a provably bare `_W()` for Callable/type-variable contracts; real
     // callables and dynamic descriptor uses stay skip-safe.
@@ -1030,9 +1100,9 @@ mod tests {
     #[test]
     fn generated_enforceable_rows_have_a_scalar_and_no_star() {
         // The invariant: every row the hook will ENFORCE must (a) carry at least
-        // one checkable param (Int/Float/Str/Typed/Bytes) and (b) have no star
-        // param (positional alignment past `*args` is uncertain). Unknown/None
-        // params are skipped, while Bytes/MemoryView/Complex are negative
+        // one checkable param (Int/Float/Str/Typed/Bytes/List) and (b) have no
+        // star param (positional alignment past `*args` is uncertain).
+        // Unknown/None params are skipped, while Bytes/MemoryView/Complex/List are negative
         // scalar walls that reject impossible concrete scalars and leave
         // dynamic/buffer/object values as Any-skips.
         // This is what lets a scalar param sitting BEHIND an Unknown param
@@ -1058,6 +1128,7 @@ mod tests {
                         | CoreTy::Bytes
                         | CoreTy::MemoryView
                         | CoreTy::Complex
+                        | CoreTy::List
                 )),
                 "{}.{} enforceable with no checkable (scalar/Typed) param",
                 s.module,

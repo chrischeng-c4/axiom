@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import list
-obj = object.__new__(list)
+obj = []
 try:
     obj.__setitem__(_W(), None)  # key: SupportsIndex <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

@@ -30,7 +30,9 @@ pub struct Diagnostic {
 /// `T = TypeVar("T")` assignments so the bound name resolves as a TypeVar in
 /// later annotations.
 fn is_type_var_factory_call(e: &Expr) -> bool {
-    let Expr::Call { func, .. } = e else { return false };
+    let Expr::Call { func, .. } = e else {
+        return false;
+    };
     let fname = match &func.node {
         Expr::Ident(n) => n.as_str(),
         Expr::Attr { attr, .. } => attr.as_str(),
@@ -345,7 +347,8 @@ impl TypeChecker {
                             || params
                                 .iter()
                                 .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
-                        let effective_params = star_pos.map_or(params.as_slice(), |pos| &params[..pos]);
+                        let effective_params =
+                            star_pos.map_or(params.as_slice(), |pos| &params[..pos]);
                         let param_types: Vec<TypeId> = effective_params
                             .iter()
                             .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
@@ -666,8 +669,9 @@ impl TypeChecker {
                 // `() -> Any` so that `len(b)` / `b[0]` / iteration are
                 // rejected at compile time. Resolve to Any (like set/frozenset)
                 // so the annotated variable supports the full dynamic surface.
-                "bytes" | "bytearray" | "memoryview"
-                | "complex" | "range" | "slice" => self.tcx.any(),
+                "bytes" | "bytearray" | "memoryview" | "complex" | "range" | "slice" => {
+                    self.tcx.any()
+                }
                 // `type` as a type expression (e.g. `type[BaseModel]` bare name):
                 // the class-object type is represented as Any for now.
                 "type" | "object" => self.tcx.any(),
@@ -840,10 +844,12 @@ impl TypeChecker {
             // No concrete scalar representation — never enforce as a positive
             // scalar. Buffer-ish values still reject impossible concrete scalar
             // actuals in the call hook.
-            // `Typed` is handled by the bare-class branch in the hook, not here.
+            // `Typed` is handled by the bare-class branch in the hook, and
+            // `List` by a negative scalar wall, not here.
             CoreTy::Bytes
             | CoreTy::MemoryView
             | CoreTy::Complex
+            | CoreTy::List
             | CoreTy::Typed
             | CoreTy::Unknown => None,
         }
