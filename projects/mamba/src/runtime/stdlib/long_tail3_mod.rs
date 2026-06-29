@@ -52,6 +52,20 @@ fn raise_type_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+fn is_str_or_bytes_path(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_) | ObjData::Bytes(_)) })
+}
+
+unsafe extern "C" fn dispatch_dbm_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let filename = a.first().copied().unwrap_or_else(MbValue::none);
+    if !is_str_or_bytes_path(filename) {
+        return raise_type_error("dbm filename must be str or bytes path");
+    }
+    dispatch_empty_dict(args_ptr, nargs)
+}
+
 extern "C" fn ctypes_array_getitem(_self_v: MbValue, _args: MbValue) -> MbValue {
     raise_type_error("indices must be integers")
 }
@@ -1495,6 +1509,20 @@ fn register_email_subs() {
 fn register_internals() {
     // Internal helper modules CPython exposes — probe code occasionally
     // imports them directly.
+    register_with(
+        "_dbm",
+        &[],
+        &[("open", dispatch_dbm_open as *const () as usize)],
+        &[],
+        &[],
+    );
+    register_with(
+        "_gdbm",
+        &[],
+        &[("open", dispatch_dbm_open as *const () as usize)],
+        &[],
+        &[],
+    );
     register_with(
         "_collections_abc",
         &[
