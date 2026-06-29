@@ -101,6 +101,9 @@ mod mvp_smoke_profile_manifest_2819;
 #[path = "schema_gates/no_xfail_no_skip_promotion_gate_703.rs"]
 mod no_xfail_no_skip_promotion_gate_703;
 
+#[path = "schema_gates/strict_type_accounting_gate_704.rs"]
+mod strict_type_accounting_gate_704;
+
 #[path = "schema_gates/perf_allocation_pressure_fixture_2661.rs"]
 mod perf_allocation_pressure_fixture_2661;
 

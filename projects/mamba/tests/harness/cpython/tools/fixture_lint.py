@@ -90,6 +90,13 @@ def lint_file(path: Path) -> tuple[bool, list[str]]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--bucket",
+        help=(
+            "limit to fixtures whose path/record contains this bucket or facet; "
+            "`type` selects the type facet"
+        ),
+    )
     ap.add_argument("--lib", help="limit to fixtures whose path contains this segment")
     ap.add_argument("--show", type=int, default=20, help="max violations to print")
     args = ap.parse_args(argv)
@@ -97,7 +104,10 @@ def main(argv=None) -> int:
     recorded = legacy = violations = 0
     shown = 0
     for path in sorted(FIXTURES_DIR.rglob("*.py")):
-        if args.lib and args.lib not in path.parts:
+        rel_parts = path.relative_to(FIXTURES_DIR).parts
+        if args.bucket and args.bucket not in rel_parts:
+            continue
+        if args.lib and args.lib not in rel_parts:
             continue
         has_record, problems = lint_file(path)
         if has_record:
