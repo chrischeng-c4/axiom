@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import range
-obj = object.__new__(range)
+obj = range(3)
 try:
     obj.__getitem__(_W())  # key: SupportsIndex <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
