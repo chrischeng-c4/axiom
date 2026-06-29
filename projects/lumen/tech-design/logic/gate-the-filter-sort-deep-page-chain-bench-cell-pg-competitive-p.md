@@ -14,6 +14,15 @@ capability_refs:
     rationale: >
       The filter + sort + cursor path is the performance promise issue #10
       exists to protect.
+  - id: "competitor-performance"
+    role: primary
+    gap: "depth-invariant-filter-sort-pagination"
+    claim: "depth-invariant-filter-sort-pagination"
+    coverage: full
+    rationale: >
+      The sorted_page_deep bench cell, pg same-depth peer comparison, and rig
+      data_table_browse scenario are the primary verification linkage for the
+      README depth-invariant filter/sort pagination claim from issue #10.
   - id: "search-core"
     role: contributes
     claim: "filter-sort-early-termination"
