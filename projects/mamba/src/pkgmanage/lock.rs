@@ -26,7 +26,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::pkgmanage::add::{ManifestState, atomic_write};
+use crate::pkgmanage::add::{
+    ManifestState, SourceMeta, append_lock_source_fields, atomic_write, dep_name,
+    source_meta_from_manifest,
+};
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
@@ -48,31 +51,38 @@ pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
     let state = ManifestState::parse(&manifest_src)?;
 
     let offline = sub.get_flag("offline");
-    let resolved = match resolve_index_dir(sub) {
-        Some(idx) => {
-            let direct: Vec<Pin> = state
-                .dependencies
-                .iter()
-                .map(|d| Pin::parse(d))
-                .collect::<Result<Vec<_>>>()?;
-            resolve_transitive(&direct, &idx)?
-        }
-        None => {
-            if offline {
-                bail!(
-                    "no frozen index configured and --offline set (pass --index DIR \
-                     or set {FROZEN_INDEX_ENV})"
-                );
+    let provider_resolved = resolve_manifest_provider_deps(&state)?;
+    let registry_deps = registry_dependency_strings(&state);
+    let mut resolved = if registry_deps.is_empty() {
+        Vec::new()
+    } else {
+        match resolve_index_dir(sub) {
+            Some(idx) => {
+                let direct: Vec<Pin> = registry_deps
+                    .iter()
+                    .map(|d| Pin::parse(d))
+                    .collect::<Result<Vec<_>>>()?;
+                resolve_transitive(&direct, &idx)?
             }
-            match resolve_index_url(sub) {
-                Some(index_url) => resolve_via_pypi(&state.dependencies, &index_url)?,
-                None => bail!(
-                    "no package source configured for `mamba lock`; pass --index DIR, \
-                     set {FROZEN_INDEX_ENV}, pass --index-url URL, or set {INDEX_URL_ENV}"
-                ),
+            None => {
+                if offline {
+                    bail!(
+                        "no frozen index configured and --offline set (pass --index DIR \
+                         or set {FROZEN_INDEX_ENV})"
+                    );
+                }
+                match resolve_index_url(sub) {
+                    Some(index_url) => resolve_via_pypi(&registry_deps, &index_url)?,
+                    None => bail!(
+                        "no package source configured for `mamba lock`; pass --index DIR, \
+                         set {FROZEN_INDEX_ENV}, pass --index-url URL, or set {INDEX_URL_ENV}"
+                    ),
+                }
             }
         }
     };
+    resolved.extend(provider_resolved);
+    resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
 
     let lock_path = project_dir.join(LOCKFILE_FILE);
     let body = render_lockfile(&state.dependencies, &resolved);
@@ -192,6 +202,7 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
                 .collect(),
             sha256: sha,
             url,
+            source: SourceMeta::Default,
         });
     }
     out.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
@@ -317,6 +328,36 @@ pub(crate) struct Resolved {
     /// live-PyPI path so `mamba sync` can fetch + sha-verify. Empty for
     /// frozen-local-index resolves where the URL is not known.
     pub(crate) url: Option<String>,
+    pub(crate) source: SourceMeta,
+}
+
+fn registry_dependency_strings(state: &ManifestState) -> Vec<String> {
+    state
+        .dependencies
+        .iter()
+        .filter(|dep| !state.source_overrides.contains_key(dep_name(dep)))
+        .cloned()
+        .collect()
+}
+
+fn resolve_manifest_provider_deps(state: &ManifestState) -> Result<Vec<Resolved>> {
+    let mut out = Vec::new();
+    for dep in &state.dependencies {
+        let name = dep_name(dep);
+        let Some(source) = state.source_overrides.get(name) else {
+            continue;
+        };
+        let pin = Pin::parse(dep)?;
+        out.push(Resolved {
+            source: source_meta_from_manifest(&pin.name, &pin.version, source)?,
+            pin,
+            direct: true,
+            requires: Vec::new(),
+            sha256: None,
+            url: None,
+        });
+    }
+    Ok(out)
 }
 
 fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
@@ -342,6 +383,7 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
                 requires: requires.clone(),
                 sha256: None,
                 url: None,
+                source: SourceMeta::Default,
             },
         );
         for r in meta {
@@ -405,11 +447,13 @@ fn render_lockfile(direct_deps: &[String], resolved: &[Resolved]) -> String {
             "sha256 = \"{}\"\n",
             r.sha256.as_deref().unwrap_or("")
         ));
-        out.push_str(&format!("url = \"{}\"\n", r.url.as_deref().unwrap_or("")));
-        out.push_str(&format!(
-            "source = \"pypi://{}/{}\"\n",
-            r.pin.name, r.pin.version
-        ));
+        append_lock_source_fields(
+            &mut out,
+            &r.pin.name,
+            &r.pin.version,
+            r.url.as_deref().unwrap_or(""),
+            &r.source,
+        );
         out.push_str(&format!("direct = {}\n", r.direct));
         out.push_str(&format!(
             "dependencies = {}\n",
@@ -482,6 +526,7 @@ mod tests {
                 requires: vec!["b==2.0".into()],
                 sha256: None,
                 url: None,
+                source: SourceMeta::Default,
             },
             Resolved {
                 pin: Pin {
@@ -492,6 +537,7 @@ mod tests {
                 requires: vec![],
                 sha256: None,
                 url: None,
+                source: SourceMeta::Default,
             },
         ];
         let a = render_lockfile(&["a==1.0".to_string()], &resolved);
