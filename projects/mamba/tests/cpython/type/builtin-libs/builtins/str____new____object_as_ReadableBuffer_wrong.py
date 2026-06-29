@@ -26,9 +26,8 @@ class _W:
 
 
 from builtins import str
-obj = object.__new__(str)
 try:
-    obj.__new__(_W())  # object: ReadableBuffer <- wrong-typed
+    str.__new__(str, _W(), "utf-8")  # object: ReadableBuffer <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)

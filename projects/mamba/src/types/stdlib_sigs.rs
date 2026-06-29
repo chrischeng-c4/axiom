@@ -601,6 +601,93 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("keepends", CoreTy::Bool)],
         enforceable: true,
     },
+    // POSITIVE: str operator and string-method overloads collapse to Unknown in
+    // the generated table because they involve LiteralString, SupportsIndex,
+    // tuple[str, ...], or printf-style formatting. Keep them as guarded
+    // negative walls: concrete wrong scalars are rejected for str-only
+    // parameters, and bare `_W()` probes are rejected for protocol/typed slots
+    // while valid strings, ints, slices, and dynamic values stay skip-safe.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "str",
+        name: "__add__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "str",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "str",
+        name: "__mod__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "str",
+        name: "__mul__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "str",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[
+            p("cls", CoreTy::Typed),
+            p("object", CoreTy::Typed),
+            p("encoding", CoreTy::Unknown),
+            p("errors", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "str",
+        name: "__rmul__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "str",
+        name: "center",
+        kind: SigKind::Method,
+        params: &[p("width", CoreTy::Typed), p("fillchar", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "str",
+        name: "endswith",
+        kind: SigKind::Method,
+        params: &[
+            p("suffix", CoreTy::Typed),
+            p("start", CoreTy::Typed),
+            p("end", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "str",
+        name: "expandtabs",
+        kind: SigKind::Method,
+        params: &[p("tabsize", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: list dunders have overloads for list-vs-list operations and
     // index/slice operations. Use a dedicated List negative scalar wall for
     // list-valued operands, and Typed for index/slice protocol operands where a
