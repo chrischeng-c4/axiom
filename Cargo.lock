@@ -1338,7 +1338,7 @@ checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
 
 [[package]]
 name = "cap"
-version = "0.3.61"
+version = "0.3.62"
 dependencies = [
  "anyhow",
  "chrono",
