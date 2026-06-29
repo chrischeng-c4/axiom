@@ -9,12 +9,11 @@
 # case = "insort_left__a_as_MutableSequence_wrong"
 # subject = "_bisect.insort_left(a: MutableSequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_bisect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: _bisect.insort_left(a: MutableSequence); call it with the wrong type.
 
