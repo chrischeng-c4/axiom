@@ -163,3 +163,29 @@ regression:
   - "cargo test -p vat vat_toml_runner -- --nocapture"
   - "cargo test -p vat --test vat_concurrent_runners -- --nocapture"
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - area: "config"
+    files: ["projects/vat/src/config.rs"]
+    summary: "Add ScenarioConfig and ScenarioNetworkMode plus validation helpers."
+  - area: "cli"
+    files: ["projects/vat/src/cli.rs"]
+    summary: "Add --scenario to vat run and dispatch a scenario target."
+  - area: "runner-orchestration"
+    files: ["projects/vat/src/commands/run.rs"]
+    summary: "Resolve scenario service union, require hermetic proxy when requested, and reuse service lifecycle."
+  - area: "state"
+    files: ["projects/vat/src/state.rs"]
+    summary: "Persist scenario topology evidence under TestRunEvidence."
+  - area: "tests"
+    files: ["projects/vat/tests/vat_toml_runner.rs", "projects/vat/tests/vat_concurrent_runners.rs"]
+    summary: "Add focused scenario execution and regression tests."
+non_changes:
+  - "No VM backend."
+  - "No Dockerized runner."
+  - "No service preset expansion."
+```
