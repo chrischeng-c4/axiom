@@ -872,6 +872,29 @@ fn test_stdlib_list_dunder_contracts_rejected() {
     );
 }
 
+#[test]
+fn test_list_generic_method_contracts_rejected() {
+    let errors = check(
+        "class _W:\n    def __eq__(self, other):\n        return True\nobj: list[int] = [1]\nobj.append(_W())\nobj.count(_W())\nobj.index(_W())\nobj.remove(_W())\n",
+    );
+    let element_errors = errors
+        .iter()
+        .filter(|e| e.contains("expected `int`, got `_W`"))
+        .count();
+    assert_eq!(
+        element_errors, 4,
+        "list[T] methods should reject values outside the element type, got: {errors:?}"
+    );
+
+    let errors = check(
+        "obj: list[int] = [1]\nobj.append(2)\nobj.count(1)\nobj.index(1)\nobj.index(1, 0)\nobj.index(1, 0, 1)\nobj.remove(1)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid list[T] method forms must stay accepted, got: {errors:?}"
+    );
+}
+
 // R9.3: getattr() with default (3-arg form) must be accepted
 #[test]
 fn test_getattr_three_arg_form_accepted() {

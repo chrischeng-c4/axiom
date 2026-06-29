@@ -1020,6 +1020,24 @@ impl TypeChecker {
     /// Resolve attribute access (#246).
     fn resolve_attr(&mut self, obj_ty_id: TypeId, attr: &str, _span: Span) -> TypeId {
         match self.tcx.get(obj_ty_id).clone() {
+            Ty::List(elem) => match attr {
+                "append" | "remove" => self.tcx.intern(Ty::Fn {
+                    params: vec![elem],
+                    ret: self.tcx.none(),
+                    variadic: false,
+                }),
+                "count" => self.tcx.intern(Ty::Fn {
+                    params: vec![elem],
+                    ret: self.tcx.int(),
+                    variadic: false,
+                }),
+                "index" => self.tcx.intern(Ty::Fn {
+                    params: vec![elem, self.tcx.int(), self.tcx.int()],
+                    ret: self.tcx.int(),
+                    variadic: false,
+                }),
+                _ => self.tcx.any(),
+            },
             Ty::Dict(key, value) => match attr {
                 "__delitem__" => self.tcx.intern(Ty::Fn {
                     params: vec![key],
