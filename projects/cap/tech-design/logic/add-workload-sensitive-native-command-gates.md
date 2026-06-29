@@ -84,105 +84,120 @@ flowchart TD
 
 ```mermaid
 ---
-id: cap-workload-sensitive-native-gates-tests
+id: cap-workload-sensitive-native-gates-contract-tests
 requirements:
-  tiny_workloads_fallback:
+  planner_below_threshold_original:
     id: R1
-    text: "Tiny or unknown workloads for candidate commands stay on the original command path when cap overhead would dominate."
+    text: "Planner returns External Original for supported command shapes when cheap workload facts are below threshold."
     kind: functional
     risk: high
     verify: test
-  large_workloads_gate_native:
+  planner_above_threshold_native:
     id: R2
-    text: "Large workloads for supported subsets can use native fast paths only after cheap threshold classification and resource-gate evidence."
+    text: "Planner returns the existing native/replacement implementation for supported command shapes when cheap workload facts meet threshold."
     kind: functional
     risk: high
     verify: test
-  shell_semantics_preserved:
+  probe_errors_fail_open:
     id: R3
-    text: "Shell-sensitive strings, unsupported flags, and unsafe shapes keep bash/original fallback semantics instead of partial native execution."
+    text: "Probe errors, missing paths, and unsupported flags fail open to the original command path."
     kind: functional
     risk: high
     verify: test
-  benchmark_matrix_covers_size:
+  run_string_matches_argv:
     id: R4
-    text: "Resource benchmarks include representative small and large scenarios with expected planner decisions for promoted candidates."
+    text: "Shell-free cap run strings and cap argv entrypoints make the same workload-sensitive decision."
     kind: functional
     risk: high
     verify: test
-  parity_still_required:
+  benchmark_small_large_rows:
     id: R5
-    text: "Every promoted native path keeps stdout, stderr, and exit-status parity with the original command."
+    text: "command_resources benchmark has explicit small and large rows for ls, sort, grep, find, and sed -n."
     kind: functional
     risk: high
+    verify: benchmark
+  readme_describes_fast_paths:
+    id: R6
+    text: "README describes native commands as workload-sensitive fast paths, not unconditional replacements."
+    kind: functional
+    risk: medium
     verify: test
 elements:
-  planner_tiny_workloads_use_original:
+  planner_threshold_tests:
     kind: test
-    type: "rs/#[test]"
-  planner_large_workloads_use_native_after_threshold:
+    type: "cargo test -p cap command_planner"
+  run_string_threshold_tests:
     kind: test
-    type: "rs/#[test]"
-  planner_shell_or_unsupported_shapes_fallback:
+    type: "cargo test -p cap command_planner"
+  parity_regression:
     kind: test
-    type: "rs/#[test]"
-  command_resource_bench_small_large_matrix:
+    type: "cargo test -p cap active_replacements_match_success_and_error_behavior"
+  resource_benchmark_matrix:
     kind: benchmark
-    type: "cargo bench"
-  active_replacements_match_success_and_error_behavior:
+    type: "cargo bench -p cap --bench command_resources"
+  readme_wording_smoke:
     kind: test
-    type: "cargo test"
+    type: "cargo test -p cap docs"
 relations:
-  - { from: planner_tiny_workloads_use_original, verifies: tiny_workloads_fallback }
-  - { from: planner_large_workloads_use_native_after_threshold, verifies: large_workloads_gate_native }
-  - { from: planner_shell_or_unsupported_shapes_fallback, verifies: shell_semantics_preserved }
-  - { from: command_resource_bench_small_large_matrix, verifies: benchmark_matrix_covers_size }
-  - { from: active_replacements_match_success_and_error_behavior, verifies: parity_still_required }
+  - { from: planner_threshold_tests, verifies: planner_below_threshold_original }
+  - { from: planner_threshold_tests, verifies: planner_above_threshold_native }
+  - { from: planner_threshold_tests, verifies: probe_errors_fail_open }
+  - { from: run_string_threshold_tests, verifies: run_string_matches_argv }
+  - { from: parity_regression, verifies: run_string_matches_argv }
+  - { from: parity_regression, verifies: probe_errors_fail_open }
+  - { from: resource_benchmark_matrix, verifies: benchmark_small_large_rows }
+  - { from: readme_wording_smoke, verifies: readme_describes_fast_paths }
 ---
 requirementDiagram
     requirement R1 {
       id: R1
-      text: "tiny or unknown workloads fall back"
+      text: "below-threshold supported shapes use original path"
       risk: high
       verifymethod: test
     }
     requirement R2 {
       id: R2
-      text: "large workloads need threshold and gate evidence"
+      text: "above-threshold supported shapes can use native path"
       risk: high
       verifymethod: test
     }
     requirement R3 {
       id: R3
-      text: "shell and unsupported shapes preserve fallback semantics"
+      text: "probe errors and unsupported flags fail open"
       risk: high
       verifymethod: test
     }
     requirement R4 {
       id: R4
-      text: "benchmarks cover small and large scenarios"
+      text: "run string and argv decisions match"
       risk: high
       verifymethod: test
     }
     requirement R5 {
       id: R5
-      text: "promoted native paths preserve parity"
+      text: "benchmarks include small and large rows"
       risk: high
+      verifymethod: benchmark
+    }
+    requirement R6 {
+      id: R6
+      text: "README says workload-sensitive fast paths"
+      risk: medium
       verifymethod: test
     }
-    element planner_tiny_workloads_use_original {
-      type: "rs/#[test]"
+    element planner_threshold_tests {
+      type: "cargo test"
     }
-    element planner_large_workloads_use_native_after_threshold {
-      type: "rs/#[test]"
+    element run_string_threshold_tests {
+      type: "cargo test"
     }
-    element planner_shell_or_unsupported_shapes_fallback {
-      type: "rs/#[test]"
+    element parity_regression {
+      type: "cargo test"
     }
-    element command_resource_bench_small_large_matrix {
+    element resource_benchmark_matrix {
       type: "cargo bench"
     }
-    element active_replacements_match_success_and_error_behavior {
+    element readme_wording_smoke {
       type: "cargo test"
     }
 ```
