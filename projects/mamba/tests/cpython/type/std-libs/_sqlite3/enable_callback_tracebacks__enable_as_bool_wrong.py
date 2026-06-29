@@ -9,12 +9,11 @@
 # case = "enable_callback_tracebacks__enable_as_bool_wrong"
 # subject = "_sqlite3.enable_callback_tracebacks(enable: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed enable"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed enable
 # mamba-strict-type: TypeError
 """Type wall: _sqlite3.enable_callback_tracebacks(enable: bool); call it with the wrong type.
 

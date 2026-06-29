@@ -9,12 +9,11 @@
 # case = "adapt__alt_as__T_wrong"
 # subject = "_sqlite3.adapt(alt: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed alt"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed alt
 # mamba-strict-type: TypeError
 """Type wall: _sqlite3.adapt(alt: _T); call it with the wrong type.
 

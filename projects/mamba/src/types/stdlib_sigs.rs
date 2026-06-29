@@ -495,6 +495,52 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("sockaddr", CoreTy::Typed), p("flags", CoreTy::Int)],
         enforceable: true,
     },
+    // POSITIVE: generated `_sqlite3` rows either omit later typevar params or
+    // collapse path/type/bool contracts. Tighten only the currently promoted
+    // force-typed probes; the `_sqlite3` runtime import surface is separate
+    // Py312 behavior work.
+    StdlibSig {
+        module: "_sqlite3",
+        qualifier: "",
+        name: "adapt",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("obj", CoreTy::Unknown),
+            p("proto", CoreTy::Unknown),
+            p("alt", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_sqlite3",
+        qualifier: "",
+        name: "connect",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("database", CoreTy::Typed),
+            p("timeout", CoreTy::Float),
+            p("detect_types", CoreTy::Int),
+            p("isolation_level", CoreTy::Unknown),
+            p("check_same_thread", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_sqlite3",
+        qualifier: "",
+        name: "enable_callback_tracebacks",
+        kind: SigKind::ModuleFn,
+        params: &[p("enable", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_sqlite3",
+        qualifier: "",
+        name: "register_adapter",
+        kind: SigKind::ModuleFn,
+        params: &[p("type", CoreTy::Typed), p("adapter", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
