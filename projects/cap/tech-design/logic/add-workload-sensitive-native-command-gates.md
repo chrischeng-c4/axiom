@@ -72,3 +72,111 @@ flowchart TD
     gate_pass -- yes --> native_fast([run workload-sensitive native fast path])
     gate_pass -- no --> original
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: cap-workload-sensitive-native-gates-tests
+requirements:
+  tiny_workloads_fallback:
+    id: R1
+    text: "Tiny or unknown workloads for candidate commands stay on the original command path when cap overhead would dominate."
+    kind: functional
+    risk: high
+    verify: test
+  large_workloads_gate_native:
+    id: R2
+    text: "Large workloads for supported subsets can use native fast paths only after cheap threshold classification and resource-gate evidence."
+    kind: functional
+    risk: high
+    verify: test
+  shell_semantics_preserved:
+    id: R3
+    text: "Shell-sensitive strings, unsupported flags, and unsafe shapes keep bash/original fallback semantics instead of partial native execution."
+    kind: functional
+    risk: high
+    verify: test
+  benchmark_matrix_covers_size:
+    id: R4
+    text: "Resource benchmarks include representative small and large scenarios with expected planner decisions for promoted candidates."
+    kind: functional
+    risk: high
+    verify: test
+  parity_still_required:
+    id: R5
+    text: "Every promoted native path keeps stdout, stderr, and exit-status parity with the original command."
+    kind: functional
+    risk: high
+    verify: test
+elements:
+  planner_tiny_workloads_use_original:
+    kind: test
+    type: "rs/#[test]"
+  planner_large_workloads_use_native_after_threshold:
+    kind: test
+    type: "rs/#[test]"
+  planner_shell_or_unsupported_shapes_fallback:
+    kind: test
+    type: "rs/#[test]"
+  command_resource_bench_small_large_matrix:
+    kind: benchmark
+    type: "cargo bench"
+  active_replacements_match_success_and_error_behavior:
+    kind: test
+    type: "cargo test"
+relations:
+  - { from: planner_tiny_workloads_use_original, verifies: tiny_workloads_fallback }
+  - { from: planner_large_workloads_use_native_after_threshold, verifies: large_workloads_gate_native }
+  - { from: planner_shell_or_unsupported_shapes_fallback, verifies: shell_semantics_preserved }
+  - { from: command_resource_bench_small_large_matrix, verifies: benchmark_matrix_covers_size }
+  - { from: active_replacements_match_success_and_error_behavior, verifies: parity_still_required }
+---
+requirementDiagram
+    requirement R1 {
+      id: R1
+      text: "tiny or unknown workloads fall back"
+      risk: high
+      verifymethod: test
+    }
+    requirement R2 {
+      id: R2
+      text: "large workloads need threshold and gate evidence"
+      risk: high
+      verifymethod: test
+    }
+    requirement R3 {
+      id: R3
+      text: "shell and unsupported shapes preserve fallback semantics"
+      risk: high
+      verifymethod: test
+    }
+    requirement R4 {
+      id: R4
+      text: "benchmarks cover small and large scenarios"
+      risk: high
+      verifymethod: test
+    }
+    requirement R5 {
+      id: R5
+      text: "promoted native paths preserve parity"
+      risk: high
+      verifymethod: test
+    }
+    element planner_tiny_workloads_use_original {
+      type: "rs/#[test]"
+    }
+    element planner_large_workloads_use_native_after_threshold {
+      type: "rs/#[test]"
+    }
+    element planner_shell_or_unsupported_shapes_fallback {
+      type: "rs/#[test]"
+    }
+    element command_resource_bench_small_large_matrix {
+      type: "cargo bench"
+    }
+    element active_replacements_match_success_and_error_behavior {
+      type: "cargo test"
+    }
+```
