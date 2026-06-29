@@ -7,9 +7,10 @@
 //! is deliberately scalar-only: anything we cannot represent as a concrete
 //! scalar (protocols, unions, typevars, overloads, buffers) collapses to
 //! [`CoreTy::Unknown`], which the hook *skips* — guaranteeing zero false
-//! positives on correct calls. [`CoreTy::Bytes`] is represented as a negative
-//! scalar wall: concrete scalars are never bytes, while bytes literals currently
-//! infer to `Any` and therefore remain skip-when-unsure.
+//! positives on correct calls. [`CoreTy::Bytes`] and [`CoreTy::MemoryView`] are
+//! represented as negative scalar walls: concrete scalars are never those
+//! buffer-ish values, while bytes/memoryview expressions currently infer to
+//! `Any` and therefore remain skip-when-unsure.
 
 /// Closed set of argument types the PoC table can express. Anything richer
 /// (Optional, Union, Protocol, TypeVar, overload, ReadableBuffer, SupportsIndex)
@@ -21,6 +22,7 @@ pub enum CoreTy {
     Float,
     Str,
     Bytes,
+    MemoryView,
     Bool,
     None,
     /// A NOMINAL/protocol type contract (a named typeshed type that is neither a
@@ -241,6 +243,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         name: "filter",
         kind: SigKind::ModuleFn,
         params: &[p("function", CoreTy::Typed), p("iterable", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bytearray",
+        name: "__release_buffer__",
+        kind: SigKind::Method,
+        params: &[p("buffer", CoreTy::MemoryView)],
         enforceable: true,
     },
     // POSITIVE: bytes/bytearray bytes-like methods accept bytes-like values or

@@ -1108,6 +1108,60 @@ fn test_stdlib_bytes_bytearray_wall_rejects_impossible_scalars() {
 }
 
 #[test]
+fn test_stdlib_bytes_bytearray_constructor_overload_walls() {
+    let errors = check("from builtins import bytes\nclass _W:\n    pass\nbytes(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `source`")),
+        "bytes(_W()) should reject a bare source instance, got: {errors:?}"
+    );
+
+    let errors = check("from builtins import bytes\nbytes(12345, \"\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `str` source when `encoding` is provided")),
+        "bytes(int, encoding) should reject the dependent overload mismatch, got: {errors:?}"
+    );
+
+    let errors = check("from builtins import bytearray\nbytearray(12345, \"\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `str` source when `encoding` is provided")),
+        "bytearray(int, encoding) should reject the dependent overload mismatch, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import bytes, bytearray\nbytes(\"ok\", \"utf-8\")\nbytearray(\"ok\", \"utf-8\")\nbytes(3)\nbytearray(3)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid string+encoding and size constructors must stay clean, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_bytearray_release_buffer_rejects_scalar() {
+    let errors =
+        check("from builtins import bytearray\nobj = bytearray()\nobj.__release_buffer__(12345)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `memoryview`, got `int`")),
+        "bytearray.__release_buffer__(int) should be rejected, got: {errors:?}"
+    );
+
+    let errors =
+        check("from builtins import bytearray\nobj = bytearray()\nbuf: Any = 12345\nobj.__release_buffer__(buf)\n");
+    assert!(
+        errors.is_empty(),
+        "dynamic memoryview-like values must stay skip-safe, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
     let errors = check(
         "from builtins import classmethod\nclass _W:\n    pass\nobj = classmethod(lambda cls: None)\nobj.__get__(_W())\n",
