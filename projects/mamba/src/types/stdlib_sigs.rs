@@ -200,6 +200,57 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("i", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: bool bitwise dunders accept bool/int operands. A single int
+    // contract covers both overloads because bool is int-compatible in the type
+    // checker, while wrong scalar operands such as str must be rejected.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bool",
+        name: "__and__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bool",
+        name: "__or__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bool",
+        name: "__xor__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bool",
+        name: "__rand__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bool",
+        name: "__ror__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "bool",
+        name: "__rxor__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Int)],
+        enforceable: true,
+    },
     // POSITIVE: ExceptionGroup matcher/sequence methods use non-scalar
     // contracts in typeshed. A bare user instance cannot satisfy Callable,
     // exception type, tuple-of-types, or Sequence, so reject it through the

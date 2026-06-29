@@ -22,7 +22,7 @@ typeshed contract: value is bool. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import bool
-obj = object.__new__(bool)
+obj = bool()
 try:
     obj.__and__("not_a_bool")  # value: bool <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
