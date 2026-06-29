@@ -26,7 +26,11 @@ class _W:
 
 
 from builtins import property
-obj = object.__new__(property)
+def _f(self=None):
+    return None
+
+
+obj = property(_f)
 try:
     obj.setter(_W())  # fset: Callable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
