@@ -1108,6 +1108,37 @@ fn test_stdlib_bytes_bytearray_wall_rejects_impossible_scalars() {
 }
 
 #[test]
+fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
+    let errors = check(
+        "from builtins import classmethod\nclass _W:\n    pass\nobj = classmethod(lambda cls: None)\nobj.__get__(_W())\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `instance`")),
+        "classmethod.__get__(_W()) should be rejected, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import classmethod\nclass _W:\n    pass\nclassmethod(_W())\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `f`")),
+        "classmethod(_W()) should be rejected, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import classmethod\nobj = classmethod(lambda cls: None)\nobj.__get__(None)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "classmethod callable/None descriptor use must stay skip-safe, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_unenforceable_never_rejected() {
     // base64.b64encode(s: ReadableBuffer) -> Unknown: NOT enforceable. Even a
     // blatantly wrong int must NOT be rejected.

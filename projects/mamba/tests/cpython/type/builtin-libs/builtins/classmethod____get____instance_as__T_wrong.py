@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import classmethod
-obj = object.__new__(classmethod)
+obj = classmethod(lambda cls: None)
 try:
     obj.__get__(_W())  # instance: _T <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
