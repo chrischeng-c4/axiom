@@ -38,6 +38,11 @@ TOOLS_DIR = Path(__file__).resolve().parent
 PERF_PINS_DIR = TOOLS_DIR.parent / "config" / "perf" / "pins"
 
 TARGET_SCOPES: dict[str, tuple[str, ...]] = {
+    "free_threaded_atomicity": (
+        "list",
+        "dict",
+        "set",
+    ),
     "thread_primitives": (
         "_thread",
         "thread",
@@ -54,6 +59,7 @@ TARGET_SCOPES: dict[str, tuple[str, ...]] = {
         "concurrent_futures",
     ),
     "synchronization_queues": (
+        "lock",
         "queue",
     ),
     "signal_interaction": (
@@ -87,8 +93,8 @@ SEMANTIC_CLASS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("contextvars_propagation", re.compile(r"(contextvars|contextvar|copy_context|context propagation)", re.I)),
     ("signal_thread_interaction", re.compile(r"(signal|sigint|sigterm|wakeup_fd|handler|setitimer)", re.I)),
     ("subprocess_process_io", re.compile(r"(subprocess|popen|pipe|communicate|returncode|stdin|stdout|stderr)", re.I)),
-    ("race_deadlock_determinism", re.compile(r"(race|deadlock|nondetermin|stress|timeout|hang|barrier|wait)", re.I)),
-    ("free_threaded_no_gil_contract", re.compile(r"(free[_-]?thread|no[_-]?gil|gil|Py_GIL_DISABLED)", re.I)),
+    ("race_deadlock_determinism", re.compile(r"(race|deadlock|nondetermin|stress|timeout|hang|barrier|wait|no_lost|no_corruption)", re.I)),
+    ("free_threaded_no_gil_contract", re.compile(r"(free[_-]?thread|no[_-]?gil|gil|Py_GIL_DISABLED|atomicity|single[_-]?mutation)", re.I)),
 )
 
 REQUIRED_SEMANTIC_CLASSES = (
@@ -108,8 +114,12 @@ REQUIRED_SEMANTIC_CLASSES = (
 
 def detect_path_target(path: Path) -> tuple[str, str] | None:
     rel_parts = path.relative_to(CPYTHON_DIR).parts
-    if len(rel_parts) >= 3 and rel_parts[0] == "concurrency" and rel_parts[1] == "primitives":
-        if rel_parts[2] == "threading":
+    if len(rel_parts) >= 3 and rel_parts[0] == "concurrency":
+        if rel_parts[1] == "atomicity" and rel_parts[2] in {"list", "dict", "set"}:
+            return "free_threaded_atomicity", rel_parts[2]
+        if rel_parts[1] == "safety" and rel_parts[2] == "lock":
+            return "synchronization_queues", "lock"
+        if rel_parts[1] == "primitives" and rel_parts[2] == "threading":
             return "thread_primitives", "threading_primitives"
 
     for index, part in enumerate(rel_parts[:-1]):
@@ -179,6 +189,8 @@ def semantic_classes(fixture: Fixture) -> list[str]:
     classes = [
         name for name, pattern in SEMANTIC_CLASS_PATTERNS if pattern.search(haystack)
     ]
+    if fixture.dimension == "concurrency" and "free_threaded_no_gil_contract" not in classes:
+        classes.append("free_threaded_no_gil_contract")
     if classes:
         return classes
     if fixture.scope == "thread_primitives":
@@ -388,7 +400,7 @@ def build_report(show: int, db: Path) -> dict[str, Any]:
         "blockers": blockers,
         "evidence_commands": [
             "python3.12 projects/mamba/tests/harness/cpython/tools/concurrency_readiness.py --json",
-            "python3.12 projects/mamba/tests/harness/cpython/tools/results_store.py collect --bucket std-libs --dimension behavior --limit 20",
+            "python3.12 projects/mamba/tests/harness/cpython/tools/results_store.py collect --dimension concurrency --limit 5 --jobs 1",
             "python3.12 projects/mamba/tests/harness/cpython/tools/verify_cpython_oracle.py --ready-only --bucket behavior",
             "target/debug/mamba run projects/mamba/tests/cpython/behavior/std-libs/threading/thread_tests__test_various_ops_uc3da134.py",
         ],
