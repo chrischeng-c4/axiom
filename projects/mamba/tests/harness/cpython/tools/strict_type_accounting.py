@@ -49,6 +49,7 @@ BEHAVIOR_FACETS = {"behavior", "surface", "errors", "real_world"}
 
 TYPE_REJECTION_MARKERS = (
     "type mismatch",
+    "type error",
     "requires numeric type",
     "requires numeric types",
     "require int types",
