@@ -9,12 +9,11 @@
 # case = "str__replace__old_as_LiteralString_wrong"
 # subject = "builtins.str.replace(old: LiteralString)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed old"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed old
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.replace(old: LiteralString); call it with the wrong type.
 

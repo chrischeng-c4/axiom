@@ -9,12 +9,11 @@
 # case = "str__maketrans__x_as_typed_wrong"
 # subject = "builtins.str.maketrans(x: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.maketrans(x: typed); call it with the wrong type.
 

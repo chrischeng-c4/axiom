@@ -9,12 +9,11 @@
 # case = "str__rpartition__sep_as_str_wrong"
 # subject = "builtins.str.rpartition(sep: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sep"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sep
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.rpartition(sep: str); call it with the wrong type.
 

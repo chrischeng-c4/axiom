@@ -9,12 +9,11 @@
 # case = "str__startswith__prefix_as_typed_wrong"
 # subject = "builtins.str.startswith(prefix: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed prefix"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed prefix
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.startswith(prefix: typed); call it with the wrong type.
 

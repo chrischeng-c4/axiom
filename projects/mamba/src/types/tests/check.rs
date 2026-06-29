@@ -969,6 +969,34 @@ fn test_stdlib_str_contracts_rejected() {
 }
 
 #[test]
+fn test_stdlib_str_text_method_contracts_rejected() {
+    let errors = check(
+        "from builtins import str\nclass _W:\n    pass\nobj = str.__new__(str)\nobj.ljust(_W())\nobj.rjust(_W())\nobj.zfill(_W())\nobj.lstrip(_W())\nobj.rstrip(_W())\nobj.strip(_W())\nobj.split(_W())\nobj.rsplit(_W())\nobj.startswith(_W())\nstr.maketrans(_W())\nobj.partition(123)\nobj.rpartition(123)\nobj.removeprefix(123)\nobj.removesuffix(123)\nobj.replace(123, \"\")\nobj.splitlines(123)\nstr.maketrans(123, \"\")\n",
+    );
+    let typed_errors = errors
+        .iter()
+        .filter(|e| e.contains("does not satisfy parameter"))
+        .count();
+    assert_eq!(
+        typed_errors, 10,
+        "str text-method protocol walls should reject bare instances, got: {errors:?}"
+    );
+    let scalar_errors = errors.iter().filter(|e| e.contains("expected `")).count();
+    assert_eq!(
+        scalar_errors, 7,
+        "str text-method scalar walls should reject wrong scalars, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import str\nobj = str.__new__(str)\nobj.ljust(3)\nobj.rjust(3)\nobj.zfill(3)\nobj.lstrip(None)\nobj.lstrip(\"x\")\nobj.rstrip(None)\nobj.strip(\"x\")\nobj.partition(\"x\")\nobj.rpartition(\"x\")\nobj.removeprefix(\"x\")\nobj.removesuffix(\"x\")\nobj.replace(\"x\", \"y\")\nobj.split(None)\nobj.split(\"x\", 1)\nobj.rsplit(None)\nobj.splitlines(True)\nobj.startswith(\"x\")\nobj.startswith((\"x\", \"y\"))\nstr.maketrans(\"a\", \"b\")\nstr.maketrans({\"a\": \"b\"})\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid str text method forms must stay accepted, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_map_new_callable_rejected() {
     let errors =
         check("from builtins import map\nclass _W:\n    pass\nmap.__new__(map, _W(), None)\n");
