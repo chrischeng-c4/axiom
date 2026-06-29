@@ -1399,6 +1399,33 @@ fn test_stdlib_function_get_owner_rejected() {
 }
 
 #[test]
+fn test_stdlib_int_new_x_rejected() {
+    let errors =
+        check("from builtins import int\nclass _W:\n    pass\nint.__new__(int, _W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `x`")),
+        "int.__new__(int, _W()) should reject a bare x operand, got: {errors:?}"
+    );
+
+    let errors =
+        check("from builtins import int\nclass _W:\n    pass\nint.__new__(int, _W(), None)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `x`")),
+        "int.__new__(int, _W(), None) should reject a bare x operand before runtime base validation, got: {errors:?}"
+    );
+
+    let errors = check("from builtins import int\nint.__new__(int)\nint.__new__(int, \"123\")\n");
+    assert!(
+        errors.is_empty(),
+        "valid int.__new__ class-call forms must stay skip-safe, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_filter_wrong_bare_function_rejected() {
     let errors = check("from builtins import filter\nclass _W:\n    pass\nfilter(_W(), [])\n");
     assert!(
