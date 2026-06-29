@@ -113,24 +113,22 @@ requirementDiagram
 
 ```yaml
 e2e_tests:
-  - id: spec-cli-doc-surface
-    name: "spec cli doc surface"
+  - id: spec-cli-agent-doc-contract
+    name: "spec cli agent doc contract"
     runner: cargo
     path: projects/lumen/tests/spec_cli.rs
     command: "cargo test -p lumen --test spec_cli -- --nocapture"
     verifies:
-      - "OpenAPI/schema JSON is valid."
-      - "Query-shape cookbook includes the updated has_child + sort wording."
-      - "LLM workflow includes the nested filter + parent sort confirmation."
-  - id: has-child-sort-runtime-regression
-    name: "has_child sort runtime regression"
+      - "OpenAPI JSON/YAML remain valid after doc string changes."
+      - "Query shape and LLM workflow text expose current sort behavior."
+  - id: storage-has-child-sort-contract
+    name: "storage has_child sort contract"
     runner: cargo
     path: projects/lumen/src/storage.rs
     command: "cargo test -p lumen storage::tests::has_child_sort_tests -- --nocapture"
     verifies:
-      - "The runtime behavior documented here remains covered by existing storage tests."
+      - "Runtime support for has_child + parent sorting remains covered."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
