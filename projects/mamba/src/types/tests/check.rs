@@ -873,6 +873,39 @@ fn test_stdlib_list_dunder_contracts_rejected() {
 }
 
 #[test]
+fn test_stdlib_tuple_dunder_contracts_rejected() {
+    let errors = check(
+        "obj = ()\nobj.__add__(12345)\nobj.__ge__(12345)\nobj.__gt__(12345)\nobj.__le__(12345)\nobj.__lt__(12345)\n",
+    );
+    let tuple_value_errors = errors
+        .iter()
+        .filter(|e| e.contains("expected `tuple`, got `int`"))
+        .count();
+    assert_eq!(
+        tuple_value_errors, 5,
+        "tuple value dunders should reject concrete non-tuple operands, got: {errors:?}"
+    );
+
+    let errors = check("class _W:\n    pass\nobj = ()\nobj.__getitem__(_W())\n");
+    let key_errors = errors
+        .iter()
+        .filter(|e| e.contains("does not satisfy parameter `key`"))
+        .count();
+    assert_eq!(
+        key_errors, 1,
+        "tuple key dunder should reject a bare key operand, got: {errors:?}"
+    );
+
+    let errors = check(
+        "obj = ()\nobj.__add__(())\nobj.__ge__(())\nobj.__gt__(())\nobj.__le__(())\nobj.__lt__(())\nobj.__getitem__(0)\nobj.__getitem__(slice(0, 1))\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid tuple dunder forms must stay accepted, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_list_generic_method_contracts_rejected() {
     let errors = check(
         "class _W:\n    def __eq__(self, other):\n        return True\nobj: list[int] = [1]\nobj.append(_W())\nobj.count(_W())\nobj.index(_W())\nobj.remove(_W())\n",
