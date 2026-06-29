@@ -9,12 +9,11 @@
 # case = "cache_from_source__path_as_StrPath_wrong"
 # subject = "_frozen_importlib_external.cache_from_source(path: StrPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_frozen_importlib_external.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: _frozen_importlib_external.cache_from_source(path: StrPath); call it with the wrong type.
 
