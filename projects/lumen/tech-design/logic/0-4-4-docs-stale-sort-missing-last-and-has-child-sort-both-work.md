@@ -28,27 +28,26 @@ fill_sections: [logic, unit-test, e2e-test, changes]
 
 ```mermaid
 ---
-id: sort-doc-refresh-applicability
-entry: start
+id: sort-doc-refresh-contract
+entry: docs
 nodes:
-  start:      { kind: start, label: "issue #718: docs lag runtime behavior" }
-  schema:     { kind: process, label: "Update SearchRequest.sort schema wording" }
-  cookbook:   { kind: process, label: "Add has_child + parent sort cookbook cue" }
-  workflow:   { kind: process, label: "Add LLM workflow line for nested filter + parent sort" }
-  verify:     { kind: terminal, label: "spec_cli asserts agent-facing text" }
+  docs:     { kind: start, label: "Agent reads lumen spec / OpenAPI / llm workflow" }
+  missing:  { kind: process, label: "sort.missing says exclude drops; first/last keep and count" }
+  arity:    { kind: process, label: "sort docs say up to MAX_SORT_KEYS=4" }
+  nested:   { kind: process, label: "has_child can filter parents before parent-field sort" }
+  verify:   { kind: terminal, label: "spec_cli locks these strings" }
 edges:
-  - { from: start, to: schema }
-  - { from: schema, to: cookbook }
-  - { from: cookbook, to: workflow }
-  - { from: workflow, to: verify }
+  - { from: docs, to: missing }
+  - { from: missing, to: arity }
+  - { from: arity, to: nested }
+  - { from: nested, to: verify }
 ---
 flowchart TD
-    start([#718 stale docs]) --> schema[OpenAPI/SearchRequest.sort wording]
-    schema --> cookbook[lumen spec query shape mentions has_child + sort]
-    cookbook --> workflow[lumen llm workflow mentions nested filter + parent sort]
-    workflow --> verify([spec_cli locks wording])
+    docs([offline agent docs]) --> missing[sort.missing first/last placement + total]
+    missing --> arity[up to 4 sort keys]
+    arity --> nested[has_child + parent sort supported]
+    nested --> verify([spec_cli assertions])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
