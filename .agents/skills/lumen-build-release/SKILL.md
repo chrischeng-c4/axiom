@@ -1,6 +1,6 @@
 ---
 name: lumen:build:release
-description: Bump lumen patch version, build the release binary, install it to ~/.cargo/bin/lumen, commit version files, and create the lumen release tag. Use when the user asks to release lumen or run a lumen release build.
+description: Release lumen end-to-end by building, installing, committing, tagging, pushing the source branch, and pushing the lumen release tag. Use when the user asks to release lumen or run a lumen release build.
 ---
 
 # /lumen:build:release
@@ -14,6 +14,13 @@ Cuts a lumen release using the project-owned release path:
 - installs `target/release/lumen` to `~/.cargo/bin/lumen`
 - commits the version files
 - creates the `lumen@<version>` annotated tag
+- pushes the current source branch to `origin`
+- pushes the `lumen@<version>` tag to trigger `.github/workflows/lumen-release.yml`
+
+If the current `HEAD` already has a `lumen@<version>` tag, the script treats it
+as an already-prepared release and only performs the source/tag push. This keeps
+the skill idempotent after a local release build finishes but the GitHub push has
+not happened yet.
 
 ## Instructions
 
