@@ -1,8 +1,8 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-29T08:18:28.711174+00:00"
-digest = "sha256:cb53e6f71e2013751167f23865e5a74486fdd92264ea8a8c63009c05f563cceb"
+generated_at = "2026-06-29T08:27:06.268072+00:00"
+digest = "sha256:cb69b584503794157ca73f4029643360ac02fdc456ea20ebeb86b541896547dc"
 
 [[files]]
 path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
@@ -53,6 +53,10 @@ path = "semantic/cap-tests.md"
 digest = "sha256:67835808e7d022e0e9f7d9f616637a5a97f8f1cb55619db6d91c5e182e945081"
 
 [[files]]
+path = "semantic/source/build.md"
+digest = "sha256:77bee60504dd46a61ea9f1d82832b958feaf3ffec82d6f690d67e55347ed46b7"
+
+[[files]]
 path = "semantic/source/cli.md"
 digest = "sha256:59b56ee87b4058a9b7f98897514113a45055ce918ac787a65063fdfc080af3e3"
 
@@ -97,8 +101,16 @@ path = "semantic/source/reap.md"
 digest = "sha256:1ed5ff5d2c2687d4f4d7821330ffeb1e9628584cff7290d7f2a03b654ffb93df"
 
 [[files]]
+path = "semantic/source/resident-shell.md"
+digest = "sha256:c1d07f03101d8d10fbde9e4e95a6acefebdc19c1e1a5e3dea6a6cb97fb6546c7"
+
+[[files]]
 path = "semantic/source/sampler.md"
 digest = "sha256:98d3aa382d0fb80da594ff7f4c678515de5edb1734412431980e31dbe9af1fc6"
+
+[[files]]
+path = "semantic/source/session-queue.md"
+digest = "sha256:c5f9dc1182cb0cd457656a3cf3a8ff6d1fd0061d1d3b3587bd059a1a30a7d849"
 
 [[files]]
 path = "semantic/source/throttle.md"
