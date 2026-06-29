@@ -78,6 +78,50 @@ impl ToolInfo {
 // Shared helpers for the `online` (network + self-install) paths.
 // ---------------------------------------------------------------------------
 
+/// Resolve a GitHub token the way `gh` itself does, in order: `$GH_TOKEN`,
+/// then `$GITHUB_TOKEN`, then the `gh` CLI credential store (`gh auth token`,
+/// which reads the OS keyring / `hosts.yml`). Returns `None` when no credential
+/// is available. This makes the standard CLI ops "just work" for anyone already
+/// authenticated via `gh`, which does not export a `GITHUB_TOKEN` env var.
+#[cfg(feature = "online")]
+pub(crate) fn resolve_github_token() -> Option<String> {
+    resolve_github_token_from(|var| std::env::var(var).ok(), gh_auth_token)
+}
+
+/// Pure resolution order (env lookup + `gh` fallback injected for testing):
+/// first non-empty of `$GH_TOKEN`, `$GITHUB_TOKEN`, then `gh()`.
+#[cfg(feature = "online")]
+fn resolve_github_token_from(
+    env: impl Fn(&str) -> Option<String>,
+    gh: impl Fn() -> Option<String>,
+) -> Option<String> {
+    for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
+        if let Some(token) = env(var) {
+            let token = token.trim().to_string();
+            if !token.is_empty() {
+                return Some(token);
+            }
+        }
+    }
+    gh()
+}
+
+/// Shell out to `gh auth token` — the de-facto GitHub auth on developer
+/// machines (token in the OS keyring). Returns `None` if `gh` is missing,
+/// unauthenticated, or prints nothing.
+#[cfg(feature = "online")]
+fn gh_auth_token() -> Option<String> {
+    let output = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!token.is_empty()).then_some(token)
+}
+
 #[cfg(feature = "online")]
 pub(crate) async fn github_get(
     client: &reqwest::Client,
@@ -87,10 +131,8 @@ pub(crate) async fn github_get(
     let mut req = client
         .get(url)
         .header("Accept", "application/vnd.github+json");
-    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-        if !token.is_empty() {
-            req = req.bearer_auth(token);
-        }
+    if let Some(token) = resolve_github_token() {
+        req = req.bearer_auth(token);
     }
     req.send()
         .await
@@ -185,5 +227,48 @@ fn install_error(e: std::io::Error, exe: &std::path::Path) -> anyhow::Error {
         )
     } else {
         anyhow::anyhow!("failed to install new binary at {}: {e}", exe.display())
+    }
+}
+
+#[cfg(all(test, feature = "online"))]
+mod token_tests {
+    use super::resolve_github_token_from;
+
+    #[test]
+    fn gh_token_takes_precedence() {
+        let got = resolve_github_token_from(
+            |v| match v {
+                "GH_TOKEN" => Some("from-gh-env".to_string()),
+                "GITHUB_TOKEN" => Some("from-github".to_string()),
+                _ => None,
+            },
+            || Some("from-gh-cli".to_string()),
+        );
+        assert_eq!(got.as_deref(), Some("from-gh-env"));
+    }
+
+    #[test]
+    fn github_token_is_second() {
+        let got = resolve_github_token_from(
+            |v| (v == "GITHUB_TOKEN").then(|| "from-github".to_string()),
+            || Some("from-gh-cli".to_string()),
+        );
+        assert_eq!(got.as_deref(), Some("from-github"));
+    }
+
+    #[test]
+    fn falls_back_to_gh_cli_when_env_absent_or_blank() {
+        // Blank env values are skipped, so the gh CLI store is consulted.
+        let got = resolve_github_token_from(
+            |v| (v == "GH_TOKEN").then(|| "   ".to_string()),
+            || Some("from-gh-cli".to_string()),
+        );
+        assert_eq!(got.as_deref(), Some("from-gh-cli"));
+    }
+
+    #[test]
+    fn none_when_no_credential_anywhere() {
+        let got = resolve_github_token_from(|_| None, || None);
+        assert_eq!(got, None);
     }
 }
