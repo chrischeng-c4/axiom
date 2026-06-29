@@ -9,12 +9,11 @@
 # case = "Future__add_done_callback__fn_as_Callable_wrong"
 # subject = "_asyncio.Future.add_done_callback(fn: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fn"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_asyncio.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fn
 # mamba-strict-type: TypeError
 """Type wall: _asyncio.Future.add_done_callback(fn: Callable); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from _asyncio import Future
-obj = object.__new__(Future)
+obj = Future()
 try:
     obj.add_done_callback(_W())  # fn: Callable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

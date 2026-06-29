@@ -58,6 +58,15 @@ unsafe extern "C" fn dispatch_future(_args_ptr: *const MbValue, _nargs: usize) -
     make_future()
 }
 
+unsafe extern "C" fn dispatch_task(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let coro = a.first().copied().unwrap_or_else(MbValue::none);
+    if !super::super::async_rt::is_known_coroutine(coro) {
+        return raise_asyncio("TypeError", "a coroutine was expected");
+    }
+    make_task(coro)
+}
+
 unsafe extern "C" fn dispatch_event(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     make_event()
 }
@@ -151,6 +160,15 @@ pub fn register() {
     register_event_class();
     register_queue_class();
     register_task_class();
+    let task_addr = dispatch_task as *const () as usize;
+    attrs.insert("Task".to_string(), MbValue::from_func(task_addr));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(task_addr as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut()
+            .insert(task_addr as u64, "asyncio.Task".to_string());
+    });
     let queue_addr = dispatch_queue as *const () as usize;
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         m.borrow_mut()
@@ -229,7 +247,6 @@ pub fn register() {
         "StreamWriter",
         "SubprocessProtocol",
         "SubprocessTransport",
-        "Task",
         "TaskGroup",
         "ThreadedChildWatcher",
         "Timeout",
@@ -282,6 +299,13 @@ pub fn register() {
 
     register_exception_classes(&mut attrs);
 
+    let mut accel_attrs = HashMap::new();
+    for name in ["Future", "Task", "current_task"] {
+        if let Some(value) = attrs.get(name).copied() {
+            accel_attrs.insert(name.to_string(), value);
+        }
+    }
+    super::register_module("_asyncio", accel_attrs);
     super::register_module("asyncio", attrs);
 }
 
@@ -425,7 +449,7 @@ fn raise_asyncio(exc: &str, msg: &str) -> MbValue {
     MbValue::none()
 }
 
-extern "C" fn future_cancel(this: MbValue) -> MbValue {
+unsafe extern "C" fn future_cancel(this: MbValue, _args: MbValue) -> MbValue {
     if future_state(this) == "PENDING" {
         set_field(this, "_state", new_str("CANCELLED"));
         return MbValue::from_bool(true);
@@ -433,23 +457,74 @@ extern "C" fn future_cancel(this: MbValue) -> MbValue {
     MbValue::from_bool(false)
 }
 
-extern "C" fn future_cancelled(this: MbValue) -> MbValue {
+unsafe extern "C" fn future_cancelled(this: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_bool(future_state(this) == "CANCELLED")
 }
 
-extern "C" fn future_done(this: MbValue) -> MbValue {
+unsafe extern "C" fn future_done(this: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_bool(matches!(
         future_state(this).as_str(),
         "FINISHED" | "CANCELLED"
     ))
 }
 
-extern "C" fn future_result(this: MbValue) -> MbValue {
+unsafe extern "C" fn future_result(this: MbValue, _args: MbValue) -> MbValue {
     match future_state(this).as_str() {
         "FINISHED" => get_field(this, "_result").unwrap_or_else(MbValue::none),
         "CANCELLED" => raise_asyncio("CancelledError", ""),
         _ => raise_asyncio("InvalidStateError", "Result is not set."),
     }
+}
+
+unsafe extern "C" fn future_add_done_callback(this: MbValue, args: MbValue) -> MbValue {
+    let callback = method_arg0(args).unwrap_or_else(MbValue::none);
+    if super::super::builtins::mb_callable(callback).as_bool() != Some(true) {
+        return raise_asyncio("TypeError", "callback must be callable");
+    }
+    if matches!(future_state(this).as_str(), "FINISHED" | "CANCELLED") {
+        let call_args = MbValue::from_ptr(MbObject::new_list(vec![this]));
+        let _ = super::super::builtins::mb_call_spread(callback, call_args);
+        if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+            super::super::exception::mb_clear_exception();
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn future_remove_done_callback(_this: MbValue, args: MbValue) -> MbValue {
+    let callback = method_arg0(args).unwrap_or_else(MbValue::none);
+    if super::super::builtins::mb_callable(callback).as_bool() != Some(true) {
+        return raise_asyncio("TypeError", "callback must be callable");
+    }
+    MbValue::from_int(0)
+}
+
+unsafe extern "C" fn future_set_result(this: MbValue, args: MbValue) -> MbValue {
+    let result = method_arg0(args).unwrap_or_else(MbValue::none);
+    set_field(this, "_result", result);
+    set_field(this, "_state", new_str("FINISHED"));
+    MbValue::none()
+}
+
+fn is_exception_instance(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            class_name == "BaseException"
+                || super::super::exception::is_subclass_of(class_name, "BaseException")
+        } else {
+            false
+        }
+    })
+}
+
+unsafe extern "C" fn future_set_exception(this: MbValue, args: MbValue) -> MbValue {
+    let exc = method_arg0(args).unwrap_or_else(MbValue::none);
+    if !is_exception_instance(exc) {
+        return raise_asyncio("TypeError", "invalid exception object");
+    }
+    set_field(this, "_exception", exc);
+    set_field(this, "_state", new_str("FINISHED"));
+    MbValue::none()
 }
 
 fn register_future_class() {
@@ -459,7 +534,18 @@ fn register_future_class() {
         ("cancelled", future_cancelled as *const () as usize),
         ("done", future_done as *const () as usize),
         ("result", future_result as *const () as usize),
+        (
+            "add_done_callback",
+            future_add_done_callback as *const () as usize,
+        ),
+        (
+            "remove_done_callback",
+            future_remove_done_callback as *const () as usize,
+        ),
+        ("set_result", future_set_result as *const () as usize),
+        ("set_exception", future_set_exception as *const () as usize),
     ] {
+        super::super::module::register_variadic_func(addr as u64);
         methods.insert(name.to_string(), MbValue::from_func(addr));
     }
     super::super::class::mb_class_register("asyncio.Future", vec!["object".to_string()], methods);
@@ -592,19 +678,19 @@ fn task_id(this: MbValue) -> MbValue {
     get_field(this, "_task_id").unwrap_or_else(MbValue::none)
 }
 
-extern "C" fn task_cancel(this: MbValue) -> MbValue {
+unsafe extern "C" fn task_cancel(this: MbValue, _args: MbValue) -> MbValue {
     rt_cancel_task(task_id(this))
 }
 
-extern "C" fn task_cancelled(this: MbValue) -> MbValue {
+unsafe extern "C" fn task_cancelled(this: MbValue, _args: MbValue) -> MbValue {
     rt_task_cancelled(task_id(this))
 }
 
-extern "C" fn task_done(this: MbValue) -> MbValue {
+unsafe extern "C" fn task_done(this: MbValue, _args: MbValue) -> MbValue {
     rt_task_done(task_id(this))
 }
 
-extern "C" fn task_result(this: MbValue) -> MbValue {
+unsafe extern "C" fn task_result(this: MbValue, _args: MbValue) -> MbValue {
     if rt_task_cancelled(task_id(this)).as_bool() == Some(true) {
         return raise_asyncio("CancelledError", "");
     }
@@ -619,6 +705,7 @@ fn register_task_class() {
         ("done", task_done as *const () as usize),
         ("result", task_result as *const () as usize),
     ] {
+        super::super::module::register_variadic_func(addr as u64);
         methods.insert(name.to_string(), MbValue::from_func(addr));
     }
     super::super::class::mb_class_register(
