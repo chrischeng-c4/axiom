@@ -177,7 +177,6 @@ requirementDiagram
     verifymethod: benchmark
   }
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
