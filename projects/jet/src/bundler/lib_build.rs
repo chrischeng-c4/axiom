@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use super::types::OutputFormat;
+use super::types::{OutputFormat, SourceMapOption};
 use crate::resolver::package::{external_package_names, library_entries, LibraryEntry};
 
 /// Options driving a single library build.
@@ -80,6 +80,9 @@ pub struct LibBuildOptions {
     /// subpaths so consumers can deep-import `@pkg/assets/icons/x.svg`. When
     /// empty, no copy runs. Replaces the bespoke `copyRawAssets` plugin.
     pub raw_copy: Vec<RawCopyDir>,
+
+    /// Source map policy for emitted JS library outputs.
+    pub sourcemap: SourceMapOption,
 }
 
 /// One raw-asset directory copy: the source dir (relative to `project_root`)
@@ -109,6 +112,7 @@ impl Default for LibBuildOptions {
             entry: Vec::new(),
             css_merge: Vec::new(),
             raw_copy: Vec::new(),
+            sourcemap: SourceMapOption::None,
         }
     }
 }
@@ -279,6 +283,7 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
     for entry in &entries {
         let entry_path = resolve_entry_path(&options.project_root, &entry.source)
             .with_context(|| format!("resolving entry source {}", entry.source))?;
+        ensure_library_source_path(&entry_path, &entry.source, "entry source")?;
 
         // Inline internal relative modules; hoist external imports verbatim.
         let esm = bundle_library_entry(&entry_path, &externals)?;
@@ -308,6 +313,8 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
 
             let file_name = output_file_name(&entry.subpath, format);
             let out_path = options.out_dir.join(&file_name);
+            let code = apply_library_sourcemap(&options, &entry_path, &file_name, code)
+                .with_context(|| format!("emitting source map for {}", out_path.display()))?;
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("creating {}", parent.display()))?;
@@ -327,7 +334,12 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
 
     // Post-emit asset steps: CSS cascade-merge + raw-asset copy. No-ops (and
     // thus byte-identical to today) when neither is configured.
-    let assets = run_post_emit_assets(&options)?;
+    let mut assets = run_post_emit_assets(&options)?;
+    assets.extend(copy_wildcard_export_assets(
+        &options,
+        &pkg_path,
+        &conditions,
+    )?);
 
     Ok(LibBuildResult {
         entries: outputs,
@@ -400,7 +412,7 @@ fn collect_reexport_declaration_modules(
         if is_external_specifier(&spec, externals) {
             continue;
         }
-        if let Some(target) = resolve_relative(path, &spec) {
+        if let Some(target) = resolve_relative(path, &spec)? {
             collect_reexport_declaration_modules(&target, externals, visited, order)?;
         }
     }
@@ -580,6 +592,224 @@ fn copy_raw_assets(options: &LibBuildOptions) -> Result<Vec<AssetOutput>> {
     }
 
     Ok(copied)
+}
+
+/// Copy non-code files that are exposed through package.json wildcard export
+/// patterns such as `"./icons/*": "./dist/icons/*"`.
+///
+/// Library entry discovery intentionally skips wildcard exports because code
+/// wildcard entries need a real graph expansion step. Raw assets are simpler:
+/// when the public wildcard prefix has a matching `src/<prefix>` directory and
+/// the target points under `out_dir`, copy every non-JS/TS file verbatim.
+fn copy_wildcard_export_assets(
+    options: &LibBuildOptions,
+    pkg_path: &Path,
+    conditions: &[&str],
+) -> Result<Vec<AssetOutput>> {
+    let package_json = std::fs::read_to_string(pkg_path)
+        .with_context(|| format!("reading {}", pkg_path.display()))?;
+    let package: serde_json::Value = serde_json::from_str(&package_json)
+        .with_context(|| format!("parsing {}", pkg_path.display()))?;
+    let Some(exports) = package.get("exports").and_then(|v| v.as_object()) else {
+        return Ok(Vec::new());
+    };
+
+    let mut copied = Vec::new();
+    for (public_pattern, value) in exports {
+        if !public_pattern.contains('*') {
+            continue;
+        }
+        let Some(target_pattern) = wildcard_export_target(value, conditions) else {
+            continue;
+        };
+        let Some((source_dir, dest_dir)) =
+            wildcard_asset_dirs(options, public_pattern, &target_pattern)?
+        else {
+            continue;
+        };
+        if !source_dir.is_dir() {
+            continue;
+        }
+
+        for entry in walkdir::WalkDir::new(&source_dir).follow_links(false) {
+            let entry = entry.with_context(|| {
+                format!(
+                    "jet build --lib wildcard export: walking {}",
+                    source_dir.display()
+                )
+            })?;
+            if !entry.file_type().is_file() || is_library_source_path(entry.path()) {
+                continue;
+            }
+            let rel = entry.path().strip_prefix(&source_dir).with_context(|| {
+                format!(
+                    "computing relative path of {} under {}",
+                    entry.path().display(),
+                    source_dir.display()
+                )
+            })?;
+            let dest = dest_dir.join(rel);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            std::fs::copy(entry.path(), &dest).with_context(|| {
+                format!("copying {} → {}", entry.path().display(), dest.display())
+            })?;
+            copied.push(AssetOutput {
+                path: dest,
+                kind: AssetKind::RawAsset,
+            });
+        }
+    }
+
+    Ok(copied)
+}
+
+fn wildcard_export_target(value: &serde_json::Value, conditions: &[&str]) -> Option<String> {
+    match value {
+        serde_json::Value::String(path) => Some(path.clone()),
+        serde_json::Value::Object(map) => {
+            for (key, nested) in map {
+                if conditions.contains(&key.as_str()) {
+                    if let Some(path) = wildcard_export_target(nested, conditions) {
+                        return Some(path);
+                    }
+                }
+            }
+            map.get("default")
+                .and_then(|nested| wildcard_export_target(nested, conditions))
+        }
+        _ => None,
+    }
+}
+
+fn wildcard_asset_dirs(
+    options: &LibBuildOptions,
+    public_pattern: &str,
+    target_pattern: &str,
+) -> Result<Option<(PathBuf, PathBuf)>> {
+    let Some(public_prefix) = public_pattern.split('*').next() else {
+        return Ok(None);
+    };
+    let Some(target_prefix) = target_pattern.split('*').next() else {
+        return Ok(None);
+    };
+    let public_prefix = public_prefix.trim_start_matches("./").trim_matches('/');
+    if public_prefix.is_empty() {
+        return Ok(None);
+    }
+
+    let out_dir_name = options
+        .out_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("dist");
+    let target_prefix = target_prefix.trim_start_matches("./");
+    let Some(dest_rel) = target_prefix.strip_prefix(&format!("{out_dir_name}/")) else {
+        return Ok(None);
+    };
+
+    let source_dir = options.project_root.join("src").join(public_prefix);
+    let dest_dir = options.out_dir.join(dest_rel.trim_matches('/'));
+    Ok(Some((source_dir, dest_dir)))
+}
+
+fn apply_library_sourcemap(
+    options: &LibBuildOptions,
+    entry_path: &Path,
+    file_name: &str,
+    code: String,
+) -> Result<String> {
+    match options.sourcemap {
+        SourceMapOption::None => Ok(code),
+        SourceMapOption::External | SourceMapOption::Hidden | SourceMapOption::Inline => {
+            let source = std::fs::read_to_string(entry_path)
+                .with_context(|| format!("reading source map input {}", entry_path.display()))?;
+            let source_name = entry_path
+                .strip_prefix(&options.project_root)
+                .unwrap_or(entry_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let map =
+                super::sourcemap::generate_source_map(file_name, &[(source_name, source)], &code);
+            match options.sourcemap {
+                SourceMapOption::External => {
+                    let map_filename = format!("{file_name}.map");
+                    super::sourcemap::write_external_map(
+                        &options.out_dir,
+                        &map_filename,
+                        &map.json,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "writing source map {}",
+                            options.out_dir.join(&map_filename).display()
+                        )
+                    })?;
+                    Ok(super::sourcemap::append_source_map_url(
+                        &code,
+                        &map_filename,
+                    ))
+                }
+                SourceMapOption::Hidden => {
+                    let map_filename = format!("{file_name}.map");
+                    super::sourcemap::write_external_map(
+                        &options.out_dir,
+                        &map_filename,
+                        &map.json,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "writing source map {}",
+                            options.out_dir.join(&map_filename).display()
+                        )
+                    })?;
+                    Ok(code)
+                }
+                SourceMapOption::Inline => {
+                    Ok(super::sourcemap::inline_source_map(&code, &map.json))
+                }
+                SourceMapOption::None => unreachable!(),
+            }
+        }
+    }
+}
+
+fn transpile_library_esm(source: &str) -> Result<String> {
+    let options = crate::transform::TransformOptions {
+        jsx_pragma: None,
+        jsx_fragment: None,
+        jsx_automatic: true,
+        ts_target: crate::transform::TypeScriptTarget::ES2020,
+        source_maps: false,
+        minify: false,
+        dev_mode: false,
+    };
+    crate::transform::transform_tsx::transform_tsx(source, &options).map(|result| result.code)
+}
+
+fn ensure_library_source_path(path: &Path, spec: &str, role: &str) -> Result<()> {
+    if is_library_source_path(path) {
+        return Ok(());
+    }
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("<none>");
+    anyhow::bail!(
+        "jet build --lib: unsupported local {role} extension '.{ext}' for {spec} at {}; \
+         library mode only inlines JS/TS source modules. Configure css_merge/raw_copy \
+         or add a loader before importing this asset.",
+        path.display()
+    )
+}
+
+fn is_library_source_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs")
+    )
 }
 
 /// Read the `name` field from a `package.json`, falling back to `"lib"` when
@@ -969,7 +1199,7 @@ fn collect_modules(
         if is_external_specifier(&spec, externals) {
             continue;
         }
-        if let Some(target) = resolve_relative(path, &spec) {
+        if let Some(target) = resolve_relative(path, &spec)? {
             collect_modules(&target, externals, visited, order)?;
         }
     }
@@ -1252,7 +1482,7 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
         out.push('\n');
     }
     out.push_str(&body);
-    Ok(out)
+    transpile_library_esm(&out)
 }
 
 /// Recursively inline one module's body.
@@ -1355,7 +1585,7 @@ fn inline_module(
             // Recursion + the shared `inlined_files` visited-set make this
             // transitive (a re-export of a re-export is followed) and cycle-
             // safe (a module is inlined at most once).
-            if let Some(target) = resolve_relative(path, &spec) {
+            if let Some(target) = resolve_relative(path, &spec)? {
                 if is_star_reexport(stmt_text) {
                     // `export * from "./m"` — inline keeping export keywords so
                     // the target's exports become the bundle's exports.
@@ -1396,7 +1626,7 @@ fn inline_module(
             // place so the bundled entry stays self-contained. The target's
             // own `export` keywords are kept (verbatim inline), matching the
             // pre-existing single-file behaviour.
-            if let Some(target) = resolve_relative(path, &spec) {
+            if let Some(target) = resolve_relative(path, &spec)? {
                 let inlined = inline_module(
                     &target,
                     externals,
@@ -1530,25 +1760,31 @@ fn is_external_specifier(spec: &str, externals: &HashSet<String>) -> bool {
 }
 
 /// Resolve a relative specifier against the importing file.
-fn resolve_relative(from: &Path, spec: &str) -> Option<PathBuf> {
-    let base = from.parent()?.join(spec.trim_start_matches("./"));
+fn resolve_relative(from: &Path, spec: &str) -> Result<Option<PathBuf>> {
+    let Some(parent) = from.parent() else {
+        return Ok(None);
+    };
+    let base = parent.join(spec.trim_start_matches("./"));
     if base.is_file() {
-        return Some(base);
+        ensure_library_source_path(&base, spec, "import")?;
+        return Ok(Some(base));
     }
     let exts = ["ts", "tsx", "js", "jsx", "mjs", "cjs"];
     for ext in exts {
         let candidate = base.with_extension(ext);
         if candidate.is_file() {
-            return Some(candidate);
+            ensure_library_source_path(&candidate, spec, "import")?;
+            return Ok(Some(candidate));
         }
     }
     for ext in exts {
         let candidate = base.join(format!("index.{ext}"));
         if candidate.is_file() {
-            return Some(candidate);
+            ensure_library_source_path(&candidate, spec, "import")?;
+            return Ok(Some(candidate));
         }
     }
-    None
+    Ok(None)
 }
 
 /// Best-effort ESM → CJS rewrite for library output.
@@ -1575,16 +1811,68 @@ fn resolve_relative(from: &Path, spec: &str) -> Option<PathBuf> {
 /// is correct for the eagerly-evaluated modules a published library entry uses.
 fn esm_to_cjs(esm: &str) -> String {
     let mut out = String::new();
+    let mut export_assignments = Vec::new();
     for line in esm.lines() {
         let trimmed = line.trim();
-        if let Some(rewritten) = rewrite_cjs_line(trimmed) {
+        if let Some((rewritten, assignment)) = rewrite_cjs_export_declaration(trimmed, line) {
+            out.push_str(&rewritten);
+            export_assignments.push(assignment);
+        } else if let Some(rewritten) = rewrite_cjs_line(trimmed) {
             out.push_str(&rewritten);
         } else {
             out.push_str(line);
         }
         out.push('\n');
     }
+    if !export_assignments.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        for assignment in export_assignments {
+            out.push_str(&assignment);
+            out.push('\n');
+        }
+    }
     out
+}
+
+fn rewrite_cjs_export_declaration(trimmed: &str, original: &str) -> Option<(String, String)> {
+    for kw in ["const", "let", "var"] {
+        if let Some(rest) = trimmed.strip_prefix(&format!("export {kw} ")) {
+            let name = rest.split(['=', ' ', ':']).next()?.trim();
+            if name.is_empty() || name.starts_with('{') || name.starts_with('[') {
+                return None;
+            }
+            return Some((
+                strip_export_keyword_preserving_indent(original),
+                format!("exports.{name} = {name};"),
+            ));
+        }
+    }
+    for kw in ["function", "class"] {
+        if let Some(rest) = trimmed.strip_prefix(&format!("export {kw} ")) {
+            let name = rest.split(['(', ' ', '{', '<']).next().unwrap_or("").trim();
+            if name.is_empty() {
+                return None;
+            }
+            return Some((
+                strip_export_keyword_preserving_indent(original),
+                format!("exports.{name} = {name};"),
+            ));
+        }
+    }
+    None
+}
+
+fn strip_export_keyword_preserving_indent(line: &str) -> String {
+    if let Some(idx) = line.find("export ") {
+        let mut out = String::with_capacity(line.len().saturating_sub("export ".len()));
+        out.push_str(&line[..idx]);
+        out.push_str(&line[idx + "export ".len()..]);
+        out
+    } else {
+        line.to_string()
+    }
 }
 
 fn rewrite_cjs_line(line: &str) -> Option<String> {
@@ -1650,22 +1938,6 @@ fn rewrite_cjs_line(line: &str) -> Option<String> {
                     return Some(buf.trim_end().to_string());
                 }
                 return Some(String::new());
-            }
-        }
-    }
-    // export const|let|var NAME = ...
-    for kw in ["const", "let", "var"] {
-        if let Some(rest) = line.strip_prefix(&format!("export {kw} ")) {
-            let name = rest.split(['=', ' ', ':']).next()?.trim();
-            return Some(format!("{kw} {rest}\nexports.{name} = {name};"));
-        }
-    }
-    // export function NAME / export class NAME
-    for kw in ["function", "class"] {
-        if let Some(rest) = line.strip_prefix(&format!("export {kw} ")) {
-            let name = rest.split(['(', ' ', '{', '<']).next().unwrap_or("").trim();
-            if !name.is_empty() {
-                return Some(format!("{kw} {rest}\nexports.{name} = {name};"));
             }
         }
     }

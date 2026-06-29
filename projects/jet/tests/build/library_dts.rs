@@ -14,6 +14,7 @@
 //! @issue #722
 
 use jet::bundler::types::OutputFormat;
+use jet::bundler::types::SourceMapOption;
 use jet::bundler::{build_library, LibBuildOptions};
 use std::collections::HashSet;
 use tempfile::tempdir;
@@ -41,6 +42,7 @@ fn lib_options(root: &std::path::Path) -> LibBuildOptions {
         entry: Vec::new(),
         css_merge: Vec::new(),
         raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
     }
 }
 
