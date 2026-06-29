@@ -23,6 +23,7 @@ WORKSPACE_DIR = MAMBA_DIR.parents[1]
 PROMOTION_GATE = TOOLS_DIR / "promotion_gate.py"
 DENOMINATOR_INVENTORY = MAMBA_DIR / "tools" / "cpython_regrtest_inventory.py"
 STRICT_TYPE_ACCOUNTING = TOOLS_DIR / "strict_type_accounting.py"
+GATE_CHECK = TOOLS_DIR / "gate_check.py"
 
 EXIT_NOT_READY = 70
 
@@ -322,6 +323,53 @@ def perf_dimension(show: int) -> Dimension:
     )
 
 
+def safety_dimension(show: int) -> Dimension:
+    code, payload = run_json(
+        [sys.executable, str(GATE_CHECK), "--json"],
+        accepted={0, 1},
+    )
+    criteria = payload["criteria"]
+    failed = [item for item in criteria if not item["passed"]]
+    d4 = next((item for item in criteria if item["id"] == "D4"), None)
+    status = "green" if code == 0 and not failed else "red"
+    blockers = [
+        {
+            "kind": "safety_gate_criterion_failed",
+            "id": item["id"],
+            "name": item["name"],
+            "detail": item["detail"],
+        }
+        for item in failed[:show]
+    ]
+    return Dimension(
+        id="safety_stability_security",
+        title="Safety, stability, leak, crash, and secret-leak gates",
+        status=status,
+        owner_issue="#709",
+        summary=(
+            "safety/stability production gate is green"
+            if status == "green"
+            else (
+                "safety/stability production gate is not replacement-ready: "
+                f"{payload['met']}/{payload['total']} criteria met"
+            )
+        ),
+        counts={
+            "criteria_total": payload["total"],
+            "criteria_met": payload["met"],
+            "criteria_failed": len(failed),
+            "d4_safety_passed": d4["passed"] if d4 else False,
+            "d4_safety_detail": d4["detail"] if d4 else "missing D4 criterion",
+        },
+        evidence=[
+            "python3.12 projects/mamba/tests/harness/cpython/tools/gate_check.py --json",
+            "cargo test -p mamba -- --list",
+            "python3.12 projects/mamba/tests/harness/cpython/tools/verify_cpython_oracle.py --help",
+        ],
+        blockers=blockers,
+    )
+
+
 def blocked_dimension(
     *,
     id: str,
@@ -353,13 +401,7 @@ def dimensions(show: int, type_limit: int) -> list[Dimension]:
         promotion_dimension(show),
         strict_type_dimension(show, type_limit),
         perf_dimension(show),
-        blocked_dimension(
-            id="safety_stability_security",
-            title="Safety, stability, leak, crash, and secret-leak gates",
-            owner_issue="#709",
-            summary="safety/stability/security readiness dimensions require dedicated leak/crash/secret-leak proof",
-            evidence=["python3.12 projects/mamba/tests/harness/cpython/tools/gate_check.py --json"],
-        ),
+        safety_dimension(show),
         blocked_dimension(
             id="platform_os_process_network_tls",
             title="Platform, OS, process, network, and TLS coverage",
