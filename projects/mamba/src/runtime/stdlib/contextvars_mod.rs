@@ -125,6 +125,18 @@ fn instance_class(v: MbValue) -> Option<String> {
     }
 }
 
+fn raise_type_error(msg: impl Into<String>) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.into())),
+    );
+    MbValue::none()
+}
+
+fn is_contextvar(value: MbValue) -> bool {
+    instance_class(value).as_deref() == Some("ContextVar")
+}
+
 /// The `Token.MISSING` sentinel — a unique Instance compared by identity.
 pub fn missing_sentinel() -> MbValue {
     MISSING.with(|m| {
@@ -369,6 +381,11 @@ fn context_snapshot_map(ctx: MbValue) -> ContextMap {
 /// `ctx.run(callable, *args)` — execute under the snapshot, capture writes
 /// back into the Context, restore the caller's context.
 pub fn mb_context_run(ctx: MbValue, func: MbValue, args: Vec<MbValue>) -> MbValue {
+    if super::super::builtins::mb_callable(func).as_bool() != Some(true) {
+        let type_name = super::super::builtins::value_type_name(func);
+        return raise_type_error(format!("'{type_name}' object is not callable"));
+    }
+
     // Install the snapshot.
     let snapshot = context_snapshot_map(ctx);
     let saved = CURRENT.with(|c| std::mem::replace(&mut *c.borrow_mut(), snapshot));
@@ -390,6 +407,26 @@ pub fn mb_context_run(ctx: MbValue, func: MbValue, args: Vec<MbValue>) -> MbValu
         }
     }
     result
+}
+
+/// `ctx[var]` — read a captured value by ContextVar key.
+pub fn mb_context_getitem(ctx: MbValue, key: MbValue) -> MbValue {
+    if !is_contextvar(key) {
+        let type_name = super::super::builtins::value_type_name(key);
+        return raise_type_error(format!("a ContextVar key was expected, got {type_name}"));
+    }
+    let data = inst_field(ctx, "_data").unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_getitem(data, key)
+}
+
+/// `ctx.get(var, default=None)` — read a captured value by ContextVar key.
+pub fn mb_context_get(ctx: MbValue, key: MbValue, default: MbValue) -> MbValue {
+    if !is_contextvar(key) {
+        let type_name = super::super::builtins::value_type_name(key);
+        return raise_type_error(format!("a ContextVar key was expected, got {type_name}"));
+    }
+    let data = inst_field(ctx, "_data").unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_get(data, key, default)
 }
 
 /// `ctx.copy()` — a new Context with the same snapshot.
@@ -537,6 +574,7 @@ pub fn register() {
         ),
     );
 
+    super::register_module("_contextvars", attrs.clone());
     super::register_module("contextvars", attrs);
 }
 

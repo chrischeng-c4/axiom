@@ -9,12 +9,11 @@
 # case = "ContextVar__reset__token_as_Token_wrong"
 # subject = "_contextvars.ContextVar.reset(token: Token)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed token"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_contextvars.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed token
 # mamba-strict-type: TypeError
 """Type wall: _contextvars.ContextVar.reset(token: Token); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from _contextvars import ContextVar
-obj = object.__new__(ContextVar)
+obj = ContextVar("reset_token_wall")
 try:
     obj.reset(_W())  # token: Token <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
