@@ -183,6 +183,7 @@ impl TypeChecker {
                 // error when a known stdlib signature is genuinely violated by a
                 // concrete-scalar argument. Skip-when-unsure at every branch.
                 self.check_stdlib_call(func, args);
+                self.check_dict_operator_call(func, args);
                 match func_ty {
                     Ty::Fn {
                         params,
@@ -675,6 +676,43 @@ impl TypeChecker {
                 }
                 self.tcx.error()
             }
+        }
+    }
+
+    /// Strict dict operator wall for receiver-known `dict[...]` values.
+    ///
+    /// `dict | other` accepts mapping-like values such as `UserDict`, while
+    /// `dict |= other` also accepts iterable key/value pairs. Until protocols are
+    /// modeled here, only reject values that are provably neither: concrete
+    /// scalars and bare user-class instances.
+    fn check_dict_operator_call(&mut self, func: &Spanned<Expr>, args: &[CallArg]) {
+        if stdlib_arg_check_suppressed() {
+            return;
+        }
+        let Expr::Attr { object, attr } = &func.node else {
+            return;
+        };
+        if !matches!(attr.as_str(), "__ior__" | "__or__" | "__ror__") {
+            return;
+        }
+        let receiver_ty = self.check_expr(object);
+        if !matches!(self.tcx.get(receiver_ty), Ty::Dict(_, _)) {
+            return;
+        }
+        let Some(CallArg::Positional(arg)) = args.first() else {
+            return;
+        };
+        let actual = self.check_expr(arg);
+        let bare_arg = match self.tcx.get(actual) {
+            Ty::Class { name, .. } if self.user_bare_classes.contains(name) => Some(name.clone()),
+            _ => None,
+        };
+        if self.is_concrete_scalar(actual) || bare_arg.is_some() {
+            let got = bare_arg.unwrap_or_else(|| self.ty_name(actual));
+            self.error(
+                arg.span,
+                format!("argument type mismatch: expected `mapping`, got `{got}`"),
+            );
         }
     }
 
