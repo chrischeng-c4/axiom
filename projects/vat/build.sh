@@ -8,7 +8,7 @@ usage() {
 Usage: projects/vat/build.sh <debug|release>
 
 debug    Build vat and install target/debug/vat to ~/.cargo/bin/vat.
-release  Bump patch version, build/install vat, commit version files, and tag vat@<version>.
+release  Bump patch version, build/install vat, commit version files, tag vat@<version>, and push both.
 EOF
 }
 
@@ -91,6 +91,13 @@ git add Cargo.lock projects/vat
 git commit -m "release(vat): ${TAG}"
 git tag -a "$TAG" -m "Release ${TAG}"
 
+BRANCH="$(git branch --show-current)"
+if [[ -z "$BRANCH" ]]; then
+  echo "Cannot publish release from detached HEAD." >&2
+  exit 2
+fi
+git push origin "HEAD:${BRANCH}" "$TAG"
+
 echo ""
-echo "Build complete. vat ${TAG} installed and tagged."
+echo "Build complete. vat ${TAG} installed, tagged, and pushed."
 # CODEGEN-END
