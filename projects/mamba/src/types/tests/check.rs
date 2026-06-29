@@ -57,6 +57,25 @@ fn test_type_mismatch_var_decl() {
 }
 
 #[test]
+fn test_function_str_arg_rejects_bytes_literal() {
+    let errors = check("def upper(s: str) -> str:\n    return s\nupper(b\"hi\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `str`, got `bytes`")),
+        "str-annotated positional arg should reject bytes literals, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from typing import Any\nx: Any = b\"hi\"\ndef upper(s: str) -> str:\n    return s\nupper(\"hi\")\nupper(x)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid str literal and dynamic Any calls should remain accepted, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_return_type_mismatch() {
     // Use a genuinely incompatible return type (str). `bool` is a subtype
     // of `int` per CPython semantics (#1680), so `return True` from an
