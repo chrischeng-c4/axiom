@@ -38,6 +38,7 @@ class LegacyEpic:
     readiness_dimensions: tuple[str, ...]
     selectors: tuple[str, ...]
     reproduction: str
+    no_hit_classification: str = "closed_stale_candidate"
 
 
 LEGACY_EPICS: tuple[LegacyEpic, ...] = (
@@ -53,7 +54,15 @@ LEGACY_EPICS: tuple[LegacyEpic, ...] = (
     LegacyEpic(26, "medium stdlib batch", "still_failing_runtime_work", ("platform_os_process_network_tls", "debugger_introspection_profiling", "concurrency_free_threaded"), ("platform", "weakref", "types", "ipaddress", "sqlite3", "lzma", "bdb", "tempfile", "subprocess", "enum"), "python3.12 projects/mamba/tests/harness/cpython/tools/platform_readiness.py --json"),
     LegacyEpic(27, "non-3p long-tail directories under ten failures", "still_failing_runtime_work", ("promotion_debt",), ("_regression/core/", "_regression/std-libs/", "_regression/builtin-libs/"), "python3.12 projects/mamba/tests/harness/cpython/tools/promotion_gate.py --profile replacement --json"),
     LegacyEpic(30, "runtime dynamic class construction", "still_failing_runtime_work", ("promotion_debt",), ("type", "dataclasses", "namedtuple", "enum"), "target/debug/mamba run projects/mamba/tests/cpython/behavior/std-libs/enum/"),
-    LegacyEpic(31, "collections.abc mixin synthesis", "still_failing_runtime_work", ("promotion_debt",), ("collections", "collections_abc"), "target/debug/mamba run projects/mamba/tests/cpython/behavior/std-libs/collections/"),
+    LegacyEpic(
+        31,
+        "collections.abc mixin synthesis",
+        "still_failing_runtime_work",
+        ("promotion_debt",),
+        ("collections", "collections_abc"),
+        "env MAMBA_BIN=target/debug/mamba python3.12 projects/mamba/tests/harness/cpython/tools/sweep.py behavior/std-libs/collections/abc_mapping_views_are_set_like.py behavior/std-libs/collections/abc_mutablesequence_mixins.py behavior/std-libs/collections/abc_mutableset_mixins_mutate.py behavior/std-libs/collections/abc_set_mixins_provide_algebra.py behavior/std-libs/collections/abc_subclass_and_register.py --timeout 10 --jobs 6",
+        no_hit_classification="still_failing_runtime_work",
+    ),
     LegacyEpic(34, "language core miscellaneous batch", "still_failing_runtime_work", ("promotion_debt",), ("builtin", "ClassDef", "NameError", "class_system"), "target/debug/mamba run projects/mamba/tests/cpython/_regression/core/class_system/errors.py"),
     LegacyEpic(36, "oracle-env ensure-script interpreter pin", "readiness_test_hardening", ("cpython_denominator",), ("oracle-env", "verify_cpython_oracle"), "python3.12 projects/mamba/tests/harness/cpython/tools/verify_cpython_oracle.py --ready-only --help"),
     LegacyEpic(37, "D5.3 oracle cache and D5.4 collector", "readiness_test_hardening", ("perf_rss_baselines", "safety_stability_security"), ("results_store", "sweep"), "python3.12 projects/mamba/tests/harness/cpython/tools/results_store.py summary --json"),
@@ -115,7 +124,7 @@ def classify(epic: LegacyEpic, hits: list[str]) -> str:
         return epic.classification
     if hits:
         return "still_failing_runtime_work"
-    return "closed_stale_candidate"
+    return epic.no_hit_classification
 
 
 def build_report(show: int, failure_cache: Path) -> dict[str, Any]:
