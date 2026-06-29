@@ -117,3 +117,33 @@ requirementDiagram
     lumen_auth_unit_tests - verifies -> R2
     lumen_auth_unit_tests - verifies -> R3
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: lumen-auth-e2e-contract
+    name: "lumen auth e2e contract"
+    runner: cargo
+    path: projects/lumen/tests/auth_e2e.rs
+    command: "cargo test -p lumen --test auth_e2e -- --nocapture"
+    verifies:
+      - "LUMEN_AUTH=required rejects missing and invalid Bearer tokens with 401."
+      - "Valid tokens pass through as AuthContext and RBAC denial remains 403."
+      - "Probe and scrape routes remain unauthenticated."
+  - id: lumen-authz-matrix-contract
+    name: "lumen authz matrix contract"
+    runner: cargo
+    path: projects/lumen/tests/authz_matrix_e2e.rs
+    command: "cargo test -p lumen --test authz_matrix_e2e -- --nocapture"
+    verifies:
+      - "Every protected route still applies the expected read/write/admin RBAC minimum."
+  - id: lumen-package-regression
+    name: "lumen package regression"
+    runner: cargo
+    path: projects/lumen
+    command: "cargo test -p lumen"
+    verifies:
+      - "The shared-auth adoption does not regress the package test suite."
+```
