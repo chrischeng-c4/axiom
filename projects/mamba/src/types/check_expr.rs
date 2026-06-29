@@ -1004,6 +1004,7 @@ impl TypeChecker {
                     | super::stdlib_sigs::CoreTy::Complex
                     | super::stdlib_sigs::CoreTy::List
                     | super::stdlib_sigs::CoreTy::Tuple
+                    | super::stdlib_sigs::CoreTy::Dict
                     | super::stdlib_sigs::CoreTy::Bool
                     | super::stdlib_sigs::CoreTy::Typed
             );
@@ -1057,6 +1058,7 @@ impl TypeChecker {
                         | super::stdlib_sigs::CoreTy::MemoryView
                         | super::stdlib_sigs::CoreTy::List
                         | super::stdlib_sigs::CoreTy::Tuple
+                        | super::stdlib_sigs::CoreTy::Dict
                 ) && !actual_is_none
                     && self.is_concrete_scalar(actual)
                 {
@@ -1065,6 +1067,7 @@ impl TypeChecker {
                         super::stdlib_sigs::CoreTy::MemoryView => "memoryview",
                         super::stdlib_sigs::CoreTy::List => "list",
                         super::stdlib_sigs::CoreTy::Tuple => "tuple",
+                        super::stdlib_sigs::CoreTy::Dict => "dict",
                         _ => unreachable!(),
                     };
                     self.error(

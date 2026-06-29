@@ -8,10 +8,11 @@
 //! scalar (protocols, unions, typevars, overloads, buffers) collapses to
 //! [`CoreTy::Unknown`], which the hook *skips* — guaranteeing zero false
 //! positives on correct calls. [`CoreTy::Bytes`], [`CoreTy::MemoryView`],
-//! [`CoreTy::Complex`], [`CoreTy::List`], and [`CoreTy::Tuple`] are represented
-//! as negative scalar walls: concrete incompatible scalars are never those
-//! values, while bytes/memoryview/complex/list/tuple expressions currently
-//! infer to dynamic or collection types and therefore remain skip-when-unsure.
+//! [`CoreTy::Complex`], [`CoreTy::List`], [`CoreTy::Tuple`], and
+//! [`CoreTy::Dict`] are represented as negative scalar walls: concrete
+//! incompatible scalars are never those values, while
+//! bytes/memoryview/complex/list/tuple/dict expressions currently infer to
+//! dynamic or collection types and therefore remain skip-when-unsure.
 
 /// Closed set of argument types the PoC table can express. Anything richer
 /// (Optional, Union, Protocol, TypeVar, overload, ReadableBuffer, SupportsIndex)
@@ -27,6 +28,7 @@ pub enum CoreTy {
     Complex,
     List,
     Tuple,
+    Dict,
     Bool,
     None,
     /// A NOMINAL/protocol type contract (a named typeshed type that is neither a
@@ -258,6 +260,39 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         name: "setstate",
         kind: SigKind::Method,
         params: &[p("state", CoreTy::Tuple)],
+        enforceable: true,
+    },
+    // POSITIVE: generated typeshed collapses dict parameters to Unknown because
+    // dict element types are richer than CoreTy. The container shape itself is
+    // still enforceable as a negative scalar wall: concrete scalars such as int
+    // are never dicts, while dynamic/container values stay skip-when-unsure.
+    StdlibSig {
+        module: "_osx_support",
+        qualifier: "",
+        name: "customize_compiler",
+        kind: SigKind::ModuleFn,
+        params: &[p("_config_vars", CoreTy::Dict)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_osx_support",
+        qualifier: "",
+        name: "customize_config_vars",
+        kind: SigKind::ModuleFn,
+        params: &[p("_config_vars", CoreTy::Dict)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_osx_support",
+        qualifier: "",
+        name: "get_platform_osx",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("_config_vars", CoreTy::Dict),
+            p("osname", CoreTy::Unknown),
+            p("release", CoreTy::Unknown),
+            p("machine", CoreTy::Unknown),
+        ],
         enforceable: true,
     },
     // POSITIVE: `_operator` has many protocol/typevar rows that generated
@@ -1839,10 +1874,10 @@ mod tests {
     #[test]
     fn generated_enforceable_rows_have_a_scalar_and_no_star() {
         // The invariant: every row the hook will ENFORCE must (a) carry at least
-        // one checkable param (Int/Float/Str/Typed/Bytes/List) and (b) have no
+        // one checkable param (Int/Float/Str/Typed/Bytes/List/Tuple/Dict) and (b) have no
         // star param (positional alignment past `*args` is uncertain).
-        // Unknown/None params are skipped, while Bytes/MemoryView/Complex/List are negative
-        // scalar walls that reject impossible concrete scalars and leave
+        // Unknown/None params are skipped, while Bytes/MemoryView/Complex/List/Tuple/Dict
+        // are negative scalar walls that reject impossible concrete scalars and leave
         // dynamic/buffer/object values as Any-skips.
         // This is what lets a scalar param sitting BEHIND an Unknown param
         // enforce at its real position; a full uncapped 28k-fixture ② FP scan
@@ -1869,6 +1904,7 @@ mod tests {
                         | CoreTy::Complex
                         | CoreTy::List
                         | CoreTy::Tuple
+                        | CoreTy::Dict
                 )),
                 "{}.{} enforceable with no checkable (scalar/Typed) param",
                 s.module,

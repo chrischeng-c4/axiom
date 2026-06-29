@@ -9,12 +9,11 @@
 # case = "customize_config_vars___config_vars_as_dict_wrong"
 # subject = "_osx_support.customize_config_vars(_config_vars: dict)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _config_vars"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_osx_support.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _config_vars
 # mamba-strict-type: TypeError
 """Type wall: _osx_support.customize_config_vars(_config_vars: dict); call it with the wrong type.
 
