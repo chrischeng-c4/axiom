@@ -151,6 +151,7 @@ unsafe extern "C" fn d_tostring(args_ptr: *const MbValue, nargs: usize) -> MbVal
     let mut xml_decl = false;
     let mut short_empty = true;
     let mut method = "xml".to_string();
+    let mut default_namespace: Option<String> = None;
     if nargs >= 2 {
         // Trailing kwargs dict (runtime appends it as the last positional arg).
         let kwargs = a[nargs - 1];
@@ -166,6 +167,9 @@ unsafe extern "C" fn d_tostring(args_ptr: *const MbValue, nargs: usize) -> MbVal
         if let Some(v) = kwarg_get(kwargs, "method").and_then(extract_str) {
             method = v;
         }
+        if let Some(v) = kwarg_get(kwargs, "default_namespace").and_then(extract_str) {
+            default_namespace = Some(v);
+        }
         // Positional encoding: tostring(elem, "unicode")
         if encoding.is_none() {
             if let Some(s) = extract_str(a[1]) {
@@ -173,7 +177,14 @@ unsafe extern "C" fn d_tostring(args_ptr: *const MbValue, nargs: usize) -> MbVal
             }
         }
     }
-    tostring_impl(elem, encoding.as_deref(), xml_decl, short_empty, &method)
+    tostring_impl(
+        elem,
+        encoding.as_deref(),
+        xml_decl,
+        short_empty,
+        &method,
+        default_namespace.as_deref(),
+    )
 }
 
 /// ElementTree(root?) — for a concrete root, Mamba models the tree wrapper as
@@ -214,10 +225,14 @@ unsafe extern "C" fn d_elementtree(args_ptr: *const MbValue, nargs: usize) -> Mb
     mb_xml_parse(arg)
 }
 
-/// QName(text_or_uri, tag?) → stub dict carrying Clark-notation `.text`.
+/// QName(text_or_uri, tag?) -> stub dict carrying Clark-notation `.text`.
 unsafe extern "C" fn d_qname(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let first = a.get(0).copied().and_then(extract_str).unwrap_or_default();
+    let first = a
+        .get(0)
+        .copied()
+        .and_then(xml_name_value)
+        .unwrap_or_default();
     let second = a.get(1).copied().and_then(extract_str);
     let text = match second {
         Some(tag) => format!("{{{first}}}{tag}"),
@@ -624,6 +639,42 @@ fn dict_string_entries(dict: MbValue) -> Vec<(String, String)> {
     Vec::new()
 }
 
+pub fn qname_text_value(val: MbValue) -> Option<String> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let class = map
+                .get("__class__")
+                .copied()
+                .and_then(extract_str)?;
+            if class == "QName" {
+                return map.get("text").copied().and_then(extract_str);
+            }
+        }
+    }
+    None
+}
+
+pub fn qname_eq_value(a: MbValue, b: MbValue) -> Option<bool> {
+    let a_text = qname_text_value(a);
+    let b_text = qname_text_value(b);
+    if a_text.is_none() && b_text.is_none() {
+        return None;
+    }
+    let Some(left) = a_text.or_else(|| extract_str(a)) else {
+        return Some(false);
+    };
+    let Some(right) = b_text.or_else(|| extract_str(b)) else {
+        return Some(false);
+    };
+    Some(left == right)
+}
+
+fn xml_name_value(val: MbValue) -> Option<String> {
+    qname_text_value(val).or_else(|| extract_str(val))
+}
+
 /// Write a string key into an element/stub dict, retaining the new value and
 /// releasing any replaced one (store-retains convention).
 fn dict_set_key(elem: MbValue, key: &str, value: MbValue) {
@@ -940,7 +991,7 @@ fn source_content(src: MbValue) -> Option<String> {
 /// the `attrib` slot.
 pub fn mb_xml_element(tag: MbValue, attrib: MbValue) -> MbValue {
     let dict = MbObject::new_dict();
-    let tag_str = extract_str(tag).unwrap_or_else(|| "element".to_string());
+    let tag_str = xml_name_value(tag).unwrap_or_else(|| "element".to_string());
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
@@ -1030,20 +1081,152 @@ fn encode_serialized_bytes(payload: &str, encoding: Option<&str>) -> Vec<u8> {
     }
 }
 
-/// Map `{uri}local` through registered namespace prefixes. Returns the
-/// display tag plus the (prefix, uri) pair when a mapping applied.
-fn mapped_tag(tag: &str) -> (String, Option<(String, String)>) {
-    if let Some(rest) = tag.strip_prefix('{') {
-        if let Some(close) = rest.find('}') {
-            let uri = &rest[..close];
-            let local = &rest[close + 1..];
-            let prefix = NS_PREFIXES.with(|m| m.borrow().get(uri).cloned());
-            if let Some(p) = prefix {
-                return (format!("{p}:{local}"), Some((p, uri.to_string())));
+const XML_NAMESPACE_URI: &str = "http://www.w3.org/XML/1998/namespace";
+
+fn clark_name_parts(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix('{')?;
+    let close = rest.find('}')?;
+    Some((&rest[..close], &rest[close + 1..]))
+}
+
+struct XmlSerContext {
+    uri_to_prefix: HashMap<String, String>,
+    decls: Vec<(String, String)>,
+}
+
+impl XmlSerContext {
+    fn for_tree(elem: MbValue, default_namespace: Option<&str>) -> Self {
+        let mut ctx = Self {
+            uri_to_prefix: HashMap::new(),
+            decls: Vec::new(),
+        };
+        if let Some(ns) = default_namespace.filter(|ns| !ns.is_empty()) {
+            ctx.uri_to_prefix.insert(ns.to_string(), String::new());
+            ctx.decls.push((String::new(), ns.to_string()));
+        }
+        ctx.collect_elem(elem);
+        ctx
+    }
+
+    fn collect_elem(&mut self, elem: MbValue) {
+        let Some(ptr) = elem.as_ptr() else {
+            return;
+        };
+        let (tag, attr_keys, child_items) = unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let map = lock.read().unwrap();
+                let tag = map
+                    .get("tag")
+                    .and_then(|v| extract_str(*v))
+                    .unwrap_or_default();
+                let attr_keys = map
+                    .get("attrib")
+                    .copied()
+                    .and_then(|attrib| attrib.as_ptr())
+                    .and_then(|ap| {
+                        if let ObjData::Dict(ref a_lock) = (*ap).data {
+                            Some(
+                                a_lock
+                                    .read()
+                                    .unwrap()
+                                    .keys()
+                                    .map(super::super::dict_ops::dict_key_raw_str)
+                                    .collect::<Vec<_>>(),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                let child_items = map
+                    .get("_children")
+                    .copied()
+                    .and_then(|children| children.as_ptr())
+                    .and_then(|cp| {
+                        if let ObjData::List(ref list_lock) = (*cp).data {
+                            Some(list_lock.read().unwrap().to_vec())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                (tag, attr_keys, child_items)
+            } else {
+                (String::new(), Vec::new(), Vec::new())
+            }
+        };
+
+        if let Some((uri, _)) = clark_name_parts(&tag) {
+            self.ensure_uri(uri);
+        }
+        for key in attr_keys {
+            if let Some((uri, _)) = clark_name_parts(&key) {
+                self.ensure_uri(uri);
             }
         }
+        for child in child_items {
+            self.collect_elem(child);
+        }
     }
-    (tag.to_string(), None)
+
+    fn ensure_uri(&mut self, uri: &str) {
+        if uri.is_empty() || uri == XML_NAMESPACE_URI || self.uri_to_prefix.contains_key(uri) {
+            return;
+        }
+        let prefix = NS_PREFIXES
+            .with(|m| m.borrow().get(uri).cloned())
+            .unwrap_or_else(|| self.next_auto_prefix());
+        if uri != XML_NAMESPACE_URI {
+            self.decls.push((prefix.clone(), uri.to_string()));
+        }
+        self.uri_to_prefix.insert(uri.to_string(), prefix);
+    }
+
+    fn next_auto_prefix(&self) -> String {
+        let mut i = if self.uri_to_prefix.values().any(|p| p.is_empty()) {
+            1
+        } else {
+            0
+        };
+        loop {
+            let candidate = format!("ns{i}");
+            if !self.uri_to_prefix.values().any(|p| p == &candidate) {
+                return candidate;
+            }
+            i += 1;
+        }
+    }
+
+    fn display_name(&self, raw: &str, attr: bool) -> String {
+        let Some((uri, local)) = clark_name_parts(raw) else {
+            return raw.to_string();
+        };
+        if uri == XML_NAMESPACE_URI {
+            return format!("xml:{local}");
+        }
+        let Some(prefix) = self.uri_to_prefix.get(uri) else {
+            return raw.to_string();
+        };
+        if prefix.is_empty() && !attr {
+            local.to_string()
+        } else if prefix.is_empty() {
+            local.to_string()
+        } else {
+            format!("{prefix}:{local}")
+        }
+    }
+
+    fn root_declarations(&self) -> String {
+        let mut out = String::new();
+        for (prefix, uri) in &self.decls {
+            if prefix.is_empty() {
+                out.push_str(&format!(" xmlns=\"{}\"", escape_attr(uri)));
+            } else if prefix != "xml" {
+                out.push_str(&format!(" xmlns:{prefix}=\"{}\"", escape_attr(uri)));
+            }
+        }
+        out
+    }
 }
 
 /// tostring(element) with explicit options.
@@ -1053,11 +1236,13 @@ fn tostring_impl(
     xml_declaration: bool,
     short_empty: bool,
     method: &str,
+    default_namespace: Option<&str>,
 ) -> MbValue {
     let body = if method == "text" {
         element_text_only(elem)
     } else {
-        element_to_string(elem, 0, short_empty, method)
+        let ctx = XmlSerContext::for_tree(elem, default_namespace);
+        element_to_string(elem, 0, short_empty, method, &ctx)
     };
     let unicode = encoding == Some("unicode");
     let mut out = String::new();
@@ -1078,7 +1263,10 @@ fn tostring_impl(
 /// tostring(element) -> XML string (legacy str-returning entry; the module
 /// dispatcher `d_tostring` handles encoding/declaration options).
 pub fn mb_xml_tostring(elem: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str(element_to_string(elem, 0, true, "xml")))
+    let ctx = XmlSerContext::for_tree(elem, None);
+    MbValue::from_ptr(MbObject::new_str(element_to_string(
+        elem, 0, true, "xml", &ctx,
+    )))
 }
 
 fn element_text_only(elem: MbValue) -> String {
@@ -1111,7 +1299,13 @@ fn element_text_only(elem: MbValue) -> String {
     String::new()
 }
 
-fn element_to_string(elem: MbValue, depth: usize, short_empty: bool, method: &str) -> String {
+fn element_to_string(
+    elem: MbValue,
+    depth: usize,
+    short_empty: bool,
+    method: &str,
+    ctx: &XmlSerContext,
+) -> String {
     if let Some(ptr) = elem.as_ptr() {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -1148,7 +1342,7 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool, method: &st
                     .get("tag")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_else(|| "?".to_string());
-                let (tag, ns) = mapped_tag(&raw_tag);
+                let tag = ctx.display_name(&raw_tag, false);
                 let text = map
                     .get("text")
                     .and_then(|v| extract_str(*v))
@@ -1157,16 +1351,15 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool, method: &st
                 // Build attributes string (xmlns declaration first on the root).
                 let mut attr_str = String::new();
                 if depth == 0 {
-                    if let Some((prefix, uri)) = &ns {
-                        attr_str.push_str(&format!(" xmlns:{prefix}=\"{uri}\""));
-                    }
+                    attr_str.push_str(&ctx.root_declarations());
                 }
                 if let Some(attrib) = map.get("attrib").copied() {
                     if let Some(a_ptr) = attrib.as_ptr() {
                         if let ObjData::Dict(ref a_lock) = (*a_ptr).data {
                             let a_map = a_lock.read().unwrap();
                             for (k, v) in a_map.iter() {
-                                let ks = super::super::dict_ops::dict_key_raw_str(k);
+                                let raw = super::super::dict_ops::dict_key_raw_str(k);
+                                let ks = ctx.display_name(&raw, true);
                                 let vs = extract_str(*v).unwrap_or_default();
                                 attr_str.push_str(&format!(" {ks}=\"{}\"", escape_attr(&vs)));
                             }
@@ -1208,7 +1401,13 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool, method: &st
                     }
                 }
                 for child in child_items {
-                    result.push_str(&element_to_string(child, depth + 1, short_empty, method));
+                    result.push_str(&element_to_string(
+                        child,
+                        depth + 1,
+                        short_empty,
+                        method,
+                        ctx,
+                    ));
                 }
                 result.push_str(&format!("</{tag}>"));
                 result.push_str(&tail);
@@ -2012,6 +2211,29 @@ fn parse_predicate(pred: &str) -> Option<PathPredicate> {
     None
 }
 
+fn split_path_segments(path: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut brace_depth = 0usize;
+    for (idx, ch) in path.char_indices() {
+        match ch {
+            '{' => brace_depth += 1,
+            '}' if brace_depth > 0 => brace_depth -= 1,
+            '/' if brace_depth == 0 => {
+                if start != idx {
+                    segments.push(&path[start..idx]);
+                }
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if start < path.len() {
+        segments.push(&path[start..]);
+    }
+    segments
+}
+
 /// Parse the fixture-level ElementPath subset: child paths, `.//tag`,
 /// wildcards, simple predicates, and namespace prefixes supplied by
 /// `namespaces=`.
@@ -2024,8 +2246,8 @@ fn parse_pathspec(path: &str, namespaces: &HashMap<String, String>) -> PathSpec 
     } else if let Some(r) = rest.strip_prefix("./") {
         rest = r;
     }
-    let steps = rest
-        .split('/')
+    let steps = split_path_segments(rest)
+        .into_iter()
         .filter(|segment| !segment.is_empty())
         .map(|segment| {
             let mut tag = segment;
@@ -2411,10 +2633,12 @@ pub fn dispatch_xml_stub_method(
                     .and_then(extract_str)
                     .unwrap_or_else(|| "xml".to_string());
                 let encoding = kwarg_get(kwargs, "encoding").and_then(extract_str);
+                let default_namespace = default_namespace_arg(args);
                 let payload = if method == "text" {
                     element_text_only(receiver)
                 } else {
-                    element_to_string(receiver, 0, true, &method)
+                    let ctx = XmlSerContext::for_tree(receiver, default_namespace.as_deref());
+                    element_to_string(receiver, 0, true, &method, &ctx)
                 };
                 let dest = arg(0);
                 if let Some(path) = extract_str(dest) {
