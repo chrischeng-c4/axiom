@@ -17,6 +17,7 @@
 //!   5. return a [`LibBuildResult`].
 //!
 //! @issue #170
+//! @issue #722
 
 use anyhow::{Context, Result};
 use std::collections::HashSet;
@@ -283,21 +284,12 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
         let esm = bundle_library_entry(&entry_path, &externals)?;
 
         // Emit `<entry>.d.ts` once per entry (not per format) when declaration
-        // emission is on. The isolatedDeclarations emitter reads the entry
-        // source directly so type aliases / interfaces survive the JS inline.
+        // emission is on. Local barrel re-export targets also get sibling
+        // declarations so preserved `export * from "./x"` statements do not
+        // dangle in a published package.
         let dts_path = if options.declaration {
-            let entry_source = std::fs::read_to_string(&entry_path)
-                .with_context(|| format!("reading {} for .d.ts", entry_path.display()))?;
-            let dts = super::dts::emit_declarations(&entry_source)
+            let dts_out = emit_declaration_tree(&options, entry, &entry_path, &externals)
                 .with_context(|| format!("emitting .d.ts for entry {}", entry.subpath))?;
-            let dts_name = dts_file_name(&entry.subpath);
-            let dts_out = options.out_dir.join(&dts_name);
-            if let Some(parent) = dts_out.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("creating {}", parent.display()))?;
-            }
-            std::fs::write(&dts_out, &dts)
-                .with_context(|| format!("writing {}", dts_out.display()))?;
             types_outputs.push(TypesOutput {
                 subpath: entry.subpath.clone(),
                 path: dts_out.clone(),
@@ -342,6 +334,128 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
         types: types_outputs,
         assets,
     })
+}
+
+/// Emit declarations for one public entry and every internal module reachable
+/// through local `export ... from "./x"` barrel re-exports.
+///
+/// `LibBuildResult::types` still reports only public entry declarations. The
+/// additional files are filesystem side effects needed by the preserved
+/// re-export statements inside `index.d.ts`.
+fn emit_declaration_tree(
+    options: &LibBuildOptions,
+    entry: &LibraryEntry,
+    entry_path: &Path,
+    externals: &HashSet<String>,
+) -> Result<PathBuf> {
+    let mut visited = HashSet::new();
+    let mut modules = Vec::new();
+    collect_reexport_declaration_modules(entry_path, externals, &mut visited, &mut modules)?;
+
+    let source_root = common_source_root(&modules);
+    let entry_canonical = entry_path
+        .canonicalize()
+        .unwrap_or_else(|_| entry_path.to_path_buf());
+    let mut entry_dts = None;
+
+    for module in modules {
+        let source = std::fs::read_to_string(&module)
+            .with_context(|| format!("reading {} for .d.ts", module.display()))?;
+        let dts = super::dts::emit_declarations(&source)
+            .with_context(|| format!("emitting .d.ts for {}", module.display()))?;
+        let module_canonical = module.canonicalize().unwrap_or_else(|_| module.clone());
+        let dts_out = if module_canonical == entry_canonical {
+            options.out_dir.join(dts_file_name(&entry.subpath))
+        } else {
+            declaration_module_output_path(&options.out_dir, &source_root, &module)
+        };
+        if module_canonical == entry_canonical {
+            entry_dts = Some(dts_out.clone());
+        }
+        if let Some(parent) = dts_out.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        std::fs::write(&dts_out, &dts).with_context(|| format!("writing {}", dts_out.display()))?;
+    }
+
+    entry_dts.ok_or_else(|| anyhow::anyhow!("entry declaration was not emitted"))
+}
+
+fn collect_reexport_declaration_modules(
+    path: &Path,
+    externals: &HashSet<String>,
+    visited: &mut HashSet<PathBuf>,
+    order: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(canonical.clone()) {
+        return Ok(());
+    }
+    order.push(canonical.clone());
+
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    for spec in reexport_specifiers(&source, path)? {
+        if is_external_specifier(&spec, externals) {
+            continue;
+        }
+        if let Some(target) = resolve_relative(path, &spec) {
+            collect_reexport_declaration_modules(&target, externals, visited, order)?;
+        }
+    }
+    Ok(())
+}
+
+fn reexport_specifiers(source: &str, path: &Path) -> Result<Vec<String>> {
+    let mut parser = tree_sitter::Parser::new();
+    let ext = path.extension().and_then(|e| e.to_str());
+    let is_ts = matches!(ext, Some("ts") | Some("tsx"));
+    let language: tree_sitter::Language = if is_ts {
+        tree_sitter_typescript::LANGUAGE_TSX.into()
+    } else {
+        tree_sitter_javascript::LANGUAGE.into()
+    };
+    parser
+        .set_language(&language)
+        .context("setting tree-sitter language")?;
+    let tree = parser
+        .parse(source, None)
+        .context("parsing module source")?;
+    let root = tree.root_node();
+
+    let mut specs = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() != "export_statement" {
+            continue;
+        }
+        if let Some(spec) = statement_specifier(source, &child) {
+            specs.push(spec);
+        }
+    }
+    Ok(specs)
+}
+
+fn declaration_module_output_path(out_dir: &Path, source_root: &Path, module: &Path) -> PathBuf {
+    let rel = module.strip_prefix(source_root).ok().and_then(|p| {
+        if p.as_os_str().is_empty() {
+            None
+        } else {
+            Some(p)
+        }
+    });
+    match rel {
+        Some(path) => out_dir.join(path).with_extension("d.ts"),
+        None => out_dir
+            .join(
+                module
+                    .file_name()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("module.ts")),
+            )
+            .with_extension("d.ts"),
+    }
 }
 
 /// Run the post-emit asset side-effects for a library build:
