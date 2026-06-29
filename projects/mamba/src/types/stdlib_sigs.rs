@@ -628,6 +628,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
     StdlibSig {
         module: "builtins",
         qualifier: "frozenset",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[p("cls", CoreTy::Typed), p("iterable", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "frozenset",
         name: "__or__",
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
