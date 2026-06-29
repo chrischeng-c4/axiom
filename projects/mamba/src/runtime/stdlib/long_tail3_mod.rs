@@ -1,3 +1,4 @@
+use super::super::dict_ops::DictKey;
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 /// Long-tail stub batch 3 for Mamba (#1261).
@@ -30,12 +31,103 @@ unsafe extern "C" fn dispatch_int_zero(_a: *const MbValue, _n: usize) -> MbValue
 unsafe extern "C" fn dispatch_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
 }
+
+fn extract_args(args: MbValue) -> Vec<MbValue> {
+    args.as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                Some(lock.read().unwrap().to_vec())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+extern "C" fn ctypes_array_getitem(_self_v: MbValue, _args: MbValue) -> MbValue {
+    raise_type_error("indices must be integers")
+}
+
+extern "C" fn ctypes_array_setitem(_self_v: MbValue, _args: MbValue) -> MbValue {
+    raise_type_error("indices must be integer")
+}
+
+extern "C" fn ctypes_cfuncptr_new(_self_v: MbValue, args: MbValue) -> MbValue {
+    let _ = extract_args(args);
+    raise_type_error("argument must be callable or integer function address")
+}
+
+unsafe extern "C" fn ctypes_array_getitem_direct(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    raise_type_error("indices must be integers")
+}
+
+unsafe extern "C" fn ctypes_array_setitem_direct(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    raise_type_error("indices must be integer")
+}
+
+unsafe extern "C" fn ctypes_cfuncptr_new_direct(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    raise_type_error("argument must be callable or integer function address")
+}
+
+fn register_variadic_method_class(class_name: &str, methods: &[(&str, usize)]) {
+    let mut map = HashMap::new();
+    for (name, addr) in methods {
+        super::super::module::register_variadic_func(*addr as u64);
+        map.insert((*name).to_string(), MbValue::from_func(*addr));
+    }
+    super::super::class::mb_class_register(class_name, vec!["object".to_string()], map);
+}
+
+fn make_ctypes_callable_shell(name: &str, module: &str, methods: &[(&str, usize)]) -> MbValue {
+    let obj = MbObject::new_dict();
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*obj).data {
+            let mut map = lock.write().unwrap();
+            map.insert(
+                DictKey::from("__name__"),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            map.insert(
+                DictKey::from("__qualname__"),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            map.insert(
+                DictKey::from("__module__"),
+                MbValue::from_ptr(MbObject::new_str(module.to_string())),
+            );
+            for (method, addr) in methods {
+                map.insert(DictKey::from(*method), MbValue::from_func(*addr));
+            }
+        }
+    }
+    MbValue::from_ptr(obj)
+}
+
 // importlib.util.find_spec(name) -> spec | None. Routes to the real
 // module-registry lookup so a missing module yields None (not an empty
 // shell dict), matching CPython's "find_spec returns None when absent".
 unsafe extern "C" fn dispatch_importlib_find_spec(a: *const MbValue, n: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(a, n) };
-    super::importlib_mod::mb_importlib_find_spec(args.first().copied().unwrap_or_else(MbValue::none))
+    super::importlib_mod::mb_importlib_find_spec(
+        args.first().copied().unwrap_or_else(MbValue::none),
+    )
 }
 
 fn register_addrs(addrs: &[usize]) {
@@ -350,6 +442,18 @@ fn register_distutils() {
 }
 
 fn register_ctypes() {
+    register_variadic_method_class(
+        "Array",
+        &[
+            ("__getitem__", ctypes_array_getitem as *const () as usize),
+            ("__setitem__", ctypes_array_setitem as *const () as usize),
+        ],
+    );
+    register_variadic_method_class(
+        "CFuncPtr",
+        &[("__new__", ctypes_cfuncptr_new as *const () as usize)],
+    );
+
     register_with(
         "ctypes",
         &[
@@ -451,6 +555,30 @@ fn register_ctypes() {
         ],
         &[],
     );
+    let mut ctypes_internal = HashMap::new();
+    let array_getitem = ctypes_array_getitem_direct as *const () as usize;
+    let array_setitem = ctypes_array_setitem_direct as *const () as usize;
+    let cfuncptr_new = ctypes_cfuncptr_new_direct as *const () as usize;
+    register_addrs(&[array_getitem, array_setitem, cfuncptr_new]);
+    ctypes_internal.insert(
+        "Array".to_string(),
+        make_ctypes_callable_shell(
+            "Array",
+            "_ctypes",
+            &[
+                ("__getitem__", array_getitem),
+                ("__setitem__", array_setitem),
+            ],
+        ),
+    );
+    ctypes_internal.insert(
+        "CFuncPtr".to_string(),
+        make_ctypes_callable_shell("CFuncPtr", "_ctypes", &[("__new__", cfuncptr_new)]),
+    );
+    for name in ["Structure", "Union"] {
+        ctypes_internal.insert(name.to_string(), make_type_obj(name, "_ctypes"));
+    }
+    super::register_module("_ctypes", ctypes_internal);
     register_with(
         "ctypes.util",
         &[],
@@ -758,12 +886,27 @@ fn register_xml_subs() {
 /// The common IANA zone names mamba recognises (identity/key surface only; no
 /// tz-transition data without chrono-tz).
 pub const IANA_ZONES: &[&str] = &[
-    "UTC", "GMT", "America/New_York", "America/Chicago", "America/Denver",
-    "America/Los_Angeles", "America/Sao_Paulo", "America/Toronto",
-    "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Moscow",
-    "Asia/Tokyo", "Asia/Shanghai", "Asia/Kolkata", "Asia/Dubai",
-    "Asia/Singapore", "Australia/Sydney", "Pacific/Auckland",
-    "Africa/Cairo", "Africa/Johannesburg",
+    "UTC",
+    "GMT",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "America/Sao_Paulo",
+    "America/Toronto",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Europe/Moscow",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "Asia/Kolkata",
+    "Asia/Dubai",
+    "Asia/Singapore",
+    "Australia/Sydney",
+    "Pacific/Auckland",
+    "Africa/Cairo",
+    "Africa/Johannesburg",
 ];
 
 /// Is `key` a zone name mamba recognises as valid (so ZoneInfo accepts it)?
@@ -804,25 +947,37 @@ fn zoneinfo_fresh(key: &str) -> MbValue {
 /// Cached ZoneInfo construction (used by the `ZoneInfo(key)` call path).
 pub fn zoneinfo_cached(key: &str) -> MbValue {
     if let Some(c) = ZI_CACHE.with(|m| m.borrow().get(key).copied()) {
-        unsafe { super::super::rc::retain_if_ptr(c); }
+        unsafe {
+            super::super::rc::retain_if_ptr(c);
+        }
         return c;
     }
     let v = zoneinfo_fresh(key);
     ZI_CACHE.with(|m| {
         m.borrow_mut().insert(key.to_string(), v);
     });
-    unsafe { super::super::rc::retain_if_ptr(v); }
+    unsafe {
+        super::super::rc::retain_if_ptr(v);
+    }
     v
 }
 
 /// `ZoneInfo.no_cache(key)` — a fresh, uncached instance (CPython).
 unsafe extern "C" fn dispatch_zoneinfo_no_cache(a: *const MbValue, n: usize) -> MbValue {
-    let args = if n == 0 || a.is_null() { &[][..] } else { unsafe { std::slice::from_raw_parts(a, n) } };
+    let args = if n == 0 || a.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(a, n) }
+    };
     let key = args
         .first()
         .and_then(|v| v.as_ptr())
         .and_then(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*p).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
         .unwrap_or_else(|| "UTC".to_string());
     zoneinfo_fresh(&key)

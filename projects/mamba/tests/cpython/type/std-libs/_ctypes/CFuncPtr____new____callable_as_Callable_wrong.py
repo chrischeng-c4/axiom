@@ -9,12 +9,11 @@
 # case = "CFuncPtr____new____callable_as_Callable_wrong"
 # subject = "_ctypes.CFuncPtr.__new__(callable: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed callable"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_ctypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed callable
 # mamba-strict-type: TypeError
 """Type wall: _ctypes.CFuncPtr.__new__(callable: Callable); call it with the wrong type.
 
@@ -26,9 +25,8 @@ class _W:
 
 
 from _ctypes import CFuncPtr
-obj = object.__new__(CFuncPtr)
 try:
-    obj.__new__(_W())  # callable: Callable <- wrong-typed
+    CFuncPtr.__new__(CFuncPtr, _W())  # callable: Callable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
