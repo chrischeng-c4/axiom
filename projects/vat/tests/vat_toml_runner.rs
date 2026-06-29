@@ -38,6 +38,207 @@ fn result_event(events: &[Value]) -> &Value {
 }
 
 #[test]
+fn scenario_run_starts_app_dependency_and_runner() {
+    if !python3_available() {
+        return;
+    }
+
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+name = "scenario-smoke"
+
+[workspace]
+base = "."
+workdir = "."
+keep = "always"
+
+[[services]]
+id = "api"
+cmd = ["python3", "-m", "http.server", "{port}", "--bind", "127.0.0.1"]
+ready_http = "http://127.0.0.1:{port}/"
+export = { APP_URL = "APP_URL" }
+timeout_s = 10
+
+[[services]]
+id = "deps"
+cmd = ["sh", "-c", "while :; do sleep 1; done"]
+
+[[runners]]
+id = "e2e"
+requires = ["deps"]
+cmd = ["sh", "-c", "case \"$APP_URL\" in http://127.0.0.1:*) echo scenario-ok > scenario-artifact.txt;; *) exit 9;; esac"]
+artifacts = ["scenario-artifact.txt"]
+
+[[scenarios]]
+id = "prod-like"
+app = "api"
+requires = ["deps"]
+runner = "e2e"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--scenario", "prod-like"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = jsonl(&output.stdout);
+    assert_eq!(events[0]["type"], "select");
+    assert_eq!(events[0]["scenario"], "prod-like");
+    assert_eq!(events[0]["app"], "api");
+    assert_eq!(events[0]["runner"], "e2e");
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "ready" && event["service"] == "api"));
+    let result = result_event(&events);
+    assert_eq!(result["scenario"], "prod-like");
+    assert_eq!(result["app"], "api");
+    assert_eq!(result["ok"], true);
+    let id = result["id"].as_str().unwrap();
+
+    let state_output = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["state", id, "--compact"])
+        .output()
+        .unwrap();
+    assert!(state_output.status.success());
+    let json: Value = serde_json::from_slice(&state_output.stdout).unwrap();
+    assert_eq!(json["test_run"]["scenario"]["id"], "prod-like");
+    assert_eq!(json["test_run"]["scenario"]["app"], "api");
+    assert_eq!(json["test_run"]["scenario"]["runner"], "e2e");
+    assert!(json["test_run"]["scenario"]["services"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "api"));
+    assert_eq!(
+        json["test_run"]["artifacts"][0]["path"],
+        "scenario-artifact.txt"
+    );
+}
+
+#[test]
+fn scenario_failure_keeps_topology_and_logs() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+
+[workspace]
+keep = "failed"
+
+[[services]]
+id = "api"
+cmd = ["sh", "-c", "while :; do sleep 1; done"]
+
+[[runners]]
+id = "fail"
+cmd = ["sh", "-c", "echo scenario-before-fail; exit 7"]
+
+[[scenarios]]
+id = "prod-like"
+app = "api"
+runner = "fail"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--scenario", "prod-like"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(7));
+    let events = jsonl(&output.stdout);
+    let result = result_event(&events);
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["state"], "kept");
+    let id = result["id"].as_str().unwrap();
+
+    let state_output = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["state", id, "--compact"])
+        .output()
+        .unwrap();
+    let json: Value = serde_json::from_slice(&state_output.stdout).unwrap();
+    assert_eq!(json["test_run"]["scenario"]["id"], "prod-like");
+    assert_eq!(json["test_run"]["scenario"]["app"], "api");
+
+    let logs = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["logs", id, "runner"])
+        .output()
+        .unwrap();
+    assert!(logs.status.success());
+    assert!(String::from_utf8_lossy(&logs.stdout).contains("scenario-before-fail"));
+}
+
+#[test]
+fn scenario_hermetic_requires_http_mock_service() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    let marker = project.path().join("runner-started");
+    std::fs::write(
+        project.path().join("vat.toml"),
+        format!(
+            r#"
+version = 1
+
+[[services]]
+id = "api"
+cmd = ["sh", "-c", "while :; do sleep 1; done"]
+
+[[runners]]
+id = "e2e"
+cmd = ["sh", "-c", "touch {}"]
+
+[[scenarios]]
+id = "prod-like"
+app = "api"
+runner = "e2e"
+network = "hermetic"
+"#,
+            marker.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--scenario", "prod-like"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let events = jsonl(&output.stdout);
+    assert!(events.iter().any(|event| {
+        event["type"] == "error" && event["code"] == "scenario_hermetic_proxy_required"
+    }));
+    assert!(
+        !marker.exists(),
+        "runner should not execute when hermetic proxy is missing"
+    );
+}
+
+#[test]
 fn vat_toml_runner_starts_service_and_returns_json_evidence() {
     if !python3_available() {
         return;
