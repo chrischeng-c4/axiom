@@ -9,12 +9,11 @@
 # case = "compare_digest__a_as_AnyStr_wrong"
 # subject = "_hashlib.compare_digest(a: AnyStr)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: _hashlib.compare_digest(a: AnyStr); call it with the wrong type.
 
