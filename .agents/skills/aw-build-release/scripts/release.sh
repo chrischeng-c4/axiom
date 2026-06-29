@@ -6,7 +6,9 @@ set -euo pipefail
 # Resolves <project> against [[projects]] in .aw/config.toml (matches `name`
 # or any entry in `aliases`) and execs <project_path>/build.sh release.
 #
-# The per-project build.sh owns: version bump, build, install, commit, tag.
+# The per-project build.sh owns release-prep: tag-collision check, version bump,
+# release build, install, and commit. The skill lands, tags, pushes, and monitors
+# the GitHub release after this script prints RELEASE_TAG.
 #
 # Usage:
 #   release.sh <project>     explicit project name or alias

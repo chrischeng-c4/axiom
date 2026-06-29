@@ -7,7 +7,7 @@ usage() {
 Usage: projects/agentic-workflow/build.sh <debug|release>
 
 debug    Build agentic-workflow and install target/debug/aw to ~/.cargo/bin/aw.
-release  Bump patch version, build/install aw, commit version files, and tag.
+release  Build/install aw, create a release commit, and print the tag to push after git:land.
 EOF
 }
 
@@ -43,6 +43,7 @@ esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+. scripts/project-build-lib.sh
 
 trap 'fail_hint "$MODE"' ERR
 
@@ -55,47 +56,38 @@ install_aw() {
 }
 
 if [[ "$MODE" == "debug" ]]; then
+  VERSION_FILES=(Cargo.toml)
+  if [[ -f pyproject.toml ]]; then
+    VERSION_FILES+=(pyproject.toml)
+  fi
+  CURRENT_VERSION="$(project_build_read_version Cargo.toml)"
+  project_build_prepare_debug_version aw "$CURRENT_VERSION" "${VERSION_FILES[@]}"
   cargo build -p agentic-workflow
   install_aw debug
+  project_build_restore_manifests
   echo ""
-  echo "Build complete."
+  echo "Build complete (debug ${PROJECT_BUILD_DEBUG_VERSION})."
   exit 0
 fi
 
-CURRENT_VERSION="$(grep -m1 '^version = "' Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
-IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-
-NEW_PATCH=$((PATCH + 1))
-NEW_MINOR=$MINOR
-NEW_MAJOR=$MAJOR
-if [[ "$NEW_PATCH" -gt 63 ]]; then
-  NEW_PATCH=0
-  NEW_MINOR=$((MINOR + 1))
-fi
-if [[ "$NEW_MINOR" -gt 63 ]]; then
-  NEW_MINOR=0
-  NEW_MAJOR=$((MAJOR + 1))
-fi
-NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
-
-echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
-sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
+VERSION_FILES=(Cargo.toml)
 if [[ -f pyproject.toml ]]; then
-  sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" pyproject.toml
+  VERSION_FILES+=(pyproject.toml)
 fi
+CURRENT_VERSION="$(project_build_read_version Cargo.toml)"
+export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
+project_build_prepare_release_version aw "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
 cargo build --release -p agentic-workflow
 install_aw release
 
-TAG="v${NEW_VERSION}"
+TAG="${PROJECT_BUILD_RELEASE_TAG}"
 git add Cargo.toml Cargo.lock
 if [[ -f pyproject.toml ]]; then
   git add pyproject.toml
 fi
-git commit -m "release: ${TAG}"
-git tag -a "$TAG" -m "Release ${TAG}"
+git commit --allow-empty -m "release(aw): ${TAG}"
 
-echo ""
-echo "Build complete. aw ${TAG} installed and tagged."
+project_build_print_release_next_steps aw "$TAG"
 # </HANDWRITE>

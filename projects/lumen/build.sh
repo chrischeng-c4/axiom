@@ -8,7 +8,7 @@ usage() {
 Usage: projects/lumen/build.sh <debug|release>
 
 debug    Build lumen and install target/debug/lumen to ~/.cargo/bin/lumen.
-release  Bump patch version, build/install lumen, commit version files, and tag lumen@<version>.
+release  Build/install lumen, create a release commit, and print the tag to push after git:land.
 
 Note: this is the LOCAL/host dev install. Cross-platform release binaries
 (macOS arm64 + Linux x64/arm64) are built by .github/workflows/lumen-release.yml
@@ -48,6 +48,7 @@ esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+. scripts/project-build-lib.sh
 
 trap 'fail_hint "$MODE"' ERR
 
@@ -60,47 +61,29 @@ install_lumen() {
 }
 
 if [[ "$MODE" == "debug" ]]; then
+  VERSION_FILES=(projects/lumen/Cargo.toml)
+  CURRENT_VERSION="$(project_build_read_version projects/lumen/Cargo.toml)"
+  project_build_prepare_debug_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
   cargo build -p lumen --bin lumen --features relay-wal
   install_lumen debug
+  project_build_restore_manifests
   echo ""
-  echo "Build complete."
+  echo "Build complete (debug ${PROJECT_BUILD_DEBUG_VERSION})."
   exit 0
 fi
 
-# lumen uses the shared workspace version (version.workspace = true), so the
-# bump lands in the root Cargo.toml — same convention as cap/vat/meter. The
-# version number is a shared monotonic counter; the tag lumen@<v> is what makes
-# this an independent lumen release.
-CURRENT_VERSION="$(grep -m1 '^version = "' Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
-IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-
-NEW_PATCH=$((PATCH + 1))
-NEW_MINOR=$MINOR
-NEW_MAJOR=$MAJOR
-if [[ "$NEW_PATCH" -gt 63 ]]; then
-  NEW_PATCH=0
-  NEW_MINOR=$((MINOR + 1))
-fi
-if [[ "$NEW_MINOR" -gt 63 ]]; then
-  NEW_MINOR=0
-  NEW_MAJOR=$((MAJOR + 1))
-fi
-NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
-
-echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
-sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
+VERSION_FILES=(projects/lumen/Cargo.toml)
+CURRENT_VERSION="$(project_build_read_version projects/lumen/Cargo.toml)"
+export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
+project_build_prepare_release_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
 cargo build --release -p lumen --bin lumen --features "otel relay-wal"
 install_lumen release
 
-TAG="lumen@${NEW_VERSION}"
-git add Cargo.toml Cargo.lock projects/lumen
-git commit -m "release(lumen): ${TAG}"
-git tag -a "$TAG" -m "Release ${TAG}"
+TAG="${PROJECT_BUILD_RELEASE_TAG}"
+git add Cargo.lock projects/lumen
+git commit --allow-empty -m "release(lumen): ${TAG}"
 
-echo ""
-echo "Build complete. lumen ${TAG} installed and tagged."
-echo "Push the tag to trigger cross-platform release binaries:"
-echo "  git push origin ${TAG}"
+project_build_print_release_next_steps lumen "$TAG"
 # CODEGEN-END

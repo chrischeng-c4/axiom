@@ -1,12 +1,16 @@
 ---
 name: mamba:build:debug
-description: Build mamba (debug profile) and install to ~/.cargo/bin (no version bump)
+description: Build mamba with the debug profile, commit a debug checkpoint when needed, install to ~/.cargo/bin/mamba, and use a git-hash-suffixed debug version.
 user-invocable: true
 ---
 
 # /mamba:build:debug
 
-Builds the mamba CLI in debug mode and installs to `~/.cargo/bin/mamba`. Does **not** bump the workspace version. Use this for fast iteration; for benchmarking against CPython use `/mamba:build:release` instead (release-profile binary).
+Builds the mamba CLI in debug mode and installs to `~/.cargo/bin/mamba`. The
+build script commits a dirty tree before building, uses a `<version>+<git-sha>`
+debug version, and restores manifest files after the local install. Use this
+for fast iteration; for benchmarking against CPython use `/mamba:build:release`
+instead (release-profile binary).
 
 ## Instructions
 

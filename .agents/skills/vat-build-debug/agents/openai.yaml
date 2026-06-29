@@ -1,4 +1,4 @@
 interface:
   display_name: "VAT Build Debug"
   short_description: "Build and install vat debug binary"
-  default_prompt: "Use $vat-build-debug to build and install the vat debug binary."
+  default_prompt: "Use $vat-build-debug to checkpoint, build, and install the vat debug binary."

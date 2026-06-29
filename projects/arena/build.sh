@@ -8,7 +8,7 @@ usage() {
 Usage: projects/arena/build.sh <debug|release>
 
 debug    Build arena-cli and install target/debug/arena to ~/.cargo/bin/arena.
-release  Bump patch version, build/install arena, commit version files, and tag arena@<version>.
+release  Build/install arena, create a release commit, and print the tag to push after git:land.
 EOF
 }
 
@@ -44,6 +44,7 @@ esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+. scripts/project-build-lib.sh
 
 trap 'fail_hint "$MODE"' ERR
 
@@ -56,41 +57,29 @@ install_arena() {
 }
 
 if [[ "$MODE" == "debug" ]]; then
+  VERSION_FILES=(projects/arena/Cargo.toml projects/arena/arena-cli/Cargo.toml)
+  CURRENT_VERSION="$(project_build_read_version projects/arena/arena-cli/Cargo.toml)"
+  project_build_prepare_debug_version arena "$CURRENT_VERSION" "${VERSION_FILES[@]}"
   cargo build -p arena-cli
   install_arena debug
+  project_build_restore_manifests
   echo ""
-  echo "Build complete."
+  echo "Build complete (debug ${PROJECT_BUILD_DEBUG_VERSION})."
   exit 0
 fi
 
-CURRENT_VERSION="$(grep -m1 '^version = "' projects/arena/arena-cli/Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
-IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-
-NEW_PATCH=$((PATCH + 1))
-NEW_MINOR=$MINOR
-NEW_MAJOR=$MAJOR
-if [[ "$NEW_PATCH" -gt 63 ]]; then
-  NEW_PATCH=0
-  NEW_MINOR=$((MINOR + 1))
-fi
-if [[ "$NEW_MINOR" -gt 63 ]]; then
-  NEW_MINOR=0
-  NEW_MAJOR=$((MAJOR + 1))
-fi
-NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
-
-echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
-sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" projects/arena/Cargo.toml projects/arena/arena-cli/Cargo.toml
+VERSION_FILES=(projects/arena/Cargo.toml projects/arena/arena-cli/Cargo.toml)
+CURRENT_VERSION="$(project_build_read_version projects/arena/arena-cli/Cargo.toml)"
+export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
+project_build_prepare_release_version arena "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
 cargo build --release -p arena-cli
 install_arena release
 
-TAG="arena@${NEW_VERSION}"
+TAG="${PROJECT_BUILD_RELEASE_TAG}"
 git add Cargo.lock projects/arena
-git commit -m "release(arena): ${TAG}"
-git tag -a "$TAG" -m "Release ${TAG}"
+git commit --allow-empty -m "release(arena): ${TAG}"
 
-echo ""
-echo "Build complete. arena ${TAG} installed and tagged."
+project_build_print_release_next_steps arena "$TAG"
 # CODEGEN-END

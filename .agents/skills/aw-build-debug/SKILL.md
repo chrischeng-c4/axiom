@@ -1,13 +1,16 @@
 ---
 name: aw:build:debug
-description: Build a project's debug binary and install it (no version bump). Project resolved from .aw/config.toml [[projects]]; infer from project-<name> branch when no arg.
+description: Build a project's debug binary, committing a debug checkpoint when needed and installing a git-hash-suffixed debug version. Project resolved from .aw/config.toml [[projects]]; infer from project-<name> branch when no arg.
 user-invocable: true
 ---
 
 # /aw:build:debug
 
 Builds the requested project in debug mode and installs the resulting binary via
-that project's own `build.sh`. Does **not** bump version.
+that project's own `build.sh`. The project build script commits a dirty tree
+before building, finds the next non-conflicting `<project>@<version>` base, uses
+`<version>+<git-sha>` for the debug build, and restores manifest files after the
+local install.
 
 ## Instructions
 
@@ -16,7 +19,7 @@ Run the dispatcher with the project name or alias as configured in
 to infer the project from the current branch.
 
 ```bash
-.claude/skills/aw-build-debug/scripts/build.sh [<project>]
+.agents/skills/aw-build-debug/scripts/build.sh [<project>]
 ```
 
 Examples:

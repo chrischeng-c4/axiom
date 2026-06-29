@@ -1,19 +1,15 @@
 ---
 name: aw:release-patch
-description: Bump patch version, build debug, and install
+description: Deprecated legacy AW release path. Use aw:build:release for release builds or aw:build:debug for debug installs.
 user-invocable: true
 ---
 
 # /aw:release-patch
 
-Bumps the patch version (base-64: minor/patch 0–63 with carry), builds in debug mode, installs to `~/.cargo/bin/cclab` and `~/.cargo/bin/aw`, commits version files, and creates a git tag.
+Deprecated. Do not use this legacy direct tag path.
 
-## Instructions
+Use:
 
-Run the release script:
-
-```bash
-.claude/skills/aw-release-patch/scripts/release.sh
-```
-
-Report the result to the user.
+- `/aw:build:debug aw` for a local debug install.
+- `/aw:build:release aw` for a release that lands through `git:land`, pushes
+  `aw@<version>`, and monitors GitHub release publication.

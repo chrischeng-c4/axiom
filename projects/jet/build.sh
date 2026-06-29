@@ -7,7 +7,7 @@ usage() {
 Usage: projects/jet/build.sh <debug|release>
 
 debug    Build jet and install target/debug/jet to ~/.cargo/bin/jet.
-release  Bump patch version, build/install jet, commit version files, and tag jet@<version>.
+release  Build/install jet, create a release commit, and print the tag to push after git:land.
 
 Note: this is the local host install. Cross-platform release binaries
 (macOS arm64 + Linux x64/arm64) are built by .github/workflows/jet-release.yml
@@ -47,6 +47,7 @@ esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+. scripts/project-build-lib.sh
 
 RUSTUP_STABLE="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin"
 if [[ -x "$RUSTUP_STABLE/cargo" ]]; then
@@ -54,26 +55,6 @@ if [[ -x "$RUSTUP_STABLE/cargo" ]]; then
 fi
 
 trap 'fail_hint "$MODE"' ERR
-
-bump_patch_version() {
-  local current_version="$1"
-  local major minor patch
-  IFS='.' read -r major minor patch <<< "$current_version"
-
-  local new_patch=$((patch + 1))
-  local new_minor=$minor
-  local new_major=$major
-  if [[ "$new_patch" -gt 63 ]]; then
-    new_patch=0
-    new_minor=$((minor + 1))
-  fi
-  if [[ "$new_minor" -gt 63 ]]; then
-    new_minor=0
-    new_major=$((major + 1))
-  fi
-
-  printf '%s.%s.%s\n' "$new_major" "$new_minor" "$new_patch"
-}
 
 install_jet() {
   local profile="$1"
@@ -84,36 +65,30 @@ install_jet() {
 }
 
 if [[ "$MODE" == "debug" ]]; then
+  VERSION_FILES=(projects/jet/Cargo.toml)
+  CURRENT_VERSION="$(project_build_read_version projects/jet/Cargo.toml)"
+  project_build_prepare_debug_version jet "$CURRENT_VERSION" "${VERSION_FILES[@]}"
   cargo build -p jet --bin jet
   install_jet debug
+  project_build_restore_manifests
   echo ""
-  echo "Build complete."
+  echo "Build complete (debug ${PROJECT_BUILD_DEBUG_VERSION})."
   exit 0
 fi
 
-CURRENT_VERSION="$(grep -m1 '^version = "' projects/jet/Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
-NEW_VERSION="$(bump_patch_version "$CURRENT_VERSION")"
-
-echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
-sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" projects/jet/Cargo.toml
+VERSION_FILES=(projects/jet/Cargo.toml)
+CURRENT_VERSION="$(project_build_read_version projects/jet/Cargo.toml)"
+export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
+project_build_prepare_release_version jet "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
 cargo build --release -p jet --bin jet
 install_jet release
 
-TAG="jet@${NEW_VERSION}"
+TAG="${PROJECT_BUILD_RELEASE_TAG}"
 git add Cargo.lock README.md libs/cli-std projects/jet
-git commit -m "release(jet): ${TAG}"
+git commit --allow-empty -m "release(jet): ${TAG}"
 
-echo ""
-echo "Release prepared: ${TAG} built + installed; version-bump commit created."
-echo "NOT tagged and NOT pushed — the tag must be applied AFTER this commit lands"
-echo "on main (git:land rebases/squash-merges and would orphan a pre-land tag)."
-echo "RELEASE_TAG=${TAG}"
-echo ""
-echo "The /jet:build:release skill completes the release:"
-echo "  1. land this commit to main via /git:land"
-echo "  2. git tag -a ${TAG} -m \"Release ${TAG}\" && git push origin ${TAG}"
-echo "     (pushing the ${TAG} tag triggers .github/workflows/jet-release.yml)"
+project_build_print_release_next_steps jet "$TAG"
 
 # </HANDWRITE>
