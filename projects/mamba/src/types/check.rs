@@ -662,7 +662,10 @@ impl TypeChecker {
                     self.tcx.intern(Ty::List(a))
                 }
                 "tuple" => self.tcx.intern(Ty::Tuple(vec![])),
-                "set" | "frozenset" => self.tcx.any(),
+                "set" | "frozenset" => {
+                    let a = self.tcx.any();
+                    self.tcx.intern(Ty::Set(a))
+                }
                 // Other builtin types with no dedicated Ty variant. Without
                 // these arms the call falls through to the symbol-table lookup
                 // of the builtin callable, mistyping `b: bytes = ...` as
@@ -725,15 +728,7 @@ impl TypeChecker {
                     "list" if inner.len() == 1 => self.tcx.intern(Ty::List(inner[0])),
                     "dict" if inner.len() == 2 => self.tcx.intern(Ty::Dict(inner[0], inner[1])),
                     "tuple" => self.tcx.intern(Ty::Tuple(inner)),
-                    // No dedicated `Ty::Set` variant yet: `set[T]` / `frozenset[T]`
-                    // resolve to `Any` so the annotated variable supports len(),
-                    // iteration, `.add`, etc. (matching the bare-`set` annotation
-                    // and the `{...}` set-literal which infer to Any/Error). The
-                    // inner type args are still resolved above so an unknown element
-                    // type (`set[Bogus]`) is still reported. Without this arm the
-                    // call falls through to the symbol-table lookup of the `set`
-                    // builtin callable, mistyping `x: set[int]` as `() -> Any`.
-                    "set" | "frozenset" => self.tcx.any(),
+                    "set" | "frozenset" if inner.len() == 1 => self.tcx.intern(Ty::Set(inner[0])),
                     "Callable" if inner.len() >= 2 => {
                         // #243: Callable[[params...], ret] → Fn type
                         let ret = inner[inner.len() - 1];
@@ -954,9 +949,14 @@ impl TypeChecker {
             return members.iter().all(|m| self.types_compatible(expected, *m));
         }
         // Recursive collection compatibility: List[X] ≈ List[Y] when X ≈ Y,
-        // and similarly for Dict. This handles annotations like `list[dict]`
-        // where the inner type resolves to Any and must match concrete types.
+        // similarly for Set and Dict. This handles annotations like
+        // `list[dict]` where the inner type resolves to Any and must match
+        // concrete types.
         if let (Ty::List(inner_e), Ty::List(inner_a)) = (e, a) {
+            let (ie, ia) = (*inner_e, *inner_a);
+            return self.types_compatible(ie, ia);
+        }
+        if let (Ty::Set(inner_e), Ty::Set(inner_a)) = (e, a) {
             let (ie, ia) = (*inner_e, *inner_a);
             return self.types_compatible(ie, ia);
         }
@@ -1057,6 +1057,7 @@ impl TypeChecker {
             Ty::Str => "str".into(),
             Ty::Any => "Any".into(),
             Ty::List(inner) => format!("list[{}]", self.ty_name(*inner)),
+            Ty::Set(inner) => format!("set[{}]", self.ty_name(*inner)),
             Ty::Dict(k, v) => format!("dict[{}, {}]", self.ty_name(*k), self.ty_name(*v)),
             Ty::Tuple(ts) => {
                 let parts: Vec<_> = ts.iter().map(|t| self.ty_name(*t)).collect();

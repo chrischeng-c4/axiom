@@ -85,6 +85,14 @@ impl Substitution {
                     tcx.intern(Ty::List(new_elem))
                 }
             }
+            Ty::Set(elem) => {
+                let new_elem = self.apply(elem, tcx);
+                if new_elem == elem {
+                    ty
+                } else {
+                    tcx.intern(Ty::Set(new_elem))
+                }
+            }
             Ty::Dict(k, v) => {
                 let new_k = self.apply(k, tcx);
                 let new_v = self.apply(v, tcx);
@@ -195,6 +203,12 @@ fn unify_for_inference(
         Ty::List(elem_param) => {
             let arg_ty = tcx.get(arg).clone();
             if let Ty::List(elem_arg) = arg_ty {
+                unify_for_inference(elem_param, elem_arg, type_vars, subst, conflicts, tcx);
+            }
+        }
+        Ty::Set(elem_param) => {
+            let arg_ty = tcx.get(arg).clone();
+            if let Ty::Set(elem_arg) = arg_ty {
                 unify_for_inference(elem_param, elem_arg, type_vars, subst, conflicts, tcx);
             }
         }

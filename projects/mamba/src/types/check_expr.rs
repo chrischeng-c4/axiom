@@ -480,10 +480,21 @@ impl TypeChecker {
                 }
             }
             Expr::SetLit(elems) => {
-                for elem in elems {
-                    self.check_expr(elem);
+                if elems.is_empty() {
+                    let any = self.tcx.any();
+                    self.tcx.intern(Ty::Set(any))
+                } else {
+                    let first = self.check_expr(&elems[0]);
+                    let mut homogeneous = true;
+                    for elem in &elems[1..] {
+                        let et = self.check_expr(elem);
+                        if !self.types_compatible(first, et) {
+                            homogeneous = false;
+                        }
+                    }
+                    let elem_ty = if homogeneous { first } else { self.tcx.any() };
+                    self.tcx.intern(Ty::Set(elem_ty))
                 }
-                self.tcx.error()
             }
             Expr::TupleLit(elems) => {
                 let types: Vec<TypeId> = elems.iter().map(|e| self.check_expr(e)).collect();
@@ -1031,6 +1042,14 @@ impl TypeChecker {
                 "index" => self.tcx.intern(Ty::Fn {
                     params: vec![elem, self.tcx.int(), self.tcx.int()],
                     ret: self.tcx.int(),
+                    variadic: false,
+                }),
+                _ => self.tcx.any(),
+            },
+            Ty::Set(elem) => match attr {
+                "add" | "remove" => self.tcx.intern(Ty::Fn {
+                    params: vec![elem],
+                    ret: self.tcx.none(),
                     variadic: false,
                 }),
                 _ => self.tcx.any(),
