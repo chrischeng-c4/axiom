@@ -1674,6 +1674,36 @@ fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
 }
 
 #[test]
+fn test_stdlib_staticmethod_wrong_bare_instance_rejected() {
+    let errors = check(
+        "from builtins import staticmethod\nclass _W:\n    pass\nobj = staticmethod(lambda: None)\nobj.__get__(_W())\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `instance`")),
+        "staticmethod.__get__(_W()) should be rejected, got: {errors:?}"
+    );
+
+    let errors =
+        check("from builtins import staticmethod\nclass _W:\n    pass\nstaticmethod(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `f`")),
+        "staticmethod(_W()) should be rejected, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import staticmethod\nobj = staticmethod(lambda: None)\nobj.__get__(None)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "staticmethod callable/None descriptor use must stay skip-safe, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_function_get_owner_rejected() {
     let errors = check("class _W:\n    pass\ndef f():\n    pass\nf.__get__(None, _W())\n");
     assert!(
