@@ -29,6 +29,124 @@ fn extract_str_v(v: MbValue) -> Option<String> {
     super::pathlib_mod::coerce_fspath(v)
 }
 
+fn compileall_emit(s: &str) {
+    if !super::super::output::write_captured(s) {
+        print!("{s}");
+    }
+}
+
+fn quiet_level(a: &[MbValue]) -> i64 {
+    match kwarg(a, "quiet") {
+        Some(v) if !v.is_none() => {
+            if let Some(b) = v.as_bool() {
+                if b { 1 } else { 0 }
+            } else {
+                v.as_int().unwrap_or(0)
+            }
+        }
+        _ => 0,
+    }
+}
+
+fn ascii_backslash_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch.is_ascii() {
+            out.push(ch);
+        } else {
+            let code = ch as u32;
+            if code <= 0xffff {
+                out.push_str(&format!("\\u{code:04x}"));
+            } else {
+                out.push_str(&format!("\\U{code:08x}"));
+            }
+        }
+    }
+    out
+}
+
+fn ident_byte(b: u8) -> bool {
+    b == b'_' || b.is_ascii_alphanumeric()
+}
+
+fn bytes_literal_quote_start(bytes: &[u8], i: usize) -> Option<usize> {
+    let first = *bytes.get(i)?;
+    let prev_is_ident = i > 0 && ident_byte(bytes[i - 1]);
+    if prev_is_ident {
+        return None;
+    }
+    if matches!(first, b'b' | b'B') {
+        let mut j = i + 1;
+        if matches!(bytes.get(j), Some(b'r' | b'R')) {
+            j += 1;
+        }
+        if matches!(bytes.get(j), Some(b'\'' | b'"')) {
+            return Some(j);
+        }
+    }
+    if matches!(first, b'r' | b'R') && matches!(bytes.get(i + 1), Some(b'b' | b'B')) {
+        let j = i + 2;
+        if matches!(bytes.get(j), Some(b'\'' | b'"')) {
+            return Some(j);
+        }
+    }
+    None
+}
+
+fn non_ascii_bytes_literal_line(src: &str) -> Option<usize> {
+    let bytes = src.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let Some(qpos) = bytes_literal_quote_start(bytes, i) else {
+            i += 1;
+            continue;
+        };
+        let quote = bytes[qpos];
+        let triple =
+            qpos + 2 < bytes.len() && bytes[qpos + 1] == quote && bytes[qpos + 2] == quote;
+        let mut k = qpos + if triple { 3 } else { 1 };
+        while k < bytes.len() {
+            if bytes[k] == b'\\' {
+                k = (k + 2).min(bytes.len());
+                continue;
+            }
+            if triple {
+                if k + 2 < bytes.len()
+                    && bytes[k] == quote
+                    && bytes[k + 1] == quote
+                    && bytes[k + 2] == quote
+                {
+                    i = k + 3;
+                    break;
+                }
+            } else if bytes[k] == quote {
+                i = k + 1;
+                break;
+            }
+            if bytes[k] >= 0x80 {
+                return Some(src[..k].bytes().filter(|b| *b == b'\n').count() + 1);
+            }
+            k += 1;
+        }
+        if k >= bytes.len() {
+            i = k;
+        }
+    }
+    None
+}
+
+fn emit_syntax_report(path: &str, line: usize, message: &str, a: &[MbValue]) {
+    if quiet_level(a) >= 2 {
+        return;
+    }
+    compileall_emit(&format!(
+        "***   File \"{}\", line {}\nSyntaxError: {}\n\n",
+        ascii_backslash_escape(path),
+        line,
+        message
+    ));
+}
+
 /// CPython's cache tag for this oracle (Python 3.12).
 const CACHE_TAG: &str = "cpython-312";
 
@@ -96,7 +214,17 @@ fn compile_one_file(path: &str, a: &[MbValue]) -> bool {
     let Ok(src) = std::fs::read_to_string(path) else {
         return true; // nothing to compile
     };
+    if let Some(line) = non_ascii_bytes_literal_line(&src) {
+        emit_syntax_report(
+            path,
+            line,
+            "bytes can only contain ASCII literal characters",
+            a,
+        );
+        return false;
+    }
     if crate::parser::parse(&src, FileId::default()).is_err() {
+        emit_syntax_report(path, 1, "invalid syntax", a);
         return false;
     }
     let legacy = kwarg(a, "legacy").and_then(|v| v.as_bool()).unwrap_or(false);
