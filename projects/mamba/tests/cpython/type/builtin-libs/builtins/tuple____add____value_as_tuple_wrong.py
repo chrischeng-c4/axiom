@@ -9,12 +9,11 @@
 # case = "tuple____add____value_as_tuple_wrong"
 # subject = "builtins.tuple.__add__(value: tuple)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: builtins.tuple.__add__(value: tuple); call it with the wrong type.
 
