@@ -9,12 +9,11 @@
 # case = "sub__a_as__T_contra_wrong"
 # subject = "_operator.sub(a: _T_contra)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: _operator.sub(a: _T_contra); call it with the wrong type.
 

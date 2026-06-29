@@ -9,12 +9,11 @@
 # case = "mod__a_as_SupportsMod_wrong"
 # subject = "_operator.mod(a: SupportsMod)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: _operator.mod(a: SupportsMod); call it with the wrong type.
 
