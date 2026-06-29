@@ -44,6 +44,7 @@ use tokio::task::JoinSet;
 const SEED: u64 = 1234;
 const WARMUP: usize = 5;
 const REPS: usize = 50;
+const SORTED_PAGE_DEEP_SIZE: usize = 1_000;
 // EC env override: vat exports LUMEN_BENCH_PG_DSN / LUMEN_BENCH_OS_URL when it
 // provisions pg + OpenSearch; fall back to the local-dev defaults otherwise.
 fn pg_dsn() -> String {
@@ -65,6 +66,7 @@ const CELLS: &[&str] = &[
     "range",
     "bool_filter",
     "filter_sort",
+    "sorted_page_deep",
     "pure_sort",
     // Presence + collision filters (DataTable composite search). `exists` is a
     // sparse-field presence scan; `duplicated` finds docs whose value collides.
@@ -384,6 +386,9 @@ fn lumen_query(cell: &str) -> Value {
         "filter_sort" => {
             json!({"query":{"term":{"field":"city","value":"taipei"}},"sort":[{"field":"age","order":"asc"}],"limit":10,"track_total":false})
         }
+        "sorted_page_deep" => {
+            json!({"query":{"range":{"field":"age","gte":0}},"sort":[{"field":"age","order":"asc"}],"limit":SORTED_PAGE_DEEP_SIZE,"track_total":false})
+        }
         "pure_sort" => {
             json!({"query":{"range":{"field":"age"}},"sort":[{"field":"age","order":"asc"}],"limit":10,"track_total":false})
         }
@@ -428,6 +433,11 @@ fn pg_sql(cell: &str, table: &str) -> String {
         "range" => format!("SELECT eid FROM {table} WHERE age>=30 AND age<40 LIMIT 10"),
         "bool_filter" => format!("SELECT eid FROM {table} WHERE city='taipei' AND age>=30 AND age<40 LIMIT 10"),
         "filter_sort" => format!("SELECT eid FROM {table} WHERE city='taipei' ORDER BY age ASC, eid ASC LIMIT 10"),
+        "sorted_page_deep" => format!(
+            "SELECT eid FROM {table} WHERE age>=0 ORDER BY age ASC, eid ASC LIMIT {} OFFSET {}",
+            SORTED_PAGE_DEEP_SIZE,
+            deep_page_offset(gate_n())
+        ),
         "pure_sort" => format!("SELECT eid FROM {table} ORDER BY age ASC, eid ASC LIMIT 10"),
         "exists" => format!("SELECT eid FROM {table} WHERE note IS NOT NULL LIMIT 10"),
         // pg's idiomatic "find duplicates" — a GROUP BY/HAVING subquery that
@@ -468,6 +478,9 @@ fn os_query(cell: &str) -> Value {
         }
         "filter_sort" => {
             json!({"query":{"bool":{"filter":[{"term":{"city":"taipei"}}]}},"sort":[{"age":"asc"}],"track_total_hits":false,"size":10})
+        }
+        "sorted_page_deep" => {
+            json!({"query":{"range":{"age":{"gte":0}}},"sort":[{"age":"asc"}],"track_total_hits":false,"size":SORTED_PAGE_DEEP_SIZE,"from":deep_page_offset(gate_n())})
         }
         "pure_sort" => {
             json!({"query":{"match_all":{}},"sort":[{"age":"asc"}],"track_total_hits":false,"size":10})
@@ -701,6 +714,54 @@ async fn measure_lumen(client: &reqwest::Client, base: &str, cell: &str) -> Stat
     summarize(e2e, engine)
 }
 
+async fn measure_lumen_sorted_page_deep(client: &reqwest::Client, base: &str, n: usize) -> Stat {
+    let url = format!("{base}/collections/docs/search");
+    let target_page = (deep_page_offset(n) / SORTED_PAGE_DEEP_SIZE).max(1);
+    let measure_window = REPS.min(target_page + 1);
+    let measure_from = target_page + 1 - measure_window;
+    let mut cursor: Option<String> = None;
+    let mut e2e = Vec::with_capacity(measure_window);
+    let mut engine = Vec::with_capacity(measure_window);
+
+    for page_idx in 0..=target_page {
+        let mut body = lumen_query("sorted_page_deep");
+        if let Some(c) = cursor.take() {
+            body["cursor"] = Value::String(c);
+        }
+        let t = Instant::now();
+        let j: Value = client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        let hits = j
+            .get("hits")
+            .and_then(|v| v.as_array())
+            .expect("lumen sorted_page_deep hits array");
+        assert!(
+            !hits.is_empty(),
+            "sorted_page_deep exhausted before target page {target_page}"
+        );
+        if page_idx >= measure_from {
+            e2e.push(ms);
+            if let Some(us) = j.get("took_us").and_then(|v| v.as_f64()) {
+                engine.push(us / 1000.0);
+            }
+        }
+        cursor = j
+            .get("cursor")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+    }
+
+    summarize(e2e, engine)
+}
+
 async fn measure_lumen_native(addr: &str, cell: &str) -> Stat {
     let frame = lumen_native_frame(cell);
     let mut e2e = Vec::with_capacity(REPS);
@@ -875,6 +936,21 @@ async fn measure_pg(client: &tokio_postgres::Client, cell: &str, table: &str) ->
     summarize(e2e, Vec::new())
 }
 
+async fn measure_pg_sorted_page_deep(client: &tokio_postgres::Client, table: &str) -> Stat {
+    let sql = pg_sql("sorted_page_deep", table);
+    let stmt = client.prepare(&sql).await.unwrap();
+    let mut e2e = Vec::with_capacity(REPS);
+    for r in 0..(WARMUP + REPS) {
+        let t = Instant::now();
+        let _ = client.query(&stmt, &[]).await.unwrap();
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        if r >= WARMUP {
+            e2e.push(ms);
+        }
+    }
+    summarize(e2e, Vec::new())
+}
+
 async fn pg_disk_bytes(client: &tokio_postgres::Client, table: &str) -> Option<u64> {
     let sql = format!("SELECT pg_total_relation_size('{table}'::regclass)");
     let row = client.query_one(&sql, &[]).await.ok()?;
@@ -1027,6 +1103,25 @@ fn parse_scale_cells() -> Vec<&'static str> {
 
 fn is_vector_cell(cell: &str) -> bool {
     matches!(cell, "knn" | "filtered_knn")
+}
+
+fn is_opensearch_cell(cell: &str) -> bool {
+    // OpenSearch `from` deep pagination is capped by max_result_window on stock
+    // nodes. Issue #10's competitive pin is specifically the Postgres OFFSET
+    // comparison, so keep OS out of this cell instead of making the gate depend
+    // on cluster-level OS settings.
+    !is_vector_cell(cell) && cell != "sorted_page_deep"
+}
+
+fn gate_n() -> usize {
+    std::env::var("LUMEN_GATE_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1_000_000)
+}
+
+fn deep_page_offset(n: usize) -> usize {
+    n / 2
 }
 
 fn parse_gate_cells() -> Vec<&'static str> {
@@ -1411,10 +1506,7 @@ async fn competitive_perf_gate() {
     // Default 1M: lumen's wins are at SCALE — pg's ts_rank/GIN and OpenSearch's
     // JVM degrade at 1M while lumen stays flat. At 100k pg's small-data GIN looks
     // competitive (HTTP-floor noise), so a smaller N would false-fail the gate.
-    let n: usize = std::env::var("LUMEN_GATE_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
+    let n = gate_n();
 
     let baseline: Value = serde_json::from_str(include_str!("perf-baseline.json"))
         .expect("perf-baseline.json parses");
@@ -1456,16 +1548,26 @@ async fn competitive_perf_gate() {
     let mut pg_s = std::collections::BTreeMap::new();
     let mut os_s = std::collections::BTreeMap::new();
     for &cell in &cells {
-        lumen_s.insert(cell, measure_lumen(&lc, &lbase, cell).await);
+        let lumen_stat = if cell == "sorted_page_deep" {
+            measure_lumen_sorted_page_deep(&lc, &lbase, n).await
+        } else {
+            measure_lumen(&lc, &lbase, cell).await
+        };
+        lumen_s.insert(cell, lumen_stat);
         if PG_CHEAP_CELLS.contains(&cell) {
             lumen_native_s.insert(cell, measure_lumen_native(&lnative.addr, cell).await);
         }
         if let Some(c) = &pg {
-            pg_s.insert(cell, measure_pg(c, cell, pg_table).await);
+            let pg_stat = if cell == "sorted_page_deep" {
+                measure_pg_sorted_page_deep(c, pg_table).await
+            } else {
+                measure_pg(c, cell, pg_table).await
+            };
+            pg_s.insert(cell, pg_stat);
         }
         if let Some((c, b)) = &os {
             // OS has no k-NN plugin on this host → skip vector cells (peer reported as "-").
-            if !is_vector_cell(cell) {
+            if is_opensearch_cell(cell) {
                 os_s.insert(cell, measure_os(c, b, os_index, cell).await);
             }
         }
@@ -1579,6 +1681,11 @@ async fn competitive_perf_gate() {
     // `--exact` when running this test by name so the disk gate does not run
     // concurrently and distort co-located qps rows. ----
     let qps_strict = qps_gate_enabled();
+    let qps_cells: Vec<&'static str> = cells
+        .iter()
+        .copied()
+        .filter(|cell| *cell != "sorted_page_deep")
+        .collect();
     println!(
         "\n=== qps axis (window {}s, strict={}) — ratio = peer_p50/lumen_p50 ===",
         window_s(),
@@ -1612,7 +1719,7 @@ async fn competitive_perf_gate() {
     );
     for &qps in &gate_qps_targets {
         let ceiling = healthz_ceiling_load(&lc, &lbase, qps).await;
-        for &cell in &cells {
+        for &cell in &qps_cells {
             let lumen_req = Req::Http {
                 client: lc.clone(),
                 url: format!("{lbase}/collections/docs/search"),
@@ -2063,10 +2170,7 @@ fn assert_segment_backed(engine: &lumen::storage::Engine) {
             OpenSearch (:9200); run --ignored --nocapture"]
 async fn competitive_perf_gate_disk() {
     // Same scale rationale as the in-mem gate: lumen's wins are at N=1M.
-    let n: usize = std::env::var("LUMEN_GATE_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
+    let n = gate_n();
 
     let baseline: Value = serde_json::from_str(include_str!("perf-baseline.json"))
         .expect("perf-baseline.json parses");
@@ -2102,14 +2206,29 @@ async fn competitive_perf_gate_disk() {
     let mut pg_s = std::collections::BTreeMap::new();
     let mut os_s = std::collections::BTreeMap::new();
     for &cell in &cells {
-        disk_s.insert(cell, measure_lumen(&lc_disk, &lbase_disk, cell).await);
-        mem_s.insert(cell, measure_lumen(&lc_mem, &lbase_mem, cell).await);
+        let disk_stat = if cell == "sorted_page_deep" {
+            measure_lumen_sorted_page_deep(&lc_disk, &lbase_disk, n).await
+        } else {
+            measure_lumen(&lc_disk, &lbase_disk, cell).await
+        };
+        let mem_stat = if cell == "sorted_page_deep" {
+            measure_lumen_sorted_page_deep(&lc_mem, &lbase_mem, n).await
+        } else {
+            measure_lumen(&lc_mem, &lbase_mem, cell).await
+        };
+        disk_s.insert(cell, disk_stat);
+        mem_s.insert(cell, mem_stat);
         if let Some(c) = &pg {
-            pg_s.insert(cell, measure_pg(c, cell, pg_table).await);
+            let pg_stat = if cell == "sorted_page_deep" {
+                measure_pg_sorted_page_deep(c, pg_table).await
+            } else {
+                measure_pg(c, cell, pg_table).await
+            };
+            pg_s.insert(cell, pg_stat);
         }
         if let Some((c, b)) = &os {
-            // OS has no k-NN plugin on this host → skip vector cells (peer reported as "-").
-            if !is_vector_cell(cell) {
+            // OS has no k-NN plugin on this host, and sorted_page_deep is pg-only.
+            if is_opensearch_cell(cell) {
                 os_s.insert(cell, measure_os(c, b, os_index, cell).await);
             }
         }
