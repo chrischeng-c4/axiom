@@ -26,9 +26,8 @@ class _W:
 
 
 from builtins import slice
-obj = object.__new__(slice)
 try:
-    obj.__new__(_W(), None)  # start: _T1 <- wrong-typed
+    slice.__new__(slice, _W(), None)  # start: _T1 <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)

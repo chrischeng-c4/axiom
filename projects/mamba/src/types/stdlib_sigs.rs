@@ -972,6 +972,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: slice.__new__ carries type-variable start/stop contracts in
+    // typeshed. Treat those as Typed negative walls so direct bare instances are
+    // rejected while ints, None, class objects, and dynamic values stay accepted.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "slice",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[
+            p("cls", CoreTy::Typed),
+            p("start", CoreTy::Typed),
+            p("stop", CoreTy::Typed),
+            p("step", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: frozenset rich/set operators accept AbstractSet-like values.
     // There is no dedicated Ty::Set/FrozenSet yet, so model the protocol as a
     // Typed negative wall: a bare user instance satisfies neither AbstractSet
