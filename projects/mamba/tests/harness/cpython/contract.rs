@@ -441,3 +441,22 @@ fn oracle_cache_contract_reports_warm_hit_metrics() {
         );
     }
 }
+
+#[test]
+fn production_gate_can_report_d54_sut_rows_from_temp_db() {
+    let gate = std::fs::read_to_string(cpython_harness_dir().join("tools/gate_check.py"))
+        .expect("read production gate check");
+    for needle in [
+        "--db",
+        "MAMBA_RESULTS_DB",
+        "D5.3 cpython oracle rows",
+        "D5.4 mamba SUT rows",
+        "mamba verdicts",
+        "outside-repo",
+    ] {
+        assert!(
+            gate.contains(needle),
+            "gate_check.py is missing D5.4 temp-DB reporting marker `{needle}`"
+        );
+    }
+}

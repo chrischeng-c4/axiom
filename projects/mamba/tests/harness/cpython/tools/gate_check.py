@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -34,7 +35,8 @@ CPYTHON_DIR = TESTS_DIR / "cpython"                         # fixtures + .cache 
 FIXTURES_DIR = CPYTHON_DIR
 HARNESS_DIR = TESTS_DIR / "harness"
 BENCHES_DIR = MAMBA_DIR / "benches"
-RESULTS_DB = CPYTHON_DIR / ".cache" / "conformance" / "results.sqlite"
+RESULTS_DB_DEFAULT = CPYTHON_DIR / ".cache" / "conformance" / "results.sqlite"
+RESULTS_DB = RESULTS_DB_DEFAULT
 RESULTS_STORE = TOOLS_DIR / "results_store.py"
 
 # The self-timing anti-pattern is a fixture measuring its OWN hot loop:
@@ -89,6 +91,15 @@ def sqlite_query(db: Path, sql: str):
         return None
 
 
+def db_gitignore_status(db: Path) -> tuple[bool, str]:
+    try:
+        db.resolve().relative_to(REPO_ROOT.resolve())
+    except ValueError:
+        return True, "outside-repo"
+    rc, _, _ = run(["git", "check-ignore", str(db)])
+    return rc == 0, "yes" if rc == 0 else "no"
+
+
 # ── the 10 criteria ──────────────────────────────────────────────────────────
 
 def c_d5_1():
@@ -118,21 +129,29 @@ def c_d5_3():
     has_results = tables is not None and any(r[0] == "results" for r in tables)
     rows = sqlite_query(RESULTS_DB, "SELECT COUNT(*) FROM results WHERE runtime='cpython'")
     cpy = rows[0][0] if rows else 0
-    rc, _, _ = run(["git", "check-ignore", str(RESULTS_DB)])
-    ignored = rc == 0
+    ignored, ignored_detail = db_gitignore_status(RESULTS_DB)
     ok = has_results and cpy > 0 and ignored
-    return (ok, f"results table={has_results}, cpython rows={cpy}, gitignored={ignored}")
+    return (ok, f"results table={has_results}, cpython rows={cpy}, gitignored={ignored_detail}")
 
 
 def c_d5_4():
     # collector must exist AND have produced isolated mamba SUT rows
     rc, _, _ = run([sys.executable, str(RESULTS_STORE), "collect", "--help"])
     has_cmd = rc == 0
+    cpy_rows = sqlite_query(RESULTS_DB, "SELECT COUNT(*) FROM results WHERE runtime='cpython'")
+    cpython_rows = cpy_rows[0][0] if cpy_rows else 0
     rows = sqlite_query(RESULTS_DB, "SELECT COUNT(*) FROM results WHERE runtime='mamba'")
     mamba_rows = rows[0][0] if rows else 0
+    verdict_rows = sqlite_query(
+        RESULTS_DB,
+        "SELECT verdict, COUNT(*) FROM results WHERE runtime='mamba' "
+        "GROUP BY verdict ORDER BY verdict",
+    )
+    mamba_verdicts = dict(verdict_rows or [])
     ok = has_cmd and mamba_rows > 0
     return (ok, f"collect subcommand={'yes' if has_cmd else 'no'} (pooled, "
-                f"ulimit-sandboxed, single-writer); mamba SUT rows={mamba_rows}")
+                f"ulimit-sandboxed, single-writer); D5.3 cpython oracle rows={cpython_rows}; "
+                f"D5.4 mamba SUT rows={mamba_rows}; mamba verdicts={mamba_verdicts}")
 
 
 def c_d5_5():
@@ -225,9 +244,17 @@ CRITERIA = [
 
 
 def main(argv=None) -> int:
+    global RESULTS_DB
+
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--db",
+        default=os.environ.get("MAMBA_RESULTS_DB", str(RESULTS_DB_DEFAULT)),
+        help="results.sqlite path to inspect (default: tests/cpython/.cache/conformance/results.sqlite)",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    RESULTS_DB = Path(args.db)
 
     results = []
     for cid, name, fn in CRITERIA:
