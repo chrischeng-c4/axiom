@@ -9,12 +9,11 @@
 # case = "is_not_none__a_as_typed_wrong"
 # subject = "_operator.is_not_none(a: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: _operator.is_not_none(a: typed); call it with the wrong type.
 
