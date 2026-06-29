@@ -375,6 +375,23 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/lumen/tests"
+      - path: "projects/lumen/tests/cli_convention.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "help_ships_standard_issue_group_not_report_issue"
+            kind: "function"
+            public: false
+          - name: "issue_help_lists_search_view_create"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/drop_field_e2e.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -1436,6 +1453,7 @@ evidence:
   source_tests:
     - path: "projects/lumen/tests/perf_gate_vs_db.rs"
     - path: "projects/lumen/tests/spec_cli.rs"
+    - path: "projects/lumen/tests/cli_convention.rs"
     - path: "projects/lumen/tests/drop_field_e2e.rs"
     - path: "projects/lumen/tests/reindex_stream_e2e.rs"
     - path: "projects/lumen/tests/coverage_gaps_e2e.rs"
@@ -1485,6 +1503,12 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/lumen/tests/cli_convention.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Standard CLI convention help-surface smoke tests cover the lumen issue group.
     impl_mode: hand-written
   - path: "projects/lumen/tests/drop_field_e2e.rs"
     action: modify
