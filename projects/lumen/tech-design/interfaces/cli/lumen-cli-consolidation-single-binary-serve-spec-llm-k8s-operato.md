@@ -1,13 +1,13 @@
 ---
 id: lumen-cli-consolidation
-summary: Consolidate lumen into a single agent-first CLI — serve / spec / llm / k8s operator — removing the openapi-dump, bench, and consumer sibling binaries and folding the operator behind the `operator` feature gate so a non-operator build is kube-free.
+summary: Consolidate lumen into a single agent-first CLI — serve / spec / llm / dockerfile / layered k8s — removing the openapi-dump, bench, and consumer sibling binaries and folding the operator run path behind the `operator` feature gate so a non-operator build is kube-free.
 capability_refs:
   - id: "cli-interface"
     role: primary
     gap: "service-process-interface"
     claim: "service-process-interface"
     coverage: full
-    rationale: "Defines the single long-running service binary and serve/spec/llm/k8s/operator command surface."
+    rationale: "Defines the single long-running service binary and serve/spec/llm/dockerfile/k8s command surface."
   - id: "cli-interface"
     role: primary
     gap: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
@@ -31,7 +31,7 @@ capability_refs:
     gap: "deployment-operator-command-surface"
     claim: "deployment-operator-command-surface"
     coverage: full
-    rationale: "Defines the k8s operator and CRD-generation command surface."
+    rationale: "Defines the Dockerfile, k8s CRD, operator, and instance deployment artifact command surface."
   - id: "http2-api-list"
     role: primary
     gap: "client-search-and-index-route-list"
@@ -103,9 +103,12 @@ nodes:
   serve: {kind: process, label: "serve: run serving node (data-plane)"}
   spec: {kind: process, label: "spec: offline OpenAPI / JSON-schema / shapes / fields"}
   llm: {kind: process, label: "llm <topic>: offline agent narrative (outline=entry)"}
+  dockerfile: {kind: process, label: "dockerfile render: source/release image artifact"}
   k8s: {kind: decision, label: "k8s subcommand"}
-  operator: {kind: process, label: "k8s operator: reconcile controller (cfg feature=operator)"}
-  gencrd: {kind: process, label: "k8s gen-crd: print Lumen CRD YAML"}
+  crd: {kind: process, label: "k8s crd render: print Lumen CRD YAML"}
+  operator_render: {kind: process, label: "k8s operator render: control-plane manifests"}
+  operator_run: {kind: process, label: "k8s operator run: reconcile controller (cfg feature=operator)"}
+  instance: {kind: process, label: "k8s instance render: app-namespace Lumen CR"}
   help: {kind: process, label: "--help: long_about points to 'lumen llm outline'"}
   nofeat: {kind: terminal, label: "clear error: built without operator support"}
   done: {kind: terminal, label: "command complete"}
@@ -113,30 +116,42 @@ edges:
   - {from: parse, to: serve, label: "serve"}
   - {from: parse, to: spec, label: "spec"}
   - {from: parse, to: llm, label: "llm"}
+  - {from: parse, to: dockerfile, label: "dockerfile"}
   - {from: parse, to: k8s, label: "k8s"}
   - {from: parse, to: help, label: "-h/--help"}
-  - {from: k8s, to: operator, label: "operator"}
-  - {from: k8s, to: gencrd, label: "gen-crd"}
-  - {from: operator, to: nofeat, label: "feature off"}
+  - {from: k8s, to: crd, label: "crd render"}
+  - {from: k8s, to: operator_render, label: "operator render"}
+  - {from: k8s, to: operator_run, label: "operator run"}
+  - {from: k8s, to: instance, label: "instance render"}
+  - {from: operator_run, to: nofeat, label: "feature off"}
   - {from: serve, to: done}
   - {from: spec, to: done}
   - {from: llm, to: done}
-  - {from: gencrd, to: done}
+  - {from: dockerfile, to: done}
+  - {from: crd, to: done}
+  - {from: operator_render, to: done}
+  - {from: instance, to: done}
   - {from: help, to: done}
 ---
 flowchart TD
     parse{{parse lumen subcommand}} -->|serve| serve[serve: serving node data-plane]
     parse -->|spec| spec[spec: offline OpenAPI / JSON-schema / shapes / fields]
     parse -->|llm| llm[llm topic: offline agent narrative]
+    parse -->|dockerfile| dockerfile[dockerfile render: source/release image artifact]
     parse -->|k8s| k8s{k8s subcommand}
     parse -->|-h / --help| help[help: long_about points to lumen llm outline]
-    k8s -->|operator| operator[operator: reconcile controller cfg feature operator]
-    k8s -->|gen-crd| gencrd[gen-crd: print Lumen CRD YAML]
-    operator -. feature off .-> nofeat([clear error: built without operator support])
+    k8s -->|crd render| crd[crd render: print Lumen CRD YAML]
+    k8s -->|operator render| operator_render[operator render: control-plane manifests]
+    k8s -->|operator run| operator_run[operator run: reconcile controller cfg feature operator]
+    k8s -->|instance render| instance[instance render: app-namespace Lumen CR]
+    operator_run -. feature off .-> nofeat([clear error: built without operator support])
     serve --> done([command complete])
     spec --> done
     llm --> done
-    gencrd --> done
+    dockerfile --> done
+    crd --> done
+    operator_render --> done
+    instance --> done
     help --> done
 ```
 ## CLI
@@ -152,7 +167,7 @@ cli:
       args:
         - {name: "--host", env: "LUMEN_HOST", default: "127.0.0.1"}
         - {name: "--port", env: "LUMEN_PORT", default: "7373"}
-        - {name: "--wal", env: "LUMEN_WAL", default: "embedded", choices: ["embedded", "nats", "relay"]}
+        - {name: "--wal", env: "LUMEN_WAL", default: "auto", choices: ["auto", "embedded", "nats", "relay", "raft"]}
         - {name: "--relay-url", env: "LUMEN_RELAY_URL", default: "http://localhost:7000"}
         - {name: "--relay-subject", env: "LUMEN_RELAY_SUBJECT", default: "lumen-wal"}
         - {name: "--relay-subscriber-id", env: "LUMEN_RELAY_SUBSCRIBER_ID", default: "POD_NAME/HOSTNAME"}
@@ -166,15 +181,44 @@ cli:
     - name: llm
       about: "Print agent-facing topics (offline). outline is the entry point."
       args:
-        - {name: "topic", kind: "positional", default: "outline", choices: ["outline", "workflow", "integration", "quickstart", "recipes"]}
+        - {name: "--topic", default: "outline", choices: ["outline", "workflow", "integration", "quickstart", "recipes"]}
         - {name: "--format", default: "md", choices: ["md", "json"]}
-    - name: k8s
-      about: "Kubernetes operator and CRD generation (manifest/render only; lumen does not deploy)."
+    - name: dockerfile
+      about: "Render source/release Dockerfiles for compose, kind, or registry builds."
       commands:
+        - name: render
+          args:
+            - {name: "--variant", default: "release", choices: ["source", "release"]}
+            - {name: "--version", kind: "optional", description: "Release tag for --variant release."}
+            - {name: "--out", kind: "optional", description: "File or directory output path."}
+    - name: k8s
+      about: "Kubernetes artifacts split into cluster API, control plane, and app instance layers."
+      commands:
+        - name: crd
+          commands:
+            - name: render
+              about: "Print the Lumen CustomResourceDefinition YAML."
         - name: operator
-          about: "Run the Lumen CRD reconcile controller (container CMD; requires build feature operator)."
-        - name: gen-crd
-          about: "Print the Lumen CustomResourceDefinition YAML."
+          commands:
+            - name: run
+              about: "Run the Lumen CRD reconcile controller (container CMD; requires build feature operator)."
+            - name: render
+              about: "Render operator namespace/RBAC/deployment YAML."
+              args:
+                - {name: "--namespace", default: "lumen-system"}
+                - {name: "--out", kind: "optional"}
+        - name: instance
+          commands:
+            - name: render
+              about: "Render a namespaced kind:Lumen custom resource."
+              args:
+                - {name: "--profile", default: "dev", choices: ["dev", "staging", "prod", "template"]}
+                - {name: "--name", kind: "optional"}
+                - {name: "--namespace", kind: "optional"}
+                - {name: "--image", kind: "optional"}
+                - {name: "--relay-image", kind: "optional"}
+                - {name: "--relay-url", kind: "optional"}
+                - {name: "--out", kind: "optional"}
 ```
 ## Manifest
 <!-- type: manifest lang: yaml -->
@@ -194,19 +238,19 @@ id: lumen-cli-consolidation-verification
 requirements:
   single_cli_surface:
     id: R1
-    text: "lumen --help lists serve/spec/llm/k8s only; openapi-dump/bench/consumer binaries removed"
+    text: "lumen --help lists serve/spec/llm/dockerfile/k8s/upgrade/issue; openapi-dump/bench/consumer binaries removed"
     kind: functional
     risk: medium
     verify: test
-  operator_subcommand:
+  deployment_artifact_subcommands:
     id: R5
-    text: "lumen k8s operator run and gen-crd work; default image built with feature operator"
+    text: "lumen dockerfile render, k8s crd render, k8s operator render|run, and k8s instance render work; default image built with feature operator"
     kind: functional
     risk: high
     verify: test
   operator_feature_gate:
     id: R5b
-    text: "build without feature operator is kube-free; subcommand stays in --help and errors clearly"
+    text: "build without feature operator is kube-free; operator run stays in --help and errors clearly"
     kind: functional
     risk: high
     verify: test
@@ -220,7 +264,7 @@ elements:
   cli_help_test:
     kind: test
     type: "rs/#[test]"
-  operator_dispatch_test:
+  deployment_artifact_dispatch_test:
     kind: test
     type: "rs/#[test]"
   parity_test:
@@ -228,8 +272,8 @@ elements:
     type: "rs/#[test]"
 relations:
   - { from: cli_help_test, verifies: single_cli_surface }
-  - { from: operator_dispatch_test, verifies: operator_subcommand }
-  - { from: operator_dispatch_test, verifies: operator_feature_gate }
+  - { from: deployment_artifact_dispatch_test, verifies: deployment_artifact_subcommands }
+  - { from: deployment_artifact_dispatch_test, verifies: operator_feature_gate }
   - { from: parity_test, verifies: output_parity }
 ---
 requirementDiagram
@@ -239,9 +283,9 @@ requirementDiagram
       risk: medium
       verifymethod: test
     }
-    requirement operator_subcommand {
+    requirement deployment_artifact_subcommands {
       id: R5
-      text: "k8s operator run and gen-crd work; image has feature operator"
+      text: "dockerfile + k8s crd/operator/instance render work; operator run works with feature"
       risk: high
       verifymethod: test
     }
@@ -260,15 +304,15 @@ requirementDiagram
     element cli_help_test {
       type: "rs/#[test]"
     }
-    element operator_dispatch_test {
+    element deployment_artifact_dispatch_test {
       type: "rs/#[test]"
     }
     element parity_test {
       type: "rs/#[test]"
     }
     cli_help_test - verifies -> single_cli_surface
-    operator_dispatch_test - verifies -> operator_subcommand
-    operator_dispatch_test - verifies -> operator_feature_gate
+    deployment_artifact_dispatch_test - verifies -> deployment_artifact_subcommands
+    deployment_artifact_dispatch_test - verifies -> operator_feature_gate
     parity_test - verifies -> output_parity
 ```
 
@@ -304,7 +348,7 @@ changes:
 ### Review 1
 **Verdict:** approved
 
-- [logic] Codegen-ready Mermaid Plus flowchart: dispatch covers serve/spec/llm, k8s operator/gen-crd, help, and the feature-off error path. Contract complete.
-- [cli] Command tree is the authoritative single-binary surface (serve/spec/llm/k8s operator|gen-crd) with key args/env/choices. Contract complete.
+- [logic] Codegen-ready Mermaid Plus flowchart: dispatch covers serve/spec/llm/dockerfile, layered k8s crd/operator/instance, help, and the feature-off operator run path. Contract complete.
+- [cli] Command tree is the authoritative single-binary surface (serve/spec/llm/dockerfile/k8s crd|operator|instance) with key args/env/choices. Contract complete.
 - [manifest] Operator-gated optional deps (kube/k8s-openapi/schemars) match the feature design. Contract complete.
 - [unit-test] requirementDiagram with frontmatter binds R1/R5/R5b/R4 to test elements covering surface, operator dispatch, feature gate, and output parity. Contract complete.

@@ -246,7 +246,7 @@ A service is not "done" until it satisfies every row:
 | **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`cclab-openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
 | **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-host`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-host`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
 | **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
-| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); StatefulSet identity/peers from the **downward API**; an `HA.md`. | `keep/k8s`, `lumen/k8s` (+ `operator` feature). `loom` currently ships only a flat `deploy/k8s.yaml` — that's the un-grown form, not the target. |
+| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; StatefulSet identity/peers from the **downward API**; an `HA.md`. | `keep/k8s`, `lumen k8s` (+ `operator` feature). `loom` currently ships only a flat `deploy/k8s.yaml` — that's the un-grown form, not the target. |
 | **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
 | **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
 | **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
@@ -279,6 +279,33 @@ with no external codegen step. Reference: `lumen spec gen` (feeds the binary's
 own `openapi_json()` into `cclab_openapi_codegen::generate`). Do **not** add a
 second codegen path — extend the shared crate (a new emitter / capability) so
 every service benefits.
+
+### Deploy artifacts — image, cluster API, operator, instance
+
+Image construction is not a Kubernetes subcommand. Every k8s-native service CLI
+ships:
+
+```
+<cli> dockerfile render --variant source|release [--version <tag>] [--out <path-or-dir>]
+```
+
+`source` renders the workspace-build Dockerfile used by dev/CI; `release`
+renders the small production image that fetches a published `<project>@<version>`
+binary. The same image artifact feeds compose, kind, and real registries.
+
+Kubernetes output is split by lifecycle layer:
+
+```
+<cli> k8s crd render [--out <path>]
+<cli> k8s operator render [--namespace <ns>] [--out <path-or-dir>]
+<cli> k8s operator run
+<cli> k8s instance render --profile dev|staging|prod|template [--out <path-or-dir>]
+```
+
+`crd` owns the cluster-scoped API. `operator` owns the control plane, normally in
+an independent namespace such as `<svc>-system`; `operator run` is the controller
+process/container entrypoint. `instance` renders the app-namespace custom
+resource that an application team applies next to the app it integrates with.
 
 ### Standard endpoints — one operational surface, one contract three ways
 

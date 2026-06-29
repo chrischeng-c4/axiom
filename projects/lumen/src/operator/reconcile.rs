@@ -75,7 +75,7 @@ impl ManagedService for Lumen {
     }
 }
 
-/// `lumen k8s operator` — run the reconcile controller on the shared
+/// `lumen k8s operator run` — run the reconcile controller on the shared
 /// `libs/operator` host (leader-gated; safe at `replicas > 1`).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
