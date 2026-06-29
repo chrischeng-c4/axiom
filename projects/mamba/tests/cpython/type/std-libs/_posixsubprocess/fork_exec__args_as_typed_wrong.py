@@ -9,12 +9,11 @@
 # case = "fork_exec__args_as_typed_wrong"
 # subject = "_posixsubprocess.fork_exec(args: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_posixsubprocess.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args
 # mamba-strict-type: TypeError
 """Type wall: _posixsubprocess.fork_exec(args: typed); call it with the wrong type.
 
