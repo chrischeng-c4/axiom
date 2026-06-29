@@ -22,7 +22,7 @@ typeshed contract: value is dict. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import dict
-obj = object.__new__(dict)
+obj: dict[str, int] = {}
 try:
     obj.__ror__(12345)  # value: dict <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
