@@ -9,12 +9,11 @@
 # case = "register_adapter__type_as_type_wrong"
 # subject = "_sqlite3.register_adapter(type: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type
 # mamba-strict-type: TypeError
 """Type wall: _sqlite3.register_adapter(type: type); call it with the wrong type.
 
