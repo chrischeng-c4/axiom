@@ -18,7 +18,7 @@ pub type HttpResponse = Response;
 pub async fn from_reqwest(response: reqwest::Response, latency_ms: u64) -> HttpResult<Response> {
     let status_code = response.status().as_u16();
     let final_url = response.url().to_string();
-    let version = format!("{:?}", response.version());
+    let version = stable_http_version(response.version());
 
     let mut headers = HashMap::new();
     for (name, value) in response.headers().iter() {
@@ -39,6 +39,18 @@ pub async fn from_reqwest(response: reqwest::Response, latency_ms: u64) -> HttpR
         final_url,
         version,
     })
+}
+
+fn stable_http_version(version: http::Version) -> String {
+    match version {
+        http::Version::HTTP_09 => "HTTP/0.9",
+        http::Version::HTTP_10 => "HTTP/1.0",
+        http::Version::HTTP_11 => "HTTP/1.1",
+        http::Version::HTTP_2 => "HTTP/2",
+        http::Version::HTTP_3 => "HTTP/3",
+        _ => return format!("{version:?}"),
+    }
+    .to_string()
 }
 
 /// Builder for assembling a `Response` in tests. Production code constructs
