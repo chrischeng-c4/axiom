@@ -10,7 +10,7 @@
 // @command cargo test -p vat --test vat_toml_runner -- --nocapture
 // AW-EC-END
 
-// Contract: `vat llm` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands.
+// Contract: `vat llm --topic guide` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands.
 // Contract: the guide mentions the cloud-tasks / cloud-scheduler client-wiring factory (REST transport + http endpoint + anonymous credentials) and the direct-REST alternative.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
