@@ -541,6 +541,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("instance", CoreTy::Unknown), p("owner", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: `int.__new__` is normally reached as a classmethod-style call,
+    // so the explicit `cls` argument must be consumed before enforcing `x`.
+    // `base` is intentionally Unknown: CPython validates it at runtime and
+    // typeshed overloads make it unsafe to scalar-wall here.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "int",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[
+            p("cls", CoreTy::Typed),
+            p("x", CoreTy::Typed),
+            p("base", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: bool bitwise dunders accept bool/int operands. A single int
     // contract covers both overloads because bool is int-compatible in the type
     // checker, while wrong scalar operands such as str must be rejected.
