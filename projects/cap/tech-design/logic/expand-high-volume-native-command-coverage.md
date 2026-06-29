@@ -178,3 +178,84 @@ requirementDiagram
     verifymethod: benchmark
   }
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/cap/src/command_planner.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add a workload-gated WcLines native command plan for `wc -l FILE...`.
+      The planner accepts only regular-file operands with no stdin, directory,
+      or unsupported flag semantics, and promotes only file sets meeting the
+      high-volume gate. Small, missing, or unsupported shapes remain External
+      Original so behavior stays delegated to the system command.
+
+  - path: projects/cap/src/command_planner.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add the Rust native aggregate line-count runner and `cap explain`
+      rendering for promoted `wc -l` workloads. The runner must preserve the
+      system `wc -l` success shape, including per-file rows and the multi-file
+      total row.
+
+  - path: projects/cap/src/cap_fast_frontend.c
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add the low-overhead production fast path for `wc -l FILE...`, sharing
+      the same workload gate as the Rust planner. The C frontend returns
+      unsupported for small or unsafe shapes so the public `cap` launcher
+      continues through `cap-full` and original-command fallback.
+
+  - path: projects/cap/src/cap_fast_frontend.c
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Register `wc` as an active same-name candidate only after the fast path
+      can prove regular-file safety and large-workload eligibility. Do not add
+      arbitrary `wc` option support in this slice.
+
+  - path: projects/cap/tests/behavior_cap_command_replacement_parity.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Extend installed-frontend parity coverage with large `wc -l` success,
+      `cap run "wc -l ..."` success, and fallback/error cases for missing
+      paths or unsupported operands.
+
+  - path: projects/cap/benches/command_resources.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Add a high-volume `wc -l` benchmark scenario with the dual-win gate,
+      comparing the production C frontend against `/usr/bin/wc` using median
+      child CPU time and peak RSS.
+
+  - path: projects/cap/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Document `wc -l` as an active high-volume fast path and keep pipe-shaped
+      candidates such as `find ... | xargs wc -l` listed as scout-only until
+      shell/pipeline fusion has parity and benchmark proof.
+
+  - path: projects/cap/BENCHMARKS.md
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Record the measured `wc -l` resource result and the gating decision after
+      running the command resource benchmark.
+```
