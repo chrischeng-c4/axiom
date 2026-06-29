@@ -146,7 +146,6 @@ e2e_tests:
     verifies:
       - "The strict competitive gate can be run in a vat-owned pg/OpenSearch environment."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
