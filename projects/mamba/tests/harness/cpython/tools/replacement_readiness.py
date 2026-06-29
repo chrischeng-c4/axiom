@@ -21,6 +21,7 @@ TOOLS_DIR = Path(__file__).resolve().parent
 MAMBA_DIR = TOOLS_DIR.parents[3]
 PROMOTION_GATE = TOOLS_DIR / "promotion_gate.py"
 DENOMINATOR_INVENTORY = MAMBA_DIR / "tools" / "cpython_regrtest_inventory.py"
+STRICT_TYPE_ACCOUNTING = TOOLS_DIR / "strict_type_accounting.py"
 
 EXIT_NOT_READY = 70
 
@@ -170,6 +171,67 @@ def denominator_dimension(show: int) -> Dimension:
     )
 
 
+def strict_type_dimension(show: int, type_limit: int) -> Dimension:
+    argv = [
+        sys.executable,
+        str(STRICT_TYPE_ACCOUNTING),
+        "--json",
+        "--show",
+        str(show),
+    ]
+    if type_limit:
+        argv.extend(["--limit", str(type_limit)])
+    code, payload = run_json(argv, accepted={0, EXIT_NOT_READY})
+    status = "green" if code == 0 and payload["ready"] else "red"
+    typeshed = payload["typeshed"]
+    enforcement = payload["enforcement"]
+    soundness = payload["soundness"]
+    divergences = payload["divergences"]
+    blockers = payload.get("blockers", [])[:show]
+    return Dimension(
+        id="strict_type_accounting",
+        title="Strict-type divergence and typeshed accounting",
+        status=status,
+        owner_issue="#704",
+        summary=(
+            "strict-type denominator, enforcement, soundness, and divergence accounting are green"
+            if status == "green"
+            else (
+                "strict-type accounting is not replacement-ready: "
+                f"enforced={enforcement['enforced']}/{enforcement['gradable']} "
+                f"gradable, soundness={soundness['passed']}/{soundness['gradable']} "
+                f"gradable, divergences valid={divergences['valid']}/{divergences['declared']}"
+            )
+        ),
+        counts={
+            "typeshed_rows": typeshed["rows"],
+            "typeshed_enforceable": typeshed["enforceable"],
+            "typeshed_unknown_skipped": typeshed["unknown_skipped"],
+            "type_fixture_wall": typeshed["type_fixture_wall"],
+            "type_measured": enforcement["measured"],
+            "type_gradable": enforcement["gradable"],
+            "type_enforced": enforcement["enforced"],
+            "type_leaked": enforcement["leaked"],
+            "type_ungradable": enforcement["ungradable"],
+            "soundness_measured": soundness["measured"],
+            "soundness_gradable": soundness["gradable"],
+            "soundness_passed": soundness["passed"],
+            "soundness_failed": soundness["failed"],
+            "soundness_oracle_skip": soundness["oracle_skip"],
+            "declared_divergences": divergences["declared"],
+            "valid_divergences": divergences["valid"],
+            "invalid_divergences": divergences["invalid"],
+            "missing_divergence_owner": divergences["missing_owner"],
+            "sampled": payload["sampled"],
+        },
+        evidence=[
+            "python3.12 projects/mamba/tests/harness/cpython/tools/strict_type_accounting.py --json",
+            "python3.12 projects/mamba/tests/harness/cpython/tools/fixture_lint.py --bucket type",
+        ],
+        blockers=blockers,
+    )
+
+
 def blocked_dimension(
     *,
     id: str,
@@ -195,20 +257,11 @@ def blocked_dimension(
     )
 
 
-def dimensions(show: int) -> list[Dimension]:
+def dimensions(show: int, type_limit: int) -> list[Dimension]:
     return [
         denominator_dimension(show),
         promotion_dimension(show),
-        blocked_dimension(
-            id="strict_type_accounting",
-            title="Strict-type divergence and typeshed accounting",
-            owner_issue="#704",
-            summary="strict-type denominator and verified divergence accounting are not yet integrated into the single report",
-            evidence=[
-                "python3.12 projects/mamba/tests/harness/cpython/tools/fixture_lint.py --bucket type",
-                "rg -n 'type_divergences|strict_type|mamba-strict-type' projects/mamba/tests/harness/cpython projects/mamba/tests/cpython",
-            ],
-        ),
+        strict_type_dimension(show, type_limit),
         blocked_dimension(
             id="perf_rss_baselines",
             title="Performance and peak-RSS baseline gate",
@@ -261,8 +314,8 @@ def dimensions(show: int) -> list[Dimension]:
     ]
 
 
-def build_report(show: int) -> dict[str, Any]:
-    dims = dimensions(show)
+def build_report(show: int, type_limit: int = 0) -> dict[str, Any]:
+    dims = dimensions(show, type_limit)
     counts = {
         "green": sum(1 for item in dims if item.status == "green"),
         "red": sum(1 for item in dims if item.status == "red"),
@@ -309,9 +362,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--show", type=int, default=10)
+    parser.add_argument(
+        "--type-limit",
+        type=int,
+        default=0,
+        help="sample N strict-type fixtures for development validation; sampled reports stay red",
+    )
     args = parser.parse_args(argv)
 
-    report = build_report(args.show)
+    report = build_report(args.show, args.type_limit)
     if args.json:
         print(json.dumps(report, sort_keys=True))
     else:
