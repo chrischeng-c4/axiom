@@ -348,6 +348,35 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("value", CoreTy::Complex)],
         enforceable: true,
     },
+    // POSITIVE: generated float pow/round rows collapse overload/protocol
+    // details to Unknown. The numeric dunders accept bool/int/float under
+    // Python numeric promotion, which CoreTy::Float already models, and reject
+    // impossible concrete scalars. round(ndigits) uses SupportsIndex; Int is the
+    // conservative scalar wall and still accepts bool through bool-is-int.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "float",
+        name: "__pow__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Float), p("mod", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "float",
+        name: "__round__",
+        kind: SigKind::Method,
+        params: &[p("ndigits", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "float",
+        name: "__rpow__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Float), p("mod", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // POSITIVE: bytes/bytearray bytes-like methods accept bytes-like values or
     // tuples thereof. Concrete scalars such as int/str/bool are never bytes,
     // while actual bytes literals infer to Any today and stay skip-when-unsure.

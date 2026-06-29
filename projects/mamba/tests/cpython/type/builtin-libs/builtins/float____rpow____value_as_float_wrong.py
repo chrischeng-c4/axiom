@@ -22,7 +22,7 @@ typeshed contract: value is float. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import float
-obj = object.__new__(float)
+obj = float()
 try:
     obj.__rpow__("not_a_float")  # value: float <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
