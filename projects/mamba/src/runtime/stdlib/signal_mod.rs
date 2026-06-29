@@ -60,7 +60,8 @@ use std::cell::RefCell;
 ///   - SIG* integer values reflect the host (macOS/darwin) signal table.
 ///     Linux-only signal numbers (e.g. `SIGRTMIN`, `SIGPWR`) are not
 ///     exposed; surface-presence does not test them.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex};
 
 #[cfg(unix)]
 unsafe extern "C" {
@@ -99,6 +100,10 @@ thread_local! {
     static HANDLERS: RefCell<HashMap<i64, MbValue>> = RefCell::new(HashMap::new());
     static WAKEUP_FD: RefCell<i64> = const { RefCell::new(-1) };
 }
+static BLOCKED_SIGNALS: LazyLock<Mutex<HashSet<i64>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+static PENDING_SIGNALS: LazyLock<Mutex<HashSet<i64>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// The distinct, valid signal numbers exposed by this build (mirrors the
 /// SIG* table registered below). Used by `valid_signals()` and range checks.
@@ -199,6 +204,65 @@ pub(crate) fn signal_enum_int_value(v: MbValue) -> Option<MbValue> {
 
 fn handler_sentinel(value: i64) -> MbValue {
     lookup_registered_member("Handlers", value).unwrap_or_else(|| MbValue::from_int(value))
+}
+
+fn signal_member_value(signum: i64) -> MbValue {
+    lookup_registered_member("Signals", signum).unwrap_or_else(|| MbValue::from_int(signum))
+}
+
+fn signal_set<I>(items: I) -> MbValue
+where
+    I: IntoIterator<Item = i64>,
+{
+    MbValue::from_ptr(MbObject::new_set(
+        items.into_iter().map(signal_member_value).collect(),
+    ))
+}
+
+fn mask_numbers(mask: MbValue) -> Option<Vec<i64>> {
+    let mut nums = Vec::new();
+    for item in seq_items(mask)? {
+        nums.push(signal_int_value(item)?);
+    }
+    Some(nums)
+}
+
+fn blocked_snapshot() -> Vec<i64> {
+    BLOCKED_SIGNALS
+        .lock()
+        .unwrap()
+        .iter()
+        .copied()
+        .collect()
+}
+
+fn is_signal_blocked(signum: i64) -> bool {
+    BLOCKED_SIGNALS.lock().unwrap().contains(&signum)
+}
+
+fn queue_pending_signal(signum: i64) {
+    PENDING_SIGNALS.lock().unwrap().insert(signum);
+}
+
+fn take_unblocked_pending() -> Vec<i64> {
+    let blocked = BLOCKED_SIGNALS.lock().unwrap().clone();
+    let mut pending = PENDING_SIGNALS.lock().unwrap();
+    let ready: Vec<i64> = pending
+        .iter()
+        .copied()
+        .filter(|signum| !blocked.contains(signum))
+        .collect();
+    for signum in &ready {
+        pending.remove(signum);
+    }
+    ready
+}
+
+fn take_pending_from(mask: &[i64]) -> Option<i64> {
+    let mut pending = PENDING_SIGNALS.lock().unwrap();
+    let signum = mask.iter().copied().find(|signum| pending.contains(signum))?;
+    pending.remove(&signum);
+    Some(signum)
 }
 
 /// Coerce a value to a Python signal number. Accepts plain ints, bools, and
@@ -487,6 +551,10 @@ pub fn mb_signal_raise_signal(signum: MbValue) -> MbValue {
     if !valid_signal_numbers().contains(&n) {
         return raise_value_error("signal number out of range");
     }
+    if is_signal_blocked(n) {
+        queue_pending_signal(n);
+        return MbValue::none();
+    }
     write_wakeup_byte(n);
     let handler = HANDLERS
         .with(|h| h.borrow().get(&n).copied())
@@ -520,6 +588,10 @@ pub fn mb_signal_raise_signal(signum: MbValue) -> MbValue {
 /// is not silently replaced by a no-op.
 pub(crate) fn mb_signal_deliver_if_registered(signum: MbValue) -> Option<MbValue> {
     let n = as_signum(signum)?;
+    if is_signal_blocked(n) {
+        queue_pending_signal(n);
+        return Some(MbValue::none());
+    }
     let handler = HANDLERS.with(|h| h.borrow().get(&n).copied())?;
     if signal_int_value(handler) == Some(0) {
         None
@@ -606,8 +678,14 @@ pub fn mb_signal_default_int_handler(_signum: MbValue, _frame: MbValue) -> MbVal
 }
 
 /// signal.pthread_kill(tid, signum) -> None.
-pub fn mb_signal_pthread_kill(_tid: MbValue, _signum: MbValue) -> MbValue {
-    MbValue::none()
+pub fn mb_signal_pthread_kill(_tid: MbValue, signum: MbValue) -> MbValue {
+    let Some(n) = as_signum(signum) else {
+        return raise_value_error("signal number out of range");
+    };
+    if !valid_signal_numbers().contains(&n) {
+        return raise_value_error("signal number out of range");
+    }
+    mb_signal_raise_signal(MbValue::from_int(n))
 }
 
 /// signal.pthread_sigmask(how, mask) -> previous mask (empty set).
@@ -619,8 +697,6 @@ pub fn mb_signal_pthread_kill(_tid: MbValue, _signum: MbValue) -> MbValue {
 ///   - every entry of `mask` must be a valid signal number `0 < n < NSIG`
 ///     (else `ValueError`; non-integer / huge BigInt entries also fail).
 ///
-/// Process signal masks are not actually mutated; the returned previous
-/// mask is an empty set.
 pub fn mb_signal_pthread_sigmask(args: &[MbValue]) -> MbValue {
     if args.len() != 2 {
         return raise_type_error(&format!(
@@ -628,27 +704,47 @@ pub fn mb_signal_pthread_sigmask(args: &[MbValue]) -> MbValue {
             args.len()
         ));
     }
-    // `how` must be one of the three mask-op constants.
-    match signal_int_value(args[0]) {
-        Some(1) | Some(2) | Some(3) => {}
+    let how = match signal_int_value(args[0]) {
+        Some(n @ (1 | 2 | 3)) => n,
         Some(_) => return raise_os_error("[Errno 22] Invalid argument"),
         None => return raise_os_error("[Errno 22] Invalid argument"),
-    }
+    };
     // Validate every signal number in the mask iterable.
-    if let Some(items) = seq_items(args[1]) {
-        for item in items {
-            match signal_int_value(item) {
-                // Valid signal numbers are strictly between 0 and NSIG.
-                Some(n) if n > 0 && n < 32 => {}
-                // 0, NSIG, negatives, and out-of-range numbers are invalid.
-                Some(_) => return raise_value_error("signal number out of range"),
-                // Non-int entries (including huge BigInts that don't fit
-                // i64) cannot be valid signal numbers.
-                None => return raise_value_error("signal number out of range"),
-            }
+    let Some(mask) = mask_numbers(args[1]) else {
+        return raise_value_error("signal number out of range");
+    };
+    for n in &mask {
+        if !(*n > 0 && *n < 32) {
+            return raise_value_error("signal number out of range");
         }
     }
-    MbValue::from_ptr(MbObject::new_set(Vec::new()))
+    let previous = blocked_snapshot();
+    {
+        let mut blocked = BLOCKED_SIGNALS.lock().unwrap();
+        match how {
+            1 => {
+                for signum in &mask {
+                    blocked.insert(*signum);
+                }
+            }
+            2 => {
+                for signum in &mask {
+                    blocked.remove(signum);
+                }
+            }
+            3 => {
+                blocked.clear();
+                for signum in &mask {
+                    blocked.insert(*signum);
+                }
+            }
+            _ => {}
+        }
+    }
+    for signum in take_unblocked_pending() {
+        mb_signal_raise_signal(MbValue::from_int(signum));
+    }
+    signal_set(previous)
 }
 
 /// Collect the elements of a List/Tuple/Set `MbValue` into a Vec.
@@ -691,14 +787,22 @@ pub fn mb_signal_pause() -> MbValue {
     MbValue::none()
 }
 
-/// signal.sigpending() -> set of pending signals (empty).
+/// signal.sigpending() -> set of pending signals.
 pub fn mb_signal_sigpending() -> MbValue {
-    MbValue::from_ptr(MbObject::new_list(Vec::new()))
+    signal_set(PENDING_SIGNALS.lock().unwrap().iter().copied().collect::<Vec<_>>())
 }
 
-/// signal.sigwait(sigset) -> received signum (0 sentinel).
-pub fn mb_signal_sigwait(_sigset: MbValue) -> MbValue {
-    MbValue::from_int(0)
+/// signal.sigwait(sigset) -> received signum.
+pub fn mb_signal_sigwait(sigset: MbValue) -> MbValue {
+    let Some(mask) = mask_numbers(sigset) else {
+        return raise_value_error("signal number out of range");
+    };
+    loop {
+        if let Some(signum) = take_pending_from(&mask) {
+            return signal_member_value(signum);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 // ── Class / type shells ──
@@ -764,6 +868,11 @@ mod tests {
                 .get("signal")
                 .and_then(|m| m.attrs.get(name).copied())
         })
+    }
+
+    fn reset_mask_state() {
+        BLOCKED_SIGNALS.lock().unwrap().clear();
+        PENDING_SIGNALS.lock().unwrap().clear();
     }
 
     #[test]
@@ -886,6 +995,27 @@ mod tests {
         assert!(mb_signal_default_int_handler(MbValue::from_int(2), MbValue::none()).is_none());
         assert!(mb_signal_pthread_kill(MbValue::from_int(0), MbValue::from_int(2)).is_none());
         assert!(mb_signal_pause().is_none());
+    }
+
+    #[test]
+    fn test_masked_signal_becomes_pending_and_sigwait_consumes() {
+        register();
+        reset_mask_state();
+        let sig = MbValue::from_int(30);
+        let mask = MbValue::from_ptr(MbObject::new_list(vec![sig]));
+        let previous = mb_signal_pthread_sigmask(&[MbValue::from_int(1), mask]);
+        assert!(seq_items(previous).unwrap().is_empty());
+
+        assert!(mb_signal_deliver_if_registered(sig).unwrap().is_none());
+        let pending = seq_items(mb_signal_sigpending()).unwrap();
+        assert_eq!(pending.iter().copied().find_map(signal_int_value), Some(30));
+
+        let waited = mb_signal_sigwait(mask);
+        assert_eq!(signal_int_value(waited), Some(30));
+        assert!(seq_items(mb_signal_sigpending()).unwrap().is_empty());
+
+        let _ = mb_signal_pthread_sigmask(&[MbValue::from_int(2), mask]);
+        reset_mask_state();
     }
 
     #[test]
