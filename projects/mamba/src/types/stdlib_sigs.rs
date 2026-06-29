@@ -259,6 +259,21 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("function", CoreTy::Typed), p("iterable", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: map.__new__(cls, func, iterable, ...) requires a callable
+    // function. Model the first iterable as Unknown and keep additional
+    // iterables skip-safe until variadic protocol rows are representable.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "map",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[
+            p("cls", CoreTy::Typed),
+            p("func", CoreTy::Typed),
+            p("iterable", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: isinstance's second argument must be a class or tuple of
     // classes. A bare `_W()` instance cannot satisfy that classinfo contract.
     StdlibSig {

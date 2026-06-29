@@ -895,6 +895,26 @@ fn test_list_generic_method_contracts_rejected() {
     );
 }
 
+#[test]
+fn test_stdlib_map_new_callable_rejected() {
+    let errors =
+        check("from builtins import map\nclass _W:\n    pass\nmap.__new__(map, _W(), None)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `func`")),
+        "map.__new__(map, _W(), None) should reject a bare non-Callable func, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import map\ndef identity(x):\n    return x\nmap.__new__(map, identity, [1])\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid map.__new__ callable form must stay accepted, got: {errors:?}"
+    );
+}
+
 // R9.3: getattr() with default (3-arg form) must be accepted
 #[test]
 fn test_getattr_three_arg_form_accepted() {
