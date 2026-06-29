@@ -8,10 +8,10 @@
 //! scalar (protocols, unions, typevars, overloads, buffers) collapses to
 //! [`CoreTy::Unknown`], which the hook *skips* — guaranteeing zero false
 //! positives on correct calls. [`CoreTy::Bytes`], [`CoreTy::MemoryView`],
-//! [`CoreTy::Complex`], and [`CoreTy::List`] are represented as negative scalar
-//! walls: concrete incompatible scalars are never those values, while
-//! bytes/memoryview/complex/list expressions currently infer to dynamic or
-//! collection types and therefore remain skip-when-unsure.
+//! [`CoreTy::Complex`], [`CoreTy::List`], and [`CoreTy::Tuple`] are represented
+//! as negative scalar walls: concrete incompatible scalars are never those
+//! values, while bytes/memoryview/complex/list/tuple expressions currently
+//! infer to dynamic or collection types and therefore remain skip-when-unsure.
 
 /// Closed set of argument types the PoC table can express. Anything richer
 /// (Optional, Union, Protocol, TypeVar, overload, ReadableBuffer, SupportsIndex)
@@ -26,6 +26,7 @@ pub enum CoreTy {
     MemoryView,
     Complex,
     List,
+    Tuple,
     Bool,
     None,
     /// A NOMINAL/protocol type contract (a named typeshed type that is neither a
@@ -888,6 +889,57 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: tuple dunders mirror list's value/key contracts. Use a
+    // dedicated Tuple negative scalar wall for tuple-valued operands and Typed
+    // for the SupportsIndex/slice key overloads.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "tuple",
+        name: "__add__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Tuple)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "tuple",
+        name: "__ge__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Tuple)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "tuple",
+        name: "__gt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Tuple)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "tuple",
+        name: "__le__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Tuple)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "tuple",
+        name: "__lt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Tuple)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "tuple",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: range index/new overloads use SupportsIndex/slice protocols.
     // Typed rejects only a provably bare `_W()` while accepting ints, slices,
     // classes with __index__, and dynamic values.
@@ -1642,6 +1694,7 @@ mod tests {
                         | CoreTy::MemoryView
                         | CoreTy::Complex
                         | CoreTy::List
+                        | CoreTy::Tuple
                 )),
                 "{}.{} enforceable with no checkable (scalar/Typed) param",
                 s.module,
