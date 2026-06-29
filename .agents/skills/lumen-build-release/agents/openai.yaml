@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lumen Build Release"
+  short_description: "Release, install, commit, and tag lumen"
+  default_prompt: "Use $lumen-build-release to cut a lumen release build and install it."
