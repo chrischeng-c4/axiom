@@ -123,3 +123,26 @@ requirementDiagram
     test_term_query_latency_floor - verifies -> R2
     test_competitive_perf_gate - verifies -> R3
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-ec-efficiency-meter-kw-term
+    name: "vat ec-efficiency meter covers kw_term"
+    runner: vat
+    path: projects/lumen/vat.toml
+    command: "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
+    verifies:
+      - "Postgres and OpenSearch peers are provisioned by vat, not mocked."
+      - "The release `perf_gate_vs_db::competitive_perf_gate` includes the kw_term cell and native pg cheap-predicate evidence."
+      - "A clean meter report proves the current kw_term planner did not regress the release competitive gate."
+  - id: perf-gate-term-latency-floor
+    name: "term latency floor"
+    runner: cargo
+    path: projects/lumen/tests/perf_gate.rs
+    command: "cargo test -p lumen --test perf_gate term_query_latency_floor -- --exact --nocapture"
+    verifies:
+      - "The local perf gate still exercises the term lookup latency floor."
+```
