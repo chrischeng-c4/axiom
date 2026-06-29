@@ -57,6 +57,11 @@ fn is_str_or_bytes_path(v: MbValue) -> bool {
         .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_) | ObjData::Bytes(_)) })
 }
 
+fn is_str(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+}
+
 unsafe extern "C" fn dispatch_dbm_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let filename = a.first().copied().unwrap_or_else(MbValue::none);
@@ -64,6 +69,30 @@ unsafe extern "C" fn dispatch_dbm_open(args_ptr: *const MbValue, nargs: usize) -
         return raise_type_error("dbm filename must be str or bytes path");
     }
     dispatch_empty_dict(args_ptr, nargs)
+}
+
+unsafe extern "C" fn dispatch_importlib_file_finder(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let path = a.first().copied().unwrap_or_else(MbValue::none);
+    if !is_str(path) {
+        return raise_type_error("FileFinder path must be str");
+    }
+    dispatch_empty_dict(args_ptr, nargs)
+}
+
+unsafe extern "C" fn dispatch_importlib_cache_from_source(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let path = a.first().copied().unwrap_or_else(MbValue::none);
+    if !is_str(path) {
+        return raise_type_error("cache_from_source path must be str");
+    }
+    dispatch_empty_str(args_ptr, nargs)
 }
 
 extern "C" fn ctypes_array_getitem(_self_v: MbValue, _args: MbValue) -> MbValue {
@@ -1356,6 +1385,41 @@ fn register_importlib_subs() {
         ],
         &[],
         &[],
+    );
+    register_with(
+        "_frozen_importlib_external",
+        &[
+            "FileLoader",
+            "SourceLoader",
+            "SourceFileLoader",
+            "SourcelessFileLoader",
+            "ExtensionFileLoader",
+            "PathFinder",
+            "FileFinder",
+            "WindowsRegistryFinder",
+            "NamespaceLoader",
+        ],
+        &[
+            (
+                "FileFinder",
+                dispatch_importlib_file_finder as *const () as usize,
+            ),
+            (
+                "cache_from_source",
+                dispatch_importlib_cache_from_source as *const () as usize,
+            ),
+            (
+                "source_from_cache",
+                dispatch_empty_str as *const () as usize,
+            ),
+            ("decode_source", dispatch_empty_str as *const () as usize),
+            (
+                "spec_from_file_location",
+                dispatch_empty_dict as *const () as usize,
+            ),
+        ],
+        &[],
+        &[("MAGIC_NUMBER", "")],
     );
 }
 
