@@ -114,19 +114,25 @@ example:
 <!-- type: schema lang: yaml -->
 
 ```yaml
-new_types:
+rust_types:
   ScenarioConfig:
+    derives: ["Debug", "Clone", "Serialize", "Deserialize"]
+    location: "projects/vat/src/config.rs"
     fields:
       id: String
       app: String
-      requires: Vec<String>
+      requires: "Vec<String> with serde default/skip empty"
       runner: String
-      network: ScenarioNetworkMode
+      network: "ScenarioNetworkMode with serde default"
   ScenarioNetworkMode:
+    derives: ["Debug", "Clone", "Copy", "Default", "PartialEq", "Eq", "Serialize", "Deserialize"]
+    serde: "rename_all = kebab-case"
     variants:
-      - open
-      - hermetic
+      Open: "default"
+      Hermetic: "requires http-mock proxy participation"
   ScenarioRunRecord:
+    derives: ["Debug", "Clone", "Serialize", "Deserialize"]
+    location: "projects/vat/src/state.rs"
     fields:
       id: String
       app: String
@@ -136,19 +142,20 @@ new_types:
       routes: Vec<RouteRecord>
       hermetic: bool
   RouteRecord:
+    derives: ["Debug", "Clone", "Serialize", "Deserialize"]
+    location: "projects/vat/src/state.rs"
     fields:
       host: String
       target: String
       source: String
-state_integration:
+state_changes:
   TestRunEvidence:
-    add_optional_field: "scenario: Option<ScenarioRunRecord>"
-  ServiceRunRecord:
-    reuse_existing_fields: ["id", "status", "preset", "port", "exported_env", "ready_duration_ms", "stdout_log", "stderr_log"]
+    field: "scenario: Option<ScenarioRunRecord>"
+    serde: "default + skip_serializing_if Option::is_none"
 compatibility:
-  serde_defaults: "new fields default absent for existing metadata"
+  - "Old meta.json without scenario field deserializes."
+  - "Scenario evidence is absent for non-scenario runner runs."
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
