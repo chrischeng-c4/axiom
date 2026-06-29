@@ -1426,6 +1426,33 @@ fn test_stdlib_int_new_x_rejected() {
 }
 
 #[test]
+fn test_stdlib_int_pow_value_rejected() {
+    let errors = check("from builtins import int\nobj = int()\nobj.__pow__(\"bad\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `int`, got `str`")),
+        "int.__pow__(str) should reject a non-int value operand, got: {errors:?}"
+    );
+
+    let errors =
+        check("from builtins import int\nclass _W:\n    pass\nobj = int()\nobj.__pow__(_W(), None)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `value`")),
+        "int.__pow__(_W(), None) should reject a bare value operand, got: {errors:?}"
+    );
+
+    let errors =
+        check("from builtins import int\nobj = int()\nobj.__pow__(2)\nobj.__pow__(2, None)\n");
+    assert!(
+        errors.is_empty(),
+        "valid int.__pow__ forms must stay skip-safe, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_filter_wrong_bare_function_rejected() {
     let errors = check("from builtins import filter\nclass _W:\n    pass\nfilter(_W(), [])\n");
     assert!(

@@ -557,6 +557,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: generated int.__pow__ collapses overloads/Literal aliases to
+    // Unknown. The receiver method still requires an int exponent; `mod` stays
+    // runtime-validated because `None` and omitted-mod forms are both common.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "int",
+        name: "__pow__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Int), p("mod", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // POSITIVE: bool bitwise dunders accept bool/int operands. A single int
     // contract covers both overloads because bool is int-compatible in the type
     // checker, while wrong scalar operands such as str must be rejected.

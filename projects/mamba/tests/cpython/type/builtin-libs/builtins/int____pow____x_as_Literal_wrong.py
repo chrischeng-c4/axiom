@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import int
-obj = object.__new__(int)
+obj = int()
 try:
     obj.__pow__(_W())  # x: Literal <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
