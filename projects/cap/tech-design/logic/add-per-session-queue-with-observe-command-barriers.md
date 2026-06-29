@@ -72,7 +72,6 @@ effect, while `ls`, `cat`, `grep`, and `find` act as observe barriers. All other
 commands remain synchronous until profiled. Queue state is local and per-session,
 not distributed, and observe barriers must report prior queued-job failures
 before running the current observation command.
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
