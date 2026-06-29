@@ -27,6 +27,8 @@ use mamba::pkgmanage::venv as pkg_venv;
 use mamba::pkgmanage::version as pkg_version;
 use mamba::pkgmanage::workspace as pkg_workspace;
 
+mod standard_cli;
+
 // Force-link Mamba native binding crates so their #[distributed_slice(MAMBA_MODULES)]
 // entries are included in the binary.  Without these, `mamba run` cannot resolve
 // imports like `from mambalibs.pg import connect`.
@@ -47,6 +49,9 @@ fn cli() -> Command {
     Command::new("mamba")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Mamba - Force-typed Python compiler with native code generation")
+        .subcommand(standard_cli::llm_command())
+        .subcommand(standard_cli::upgrade_command())
+        .subcommand(standard_cli::report_issue_command())
         .subcommand(
             Command::new("build")
                 .about("Compile a Mamba source file or project")
@@ -625,6 +630,9 @@ fn main() -> Result<()> {
     let matches = cli().get_matches();
 
     match matches.subcommand() {
+        Some(("llm", sub)) => standard_cli::run_llm(sub),
+        Some(("upgrade", sub)) => standard_cli::run_upgrade(sub),
+        Some(("report-issue", sub)) => standard_cli::run_report_issue(sub),
         Some(("build", sub)) => pkg_builder::cmd_build(sub),
         Some(("check", sub)) => cmd_check(sub),
         Some(("run", sub)) => cmd_run(sub),
