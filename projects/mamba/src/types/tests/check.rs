@@ -917,6 +917,29 @@ fn test_set_generic_method_contracts_rejected() {
 }
 
 #[test]
+fn test_stdlib_slice_new_contracts_rejected() {
+    let errors = check(
+        "from builtins import slice\nclass _W:\n    pass\nslice.__new__(slice, _W())\nslice.__new__(slice, _W(), None)\nslice.__new__(slice, None, _W())\n",
+    );
+    let typed_errors = errors
+        .iter()
+        .filter(|e| e.contains("does not satisfy parameter"))
+        .count();
+    assert_eq!(
+        typed_errors, 3,
+        "slice.__new__ should reject bare start/stop instances, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import slice\nclass C:\n    pass\nslice.__new__(slice, 3)\nslice.__new__(slice, 1, 3)\nslice.__new__(slice, None, None)\nslice.__new__(slice, C)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid slice.__new__ forms must stay accepted, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_map_new_callable_rejected() {
     let errors =
         check("from builtins import map\nclass _W:\n    pass\nmap.__new__(map, _W(), None)\n");
