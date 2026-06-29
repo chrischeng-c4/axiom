@@ -55,74 +55,73 @@ flowchart TD
 
 ```mermaid
 ---
-id: kw-term-early-stop-unit-evidence
+id: kw-term-early-stop-contract-tests
 requirements:
-  standalone_term_uses_posting_window:
+  posting_window_contract:
     id: R1
-    text: "No-sort keyword Term queries return the first limit entries directly from the posting list"
+    text: "`storage::try_plan` keeps standalone keyword Term queries on the posting-window path"
     kind: design-constraint
     risk: high
     verify: inspection
-  high_selectivity_term_has_latency_floor:
+  term_latency_floor_contract:
     id: R2
-    text: "Term query latency stays covered by the lumen perf gate"
+    text: "`term_query_latency_floor` stays below the exact term lookup budget"
     kind: performance
     risk: medium
     verify: test
-  competitor_gate_covers_kw_term:
+  release_peer_gate_contract:
     id: R3
-    text: "The release competitive gate reports kw_term under pg-native/OpenSearch peer evidence"
+    text: "`ec-efficiency-meter` can run the release competitive gate cleanly with real pg/OpenSearch peers"
     kind: performance
     risk: high
     verify: test
 elements:
-  storage_try_plan_term_page:
+  storage_try_plan:
     kind: source
     path: projects/lumen/src/storage.rs
-  test_term_query_latency_floor:
+  perf_gate_term_query_latency_floor:
     kind: test
     path: projects/lumen/tests/perf_gate.rs
-  test_competitive_perf_gate:
-    kind: test
-    path: projects/lumen/tests/perf_gate_vs_db.rs
+  vat_ec_efficiency_meter:
+    kind: runner
+    path: projects/lumen/vat.toml
 relations:
-  - { from: storage_try_plan_term_page, verifies: standalone_term_uses_posting_window }
-  - { from: test_term_query_latency_floor, verifies: high_selectivity_term_has_latency_floor }
-  - { from: test_competitive_perf_gate, verifies: competitor_gate_covers_kw_term }
+  - { from: storage_try_plan, verifies: posting_window_contract }
+  - { from: perf_gate_term_query_latency_floor, verifies: term_latency_floor_contract }
+  - { from: vat_ec_efficiency_meter, verifies: release_peer_gate_contract }
 ---
 requirementDiagram
     requirement R1 {
       id: R1
-      text: "standalone keyword Term uses posting window"
+      text: "Term page stays on posting-window planner"
       risk: high
       verifymethod: inspection
     }
     requirement R2 {
       id: R2
-      text: "term latency floor remains covered"
+      text: "term latency floor passes"
       risk: medium
       verifymethod: test
     }
     requirement R3 {
       id: R3
-      text: "kw_term has peer perf evidence"
+      text: "release peer perf gate passes"
       risk: high
       verifymethod: test
     }
-    element storage_try_plan_term_page {
+    element storage_try_plan {
       type: "rs/function"
     }
-    element test_term_query_latency_floor {
+    element perf_gate_term_query_latency_floor {
       type: "rs/#[test]"
     }
-    element test_competitive_perf_gate {
-      type: "rs/#[test]"
+    element vat_ec_efficiency_meter {
+      type: "vat/runner"
     }
-    storage_try_plan_term_page - verifies -> R1
-    test_term_query_latency_floor - verifies -> R2
-    test_competitive_perf_gate - verifies -> R3
+    storage_try_plan - verifies -> R1
+    perf_gate_term_query_latency_floor - verifies -> R2
+    vat_ec_efficiency_meter - verifies -> R3
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
