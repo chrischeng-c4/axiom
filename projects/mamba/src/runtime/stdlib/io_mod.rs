@@ -1119,6 +1119,16 @@ pub fn mb_textiowrapper_read(tio: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(decoded))
 }
 
+pub fn mb_textiowrapper_seek_with_whence(tio: MbValue, pos: MbValue, whence: MbValue) -> MbValue {
+    let under = textiowrapper_underlying(tio);
+    mb_bytesio_seek_with_whence(under, pos, whence)
+}
+
+pub fn mb_textiowrapper_tell(tio: MbValue) -> MbValue {
+    let under = textiowrapper_underlying(tio);
+    mb_bytesio_tell(under)
+}
+
 pub fn mb_textiowrapper_flush(_tio: MbValue) -> MbValue {
     MbValue::none()
 }
