@@ -2288,7 +2288,10 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
     // their method surface to xml_mod; None falls through to plain-dict
     // semantics (only for dunders the dict intrinsics already guard).
     if let Some(ref cls) = stub_class {
-        if matches!(cls.as_str(), "Element" | "ElementTree" | "XMLParser" | "TreeBuilder") {
+        if matches!(
+            cls.as_str(),
+            "Element" | "ElementTree" | "XMLParser" | "XMLPullParser" | "TreeBuilder"
+        ) {
             if let Some(result) =
                 super::stdlib::xml_mod::dispatch_xml_stub_method(cls, name, receiver, args)
             {

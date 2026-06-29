@@ -236,6 +236,51 @@ unsafe extern "C" fn d_xmlparser(_args_ptr: *const MbValue, _nargs: usize) -> Mb
         "_data",
         MbValue::from_ptr(MbObject::new_str(String::new())),
     );
+    dict_set_key(
+        stub,
+        "entity",
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
+    stub
+}
+
+/// XMLPullParser(events=("end",)) -> incremental event stub.
+unsafe extern "C" fn d_xmlpullparser(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = if nargs == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let (want_start, want_end, want_comment) = pull_event_flags(
+        args.last()
+            .copied()
+            .and_then(|last| kwarg_get(last, "events"))
+            .or_else(|| args.first().copied()),
+    );
+    let stub = new_stub_dict("XMLPullParser");
+    dict_set_key(
+        stub,
+        "_data",
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+    );
+    dict_set_key(
+        stub,
+        "_events",
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    dict_set_key(
+        stub,
+        "_pull_stack",
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    dict_set_key(
+        stub,
+        "_pull_ns_stack",
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    dict_set_key(stub, "_want_start", MbValue::from_bool(want_start));
+    dict_set_key(stub, "_want_end", MbValue::from_bool(want_end));
+    dict_set_key(stub, "_want_comment", MbValue::from_bool(want_comment));
     stub
 }
 
@@ -331,7 +376,7 @@ pub fn register() {
         ("dump", d_tostring as *const () as usize),
         ("iterparse", d_iterparse as *const () as usize),
         ("XMLParser", d_xmlparser as *const () as usize),
-        ("XMLPullParser", d_xml as *const () as usize),
+        ("XMLPullParser", d_xmlpullparser as *const () as usize),
         ("ElementTree", d_elementtree as *const () as usize),
         ("QName", d_qname as *const () as usize),
         ("TreeBuilder", d_treebuilder as *const () as usize),
@@ -525,6 +570,29 @@ fn seq_items(val: MbValue) -> Vec<MbValue> {
     Vec::new()
 }
 
+fn pull_event_flags(events: Option<MbValue>) -> (bool, bool, bool) {
+    let Some(events) = events else {
+        return (false, true, false);
+    };
+    let mut names: Vec<String> = seq_items(events)
+        .into_iter()
+        .filter_map(extract_str)
+        .collect();
+    if names.is_empty() {
+        if let Some(name) = extract_str(events) {
+            names.push(name);
+        }
+    }
+    if names.is_empty() {
+        return (false, true, false);
+    }
+    (
+        names.iter().any(|name| name == "start"),
+        names.iter().any(|name| name == "end"),
+        names.iter().any(|name| name == "comment"),
+    )
+}
+
 /// Read a string key out of an element/stub dict (borrowed — no retain).
 fn dict_get_key(elem: MbValue, key: &str) -> Option<MbValue> {
     let ptr = elem.as_ptr()?;
@@ -534,6 +602,26 @@ fn dict_get_key(elem: MbValue, key: &str) -> Option<MbValue> {
         }
     }
     None
+}
+
+fn dict_string_entries(dict: MbValue) -> Vec<(String, String)> {
+    let Some(ptr) = dict.as_ptr() else {
+        return Vec::new();
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            return lock
+                .read()
+                .unwrap()
+                .iter()
+                .filter_map(|(key, value)| {
+                    extract_str(*value)
+                        .map(|value| (super::super::dict_ops::dict_key_raw_str(key), value))
+                })
+                .collect();
+        }
+    }
+    Vec::new()
 }
 
 /// Write a string key into an element/stub dict, retaining the new value and
@@ -568,6 +656,201 @@ fn new_stub_dict(class: &str) -> MbValue {
         }
     }
     MbValue::from_ptr(dict)
+}
+
+fn pop_list_value(list: MbValue) -> Option<MbValue> {
+    let ptr = list.as_ptr()?;
+    unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            return lock.write().unwrap().pop();
+        }
+    }
+    None
+}
+
+fn append_list_value(list: MbValue, value: MbValue) {
+    super::super::list_ops::mb_list_append(list, value);
+    unsafe { super::super::rc::release_if_ptr(value) };
+}
+
+fn pull_wants(receiver: MbValue, key: &str) -> bool {
+    dict_get_key(receiver, key).and_then(|v| v.as_bool()) == Some(true)
+}
+
+fn pull_current_ns(receiver: MbValue) -> String {
+    dict_get_key(receiver, "_pull_ns_stack")
+        .and_then(|stack| seq_items(stack).last().copied())
+        .and_then(extract_str)
+        .unwrap_or_default()
+}
+
+fn pull_push_stack(receiver: MbValue, tag: &str, default_ns: &str) {
+    if let Some(stack) = dict_get_key(receiver, "_pull_stack") {
+        super::super::list_ops::mb_list_append(
+            stack,
+            MbValue::from_ptr(MbObject::new_str(tag.to_string())),
+        );
+    }
+    if let Some(stack) = dict_get_key(receiver, "_pull_ns_stack") {
+        super::super::list_ops::mb_list_append(
+            stack,
+            MbValue::from_ptr(MbObject::new_str(default_ns.to_string())),
+        );
+    }
+}
+
+fn pull_pop_stack(receiver: MbValue, fallback: &str) -> String {
+    if let Some(ns_stack) = dict_get_key(receiver, "_pull_ns_stack") {
+        if let Some(ns) = pop_list_value(ns_stack) {
+            unsafe { super::super::rc::release_if_ptr(ns) };
+        }
+    }
+    if let Some(tag_stack) = dict_get_key(receiver, "_pull_stack") {
+        if let Some(tag) = pop_list_value(tag_stack) {
+            let out = extract_str(tag).unwrap_or_else(|| fallback.to_string());
+            unsafe { super::super::rc::release_if_ptr(tag) };
+            return out;
+        }
+    }
+    fallback.to_string()
+}
+
+fn pull_event_tuple(action: &str, elem: MbValue) -> MbValue {
+    unsafe { super::super::rc::retain_if_ptr(elem) };
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(action.to_string())),
+        elem,
+    ]))
+}
+
+fn pull_queue_event(receiver: MbValue, action: &str, elem: MbValue) {
+    if let Some(events) = dict_get_key(receiver, "_events") {
+        append_list_value(events, pull_event_tuple(action, elem));
+    }
+}
+
+fn parse_xml_tag_attrs(input: &str) -> (String, HashMap<String, String>, bool) {
+    let mut s = input.trim();
+    let self_closing = s.ends_with('/');
+    if self_closing {
+        s = s[..s.len() - 1].trim_end();
+    }
+    let split = s
+        .find(|ch: char| ch.is_ascii_whitespace())
+        .unwrap_or(s.len());
+    let tag = s[..split].to_string();
+    let mut attrs = HashMap::new();
+    let mut rest = s[split..].trim_start();
+    while !rest.is_empty() {
+        let Some(eq) = rest.find('=') else {
+            break;
+        };
+        let name = rest[..eq].trim().to_string();
+        rest = rest[eq + 1..].trim_start();
+        let Some(quote) = rest.as_bytes().first().copied() else {
+            break;
+        };
+        if quote != b'\'' && quote != b'"' {
+            break;
+        }
+        rest = &rest[1..];
+        let Some(end) = rest.as_bytes().iter().position(|b| *b == quote) else {
+            break;
+        };
+        attrs.insert(name, decode_entities(&rest[..end]));
+        rest = rest[end + 1..].trim_start();
+    }
+    (tag, attrs, self_closing)
+}
+
+fn pull_resolve_tag(
+    raw: &str,
+    attrs: &HashMap<String, String>,
+    inherited_ns: &str,
+) -> (String, String) {
+    let mut namespaces = HashMap::new();
+    if !inherited_ns.is_empty() {
+        namespaces.insert(String::new(), inherited_ns.to_string());
+    }
+    for (name, value) in attrs {
+        if name == "xmlns" {
+            namespaces.insert(String::new(), value.clone());
+        } else if let Some(prefix) = name.strip_prefix("xmlns:") {
+            namespaces.insert(prefix.to_string(), value.clone());
+        }
+    }
+    let default_ns = namespaces.get("").cloned().unwrap_or_default();
+    (resolve_xml_name(raw, &namespaces), default_ns)
+}
+
+fn pull_feed_chunk(receiver: MbValue, chunk: &str) {
+    let mut rest = chunk;
+    while let Some(open) = rest.find('<') {
+        rest = &rest[open..];
+        if let Some(after) = rest.strip_prefix("<!--") {
+            let Some(end) = after.find("-->") else {
+                break;
+            };
+            if pull_wants(receiver, "_want_comment") {
+                let comment = mb_xml_comment(MbValue::from_ptr(MbObject::new_str(
+                    after[..end].to_string(),
+                )));
+                pull_queue_event(receiver, "comment", comment);
+                unsafe { super::super::rc::release_if_ptr(comment) };
+            }
+            rest = &after[end + 3..];
+            continue;
+        }
+        if rest.starts_with("<?") || rest.starts_with("<!") {
+            let Some(end) = rest.find('>') else {
+                break;
+            };
+            rest = &rest[end + 1..];
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix("</") {
+            let Some(end) = after.find('>') else {
+                break;
+            };
+            let raw = after[..end].trim();
+            let tag = pull_pop_stack(receiver, raw);
+            if pull_wants(receiver, "_want_end") {
+                let elem = mb_xml_element(
+                    MbValue::from_ptr(MbObject::new_str(tag)),
+                    MbValue::none(),
+                );
+                pull_queue_event(receiver, "end", elem);
+                unsafe { super::super::rc::release_if_ptr(elem) };
+            }
+            rest = &after[end + 1..];
+            continue;
+        }
+        let Some(end) = rest.find('>') else {
+            break;
+        };
+        let (raw_tag, attrs, self_closing) = parse_xml_tag_attrs(&rest[1..end]);
+        if raw_tag.is_empty() {
+            rest = &rest[end + 1..];
+            continue;
+        }
+        let (tag, default_ns) = pull_resolve_tag(&raw_tag, &attrs, &pull_current_ns(receiver));
+        let elem = mb_xml_element(
+            MbValue::from_ptr(MbObject::new_str(tag.clone())),
+            MbValue::none(),
+        );
+        if pull_wants(receiver, "_want_start") {
+            pull_queue_event(receiver, "start", elem);
+        }
+        if self_closing {
+            if pull_wants(receiver, "_want_end") {
+                pull_queue_event(receiver, "end", elem);
+            }
+        } else {
+            pull_push_stack(receiver, &tag, &default_ns);
+        }
+        unsafe { super::super::rc::release_if_ptr(elem) };
+        rest = &rest[end + 1..];
+    }
 }
 
 fn is_element(val: MbValue) -> bool {
@@ -1455,6 +1738,40 @@ fn decode_entities(s: &str) -> String {
     out
 }
 
+fn strip_doctype_decl(s: &str) -> String {
+    let Some(start) = s.find("<!DOCTYPE") else {
+        return s.to_string();
+    };
+    let tail = &s[start..];
+    let end = tail
+        .find("]>")
+        .map(|idx| idx + 2)
+        .or_else(|| tail.find('>').map(|idx| idx + 1));
+    let Some(end) = end else {
+        return s.to_string();
+    };
+    format!("{}{}", &s[..start], &s[start + end..])
+}
+
+fn apply_custom_entities(mut s: String, entities: MbValue) -> String {
+    for (name, value) in dict_string_entries(entities) {
+        s = s.replace(&format!("&{name};"), &value);
+    }
+    s
+}
+
+fn parse_xmlparser_data(receiver: MbValue) -> MbValue {
+    let data = dict_get_key(receiver, "_data")
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let data = strip_doctype_decl(&data);
+    let data = apply_custom_entities(
+        data,
+        dict_get_key(receiver, "entity").unwrap_or_else(MbValue::none),
+    );
+    mb_xml_fromstring(MbValue::from_ptr(MbObject::new_str(data)))
+}
+
 /// parse(source) -> root Element. Accepts a filename path or a
 /// StringIO/BytesIO file-like; getroot() on the result returns self.
 pub fn mb_xml_parse(source: MbValue) -> MbValue {
@@ -2179,12 +2496,38 @@ pub fn dispatch_xml_stub_method(
                 Some(MbValue::none())
             }
             "close" => {
-                let data = dict_get_key(receiver, "_data")
+                Some(parse_xmlparser_data(receiver))
+            }
+            _ => None,
+        },
+        "XMLPullParser" => match name {
+            "feed" => {
+                let existing = dict_get_key(receiver, "_data")
                     .and_then(extract_str)
                     .unwrap_or_default();
-                Some(mb_xml_fromstring(MbValue::from_ptr(MbObject::new_str(
-                    data,
-                ))))
+                let chunk = extract_str(arg(0)).unwrap_or_default();
+                dict_set_key(
+                    receiver,
+                    "_data",
+                    MbValue::from_ptr(MbObject::new_str(format!("{existing}{chunk}"))),
+                );
+                pull_feed_chunk(receiver, &chunk);
+                Some(MbValue::none())
+            }
+            "read_events" => {
+                let events = dict_get_key(receiver, "_events").unwrap_or_else(|| {
+                    MbValue::from_ptr(MbObject::new_list(vec![]))
+                });
+                unsafe { super::super::rc::retain_if_ptr(events) };
+                dict_set_key(
+                    receiver,
+                    "_events",
+                    MbValue::from_ptr(MbObject::new_list(vec![])),
+                );
+                Some(events)
+            }
+            "close" => {
+                Some(MbValue::none())
             }
             _ => None,
         },
