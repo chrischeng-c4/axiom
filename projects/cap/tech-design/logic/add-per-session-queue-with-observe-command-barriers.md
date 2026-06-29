@@ -139,7 +139,6 @@ requirementDiagram
     verifymethod: test
   }
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
