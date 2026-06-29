@@ -148,6 +148,29 @@ pub struct RunnerRunRecord {
     pub stderr_log: String,
 }
 
+/// Route visible in a scenario topology report.
+/// @spec projects/vat/tech-design/logic/production-like-integration-scenarios.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteRecord {
+    pub host: String,
+    pub target: String,
+    pub source: String,
+}
+
+/// Captured scenario topology for a production-like integration run.
+/// @spec projects/vat/tech-design/logic/production-like-integration-scenarios.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioRunRecord {
+    pub id: String,
+    pub app: String,
+    pub runner: String,
+    pub network: String,
+    pub services: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<RouteRecord>,
+    pub hermetic: bool,
+}
+
 /// Process status used inside test-run evidence.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +201,10 @@ pub struct TestRunEvidence {
     pub runner_id: String,
     pub retention: RetentionPolicy,
     pub services: Vec<ServiceRunRecord>,
+    /// Scenario topology for `vat run --scenario`; absent for existing runner
+    /// modes and old metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenario: Option<ScenarioRunRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<RunnerRunRecord>,
     /// Every runner of a concurrent `vat run a b ...` set; `runner` keeps the

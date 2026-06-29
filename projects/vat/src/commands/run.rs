@@ -22,8 +22,8 @@ use walkdir::WalkDir;
 
 use crate::cluster::{self, ClusterSpec, ResolvedBackend};
 use crate::config::{
-    self, ClusterBackend, PortSpec, RetentionPolicy, RunnerConfig, ServiceConfig, ServicePreset,
-    ServiceRuntime, VatConfig,
+    self, ClusterBackend, PortSpec, RetentionPolicy, RunnerConfig, ScenarioConfig,
+    ScenarioNetworkMode, ServiceConfig, ServicePreset, ServiceRuntime, VatConfig,
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
@@ -31,8 +31,8 @@ use crate::overlay;
 use crate::sandbox;
 use crate::spec::{Base, EnvSpec, GpuRequest, Isolation};
 use crate::state::{
-    ArtifactRecord, ClusterRunRecord, ConfigRef, ProcessStatus, RunRecord, RunnerRunRecord,
-    ServiceRunRecord, Status, TestRunEvidence,
+    ArtifactRecord, ClusterRunRecord, ConfigRef, ProcessStatus, RouteRecord, RunRecord,
+    RunnerRunRecord, ScenarioRunRecord, ServiceRunRecord, Status, TestRunEvidence,
 };
 use crate::{id, store};
 
@@ -61,6 +61,9 @@ pub enum Target {
     Runner {
         /// Empty = default selection; several = run CONCURRENTLY in one vat.
         runner_ids: Vec<String>,
+    },
+    Scenario {
+        scenario_id: String,
     },
 }
 
@@ -98,6 +101,14 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             gpu,
             runner_ids,
         }),
+        Target::Scenario { scenario_id } => exec_scenario(ScenarioArgs {
+            base,
+            from,
+            name,
+            isolation,
+            gpu,
+            scenario_id,
+        }),
     }
 }
 
@@ -119,6 +130,15 @@ struct DirectArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     json: bool,
+}
+
+struct ScenarioArgs {
+    base: Option<PathBuf>,
+    from: Option<String>,
+    name: Option<String>,
+    isolation: Isolation,
+    gpu: GpuRequest,
+    scenario_id: String,
 }
 
 fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
@@ -340,6 +360,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         runner_id: joined_ids.clone(),
         retention: cfg.workspace.keep,
         services: Vec::new(),
+        scenario: None,
         runner: None,
         runners: Vec::new(),
         artifacts: Vec::new(),
@@ -350,7 +371,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         format!("runner: {joined_ids}"),
     ))?;
 
-    let result = run_configured(&mut vat, &cfg, &runners, &logs_dir);
+    let result = run_configured(&mut vat, &cfg, &runners, &logs_dir, &[], false);
     let code = match result {
         Ok(code) => code,
         Err(err) => {
@@ -417,6 +438,189 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
     Ok(process_exit_code(code))
 }
 
+fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
+    let cwd = std::env::current_dir().context("get current directory")?;
+    let cfg = config::load_nearest(&cwd)?;
+    if args.base.is_some() || args.from.is_some() {
+        bail!(
+            "vat run --scenario uses vat.toml workspace.base; --base/--from are direct mode only"
+        );
+    }
+    let scenario = match cfg.scenario(&args.scenario_id) {
+        Ok(scenario) => scenario.clone(),
+        Err(err) => {
+            emit_jsonl(serde_json::json!({
+                "type": "error",
+                "code": "scenario_required",
+                "message": err.to_string(),
+                "scenarios": cfg.scenarios.iter().map(|scenario| scenario.id.as_str()).collect::<Vec<_>>(),
+            }))?;
+            return Err(err);
+        }
+    };
+    let runner = cfg.runner(&scenario.runner)?.clone();
+    let extra_service_ids = scenario_service_ids(&cfg, &scenario, &runner)?;
+    if scenario.network == ScenarioNetworkMode::Hermetic
+        && !service_set_has_http_mock(&cfg, &extra_service_ids)
+    {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "scenario_hermetic_proxy_required",
+            "scenario": scenario.id.as_str(),
+            "message": "scenario network = hermetic requires a participating `preset = \"http-mock\"` service",
+            "services": extra_service_ids,
+        }))?;
+        bail!(
+            "scenario `{}` network = hermetic requires a participating `preset = \"http-mock\"` service",
+            scenario.id
+        );
+    }
+    emit_jsonl(serde_json::json!({
+        "type": "select",
+        "scenario": scenario.id.as_str(),
+        "app": scenario.app.as_str(),
+        "runner": runner.id.as_str(),
+        "services": extra_service_ids,
+        "reason": "scenario",
+    }))?;
+
+    let gpu_info = gpu::detect();
+    if args.gpu == GpuRequest::Required && !gpu_info.accessible {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "gpu_required",
+            "message": gpu_info.note.as_str(),
+        }))?;
+        bail!(
+            "spec requires a GPU but none is accessible on this host ({})",
+            gpu_info.note
+        );
+    }
+
+    let source = std::fs::canonicalize(cfg.base_dir())
+        .with_context(|| format!("resolve workspace base {}", cfg.base_dir().display()))?;
+    let mut env = cfg.env.clone();
+    env.entry("VAT_CONFIG_ROOT".to_string())
+        .or_insert_with(|| cfg.root.to_string_lossy().into_owned());
+    env.entry("VAT_WORKSPACE_BASE".to_string())
+        .or_insert_with(|| source.to_string_lossy().into_owned());
+
+    let egress = if scenario.network == ScenarioNetworkMode::Hermetic {
+        crate::spec::EgressPolicy::LocalhostOnly
+    } else {
+        cfg.network.as_ref().map(|n| n.egress).unwrap_or_default()
+    };
+    let isolation =
+        if scenario.network == ScenarioNetworkMode::Hermetic && args.isolation == Isolation::None {
+            Isolation::Seatbelt
+        } else {
+            args.isolation
+        };
+    let spec = EnvSpec {
+        base: Some(Base::Dir(source.clone())),
+        workdir: cfg.workspace.workdir.clone(),
+        env,
+        isolation,
+        egress,
+        gpu: args.gpu,
+        ..EnvSpec::default()
+    };
+
+    let new_id = id::fresh();
+    let name = args
+        .name
+        .or_else(|| cfg.name.clone())
+        .or(Some(scenario.id.clone()));
+    let mut vat = store::create(&new_id, name, spec.clone(), Some(&source), Vec::new())
+        .context("create vat")?;
+    let logs_dir = vat.dir.join(crate::paths::file::LOGS);
+    std::fs::create_dir_all(&logs_dir).with_context(|| format!("create {}", logs_dir.display()))?;
+
+    vat.meta.status = Status::Running;
+    vat.meta.test_run = Some(TestRunEvidence {
+        config: ConfigRef {
+            path: cfg.path.to_string_lossy().into_owned(),
+            digest: cfg.digest.clone(),
+        },
+        runner_id: runner.id.clone(),
+        retention: cfg.workspace.keep,
+        services: Vec::new(),
+        scenario: Some(ScenarioRunRecord {
+            id: scenario.id.clone(),
+            app: scenario.app.clone(),
+            runner: runner.id.clone(),
+            network: scenario_network_name(scenario.network).to_string(),
+            services: extra_service_ids.clone(),
+            routes: Vec::new(),
+            hermetic: scenario.network == ScenarioNetworkMode::Hermetic,
+        }),
+        runner: None,
+        runners: Vec::new(),
+        artifacts: Vec::new(),
+    });
+    vat.save()?;
+    vat.log(Event::new(
+        EventKind::RunStarted,
+        format!("scenario: {}", scenario.id),
+    ))?;
+
+    let runners = vec![runner.clone()];
+    let result = run_configured(
+        &mut vat,
+        &cfg,
+        &runners,
+        &logs_dir,
+        &extra_service_ids,
+        scenario.network == ScenarioNetworkMode::Hermetic,
+    );
+    let code = match result {
+        Ok(code) => code,
+        Err(err) => {
+            emit_jsonl(serde_json::json!({
+                "type": "error",
+                "code": "run_failed",
+                "message": err.to_string(),
+            }))?;
+            record_runner_failure(&mut vat, &runner, &logs_dir, &err.to_string())?;
+            -1
+        }
+    };
+
+    vat.meta.status = Status::Exited { code };
+    vat.save()?;
+    let state = vat.project()?;
+    let should_remove = match cfg.workspace.keep {
+        RetentionPolicy::Always => false,
+        RetentionPolicy::Never => true,
+        RetentionPolicy::Failed => code == 0,
+    };
+    if should_remove {
+        let _ = store::remove(&state.id);
+    }
+    let kept = !should_remove;
+    emit_jsonl(serde_json::json!({
+        "type": "result",
+        "id": state.id.as_str(),
+        "scenario": scenario.id.as_str(),
+        "app": scenario.app.as_str(),
+        "runner": runner.id.as_str(),
+        "ok": code == 0,
+        "exit_code": code,
+        "state": if kept { "kept" } else { "removed" },
+        "inspect": if kept {
+            serde_json::json!({
+                "state": format!("vat state {}", state.id),
+                "logs": format!("vat logs {} runner", state.id),
+                "diff": format!("vat diff {} --json", state.id),
+            })
+        } else {
+            serde_json::Value::Null
+        },
+    }))?;
+
+    Ok(process_exit_code(code))
+}
+
 fn process_exit_code(code: i32) -> ExitCode {
     if code < 0 {
         ExitCode::from(255)
@@ -430,6 +634,8 @@ fn run_configured(
     cfg: &VatConfig,
     runners: &[RunnerConfig],
     logs_dir: &Path,
+    extra_service_ids: &[String],
+    force_hermetic_proxy: bool,
 ) -> Result<i32> {
     let rootfs = vat.rootfs();
     let cwd = rootfs.join(&vat.meta.spec.workdir);
@@ -445,6 +651,11 @@ fn run_configured(
     // Services: the UNION of every runner's requires, order-preserving and
     // deduplicated — one shared instance set serves all concurrent runners.
     let mut service_ids: Vec<&str> = Vec::new();
+    for service_id in extra_service_ids {
+        if !service_ids.contains(&service_id.as_str()) {
+            service_ids.push(service_id);
+        }
+    }
     for runner in runners {
         for service_id in &runner.requires {
             if !service_ids.contains(&service_id.as_str()) {
@@ -455,7 +666,7 @@ fn run_configured(
     let mut service_plans = Vec::new();
     let mut run_env = vat.meta.spec.env.clone();
     for service in ordered_required_services(cfg, &service_ids)? {
-        let plan = prepare_service(vat, cfg, service)?;
+        let plan = prepare_service(vat, cfg, service, force_hermetic_proxy)?;
         for (key, value) in &plan.env {
             run_env.insert(key.clone(), value.clone());
         }
@@ -469,6 +680,7 @@ fn run_configured(
     // above, so the proxy is spawned with the full (explicit + preset-derived)
     // route set.
     seed_preset_routes_into_proxy(&mut service_plans, cfg);
+    persist_scenario_topology(vat, cfg, &service_plans, force_hermetic_proxy)?;
 
     for step in &cfg.setup {
         if !config::should_run_setup(&rootfs, step) {
@@ -487,7 +699,19 @@ fn run_configured(
 
     let mut services = Vec::new();
     for plan in &service_plans {
-        let handle = match start_service(vat, plan, &cwd, logs_dir, &run_env) {
+        let handle = match start_service(
+            vat,
+            plan,
+            &cwd,
+            logs_dir,
+            &run_env,
+            if force_hermetic_proxy {
+                Some(sandbox_backend.as_ref())
+            } else {
+                None
+            },
+            &rootfs,
+        ) {
             Ok(handle) => handle,
             Err(err) => {
                 stop_services(
@@ -580,6 +804,85 @@ fn run_configured(
         .join("; ");
     vat.log(Event::new(EventKind::RunFinished, summary))?;
     Ok(code)
+}
+
+fn scenario_service_ids(
+    cfg: &VatConfig,
+    scenario: &ScenarioConfig,
+    runner: &RunnerConfig,
+) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    for id in std::iter::once(&scenario.app)
+        .chain(scenario.requires.iter())
+        .chain(runner.requires.iter())
+    {
+        if !ids.contains(id) {
+            ids.push(id.clone());
+        }
+    }
+    let service_ids: Vec<&str> = ids.iter().map(|id| id.as_str()).collect();
+    Ok(ordered_required_services(cfg, &service_ids)?
+        .into_iter()
+        .map(|service| service.id.clone())
+        .collect())
+}
+
+fn service_set_has_http_mock(cfg: &VatConfig, service_ids: &[String]) -> bool {
+    service_ids.iter().any(|id| {
+        cfg.service(id)
+            .map(|service| service.preset == Some(ServicePreset::HttpMock))
+            .unwrap_or(false)
+    })
+}
+
+fn scenario_network_name(network: ScenarioNetworkMode) -> &'static str {
+    match network {
+        ScenarioNetworkMode::Open => "open",
+        ScenarioNetworkMode::Hermetic => "hermetic",
+    }
+}
+
+fn persist_scenario_topology(
+    vat: &mut store::Vat,
+    cfg: &VatConfig,
+    plans: &[ServicePlan],
+    force_hermetic_proxy: bool,
+) -> Result<()> {
+    let routes = scenario_route_records(cfg, plans);
+    if let Some(test_run) = vat.meta.test_run.as_mut() {
+        if let Some(scenario) = test_run.scenario.as_mut() {
+            scenario.services = plans.iter().map(|plan| plan.id.clone()).collect();
+            scenario.routes = routes;
+            scenario.hermetic = force_hermetic_proxy;
+        }
+    }
+    vat.save()
+}
+
+fn scenario_route_records(cfg: &VatConfig, plans: &[ServicePlan]) -> Vec<RouteRecord> {
+    let mut records = Vec::new();
+    let mut explicit_hosts = BTreeSet::new();
+    for (host, target) in explicit_network_routes(cfg) {
+        explicit_hosts.insert(host.clone());
+        records.push(RouteRecord {
+            host,
+            target,
+            source: "explicit".to_string(),
+        });
+    }
+    let pairs: Vec<(Option<ServicePreset>, Option<u16>)> =
+        plans.iter().map(|plan| (plan.preset, plan.port)).collect();
+    for (host, target) in preset_auto_routes(&pairs) {
+        if explicit_hosts.contains(&host) {
+            continue;
+        }
+        records.push(RouteRecord {
+            host,
+            target,
+            source: "preset".to_string(),
+        });
+    }
+    records
 }
 
 fn kill_runner_processes(procs: &mut [RunnerProc]) {
@@ -811,6 +1114,7 @@ fn prepare_service(
     vat: &store::Vat,
     cfg: &VatConfig,
     service: &ServiceConfig,
+    force_hermetic_proxy: bool,
 ) -> Result<ServicePlan> {
     let started = Instant::now();
     let plan = if let Some(backend) = service.cluster {
@@ -834,10 +1138,11 @@ fn prepare_service(
             ResolvedRuntime::Builtin => {
                 // Hermetic when the run confines egress (localhost-only/deny):
                 // the http-mock proxy then blocks unmatched requests too.
-                let hermetic = !matches!(
-                    cfg.network.as_ref().map(|n| n.egress).unwrap_or_default(),
-                    crate::spec::EgressPolicy::Open
-                );
+                let hermetic = force_hermetic_proxy
+                    || !matches!(
+                        cfg.network.as_ref().map(|n| n.egress).unwrap_or_default(),
+                        crate::spec::EgressPolicy::Open
+                    );
                 prepare_builtin_service(
                     service,
                     preset,
@@ -848,15 +1153,25 @@ fn prepare_service(
             }
         }
     } else {
-        let env = export_command_service_env(service);
+        let port = command_service_port(service)?;
+        let command = substitute_service_port(&service.cmd, port);
+        let ready_http = service
+            .ready_http
+            .as_ref()
+            .map(|value| substitute_port(value, port));
+        let ready_cmd = substitute_service_port(&service.ready_cmd, port);
+        let mut service_for_probe = service.clone();
+        service_for_probe.ready_http = ready_http.clone();
+        service_for_probe.ready_cmd = ready_cmd;
+        let env = export_command_service_env(&service_for_probe, port);
         ServicePlan {
             id: service.id.clone(),
-            command: service.cmd.clone(),
-            ready_http: service.ready_http.clone(),
-            ready_probe: resolve_ready_probe(service, None),
+            command,
+            ready_http,
+            ready_probe: resolve_ready_probe(&service_for_probe, None),
             timeout_s: service.timeout_s,
             preset: None,
-            port: None,
+            port,
             prepare_mode: "direct_start".to_string(),
             cache_key: None,
             prepare_duration_ms: 0,
@@ -1016,14 +1331,17 @@ fn start_service(
     cwd: &Path,
     logs_dir: &Path,
     env: &BTreeMap<String, String>,
+    service_sandbox: Option<&dyn sandbox::Sandbox>,
+    rootfs: &Path,
 ) -> Result<ServiceHandle> {
     let stdout = logs_dir.join(format!("{}.stdout.log", plan.id));
     let stderr = logs_dir.join(format!("{}.stderr.log", plan.id));
-    let child = command_with_logs(&plan.command, cwd, env, &stdout, &stderr)
+    let command = service_start_command(plan, service_sandbox, rootfs);
+    let child = command_with_logs(&command, cwd, env, &stdout, &stderr)
         .with_context(|| format!("spawn service `{}`", plan.id))?;
     let record = ServiceRunRecord {
         id: plan.id.clone(),
-        command: plan.command.clone(),
+        command,
         status: ProcessStatus::Running,
         preset: plan.preset.map(service_preset_name).map(str::to_string),
         port: plan.port,
@@ -1051,6 +1369,20 @@ fn start_service(
         docker_name: plan.docker_name.clone(),
         cluster: plan.cluster.clone(),
     })
+}
+
+fn service_start_command(
+    plan: &ServicePlan,
+    service_sandbox: Option<&dyn sandbox::Sandbox>,
+    rootfs: &Path,
+) -> Vec<String> {
+    if plan.prepare_mode == "direct_start" {
+        service_sandbox
+            .map(|backend| sandbox_wrap(backend, rootfs, &plan.command))
+            .unwrap_or_else(|| plan.command.clone())
+    } else {
+        plan.command.clone()
+    }
 }
 
 fn prepare_preset_service(
@@ -2478,12 +2810,67 @@ fn preset_exports(
     env
 }
 
-fn export_command_service_env(service: &ServiceConfig) -> BTreeMap<String, String> {
+fn command_service_port(service: &ServiceConfig) -> Result<Option<u16>> {
+    let needs_port = service.cmd.iter().any(|value| value.contains("{port}"))
+        || service
+            .ready_http
+            .as_deref()
+            .map(|value| value.contains("{port}"))
+            .unwrap_or(false)
+        || service
+            .ready_cmd
+            .iter()
+            .any(|value| value.contains("{port}"))
+        || service
+            .export
+            .values()
+            .any(|value| value.contains("{port}") || value.contains("{host}"));
+    if needs_port {
+        Ok(Some(resolve_service_port(&service.port)?))
+    } else {
+        Ok(None)
+    }
+}
+
+fn substitute_service_port(values: &[String], port: Option<u16>) -> Vec<String> {
+    values
+        .iter()
+        .map(|value| substitute_port(value, port))
+        .collect()
+}
+
+fn substitute_port(value: &str, port: Option<u16>) -> String {
+    match port {
+        Some(port) => value
+            .replace("{host}", "127.0.0.1")
+            .replace("{port}", &port.to_string()),
+        None => value.to_string(),
+    }
+}
+
+fn export_command_service_env(
+    service: &ServiceConfig,
+    port: Option<u16>,
+) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     if let Some(ready_http) = &service.ready_http {
-        for target in service.export.values() {
-            env.insert(target.clone(), ready_http.clone());
+        if service.export.is_empty() {
+            let upper = service.id.to_uppercase().replace(['-', '.'], "_");
+            env.insert(format!("VAT_SERVICE_{upper}_URL"), ready_http.clone());
+        } else {
+            for (key, template) in &service.export {
+                if template.contains("{host}") || template.contains("{port}") {
+                    env.insert(key.clone(), substitute_port(template, port));
+                } else {
+                    env.insert(template.clone(), ready_http.clone());
+                }
+            }
         }
+    }
+    if let Some(port) = port {
+        let upper = service.id.to_uppercase().replace(['-', '.'], "_");
+        env.insert(format!("VAT_SERVICE_{upper}_HOST"), "127.0.0.1".to_string());
+        env.insert(format!("VAT_SERVICE_{upper}_PORT"), port.to_string());
     }
     env
 }
@@ -2813,6 +3200,7 @@ mod tests {
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: PathBuf::from("vat.toml"),
             root: PathBuf::from("."),
             digest: String::new(),
@@ -2827,6 +3215,102 @@ mod tests {
                 .map(|service| service.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["postgres", "backend", "frontend"]
+        );
+    }
+
+    #[test]
+    fn scenario_service_ids_expand_dependencies_before_hermetic_check() {
+        let mut http = test_service("http", &[]);
+        http.preset = Some(ServicePreset::HttpMock);
+        let cfg = VatConfig {
+            version: 1,
+            network: None,
+            name: None,
+            default_runner: None,
+            workspace: crate::config::WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: vec![
+                test_service("api", &["worker"]),
+                test_service("worker", &["http"]),
+                http,
+            ],
+            runners: vec![RunnerConfig {
+                id: "e2e".to_string(),
+                requires: Vec::new(),
+                cmd: vec!["true".to_string()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            scenarios: Vec::new(),
+            path: PathBuf::from("vat.toml"),
+            root: PathBuf::from("."),
+            digest: String::new(),
+        };
+        let scenario = ScenarioConfig {
+            id: "prod-like".to_string(),
+            app: "api".to_string(),
+            requires: Vec::new(),
+            runner: "e2e".to_string(),
+            network: ScenarioNetworkMode::Hermetic,
+        };
+
+        let ids = scenario_service_ids(&cfg, &scenario, &cfg.runners[0]).expect("scenario ids");
+
+        assert_eq!(ids, vec!["http", "worker", "api"]);
+        assert!(service_set_has_http_mock(&cfg, &ids));
+    }
+
+    struct TestSandbox;
+
+    impl crate::sandbox::Sandbox for TestSandbox {
+        fn name(&self) -> &'static str {
+            "test"
+        }
+
+        fn resolve(&self, rootfs: &Path, program: &str, args: &[String]) -> (String, Vec<String>) {
+            (
+                "sandboxed".to_string(),
+                std::iter::once(rootfs.display().to_string())
+                    .chain(std::iter::once(program.to_string()))
+                    .chain(args.iter().cloned())
+                    .collect(),
+            )
+        }
+    }
+
+    #[test]
+    fn direct_start_service_command_uses_supplied_sandbox_only_for_direct_services() {
+        let plan = ServicePlan {
+            id: "api".to_string(),
+            command: vec!["python3".to_string(), "-m".to_string(), "app".to_string()],
+            ready_http: None,
+            ready_probe: ReadyProbe::None,
+            timeout_s: 1,
+            preset: None,
+            port: None,
+            prepare_mode: "direct_start".to_string(),
+            cache_key: None,
+            prepare_duration_ms: 0,
+            env: BTreeMap::new(),
+            exported_env: Vec::new(),
+            docker_name: None,
+            image: None,
+            cluster: None,
+        };
+
+        let wrapped = service_start_command(&plan, Some(&TestSandbox), Path::new("/vat/root"));
+
+        assert_eq!(
+            wrapped,
+            vec!["sandboxed", "/vat/root", "python3", "-m", "app"]
+        );
+
+        let mut preset_plan = plan.clone();
+        preset_plan.prepare_mode = "builtin_emulator".to_string();
+        assert_eq!(
+            service_start_command(&preset_plan, Some(&TestSandbox), Path::new("/vat/root")),
+            preset_plan.command
         );
     }
 
@@ -2976,6 +3460,7 @@ mod tests {
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: temp.path().join("vat.toml"),
             root: temp.path().to_path_buf(),
             digest: String::new(),

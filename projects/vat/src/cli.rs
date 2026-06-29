@@ -34,6 +34,9 @@ struct Cli {
 enum Cmd {
     /// Create a fresh vat and run a command inside it.
     Run {
+        /// Run a named production-like integration scenario from vat.toml.
+        #[arg(long)]
+        scenario: Option<String>,
         /// Named runner(s) from vat.toml. Omit to use default_runner or the
         /// only runner; pass several to run them CONCURRENTLY against one
         /// shared workspace + service set (worst exit code wins).
@@ -237,6 +240,7 @@ pub fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Run {
+            scenario,
             runners,
             base,
             from,
@@ -246,6 +250,24 @@ pub fn run() -> Result<ExitCode> {
             json,
             mut cmd,
         } => {
+            if let Some(scenario_id) = scenario {
+                if !cmd.is_empty() {
+                    anyhow::bail!("vat run --scenario cannot be combined with direct command mode");
+                }
+                if !runners.is_empty() {
+                    anyhow::bail!("vat run --scenario cannot be combined with runner ids");
+                }
+                let target = commands::run::Target::Scenario { scenario_id };
+                return commands::run::exec(commands::run::Args {
+                    target,
+                    base,
+                    from,
+                    name,
+                    isolation,
+                    gpu,
+                    json,
+                });
+            }
             let target = if !cmd.is_empty() {
                 let program = cmd.remove(0);
                 commands::run::Target::Direct {

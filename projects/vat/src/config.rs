@@ -36,6 +36,8 @@ pub struct VatConfig {
     pub services: Vec<ServiceConfig>,
     #[serde(default)]
     pub runners: Vec<RunnerConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scenarios: Vec<ScenarioConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network: Option<NetworkConfig>,
 
@@ -360,6 +362,33 @@ fn default_service_timeout() -> u64 {
     60
 }
 
+/// Named production-like integration scenario. A scenario promotes an app
+/// service plus its dependency set to a first-class runner target while reusing
+/// the existing service lifecycle.
+/// @spec projects/vat/tech-design/logic/production-like-integration-scenarios.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioConfig {
+    pub id: String,
+    pub app: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+    pub runner: String,
+    #[serde(default)]
+    pub network: ScenarioNetworkMode,
+}
+
+/// Scenario-scoped network safety mode.
+/// @spec projects/vat/tech-design/logic/production-like-integration-scenarios.md#schema
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScenarioNetworkMode {
+    /// Use the project/run network policy as configured.
+    #[default]
+    Open,
+    /// Require http-mock participation and no-forward proxy behavior.
+    Hermetic,
+}
+
 /// Named runner an agent can invoke via `vat run <id>`.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -535,6 +564,36 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
             bail!("default_runner `{default_runner}` does not match any runner id");
         }
     }
+    let mut scenario_ids = BTreeSet::new();
+    for scenario in &cfg.scenarios {
+        validate_id("scenario", &scenario.id)?;
+        if !scenario_ids.insert(scenario.id.as_str()) {
+            bail!("duplicate scenario id `{}`", scenario.id);
+        }
+        if !service_ids.contains(scenario.app.as_str()) {
+            bail!(
+                "scenario `{}` app references unknown service `{}`",
+                scenario.id,
+                scenario.app
+            );
+        }
+        if !runner_ids.contains(scenario.runner.as_str()) {
+            bail!(
+                "scenario `{}` runner references unknown runner `{}`",
+                scenario.id,
+                scenario.runner
+            );
+        }
+        for required in &scenario.requires {
+            if !service_ids.contains(required.as_str()) {
+                bail!(
+                    "scenario `{}` requires unknown service `{}`",
+                    scenario.id,
+                    required
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -688,6 +747,13 @@ impl VatConfig {
             .with_context(|| format!("service `{id}` not found in {}", self.path.display()))
     }
 
+    pub fn scenario(&self, id: &str) -> Result<&ScenarioConfig> {
+        self.scenarios
+            .iter()
+            .find(|s| s.id == id)
+            .with_context(|| format!("scenario `{id}` not found in {}", self.path.display()))
+    }
+
     pub fn base_dir(&self) -> PathBuf {
         resolve_relative(&self.root, &self.workspace.base)
     }
@@ -818,6 +884,82 @@ artifacts = ["out.txt"]
     }
 
     #[test]
+    fn parses_scenario_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        std::fs::write(
+            &path,
+            r#"
+version = 1
+
+[[services]]
+id = "api"
+cmd = ["true"]
+
+[[services]]
+id = "pg"
+cmd = ["true"]
+
+[[runners]]
+id = "e2e"
+requires = ["pg"]
+cmd = ["true"]
+
+[[scenarios]]
+id = "prod-like"
+app = "api"
+requires = ["pg"]
+runner = "e2e"
+network = "hermetic"
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_file(&path).unwrap();
+        let scenario = cfg.scenario("prod-like").unwrap();
+        assert_eq!(scenario.app, "api");
+        assert_eq!(scenario.requires, vec!["pg"]);
+        assert_eq!(scenario.runner, "e2e");
+        assert_eq!(scenario.network, ScenarioNetworkMode::Hermetic);
+    }
+
+    #[test]
+    fn rejects_scenario_unknown_references() {
+        let cfg = VatConfig {
+            version: 1,
+            network: None,
+            name: None,
+            default_runner: None,
+            workspace: WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: {
+                let mut service = bare_service("api");
+                service.cmd = vec!["true".into()];
+                vec![service]
+            },
+            runners: vec![RunnerConfig {
+                id: "e2e".into(),
+                requires: Vec::new(),
+                cmd: vec!["true".into()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            scenarios: vec![ScenarioConfig {
+                id: "bad".into(),
+                app: "missing".into(),
+                requires: Vec::new(),
+                runner: "e2e".into(),
+                network: ScenarioNetworkMode::Open,
+            }],
+            path: PathBuf::from("vat.toml"),
+            root: PathBuf::from("."),
+            digest: String::new(),
+        };
+        assert!(validate(&cfg).is_err());
+    }
+
+    #[test]
     fn rejects_unknown_required_service() {
         let cfg = VatConfig {
             version: 1,
@@ -835,6 +977,7 @@ artifacts = ["out.txt"]
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: PathBuf::from("vat.toml"),
             root: PathBuf::from("."),
             digest: String::new(),
@@ -880,6 +1023,7 @@ artifacts = ["out.txt"]
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: PathBuf::from("vat.toml"),
             root: PathBuf::from("."),
             digest: String::new(),
@@ -948,6 +1092,7 @@ artifacts = ["out.txt"]
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: PathBuf::from("vat.toml"),
             root: PathBuf::from("."),
             digest: String::new(),
@@ -972,6 +1117,7 @@ artifacts = ["out.txt"]
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: PathBuf::from("vat.toml"),
             root: PathBuf::from("."),
             digest: String::new(),

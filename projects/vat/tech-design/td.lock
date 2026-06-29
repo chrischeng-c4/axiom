@@ -1,8 +1,8 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-27T07:09:43.892889+00:00"
-digest = "sha256:0214a23f405730cd1ba38c6da27314fbf0ae80695110cb0c9d54dedcd9b941c9"
+generated_at = "2026-06-29T04:33:46.432869+00:00"
+digest = "sha256:5b795be7feb143da542233d12adfd1c90e8e6669469dd0c21ce7358fd468aee4"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -71,6 +71,10 @@ digest = "sha256:2860986a019818207bd9efab6b7500049c3d446a221f2fdf2df8fe8af7eab3b
 [[files]]
 path = "logic/local-agent-test-runner-protocol.md"
 digest = "sha256:fca71d48799920b24c4f8f1ce80050a45db34e71707acfbd506e315fae26b522"
+
+[[files]]
+path = "logic/production-like-integration-scenarios.md"
+digest = "sha256:674414c13706bebf6e659f8a5f947fbc88f993bbd77442430bf0de8add4af5af"
 
 [[files]]
 path = "logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md"
