@@ -34,10 +34,10 @@ use super::super::value::MbValue;
 ///     lock backing. Keep this body minimal — extra allocation
 ///     regresses the gate.
 ///   - All other constructors return passive Instance shells of the
-///     matching class name. Methods (`add_cookie_header`,
-///     `extract_cookies`, `set_cookie`, `load`, `save`, `clear`,
-///     `make_cookies`, etc.) are NOT attached; CPython code that
-///     calls them through the instance will diverge.
+///     matching class name. The jar/file methods below cover the behavior
+///     fixtures (`set_cookie`, `extract_cookies`, `add_cookie_header`,
+///     `load`, `save`, `clear`, iteration, length); deeper policy hooks
+///     such as `make_cookies` remain out of scope.
 ///
 /// Carve-outs (deliberately out of scope for this surface ticket):
 ///   - No actual cookie parsing or jar bookkeeping — `CookieJar.set_cookie()`
@@ -179,6 +179,10 @@ fn jar_cookies(self_v: MbValue) -> MbValue {
             lst
         }
     }
+}
+
+fn call_method(receiver: MbValue, name: &str, args: Vec<MbValue>) -> MbValue {
+    super::super::class::mb_call_method(receiver, new_str(name), new_list(args))
 }
 
 // ── Variadic dispatchers ──
@@ -466,6 +470,160 @@ unsafe extern "C" fn m_jar_set_cookie(self_v: MbValue, args: MbValue) -> MbValue
     MbValue::none()
 }
 
+fn response_set_cookie_headers(response: MbValue) -> Vec<String> {
+    let info = call_method(response, "info", Vec::new());
+    if info.is_none() {
+        return Vec::new();
+    }
+    let raw = call_method(
+        info,
+        "get_all",
+        vec![new_str("Set-Cookie"), new_list(Vec::new())],
+    );
+    items_of(raw).into_iter().filter_map(extract_str).collect()
+}
+
+fn cookie_default_path(request: MbValue) -> String {
+    let path = request_path_impl(request);
+    if !path.starts_with('/') {
+        return "/".to_string();
+    }
+    match path.rfind('/') {
+        Some(0) | None => "/".to_string(),
+        Some(i) => path[..i].to_string(),
+    }
+}
+
+fn parse_set_cookie_header(header: &str, request: MbValue) -> Option<MbValue> {
+    let mut parts = header.split(';').map(str::trim);
+    let first = parts.next()?.trim();
+    let (name, value) = first.split_once('=')?;
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    let mut domain = request_host_impl(request);
+    let mut path = cookie_default_path(request);
+    let mut secure = false;
+    let mut expires = MbValue::none();
+    let mut discard = true;
+
+    for attr in parts {
+        if attr.is_empty() {
+            continue;
+        }
+        let (key, val) = attr.split_once('=').unwrap_or((attr, ""));
+        match key.trim().to_ascii_lowercase().as_str() {
+            "domain" => {
+                let d = strip_quotes(val.trim()).to_ascii_lowercase();
+                if !d.is_empty() {
+                    domain = d;
+                }
+            }
+            "path" => {
+                let p = strip_quotes(val.trim());
+                if !p.is_empty() {
+                    path = p;
+                }
+            }
+            "secure" => secure = true,
+            "expires" => {
+                if let Some(stamp) = http2time_impl(&strip_quotes(val.trim())) {
+                    expires = MbValue::from_int(stamp);
+                    discard = false;
+                }
+            }
+            "max-age" => discard = false,
+            _ => {}
+        }
+    }
+
+    let cookie = make_class_shell("Cookie");
+    set_inst_field(cookie, "version", MbValue::from_int(0));
+    set_inst_field(cookie, "name", new_str(name));
+    set_inst_field(cookie, "value", new_str(&strip_quotes(value.trim())));
+    set_inst_field(cookie, "domain", new_str(&domain));
+    set_inst_field(cookie, "path", new_str(&path));
+    set_inst_field(cookie, "secure", MbValue::from_bool(secure));
+    set_inst_field(cookie, "expires", expires);
+    set_inst_field(cookie, "discard", MbValue::from_bool(discard));
+    Some(cookie)
+}
+
+/// CookieJar.extract_cookies(response, request) -> None. Pulls Set-Cookie
+/// headers from `response.info()` and stores simple name/value cookies.
+unsafe extern "C" fn m_jar_extract_cookies(self_v: MbValue, args: MbValue) -> MbValue {
+    let pos = items_of(args);
+    let response = pos.first().copied().unwrap_or_else(MbValue::none);
+    let request = pos.get(1).copied().unwrap_or_else(MbValue::none);
+    let cookies = jar_cookies(self_v);
+    for header in response_set_cookie_headers(response) {
+        if let Some(cookie) = parse_set_cookie_header(&header, request) {
+            super::super::list_ops::mb_list_append(cookies, cookie);
+        }
+    }
+    MbValue::none()
+}
+
+fn cookie_domain_matches(request_host: &str, cookie_domain: &str) -> bool {
+    let host = request_host.trim_end_matches('.').to_ascii_lowercase();
+    let raw_domain = cookie_domain.trim_end_matches('.').to_ascii_lowercase();
+    let domain = raw_domain.trim_start_matches('.');
+    if host == domain {
+        return true;
+    }
+    raw_domain.starts_with('.') && host.ends_with(&format!(".{domain}"))
+}
+
+fn cookie_path_matches(request_path: &str, cookie_path: &str) -> bool {
+    let path = if cookie_path.is_empty() {
+        "/"
+    } else {
+        cookie_path
+    };
+    request_path == path
+        || (request_path.starts_with(path)
+            && (path.ends_with('/') || request_path[path.len()..].starts_with('/')))
+}
+
+/// CookieJar.add_cookie_header(request) -> None. Adds a Cookie header containing
+/// stored cookies that match the request's host and path.
+unsafe extern "C" fn m_jar_add_cookie_header(self_v: MbValue, args: MbValue) -> MbValue {
+    let request = items_of(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
+    let req_host = request_host_impl(request);
+    let req_path = request_path_impl(request);
+    let mut pairs = Vec::new();
+    for cookie in items_of(jar_cookies(self_v)) {
+        let Some(name) = inst_field(cookie, "name").and_then(extract_str) else {
+            continue;
+        };
+        let value = inst_field(cookie, "value")
+            .and_then(extract_str)
+            .unwrap_or_default();
+        let domain = inst_field(cookie, "domain")
+            .and_then(extract_str)
+            .unwrap_or_else(|| req_host.clone());
+        let path = inst_field(cookie, "path")
+            .and_then(extract_str)
+            .unwrap_or_else(|| "/".to_string());
+        if cookie_domain_matches(&req_host, &domain) && cookie_path_matches(&req_path, &path) {
+            pairs.push(format!("{name}={value}"));
+        }
+    }
+    if !pairs.is_empty() {
+        call_method(
+            request,
+            "add_header",
+            vec![new_str("Cookie"), new_str(&pairs.join("; "))],
+        );
+    }
+    MbValue::none()
+}
+
 /// CookieJar.__len__() -> int. Number of cookies currently stored.
 unsafe extern "C" fn m_jar_len(self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_int(items_of(jar_cookies(self_v)).len() as i64)
@@ -737,6 +895,8 @@ fn register_classes() {
         &[],
         &[
             ("set_cookie", m_jar_set_cookie as usize, true),
+            ("extract_cookies", m_jar_extract_cookies as usize, true),
+            ("add_cookie_header", m_jar_add_cookie_header as usize, true),
             ("clear", m_jar_clear as usize, true),
             (
                 "clear_session_cookies",
