@@ -1064,6 +1064,24 @@ fn test_direct_builtin_typed_argument_rejected_unless_shadowed() {
 }
 
 #[test]
+fn test_stdlib_bool_bitwise_wrong_scalar_rejected() {
+    let errors = check("from builtins import bool\nobj = bool()\nobj.__and__(\"bad\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `int`, got `str`")),
+        "bool.__and__(str) should be rejected, got: {errors:?}"
+    );
+
+    let errors =
+        check("from builtins import bool\nobj = bool()\nobj.__and__(True)\nobj.__or__(1)\n");
+    assert!(
+        errors.is_empty(),
+        "bool bitwise dunders must allow bool/int operands, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_unenforceable_never_rejected() {
     // base64.b64encode(s: ReadableBuffer) -> Unknown: NOT enforceable. Even a
     // blatantly wrong int must NOT be rejected.
