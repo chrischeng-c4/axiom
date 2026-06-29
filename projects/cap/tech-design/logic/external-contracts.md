@@ -47,9 +47,11 @@ e2e_tests:
     claim_id: shared-standard-cli-commands
     contract_id: standard-agent-cli-operations
     category: behavior
-    command: "cargo test -p cap --lib cli_std_convention -- --nocapture && cargo build -p cap --features release"
+    command: "cargo test -p cap --lib cli_std_convention -- --nocapture && cargo test -p cap installed_frontend_exposes_standard_agent_commands -- --nocapture && cargo build -p cap --features release"
     assertions:
       - "cap help lists llm, upgrade, issue, and report-issue compatibility commands"
+      - "installed cap frontend delegates standard commands through the cap-full sibling"
+      - "installed cap frontend preserves the caller environment for cap-full passthrough commands"
       - "cap llm renders cap-specific offline docs through cli-std"
       - "cap issue create and report-issue dry-run payloads carry project:cap diagnostics"
       - "release-feature builds enable cli-std online paths"

@@ -1011,8 +1011,11 @@ static int exec_full(int argc, char **argv) {
     }
   }
 
+  const char *public_arg0 = getenv("CAP_PUBLIC_EXE");
+  if (!public_arg0 || !*public_arg0) public_arg0 = full;
+
   char *full_argv[argc + 1];
-  full_argv[0] = full;
+  full_argv[0] = (char *)public_arg0;
   for (int idx = 1; idx < argc; idx++) full_argv[idx] = argv[idx];
   full_argv[argc] = NULL;
 

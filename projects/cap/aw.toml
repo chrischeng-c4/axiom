@@ -14,7 +14,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "cap"
-generated_from_td_digest = "sha256:93a7f9b45b3137f4ec4bd1bc052e129718edf06f6e908f9c8ff319415c54e500"
+generated_from_td_digest = "sha256:0eebc26b7373bf8a5511f35f4512a4c7cb7ca273fcac079537680c44d6a8aecd"
 
 [[aw.ec.generated.cases]]
 id = "cap-agent-hook-installation"
@@ -183,10 +183,12 @@ contract_id = "standard-agent-cli-operations"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-standard-agent-cli-operations"
 test_path = "projects/cap/tests/behavior_cap_standard_agent_cli_operations.rs"
-command = "cargo test -p cap --lib cli_std_convention -- --nocapture && cargo build -p cap --features release"
+command = "cargo test -p cap --lib cli_std_convention -- --nocapture && cargo test -p cap installed_frontend_exposes_standard_agent_commands -- --nocapture && cargo build -p cap --features release"
 required_for_production = true
 assertions = [
     "cap help lists llm, upgrade, issue, and report-issue compatibility commands",
+    "installed cap frontend delegates standard commands through the cap-full sibling",
+    "installed cap frontend preserves the caller environment for cap-full passthrough commands",
     "cap llm renders cap-specific offline docs through cli-std",
     "cap issue create and report-issue dry-run payloads carry project:cap diagnostics",
     "release-feature builds enable cli-std online paths",

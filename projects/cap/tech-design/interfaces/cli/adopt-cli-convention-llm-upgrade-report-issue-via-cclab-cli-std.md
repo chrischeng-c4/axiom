@@ -115,6 +115,9 @@ elements:
   cli_unit_tests:
     kind: test
     type: "cargo test -p cap cli_std_convention"
+  installed_frontend_smoke:
+    kind: test
+    type: "cargo test -p cap installed_frontend_exposes_standard_agent_commands"
   cap_package_tests:
     kind: test
     type: "cargo test -p cap"
@@ -123,9 +126,13 @@ elements:
     type: "cargo build -p cap --features release"
 relations:
   - { from: cli_unit_tests, verifies: help_surface }
+  - { from: installed_frontend_smoke, verifies: help_surface }
   - { from: cli_unit_tests, verifies: llm_offline }
+  - { from: installed_frontend_smoke, verifies: llm_offline }
   - { from: cli_unit_tests, verifies: issue_create }
+  - { from: installed_frontend_smoke, verifies: issue_create }
   - { from: cli_unit_tests, verifies: legacy_report_issue }
+  - { from: installed_frontend_smoke, verifies: legacy_report_issue }
   - { from: cap_package_tests, verifies: help_surface }
   - { from: cap_release_feature_build, verifies: build_features }
 ---

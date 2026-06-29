@@ -7,10 +7,12 @@
 // @contract standard-agent-cli-operations
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cap --lib cli_std_convention -- --nocapture && cargo build -p cap --features release
+// @command cargo test -p cap --lib cli_std_convention -- --nocapture && cargo test -p cap installed_frontend_exposes_standard_agent_commands -- --nocapture && cargo build -p cap --features release
 // AW-EC-END
 
 // Contract: cap help lists llm, upgrade, issue, and report-issue compatibility commands
+// Contract: installed cap frontend delegates standard commands through the cap-full sibling
+// Contract: installed cap frontend preserves the caller environment for cap-full passthrough commands
 // Contract: cap llm renders cap-specific offline docs through cli-std
 // Contract: cap issue create and report-issue dry-run payloads carry project:cap diagnostics
 // Contract: release-feature builds enable cli-std online paths
@@ -18,7 +20,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn cap_standard_agent_cli_operations() {
     let command =
-        "cargo test -p cap --lib cli_std_convention -- --nocapture && cargo build -p cap --features release";
+        "cargo test -p cap --lib cli_std_convention -- --nocapture && cargo test -p cap installed_frontend_exposes_standard_agent_commands -- --nocapture && cargo build -p cap --features release";
     let id = "cap-standard-agent-cli-operations";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

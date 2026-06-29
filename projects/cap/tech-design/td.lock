@@ -1,12 +1,12 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-29T08:27:06.268072+00:00"
-digest = "sha256:cb69b584503794157ca73f4029643360ac02fdc456ea20ebeb86b541896547dc"
+generated_at = "2026-06-29T09:00:52.630921+00:00"
+digest = "sha256:ae29610dfb9900570b7f5ba1e46e0653813cf3490d9148780472670e0b95536f"
 
 [[files]]
 path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
-digest = "sha256:3809001ff28223e8359c0142b600e75b772029d2bd8669ee4f1b3296867472eb"
+digest = "sha256:da3e77bc56b0527cc5e106dcba88643418ad9cdb23375b81ffe16705a98f3a4e"
 
 [[files]]
 path = "logic/add-per-session-queue-with-observe-command-barriers.md"
@@ -26,7 +26,7 @@ digest = "sha256:50bb7576f093d57f5e6efb7b7346969c767d3d44da6da590bea6048bfee6254
 
 [[files]]
 path = "logic/external-contracts.md"
-digest = "sha256:fd433ad571c6617e55aac66ed6937838fec226a37705bcf49b28fd4134326bc1"
+digest = "sha256:7e84cbcd94237ba65f037c0fa1dfcb131c9f7ddac9ac6becd23ebac6790e7aec"
 
 [[files]]
 path = "semantic/cap-benches.md"
@@ -34,7 +34,7 @@ digest = "sha256:4e4177698b62759b4992eb00975845389a6b1d5ca5faf4da98a969ac515e581
 
 [[files]]
 path = "semantic/cap-build-script.md"
-digest = "sha256:f2dd849b501e5ef5bae4d871a1c69085b64c6ab5b87ea9a02a0535cd173af412"
+digest = "sha256:4f43a7edbcbdf724ab7344ce2521b11a03aa7059a57a3ec18ca01ac7e8c27a52"
 
 [[files]]
 path = "semantic/cap-install-script.md"
@@ -94,7 +94,7 @@ digest = "sha256:5b03035f946ec2290d725188b7850a7849d5cb716157312cc0ffcb664d3ec9d
 
 [[files]]
 path = "semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md"
-digest = "sha256:40b45337414de2af5126964b971d242a798ac589aeea871d377c2ada8aa68e6a"
+digest = "sha256:da125f75a3e24d6d5a55ded2f660c69b417070e8b400620ba0276e0aacf6650e"
 
 [[files]]
 path = "semantic/source/reap.md"

@@ -36,7 +36,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Agent Hook Installation | - | implemented | verified | smoke | ready | `cargo test -p cap hook_install` |
-| Standard Agent CLI Operations | #477 | implemented | verified | smoke | ready | `cargo test -p cap cli_std_convention` |
+| Standard Agent CLI Operations | #477 | implemented | verified | smoke | ready | `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands` |
 | Command Lease Throttling | - | implemented | verified | smoke | ready | `cargo test -p cap throttle` |
 | Daemon Lifecycle and Status | - | implemented | verified | smoke | ready | `cargo test -p cap daemon` |
 | Config, Logging, and Reap Policy | - | implemented | verified | smoke | ready | `cargo test -p cap config eventlog reap` |
@@ -74,11 +74,11 @@ Cap exposes the repo-wide standard agent commands through the shared `cli-std`
 implementation: `llm` for offline guidance, `upgrade` for cap release updates,
 and `issue` for tracker search/view/create with `project:cap` diagnostics.
 Gate Inventory:
-- `cargo test -p cap cli_std_convention`; `cargo build -p cap --features release`
+- `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands`; `cargo build -p cap --features release`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Shared standard CLI commands | change | #477 | implemented | verified | smoke | `cargo test -p cap cli_std_convention` |
+| Shared standard CLI commands | change | #477 | implemented | verified | smoke | `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands` |
 
 ### Command Lease Throttling
 
@@ -151,7 +151,7 @@ Build + install, then run `cap init`:
 
 ```bash
 # 1. build & put `cap` on your PATH (e.g. ~/.local/bin)
-projects/cap/build.sh debug
+CAP_INSTALL="$HOME/.local/bin" projects/cap/build.sh debug
 
 # 2. wire the PreToolUse hook into your agents (user-global)
 cap init        # installs into BOTH Claude Code and Codex CLI
