@@ -9,12 +9,11 @@
 # case = "Context__run__callable_as_Callable_wrong"
 # subject = "_contextvars.Context.run(callable: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed callable"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_contextvars.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed callable
 # mamba-strict-type: TypeError
 """Type wall: _contextvars.Context.run(callable: Callable); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from _contextvars import Context
-obj = object.__new__(Context)
+obj = Context()
 try:
     obj.run(_W())  # callable: Callable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
