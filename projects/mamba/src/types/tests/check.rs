@@ -837,6 +837,41 @@ fn test_stdlib_iter_wrong_bare_object_rejected() {
     );
 }
 
+#[test]
+fn test_stdlib_list_dunder_contracts_rejected() {
+    let errors = check(
+        "obj = []\nobj.__add__(12345)\nobj.__ge__(12345)\nobj.__gt__(12345)\nobj.__le__(12345)\nobj.__lt__(12345)\n",
+    );
+    let list_value_errors = errors
+        .iter()
+        .filter(|e| e.contains("expected `list`, got `int`"))
+        .count();
+    assert_eq!(
+        list_value_errors, 5,
+        "list value dunders should reject concrete non-list operands, got: {errors:?}"
+    );
+
+    let errors = check(
+        "class _W:\n    pass\nobj = []\nobj.__getitem__(_W())\nobj.__delitem__(_W())\nobj.__setitem__(_W(), None)\n",
+    );
+    let key_errors = errors
+        .iter()
+        .filter(|e| e.contains("does not satisfy parameter `key`"))
+        .count();
+    assert_eq!(
+        key_errors, 3,
+        "list key dunders should reject bare key operands, got: {errors:?}"
+    );
+
+    let errors = check(
+        "obj = []\nobj.__add__([])\nobj.__ge__([])\nobj.__gt__([])\nobj.__le__([])\nobj.__lt__([])\nobj.__getitem__(0)\nobj.__getitem__(slice(0, 1))\nobj.__delitem__(0)\nobj.__setitem__(0, None)\nobj.__setitem__(slice(0, 1), [])\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid list dunder forms must stay accepted, got: {errors:?}"
+    );
+}
+
 // R9.3: getattr() with default (3-arg form) must be accepted
 #[test]
 fn test_getattr_three_arg_form_accepted() {
