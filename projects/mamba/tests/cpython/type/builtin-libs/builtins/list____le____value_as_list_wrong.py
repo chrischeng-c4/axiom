@@ -22,7 +22,7 @@ typeshed contract: value is list. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import list
-obj = object.__new__(list)
+obj = []
 try:
     obj.__le__(12345)  # value: list <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
