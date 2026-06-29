@@ -9,12 +9,11 @@
 # case = "bisect_left__a_as_SupportsGetItem_wrong"
 # subject = "_bisect.bisect_left(a: SupportsGetItem)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_bisect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: _bisect.bisect_left(a: SupportsGetItem); call it with the wrong type.
 
