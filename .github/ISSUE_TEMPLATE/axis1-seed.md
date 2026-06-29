@@ -8,7 +8,8 @@ labels: ["project:mamba", "axis:1", "type:test"]
 Epic: #3331
 
 ## Seed location
-`projects/mamba/tests/fixtures/cpython_lib_test/<seed|3p|realworld>/<stem>.py`
+Manifest case under `projects/mamba/tests/harness/cpython/config/manifests/<bucket>/<lib>.toml`;
+generated fixture under `projects/mamba/tests/cpython/<dimension>/<bucket>/<lib>/<case>.py`.
 
 ## Surface (what the seed asserts)
 - [ ] <feature 1 / API 1>
@@ -16,14 +17,13 @@ Epic: #3331
 - [ ] ... (at least 5 real assertions)
 
 ## Acceptance
-- [ ] Seed authored, real assertions, no stubs
+- [ ] Manifest case authored and generated fixture filled with real assertions, no stubs
 - [ ] Emits `MAMBA_ASSERTION_PASS: <stem> <n> asserts` on exit 0
-- [ ] Pinned at `outcome = "AssertionPass"` in `cpython_lib_test_baseline.toml`
-- [ ] Pinned at `minimum_outcome = "AssertionPass"` in `cpython_lib_test_allowlist.toml`
-- [ ] `cargo test -p mamba --test cpython_lib_test_runner --release` green
+- [ ] `[tool.mamba]` record is schema-clean under the current CPython harness
+- [ ] `cargo test -p mamba --test conformance_cpython_lib_test` green under the debug build
 - [ ] If runtime gap blocks AssertionPass: separate runtime-gap issue filed + linked; THIS issue stays open
 
 ## Discipline (non-negotiable, see #3331)
 - NO `xfail` / `Stub` / `ImportPass`. Only `AssertionPass` counts.
-- NO TOML-schema theater. The Rust test that walks this seed is `cpython_lib_test_runner.rs` — it executes `mamba run`.
+- NO TOML-schema theater. The Rust test that walks this seed is `tests/harness/cpython/lib_test.rs` via `cargo test -p mamba --test conformance_cpython_lib_test`; it executes `mamba run`.
 - Real-world preferred. Distilled minimal repros of bugs outrank synthetic features.

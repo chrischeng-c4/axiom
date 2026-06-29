@@ -40,7 +40,7 @@ mode: autopilot
 
 ## Definition of done — four gates (all must hold)
 1. **Test gate** — `cargo test -p cclab-mamba` passes. For stdlib lib issues, also run the lib's behavior test fixture under `projects/mamba/tests/` or `benches/`.
-2. **Axis-1 gate** — `cargo test -p mamba --test cpython_lib_test_runner --release` passes. **Required on every PR**, including ones that don't touch the runner. If a PR's changes flip a previously-green axis-1 seed to red, the PR cannot merge; the fix lands in the same PR. This enforces epic #3331 discipline rules 3 + 4 (no xfail/Stub/ImportPass; growing-only allowlist) — without it, future iterations can silently regress axis 1.
+2. **Axis-1 gate** — `cargo test -p mamba --test conformance_cpython_lib_test` passes under the debug build. **Required on every PR**, including ones that don't touch the runner. If a PR's changes flip a previously-green axis-1 seed to red, the PR cannot merge; the fix lands in the same PR. This enforces epic #3331 discipline rules 3 + 4 (no xfail/Stub/ImportPass; growing-only allowlist) — without it, future iterations can silently regress axis 1. Release-profile runs are reserved for perf and final promotion, not normal runtime development.
 3. **Perf gate** — measured perf ≥ 1.0× CPython wall-time for the relevant workload. **Mamba's primary product is perf+memory > CPython; conformance is secondary.** If the lib can't beat CPython on any reasonable workload, comment on the issue with the numbers and close as `wontfix` or defer to a runtime/JIT followup — don't ship a slower mamba.
 4. **Real-world verification** — typeshed type check passes OR a real-world fixture (one of the `ecosystem_fixture_manifest.toml` entries, or a small idiomatic snippet) runs and produces the expected output.
 

@@ -253,7 +253,7 @@ manifest.toml ──fixture_gen.py──▶ skeleton/complete .py ──agent fi
    replaces the AGENT-FILL/UNFILLED region with the real body, and flips
    `status` to `"filled"`. The generator is **idempotent**: it never overwrites
    a `filled` file, may regenerate a `generated` one, and creates new ones.
-4. **Lint** — `python3.12 tools/fixture_lint.py` enforces the schema, the
+4. **Lint** — `python3.12 tests/harness/cpython/tools/fixture_lint.py` enforces the schema, the
    path↔metadata agreement, and that no `filled`/mechanical file still carries a
    placeholder. It **reports** (does not fail on) `status = "generated"`
    skeletons and **LEGACY** (un-migrated) files. Filters: `--bucket`, `--lib`,
@@ -341,8 +341,9 @@ path only.
 2. `python3.12 tools/fixture_gen.py <manifest>` — emits the file (mechanical
    complete; semantic = skeleton).
 3. If semantic, fill the `AGENT-FILL` body and flip `status` to `filled`.
-4. `python3.12 tools/fixture_lint.py --lib <lib>` → schema-clean, 0 unfilled.
-5. `python3.12 tools/verify_cpython_oracle.py --bucket <bucket> --lib <lib>`
+4. `python3.12 tests/harness/cpython/tools/fixture_lint.py --lib <lib>` →
+   schema-clean, 0 unfilled.
+5. `python3.12 tests/harness/cpython/tools/verify_cpython_oracle.py --bucket <bucket> --lib <lib>`
    exits `0` for the CPython side.
 6. `mamba run <file>` matches, or set `xfail` in the manifest.
 7. The Cargo harness picks it up automatically — no runner edit needed.
