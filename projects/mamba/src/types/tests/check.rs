@@ -1308,6 +1308,28 @@ fn test_stdlib_bool_bitwise_wrong_scalar_rejected() {
 }
 
 #[test]
+fn test_stdlib_set_operator_bare_instance_rejected() {
+    let errors =
+        check("from builtins import set\nclass _W:\n    pass\nobj = set()\nobj.__and__(_W())\nobj.__ge__(_W())\nobj.__gt__(_W())\nobj.__iand__(_W())\nobj.__ior__(_W())\nobj.__isub__(_W())\nobj.__ixor__(_W())\nobj.__le__(_W())\nobj.__lt__(_W())\nobj.__or__(_W())\nobj.__sub__(_W())\nobj.__xor__(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .filter(|e| e.contains("does not satisfy parameter `value`"))
+            .count()
+            >= 12,
+        "set operators should reject bare non-AbstractSet operands, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import set\nclass SetLike:\n    def __contains__(self, item):\n        return False\nobj = set()\nobj.__and__(set())\nobj.__ior__(SetLike())\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "set operator wall must stay skip-safe for modeled/dynamic set-like operands, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_frozenset_operator_bare_instance_rejected() {
     let errors =
         check("from builtins import frozenset\nclass _W:\n    pass\nobj = frozenset()\nobj.__and__(_W())\nobj.__ge__(_W())\nobj.__gt__(_W())\nobj.__le__(_W())\nobj.__lt__(_W())\nobj.__or__(_W())\nobj.__sub__(_W())\nobj.__xor__(_W())\n");

@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import set
-obj = object.__new__(set)
+obj = set()
 try:
     obj.__ge__(_W())  # value: AbstractSet <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
