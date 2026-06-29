@@ -827,6 +827,8 @@ impl TypeChecker {
                     } else if let Some(sym) = self.symbols.lookup(base) {
                         if matches!(self.tcx.get(self.get_sym_type(sym.0)), Ty::List(_)) {
                             super::stdlib_sigs::get("builtins", "list", attr)
+                        } else if matches!(self.tcx.get(self.get_sym_type(sym.0)), Ty::Tuple(_)) {
+                            super::stdlib_sigs::get("builtins", "tuple", attr)
                         } else if self.symbols.get_symbol(sym).kind == SymbolKind::Function {
                             // User-defined Python functions are instances of
                             // builtins.function. This keeps descriptor walls such as
@@ -918,6 +920,7 @@ impl TypeChecker {
                     | super::stdlib_sigs::CoreTy::MemoryView
                     | super::stdlib_sigs::CoreTy::Complex
                     | super::stdlib_sigs::CoreTy::List
+                    | super::stdlib_sigs::CoreTy::Tuple
                     | super::stdlib_sigs::CoreTy::Bool
                     | super::stdlib_sigs::CoreTy::Typed
             );
@@ -970,6 +973,7 @@ impl TypeChecker {
                     super::stdlib_sigs::CoreTy::Bytes
                         | super::stdlib_sigs::CoreTy::MemoryView
                         | super::stdlib_sigs::CoreTy::List
+                        | super::stdlib_sigs::CoreTy::Tuple
                 ) && !actual_is_none
                     && self.is_concrete_scalar(actual)
                 {
@@ -977,6 +981,7 @@ impl TypeChecker {
                         super::stdlib_sigs::CoreTy::Bytes => "bytes",
                         super::stdlib_sigs::CoreTy::MemoryView => "memoryview",
                         super::stdlib_sigs::CoreTy::List => "list",
+                        super::stdlib_sigs::CoreTy::Tuple => "tuple",
                         _ => unreachable!(),
                     };
                     self.error(

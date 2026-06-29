@@ -845,6 +845,7 @@ impl TypeChecker {
             | CoreTy::MemoryView
             | CoreTy::Complex
             | CoreTy::List
+            | CoreTy::Tuple
             | CoreTy::Typed
             | CoreTy::Unknown => None,
         }
