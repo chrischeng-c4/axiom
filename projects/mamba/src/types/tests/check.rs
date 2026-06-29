@@ -1015,6 +1015,27 @@ fn test_stdlib_object_subclasshook_rejects_instance_not_type() {
     );
 }
 
+#[test]
+fn test_stdlib_reversed_new_protocol_sequence_rejected() {
+    let errors = check(
+        "from builtins import reversed\nclass _W:\n    pass\nreversed.__new__(reversed, _W())\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `sequence`")),
+        "reversed.__new__(reversed, _W()) should reject a bare non-sequence instance, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import reversed\nclass SeqLike:\n    def __len__(self):\n        return 0\n    def __getitem__(self, index):\n        return index\nreversed.__new__(reversed, [1, 2])\nreversed.__new__(reversed, SeqLike())\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "reversed.__new__ protocol wall must stay skip-safe for list and sequence-like operands, got: {errors:?}"
+    );
+}
+
 // R9.3: getattr() with default (3-arg form) must be accepted
 #[test]
 fn test_getattr_three_arg_form_accepted() {

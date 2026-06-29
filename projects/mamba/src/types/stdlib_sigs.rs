@@ -752,6 +752,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("subclass", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: reversed.__new__(sequence) accepts Reversible /
+    // SupportsLenAndGetItem protocol values. Model that protocol contract as a
+    // Typed negative wall so a bare instance is rejected while concrete
+    // sequence/protocol-shaped values stay skip-safe.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "reversed",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[p("cls", CoreTy::Typed), p("sequence", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: classmethod is descriptor-shaped. These curated rows only
     // reject a provably bare `_W()` for Callable/type-variable contracts; real
     // callables and dynamic descriptor uses stay skip-safe.
