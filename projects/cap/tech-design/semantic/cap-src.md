@@ -2160,7 +2160,9 @@ changes:
       - { module: "paths", symbols: [] }
       - { module: "protocol", symbols: [] }
       - { module: "reap", symbols: [] }
+      - { module: "resident_shell", symbols: [] }
       - { module: "sampler", symbols: [] }
+      - { module: "session_queue", symbols: [] }
       - { module: "supervisor", symbols: [] }
       - { module: "throttle", symbols: [] }
   - path: "projects/cap/src/hook_install.rs"

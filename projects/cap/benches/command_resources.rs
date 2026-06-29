@@ -546,6 +546,11 @@ impl Fixture {
         for idx in 0..500 {
             fs::write(list_dir.join(format!(".hidden-{idx:03}")), b"x")?;
         }
+        let small_list_dir = root.join("ls-small");
+        fs::create_dir(&small_list_dir)?;
+        for idx in 0..8 {
+            fs::write(small_list_dir.join(format!("tiny-{idx}.txt")), b"x")?;
+        }
 
         let cat_file = root.join("cat-large.txt");
         write_repeated(&cat_file, b"0123456789abcdef\n", 512 * 1024)?;
@@ -569,12 +574,16 @@ impl Fixture {
                 writeln!(sed, "line {idx:06}")?;
             }
         }
+        let small_sed_file = root.join("sed-small.txt");
+        fs::write(&small_sed_file, "one\ntwo\nthree\nfour\n")?;
 
         let sort_file = root.join("sort-lines.txt");
         let mut sort = fs::File::create(&sort_file)?;
         for idx in (0..500_000).rev() {
             writeln!(sort, "line-{idx:06}")?;
         }
+        let small_sort_file = root.join("sort-small.txt");
+        fs::write(&small_sort_file, "c\na\nb\n")?;
 
         let find_root = root.join("find-tree");
         for dir_idx in 0..80 {
@@ -584,6 +593,11 @@ impl Fixture {
                 fs::write(subdir.join(format!("item-{file_idx:03}.txt")), b"find\n")?;
                 fs::write(subdir.join(format!("item-{file_idx:03}.bin")), b"find\n")?;
             }
+        }
+        let small_find_root = root.join("find-small");
+        fs::create_dir_all(&small_find_root)?;
+        for idx in 0..8 {
+            fs::write(small_find_root.join(format!("small-{idx}.txt")), b"find\n")?;
         }
 
         let grep_root = root.join("grep-tree");
@@ -603,6 +617,14 @@ impl Fixture {
                 fs::write(file, contents)?;
             }
         }
+        let small_grep_root = root.join("grep-small");
+        fs::create_dir_all(&small_grep_root)?;
+        for idx in 0..8 {
+            fs::write(
+                small_grep_root.join(format!("small-{idx}.txt")),
+                "ordinary searchable text\nNEEDLE once\n",
+            )?;
+        }
 
         let xargs_input = root.join("xargs-input.txt");
         let mut xargs = fs::File::create(&xargs_input)?;
@@ -615,14 +637,19 @@ impl Fixture {
 
     fn scenarios(&self) -> Vec<Scenario> {
         let list_dir = self.root.join("ls-many");
+        let small_list_dir = self.root.join("ls-small");
         let cat_file = self.root.join("cat-large.txt");
         let mkdir_existing = self.root.join("mkdir-existing/a/b");
         let touch_file = self.root.join("touch-existing.txt");
         let byte_window_file = self.root.join("byte-window.bin");
         let sed_file = self.root.join("sed-lines.txt");
+        let small_sed_file = self.root.join("sed-small.txt");
         let sort_file = self.root.join("sort-lines.txt");
+        let small_sort_file = self.root.join("sort-small.txt");
         let find_root = self.root.join("find-tree");
+        let small_find_root = self.root.join("find-small");
         let grep_root = self.root.join("grep-tree");
+        let small_grep_root = self.root.join("grep-small");
         let xargs_input = self.root.join("xargs-input.txt");
         let long_basename_suffix = "suffix".repeat(78);
         let long_basename_path = format!(
@@ -714,6 +741,17 @@ impl Fixture {
                 cap_args: strings(["ls", "-1", &path_string(&list_dir)]),
                 original_program: "/bin/ls".to_string(),
                 original_args: strings(["-1", &path_string(&list_dir)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "ls_small_original_path",
+                command: "ls",
+                description: "small ls stays on original path",
+                gate: Gate::Candidate,
+                expected_exit_code: 0,
+                cap_args: strings(["ls", "-1", &path_string(&small_list_dir)]),
+                original_program: "/bin/ls".to_string(),
+                original_args: strings(["-1", &path_string(&small_list_dir)]),
                 stdin_file: None,
             },
             Scenario {
@@ -834,6 +872,30 @@ impl Fixture {
                 stdin_file: None,
             },
             Scenario {
+                id: "find_name_type_small_original_path",
+                command: "find",
+                description: "small find stays on original path",
+                gate: Gate::Candidate,
+                expected_exit_code: 0,
+                cap_args: strings([
+                    "find",
+                    &path_string(&small_find_root),
+                    "-type",
+                    "f",
+                    "-name",
+                    "*.txt",
+                ]),
+                original_program: "/usr/bin/find".to_string(),
+                original_args: strings([
+                    &path_string(&small_find_root),
+                    "-type",
+                    "f",
+                    "-name",
+                    "*.txt",
+                ]),
+                stdin_file: None,
+            },
+            Scenario {
                 id: "run_string_find_name_type",
                 command: "run",
                 description: "hook string: find 3,200 files, -type f -name *.txt",
@@ -878,6 +940,17 @@ impl Fixture {
                 stdin_file: None,
             },
             Scenario {
+                id: "sort_small_original_path",
+                command: "sort",
+                description: "small sort stays on original path",
+                gate: Gate::Candidate,
+                expected_exit_code: 0,
+                cap_args: strings(["sort", &path_string(&small_sort_file)]),
+                original_program: "/usr/bin/sort".to_string(),
+                original_args: strings([&path_string(&small_sort_file)]),
+                stdin_file: None,
+            },
+            Scenario {
                 id: "run_string_sort_single_file",
                 command: "run",
                 description: "hook string: sort 500,000 reverse-sorted lines",
@@ -897,6 +970,17 @@ impl Fixture {
                 cap_args: strings(["sed", "-n", "2500,7500p", &path_string(&sed_file)]),
                 original_program: "/usr/bin/sed".to_string(),
                 original_args: strings(["-n", "2500,7500p", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "sed_small_original_path",
+                command: "sed",
+                description: "small sed -n range stays on original path",
+                gate: Gate::Candidate,
+                expected_exit_code: 0,
+                cap_args: strings(["sed", "-n", "1,2p", &path_string(&small_sed_file)]),
+                original_program: "/usr/bin/sed".to_string(),
+                original_args: strings(["-n", "1,2p", &path_string(&small_sed_file)]),
                 stdin_file: None,
             },
             Scenario {
@@ -981,6 +1065,17 @@ impl Fixture {
                 cap_args: strings(["grep", "-R", "NEEDLE", &path_string(&grep_root)]),
                 original_program: "/usr/bin/grep".to_string(),
                 original_args: strings(["-R", "NEEDLE", &path_string(&grep_root)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "grep_recursive_small_original_path",
+                command: "grep",
+                description: "small recursive grep stays on original path",
+                gate: Gate::Candidate,
+                expected_exit_code: 0,
+                cap_args: strings(["grep", "-R", "NEEDLE", &path_string(&small_grep_root)]),
+                original_program: "/usr/bin/grep".to_string(),
+                original_args: strings(["-R", "NEEDLE", &path_string(&small_grep_root)]),
                 stdin_file: None,
             },
             Scenario {

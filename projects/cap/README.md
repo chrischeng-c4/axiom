@@ -36,6 +36,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Agent Hook Installation | - | implemented | verified | smoke | ready | `cargo test -p cap hook_install` |
+| Standard Agent CLI Operations | #477 | implemented | verified | smoke | ready | `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands` |
 | Command Lease Throttling | - | implemented | verified | smoke | ready | `cargo test -p cap throttle` |
 | Daemon Lifecycle and Status | - | implemented | verified | smoke | ready | `cargo test -p cap daemon` |
 | Config, Logging, and Reap Policy | - | implemented | verified | smoke | ready | `cargo test -p cap config eventlog reap` |
@@ -58,6 +59,26 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Claude and Codex hook installation | epic | - | implemented | verified | smoke | `cargo test -p cap hook_install` |
 | Hook payload rewrite adapters | epic | - | implemented | verified | smoke | `cargo test -p cap hook` |
+
+### Standard Agent CLI Operations
+
+ID: standard-agent-cli-operations
+Type: RuntimeTool
+Surfaces: CLI: `cap llm` + `cap upgrade` + `cap issue search/view/create` + `cap report-issue` - Repo-wide agent-facing self-documentation, self-update, and diagnostics-rich issue filing through `cli-std`; `report-issue` is a deprecated compatibility alias for older issue text.
+EC Dimensions: behavior: `cap` - standard CLI command registration, offline LLM docs, release upgrade routing, and project-scoped issue diagnostics
+Root WI: #477
+Status: verified
+Required Verification: smoke
+Promise:
+Cap exposes the repo-wide standard agent commands through the shared `cli-std`
+implementation: `llm` for offline guidance, `upgrade` for cap release updates,
+and `issue` for tracker search/view/create with `project:cap` diagnostics.
+Gate Inventory:
+- `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands`; `cargo build -p cap --features release`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Shared standard CLI commands | change | #477 | implemented | verified | smoke | `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands` |
 
 ### Command Lease Throttling
 
@@ -130,7 +151,7 @@ Build + install, then run `cap init`:
 
 ```bash
 # 1. build & put `cap` on your PATH (e.g. ~/.local/bin)
-projects/cap/build.sh debug
+CAP_INSTALL="$HOME/.local/bin" projects/cap/build.sh debug
 
 # 2. wire the PreToolUse hook into your agents (user-global)
 cap init        # installs into BOTH Claude Code and Codex CLI
@@ -149,22 +170,33 @@ regardless of the agent shell's `PATH`. It does not decide whether `find`,
 `grep`, pipes, or any other command should be optimized. That decision belongs
 inside cap.
 
+Standard agent commands:
+
+| Command | Purpose |
+|---|---|
+| `cap llm [--topic <topic>] [--format md\|json]` | Offline self-documentation for agents. |
+| `cap upgrade [--version <tag>] [--check]` | Self-update from `cap@*` GitHub releases through `cli-std`. |
+| `cap issue search [query]` / `view <n>` / `create [--title <t>] [message...]` | Search, read, and file `project:cap` issues with build diagnostics. |
+| `cap report-issue --dry-run ...` | Deprecated compatibility alias for older automation; prefer `cap issue create`. |
+
 Cap's planner owns automatic command replacement. It preserves the familiar
 command shape while selecting faster implementations only for safe subsets
-that satisfy a measured resource gate. The preferred gate is dual-win: cap must
-beat the original command on both CPU time and peak RSS. When a tiny command is
-blocked by platform process-floor CPU cost, cap can use an RSS fallback gate
-only when the RSS improvement is large enough to justify the CPU regression.
-Other same-name commands may have candidate hot paths, but they are not claimed
-as replacements until their benchmark wins the dual-win gate or a material
-RSS-fallback gate.
+that satisfy both a workload-size threshold and a measured resource gate. Tiny
+or unknown workloads stay on the original command path because fixed cap
+overhead would dominate. The preferred gate is dual-win: cap must beat the
+original command on both CPU time and peak RSS. When a tiny command is blocked
+by platform process-floor CPU cost, cap can use an RSS fallback gate only when
+the RSS improvement is large enough to justify the CPU regression. Other
+same-name commands may have candidate hot paths, but they are not claimed as
+replacements until their benchmark wins the dual-win gate or a material
+RSS-fallback gate on a representative workload.
 
 Hook boundary:
 
 | Layer | Responsibility |
 |---|---|
 | Agent Bash hook | Receives the Bash tool's command string and rewrites it to `cap run '<original>'`. It should stay thin: empty-command and recursion prevention only. |
-| `cap run "<command string>"` | Owns command-string wrapping. It parses shell-free simple commands into argv, sends them through the command planner, and falls back to `bash -c` for pipes, redirects, globs, shell variables, `cd && ...`, and shell builtins. |
+| `cap run "<command string>"` | Owns command-string wrapping. A resident light-shell session captures the current cwd/env, attempts a conservative in-process native stage for proven shell-free commands, and dynamically falls back to `bash -c <original>` for pipes, redirects, globs, shell variables, `cd && ...`, shell builtins, and unproven command shapes. |
 | `cap run -- <argv...>` | Manual explicit argv mode. It skips shell-string parsing and plans the exact argv the user supplied. |
 | cap command planner | Owns same-name command replacement decisions and benchmark-gated fallback behavior. |
 
@@ -172,25 +204,37 @@ For example, the hook emits `cap run 'find . -type f -name "*.txt"'`; cap
 parses that string internally and can run the same native `find` replacement as
 `cap find . -type f -name "*.txt"`. For `find . -type f | xargs wc -l`, cap
 detects shell syntax and wraps the original string as `bash -c` internally so
-the shell keeps pipe behavior.
+the shell keeps pipe behavior. The resident layer is an optimizer boundary, not
+a sandbox or replacement shell: unsupported syntax must delegate to Bash rather
+than fail as command-not-found.
 
-Active same-name replacements:
+Session queueing is opt-in through `CAP_SESSION_ID`. When it is set, cap can
+queue profiled no-observe side effects and return job metadata immediately;
+the first slice only queues simple `touch <path...>` commands. Observe commands
+such as `ls`, `cat`, `grep`, and `find` act as same-session barriers: they wait
+for earlier queued jobs before returning their own result, and if a prior job
+failed they report that job id and stderr instead of hiding the cause behind
+the observe command. Without `CAP_SESSION_ID`, or for unknown/risky command
+strings, `cap run` keeps the existing synchronous behavior.
+
+Active same-name replacements are workload-sensitive fast paths:
 
 | Command | Replaced subset | Gate | Notes |
 |---|---|---|---|
-| `ls` | simple `ls -1` / `ls -a` / `ls -A` over one path | dual-win | High-entry-count directories. |
+| `ls` | simple `ls -1` / `ls -a` / `ls -A` over one path | dual-win | Directories with at least 1,024 matching entries. |
 | `cat` | regular file arguments without flags | dual-win | **Deferral candidate** — only RSS-neutral vs system `cat` (near-tie, not a real win); see [Deferred and planned direction](#deferred-and-planned-direction). |
 | `uniq` | one input file | dual-win | Especially large adjacent-duplicate or stdout-discard cases. |
-| `find` | `<root> -type f -name "*.txt"` | dual-win | Simple name/type walk only. |
+| `find` | `<root> -type f -name "*.txt"` | dual-win | Simple name/type walks over trees with at least 512 entries. |
 | `du` | `du -sk <root>` | dual-win | Includes stdout-discard fast path; missing-root errors are parity-tested. |
 | `sort` | one regular file of at least 1 MiB | dual-win | Large single-file sorting. |
-| `sed` | `sed -n <start>,<end>p <file>` | dual-win | Bounded line-range reads. |
-| `grep` | recursive literal `grep -R <pattern> <root>` subset | dual-win | Literal recursive search; no-match and missing-root behavior are parity-tested. |
+| `sed` | `sed -n <start>,<end>p <file>` | dual-win | Files at least 1 MiB or requested spans of at least 1,024 lines. |
+| `grep` | recursive literal `grep -R <pattern> <root>` subset | dual-win | Roots with at least 64 files or 1 MiB estimated text bytes; no-match and missing-root behavior are parity-tested. |
 
 Promotion requires both resource evidence and behavior parity. The installed
 binary shape is tested against system commands for successful stdout, nonzero
 exit codes, missing-path stderr diagnostics, and quiet nonzero cases such as
-recursive `grep` no-match.
+recursive `grep` no-match. If the cheap workload probe cannot prove the
+threshold, cap keeps the original command path.
 
 Pipe behavior is deliberate:
 
@@ -477,7 +521,7 @@ cap daemon stop      # next `cap run` auto-spawns the new one
   requires a `cap daemon stop`.
 * Same-name command replacement is the early model; marginal single-command
   gates (e.g. `cat`) are being retired toward native passthrough, and the next
-  real win is pipeline fusion — see
+  real win is resident light-shell pipeline fusion with dynamic Bash fallback — see
   [Deferred and planned direction](#deferred-and-planned-direction).
 </content>
 </invoke>
