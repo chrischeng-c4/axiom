@@ -419,6 +419,38 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: generated `_queue.SimpleQueue` rows keep `_T` and bool-like
+    // extension parameters too loose for force-typed fixtures. Tighten only the
+    // parameters represented by the current probes while preserving the rest of
+    // the generated shape.
+    StdlibSig {
+        module: "_queue",
+        qualifier: "SimpleQueue",
+        name: "get",
+        kind: SigKind::Method,
+        params: &[p("block", CoreTy::Bool), p("timeout", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_queue",
+        qualifier: "SimpleQueue",
+        name: "put",
+        kind: SigKind::Method,
+        params: &[
+            p("item", CoreTy::Typed),
+            p("block", CoreTy::Typed),
+            p("timeout", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_queue",
+        qualifier: "SimpleQueue",
+        name: "put_nowait",
+        kind: SigKind::Method,
+        params: &[p("item", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
