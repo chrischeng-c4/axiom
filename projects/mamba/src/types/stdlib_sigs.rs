@@ -451,6 +451,39 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("item", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: generated `_remote_debugging` rows collapse callback/list/bool
+    // contracts to Unknown/Typed. Tighten only the force-typed probes that the
+    // current fixtures exercise.
+    StdlibSig {
+        module: "_remote_debugging",
+        qualifier: "BinaryReader",
+        name: "replay",
+        kind: SigKind::Method,
+        params: &[
+            p("collector", CoreTy::Unknown),
+            p("progress_callback", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_remote_debugging",
+        qualifier: "BinaryWriter",
+        name: "write_sample",
+        kind: SigKind::Method,
+        params: &[
+            p("stack_frames", CoreTy::List),
+            p("timestamp_us", CoreTy::Int),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_remote_debugging",
+        qualifier: "GCMonitor",
+        name: "get_gc_stats",
+        kind: SigKind::Method,
+        params: &[p("all_interpreters", CoreTy::Bool)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
