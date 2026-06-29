@@ -28,7 +28,7 @@ use utoipa::OpenApi;
 
 use axum::http::HeaderMap;
 
-use crate::auth::{auth_middleware, AuthConfig, AuthContext, Role};
+use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
 use crate::coordinator::{WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
@@ -346,7 +346,7 @@ pub fn router(state: AppState) -> Router {
     // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
     // `/docs`) stay open so K8s probes and Prometheus scrape can hit
     // them without a token even when auth is required.
-    let auth_state = state.auth.clone();
+    let auth_state = Arc::new(LumenVerifier::new(state.auth.clone()));
     let data_plane = Router::new()
         .route("/collections", get(list_collections))
         .route(

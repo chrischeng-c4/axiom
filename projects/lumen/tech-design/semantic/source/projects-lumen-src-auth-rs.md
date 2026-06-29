@@ -1,11 +1,11 @@
 ---
 id: projects-lumen-src-auth-rs
 capability_refs:
-  - id: "competitor-feature-parity"
+  - id: "security-hardening"
     role: primary
-    claim: "query-planner-boolean-eval-roaring-postings"
+    claim: "bearer-token-auth-lumen-auth"
     coverage: partial
-    rationale: "This source unit is captured as a per-file rust-source-unit during lumen td_ast standardization."
+    rationale: "auth.rs owns Lumen bearer-token auth, shared service-auth verifier adoption, and per-collection RBAC enforcement."
 fill_sections: [overview, source, changes]
 ---
 
@@ -20,17 +20,19 @@ Public API manifest for `projects/lumen/src/auth.rs` generated from AST during S
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuthConfig` | projects/lumen/src/auth.rs | struct | pub | 68 |  |
-| `AuthContext` | projects/lumen/src/auth.rs | enum | pub | 103 |  |
-| `AuthErr` | projects/lumen/src/auth.rs | enum | pub | 178 |  |
-| `Role` | projects/lumen/src/auth.rs | enum | pub | 44 |  |
-| `TokenClaims` | projects/lumen/src/auth.rs | struct | pub | 59 |  |
-| `auth_middleware` | projects/lumen/src/auth.rs | function | pub | 146 | auth_middleware(     State(cfg): State<Arc<AuthConfig>>,     mut req: Request,     next: Next, ) -> Response |
-| `covers` | projects/lumen/src/auth.rs | function | pub | 52 | covers(self, needed: Role) -> bool |
-| `ensure` | projects/lumen/src/auth.rs | function | pub | 112 | ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> |
-| `from_env` | projects/lumen/src/auth.rs | function | pub | 82 | from_env() -> Result<Self> |
-| `open` | projects/lumen/src/auth.rs | function | pub | 75 | open() -> Self |
-| `subject` | projects/lumen/src/auth.rs | function | pub | 137 | subject(&self) -> Option<&str> |
+| `AuthConfig` | projects/lumen/src/auth.rs | struct | pub | 69 |  |
+| `AuthContext` | projects/lumen/src/auth.rs | enum | pub | 140 |  |
+| `AuthErr` | projects/lumen/src/auth.rs | enum | pub | 193 |  |
+| `LumenVerifier` | projects/lumen/src/auth.rs | struct | pub | 104 |  |
+| `Role` | projects/lumen/src/auth.rs | enum | pub | 45 |  |
+| `TokenClaims` | projects/lumen/src/auth.rs | struct | pub | 60 |  |
+| `auth_middleware` | projects/lumen/src/auth.rs | function | pub | 183 | auth_middleware(     State(verifier): State<Arc<LumenVerifier>>,     req: Request,     next: Next, ) -> Response |
+| `covers` | projects/lumen/src/auth.rs | function | pub | 53 | covers(self, needed: Role) -> bool |
+| `ensure` | projects/lumen/src/auth.rs | function | pub | 149 | ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> |
+| `from_env` | projects/lumen/src/auth.rs | function | pub | 83 | from_env() -> Result<Self> |
+| `new` | projects/lumen/src/auth.rs | function | pub | 110 | new(cfg: Arc<AuthConfig>) -> Self |
+| `open` | projects/lumen/src/auth.rs | function | pub | 76 | open() -> Self |
+| `subject` | projects/lumen/src/auth.rs | function | pub | 174 | subject(&self) -> Option<&str> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -65,11 +67,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Json, Response},
 };
 use serde::{Deserialize, Serialize};
+use service_auth::{bearer_token, AuthError as ServiceAuthError, Verifier};
 
 use crate::types::ApiError;
 
@@ -134,6 +137,42 @@ impl AuthConfig {
     }
 }
 
+/// Lumen's concrete verifier for the shared `service-auth` middleware.
+#[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
+pub struct LumenVerifier {
+    cfg: Arc<AuthConfig>,
+}
+
+/// @spec projects/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
+impl LumenVerifier {
+    pub fn new(cfg: Arc<AuthConfig>) -> Self {
+        Self { cfg }
+    }
+}
+
+/// @spec projects/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
+impl Verifier for LumenVerifier {
+    type Principal = AuthContext;
+
+    fn authenticate(&self, headers: &HeaderMap) -> Result<AuthContext, ServiceAuthError> {
+        match (self.cfg.required, bearer_token(headers)) {
+            (false, None) => Ok(AuthContext::Open),
+            (_, Some(t)) => self
+                .cfg
+                .lookup(t)
+                .cloned()
+                .map(AuthContext::Token)
+                .ok_or(ServiceAuthError::Unauthenticated),
+            (true, None) => Err(ServiceAuthError::Unauthenticated),
+        }
+    }
+
+    fn required(&self) -> bool {
+        self.cfg.required
+    }
+}
+
 /// Resolved auth state attached to every request as an axum extension.
 #[derive(Debug, Clone)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
@@ -181,33 +220,11 @@ impl AuthContext {
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 pub async fn auth_middleware(
-    State(cfg): State<Arc<AuthConfig>>,
-    mut req: Request,
+    State(verifier): State<Arc<LumenVerifier>>,
+    req: Request,
     next: Next,
 ) -> Response {
-    if !cfg.required && cfg.tokens.is_empty() && !req.headers().contains_key(header::AUTHORIZATION)
-    {
-        req.extensions_mut().insert(AuthContext::Open);
-        return next.run(req).await;
-    }
-
-    let token = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|s| s.to_owned());
-
-    let ctx = match (cfg.required, token.as_deref()) {
-        (false, None) => AuthContext::Open,
-        (_, Some(t)) => match cfg.lookup(t) {
-            Some(claims) => AuthContext::Token(claims.clone()),
-            None => return AuthErr::Unauthenticated.into_response(),
-        },
-        (true, None) => return AuthErr::Unauthenticated.into_response(),
-    };
-    req.extensions_mut().insert(ctx);
-    next.run(req).await
+    service_auth::auth_middleware::<LumenVerifier>(State(verifier), req, next).await
 }
 
 #[derive(Debug)]
@@ -342,6 +359,54 @@ mod tests {
         };
         assert!(cfg.lookup("abc").is_some());
         assert!(cfg.lookup("xyz").is_none());
+    }
+
+    #[test]
+    fn lumen_verifier_open_mode_without_bearer_returns_open_context() {
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig::open()));
+        let ctx = verifier.authenticate(&HeaderMap::new()).unwrap();
+        assert!(matches!(ctx, AuthContext::Open));
+    }
+
+    #[test]
+    fn lumen_verifier_known_bearer_returns_token_context() {
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
+            required: true,
+            tokens: HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
+        }));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer abc".parse().unwrap(),
+        );
+        let ctx = verifier.authenticate(&headers).unwrap();
+        assert_eq!(ctx.subject(), Some("tester"));
+        assert!(ctx.ensure("u", Role::Write).is_ok());
+    }
+
+    #[test]
+    fn lumen_verifier_invalid_bearer_rejects_with_shared_unauthenticated() {
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
+            required: true,
+            tokens: HashMap::from([("abc".to_string(), token(&[("u", Role::Read)]))]),
+        }));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer nope".parse().unwrap(),
+        );
+        let err = verifier.authenticate(&headers).unwrap_err();
+        assert!(matches!(err, ServiceAuthError::Unauthenticated));
+    }
+
+    #[test]
+    fn lumen_verifier_required_missing_bearer_rejects_with_shared_unauthenticated() {
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
+            required: true,
+            tokens: HashMap::new(),
+        }));
+        let err = verifier.authenticate(&HeaderMap::new()).unwrap_err();
+        assert!(matches!(err, ServiceAuthError::Unauthenticated));
     }
 
     #[test]

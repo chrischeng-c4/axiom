@@ -53,6 +53,9 @@ h2c = { path = "../../libs/h2c", features = ["server"] }
 # always build; the HTTPS paths are pulled in by lumen's `self-update` /
 # `issue` features via `cli-std/online`.
 cli-std = { path = "../../libs/cli-std", default-features = false }
+# Shared request-auth plumbing: Lumen supplies only the static role-map verifier
+# and per-collection RBAC policy.
+service-auth = { path = "../../libs/service-auth" }
 # Lumen-owned HA: writes replicated through the shared raft-core engine (behind
 # the `raft-wal` feature). Peer RPCs ride the same h2c transport.
 raft-core = { path = "../../libs/raft-core", optional = true }
