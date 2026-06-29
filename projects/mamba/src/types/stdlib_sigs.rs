@@ -484,6 +484,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("all_interpreters", CoreTy::Bool)],
         enforceable: true,
     },
+    // POSITIVE: generated `_socket.getnameinfo` keeps sockaddr as Unknown, so
+    // the force-typed probe leaks to the runtime _socket surface gap. Tighten
+    // only sockaddr while preserving the generated int flags contract.
+    StdlibSig {
+        module: "_socket",
+        qualifier: "",
+        name: "getnameinfo",
+        kind: SigKind::ModuleFn,
+        params: &[p("sockaddr", CoreTy::Typed), p("flags", CoreTy::Int)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
