@@ -9,12 +9,11 @@
 # case = "TextIOWrapper__init__buffer_as__BufferT_co_wrong"
 # subject = "_io.TextIOWrapper.__init__(buffer: _BufferT_co)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_io.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer
 # mamba-strict-type: TypeError
 """Type wall: _io.TextIOWrapper.__init__(buffer: _BufferT_co); call it with the wrong type.
 

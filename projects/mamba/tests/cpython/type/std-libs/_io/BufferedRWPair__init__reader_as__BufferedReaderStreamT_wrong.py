@@ -9,12 +9,11 @@
 # case = "BufferedRWPair__init__reader_as__BufferedReaderStreamT_wrong"
 # subject = "_io.BufferedRWPair.__init__(reader: _BufferedReaderStreamT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed reader"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_io.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed reader
 # mamba-strict-type: TypeError
 """Type wall: _io.BufferedRWPair.__init__(reader: _BufferedReaderStreamT); call it with the wrong type.
 

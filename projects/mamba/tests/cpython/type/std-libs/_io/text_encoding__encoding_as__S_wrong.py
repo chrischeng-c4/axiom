@@ -9,12 +9,11 @@
 # case = "text_encoding__encoding_as__S_wrong"
 # subject = "_io.text_encoding(encoding: _S)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed encoding"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_io.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed encoding
 # mamba-strict-type: TypeError
 """Type wall: _io.text_encoding(encoding: _S); call it with the wrong type.
 

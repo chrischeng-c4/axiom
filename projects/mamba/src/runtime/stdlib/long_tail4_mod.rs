@@ -1,4 +1,4 @@
-use super::super::rc::MbObject;
+use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 /// Long-tail stub batch 4 for Mamba (#1261).
 ///
@@ -29,6 +29,83 @@ unsafe extern "C" fn dispatch_int_zero(_a: *const MbValue, _n: usize) -> MbValue
 }
 unsafe extern "C" fn dispatch_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
+}
+
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn is_str(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+}
+
+fn is_io_stream_like(v: MbValue) -> bool {
+    if v.is_none() || v.is_bool() || v.is_int() || v.is_float() {
+        return false;
+    }
+    v.as_ptr().is_some_and(|p| unsafe {
+        match &(*p).data {
+            ObjData::Dict(_) => true,
+            ObjData::Instance { class_name, .. } => matches!(
+                class_name.as_str(),
+                "IOBase"
+                    | "RawIOBase"
+                    | "BufferedIOBase"
+                    | "TextIOBase"
+                    | "FileIO"
+                    | "BytesIO"
+                    | "StringIO"
+                    | "BufferedReader"
+                    | "BufferedWriter"
+                    | "BufferedRWPair"
+                    | "BufferedRandom"
+                    | "TextIOWrapper"
+                    | "SpooledTemporaryFile"
+                    | "NamedTemporaryFile"
+            ),
+            _ => false,
+        }
+    })
+}
+
+unsafe extern "C" fn dispatch_io_stream_constructor(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    if nargs == 0 {
+        return raise_type_error("missing required stream argument");
+    }
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if !is_io_stream_like(a[0]) {
+        return raise_type_error("expected an IO stream object");
+    }
+    dispatch_class_shell(args_ptr, nargs)
+}
+
+unsafe extern "C" fn dispatch_io_rw_pair(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs < 2 {
+        return raise_type_error("missing required stream argument");
+    }
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if !is_io_stream_like(a[0]) || !is_io_stream_like(a[1]) {
+        return raise_type_error("expected IO stream objects");
+    }
+    dispatch_class_shell(args_ptr, nargs)
+}
+
+unsafe extern "C" fn dispatch_io_text_encoding(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs > 0 {
+        let encoding = unsafe { *args_ptr };
+        if !encoding.is_none() && !is_str(encoding) {
+            return raise_type_error("encoding must be str or None");
+        }
+    }
+    dispatch_empty_str(args_ptr, nargs)
 }
 
 fn register_addrs(addrs: &[usize]) {
@@ -806,7 +883,23 @@ fn register_c_extensions() {
         &[
             ("open", dispatch_class_shell as *const () as usize),
             ("open_code", dispatch_class_shell as *const () as usize),
-            ("text_encoding", dispatch_empty_str as *const () as usize),
+            (
+                "BufferedReader",
+                dispatch_io_stream_constructor as *const () as usize,
+            ),
+            (
+                "BufferedWriter",
+                dispatch_io_stream_constructor as *const () as usize,
+            ),
+            ("BufferedRWPair", dispatch_io_rw_pair as *const () as usize),
+            (
+                "TextIOWrapper",
+                dispatch_io_stream_constructor as *const () as usize,
+            ),
+            (
+                "text_encoding",
+                dispatch_io_text_encoding as *const () as usize,
+            ),
         ],
         &[("DEFAULT_BUFFER_SIZE", 8192)],
         &[],
