@@ -1104,6 +1104,18 @@ fn test_stdlib_frozenset_operator_bare_instance_rejected() {
 }
 
 #[test]
+fn test_stdlib_frozenset_new_iterable_rejected() {
+    let errors =
+        check("from builtins import frozenset\nclass _W:\n    pass\nfrozenset.__new__(frozenset, _W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `iterable`")),
+        "frozenset.__new__(frozenset, _W()) should reject a bare non-Iterable operand, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_bytes_bytearray_wall_rejects_impossible_scalars() {
     let errors = check("from builtins import bytes\nobj = bytes()\nobj.__gt__(123)\n");
     assert!(

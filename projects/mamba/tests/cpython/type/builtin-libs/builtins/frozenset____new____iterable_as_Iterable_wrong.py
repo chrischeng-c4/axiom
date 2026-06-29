@@ -26,9 +26,8 @@ class _W:
 
 
 from builtins import frozenset
-obj = object.__new__(frozenset)
 try:
-    obj.__new__(_W())  # iterable: Iterable <- wrong-typed
+    frozenset.__new__(frozenset, _W())  # iterable: Iterable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
