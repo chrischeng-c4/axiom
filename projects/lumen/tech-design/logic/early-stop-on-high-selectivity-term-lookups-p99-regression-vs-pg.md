@@ -127,24 +127,23 @@ requirementDiagram
 
 ```yaml
 e2e_tests:
-  - id: vat-ec-efficiency-meter-kw-term
-    name: "vat ec-efficiency meter covers kw_term"
-    runner: vat
-    path: projects/lumen/vat.toml
-    command: "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
-    verifies:
-      - "Postgres and OpenSearch peers are provisioned by vat, not mocked."
-      - "The release `perf_gate_vs_db::competitive_perf_gate` includes the kw_term cell and native pg cheap-predicate evidence."
-      - "A clean meter report proves the current kw_term planner did not regress the release competitive gate."
-  - id: perf-gate-term-latency-floor
-    name: "term latency floor"
+  - id: local-term-latency-floor
+    name: "local term latency floor"
     runner: cargo
     path: projects/lumen/tests/perf_gate.rs
     command: "cargo test -p lumen --test perf_gate term_query_latency_floor -- --exact --nocapture"
     verifies:
-      - "The local perf gate still exercises the term lookup latency floor."
+      - "Exact term lookup stays below the local p99 regression budget."
+  - id: release-competitive-peer-gate
+    name: "release competitive peer gate"
+    runner: vat
+    path: projects/lumen/vat.toml
+    command: "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
+    verifies:
+      - "Postgres and OpenSearch peers are real services provisioned by vat."
+      - "The release competitive gate exits clean under meter."
+      - "kw_term remains represented in the gate and README performance table."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
