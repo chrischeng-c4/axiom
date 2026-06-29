@@ -44,3 +44,27 @@ flowchart TD
     evidence --> tests[add focused scenario tests]
     tests --> applicable([applicable to vat runner protocol])
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+config_changes:
+  - surface: "projects/vat/src/config.rs"
+    change: "Add optional scenarios: Vec<ScenarioConfig> to VatConfig with serde default."
+  - surface: "vat.toml"
+    change: "Introduce compatible [[scenarios]] entries; existing files with only services/runners remain valid."
+  - surface: "validation"
+    change: "Validate unique scenario ids, known app service, known required services, known runner, and supported network mode."
+scenario_shape:
+  fields:
+    id: "non-empty scenario id"
+    app: "service id for the app under test"
+    requires: "additional service ids for dependencies"
+    runner: "runner id to execute after readiness"
+    network: "open | hermetic; default open"
+compatibility:
+  existing_run_modes: "unchanged"
+  scenario_optional: true
+  service_schema_reuse: true
+```
