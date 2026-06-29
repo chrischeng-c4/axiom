@@ -9,12 +9,11 @@
 # case = "BufferedReader__init__raw_as__BufferedReaderStreamT_wrong"
 # subject = "_io.BufferedReader.__init__(raw: _BufferedReaderStreamT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed raw"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_io.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed raw
 # mamba-strict-type: TypeError
 """Type wall: _io.BufferedReader.__init__(raw: _BufferedReaderStreamT); call it with the wrong type.
 
