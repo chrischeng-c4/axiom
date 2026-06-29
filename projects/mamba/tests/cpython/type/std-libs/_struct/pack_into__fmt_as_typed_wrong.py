@@ -9,12 +9,11 @@
 # case = "pack_into__fmt_as_typed_wrong"
 # subject = "_struct.pack_into(fmt: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fmt"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_struct.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fmt
 # mamba-strict-type: TypeError
 """Type wall: _struct.pack_into(fmt: typed); call it with the wrong type.
 

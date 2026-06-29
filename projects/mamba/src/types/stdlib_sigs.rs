@@ -552,6 +552,29 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("format", CoreTy::Int)],
         enforceable: true,
     },
+    // POSITIVE: generated `_struct.pack`/`pack_into` rows are variadic and
+    // therefore skipped wholesale. Enforce only the fixed prefix; extra values
+    // remain skip-safe because the call hook stops when params are exhausted.
+    StdlibSig {
+        module: "_struct",
+        qualifier: "",
+        name: "pack",
+        kind: SigKind::ModuleFn,
+        params: &[p("fmt", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_struct",
+        qualifier: "",
+        name: "pack_into",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("fmt", CoreTy::Typed),
+            p("buffer", CoreTy::Typed),
+            p("offset", CoreTy::Int),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
