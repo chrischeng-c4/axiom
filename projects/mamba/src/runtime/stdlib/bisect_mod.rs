@@ -121,7 +121,10 @@ fn seq_insert(a: MbValue, pos: usize, x: MbValue) {
         }
     }
     let name = MbValue::from_ptr(MbObject::new_str("insert".to_string()));
-    let args = MbValue::from_ptr(MbObject::new_list(vec![super::super::bigint_ops::int_from_i64(pos as i64), x]));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![
+        super::super::bigint_ops::int_from_i64(pos as i64),
+        x,
+    ]));
     super::super::class::mb_call_method(a, name, args);
 }
 
@@ -184,7 +187,8 @@ fn coerce_index(v: MbValue, fname: &str) -> Result<i64, MbValue> {
     // A bound above 2^47 (e.g. `bisect(data, x, n - 10, n)` with n =
     // sys.maxsize) is a NaN-box-promoted BigInt; unbox it when it fits i64.
     use num_traits::ToPrimitive;
-    if let Some(i) = unsafe { super::super::bigint_ops::extract_bigint(v) }.and_then(|b| b.to_i64()) {
+    if let Some(i) = unsafe { super::super::bigint_ops::extract_bigint(v) }.and_then(|b| b.to_i64())
+    {
         return Ok(i);
     }
     Err(raise_type_error(&format!(
@@ -330,6 +334,13 @@ pub fn register() {
         });
     }
 
+    let mut accel_attrs = HashMap::new();
+    for name in ["bisect_left", "bisect_right", "insort_left", "insort_right"] {
+        if let Some(value) = attrs.get(name).copied() {
+            accel_attrs.insert(name.to_string(), value);
+        }
+    }
+    super::register_module("_bisect", accel_attrs);
     super::register_module("bisect", attrs);
 }
 
