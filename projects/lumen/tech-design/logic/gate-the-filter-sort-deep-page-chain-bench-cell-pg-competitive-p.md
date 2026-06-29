@@ -9,6 +9,7 @@ summary: >
 capability_refs:
   - id: "competitor-performance"
     role: primary
+    gap: "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
     claim: "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
     coverage: partial
     rationale: >
