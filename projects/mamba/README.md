@@ -67,6 +67,7 @@ Gate Inventory: `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Native mambalibs import/callable surface | epic | #3457 | partial | planned | conformance | `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs; projects/mamba/src/pkgmanage/builder/force_link.rs |
+| httpkit HTTP/2 client contract | change | #526 | implemented | verified | conformance | `cargo test -p mambalibs-http --test client_http2_test`; projects/mamba/mambalibs/httpkit/src/client |
 
 ### C4. Package manager — uv-like
 

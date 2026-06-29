@@ -4,7 +4,7 @@
 //! `mambalibs_http::http::Response`. Internally, requests are converted to
 //! `ExtractedRequest` for the middleware/reqwest path.
 
-use super::config::HttpClientConfig;
+use super::config::{HttpClientConfig, HttpProtocolPolicy};
 use super::error::{HttpError, HttpResult};
 use super::request::ExtractedRequest;
 use super::response::from_reqwest;
@@ -50,6 +50,10 @@ impl HttpClient {
             builder = builder.danger_accept_invalid_hostnames(true);
         }
 
+        if config.protocol_policy == HttpProtocolPolicy::RequireHttp2 {
+            builder = builder.http2_prior_knowledge();
+        }
+
         let client = builder.build()?;
 
         Ok(Self {
@@ -73,7 +77,7 @@ impl HttpClient {
         let reqwest_builder =
             request.build_reqwest(&self.inner.client, self.inner.config.base_url.as_deref())?;
 
-        let response = reqwest_builder.send().await?;
+        let response = self.send_reqwest(reqwest_builder).await?;
         let latency_ms = start.elapsed().as_millis() as u64;
 
         from_reqwest(response, latency_ms).await
@@ -99,7 +103,7 @@ impl HttpClient {
         let reqwest_builder =
             request.build_reqwest(&self.inner.client, self.inner.config.base_url.as_deref())?;
 
-        let response = reqwest_builder.send().await?;
+        let response = self.send_reqwest(reqwest_builder).await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -170,6 +174,21 @@ impl HttpClient {
 
     pub fn request(&self, method: HttpMethod, url: &str) -> Request {
         Request::new(method, url)
+    }
+
+    async fn send_reqwest(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> HttpResult<reqwest::Response> {
+        request.send().await.map_err(|err| {
+            if self.inner.config.protocol_policy == HttpProtocolPolicy::RequireHttp2 {
+                HttpError::Connection(format!(
+                    "HTTP/2 required by HttpProtocolPolicy::RequireHttp2; request could not negotiate or complete HTTP/2: {err}"
+                ))
+            } else {
+                err.into()
+            }
+        })
     }
 }
 

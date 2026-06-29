@@ -45,6 +45,20 @@ cargo build -p mambalibs-http
 cargo build -p mambalibs-http-binding
 ```
 
+## Client HTTP/2 contract
+
+`HttpClientConfig` exposes `HttpProtocolPolicy::Auto` and
+`HttpProtocolPolicy::RequireHttp2`. Auto mode preserves existing reqwest
+behavior: cleartext HTTP uses HTTP/1.1 by default and HTTPS can negotiate by
+ALPN. Require-HTTP/2 mode uses an HTTP/2-only transport policy and fails instead
+of silently falling back to HTTP/1.1.
+
+Client responses expose stable protocol evidence through
+`Response::protocol_version()` and `Response::is_http2()`. The offline gate
+`cargo test -p mambalibs-http --test client_http2_test` proves local h2c GET,
+POST/body, custom headers, response metadata, byte streaming, strict failure
+against an HTTP/1.1-only fixture, and default HTTP/1.1 behavior.
+
 ## Registered symbols
 
 <!-- SPEC-MANAGED: generated/readme#mamba-symbols -->

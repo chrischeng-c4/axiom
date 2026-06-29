@@ -36,3 +36,6 @@ cclab-core = { path = "../../../../crates/cclab-core" }
 [dev-dependencies]
 tokio-test = "0.4"
 wiremock = "0.6"
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "tokio", "http1", "http2"] }
+http-body-util = "0.1"

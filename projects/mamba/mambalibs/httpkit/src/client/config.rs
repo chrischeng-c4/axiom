@@ -43,6 +43,9 @@ pub struct HttpClientConfig {
 
     /// Enable brotli compression
     pub brotli: bool,
+
+    /// HTTP protocol policy for the client transport.
+    pub protocol_policy: HttpProtocolPolicy,
 }
 
 impl Default for HttpClientConfig {
@@ -61,6 +64,7 @@ impl Default for HttpClientConfig {
             danger_accept_invalid_hostnames: false,
             gzip: true,
             brotli: true,
+            protocol_policy: HttpProtocolPolicy::Auto,
         }
     }
 }
@@ -154,6 +158,38 @@ impl HttpClientConfig {
         self.brotli = enabled;
         self
     }
+
+    /// Set HTTP protocol policy.
+    pub fn protocol_policy(mut self, policy: HttpProtocolPolicy) -> Self {
+        self.protocol_policy = policy;
+        self
+    }
+
+    /// Use normal protocol negotiation. HTTPS uses ALPN when available; HTTP
+    /// preserves the existing HTTP/1.1 default behavior.
+    pub fn auto_http_protocol(mut self) -> Self {
+        self.protocol_policy = HttpProtocolPolicy::Auto;
+        self
+    }
+
+    /// Require HTTP/2 for every request. For cleartext local fixtures this uses
+    /// HTTP/2 prior knowledge (h2c); for TLS transports reqwest enforces an
+    /// HTTP/2-only preference.
+    pub fn require_http2(mut self) -> Self {
+        self.protocol_policy = HttpProtocolPolicy::RequireHttp2;
+        self
+    }
+}
+
+/// HTTP protocol behavior for the underlying transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpProtocolPolicy {
+    /// Preserve reqwest defaults: HTTP/1.1 for cleartext, ALPN negotiation for
+    /// HTTPS when the server supports it.
+    Auto,
+    /// Require HTTP/2. Requests fail instead of silently falling back to
+    /// HTTP/1.1.
+    RequireHttp2,
 }
 
 /// Retry configuration
@@ -228,6 +264,7 @@ mod tests {
         assert_eq!(config.timeout, Duration::from_secs(30));
         assert!(config.follow_redirects);
         assert_eq!(config.max_redirects, 10);
+        assert_eq!(config.protocol_policy, HttpProtocolPolicy::Auto);
     }
 
     #[test]
@@ -235,11 +272,13 @@ mod tests {
         let config = HttpClientConfig::new()
             .base_url("https://api.example.com")
             .timeout_secs(60.0)
-            .pool_max_idle_per_host(20);
+            .pool_max_idle_per_host(20)
+            .require_http2();
 
         assert_eq!(config.base_url, Some("https://api.example.com".to_string()));
         assert_eq!(config.timeout, Duration::from_secs(60));
         assert_eq!(config.pool_max_idle_per_host, 20);
+        assert_eq!(config.protocol_policy, HttpProtocolPolicy::RequireHttp2);
     }
 
     #[test]
