@@ -164,7 +164,6 @@ e2e_tests:
     verifies:
       - "The package compiles and the full Lumen regression suite remains green."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
