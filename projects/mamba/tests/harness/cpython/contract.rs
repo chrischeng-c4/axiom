@@ -419,3 +419,25 @@ fn safety_contract_has_adversarial_fixtures_and_sandboxed_runner() {
         );
     }
 }
+
+#[test]
+fn oracle_cache_contract_reports_warm_hit_metrics() {
+    let runner = std::fs::read_to_string(cpython_harness_dir().join("runner.rs"))
+        .expect("read conformance runner");
+    for needle in [
+        "ORACLE_CACHE_HITS",
+        "ORACLE_CACHE_MISSES",
+        "ORACLE_CACHE_DISABLED",
+        "[oracle-cache]",
+        "oracle hit={hit} miss={miss} disabled={disabled}",
+        "record_oracle_cache_hit(path)",
+        "record_oracle_cache_miss(path)",
+        "record_oracle_cache_disabled(path)",
+        "MAMBA_ORACLE_CACHE",
+    ] {
+        assert!(
+            runner.contains(needle),
+            "conformance runner is missing D5.3 oracle-cache metric marker `{needle}`"
+        );
+    }
+}

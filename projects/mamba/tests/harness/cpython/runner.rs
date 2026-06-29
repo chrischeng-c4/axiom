@@ -35,6 +35,7 @@ use datatest_stable::harness;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "harness_common.rs"]
 mod common;
@@ -445,6 +446,38 @@ fn oracle_cache_put(cache_file: &Path, stdout: &[u8]) {
     }
 }
 
+static ORACLE_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static ORACLE_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+static ORACLE_CACHE_DISABLED: AtomicU64 = AtomicU64::new(0);
+
+fn report_oracle_cache(event: &str, path: &Path, hit: u64, miss: u64, disabled: u64) {
+    eprintln!(
+        "  [oracle-cache] event={event} oracle hit={hit} miss={miss} disabled={disabled} fixture={}",
+        path.display()
+    );
+}
+
+fn record_oracle_cache_hit(path: &Path) {
+    let hit = ORACLE_CACHE_HITS.fetch_add(1, Ordering::Relaxed) + 1;
+    let miss = ORACLE_CACHE_MISSES.load(Ordering::Relaxed);
+    let disabled = ORACLE_CACHE_DISABLED.load(Ordering::Relaxed);
+    report_oracle_cache("hit", path, hit, miss, disabled);
+}
+
+fn record_oracle_cache_miss(path: &Path) {
+    let hit = ORACLE_CACHE_HITS.load(Ordering::Relaxed);
+    let miss = ORACLE_CACHE_MISSES.fetch_add(1, Ordering::Relaxed) + 1;
+    let disabled = ORACLE_CACHE_DISABLED.load(Ordering::Relaxed);
+    report_oracle_cache("miss", path, hit, miss, disabled);
+}
+
+fn record_oracle_cache_disabled(path: &Path) {
+    let hit = ORACLE_CACHE_HITS.load(Ordering::Relaxed);
+    let miss = ORACLE_CACHE_MISSES.load(Ordering::Relaxed);
+    let disabled = ORACLE_CACHE_DISABLED.fetch_add(1, Ordering::Relaxed) + 1;
+    report_oracle_cache("disabled", path, hit, miss, disabled);
+}
+
 fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
     // bench/*.py fixtures are owned by perf-pin Rust tests (shell-outs to
     // python3 + mamba run); they have no `.expected` goldens by design.
@@ -481,10 +514,35 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
     // fixture must exit 0 under CPython, mamba must exit 0, and stdout must match.
     // D5.3: a content-addressed cache short-circuits the oracle subprocess for
     // fixtures whose bytes (and python version) haven't changed.
-    let cache_file = oracle_cache_enabled().then(|| oracle_cache_path(&src));
-    let expected_stdout_bytes: Vec<u8> = match cache_file.as_ref().and_then(|f| oracle_cache_get(f))
-    {
-        Some(cached) => cached,
+    let cache_file = if oracle_cache_enabled() {
+        Some(oracle_cache_path(&src))
+    } else {
+        record_oracle_cache_disabled(path);
+        None
+    };
+    let expected_stdout_bytes: Vec<u8> = match cache_file.as_ref() {
+        Some(cache_file) => match oracle_cache_get(cache_file) {
+            Some(cached) => {
+                record_oracle_cache_hit(path);
+                cached
+            }
+            None => {
+                record_oracle_cache_miss(path);
+                let expected = spawn_python(path)?;
+                if !expected.status.success() {
+                    return Err(format!(
+                        "{}: INVALID fixture: CPython ended with {}\nstdout:\n{}\nstderr:\n{}",
+                        path.display(),
+                        status_detail(expected.status),
+                        String::from_utf8_lossy(&expected.stdout),
+                        String::from_utf8_lossy(&expected.stderr)
+                    )
+                    .into());
+                }
+                oracle_cache_put(cache_file, &expected.stdout);
+                expected.stdout
+            }
+        },
         None => {
             let expected = spawn_python(path)?;
             if !expected.status.success() {
@@ -496,9 +554,6 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
                     String::from_utf8_lossy(&expected.stderr)
                 )
                 .into());
-            }
-            if let Some(f) = &cache_file {
-                oracle_cache_put(f, &expected.stdout);
             }
             expected.stdout
         }
