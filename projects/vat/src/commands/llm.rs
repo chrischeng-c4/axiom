@@ -209,9 +209,16 @@ emitting JSON, while failed runs keep workspace state and logs for inspection.
   creates/lists/deletes/reports on explicit command, like kind/k3d themselves.
 "#;
 
+const TOPICS: &[cli_std::llm::Topic] = &[cli_std::llm::Topic {
+    id: "guide",
+    summary: "complete vat agent usage contract: run modes, services, evidence, and boundaries",
+    body: GUIDE,
+}];
+
 /// @spec projects/vat/tech-design/logic/llm-agent-usage-guide.md#cli
-pub fn exec() -> Result<ExitCode> {
-    print!("{GUIDE}");
+pub fn exec(topic: &str, format: cli_std::llm::Format) -> Result<ExitCode> {
+    let out = cli_std::llm::render("vat", crate::VERSION, TOPICS, topic, format)?;
+    println!("{out}");
     Ok(ExitCode::SUCCESS)
 }
 // CODEGEN-END

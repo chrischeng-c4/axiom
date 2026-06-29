@@ -23,8 +23,10 @@ during vat standardization onto the codegen ladder.
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `cli_convention_help_lists_all_three` | projects/vat/tests/vat_cli_convention.rs | function | private | 15 |  |
-| `cli_convention_report_issue_dry_run` | projects/vat/tests/vat_cli_convention.rs | function | private | 28 |  |
-| `cli_convention_upgrade_check_exits_cleanly` | projects/vat/tests/vat_cli_convention.rs | function | private | 51 |  |
+| `cli_convention_llm_flags` | projects/vat/tests/vat_cli_convention.rs | function | private | 36 |  |
+| `cli_convention_issue_create_dry_run` | projects/vat/tests/vat_cli_convention.rs | function | private | 60 |  |
+| `cli_convention_issue_help_lists_verbs` | projects/vat/tests/vat_cli_convention.rs | function | private | 83 |  |
+| `cli_convention_upgrade_check_exits_cleanly` | projects/vat/tests/vat_cli_convention.rs | function | private | 99 |  |
 | `vat` | projects/vat/tests/vat_cli_convention.rs | function | private | 10 | vat() -> &'static str |
 
 ## Source
@@ -32,7 +34,7 @@ during vat standardization onto the codegen ladder.
 
 ````rust
 //! Binary smoke test for the mandatory CLI convention: every CLI ships
-//! `llm`, `upgrade`, and `report-issue` (CONTRIBUTING.md).
+//! `llm`, `upgrade`, and `issue` (CONTRIBUTING.md).
 //!
 //! @command cargo test -p vat cli_convention -- --nocapture
 
@@ -49,20 +51,59 @@ fn cli_convention_help_lists_all_three() {
     assert!(out.status.success(), "vat --help should succeed");
     let stdout = String::from_utf8_lossy(&out.stdout);
     for verb in ["llm", "upgrade", "report-issue"] {
-        assert!(
-            stdout.contains(verb),
-            "vat --help is missing the mandatory `{verb}` verb:\n{stdout}"
-        );
+        if verb == "report-issue" {
+            assert!(
+                !stdout.contains(verb),
+                "vat --help should not expose deprecated `{verb}`:\n{stdout}"
+            );
+        } else {
+            assert!(
+                stdout
+                    .lines()
+                    .any(|line| line.trim_start().starts_with(verb)),
+                "vat --help is missing the mandatory `{verb}` verb:\n{stdout}"
+            );
+        }
     }
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.trim_start().starts_with("issue")),
+        "vat --help is missing the mandatory `issue` verb:\n{stdout}"
+    );
 }
 
 #[test]
-fn cli_convention_report_issue_dry_run() {
+fn cli_convention_llm_flags() {
     let out = Command::new(vat())
-        .args(["report-issue", "--title", "smoke test", "--dry-run"])
+        .args(["llm", "--topic", "outline", "--format", "json"])
         .output()
         .unwrap();
-    assert!(out.status.success(), "report-issue --dry-run should exit 0");
+    assert!(out.status.success(), "llm outline json should exit 0");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\"project\"") && stdout.contains("\"topics\""),
+        "llm --format json should print the cli-std JSON shape:\n{stdout}"
+    );
+
+    let guide = Command::new(vat())
+        .args(["llm", "--topic", "guide"])
+        .output()
+        .unwrap();
+    assert!(guide.status.success(), "llm --topic guide should exit 0");
+    assert!(
+        String::from_utf8_lossy(&guide.stdout).contains("vat LLM Guide"),
+        "llm --topic guide should print the detailed vat guide"
+    );
+}
+
+#[test]
+fn cli_convention_issue_create_dry_run() {
+    let out = Command::new(vat())
+        .args(["issue", "create", "--title", "smoke test", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "issue create --dry-run should exit 0");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("## Diagnostics"),
@@ -76,6 +117,21 @@ fn cli_convention_report_issue_dry_run() {
         stdout.contains(std::env::consts::OS),
         "dry-run body should include the OS:\n{stdout}"
     );
+}
+
+#[test]
+fn cli_convention_issue_help_lists_verbs() {
+    let out = Command::new(vat()).args(["issue", "--help"]).output().unwrap();
+    assert!(out.status.success(), "issue --help should exit 0");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for verb in ["search", "view", "create"] {
+        assert!(
+            stdout
+                .lines()
+                .any(|line| line.trim_start().starts_with(verb)),
+            "vat issue --help is missing `{verb}`:\n{stdout}"
+        );
+    }
 }
 
 #[test]

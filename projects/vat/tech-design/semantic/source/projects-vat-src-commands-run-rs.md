@@ -2474,8 +2474,12 @@ fn preset_exports(
     if service.export.is_empty() {
         env.insert(default_env.0.to_string(), default_env.1);
     } else {
-        for target in service.export.values() {
-            env.insert(target.clone(), default_env.1.clone());
+        for (key, template) in &service.export {
+            if template.contains("{host}") || template.contains("{port}") {
+                env.insert(key.clone(), substitute_port(template, Some(port)));
+            } else {
+                env.insert(template.clone(), default_env.1.clone());
+            }
         }
     }
     env
@@ -3191,6 +3195,36 @@ mod tests {
         assert_eq!(
             env.get("PUBSUB_EMULATOR_HOST").map(String::as_str),
             Some("127.0.0.1:8085")
+        );
+    }
+
+    #[test]
+    fn preset_exports_substitute_template_with_declared_env_key() {
+        let mut svc = test_service("mongo", &[]);
+        svc.export.insert(
+            "MONGODB_URL".to_string(),
+            "mongodb://{host}:{port}/tech-platform-e2e".to_string(),
+        );
+        let env = preset_exports(&svc, ServicePreset::Mongo, 60736);
+        assert_eq!(
+            env.get("MONGODB_URL").map(String::as_str),
+            Some("mongodb://127.0.0.1:60736/tech-platform-e2e")
+        );
+        assert!(
+            !env.contains_key("mongodb://{host}:{port}/tech-platform-e2e"),
+            "template values must not become environment variable names"
+        );
+    }
+
+    #[test]
+    fn preset_exports_keep_legacy_target_name_shorthand() {
+        let mut svc = test_service("redis", &[]);
+        svc.export
+            .insert("ignored".to_string(), "CACHE_URL".to_string());
+        let env = preset_exports(&svc, ServicePreset::Redis, 60738);
+        assert_eq!(
+            env.get("CACHE_URL").map(String::as_str),
+            Some("redis://127.0.0.1:60738/")
         );
     }
 
