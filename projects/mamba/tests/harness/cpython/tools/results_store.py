@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single results store for the mamba production test gate (D5.3).
+"""Single results store for the mamba production test gate (D5.3/D5.4).
 
 Machine-local, gitignored SQLite holding every `fixture x runtime x dimension`
 result. CPython rows are *content-addressed*: the oracle runs once per fixture
@@ -7,7 +7,8 @@ content and is re-run only when the fixture bytes change. This is the
 generalization of `perf_baseline.py`'s sqlite-cache pattern from the perf/pin
 model to all dimensions, with measurement taken EXTERNALLY (getrusage +
 `/usr/bin/time`) instead of trusting a fixture-emitted `INTERNAL_TIME_NS`
-marker (PRODUCTION-GATE.md D5.2/D5.3).
+marker (PRODUCTION-GATE.md D5.2/D5.3). Mamba SUT rows are recorded by the
+D5.4 pooled/sandboxed collector.
 
     python3 tests/harness/cpython/tools/results_store.py record-oracle --limit 20
     python3 tests/harness/cpython/tools/results_store.py record-oracle            # all fixtures, incremental
@@ -296,11 +297,11 @@ def summary(args: argparse.Namespace) -> int:
 
     delta = None
     if args.since:
-        # Scaffold: mamba SUT rows are keyed by git sha (D5.4 collector). Until
-        # that lands there is nothing to diff, so report an empty delta rather
-        # than a fabricated one.
+        # SUT rows exist, but they are keyed by runtime_version rather than a
+        # normalized git sha. Keep the delta honest until the release metadata
+        # path supplies a stable commit key.
         delta = {"since": args.since, "newly_red": 0, "newly_green": 0,
-                 "regressions": 0, "note": "mamba SUT rows pending D5.4 collector"}
+                 "regressions": 0, "note": "mamba SUT git-sha delta pending release metadata"}
 
     out = {"dimensions": tiers, "delta": delta}
     if args.json:
