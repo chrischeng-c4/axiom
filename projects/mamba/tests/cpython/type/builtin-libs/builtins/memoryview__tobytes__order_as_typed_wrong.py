@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import memoryview
-obj = object.__new__(memoryview)
+obj = memoryview(b"abc")
 try:
     obj.tobytes(_W())  # order: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
