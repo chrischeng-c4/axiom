@@ -1,16 +1,32 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-17T17:46:09.946695+00:00"
-digest = "sha256:12fe24be3bfa4cd0935f5f438fe779546eceedebab40cdff7c153da275147f7d"
+generated_at = "2026-06-29T08:18:28.711174+00:00"
+digest = "sha256:cb53e6f71e2013751167f23865e5a74486fdd92264ea8a8c63009c05f563cceb"
+
+[[files]]
+path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
+digest = "sha256:3809001ff28223e8359c0142b600e75b772029d2bd8669ee4f1b3296867472eb"
+
+[[files]]
+path = "logic/add-per-session-queue-with-observe-command-barriers.md"
+digest = "sha256:a67b9c027362d2fab27b1653e825333d025496ff714b5fc7d0642280947691bc"
+
+[[files]]
+path = "logic/add-workload-sensitive-native-command-gates.md"
+digest = "sha256:44256b12421a809779a00e6eccc7d56c7408d9cab761bea9179b191e7c71953a"
 
 [[files]]
 path = "logic/cap-hook-auto-command-optimizer-whitelist.md"
 digest = "sha256:646c91520fdcf634f139e1170e7f72d52db14d8a160ecb94eb5095495d7122b6"
 
 [[files]]
+path = "logic/design-resident-light-shell-with-dynamic-bash-fallback.md"
+digest = "sha256:50bb7576f093d57f5e6efb7b7346969c767d3d44da6da590bea6048bfee6254a"
+
+[[files]]
 path = "logic/external-contracts.md"
-digest = "sha256:3315f1717899a0b6733cfba78b45e6e811a9a03186a028ada0c30e6be239e5c9"
+digest = "sha256:fd433ad571c6617e55aac66ed6937838fec226a37705bcf49b28fd4134326bc1"
 
 [[files]]
 path = "semantic/cap-benches.md"
@@ -30,7 +46,7 @@ digest = "sha256:8d75f95a24f0e99e6a25e53f684bf24a1e64afc95c4636e31e3144bb277e7c3
 
 [[files]]
 path = "semantic/cap-src.md"
-digest = "sha256:3b5bf846e9470874732ac1c879c213039cb0f997d7c5000066dd19641c047d97"
+digest = "sha256:2bf5fa89440b1031748c3c100d0597311608be574a3718421141671ebca70ad0"
 
 [[files]]
 path = "semantic/cap-tests.md"
@@ -70,11 +86,11 @@ digest = "sha256:b8b4a989151eb2c5464f1095fa478a9e96b6d10a8dad7e225954658d9056fb5
 
 [[files]]
 path = "semantic/source/projects-cap-benches-command_resources-rs.md"
-digest = "sha256:f98fd97eefcdd5a1d43a2485ddaf0d5ec7078cc38d002a714aefa619a916e480"
+digest = "sha256:5b03035f946ec2290d725188b7850a7849d5cb716157312cc0ffcb664d3ec9dd"
 
 [[files]]
 path = "semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md"
-digest = "sha256:6f3473296330abc0d9c1a94cfc5dcdb4f3b6ecdef21e7a09ac531d9385bcb3a4"
+digest = "sha256:40b45337414de2af5126964b971d242a798ac589aeea871d377c2ada8aa68e6a"
 
 [[files]]
 path = "semantic/source/reap.md"

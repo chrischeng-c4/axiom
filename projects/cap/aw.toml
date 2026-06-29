@@ -14,7 +14,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "cap"
-generated_from_td_digest = "sha256:09ba3bc5023ecd23733b9d54c090662c82f79b683f9d7e8b28b22179434d8bb6"
+generated_from_td_digest = "sha256:93a7f9b45b3137f4ec4bd1bc052e129718edf06f6e908f9c8ff319415c54e500"
 
 [[aw.ec.generated.cases]]
 id = "cap-agent-hook-installation"
@@ -24,7 +24,7 @@ contract_id = "agent-hook-installation"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-agent-hook-installation"
 test_path = "projects/cap/tests/behavior_cap_agent_hook_installation.rs"
-command = "cargo test -p cap hook_install -- --nocapture && cargo test -p cap hook -- --nocapture"
+command = "cargo test -p cap --lib hook_install -- --nocapture && cargo test -p cap hook -- --nocapture"
 required_for_production = true
 assertions = [
     "cap init hook installation is idempotent for Claude Code and Codex CLI",
@@ -40,7 +40,7 @@ contract_id = "cli-status-and-wait-surfaces"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-cli-status-and-wait-surfaces"
 test_path = "projects/cap/tests/behavior_cap_cli_status_and_wait_surfaces.rs"
-command = "cargo test -p cap cli -- --nocapture"
+command = "cargo test -p cap --lib cli -- --nocapture"
 required_for_production = true
 assertions = [
     "status and wait CLI surfaces use the daemon contract without blocking agent commands",
@@ -55,7 +55,7 @@ contract_id = "command-lease-throttling"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-command-lease-throttling"
 test_path = "projects/cap/tests/behavior_cap_command_lease_throttling.rs"
-command = "cargo test -p cap throttle -- --nocapture && cargo test -p cap sampler -- --nocapture"
+command = "cargo test -p cap --lib throttle -- --nocapture && cargo test -p cap sampler -- --nocapture"
 required_for_production = true
 assertions = [
     "cap leases pause, resume, and kill under configured pressure thresholds",
@@ -71,7 +71,7 @@ contract_id = "config-logging-and-reap-policy"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-config-logging-and-reap-policy"
 test_path = "projects/cap/tests/behavior_cap_config_logging_and_reap_policy.rs"
-command = "cargo test -p cap config -- --nocapture && cargo test -p cap eventlog -- --nocapture && cargo test -p cap reap -- --nocapture"
+command = "cargo test -p cap --lib config -- --nocapture && cargo test -p cap eventlog -- --nocapture && cargo test -p cap reap -- --nocapture"
 required_for_production = true
 assertions = [
     "configuration defaults and compatibility rules stay stable",
@@ -87,7 +87,7 @@ contract_id = "daemon-lifecycle-and-status"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-daemon-lifecycle-and-status"
 test_path = "projects/cap/tests/behavior_cap_daemon_lifecycle_and_status.rs"
-command = "cargo test -p cap daemon -- --nocapture && cargo test -p cap cli -- --nocapture"
+command = "cargo test -p cap --lib daemon -- --nocapture && cargo test -p cap cli -- --nocapture"
 required_for_production = true
 assertions = [
     "daemon lifecycle and liveness surfaces remain callable",
@@ -103,7 +103,7 @@ contract_id = "hook-payload-rewrite-adapters"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#cap-hook-auto-command-optimizer-whitelist"
 test_path = "projects/cap/tests/behavior_cap_hook_auto_command_optimizer_whitelist.rs"
-command = "cargo test -p cap hook -- --nocapture && cargo test -p cap command_planner -- --nocapture && cargo test -p cap active_replacements_match_success_and_error_behavior -- --nocapture && cargo bench -p cap --bench command_resources"
+command = "cargo test -p cap --lib hook -- --nocapture && cargo test -p cap command_planner -- --nocapture && cargo test -p cap active_replacements_match_success_and_error_behavior -- --nocapture && cargo bench -p cap --bench command_resources"
 required_for_production = true
 assertions = [
     "the Bash hook rewrites non-recursive commands to cap run original-command-string and does not expose same-name replacement decisions",
@@ -123,7 +123,7 @@ contract_id = "hook-payload-rewrite-adapters"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-hook-payload-rewrite-adapters"
 test_path = "projects/cap/tests/behavior_cap_hook_payload_rewrite_adapters.rs"
-command = "cargo test -p cap hook -- --nocapture"
+command = "cargo test -p cap --lib hook -- --nocapture"
 required_for_production = true
 assertions = [
     "hook payload adapters rewrite Bash commands without making cap a hard dependency",
@@ -138,7 +138,7 @@ contract_id = "memory-and-cpu-pressure-sampling"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-memory-and-cpu-pressure-sampling"
 test_path = "projects/cap/tests/behavior_cap_memory_and_cpu_pressure_sampling.rs"
-command = "cargo test -p cap sampler -- --nocapture"
+command = "cargo test -p cap --lib sampler -- --nocapture"
 required_for_production = true
 assertions = [
     "sampler output is stable enough for daemon pressure decisions",
@@ -153,7 +153,7 @@ contract_id = "reap-allowlist-policy"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-reap-allowlist-policy"
 test_path = "projects/cap/tests/behavior_cap_reap_allowlist_policy.rs"
-command = "cargo test -p cap reap -- --nocapture"
+command = "cargo test -p cap --lib reap -- --nocapture"
 required_for_production = true
 assertions = [
     "reap allowlist policy stays bounded",
@@ -168,10 +168,27 @@ contract_id = "run-log-persistence"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-run-log-persistence"
 test_path = "projects/cap/tests/behavior_cap_run_log_persistence.rs"
-command = "cargo test -p cap eventlog -- --nocapture"
+command = "cargo test -p cap --lib eventlog -- --nocapture"
 required_for_production = true
 assertions = [
     "JSONL event log persistence roundtrips run records",
     "run evidence remains durable enough for agent diagnosis",
+]
+
+[[aw.ec.generated.cases]]
+id = "cap-standard-agent-cli-operations"
+capability_id = "standard-agent-cli-operations"
+claim_id = "shared-standard-cli-commands"
+contract_id = "standard-agent-cli-operations"
+category = "behavior"
+td_ref = "projects/cap/tech-design/logic/external-contracts.md#cap-standard-agent-cli-operations"
+test_path = "projects/cap/tests/behavior_cap_standard_agent_cli_operations.rs"
+command = "cargo test -p cap --lib cli_std_convention -- --nocapture && cargo build -p cap --features release"
+required_for_production = true
+assertions = [
+    "cap help lists llm, upgrade, issue, and report-issue compatibility commands",
+    "cap llm renders cap-specific offline docs through cli-std",
+    "cap issue create and report-issue dry-run payloads carry project:cap diagnostics",
+    "release-feature builds enable cli-std online paths",
 ]
 # AW-EC-END
