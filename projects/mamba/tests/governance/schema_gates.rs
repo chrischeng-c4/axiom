@@ -19,7 +19,7 @@
 //! under `tests/schema_gates/` are no longer separate binaries — this
 //! umbrella is the sole binary that links them all.
 //!
-//! Total: 91 gate modules / 834 `#[test]` functions in one binary.
+//! Total: 92 gate modules / 837 `#[test]` functions in one binary.
 //!
 //! Selector: `cargo test -p mamba --test schema_gates`.
 
@@ -112,6 +112,9 @@ mod import_readiness_gate_708;
 
 #[path = "schema_gates/third_party_readiness_gate_711.rs"]
 mod third_party_readiness_gate_711;
+
+#[path = "schema_gates/debugger_readiness_gate_712.rs"]
+mod debugger_readiness_gate_712;
 
 #[path = "schema_gates/perf_allocation_pressure_fixture_2661.rs"]
 mod perf_allocation_pressure_fixture_2661;
