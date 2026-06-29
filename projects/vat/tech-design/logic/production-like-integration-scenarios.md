@@ -134,3 +134,32 @@ errors:
   - code: "scenario_hermetic_proxy_required"
     trigger: "scenario network hermetic but no http-mock service participates"
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: scenario-starts-app-deps-and-runner
+    name: "Scenario starts app dependencies and runner"
+    command: "cargo test -p vat scenario_run_starts_app_dependency_and_runner -- --nocapture"
+    assertions:
+      - "vat run --scenario prod-like exits with runner status"
+      - "app service readiness is observed before the runner executes"
+      - "state retains scenario/app/runner topology evidence"
+  - id: scenario-failure-keeps-evidence
+    name: "Scenario failure keeps topology and logs"
+    command: "cargo test -p vat scenario_failure_keeps_topology_and_logs -- --nocapture"
+    assertions:
+      - "failed scenario run is retained under keep=failed"
+      - "vat logs and vat state expose app and runner evidence"
+  - id: scenario-hermetic-requires-http-mock
+    name: "Scenario hermetic requires http mock service"
+    command: "cargo test -p vat scenario_hermetic_requires_http_mock_service -- --nocapture"
+    assertions:
+      - "hermetic scenario without http-mock emits scenario_hermetic_proxy_required"
+      - "no runner starts after the setup error"
+regression:
+  - "cargo test -p vat vat_toml_runner -- --nocapture"
+  - "cargo test -p vat --test vat_concurrent_runners -- --nocapture"
+```
