@@ -68,3 +68,42 @@ compatibility:
   scenario_optional: true
   service_schema_reuse: true
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+new_types:
+  ScenarioConfig:
+    fields:
+      id: String
+      app: String
+      requires: Vec<String>
+      runner: String
+      network: ScenarioNetworkMode
+  ScenarioNetworkMode:
+    variants:
+      - open
+      - hermetic
+  ScenarioRunRecord:
+    fields:
+      id: String
+      app: String
+      runner: String
+      network: String
+      services: Vec<String>
+      routes: Vec<RouteRecord>
+      hermetic: bool
+  RouteRecord:
+    fields:
+      host: String
+      target: String
+      source: String
+state_integration:
+  TestRunEvidence:
+    add_optional_field: "scenario: Option<ScenarioRunRecord>"
+  ServiceRunRecord:
+    reuse_existing_fields: ["id", "status", "preset", "port", "exported_env", "ready_duration_ms", "stdout_log", "stderr_log"]
+compatibility:
+  serde_defaults: "new fields default absent for existing metadata"
+```
