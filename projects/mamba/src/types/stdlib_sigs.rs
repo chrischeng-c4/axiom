@@ -580,6 +580,75 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("value", CoreTy::Int)],
         enforceable: true,
     },
+    // POSITIVE: frozenset rich/set operators accept AbstractSet-like values.
+    // There is no dedicated Ty::Set/FrozenSet yet, so model the protocol as a
+    // Typed negative wall: a bare user instance satisfies neither AbstractSet
+    // nor the nominal/protocol contract, while modeled/dynamic operands stay
+    // skip-when-unsure.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "frozenset",
+        name: "__and__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "frozenset",
+        name: "__ge__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "frozenset",
+        name: "__gt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "frozenset",
+        name: "__le__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "frozenset",
+        name: "__lt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "frozenset",
+        name: "__or__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "frozenset",
+        name: "__sub__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "frozenset",
+        name: "__xor__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ExceptionGroup matcher/sequence methods use non-scalar
     // contracts in typeshed. A bare user instance cannot satisfy Callable,
     // exception type, tuple-of-types, or Sequence, so reject it through the

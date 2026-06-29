@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import frozenset
-obj = object.__new__(frozenset)
+obj = frozenset()
 try:
     obj.__lt__(_W())  # value: AbstractSet <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
