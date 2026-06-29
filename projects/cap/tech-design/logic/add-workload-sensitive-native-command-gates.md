@@ -217,6 +217,15 @@ changes:
       threshold, with probe errors, or with unknown materiality must return an
       External Original plan. Preserve existing shell-sensitive fallback.
 
+  - path: projects/cap/src/cap_fast_frontend.c
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Mirror the Rust planner workload thresholds in the public low-overhead C
+      frontend so same-name native fast paths only claim large, material
+      workloads and otherwise fall through to cap-full's original-command path.
+
   - path: projects/cap/src/command_planner.rs
     action: modify
     section: unit-test
@@ -248,7 +257,7 @@ changes:
 
   - path: projects/cap/README.md
     action: modify
-    section: docs
+    section: overview
     impl_mode: hand-written
     description: >
       Reword native command replacement as workload-sensitive fast paths.
@@ -257,7 +266,7 @@ changes:
 
   - path: projects/cap/BENCHMARKS.md
     action: modify
-    section: docs
+    section: overview
     impl_mode: hand-written
     description: >
       Document small-vs-large benchmark rows and the interpretation that

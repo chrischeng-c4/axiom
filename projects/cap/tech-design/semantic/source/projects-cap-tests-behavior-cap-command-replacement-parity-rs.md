@@ -24,6 +24,8 @@ No public AST symbols.
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/cap/tech-design/semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 use std::{
     fs,
     io::Write,
@@ -80,9 +82,9 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         ),
         Case::new(
             "sed",
-            vec!["sed", "-n", "2,4p", fixture.sed_file()],
+            vec!["sed", "-n", "1,1024p", fixture.sed_file()],
             "/usr/bin/sed",
-            vec!["-n", "2,4p", fixture.sed_file()],
+            vec!["-n", "1,1024p", fixture.sed_file()],
         ),
         Case::new(
             "grep",
@@ -135,9 +137,9 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         ),
         (
             "run sed",
-            format!("sed -n 2,4p {}", fixture.sed_file()),
+            format!("sed -n 1,1024p {}", fixture.sed_file()),
             "/usr/bin/sed",
-            vec!["-n", "2,4p", fixture.sed_file()],
+            vec!["-n", "1,1024p", fixture.sed_file()],
         ),
         (
             "run grep",
@@ -530,6 +532,7 @@ struct Fixture {
     grep_root: String,
 }
 
+/// @spec projects/cap/tech-design/semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md#source
 impl Fixture {
     fn create(root: &Path) -> Result<Self> {
         let data = root.join("data");
@@ -537,8 +540,9 @@ impl Fixture {
 
         let list_dir = data.join("list");
         fs::create_dir(&list_dir)?;
-        fs::write(list_dir.join("b.txt"), b"b\n")?;
-        fs::write(list_dir.join("a.txt"), b"a\n")?;
+        for idx in 0..1024 {
+            fs::write(list_dir.join(format!("item-{idx:04}.txt")), b"x\n")?;
+        }
 
         let cat_file = data.join("cat.txt");
         fs::write(&cat_file, b"alpha\nbeta\n")?;
@@ -548,7 +552,9 @@ impl Fixture {
 
         let find_root = data.join("find");
         fs::create_dir(&find_root)?;
-        fs::write(find_root.join("only.txt"), b"found\n")?;
+        for idx in 0..512 {
+            fs::write(find_root.join(format!("only-{idx:04}.txt")), b"found\n")?;
+        }
 
         let du_root = data.join("du");
         fs::create_dir(&du_root)?;
@@ -561,11 +567,19 @@ impl Fixture {
         }
 
         let sed_file = data.join("sed.txt");
-        fs::write(&sed_file, b"one\ntwo\nthree\nfour\nfive\n")?;
+        let mut sed = fs::File::create(&sed_file)?;
+        for idx in 0..1100 {
+            writeln!(sed, "line {idx:04}")?;
+        }
 
         let grep_root = data.join("grep");
         fs::create_dir(&grep_root)?;
-        fs::write(grep_root.join("match.txt"), b"plain\nNEEDLE here\n")?;
+        for idx in 0..64 {
+            fs::write(
+                grep_root.join(format!("match-{idx:04}.txt")),
+                b"plain\nNEEDLE here\n",
+            )?;
+        }
 
         Ok(Self {
             list_dir: path_string(&list_dir),
@@ -608,6 +622,7 @@ impl Fixture {
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
+// CODEGEN-END
 
 ````
 

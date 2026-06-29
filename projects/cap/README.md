@@ -151,13 +151,15 @@ inside cap.
 
 Cap's planner owns automatic command replacement. It preserves the familiar
 command shape while selecting faster implementations only for safe subsets
-that satisfy a measured resource gate. The preferred gate is dual-win: cap must
-beat the original command on both CPU time and peak RSS. When a tiny command is
-blocked by platform process-floor CPU cost, cap can use an RSS fallback gate
-only when the RSS improvement is large enough to justify the CPU regression.
-Other same-name commands may have candidate hot paths, but they are not claimed
-as replacements until their benchmark wins the dual-win gate or a material
-RSS-fallback gate.
+that satisfy both a workload-size threshold and a measured resource gate. Tiny
+or unknown workloads stay on the original command path because fixed cap
+overhead would dominate. The preferred gate is dual-win: cap must beat the
+original command on both CPU time and peak RSS. When a tiny command is blocked
+by platform process-floor CPU cost, cap can use an RSS fallback gate only when
+the RSS improvement is large enough to justify the CPU regression. Other
+same-name commands may have candidate hot paths, but they are not claimed as
+replacements until their benchmark wins the dual-win gate or a material
+RSS-fallback gate on a representative workload.
 
 Hook boundary:
 
@@ -174,23 +176,24 @@ parses that string internally and can run the same native `find` replacement as
 detects shell syntax and wraps the original string as `bash -c` internally so
 the shell keeps pipe behavior.
 
-Active same-name replacements:
+Active same-name replacements are workload-sensitive fast paths:
 
 | Command | Replaced subset | Gate | Notes |
 |---|---|---|---|
-| `ls` | simple `ls -1` / `ls -a` / `ls -A` over one path | dual-win | High-entry-count directories. |
+| `ls` | simple `ls -1` / `ls -a` / `ls -A` over one path | dual-win | Directories with at least 1,024 matching entries. |
 | `cat` | regular file arguments without flags | dual-win | **Deferral candidate** — only RSS-neutral vs system `cat` (near-tie, not a real win); see [Deferred and planned direction](#deferred-and-planned-direction). |
 | `uniq` | one input file | dual-win | Especially large adjacent-duplicate or stdout-discard cases. |
-| `find` | `<root> -type f -name "*.txt"` | dual-win | Simple name/type walk only. |
+| `find` | `<root> -type f -name "*.txt"` | dual-win | Simple name/type walks over trees with at least 512 entries. |
 | `du` | `du -sk <root>` | dual-win | Includes stdout-discard fast path; missing-root errors are parity-tested. |
 | `sort` | one regular file of at least 1 MiB | dual-win | Large single-file sorting. |
-| `sed` | `sed -n <start>,<end>p <file>` | dual-win | Bounded line-range reads. |
-| `grep` | recursive literal `grep -R <pattern> <root>` subset | dual-win | Literal recursive search; no-match and missing-root behavior are parity-tested. |
+| `sed` | `sed -n <start>,<end>p <file>` | dual-win | Files at least 1 MiB or requested spans of at least 1,024 lines. |
+| `grep` | recursive literal `grep -R <pattern> <root>` subset | dual-win | Roots with at least 64 files or 1 MiB estimated text bytes; no-match and missing-root behavior are parity-tested. |
 
 Promotion requires both resource evidence and behavior parity. The installed
 binary shape is tested against system commands for successful stdout, nonzero
 exit codes, missing-path stderr diagnostics, and quiet nonzero cases such as
-recursive `grep` no-match.
+recursive `grep` no-match. If the cheap workload probe cannot prove the
+threshold, cap keeps the original command path.
 
 Pipe behavior is deliberate:
 
