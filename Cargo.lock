@@ -1343,6 +1343,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "cli-std",
  "dirs",
  "libc",
  "serde",

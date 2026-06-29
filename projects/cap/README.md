@@ -36,6 +36,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Agent Hook Installation | - | implemented | verified | smoke | ready | `cargo test -p cap hook_install` |
+| Standard Agent CLI Operations | #477 | implemented | verified | smoke | ready | `cargo test -p cap cli_std_convention` |
 | Command Lease Throttling | - | implemented | verified | smoke | ready | `cargo test -p cap throttle` |
 | Daemon Lifecycle and Status | - | implemented | verified | smoke | ready | `cargo test -p cap daemon` |
 | Config, Logging, and Reap Policy | - | implemented | verified | smoke | ready | `cargo test -p cap config eventlog reap` |
@@ -58,6 +59,26 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Claude and Codex hook installation | epic | - | implemented | verified | smoke | `cargo test -p cap hook_install` |
 | Hook payload rewrite adapters | epic | - | implemented | verified | smoke | `cargo test -p cap hook` |
+
+### Standard Agent CLI Operations
+
+ID: standard-agent-cli-operations
+Type: RuntimeTool
+Surfaces: CLI: `cap llm` + `cap upgrade` + `cap issue search/view/create` + `cap report-issue` - Repo-wide agent-facing self-documentation, self-update, and diagnostics-rich issue filing through `cli-std`; `report-issue` is a deprecated compatibility alias for older issue text.
+EC Dimensions: behavior: `cap` - standard CLI command registration, offline LLM docs, release upgrade routing, and project-scoped issue diagnostics
+Root WI: #477
+Status: verified
+Required Verification: smoke
+Promise:
+Cap exposes the repo-wide standard agent commands through the shared `cli-std`
+implementation: `llm` for offline guidance, `upgrade` for cap release updates,
+and `issue` for tracker search/view/create with `project:cap` diagnostics.
+Gate Inventory:
+- `cargo test -p cap cli_std_convention`; `cargo build -p cap --features release`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Shared standard CLI commands | change | #477 | implemented | verified | smoke | `cargo test -p cap cli_std_convention` |
 
 ### Command Lease Throttling
 
@@ -148,6 +169,15 @@ The hook uses cap's **absolute path** (not a bare `cap`), so it works
 regardless of the agent shell's `PATH`. It does not decide whether `find`,
 `grep`, pipes, or any other command should be optimized. That decision belongs
 inside cap.
+
+Standard agent commands:
+
+| Command | Purpose |
+|---|---|
+| `cap llm [--topic <topic>] [--format md\|json]` | Offline self-documentation for agents. |
+| `cap upgrade [--version <tag>] [--check]` | Self-update from `cap@*` GitHub releases through `cli-std`. |
+| `cap issue search [query]` / `view <n>` / `create [--title <t>] [message...]` | Search, read, and file `project:cap` issues with build diagnostics. |
+| `cap report-issue --dry-run ...` | Deprecated compatibility alias for older automation; prefer `cap issue create`. |
 
 Cap's planner owns automatic command replacement. It preserves the familiar
 command shape while selecting faster implementations only for safe subsets

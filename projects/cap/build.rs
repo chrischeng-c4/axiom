@@ -36,6 +36,4 @@ fn short_sha() -> Option<String> {
     let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!sha.is_empty()).then_some(sha)
 }
-
-<!-- marker: missing-generator:build-provenance:bf89beec path: projects/cap/build.rs reason: Stamp CAP_TARGET, CAP_GIT_SHA, and CAP_BUILT_AT for cli_std::ToolInfo release asset and diagnostics metadata. -->
 // HANDWRITE-END
