@@ -257,6 +257,19 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("function", CoreTy::Typed), p("iterable", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: isinstance's second argument must be a class or tuple of
+    // classes. A bare `_W()` instance cannot satisfy that classinfo contract.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "",
+        name: "isinstance",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("obj", CoreTy::Unknown),
+            p("class_or_tuple", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     StdlibSig {
         module: "builtins",
         qualifier: "bytearray",

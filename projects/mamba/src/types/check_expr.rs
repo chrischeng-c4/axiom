@@ -754,84 +754,83 @@ impl TypeChecker {
         // bare stdlib name `Cls(...)` may be either a module function OR a class
         // constructor; we try the module-fn key first and fall back to the
         // class `__init__` key. Skip-when-unsure at every miss.
-        let sig: Option<&'static super::stdlib_sigs::StdlibSig> = match &func.node {
-            // Bare name: a from-imported module function (`strerror(...)`) OR a
-            // from-imported stdlib class called as a constructor (`Cls(...)`).
-            //
-            // The import-time qualifier (recorded in `import_origins`) is only a
-            // hint — `is_known_stdlib_class` consults the curated table, so most
-            // generated stdlib classes are bound with an empty qualifier and
-            // look like module functions here. So we DO NOT trust the qualifier:
-            // we try the module-fn key `(module, "", name)` first, and on a miss
-            // fall back to the constructor key `(module, name, "__init__")`.
-            // The `self` receiver is already stripped from `__init__` param rows,
-            // so positional alignment starts at the first real argument. Names not
-            // in `import_origins` (user-defined classes, locals) resolve to None.
-            Expr::Ident(name) => self
-                .import_origins
-                .get(name)
-                .and_then(|(module, _qual)| {
-                    super::stdlib_sigs::get(module, "", name)
-                        .or_else(|| super::stdlib_sigs::get(module, name, "__init__"))
-                })
-                .or_else(|| {
-                    if self.is_unshadowed_builtin(name) {
-                        super::stdlib_sigs::get("builtins", "", name)
-                            .or_else(|| super::stdlib_sigs::get("builtins", name, "__init__"))
-                    } else {
-                        None
-                    }
-                }),
-            // Attribute access: `os.strerror(...)` (module fn) or
-            // `obj.handle_entityref(...)` (instance method).
-            Expr::Attr { object, attr } => {
-                if let Expr::Ident(base) = &object.node {
-                    if let Some((module, qual)) = self.import_origins.get(base) {
-                        // `base.attr(...)` is either a module function or a
-                        // class/static method. Most from-imported stdlib classes are
-                        // bound with an EMPTY qualifier (they "look like module
-                        // functions" here, see the Ident branch above), so resolving
-                        // `date.fromtimestamp(...)` needs us to also try `base` itself
-                        // as the class qualifier — `get(module, "date", "fromtimestamp")`.
-                        // Try module-fn first, then class-method (base = class name),
-                        // then any recorded qualifier. Still gated downstream by
-                        // `sig.enforceable` + the concrete-scalar-disjoint check, so
-                        // this only ADDS rejections of genuinely wrong-typed scalar
-                        // args (it previously leaked `date.fromtimestamp("x")` etc.).
-                        super::stdlib_sigs::get(module, "", attr)
-                            .or_else(|| super::stdlib_sigs::get(module, base, attr))
-                            .or_else(|| {
-                                if qual.is_empty() {
-                                    None
-                                } else {
-                                    super::stdlib_sigs::get(module, qual, attr)
-                                }
+        let sig: Option<&'static super::stdlib_sigs::StdlibSig> =
+            match &func.node {
+                // Bare name: a from-imported module function (`strerror(...)`) OR a
+                // from-imported stdlib class called as a constructor (`Cls(...)`).
+                //
+                // The import-time qualifier (recorded in `import_origins`) is only a
+                // hint — `is_known_stdlib_class` consults the curated table, so most
+                // generated stdlib classes are bound with an empty qualifier and
+                // look like module functions here. So we DO NOT trust the qualifier:
+                // we try the module-fn key `(module, "", name)` first, and on a miss
+                // fall back to the constructor key `(module, name, "__init__")`.
+                // The `self` receiver is already stripped from `__init__` param rows,
+                // so positional alignment starts at the first real argument. Names not
+                // in `import_origins` (user-defined classes, locals) resolve to None.
+                Expr::Ident(name) => self
+                    .import_origins
+                    .get(name)
+                    .and_then(|(module, _qual)| {
+                        super::stdlib_sigs::get(module, "", name)
+                            .or_else(|| super::stdlib_sigs::get(module, name, "__init__"))
+                    })
+                    .or_else(|| {
+                        if self.is_unshadowed_builtin(name) {
+                            super::stdlib_sigs::get("builtins", "", name)
+                                .or_else(|| super::stdlib_sigs::get("builtins", name, "__init__"))
+                        } else {
+                            None
+                        }
+                    }),
+                // Attribute access: `os.strerror(...)` (module fn) or
+                // `obj.handle_entityref(...)` (instance method).
+                Expr::Attr { object, attr } => {
+                    if let Expr::Ident(base) = &object.node {
+                        if let Some((module, qual)) = self.import_origins.get(base) {
+                            // `base.attr(...)` is either a module function or a
+                            // class/static method. Most from-imported stdlib classes are
+                            // bound with an EMPTY qualifier (they "look like module
+                            // functions" here, see the Ident branch above), so resolving
+                            // `date.fromtimestamp(...)` needs us to also try `base` itself
+                            // as the class qualifier — `get(module, "date", "fromtimestamp")`.
+                            // Try module-fn first, then class-method (base = class name),
+                            // then any recorded qualifier. Still gated downstream by
+                            // `sig.enforceable` + the concrete-scalar-disjoint check, so
+                            // this only ADDS rejections of genuinely wrong-typed scalar
+                            // args (it previously leaked `date.fromtimestamp("x")` etc.).
+                            super::stdlib_sigs::get(module, "", attr)
+                                .or_else(|| super::stdlib_sigs::get(module, base, attr))
+                                .or_else(|| {
+                                    if qual.is_empty() {
+                                        None
+                                    } else {
+                                        super::stdlib_sigs::get(module, qual, attr)
+                                    }
+                                })
+                        } else if let Some(cls) = self.instance_origins.get(base).cloned() {
+                            // `base` is a stdlib instance — recover its module from
+                            // the class's import origin, then resolve a method sig.
+                            self.import_origins.get(&cls).and_then(|(module, _q)| {
+                                super::stdlib_sigs::get(module, &cls, attr)
                             })
-                    } else if let Some(cls) = self.instance_origins.get(base).cloned() {
-                        // `base` is a stdlib instance — recover its module from
-                        // the class's import origin, then resolve a method sig.
-                        self.import_origins
-                            .get(&cls)
-                            .and_then(|(module, _q)| super::stdlib_sigs::get(module, &cls, attr))
-                    } else if self
-                        .symbols
-                        .lookup(base)
-                        .is_some_and(|id| self.symbols.get_symbol(id).kind == SymbolKind::Function)
-                    {
-                        // User-defined Python functions are instances of
-                        // builtins.function. This keeps descriptor walls such as
-                        // `f.__get__(..., owner)` enforceable without pretending
-                        // that `builtins.function` is importable in CPython.
-                        super::stdlib_sigs::get("builtins", "function", attr)
+                        } else if self.symbols.lookup(base).is_some_and(|id| {
+                            self.symbols.get_symbol(id).kind == SymbolKind::Function
+                        }) {
+                            // User-defined Python functions are instances of
+                            // builtins.function. This keeps descriptor walls such as
+                            // `f.__get__(..., owner)` enforceable without pretending
+                            // that `builtins.function` is importable in CPython.
+                            super::stdlib_sigs::get("builtins", "function", attr)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
-                } else {
-                    None
                 }
-            }
-            _ => None,
-        };
+                _ => None,
+            };
 
         let Some(sig) = sig else { return };
         let strict_keyword_wall = self.strict_type_fixture
@@ -868,6 +867,23 @@ impl TypeChecker {
             // literals currently infer to Any.
             let expected = self.core_ty_to_type_id(param.ty);
             let actual = self.check_expr(a);
+            let classinfo_param = sig.module == "builtins"
+                && sig.qualifier.is_empty()
+                && matches!(sig.name, "isinstance" | "issubclass")
+                && param_idx == 1;
+            if classinfo_param {
+                if let Some(name) = self.classinfo_bare_instance_name(a) {
+                    self.error(
+                        a.span,
+                        format!(
+                            "argument type mismatch: `{name}` does not satisfy parameter `{}`'s type",
+                            param.name,
+                        ),
+                    );
+                }
+                param_idx += 1;
+                continue;
+            }
             // A BARE user class instance (`class _W: pass` → `_W()`) satisfies NO
             // concrete parameter contract: it is not a scalar (str/int/float/
             // bytes/bool — no relevant dunder), not a protocol (no dunders), and
@@ -974,6 +990,23 @@ impl TypeChecker {
                 }
             }
             param_idx += 1;
+        }
+    }
+
+    /// `isinstance`/`issubclass` classinfo accepts type objects and tuples of
+    /// type objects. The current type model represents both `C` and `C()` as
+    /// `Ty::Class`, so this narrow hook uses expression shape to reject only
+    /// the provably-wrong bare-instance fixtures.
+    fn classinfo_bare_instance_name(&self, expr: &Spanned<Expr>) -> Option<String> {
+        match &expr.node {
+            Expr::Call { func, .. } => match &func.node {
+                Expr::Ident(name) if self.user_bare_classes.contains(name) => Some(name.clone()),
+                _ => None,
+            },
+            Expr::TupleLit(elems) => elems
+                .iter()
+                .find_map(|elem| self.classinfo_bare_instance_name(elem)),
+            _ => None,
         }
     }
 
