@@ -157,9 +157,19 @@ unsafe extern "C" fn dispatch_merge(args_ptr: *const MbValue, nargs: usize) -> M
     MbValue::from_ptr(MbObject::new_list_borrowed(all))
 }
 
-pub fn register() {
+fn register_dispatchers(module_name: &str, dispatchers: &[(&str, usize)]) {
     let mut attrs = HashMap::new();
-    let dispatchers: Vec<(&str, usize)> = vec![
+    for (name, addr) in dispatchers.iter().copied() {
+        attrs.insert(name.to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+    super::register_module(module_name, attrs);
+}
+
+pub fn register() {
+    let heapq_dispatchers: &[(&str, usize)] = &[
         ("heappush", dispatch_heappush as usize),
         ("heappop", dispatch_heappop as usize),
         ("heappushpop", dispatch_heappushpop as usize),
@@ -174,13 +184,19 @@ pub fn register() {
         ("_heappop_max", dispatch_heappop_max as usize),
         ("_heapreplace_max", dispatch_heapreplace_max as usize),
     ];
-    for (name, addr) in dispatchers {
-        attrs.insert(name.to_string(), MbValue::from_func(addr));
-        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-            s.borrow_mut().insert(addr as u64);
-        });
-    }
-    super::register_module("heapq", attrs);
+    register_dispatchers("heapq", heapq_dispatchers);
+
+    let accelerator_dispatchers: &[(&str, usize)] = &[
+        ("heapify", dispatch_heapify as usize),
+        ("heappop", dispatch_heappop as usize),
+        ("heappush", dispatch_heappush as usize),
+        ("heappushpop", dispatch_heappushpop as usize),
+        ("heapreplace", dispatch_heapreplace as usize),
+        ("_heapify_max", dispatch_heapify_max as usize),
+        ("_heappop_max", dispatch_heappop_max as usize),
+        ("_heapreplace_max", dispatch_heapreplace_max as usize),
+    ];
+    register_dispatchers("_heapq", accelerator_dispatchers);
 }
 
 /// CPython-faithful `<` for two MbValues. Delegates to the runtime's
