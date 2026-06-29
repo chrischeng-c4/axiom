@@ -9,12 +9,11 @@
 # case = "BinaryWriter__write_sample__stack_frames_as_list_wrong"
 # subject = "_remote_debugging.BinaryWriter.write_sample(stack_frames: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stack_frames"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_remote_debugging.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stack_frames
 # mamba-strict-type: TypeError
 """Type wall: _remote_debugging.BinaryWriter.write_sample(stack_frames: list); call it with the wrong type.
 

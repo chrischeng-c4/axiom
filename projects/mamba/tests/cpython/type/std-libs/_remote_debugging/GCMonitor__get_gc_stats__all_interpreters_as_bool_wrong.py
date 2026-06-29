@@ -9,12 +9,11 @@
 # case = "GCMonitor__get_gc_stats__all_interpreters_as_bool_wrong"
 # subject = "_remote_debugging.GCMonitor.get_gc_stats(all_interpreters: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed all_interpreters"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_remote_debugging.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed all_interpreters
 # mamba-strict-type: TypeError
 """Type wall: _remote_debugging.GCMonitor.get_gc_stats(all_interpreters: bool); call it with the wrong type.
 
