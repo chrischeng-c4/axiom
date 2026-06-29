@@ -24,15 +24,42 @@ from pathlib import Path
 
 
 MAMBA_DIR = Path(__file__).resolve().parent.parent
-FIXTURES_ROOT = MAMBA_DIR / "tests" / "cpython" / "fixtures"
+FIXTURES_ROOT = MAMBA_DIR / "tests" / "cpython"
 MAMBA_BLOCK_RE = re.compile(
     r"^# /// script[ \t]*\n(.*?)^# ///[ \t]*$",
     re.DOTALL | re.MULTILINE,
 )
+EXIT_UNOWNED_DENOMINATOR = 70
 
 
 def test_root(stdlib: Path | None) -> Path:
-    root = stdlib or Path(sysconfig.get_paths()["stdlib"])
+    if stdlib is not None:
+        test = stdlib / "test"
+        if test.exists():
+            return test
+        if stdlib.name == "test" and stdlib.exists():
+            return stdlib
+        raise SystemExit(f"CPython Lib/test not found: {test}")
+
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import pathlib, test; print(pathlib.Path(test.__file__).parent)",
+            ],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=30,
+        )
+        test = Path(result.stdout.strip())
+        if test.exists():
+            return test
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    root = Path(sysconfig.get_paths()["stdlib"])
     test = root / "test"
     if not test.exists():
         raise SystemExit(f"CPython Lib/test not found: {test}")
@@ -91,20 +118,6 @@ def cpython_key(module: str) -> str:
     return aliases.get(top, top).replace(".", "_").replace("-", "_").lower()
 
 
-def fixture_libs() -> dict[str, list[str]]:
-    out: dict[str, list[str]] = {}
-    if not FIXTURES_ROOT.exists():
-        return out
-    for bucket_dir in FIXTURES_ROOT.iterdir():
-        if not bucket_dir.is_dir():
-            continue
-        for lib_dir in bucket_dir.iterdir():
-            if lib_dir.is_dir():
-                key = lib_dir.name.replace("-", "_").lower()
-                out.setdefault(key, []).append(bucket_dir.name)
-    return {key: sorted(value) for key, value in out.items()}
-
-
 def normalize_fixture_source(source: str) -> str:
     if source.startswith("Lib/test/"):
         return source.removeprefix("Lib/test/")
@@ -113,13 +126,48 @@ def normalize_fixture_source(source: str) -> str:
     return source
 
 
+def fixture_files(root: Path) -> list[Path]:
+    out: list[Path] = []
+    if not root.exists():
+        return out
+    for path in sorted(root.rglob("*.py")):
+        rel_parts = path.relative_to(root).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        if "_invalid" in rel_parts or path.name.endswith("_stub.py"):
+            continue
+        out.append(path)
+    return out
+
+
+def parse_mamba_meta(text: str) -> tuple[dict | None, str | None]:
+    match = MAMBA_BLOCK_RE.search(text)
+    if not match:
+        return None, None
+    block_lines = []
+    for line in match.group(1).splitlines():
+        if line.startswith("# "):
+            block_lines.append(line[2:])
+        elif line == "#":
+            block_lines.append("")
+    try:
+        meta = tomllib.loads("\n".join(block_lines)).get("tool", {}).get("mamba")
+    except tomllib.TOMLDecodeError as exc:
+        return None, str(exc)
+    if not isinstance(meta, dict):
+        return None, None
+    return meta, None
+
+
 def fixture_case_inventory() -> dict:
     cases = []
     migrated = []
     legacy = []
     by_dimension = Counter()
     by_bucket = Counter()
+    by_lib = Counter()
     by_source_path = Counter()
+    lib_buckets: dict[str, set[str]] = {}
     invalid_metadata = []
 
     if not FIXTURES_ROOT.exists():
@@ -130,35 +178,31 @@ def fixture_case_inventory() -> dict:
             "invalid_metadata_files": [],
             "by_dimension": {},
             "by_bucket": {},
+            "by_lib": {},
+            "by_source_path": {},
+            "fixture_lib_buckets": {},
         }
 
-    for path in sorted(FIXTURES_ROOT.rglob("*.py")):
-        if path.name.endswith("_stub.py") or "_invalid" in path.parts:
-            continue
+    for path in fixture_files(FIXTURES_ROOT):
         rel = str(path.relative_to(FIXTURES_ROOT))
         cases.append(rel)
         text = path.read_text(encoding="utf-8", errors="replace")
-        match = MAMBA_BLOCK_RE.search(text)
-        if not match:
-            legacy.append(rel)
+        meta, parse_error = parse_mamba_meta(text)
+        if parse_error is not None:
+            invalid_metadata.append(f"{rel}: {parse_error}")
             continue
-        block_lines = []
-        for line in match.group(1).splitlines():
-            if line.startswith("# "):
-                block_lines.append(line[2:])
-            elif line == "#":
-                block_lines.append("")
-        try:
-            meta = tomllib.loads("\n".join(block_lines)).get("tool", {}).get("mamba")
-        except tomllib.TOMLDecodeError as exc:
-            invalid_metadata.append(f"{rel}: {exc}")
-            continue
-        if not isinstance(meta, dict):
+        if meta is None:
             legacy.append(rel)
             continue
         migrated.append(rel)
-        by_dimension[str(meta.get("dimension", "<missing>"))] += 1
-        by_bucket[str(meta.get("bucket", "<missing>"))] += 1
+        dimension = str(meta.get("dimension", "<missing>"))
+        bucket = str(meta.get("bucket", "<missing>"))
+        lib = str(meta.get("lib", "<missing>"))
+        by_dimension[dimension] += 1
+        by_bucket[bucket] += 1
+        by_lib[lib] += 1
+        lib_key = lib.replace("-", "_").lower()
+        lib_buckets.setdefault(lib_key, set()).add(bucket)
         source = meta.get("source")
         if isinstance(source, str) and source:
             by_source_path[normalize_fixture_source(source)] += 1
@@ -170,7 +214,11 @@ def fixture_case_inventory() -> dict:
         "invalid_metadata_files": invalid_metadata,
         "by_dimension": dict(sorted(by_dimension.items())),
         "by_bucket": dict(sorted(by_bucket.items())),
+        "by_lib": dict(sorted(by_lib.items())),
         "by_source_path": dict(sorted(by_source_path.items())),
+        "fixture_lib_buckets": {
+            key: sorted(value) for key, value in sorted(lib_buckets.items())
+        },
     }
 
 
@@ -185,9 +233,9 @@ def all_test_py_files(root: Path) -> list[Path]:
 
 def build_inventory(root: Path, *, top: int) -> dict:
     modules = regrtest_modules()
-    libs = fixture_libs()
     mamba_cases = fixture_case_inventory()
     source_paths = mamba_cases["by_source_path"]
+    libs = mamba_cases["fixture_lib_buckets"]
     rows = []
     for module in modules:
         path = module_path(root, module)
@@ -221,6 +269,9 @@ def build_inventory(root: Path, *, top: int) -> dict:
     exact_mapped = [row for row in rows if row["fixture_buckets_exact_lib_match"]]
     source_mapped = [row for row in rows if row["fixture_source_match_count"]]
     fixture_missing = [row for row in rows if not row["fixture_match"]]
+    unowned_static_defs = sum(row["static_test_defs"] for row in fixture_missing)
+    owned_static_defs = sum(row["static_test_defs"] for row in rows if row["fixture_match"])
+    passable = not fixture_missing and not parse_errors and not mamba_cases["invalid_metadata_files"]
     return {
         "cpython_test_root": str(root),
         "python": sys.version.split()[0],
@@ -242,6 +293,15 @@ def build_inventory(root: Path, *, top: int) -> dict:
         "no_exact_fixture_lib_match": len(exact_missing),
         "source_fixture_matches": len(source_mapped),
         "no_fixture_lib_or_source_match": len(fixture_missing),
+        "denominator_ownership": {
+            "pass": passable,
+            "owned_modules": len(rows) - len(fixture_missing),
+            "unowned_modules": len(fixture_missing),
+            "owned_static_test_defs": owned_static_defs,
+            "unowned_static_test_defs": unowned_static_defs,
+            "invalid_metadata_files": len(mamba_cases["invalid_metadata_files"]),
+            "parse_errors": len(parse_errors),
+        },
         "top_no_exact_fixture_lib_match": sorted(
             exact_missing, key=lambda row: row["static_test_defs"], reverse=True
         )[:top],
@@ -258,6 +318,7 @@ def build_inventory(root: Path, *, top: int) -> dict:
 def print_text(data: dict) -> None:
     mamba = data["mamba_fixture_cases"]
     cpython = data["cpython_test_case_candidates"]
+    ownership = data["denominator_ownership"]
     print(f"CPython test root: {data['cpython_test_root']}")
     print(f"Python: {data['python']}")
     print(f"mamba fixture cases: {mamba['total_case_files']}")
@@ -282,6 +343,16 @@ def print_text(data: dict) -> None:
         "no fixture-lib or source match: "
         f"{data['no_fixture_lib_or_source_match']}"
     )
+    print(
+        "denominator ownership: "
+        f"owned_modules={ownership['owned_modules']} "
+        f"unowned_modules={ownership['unowned_modules']} "
+        f"owned_static_test_defs={ownership['owned_static_test_defs']} "
+        f"unowned_static_test_defs={ownership['unowned_static_test_defs']} "
+        f"invalid_metadata={ownership['invalid_metadata_files']} "
+        f"parse_errors={ownership['parse_errors']} "
+        f"pass={ownership['pass']}"
+    )
     print("\nTop CPython modules without fixture-lib or source metadata match:")
     for row in data["top_no_fixture_lib_or_source_match"]:
         print(
@@ -299,6 +370,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--top", type=int, default=30)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--require-owned",
+        action="store_true",
+        help="exit nonzero while any CPython Lib/test denominator module lacks fixture ownership",
+    )
     args = parser.parse_args(argv)
 
     data = build_inventory(test_root(args.stdlib), top=args.top)
@@ -306,6 +382,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(data, indent=2))
     else:
         print_text(data)
+    if args.require_owned and not data["denominator_ownership"]["pass"]:
+        return EXIT_UNOWNED_DENOMINATOR
     return 0
 
 
