@@ -16,6 +16,10 @@ path = "src/lib.rs"
 name = "lumen"
 path = "src/bin/lumen.rs"
 
+[[bin]]
+name = "lumen-bench"
+path = "src/bin/lumen-bench.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-nats = { workspace = true }

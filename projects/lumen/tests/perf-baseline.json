@@ -33,6 +33,10 @@
       "pg": { "gate": "win", "baseline": 9.6 },
       "os": { "gate": "win", "baseline": 3.0, "note": "Latest N=1M in-memory 4.08x and disk 6.02x vs OS; qps1000 strict report 3.51x. 0.8 ratchet keeps the failure floor at 2.4x." }
     },
+    "sorted_page_deep": {
+      "pg": { "gate": "win", "baseline": 3.0, "note": "Issue #10 deep-page gate: lumen keyset cursor pages near N/2 vs Postgres covering-index ORDER BY with OFFSET at the same depth. Conservative 3.0 floor avoids overfitting local sub-ms jitter while still failing an O(offset) regression." },
+      "os": { "gate": "exempt", "reason": "Issue #10's competitive pin is Postgres OFFSET at the same depth. Stock OpenSearch max_result_window makes deep `from` pagination a cluster-setting test rather than a Lumen regression gate." }
+    },
     "pure_sort": {
       "pg": { "gate": "win", "baseline": 22.9 },
       "os": { "gate": "win", "baseline": 3.0, "note": "Latest N=1M in-memory 3.88x and disk 5.20x vs OS; qps1000 strict report 3.18x. 0.8 ratchet keeps the failure floor at 2.4x." }
