@@ -9,12 +9,11 @@
 # case = "Task__init__coro_as__TaskCompatibleCoro_wrong"
 # subject = "_asyncio.Task.__init__(coro: _TaskCompatibleCoro)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coro"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_asyncio.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coro
 # mamba-strict-type: TypeError
 """Type wall: _asyncio.Task.__init__(coro: _TaskCompatibleCoro); call it with the wrong type.
 
