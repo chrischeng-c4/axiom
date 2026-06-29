@@ -72,68 +72,81 @@ flowchart TD
 
 ```mermaid
 ---
-id: lumen-service-auth-convergence-unit-tests
+id: lumen-service-auth-convergence-contract-tests
 requirements:
-  shared_middleware_contract:
+  verifier_open_mode:
     id: R1
-    text: "libs/service-auth continues to prove bearer extraction, required-mode rejection, open-mode pass-through, principal injection, and forbidden rendering."
+    text: "LumenVerifier returns AuthContext::Open when auth is not required, no tokens are configured, and no bearer is present."
     kind: behavior
     risk: medium
     verify: test
-  lumen_verifier_contract:
+  verifier_token_mode:
     id: R2
-    text: "LumenVerifier maps AuthConfig into AuthContext while preserving missing-token open mode, invalid-token 401, and concrete principal injection."
+    text: "LumenVerifier returns AuthContext::Token for a known bearer and AuthError::Unauthenticated for an unknown bearer."
     kind: behavior
     risk: medium
     verify: test
-  rbac_contract:
+  rbac_preserved:
     id: R3
-    text: "AuthContext::ensure continues to enforce collection-specific and wildcard roles."
+    text: "AuthContext::ensure keeps wildcard and per-collection role precedence unchanged."
     kind: behavior
     risk: medium
+    verify: test
+  shared_middleware:
+    id: R4
+    text: "libs/service-auth continues to prove generic middleware injection and rejection."
+    kind: behavior
+    risk: low
     verify: test
 elements:
-  service_auth_unit_tests:
-    kind: test
-    path: libs/service-auth/src/lib.rs
   lumen_auth_unit_tests:
     kind: test
     path: projects/lumen/src/auth.rs
+  service_auth_unit_tests:
+    kind: test
+    path: libs/service-auth/src/lib.rs
 relations:
-  - { from: service_auth_unit_tests, verifies: shared_middleware_contract }
-  - { from: lumen_auth_unit_tests, verifies: lumen_verifier_contract }
-  - { from: lumen_auth_unit_tests, verifies: rbac_contract }
+  - { from: lumen_auth_unit_tests, verifies: verifier_open_mode }
+  - { from: lumen_auth_unit_tests, verifies: verifier_token_mode }
+  - { from: lumen_auth_unit_tests, verifies: rbac_preserved }
+  - { from: service_auth_unit_tests, verifies: shared_middleware }
 ---
 requirementDiagram
     requirement R1 {
       id: R1
-      text: "shared auth middleware contract"
+      text: "open-mode verifier"
       risk: medium
       verifymethod: test
     }
     requirement R2 {
       id: R2
-      text: "LumenVerifier maps AuthConfig to AuthContext"
+      text: "token-mode verifier"
       risk: medium
       verifymethod: test
     }
     requirement R3 {
       id: R3
-      text: "per-collection RBAC remains in AuthContext"
+      text: "RBAC preserved"
       risk: medium
       verifymethod: test
     }
-    element service_auth_unit_tests {
-      type: "rs/#[test]"
+    requirement R4 {
+      id: R4
+      text: "shared middleware tests"
+      risk: low
+      verifymethod: test
     }
     element lumen_auth_unit_tests {
       type: "rs/#[test]"
     }
-    service_auth_unit_tests - verifies -> R1
+    element service_auth_unit_tests {
+      type: "rs/#[test]"
+    }
+    lumen_auth_unit_tests - verifies -> R1
     lumen_auth_unit_tests - verifies -> R2
     lumen_auth_unit_tests - verifies -> R3
+    service_auth_unit_tests - verifies -> R4
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
