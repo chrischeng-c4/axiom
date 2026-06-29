@@ -889,6 +889,14 @@ unsafe extern "C" fn dispatch_pbkdf2_hmac(args_ptr: *const MbValue, nargs: usize
     }
 }
 
+unsafe extern "C" fn dispatch_compare_digest(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    super::hmac_mod::mb_hmac_compare_digest(
+        a.first().copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+    )
+}
+
 // ── Module registration ──────────────────────────────────────────────────
 
 pub fn register() {
@@ -944,6 +952,17 @@ pub fn register() {
     );
 
     super::register_module("hashlib", attrs);
+
+    let compare_digest_addr = dispatch_compare_digest as usize;
+    let mut accelerator_attrs: HashMap<String, MbValue> = HashMap::new();
+    accelerator_attrs.insert(
+        "compare_digest".to_string(),
+        MbValue::from_func(compare_digest_addr),
+    );
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(compare_digest_addr as u64);
+    });
+    super::register_module("_hashlib", accelerator_attrs);
 
     // #2111: register retain/release hooks so per-iter rebinds
     // (`h = hashlib.sha256(...)` in a hot loop) drop prior digester state.
