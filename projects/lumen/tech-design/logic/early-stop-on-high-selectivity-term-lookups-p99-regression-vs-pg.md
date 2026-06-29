@@ -30,27 +30,26 @@ fill_sections: [logic, unit-test, e2e-test, changes]
 
 ```mermaid
 ---
-id: kw-term-early-stop-applicability
-entry: start
+id: kw-term-early-stop-contract
+entry: request
 nodes:
-  start:    { kind: start, label: "issue #45: kw_term must not materialize every high-selectivity hit" }
-  inspect:  { kind: process, label: "Inspect storage planner for standalone Term queries" }
-  planner:  { kind: process, label: "Use posting-window path: first limit docids + posting len total" }
-  evidence: { kind: process, label: "Verify with perf_gate and vat ec-efficiency-meter" }
-  close:    { kind: terminal, label: "Close stale perf regression with TD evidence" }
+  request: { kind: start, label: "POST /search Term(city=taipei), no sort, first page" }
+  plan:    { kind: process, label: "try_plan detects standalone Term" }
+  page:    { kind: process, label: "Read posting iterator and take limit docids" }
+  total:   { kind: process, label: "Use posting.len as exact total; do not build scored HashMap" }
+  output:  { kind: terminal, label: "Return constant-score page in posting order" }
 edges:
-  - { from: start, to: inspect }
-  - { from: inspect, to: planner }
-  - { from: planner, to: evidence }
-  - { from: evidence, to: close }
+  - { from: request, to: plan }
+  - { from: plan, to: page }
+  - { from: page, to: total }
+  - { from: total, to: output }
 ---
 flowchart TD
-    start([#45 high-selectivity kw_term regression]) --> inspect[Inspect storage::try_plan]
-    inspect --> planner[Standalone Term planner returns posting.take(limit) + posting.len]
-    planner --> evidence[perf_gate + vat ec-efficiency-meter evidence]
-    evidence --> close([Issue closed by existing implementation claim])
+    request([Term query, no sort]) --> plan[Planner standalone Term branch]
+    plan --> page[posting.iter().take(limit)]
+    page --> total[posting.len exact total]
+    total --> output([No full materialization or ranking])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
