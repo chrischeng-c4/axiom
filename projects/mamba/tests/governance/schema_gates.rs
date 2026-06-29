@@ -19,7 +19,7 @@
 //! under `tests/schema_gates/` are no longer separate binaries — this
 //! umbrella is the sole binary that links them all.
 //!
-//! Total: 94 gate modules / 843 `#[test]` functions in one binary.
+//! Total: 95 gate modules / 846 `#[test]` functions in one binary.
 //!
 //! Selector: `cargo test -p mamba --test schema_gates`.
 
@@ -121,6 +121,9 @@ mod concurrency_readiness_gate_713;
 
 #[path = "schema_gates/runtime_gap_bridge_gate_715.rs"]
 mod runtime_gap_bridge_gate_715;
+
+#[path = "schema_gates/harness_doc_paths_gate_716.rs"]
+mod harness_doc_paths_gate_716;
 
 #[path = "schema_gates/perf_allocation_pressure_fixture_2661.rs"]
 mod perf_allocation_pressure_fixture_2661;

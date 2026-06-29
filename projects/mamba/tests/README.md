@@ -21,9 +21,9 @@ Cargo does not auto-discover Rust test files under subdirectories, so
 Rust integration tests under a domain directory and either register a domain
 entrypoint in `Cargo.toml` or add a module to the existing umbrella runner.
 
-Domain-local helper scripts belong under their domain as well. For example,
-CPython golden regeneration lives at `cpython/tools/regen_golden.py`, not at
-the tests root.
+Domain-local helper scripts belong under their domain as well. CPython harness
+maintenance commands live under `harness/cpython/tools/`; fixture-generation
+helpers that author manifest-backed files live under `../tools/`.
 
 ## Boundary-First Rules
 
@@ -51,7 +51,7 @@ Follow the repository-wide rule from `CONTRIBUTING.md`:
 For CPython fixtures, the concrete grammar is:
 
 ```text
-tests/cpython/fixtures/<bucket>/<lib>/<dimension>/<case>.py
+tests/cpython/<dimension>/<bucket>/<lib>/<case>.py
 ```
 
 This tree is generator/linter backed, so maximal one-case-per-file granularity
@@ -81,4 +81,4 @@ compatibility, but new fixtures should not use that shape. `ci_guard` locks the
 current count as a ceiling so the debt can only stay flat or shrink.
 
 The detailed CPython fixture mechanics live in
-`tests/cpython/conventions/FIXTURE-LAYOUT.md`.
+`tests/harness/cpython/conventions/FIXTURE-LAYOUT.md`.

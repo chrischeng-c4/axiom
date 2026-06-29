@@ -47,7 +47,7 @@
   `time.perf_counter` legitimately contains it). `projects/mamba/benches/` is
   outside `tests/` and also out of scope:
   ```
-  find projects/mamba/tests/cpython/fixtures -path '*/bench/*.py' \
+  find projects/mamba/tests/cpython -path '*/bench/*.py' \
     -exec grep -l 'perf_counter\|INTERNAL_TIME_NS' {} + | wc -l
   ```
   → **`0`**
@@ -143,7 +143,7 @@
   ```
   find projects/mamba/tests -name 'run.py' -not -path '*/fixtures/*' | wc -l   # → 0  (MET)
   rg -rln 'tests/cpython/run\.py' projects/mamba/CONTRIBUTING.md \
-     projects/mamba/tests/cpython/conventions | wc -l                          # → 0  (MET)
+     projects/mamba/tests/harness/cpython/conventions | wc -l                  # → 0  (MET)
   ```
 - **Capstone DONE (option B)**: `golden_capstone.py` proved the dynamic CPython
   oracle reproduces all 668 cpython goldens (type-strict uses
@@ -167,8 +167,8 @@
 - **Success metric**:
   ```
   # every type-strict fixture carries a directive
-  find projects/mamba/tests/cpython/fixtures/type-strict -name '*.py' \
-    -exec grep -L 'typeerror:\|no_typeerror:' {} + | wc -l     # → 0
+  find projects/mamba/tests/cpython/type -name '*.py' \
+    -exec grep -L 'mamba-strict-type:\|typeerror:\|no_typeerror:' {} + | wc -l # → 0
   # collector emits the verdict pair
   <summary-cmd> --dimension D1 | rg 'STRICT_TYPE_OK|MAMBA_TYPE_LEAKED'
   ```
@@ -181,7 +181,7 @@
 - **Success metric**:
   ```
   # lang + 3p seeds present and lint-clean
-  python3 projects/mamba/tests/cpython/tools/fixture_lint.py --bucket pep --bucket 3rd-libs   # exit 0
+  python3.12 projects/mamba/tests/harness/cpython/tools/fixture_lint.py --bucket pep --bucket 3rd-libs   # exit 0
   aw wi list --label gate:production --state open | rg -c 'AssertionPass seed'   # → 0 (all authored)
   ```
 - **Issues**: lang #3340 / #3346–3361, 3p #3458–3472.
