@@ -117,7 +117,9 @@ pub async fn launch_detached(opts: ServeProcessOptions) -> Result<ServeLaunch> {
     let mut cmd = std::process::Command::new(exe);
     cmd.current_dir(&opts.root_dir);
     if opts.prod {
-        cmd.arg("serve").arg("--prod");
+        // `jet serve` is the production static surface; the detached child is
+        // signaled via JET_SERVE_CHILD (no `--prod` flag on the public surface).
+        cmd.arg("serve");
         if opts.wasm {
             cmd.arg("--wasm");
         }

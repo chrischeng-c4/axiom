@@ -1,7 +1,7 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-dev-server.md#schema
 // CODEGEN-BEGIN
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-dev-server.md#schema
-//! Production static server used by `jet serve --prod`.
+//! Production static server used by `jet serve`.
 
 use anyhow::{Context, Result};
 use axum::{
@@ -65,7 +65,7 @@ pub async fn serve(root_dir: &Path, opts: ProdOptions) -> Result<()> {
     let index = dist.join("index.html");
     if !index.is_file() {
         anyhow::bail!(
-            "jet serve --prod expected {} to exist. Run `jet build` first.",
+            "jet serve expected {} to exist. Run `jet build` first.",
             index.display()
         );
     }
@@ -86,7 +86,7 @@ pub async fn serve(root_dir: &Path, opts: ProdOptions) -> Result<()> {
     });
 
     eprintln!(
-        "[jet serve --prod] serving {} at http://{}/ ({} files, {} bytes preloaded)",
+        "[jet serve] serving {} at http://{}/ ({} files, {} bytes preloaded)",
         dist.display(),
         bound,
         manifest.assets.len(),
@@ -98,7 +98,7 @@ pub async fn serve(root_dir: &Path, opts: ProdOptions) -> Result<()> {
         bound.ip()
     );
     if let Err(err) = super::session::write_from_env(root_dir, bound, opts.target) {
-        eprintln!("[jet serve --prod] failed to write serve session: {err:#}");
+        eprintln!("[jet serve] failed to write serve session: {err:#}");
     }
 
     let shutdown = async {
@@ -106,13 +106,13 @@ pub async fn serve(root_dir: &Path, opts: ProdOptions) -> Result<()> {
             _ = shutdown_rx => "jet serve shutdown",
             _ = shutdown_signal() => "Ctrl-C",
         };
-        eprintln!("[jet serve --prod] shutting down ({reason})...");
+        eprintln!("[jet serve] shutting down ({reason})...");
     };
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
         .await
         .context("HTTP server error")?;
-    eprintln!("[jet serve --prod] stopped.");
+    eprintln!("[jet serve] stopped.");
     Ok(())
 }
 
@@ -191,12 +191,12 @@ async fn handle_shutdown(State(state): State<ProdState>) -> Response {
         let _ = tx.send(());
         Response::builder()
             .status(StatusCode::OK)
-            .body(Body::from("jet serve --prod shutdown requested\n"))
+            .body(Body::from("jet serve shutdown requested\n"))
             .expect("valid shutdown response")
     } else {
         Response::builder()
             .status(StatusCode::OK)
-            .body(Body::from("jet serve --prod shutdown already requested\n"))
+            .body(Body::from("jet serve shutdown already requested\n"))
             .expect("valid shutdown response")
     }
 }
@@ -422,7 +422,7 @@ fn load_static_manifest(dist: &Path) -> Result<StaticManifest> {
 
     let Some(index) = assets.get("index.html").cloned() else {
         anyhow::bail!(
-            "jet serve --prod expected {} to exist",
+            "jet serve expected {} to exist",
             dist.join("index.html").display()
         );
     };
@@ -514,7 +514,7 @@ async fn shutdown_signal() {
         tracing::warn!(
             target: "jet::prod_static",
             error = %err,
-            "failed to install Ctrl-C handler for jet serve --prod; server will keep running until shutdown endpoint or process termination"
+            "failed to install Ctrl-C handler for jet serve; server will keep running until shutdown endpoint or process termination"
         );
         std::future::pending::<()>().await;
     }
