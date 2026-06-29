@@ -346,6 +346,9 @@ fn compile_dir_recursive(
                     continue;
                 }
             }
+            if !within_limit_sl_dest(&p, a) {
+                continue;
+            }
             ok &= compile_one_file(&ps, a);
         }
     }
@@ -356,6 +359,28 @@ fn compile_dir_recursive(
         }
     }
     ok
+}
+
+fn within_limit_sl_dest(path: &std::path::Path, a: &[MbValue]) -> bool {
+    let Some(limit) = kwarg(a, "limit_sl_dest")
+        .filter(|v| !v.is_none())
+        .and_then(extract_str_v)
+    else {
+        return true;
+    };
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return true;
+    };
+    if !meta.file_type().is_symlink() {
+        return true;
+    }
+    let Ok(target) = std::fs::canonicalize(path) else {
+        return true;
+    };
+    let Ok(limit) = std::fs::canonicalize(limit) else {
+        return true;
+    };
+    target.starts_with(limit)
 }
 
 /// importlib.util.cache_from_source(path, *, optimization=None).
