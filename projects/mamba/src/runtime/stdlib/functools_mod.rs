@@ -8,7 +8,8 @@ use rustc_hash::FxHashMap;
 ///   singledispatchmethod.
 /// Note: reduce and partial are stubs — full function-call dispatch
 /// is not yet wired in. lru_cache is an identity passthrough.
-/// cached_property, singledispatch, singledispatchmethod are MVP stubs.
+/// cached_property is an MVP stub; singledispatch and singledispatchmethod
+/// carry runtime dispatch registries.
 use std::collections::HashMap;
 
 /// Extract a String from an MbValue that wraps a heap Str.
@@ -1216,6 +1217,22 @@ fn lru_encode_value_key(v: MbValue, out: &mut String) {
             out.push_str(s);
             out.push('"');
         }
+        DictKey::StrCodepoints(codepoints) => {
+            out.push('u');
+            out.push('"');
+            out.push_str(&super::super::string_ops::escape_codepoints_non_ascii(
+                codepoints,
+            ));
+            out.push('"');
+        }
+        DictKey::Bytes(b) => {
+            out.push('b');
+            out.push_str(&b.len().to_string());
+            out.push(':');
+            for byte in b {
+                out.push_str(&format!("{byte:02x}"));
+            }
+        }
         DictKey::Bool(b) => out.push_str(if *b { "T" } else { "F" }),
         DictKey::None => out.push_str("None"),
         DictKey::Instance { hash_val, ptr, .. } => {
@@ -1555,13 +1572,14 @@ pub fn mb_functools_lru_cache_clear(wrapper: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// functools.cached_property(func) -> func  (R6)
+/// functools.cached_property(func) -> a `__cached_property__` descriptor.
 ///
-/// MVP: identity passthrough. The descriptor protocol is not yet wired.
-/// Returns the function unchanged so that `from functools import cached_property`
-/// does not crash.
+/// Wrapping the getter in the descriptor (keyed by the function name) makes the
+/// first instance access compute and cache the value on the instance, so later
+/// reads hit the instance __dict__ — standard CPython cached_property.
 pub fn mb_functools_cached_property(func: MbValue) -> MbValue {
-    func
+    let name = super::super::closure::mb_func_get_name(func);
+    super::super::class::mb_cached_property_new(func, name)
 }
 
 /// functools.cmp_to_key(mycmp) -> key-factory Instance  (R7)
@@ -1786,11 +1804,25 @@ pub fn get_func_wrapped(wrapper: MbValue) -> MbValue {
 /// `wrapper` (both function values): copy `__name__`, `__qualname__`,
 /// `__module__`, `__doc__` and set `__wrapped__ = wrapped`. Returns `wrapper`.
 pub fn mb_functools_wraps_apply(wrapper: MbValue, wrapped: MbValue) -> MbValue {
-    let name = super::super::closure::mb_func_get_name(wrapped);
+    // Read an attribute from a non-function wrapped object (e.g. a builtin type
+    // like `type`/`max`) when the function-registry getter has nothing.
+    let getattr = |attr: &str| -> MbValue {
+        super::super::class::mb_getattr(
+            wrapped,
+            MbValue::from_ptr(MbObject::new_str(attr.to_string())),
+        )
+    };
+    let mut name = super::super::closure::mb_func_get_name(wrapped);
+    if name.is_none() {
+        name = getattr("__name__");
+    }
     if !name.is_none() {
         super::super::closure::mb_func_set_name(wrapper, name);
     }
-    let doc = super::super::closure::mb_func_get_doc(wrapped);
+    let mut doc = super::super::closure::mb_func_get_doc(wrapped);
+    if doc.is_none() {
+        doc = getattr("__doc__");
+    }
     if !doc.is_none() {
         super::super::closure::mb_func_set_doc(wrapper, doc);
     }
@@ -1853,11 +1885,19 @@ pub fn mb_functools_update_wrapper(wrapper: MbValue, wrapped: MbValue) -> MbValu
 
 /// functools.singledispatch(func) -> Instance  (R9)
 ///
-/// MVP: wraps the function in a `functools.singledispatch` Instance.
-/// The dispatch registry and `@f.register` mechanism are future work.
+/// Wraps `func` in a `functools.singledispatch` Instance carrying a per-type
+/// registry. `.register(t, impl)` / `@f.register(t)` populate it; calling the
+/// instance dispatches on the first argument's type (MRO-aware), falling back
+/// to `func`. Call/method dispatch is wired in builtins.rs (mb_call_spread)
+/// and class.rs (mb_call_method).
 pub fn mb_functools_singledispatch(func: MbValue) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("_func".to_string(), func);
+    // _registry: dict mapping type-name (str) -> implementation.
+    fields.insert(
+        "_registry".to_string(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -1871,12 +1911,514 @@ pub fn mb_functools_singledispatch(func: MbValue) -> MbValue {
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
-/// functools.singledispatchmethod(func) -> func  (R10)
+/// Read a field from a `functools.singledispatch` (or `_sd_register`) Instance.
+fn sd_field(inst: MbValue, name: &str) -> MbValue {
+    inst.as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields.read().unwrap().get(name).copied()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none)
+}
+
+fn sd_registry_insert_name(inst: MbValue, name: &str, impl_val: MbValue) {
+    if name.is_empty() {
+        return;
+    }
+    let registry = sd_field(inst, "_registry");
+    if let Some(rp) = registry.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*rp).data {
+                super::super::rc::retain_if_ptr(impl_val);
+                lock.write().unwrap().insert(
+                    super::super::dict_ops::DictKey::Str(name.to_string()),
+                    impl_val,
+                );
+            }
+        }
+    }
+}
+
+fn sd_type_names_from_value(type_val: MbValue) -> Vec<String> {
+    if let Some(args) = type_val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+            let is_union = if class_name == "UnionType" {
+                true
+            } else if class_name == "typing.Alias" {
+                fields
+                    .read()
+                    .ok()
+                    .and_then(|f| f.get("_kind").copied().and_then(extract_str))
+                    == Some("union".to_string())
+            } else {
+                false
+            };
+            if is_union {
+                fields.read().ok().and_then(|f| f.get("__args__").copied())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }) {
+        if let Some(arg_ptr) = args.as_ptr() {
+            unsafe {
+                if let ObjData::Tuple(items) = &(*arg_ptr).data {
+                    let names: Vec<String> = items
+                        .iter()
+                        .filter_map(|item| super::super::class::resolve_class_name(*item))
+                        .collect();
+                    if !names.is_empty() {
+                        return names;
+                    }
+                }
+            }
+        }
+    }
+    super::super::class::resolve_class_name(type_val)
+        .into_iter()
+        .collect()
+}
+
+/// Store `impl_val` under `type_val`'s class name in the singledispatch
+/// instance's registry. Returns `impl_val` (so `register` can be used as a
+/// decorator / direct call).
+fn sd_registry_insert(inst: MbValue, type_val: MbValue, impl_val: MbValue) {
+    for name in sd_type_names_from_value(type_val) {
+        sd_registry_insert_name(inst, &name, impl_val);
+    }
+}
+
+fn sd_annotation_part_type_name(part: &str) -> Option<String> {
+    let trimmed = part.trim().trim_matches(|c| c == '\'' || c == '"');
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(match trimmed {
+        "None" => "NoneType".to_string(),
+        other => other.rsplit('.').next().unwrap_or(other).to_string(),
+    })
+}
+
+fn sd_annotation_type_names(annotation: &str) -> Vec<String> {
+    let annotation = annotation.trim();
+    let union_inner = annotation
+        .strip_prefix("typing.Union[")
+        .or_else(|| annotation.strip_prefix("Union["))
+        .and_then(|rest| rest.strip_suffix(']'));
+    if let Some(inner) = union_inner {
+        return inner
+            .split(',')
+            .filter_map(sd_annotation_part_type_name)
+            .collect();
+    }
+    if annotation.contains('|') {
+        return annotation
+            .split('|')
+            .filter_map(sd_annotation_part_type_name)
+            .collect();
+    }
+    sd_annotation_part_type_name(annotation)
+        .into_iter()
+        .collect()
+}
+
+fn sd_register_from_first_annotation(inst: MbValue, impl_val: MbValue) -> bool {
+    let Some(params) = super::super::closure::func_params(impl_val) else {
+        return false;
+    };
+    let Some(annotation) = params.into_iter().find_map(|p| p.annotation) else {
+        return false;
+    };
+    let names = sd_annotation_type_names(&annotation);
+    if names.is_empty() {
+        return false;
+    }
+    for name in names {
+        sd_registry_insert_name(inst, &name, impl_val);
+    }
+    true
+}
+
+pub fn mb_singledispatch_register_annotation(
+    inst: MbValue,
+    impl_val: MbValue,
+    annotation: MbValue,
+) -> MbValue {
+    let is_singledispatch = inst.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. } if class_name == "functools.singledispatch"
+        )
+    });
+    if !is_singledispatch {
+        let register = super::super::class::mb_getattr(
+            inst,
+            MbValue::from_ptr(MbObject::new_str("register".to_string())),
+        );
+        return super::super::class::mb_call1_val(register, impl_val);
+    }
+    if let Some(annotation) = extract_str(annotation) {
+        for name in sd_annotation_type_names(&annotation) {
+            sd_registry_insert_name(inst, &name, impl_val);
+        }
+    }
+    impl_val
+}
+
+fn sd_builtin_abc_mro(type_name: &str) -> &'static [&'static str] {
+    match type_name {
+        "list" | "bytearray" => &[
+            "MutableSequence",
+            "Sequence",
+            "Reversible",
+            "Collection",
+            "Sized",
+            "Iterable",
+            "Container",
+        ],
+        "tuple" | "str" | "bytes" => &[
+            "Sequence",
+            "Reversible",
+            "Collection",
+            "Sized",
+            "Iterable",
+            "Container",
+        ],
+        "dict" => &[
+            "MutableMapping",
+            "Mapping",
+            "Collection",
+            "Sized",
+            "Iterable",
+            "Container",
+        ],
+        "set" => &[
+            "MutableSet",
+            "Set",
+            "Collection",
+            "Sized",
+            "Iterable",
+            "Container",
+        ],
+        "frozenset" => &["Set", "Collection", "Sized", "Iterable", "Container"],
+        _ => &[],
+    }
+}
+
+/// MRO of a type name for dispatch: user classes use the class registry; a
+/// builtin falls back to `[name, object]` (plus bool ⊂ int).
+fn sd_mro(type_name: &str) -> Vec<String> {
+    let mro = super::super::class::class_mro_list(type_name);
+    if !mro.is_empty() {
+        return mro;
+    }
+    let mut out = match type_name {
+        "bool" => vec!["bool".into(), "int".into()],
+        other => vec![other.to_string()],
+    };
+    out.extend(
+        sd_builtin_abc_mro(type_name)
+            .iter()
+            .map(|name| (*name).to_string()),
+    );
+    if !out.iter().any(|name| name == "object") {
+        out.push("object".into());
+    }
+    out
+}
+
+/// Find the implementation registered for `type_name` (walking its MRO),
+/// falling back to the base `_func`.
+fn sd_lookup_impl(inst: MbValue, type_name: &str) -> MbValue {
+    let registry = sd_field(inst, "_registry");
+    if let Some(rp) = registry.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*rp).data {
+                let guard = lock.read().unwrap();
+                for ancestor in sd_mro(type_name) {
+                    if let Some(v) = guard.get(&super::super::dict_ops::DictKey::Str(ancestor)) {
+                        return *v;
+                    }
+                }
+            }
+        }
+    }
+    sd_field(inst, "_func")
+}
+
+/// `singledispatch.register(...)`:
+///   - `register(type, impl)` → store and return `impl`.
+///   - `register(type)`       → return a `_sd_register` decorator instance.
+pub fn mb_singledispatch_register(inst: MbValue, args: &[MbValue]) -> MbValue {
+    let type_val = args.first().copied().unwrap_or_else(MbValue::none);
+    if let Some(impl_val) = args.get(1).copied() {
+        sd_registry_insert(inst, type_val, impl_val);
+        return impl_val;
+    }
+    if super::super::class::resolve_class_name(type_val).is_none()
+        && sd_register_from_first_annotation(inst, type_val)
+    {
+        return type_val;
+    }
+    // Decorator form: capture (dispatcher, type) for a later impl call.
+    let mut fields = FxHashMap::default();
+    unsafe {
+        super::super::rc::retain_if_ptr(inst);
+        super::super::rc::retain_if_ptr(type_val);
+    }
+    fields.insert("_sd".to_string(), inst);
+    fields.insert("_type".to_string(), type_val);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "functools._sd_register".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// Apply the `@f.register(type)` decorator instance to an implementation:
+/// register it and return the implementation unchanged.
+pub fn mb_singledispatch_register_apply(decorator: MbValue, impl_val: MbValue) -> MbValue {
+    let inst = sd_field(decorator, "_sd");
+    let type_val = sd_field(decorator, "_type");
+    if super::super::class::resolve_class_name(type_val).is_none() {
+        if !sd_register_from_first_annotation(inst, impl_val) {
+            sd_registry_insert(inst, type_val, impl_val);
+        }
+    } else {
+        sd_registry_insert(inst, type_val, impl_val);
+    }
+    impl_val
+}
+
+/// `singledispatch.dispatch(type)` → the implementation for `type` (MRO-aware).
+pub fn mb_singledispatch_dispatch(inst: MbValue, type_val: MbValue) -> MbValue {
+    let name = super::super::class::resolve_class_name(type_val).unwrap_or_default();
+    sd_lookup_impl(inst, &name)
+}
+
+/// Call a `functools.singledispatch` instance: dispatch on the first argument's
+/// runtime type and invoke the matching implementation. No positional argument
+/// is a TypeError (matching CPython).
+pub fn mb_singledispatch_call(inst: MbValue, args: Vec<MbValue>) -> MbValue {
+    let Some(first) = args.first().copied() else {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "funcname requires at least 1 positional argument".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    let type_name = super::super::builtins::value_type_name(first);
+    let impl_val = sd_lookup_impl(inst, &type_name);
+    let args_list = MbValue::from_ptr(MbObject::new_list(args));
+    super::super::builtins::mb_call_spread(impl_val, args_list)
+}
+
+/// functools.singledispatchmethod(func) -> descriptor  (R10)
 ///
-/// MVP: identity passthrough matching the total_ordering pattern.
-/// Returns the first argument unchanged.
+/// The descriptor owns an inner singledispatch registry but dispatches on the
+/// first non-self/non-cls argument when the method is invoked.
 pub fn mb_functools_singledispatchmethod(func: MbValue) -> MbValue {
-    func
+    let mut fields = FxHashMap::default();
+    fields.insert("_sd".to_string(), mb_functools_singledispatch(func));
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "functools.singledispatchmethod".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+fn sdm_field(inst: MbValue, name: &str) -> MbValue {
+    inst.as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields.read().unwrap().get(name).copied()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none)
+}
+
+pub fn is_singledispatchmethod_descriptor(val: MbValue) -> bool {
+    val.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if class_name == "functools.singledispatchmethod"
+        )
+    })
+}
+
+pub fn is_singledispatchmethod_bound(val: MbValue) -> bool {
+    val.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if class_name == "functools._singledispatchmethod_bound"
+        )
+    })
+}
+
+pub fn mb_singledispatchmethod_register_value(desc: MbValue, type_val: MbValue, impl_val: MbValue) {
+    let sd = sdm_field(desc, "_sd");
+    if sd.is_none() {
+        return;
+    }
+    sd_registry_insert(sd, type_val, impl_val);
+}
+
+pub fn mb_singledispatchmethod_get(desc: MbValue, receiver: MbValue) -> MbValue {
+    let mut fields = FxHashMap::default();
+    unsafe {
+        super::super::rc::retain_if_ptr(desc);
+        super::super::rc::retain_if_ptr(receiver);
+    }
+    fields.insert("_sdm".to_string(), desc);
+    fields.insert("_receiver".to_string(), receiver);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "functools._singledispatchmethod_bound".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SdmImplKind {
+    Regular,
+    ClassMethod,
+    StaticMethod,
+}
+
+fn sdm_unwrap_impl(impl_val: MbValue) -> (MbValue, SdmImplKind) {
+    if let Some(ptr) = impl_val.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+                let kind = match class_name.as_str() {
+                    "__classmethod__" => Some(SdmImplKind::ClassMethod),
+                    "__staticmethod__" => Some(SdmImplKind::StaticMethod),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    let func = fields
+                        .read()
+                        .unwrap()
+                        .get("__func__")
+                        .copied()
+                        .unwrap_or_else(MbValue::none);
+                    return (func, kind);
+                }
+            }
+        }
+    }
+    (impl_val, SdmImplKind::Regular)
+}
+
+fn sdm_receiver_class(receiver: MbValue) -> MbValue {
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Instance { class_name, .. } => {
+                    return MbValue::from_ptr(MbObject::new_str(class_name.clone()));
+                }
+                ObjData::Str(s) if super::super::class::class_is_registered(s) => {
+                    super::super::rc::retain_if_ptr(receiver);
+                    return receiver;
+                }
+                _ => {}
+            }
+        }
+    }
+    MbValue::none()
+}
+
+fn sdm_dispatch_index(receiver: MbValue, kind: SdmImplKind, args: &[MbValue]) -> usize {
+    if kind == SdmImplKind::Regular && args.len() > 1 {
+        if let Some(ptr) = receiver.as_ptr() {
+            unsafe {
+                if matches!(&(*ptr).data, ObjData::Str(s) if super::super::class::class_is_registered(s))
+                {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+pub fn mb_singledispatchmethod_call_bound(bound: MbValue, args: Vec<MbValue>) -> MbValue {
+    let desc = sdm_field(bound, "_sdm");
+    let receiver = sdm_field(bound, "_receiver");
+    mb_singledispatchmethod_call(desc, receiver, args)
+}
+
+pub fn mb_singledispatchmethod_call(
+    desc: MbValue,
+    receiver: MbValue,
+    args: Vec<MbValue>,
+) -> MbValue {
+    let sd = sdm_field(desc, "_sd");
+    let base = sd_field(sd, "_func");
+    let (_, base_kind) = sdm_unwrap_impl(base);
+    let dispatch_idx = sdm_dispatch_index(receiver, base_kind, &args);
+    let Some(dispatch_arg) = args.get(dispatch_idx).copied() else {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "singledispatchmethod requires an argument to dispatch on".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    let type_name = super::super::builtins::value_type_name(dispatch_arg);
+    let impl_val = sd_lookup_impl(sd, &type_name);
+    let (callable, kind) = sdm_unwrap_impl(impl_val);
+    let mut call_args = Vec::with_capacity(args.len() + 1);
+    match kind {
+        SdmImplKind::Regular => {
+            if receiver.as_ptr().is_some_and(|ptr| unsafe {
+                matches!(&(*ptr).data, ObjData::Str(s) if super::super::class::class_is_registered(s))
+            }) {
+                call_args.extend(args);
+            } else {
+                call_args.push(receiver);
+                call_args.extend(args);
+            }
+        }
+        SdmImplKind::ClassMethod => {
+            call_args.push(sdm_receiver_class(receiver));
+            call_args.extend(args);
+        }
+        SdmImplKind::StaticMethod => {
+            call_args.extend(args);
+        }
+    }
+    let args_list = MbValue::from_ptr(MbObject::new_list(call_args));
+    super::super::builtins::mb_call_spread(callable, args_list)
 }
 
 #[cfg(test)]
@@ -2064,13 +2606,55 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_singledispatch_builtin_abc_lookup_order() {
+        let dispatcher = mb_functools_singledispatch(MbValue::from_int(1));
+        sd_registry_insert_name(dispatcher, "Sequence", MbValue::from_int(2));
+        sd_registry_insert_name(dispatcher, "MutableSequence", MbValue::from_int(3));
+
+        assert_eq!(sd_lookup_impl(dispatcher, "tuple").as_int(), Some(2));
+        assert_eq!(sd_lookup_impl(dispatcher, "list").as_int(), Some(3));
+    }
+
+    #[test]
+    fn test_singledispatch_annotation_type_names() {
+        assert_eq!(
+            sd_annotation_type_names("collections.abc.Mapping"),
+            vec!["Mapping".to_string()]
+        );
+        assert_eq!(
+            sd_annotation_type_names("typing.Union[str, bytes]"),
+            vec!["str".to_string(), "bytes".to_string()]
+        );
+        assert_eq!(
+            sd_annotation_type_names("int | float"),
+            vec!["int".to_string(), "float".to_string()]
+        );
+    }
+
     // REQ: R10
     #[test]
-    fn test_singledispatchmethod_passthrough() {
-        // singledispatchmethod is an identity passthrough at MVP.
+    fn test_singledispatchmethod_creates_descriptor() {
         let func = MbValue::from_int(77);
         let result = mb_functools_singledispatchmethod(func);
-        assert_eq!(result.as_int(), Some(77));
+        unsafe {
+            let ptr = result.as_ptr().expect("expected descriptor instance");
+            if let ObjData::Instance { class_name, .. } = &(*ptr).data {
+                assert_eq!(class_name, "functools.singledispatchmethod");
+            } else {
+                panic!("expected functools.singledispatchmethod Instance");
+            }
+        }
+        let sd = sdm_field(result, "_sd");
+        assert_eq!(sd_field(sd, "_func").as_int(), Some(77));
+    }
+
+    #[test]
+    fn test_singledispatchmethod_registers_inner_dispatcher() {
+        let desc = mb_functools_singledispatchmethod(MbValue::from_int(1));
+        mb_singledispatchmethod_register_value(desc, s("int"), MbValue::from_int(2));
+        let sd = sdm_field(desc, "_sd");
+        assert_eq!(sd_lookup_impl(sd, "int").as_int(), Some(2));
     }
 
     // -- recursive_repr / get_cache_token / GenericAlias stubs

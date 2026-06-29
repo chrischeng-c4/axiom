@@ -58,12 +58,19 @@ fn collect_used_externs(module: &MirModule) -> HashSet<String> {
                         used.insert("mb_setattr".into());
                     }
                     MirInst::GetItem { .. } => {
-                        used.insert("mb_list_getitem".into());
                         used.insert("mb_obj_getitem".into());
                     }
                     MirInst::SetItem { .. } => {
-                        used.insert("mb_list_setitem".into());
                         used.insert("mb_obj_setitem".into());
+                    }
+                    MirInst::LoadGlobal { .. } => {
+                        used.insert("mb_global_get_id".into());
+                    }
+                    MirInst::StoreGlobal { .. } => {
+                        used.insert("mb_global_set_id".into());
+                    }
+                    MirInst::DeleteGlobal { .. } => {
+                        used.insert("mb_global_del_id".into());
                     }
                     MirInst::MakeTuple { .. } => {
                         used.insert("mb_list_new".into());
@@ -429,6 +436,10 @@ impl CraneliftBackend {
                 let var = vars.get(*dest, builder, cl_type);
                 let val = match value {
                     MirConst::Int(v) => builder.ins().iconst(cl_types::I64, *v),
+                    MirConst::BigInt(s) => {
+                        let val = crate::runtime::bigint_ops::bigint_immortal_from_literal(s);
+                        builder.ins().iconst(cl_types::I64, val.to_bits() as i64)
+                    }
                     MirConst::Float(v) => builder.ins().f64const(*v),
                     MirConst::Bool(v) => builder.ins().iconst(cl_types::I64, *v as i64),
                     MirConst::None => builder.ins().iconst(cl_types::I64, 0),
@@ -440,7 +451,17 @@ impl CraneliftBackend {
                         .iconst(cl_types::I64, MbValue::ellipsis().to_bits() as i64),
                     MirConst::Str(s) => {
                         // Use immortal refcount for compile-time string constants (#1129 R4).
-                        let str_val = MbValue::from_ptr(MbObject::new_str_immortal(s.clone()));
+                        let str_val = if let Some(codepoints) =
+                            crate::lexer::token::decode_surrogate_escape_markers(s)
+                        {
+                            MbValue::from_ptr(
+                                crate::runtime::string_ops::new_surrogate_codepoints_str_immortal(
+                                    codepoints,
+                                ),
+                            )
+                        } else {
+                            MbValue::from_ptr(MbObject::new_str_immortal(s.clone()))
+                        };
                         builder
                             .ins()
                             .iconst(cl_types::I64, str_val.to_bits() as i64)
@@ -500,6 +521,72 @@ impl CraneliftBackend {
                         let zero = builder.ins().iconst(cl_types::I64, 0);
                         let dv = vars.get(*dest, builder, cl_types::I64);
                         builder.def_var(dv, zero);
+                    }
+                } else if (matches!(op, MirBinOp::FloorDiv) || matches!(op, MirBinOp::Mod))
+                    && matches!(resolved_ty, Ty::Int | Ty::Float | Ty::Bool)
+                {
+                    // Floor division / modulo → call mb_floordiv / mb_mod runtime
+                    // rather than emitting an inline `sdiv` / `srem`. This mirrors
+                    // the JIT path (#1085, #35): the inline integer path operated
+                    // on the raw tagged bits (so `10**30 % 7` saw the BigInt's
+                    // pointer bits, not its value), `x % 0` hardware-trapped
+                    // (SIGILL) instead of raising a catchable ZeroDivisionError,
+                    // and the inline float `%` returned NaN for `1.0 % 0.0`
+                    // instead of raising ZeroDivisionError. The runtime helpers
+                    // handle BigInt, floor semantics, and the correct
+                    // ZeroDivisionError messages.
+                    // Float operands are already NaN-boxed I64 MbValues — no boxing
+                    // needed. Int/Bool operands need boxing from raw I64 to MbValue.
+                    let is_mod = matches!(op, MirBinOp::Mod);
+                    let helper_name = if is_mod { "mb_mod" } else { "mb_floordiv" };
+                    let is_float = matches!(resolved_ty, Ty::Float);
+                    let box_id = if is_float {
+                        None
+                    } else {
+                        let box_fn_name = match resolved_ty {
+                            Ty::Bool => "mb_box_bool",
+                            _ => "mb_box_int",
+                        };
+                        self.extern_funcs.get(box_fn_name).copied()
+                    };
+                    if let Some(&func_id) = self.extern_funcs.get(helper_name) {
+                        let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+                        let l = vars.use_as_i64(*lhs, builder);
+                        let r = vars.use_as_i64(*rhs, builder);
+                        let (l_boxed, r_boxed) = if let Some(bid) = box_id {
+                            let fref = self.module().declare_func_in_func(bid, builder.func);
+                            let lc = builder.ins().call(fref, &[l]);
+                            let rc = builder.ins().call(fref, &[r]);
+                            (builder.inst_results(lc)[0], builder.inst_results(rc)[0])
+                        } else {
+                            (l, r)
+                        };
+                        let call = builder.ins().call(func_ref, &[l_boxed, r_boxed]);
+                        let result_bits = builder.inst_results(call)[0];
+                        // For Int/Bool operands: mb_mod / mb_floordiv return a
+                        // NaN-boxed MbValue, but subsequent primitive ops expect a
+                        // raw i64. Unbox inline-int results (tag=1) to raw i64, but
+                        // keep BigInt results NaN-boxed so they flow back through
+                        // the runtime correctly.
+                        if !is_float {
+                            let tag_raw = builder.ins().ushr_imm(result_bits, 48);
+                            let tag = builder.ins().band_imm(tag_raw, 7);
+                            let tag_int = builder.ins().iconst(cl_types::I64, 1);
+                            let is_inline = builder.ins().icmp(IntCC::Equal, tag, tag_int);
+                            let payload_mask = builder
+                                .ins()
+                                .iconst(cl_types::I64, 0x0000_FFFF_FFFF_FFFFi64);
+                            let payload = builder.ins().band(result_bits, payload_mask);
+                            let shifted = builder.ins().ishl_imm(payload, 16);
+                            let unboxed = builder.ins().sshr_imm(shifted, 16);
+                            let result = builder.ins().select(is_inline, unboxed, result_bits);
+                            vars.def_var_cast(*dest, builder, result, cl_types::I64);
+                        } else {
+                            vars.def_var_cast(*dest, builder, result_bits, cl_types::I64);
+                        }
+                    } else {
+                        let zero = builder.ins().iconst(cl_types::I64, 0);
+                        vars.def_var_cast(*dest, builder, zero, cl_types::I64);
                     }
                 } else if use_primitive {
                     let cl_type = self.mamba_to_cl_type(resolved_ty);
@@ -611,23 +698,19 @@ impl CraneliftBackend {
                         }
                         crate::mir::MirUnaryOp::Not => {
                             // Python `not x` evaluates truthiness then inverts.
-                            // If operand is raw 0/1, XOR works directly.
-                            // If operand is NaN-boxed (instance ptr, etc.),
-                            // must call mb_is_truthy first.
-                            if vars.raw_ints.contains(operand) {
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(val, one)
+                            // Raw ints are not necessarily 0/1 (`not 5` is
+                            // False), so compare the truth value to zero.
+                            let truth_value = if vars.raw_ints.contains(operand) {
+                                val
                             } else if let Some(&truthy_id) = self.extern_funcs.get("mb_is_truthy") {
                                 let truthy_ref =
                                     self.module().declare_func_in_func(truthy_id, builder.func);
                                 let call = builder.ins().call(truthy_ref, &[val]);
-                                let truthy_val = builder.inst_results(call)[0];
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(truthy_val, one)
+                                builder.inst_results(call)[0]
                             } else {
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(val, one)
-                            }
+                                val
+                            };
+                            emit_logical_not(builder, truth_value)
                         }
                         crate::mir::MirUnaryOp::BitNot => builder.ins().bnot(val),
                     };
@@ -662,20 +745,17 @@ impl CraneliftBackend {
                             }
                         }
                         crate::mir::MirUnaryOp::Not => {
-                            if vars.raw_ints.contains(operand) {
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(val, one)
+                            let truth_value = if vars.raw_ints.contains(operand) {
+                                val
                             } else if let Some(&truthy_id) = self.extern_funcs.get("mb_is_truthy") {
                                 let truthy_ref =
                                     self.module().declare_func_in_func(truthy_id, builder.func);
                                 let call = builder.ins().call(truthy_ref, &[val]);
-                                let truthy_val = builder.inst_results(call)[0];
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(truthy_val, one)
+                                builder.inst_results(call)[0]
                             } else {
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(val, one)
-                            }
+                                val
+                            };
+                            emit_logical_not(builder, truth_value)
                         }
                         crate::mir::MirUnaryOp::BitNot => builder.ins().bnot(val),
                     };
@@ -735,13 +815,7 @@ impl CraneliftBackend {
                 index,
                 ty: _,
             } => {
-                // Try list-specific getitem first, fall back to generic __getitem__
-                let func_name = if self.extern_funcs.contains_key("mb_list_getitem") {
-                    "mb_list_getitem"
-                } else {
-                    "mb_obj_getitem"
-                };
-                if let Some(&func_id) = self.extern_funcs.get(func_name) {
+                if let Some(&func_id) = self.extern_funcs.get("mb_obj_getitem") {
                     let func_ref = self.module().declare_func_in_func(func_id, builder.func);
                     let ov = vars.get(*object, builder, cl_types::I64);
                     let iv = vars.get(*index, builder, cl_types::I64);
@@ -762,13 +836,7 @@ impl CraneliftBackend {
                 index,
                 value,
             } => {
-                // Try list-specific setitem first, fall back to generic __setitem__
-                let func_name = if self.extern_funcs.contains_key("mb_list_setitem") {
-                    "mb_list_setitem"
-                } else {
-                    "mb_obj_setitem"
-                };
-                if let Some(&func_id) = self.extern_funcs.get(func_name) {
+                if let Some(&func_id) = self.extern_funcs.get("mb_obj_setitem") {
                     let func_ref = self.module().declare_func_in_func(func_id, builder.func);
                     let ov = vars.get(*object, builder, cl_types::I64);
                     let iv = vars.get(*index, builder, cl_types::I64);
@@ -895,6 +963,13 @@ impl CraneliftBackend {
                     let vv = vars.get(*value, builder, cl_types::I64);
                     let val = builder.use_var(vv);
                     builder.ins().call(func_ref, &[id_val, val]);
+                }
+            }
+            MirInst::DeleteGlobal { name } => {
+                if let Some(&func_id) = self.extern_funcs.get("mb_global_del_id") {
+                    let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+                    let id_val = builder.ins().iconst(cl_types::I64, name.0 as i64);
+                    builder.ins().call(func_ref, &[id_val]);
                 }
             }
             MirInst::LoadCell { dest, cell_idx, .. } => {
@@ -1102,6 +1177,15 @@ impl CraneliftBackend {
             builder.def_var(var, zero);
         }
     }
+}
+
+fn emit_logical_not(
+    builder: &mut FunctionBuilder,
+    truth_value: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Value {
+    let zero = builder.ins().iconst(cl_types::I64, 0);
+    let is_false = builder.ins().icmp(IntCC::Equal, truth_value, zero);
+    builder.ins().uextend(cl_types::I64, is_false)
 }
 
 /// Emit a block terminator.
@@ -1437,10 +1521,20 @@ impl CodegenBackend for CraneliftBackend {
         }
         // Phase 1b: Always declare NaN-boxing externs needed for internal call return
         // value promotion — these are emitted by emit_internal_call at codegen time,
-        // not as MirInst nodes, so they are not in `used`.
-        let boxing_names = ["mb_box_int", "mb_box_bool", "mb_box_float"];
+        // not as MirInst nodes, so they are not in `used`. mb_mod / mb_floordiv are
+        // likewise emitted directly by the BinOp lowering (Mod / FloorDiv route
+        // through the runtime for BigInt support and catchable ZeroDivisionError —
+        // see emit_inst), so they must always be available even when no MirInst
+        // names them.
+        let always_declare = [
+            "mb_box_int",
+            "mb_box_bool",
+            "mb_box_float",
+            "mb_mod",
+            "mb_floordiv",
+        ];
         for ext in &all_externs {
-            if boxing_names.contains(&ext.name.as_str())
+            if always_declare.contains(&ext.name.as_str())
                 && !self.extern_funcs.contains_key(&ext.name)
             {
                 self.declare_extern(ext)?;
@@ -1601,7 +1695,6 @@ mod tests {
         };
         let m = module_with_single_block(vec![inst]);
         let used = collect_used_externs(&m);
-        assert!(used.contains("mb_list_getitem"));
         assert!(used.contains("mb_obj_getitem"));
     }
 
@@ -1614,7 +1707,6 @@ mod tests {
         };
         let m = module_with_single_block(vec![inst]);
         let used = collect_used_externs(&m);
-        assert!(used.contains("mb_list_setitem"));
         assert!(used.contains("mb_obj_setitem"));
     }
 

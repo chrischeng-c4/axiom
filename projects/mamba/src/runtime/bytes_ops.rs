@@ -53,6 +53,55 @@ fn raise_lookup_error(msg: &str) {
     );
 }
 
+fn raise_index_error(msg: &str) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+}
+
+fn raise_value_error(msg: &str) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+}
+
+fn raise_unicode_decode_error(encoding: &str, data: &[u8], pos: usize, reason: &str) {
+    let byte = data.get(pos).copied().unwrap_or_default();
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("UnicodeDecodeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "'{encoding}' codec can't decode byte 0x{byte:02x} in position {pos}: {reason}"
+        ))),
+    );
+}
+
+fn known_text_codec_fallback(enc: &str) -> bool {
+    matches!(
+        enc.replace('_', "-").as_str(),
+            "idna"
+            | "utf-7"
+            | "utf7"
+            | "euc-jp"
+            | "eucjp"
+            | "iso-2022-jp"
+            | "shift-jis"
+            | "sjis"
+            | "cp932"
+            | "cp1252"
+            | "windows-1252"
+            | "iso-8859-15"
+            | "iso8859-15"
+            | "latin-9"
+            | "latin9"
+            | "big5"
+            | "gbk"
+            | "gb2312"
+            | "gb18030"
+    )
+}
+
 fn str_from_value(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
         match &(*ptr).data {
@@ -70,6 +119,20 @@ fn encode_str_with_encoding(s: &str, encoding: &str) -> Option<Vec<u8>> {
         "ascii" => {
             raise_type_error("'ascii' codec can't encode character");
             None
+        }
+        "raw-unicode-escape" => {
+            let mut out: Vec<u8> = Vec::new();
+            for c in s.chars() {
+                let cp = c as u32;
+                if cp <= 0xFF {
+                    out.push(cp as u8);
+                } else if cp <= 0xFFFF {
+                    out.extend_from_slice(format!("\\u{:04x}", cp).as_bytes());
+                } else {
+                    out.extend_from_slice(format!("\\U{:08x}", cp).as_bytes());
+                }
+            }
+            Some(out)
         }
         _ => {
             raise_lookup_error(&format!("unknown encoding: {encoding}"));
@@ -125,6 +188,9 @@ fn validated_bytes_from_items(items: &[MbValue]) -> Option<Vec<u8>> {
 /// after the byte payload is extracted.
 unsafe fn drain_handle_to_u8s(handle: MbValue) -> Option<Vec<u8>> {
     let items: Vec<MbValue> = if let Some(v) = super::iter::drain_iter_to_vec(handle) {
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
         v
     } else {
         // Slow path: standard iterator protocol. drain_iter_to_vec put the
@@ -132,10 +198,18 @@ unsafe fn drain_handle_to_u8s(handle: MbValue) -> Option<Vec<u8>> {
         let h = super::iter::mb_iter(handle);
         let mut out = Vec::new();
         loop {
-            if super::iter::mb_has_next(h).as_bool() != Some(true) {
+            let has_next = super::iter::mb_has_next(h);
+            if super::exception::mb_has_exception().as_bool() == Some(true) {
+                return None;
+            }
+            if has_next.as_bool() != Some(true) {
                 break;
             }
-            out.push(super::iter::mb_next(h));
+            let item = super::iter::mb_next(h);
+            if super::exception::mb_has_exception().as_bool() == Some(true) {
+                return None;
+            }
+            out.push(item);
         }
         out
     };
@@ -144,6 +218,87 @@ unsafe fn drain_handle_to_u8s(handle: MbValue) -> Option<Vec<u8>> {
         super::rc::release_if_ptr(it);
     }
     data
+}
+
+unsafe fn bytes_join_parts(parts: MbValue) -> Option<Vec<MbValue>> {
+    if let Some(ptr) = parts.as_ptr() {
+        match &(*ptr).data {
+            ObjData::List(ref lock) => return Some(lock.read().unwrap().to_vec()),
+            ObjData::Tuple(ref items) => return Some(items.clone()),
+            _ => {}
+        }
+    }
+    let handle = super::iter::mb_iter(parts);
+    if handle.is_none() {
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
+        raise_type_error("can only join an iterable");
+        return None;
+    }
+    if let Some(items) = super::iter::drain_iter_to_vec(handle) {
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
+        return Some(items);
+    }
+    let h = super::iter::mb_iter(handle);
+    let mut out = Vec::new();
+    loop {
+        let has_next = super::iter::mb_has_next(h);
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
+        if has_next.as_bool() != Some(true) {
+            break;
+        }
+        let item = super::iter::mb_next(h);
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return None;
+        }
+        out.push(item);
+    }
+    Some(out)
+}
+
+fn try_iterable_to_u8s(source: MbValue) -> Option<Option<Vec<u8>>> {
+    let iter = super::iter::mb_iter(source);
+    if iter.is_none() {
+        match super::exception::current_exception_type().as_deref() {
+            Some("TypeError") => {
+                super::exception::mb_clear_exception();
+                return Some(None);
+            }
+            Some(_) => return None,
+            None => return Some(None),
+        }
+    }
+    unsafe { drain_handle_to_u8s(iter).map(Some) }
+}
+
+fn try_sequence_getitem_to_u8s(source: MbValue, class_name: &str) -> Option<Option<Vec<u8>>> {
+    if super::class::lookup_method(class_name, "__getitem__").is_none() {
+        return Some(None);
+    }
+    let method = MbValue::from_ptr(MbObject::new_str("__getitem__".to_string()));
+    let mut items = Vec::new();
+    for i in 0..1_000_000i64 {
+        let args = MbValue::from_ptr(MbObject::new_list_borrowed(vec![MbValue::from_int(i)]));
+        let item = super::class::mb_call_method(source, method, args);
+        if let Some(t) = super::exception::current_exception_type() {
+            if t == "IndexError" {
+                super::exception::mb_clear_exception();
+                break;
+            }
+            return None;
+        }
+        items.push(item);
+    }
+    let data = validated_bytes_from_items(&items);
+    for &item in &items {
+        unsafe { super::rc::release_if_ptr(item); }
+    }
+    data.map(Some)
 }
 
 /// Create bytes from a string.
@@ -189,10 +344,34 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
                         None => MbValue::none(),
                     };
                 }
+                ObjData::Tuple(ref items) => {
+                    return match validated_bytes_from_items(items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytes(d)),
+                        None => MbValue::none(),
+                    };
+                }
+                ObjData::Set(ref lock) => {
+                    let items = lock.read().unwrap().to_vec();
+                    return match validated_bytes_from_items(&items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytes(d)),
+                        None => MbValue::none(),
+                    };
+                }
+                ObjData::FrozenSet(ref items) => {
+                    return match validated_bytes_from_items(items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytes(d)),
+                        None => MbValue::none(),
+                    };
+                }
                 // A BigInt count is too large for a size-sized integer.
                 ObjData::BigInt(_) => {
                     raise_count_overflow();
                     return MbValue::none();
+                }
+                ObjData::Instance { ref class_name, .. } if class_name == "memoryview" => {
+                    if let Some(data) = super::builtins::try_bytes_like(source) {
+                        return MbValue::from_ptr(MbObject::new_bytes(data));
+                    }
                 }
                 ObjData::Instance { ref class_name, .. } => {
                     // User __bytes__ dunder; a class without one cannot
@@ -211,6 +390,16 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
                         if super::exception::mb_has_exception().as_bool() == Some(true) {
                             return MbValue::none();
                         }
+                    }
+                    match try_iterable_to_u8s(source) {
+                        Some(Some(data)) => return MbValue::from_ptr(MbObject::new_bytes(data)),
+                        Some(None) => {}
+                        None => return MbValue::none(),
+                    }
+                    match try_sequence_getitem_to_u8s(source, &cls) {
+                        Some(Some(data)) => return MbValue::from_ptr(MbObject::new_bytes(data)),
+                        Some(None) => {}
+                        None => return MbValue::none(),
                     }
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -290,6 +479,46 @@ pub fn mb_bytearray_new(source: MbValue) -> MbValue {
                         None => MbValue::none(),
                     };
                 }
+                ObjData::Tuple(ref items) => {
+                    return match validated_bytes_from_items(items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytearray(d)),
+                        None => MbValue::none(),
+                    };
+                }
+                ObjData::Set(ref lock) => {
+                    let items = lock.read().unwrap().to_vec();
+                    return match validated_bytes_from_items(&items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytearray(d)),
+                        None => MbValue::none(),
+                    };
+                }
+                ObjData::FrozenSet(ref items) => {
+                    return match validated_bytes_from_items(items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytearray(d)),
+                        None => MbValue::none(),
+                    };
+                }
+                ObjData::Instance { ref class_name, .. } if class_name == "memoryview" => {
+                    if let Some(data) = super::builtins::try_bytes_like(source) {
+                        return MbValue::from_ptr(MbObject::new_bytearray(data));
+                    }
+                }
+                ObjData::Instance { ref class_name, .. } => {
+                    match try_iterable_to_u8s(source) {
+                        Some(Some(data)) => {
+                            return MbValue::from_ptr(MbObject::new_bytearray(data));
+                        }
+                        Some(None) => {}
+                        None => return MbValue::none(),
+                    }
+                    match try_sequence_getitem_to_u8s(source, class_name) {
+                        Some(Some(data)) => {
+                            return MbValue::from_ptr(MbObject::new_bytearray(data));
+                        }
+                        Some(None) => {}
+                        None => return MbValue::none(),
+                    }
+                }
                 ObjData::BigInt(_) => {
                     raise_count_overflow();
                     return MbValue::none();
@@ -334,6 +563,7 @@ pub fn mb_bytes_getitem(bytes: MbValue, index: MbValue) -> MbValue {
             if actual >= 0 && actual < len {
                 MbValue::from_int(data[actual as usize] as i64)
             } else {
+                raise_index_error("index out of range");
                 MbValue::none()
             }
         } else {
@@ -362,55 +592,109 @@ pub fn mb_bytes_decode(bytes: MbValue, encoding: MbValue) -> MbValue {
 ///
 /// Supported encodings: `utf-8` / `utf8`, `ascii` / `us-ascii`, and
 /// `latin-1` / `iso-8859-1`. Errors handlers: `strict` / `ignore` /
-/// `replace`. UTF-8 strict-mode UnicodeDecodeError isn't modeled — we
-/// fall back to the replacement char rather than raising — but the
-/// `ignore` and `replace` paths produce CPython-equivalent output.
+/// `replace`. Strict UTF-8/ASCII decode raises UnicodeDecodeError on invalid
+/// bytes; known but unimplemented text codecs use the legacy UTF-8 fallback so
+/// existing codec-registry fixtures keep their pre-registry behavior.
 pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
     unsafe {
         let data = match as_bytes_cloned(bytes) {
             Some(d) => d,
             None => return MbValue::from_ptr(MbObject::new_str(String::new())),
         };
-        let enc = match encoding.as_ptr().and_then(|p| match &(*p).data {
-            ObjData::Str(s) => Some(s.to_ascii_lowercase()),
+        let enc_orig = match encoding.as_ptr().and_then(|p| match &(*p).data {
+            ObjData::Str(s) => Some(s.clone()),
             _ => None,
         }) {
             Some(e) => e,
             None => "utf-8".to_string(),
         };
+        let enc = enc_orig.to_ascii_lowercase();
         let err = encoding_errors_kind(errors);
-        let s = match enc.as_str() {
-            "utf-8" | "utf8" | "u8" => decode_utf8(&data, err),
-            "ascii" | "us-ascii" => decode_ascii(&data, err),
-            "latin-1" | "latin_1" | "iso-8859-1" | "8859" => decode_latin1(&data),
-            "utf-16be" | "utf-16-be" | "utf_16_be" => decode_utf16(&data, true),
-            "utf-16le" | "utf-16-le" | "utf_16_le" => decode_utf16(&data, false),
+        let value = match enc.as_str() {
+            "utf-8" | "utf8" | "u8" => {
+                if matches!(err, ErrorsKind::Strict) {
+                    match std::str::from_utf8(&data) {
+                        Ok(s) => MbValue::from_ptr(MbObject::new_str(s.to_string())),
+                        Err(e) => {
+                            let pos = e.valid_up_to();
+                            raise_unicode_decode_error("utf-8", &data, pos, "invalid start byte");
+                            return MbValue::none();
+                        }
+                    }
+                } else {
+                    decode_utf8_value(&data, err)
+                }
+            }
+            "ascii" | "us-ascii" => {
+                if matches!(err, ErrorsKind::Strict) {
+                    if let Some(pos) = data.iter().position(|b| *b >= 0x80) {
+                        raise_unicode_decode_error(
+                            "ascii",
+                            &data,
+                            pos,
+                            "ordinal not in range(128)",
+                        );
+                        return MbValue::none();
+                    }
+                    MbValue::from_ptr(MbObject::new_str(
+                        String::from_utf8_lossy(&data).into_owned(),
+                    ))
+                } else {
+                    decode_ascii_value(&data, err)
+                }
+            }
+            "latin-1" | "latin_1" | "iso-8859-1" | "8859" => {
+                MbValue::from_ptr(MbObject::new_str(decode_latin1(&data)))
+            }
+            "utf-16be" | "utf-16-be" | "utf_16_be" => {
+                MbValue::from_ptr(MbObject::new_str(decode_utf16(&data, true)))
+            }
+            "utf-16le" | "utf-16-le" | "utf_16_le" => {
+                MbValue::from_ptr(MbObject::new_str(decode_utf16(&data, false)))
+            }
             // Bare "utf-16": consume a leading BOM to pick endianness (LE
             // default, matching CPython). Used by test_xml_encodings.
             "utf-16" | "utf16" => {
                 if data.len() >= 2 && data[0] == 0xFE && data[1] == 0xFF {
-                    decode_utf16(&data[2..], true)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf16(&data[2..], true)))
                 } else if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xFE {
-                    decode_utf16(&data[2..], false)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf16(&data[2..], false)))
                 } else {
-                    decode_utf16(&data, false)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf16(&data, false)))
                 }
             }
-            "utf-32be" | "utf-32-be" | "utf_32_be" => decode_utf32(&data, true),
-            "utf-32le" | "utf-32-le" | "utf_32_le" => decode_utf32(&data, false),
+            "utf-32be" | "utf-32-be" | "utf_32_be" => {
+                MbValue::from_ptr(MbObject::new_str(decode_utf32(&data, true)))
+            }
+            "utf-32le" | "utf-32-le" | "utf_32_le" => {
+                MbValue::from_ptr(MbObject::new_str(decode_utf32(&data, false)))
+            }
             "utf-32" | "utf32" => {
                 if data.len() >= 4 && data[..4] == [0x00, 0x00, 0xFE, 0xFF] {
-                    decode_utf32(&data[4..], true)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf32(&data[4..], true)))
                 } else if data.len() >= 4 && data[..4] == [0xFF, 0xFE, 0x00, 0x00] {
-                    decode_utf32(&data[4..], false)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf32(&data[4..], false)))
                 } else {
-                    decode_utf32(&data, false)
+                    MbValue::from_ptr(MbObject::new_str(decode_utf32(&data, false)))
                 }
             }
+            "idna" => match super::stdlib::codecs_mod::idna_decode_string(&data) {
+                Some(out) => MbValue::from_ptr(MbObject::new_str(out)),
+                None => {
+                    raise_unicode_decode_error("idna", &data, 0, "invalid input");
+                    return MbValue::none();
+                }
+            },
+            "punycode" => match super::stdlib::codecs_mod::punycode_decode_string(&data) {
+                Some(out) => MbValue::from_ptr(MbObject::new_str(out)),
+                None => {
+                    raise_unicode_decode_error("punycode", &data, 0, "invalid input");
+                    return MbValue::none();
+                }
+            },
             _ => {
                 // A known non-text codec (quopri, base64, ...) is a LookupError
-                // via bytes.decode; unrecognised names keep the lenient utf-8
-                // fallback.
+                // via bytes.decode ("not a text encoding").
                 if let Some(canon) = super::string_ops::nontext_codec_name(&enc) {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
@@ -420,10 +704,22 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                     );
                     return MbValue::none();
                 }
-                decode_utf8(&data, err)
+                // A recognised-but-not-enumerated text codec keeps the lenient
+                // utf-8 fallback; a name CPython's codecs.lookup cannot resolve
+                // is rejected with LookupError (matching CPython).
+                if !super::string_ops::is_known_codec(&enc) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "unknown encoding: {enc_orig}"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
+                decode_utf8_value(&data, err)
             }
         };
-        MbValue::from_ptr(MbObject::new_str(s))
+        value
     }
 }
 
@@ -437,6 +733,8 @@ fn encoding_errors_kind(errors: MbValue) -> ErrorsKind {
     match raw {
         Some("ignore") => ErrorsKind::Ignore,
         Some("replace") => ErrorsKind::Replace,
+        Some("surrogateescape") => ErrorsKind::SurrogateEscape,
+        Some("surrogatepass") => ErrorsKind::SurrogatePass,
         _ => ErrorsKind::Strict,
     }
 }
@@ -446,9 +744,95 @@ enum ErrorsKind {
     Strict,
     Ignore,
     Replace,
+    SurrogateEscape,
+    SurrogatePass,
 }
 
-fn decode_utf8(data: &[u8], err: ErrorsKind) -> String {
+fn codepoints_to_string_value(codepoints: Vec<u32>) -> MbValue {
+    let has_surrogate = codepoints.iter().any(|cp| (0xD800..=0xDFFF).contains(cp));
+    if has_surrogate {
+        return super::string_ops::new_surrogate_codepoints_str(codepoints);
+    }
+    let s: String = codepoints.into_iter().filter_map(char::from_u32).collect();
+    MbValue::from_ptr(MbObject::new_str(s))
+}
+
+fn decode_utf8_surrogateescape_value(data: &[u8]) -> MbValue {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        match std::str::from_utf8(&data[i..]) {
+            Ok(rest) => {
+                out.extend(rest.chars().map(|c| c as u32));
+                break;
+            }
+            Err(e) => {
+                let valid = e.valid_up_to();
+                if valid > 0 {
+                    if let Ok(prefix) = std::str::from_utf8(&data[i..i + valid]) {
+                        out.extend(prefix.chars().map(|c| c as u32));
+                    }
+                    i += valid;
+                    continue;
+                }
+                out.push(0xDC00 + data[i] as u32);
+                i += 1;
+            }
+        }
+    }
+    codepoints_to_string_value(out)
+}
+
+fn decode_utf8_surrogatepass_value(data: &[u8]) -> Result<MbValue, usize> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        match std::str::from_utf8(&data[i..]) {
+            Ok(rest) => {
+                out.extend(rest.chars().map(|c| c as u32));
+                break;
+            }
+            Err(e) => {
+                let valid = e.valid_up_to();
+                if valid > 0 {
+                    if let Ok(prefix) = std::str::from_utf8(&data[i..i + valid]) {
+                        out.extend(prefix.chars().map(|c| c as u32));
+                    }
+                    i += valid;
+                    continue;
+                }
+                if i + 2 < data.len()
+                    && data[i] == 0xED
+                    && (0xA0..=0xBF).contains(&data[i + 1])
+                    && (0x80..=0xBF).contains(&data[i + 2])
+                {
+                    let cp = (((data[i] & 0x0F) as u32) << 12)
+                        | (((data[i + 1] & 0x3F) as u32) << 6)
+                        | ((data[i + 2] & 0x3F) as u32);
+                    out.push(cp);
+                    i += 3;
+                } else {
+                    return Err(i);
+                }
+            }
+        }
+    }
+    Ok(codepoints_to_string_value(out))
+}
+
+fn decode_utf8_value(data: &[u8], err: ErrorsKind) -> MbValue {
+    if matches!(err, ErrorsKind::SurrogateEscape) {
+        return decode_utf8_surrogateescape_value(data);
+    }
+    if matches!(err, ErrorsKind::SurrogatePass) {
+        return match decode_utf8_surrogatepass_value(data) {
+            Ok(value) => value,
+            Err(pos) => {
+                raise_unicode_decode_error("utf-8", data, pos, "invalid start byte");
+                MbValue::none()
+            }
+        };
+    }
     // Walk the buffer one UTF-8 sequence at a time. On invalid bytes:
     //   - ignore → drop them
     //   - replace / strict → emit a single U+FFFD per *failure* (CPython
@@ -469,27 +853,46 @@ fn decode_utf8(data: &[u8], err: ErrorsKind) -> String {
                 match err {
                     ErrorsKind::Ignore => {}
                     ErrorsKind::Replace | ErrorsKind::Strict => out.push('\u{FFFD}'),
+                    ErrorsKind::SurrogateEscape | ErrorsKind::SurrogatePass => unreachable!(),
                 }
                 i += valid + bad_len.max(1);
             }
         }
     }
-    out
+    MbValue::from_ptr(MbObject::new_str(out))
 }
 
-fn decode_ascii(data: &[u8], err: ErrorsKind) -> String {
+fn decode_ascii_value(data: &[u8], err: ErrorsKind) -> MbValue {
+    if matches!(err, ErrorsKind::SurrogateEscape) {
+        let codepoints = data
+            .iter()
+            .map(|&b| {
+                if b < 0x80 {
+                    b as u32
+                } else {
+                    0xDC00 + b as u32
+                }
+            })
+            .collect();
+        return codepoints_to_string_value(codepoints);
+    }
     let mut out = String::with_capacity(data.len());
-    for &b in data {
+    for (i, &b) in data.iter().enumerate() {
         if b < 0x80 {
             out.push(b as char);
         } else {
             match err {
                 ErrorsKind::Ignore => {}
                 ErrorsKind::Replace | ErrorsKind::Strict => out.push('\u{FFFD}'),
+                ErrorsKind::SurrogateEscape => unreachable!(),
+                ErrorsKind::SurrogatePass => {
+                    raise_unicode_decode_error("ascii", data, i, "ordinal not in range(128)");
+                    return MbValue::none();
+                }
             }
         }
     }
-    out
+    MbValue::from_ptr(MbObject::new_str(out))
 }
 
 fn decode_latin1(data: &[u8]) -> String {
@@ -544,17 +947,32 @@ pub fn mb_bytes_hex_with_sep(bytes: MbValue, sep: MbValue, bytes_per_sep: MbValu
         };
         // Resolve separator: accept str (first char) or bytes (first byte).
         // None / unrecognised types fall through to the unseparated form.
+        // CPython requires the separator to be exactly one character; an empty
+        // or multi-character separator raises ValueError("sep must be length 1.").
+        let invalid_sep = || {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("sep must be length 1.".to_string())),
+            );
+            MbValue::from_ptr(MbObject::new_str(String::new()))
+        };
         let sep_char: Option<char> = if sep.is_none() {
             None
         } else if let Some(s) = sep.as_ptr().and_then(|p| match &(*p).data {
             ObjData::Str(s) => Some(s.clone()),
             _ => None,
         }) {
+            if s.chars().count() != 1 {
+                return invalid_sep();
+            }
             s.chars().next()
         } else if let Some(b) = sep.as_ptr().and_then(|p| match &(*p).data {
             ObjData::Bytes(b) => Some(b.clone()),
             _ => None,
         }) {
+            if b.len() != 1 {
+                return invalid_sep();
+            }
             b.first().map(|byte| *byte as char)
         } else {
             None
@@ -719,6 +1137,172 @@ pub fn mb_bytes_concat(a: MbValue, b: MbValue) -> MbValue {
     }
 }
 
+pub fn mb_bytes_percent_format(template: MbValue, args: MbValue) -> MbValue {
+    unsafe {
+        let Some(fmt) = as_bytes_cloned(template) else {
+            return MbValue::none();
+        };
+        let is_bytearray = template.as_ptr().map_or(false, |p| {
+            matches!(&(*p).data, ObjData::ByteArray(_))
+        });
+        let mut values = if let Some(ptr) = args.as_ptr() {
+            match &(*ptr).data {
+                ObjData::Tuple(items) => items.clone(),
+                _ => vec![args],
+            }
+        } else {
+            vec![args]
+        };
+        let mut next_arg = || {
+            if values.is_empty() {
+                None
+            } else {
+                Some(values.remove(0))
+            }
+        };
+
+        let mut out = Vec::with_capacity(fmt.len());
+        let mut i = 0usize;
+        while i < fmt.len() {
+            let ch = fmt[i];
+            if ch != b'%' {
+                out.push(ch);
+                i += 1;
+                continue;
+            }
+            i += 1;
+            if i >= fmt.len() {
+                out.push(b'%');
+                break;
+            }
+            if fmt[i] == b'%' {
+                out.push(b'%');
+                i += 1;
+                continue;
+            }
+
+            let mut left_align = false;
+            let mut zero_pad = false;
+            loop {
+                match fmt.get(i).copied() {
+                    Some(b'-') => {
+                        left_align = true;
+                        i += 1;
+                    }
+                    Some(b'0') => {
+                        zero_pad = true;
+                        i += 1;
+                    }
+                    _ => break,
+                }
+            }
+            let mut width = 0usize;
+            while let Some(b'0'..=b'9') = fmt.get(i).copied() {
+                width = width * 10 + (fmt[i] - b'0') as usize;
+                i += 1;
+            }
+            let Some(kind) = fmt.get(i).copied() else {
+                break;
+            };
+            i += 1;
+
+            let Some(arg) = next_arg() else {
+                raise_type_error("not enough arguments for format string");
+                return MbValue::none();
+            };
+            let piece = match kind {
+                b'b' | b's' => {
+                    let Some(data) = as_bytes_cloned(arg) else {
+                        raise_type_error("%b requires a bytes-like object");
+                        return MbValue::none();
+                    };
+                    data
+                }
+                b'd' | b'i' => match arg.as_int_pyint() {
+                    Some(n) => n.to_string().into_bytes(),
+                    None => {
+                        raise_type_error("%d format: a real number is required, not object");
+                        return MbValue::none();
+                    }
+                },
+                b'x' => match arg.as_int_pyint() {
+                    Some(n) => format!("{n:x}").into_bytes(),
+                    None => {
+                        raise_type_error("%x format: an integer is required, not object");
+                        return MbValue::none();
+                    }
+                },
+                b'o' => match arg.as_int_pyint() {
+                    Some(n) => format!("{n:o}").into_bytes(),
+                    None => {
+                        raise_type_error("%o format: an integer is required, not object");
+                        return MbValue::none();
+                    }
+                },
+                b'c' => {
+                    if let Some(n) = arg.as_int_pyint() {
+                        if (0..=255).contains(&n) {
+                            vec![n as u8]
+                        } else {
+                            raise_type_error("%c requires an integer in range(256) or a single byte");
+                            return MbValue::none();
+                        }
+                    } else if let Some(data) = as_bytes_cloned(arg) {
+                        if data.len() == 1 {
+                            data
+                        } else {
+                            raise_type_error("%c requires an integer in range(256) or a single byte");
+                            return MbValue::none();
+                        }
+                    } else {
+                        raise_type_error("%c requires an integer in range(256) or a single byte");
+                        return MbValue::none();
+                    }
+                }
+                b'a' => {
+                    let repr = super::builtins::mb_repr(arg);
+                    match repr.as_ptr().and_then(|p| match &(*p).data {
+                        ObjData::Str(s) => Some(s.clone()),
+                        _ => None,
+                    }) {
+                        Some(s) => s.into_bytes(),
+                        None => Vec::new(),
+                    }
+                }
+                _ => {
+                    out.push(b'%');
+                    out.push(kind);
+                    continue;
+                }
+            };
+
+            if width > piece.len() {
+                let pad_len = width - piece.len();
+                let pad = if zero_pad && !left_align { b'0' } else { b' ' };
+                if left_align {
+                    out.extend_from_slice(&piece);
+                    out.extend(std::iter::repeat(pad).take(pad_len));
+                } else if pad == b'0' && piece.first() == Some(&b'-') {
+                    out.push(b'-');
+                    out.extend(std::iter::repeat(b'0').take(pad_len));
+                    out.extend_from_slice(&piece[1..]);
+                } else {
+                    out.extend(std::iter::repeat(pad).take(pad_len));
+                    out.extend_from_slice(&piece);
+                }
+            } else {
+                out.extend_from_slice(&piece);
+            }
+        }
+
+        if is_bytearray {
+            MbValue::from_ptr(MbObject::new_bytearray(out))
+        } else {
+            MbValue::from_ptr(MbObject::new_bytes(out))
+        }
+    }
+}
+
 /// value in bytes → bool
 pub fn mb_bytes_contains(bytes: MbValue, value: MbValue) -> MbValue {
     unsafe {
@@ -757,6 +1341,14 @@ pub fn mb_bytes_contains(bytes: MbValue, value: MbValue) -> MbValue {
                 return MbValue::from_bool(data.windows(sub.len()).any(|w| w == sub.as_slice()));
             }
             // Neither an integer nor a bytes-like object → TypeError.
+            if str_from_value(value).is_some() {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "a bytes-like object is required, not 'str'".to_string())),
+                );
+                return MbValue::none();
+            }
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(
@@ -784,13 +1376,44 @@ pub fn mb_bytearray_append(ba: MbValue, value: MbValue) {
     }
 }
 
-/// bytearray.extend(iterable)
+/// bytearray.extend(iterable) — accepts bytes/bytearray, any int iterator
+/// (range, generator), or a list of ints.
 pub fn mb_bytearray_extend(ba: MbValue, other: MbValue) {
     unsafe {
+        // bytes / bytearray directly.
         if let Some(other_data) = as_bytes_cloned(other) {
             if let Some(ptr) = ba.as_ptr() {
                 if let ObjData::ByteArray(ref lock) = (*ptr).data {
                     lock.write().unwrap().extend_from_slice(&other_data);
+                }
+            }
+            return;
+        }
+        if str_from_value(other).is_some() {
+            raise_type_error("can't concat str to bytearray");
+            return;
+        }
+        // Iterator handle (range, generators, …).
+        if super::iter::is_iter_handle(other) {
+            if let Some(data) = drain_handle_to_u8s(other) {
+                if let Some(ptr) = ba.as_ptr() {
+                    if let ObjData::ByteArray(ref lock) = (*ptr).data {
+                        lock.write().unwrap().extend_from_slice(&data);
+                    }
+                }
+            }
+            return;
+        }
+        // List of ints.
+        if let Some(ptr) = other.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap().clone();
+                if let Some(data) = validated_bytes_from_items(&items) {
+                    if let Some(ba_ptr) = ba.as_ptr() {
+                        if let ObjData::ByteArray(ref ba_lock) = (*ba_ptr).data {
+                            ba_lock.write().unwrap().extend_from_slice(&data);
+                        }
+                    }
                 }
             }
         }
@@ -808,20 +1431,161 @@ pub fn mb_bytearray_clear(ba: MbValue) {
     }
 }
 
-/// bytearray.pop() → int
+/// bytearray.pop() → int — remove and return the last byte (JIT ABI: 1-arg).
 pub fn mb_bytearray_pop(ba: MbValue) -> MbValue {
+    mb_bytearray_pop_at(ba, MbValue::none())
+}
+
+/// bytearray.pop(index=-1) → int — remove and return the byte at `index`
+/// (default last). Out-of-range / empty raises IndexError (CPython).
+pub fn mb_bytearray_pop_at(ba: MbValue, index: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = ba.as_ptr() {
             if let ObjData::ByteArray(ref lock) = (*ptr).data {
-                return lock
-                    .write()
-                    .unwrap()
-                    .pop()
-                    .map(|b| MbValue::from_int(b as i64))
-                    .unwrap_or(MbValue::none());
+                let mut v = lock.write().unwrap();
+                let len = v.len() as i64;
+                if len == 0 {
+                    drop(v);
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "pop from empty bytearray".to_string())),
+                    );
+                    return MbValue::none();
+                }
+                let raw = index.as_int_pyint().unwrap_or(-1);
+                let actual = if raw < 0 { raw + len } else { raw };
+                if actual < 0 || actual >= len {
+                    drop(v);
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "pop index out of range".to_string())),
+                    );
+                    return MbValue::none();
+                }
+                let b = v.remove(actual as usize);
+                return MbValue::from_int(b as i64);
             }
         }
         MbValue::none()
+    }
+}
+
+/// bytearray.insert(index, byte) — insert `byte` before `index` (clamped like
+/// list.insert: negative offsets count from the end, both ends saturate).
+pub fn mb_bytearray_insert(ba: MbValue, index: MbValue, value: MbValue) {
+    unsafe {
+        if let Some(ptr) = ba.as_ptr() {
+            if let ObjData::ByteArray(ref lock) = (*ptr).data {
+                if let Some(b) = value.as_int() {
+                    let mut v = lock.write().unwrap();
+                    let len = v.len() as i64;
+                    let mut idx = index.as_int().unwrap_or(0);
+                    if idx < 0 {
+                        idx += len;
+                        if idx < 0 { idx = 0; }
+                    }
+                    if idx > len { idx = len; }
+                    v.insert(idx as usize, b as u8);
+                }
+            }
+        }
+    }
+}
+
+/// bytearray.remove(value) — remove the first byte equal to `value`;
+/// ValueError if it is absent (CPython).
+pub fn mb_bytearray_remove(ba: MbValue, value: MbValue) {
+    unsafe {
+        if let Some(ptr) = ba.as_ptr() {
+            if let ObjData::ByteArray(ref lock) = (*ptr).data {
+                if let Some(b) = value.as_int() {
+                    let target = b as u8;
+                    let mut v = lock.write().unwrap();
+                    if let Some(pos) = v.iter().position(|&x| x == target) {
+                        v.remove(pos);
+                    } else {
+                        drop(v);
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "value not found in bytearray".to_string())),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// del bytearray[i] / del bytearray[start:stop:step]. Slice keys arrive as a
+/// (start, stop, step) tuple (normalized by mb_obj_delitem).
+pub fn mb_bytearray_delitem(ba: MbValue, key: MbValue) {
+    unsafe {
+        let Some(ptr) = ba.as_ptr() else { return };
+        let ObjData::ByteArray(ref lock) = (*ptr).data else { return };
+        if let Some(kp) = key.as_ptr() {
+            if let ObjData::Tuple(ref t) = (*kp).data {
+                if t.len() == 3 {
+                    let mut v = lock.write().unwrap();
+                    let len = v.len() as i64;
+                    let norm = |o: Option<i64>, dflt: i64| -> i64 {
+                        match o {
+                            Some(i) => (if i < 0 { i + len } else { i }).clamp(0, len),
+                            None => dflt,
+                        }
+                    };
+                    let step = t[2].as_int().unwrap_or(1);
+                    if step == 1 {
+                        let s = norm(t[0].as_int(), 0);
+                        let e = norm(t[1].as_int(), len).max(s);
+                        v.drain(s as usize..e as usize);
+                    } else if step > 1 {
+                        let s = norm(t[0].as_int(), 0);
+                        let e = norm(t[1].as_int(), len);
+                        let mut idx = s;
+                        let mut rm: Vec<usize> = Vec::new();
+                        while idx < e {
+                            rm.push(idx as usize);
+                            idx += step;
+                        }
+                        for &r in rm.iter().rev() {
+                            v.remove(r);
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        if let Some(idx) = key.as_int() {
+            let mut v = lock.write().unwrap();
+            let len = v.len() as i64;
+            let actual = if idx < 0 { idx + len } else { idx };
+            if actual >= 0 && actual < len {
+                v.remove(actual as usize);
+            }
+        }
+    }
+}
+
+/// bytearray *= n — repeat the buffer in place `n` times (n<=0 empties it).
+pub fn mb_bytearray_imul(ba: MbValue, n: MbValue) {
+    unsafe {
+        if let Some(ptr) = ba.as_ptr() {
+            if let ObjData::ByteArray(ref lock) = (*ptr).data {
+                let count = n.as_int().unwrap_or(1);
+                let mut v = lock.write().unwrap();
+                if count <= 0 {
+                    v.clear();
+                    return;
+                }
+                let orig: Vec<u8> = v.to_vec();
+                for _ in 1..count {
+                    v.extend_from_slice(&orig);
+                }
+            }
+        }
     }
 }
 
@@ -1055,6 +1819,7 @@ pub fn mb_bytes_slice_full(
             let len = data.len() as i64;
             let st = step.as_int().unwrap_or(1);
             if st == 0 {
+                raise_value_error("slice step cannot be zero");
                 return MbValue::from_ptr(MbObject::new_bytes(Vec::new()));
             }
             let (s, e) = if st > 0 {
@@ -1183,34 +1948,19 @@ pub fn mb_bytes_join(sep: MbValue, parts: MbValue) -> MbValue {
         let sep_data = as_bytes_cloned(sep).unwrap_or_default();
         let mut result = Vec::new();
         let mut first = true;
-        // Collect items from list or iterable
-        if let Some(ptr) = parts.as_ptr() {
-            match &(*ptr).data {
-                ObjData::List(ref lock) => {
-                    let items = lock.read().unwrap();
-                    for item in items.iter() {
-                        if !first {
-                            result.extend_from_slice(&sep_data);
-                        }
-                        if let Some(data) = as_bytes_cloned(*item) {
-                            result.extend_from_slice(&data);
-                        }
-                        first = false;
-                    }
-                }
-                ObjData::Tuple(ref items) => {
-                    for item in items.iter() {
-                        if !first {
-                            result.extend_from_slice(&sep_data);
-                        }
-                        if let Some(data) = as_bytes_cloned(*item) {
-                            result.extend_from_slice(&data);
-                        }
-                        first = false;
-                    }
-                }
-                _ => {}
+        let Some(items) = bytes_join_parts(parts) else {
+            return MbValue::none();
+        };
+        for item in items {
+            if !first {
+                result.extend_from_slice(&sep_data);
             }
+            let Some(data) = as_bytes_cloned(item) else {
+                raise_type_error("sequence item must be a bytes-like object");
+                return MbValue::none();
+            };
+            result.extend_from_slice(&data);
+            first = false;
         }
         // CPython: bytearray.join(...) returns a bytearray; bytes.join(...)
         // returns bytes. The result type follows the separator's type.
@@ -1500,7 +2250,18 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             mb_bytearray_clear(receiver);
             MbValue::none()
         }
-        "pop" => mb_bytearray_pop(receiver),
+        "pop" => mb_bytearray_pop_at(
+            receiver,
+            if argc() > 0 { arg(0) } else { MbValue::none() },
+        ),
+        "insert" => {
+            mb_bytearray_insert(receiver, arg(0), arg(1));
+            MbValue::none()
+        }
+        "remove" => {
+            mb_bytearray_remove(receiver, arg(0));
+            MbValue::none()
+        }
         "reverse" => {
             mb_bytearray_reverse(receiver);
             MbValue::none()
@@ -1521,6 +2282,7 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
         "ljust" => mb_bytes_ljust(receiver, arg(0), arg(1)),
         "rjust" => mb_bytes_rjust(receiver, arg(0), arg(1)),
         "translate" => mb_bytes_translate(receiver, arg(0), arg(1)),
+        "maketrans" => mb_bytes_maketrans(arg(0), arg(1)),
         "rsplit" => {
             let maxsplit = if argc() > 1 { arg(1) } else { MbValue::none() };
             mb_bytes_rsplit(receiver, arg(0), maxsplit)
@@ -1585,9 +2347,11 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
         "removeprefix" => mb_bytes_removeprefix(receiver, arg(0)),
         "removesuffix" => mb_bytes_removesuffix(receiver, arg(0)),
         "copy" => {
+            // bytearray.copy() must return an independent, MUTABLE bytearray
+            // (not immutable bytes); bytes_to_value preserves the receiver type.
             let cloned: Option<Vec<u8>> = unsafe { as_bytes_cloned(receiver) };
             cloned
-                .map(|d| MbValue::from_ptr(MbObject::new_bytes(d)))
+                .map(|d| bytes_to_value(receiver, d))
                 .unwrap_or_else(MbValue::none)
         }
         "__alloc__" => MbValue::from_int(0),
@@ -1619,6 +2383,26 @@ fn bytes_to_value(receiver: MbValue, data: Vec<u8>) -> MbValue {
     } else {
         MbValue::from_ptr(MbObject::new_bytes(data))
     }
+}
+
+pub fn mb_bytes_maketrans(from: MbValue, to: MbValue) -> MbValue {
+    let Some(from_b) = extract_bytes(from) else {
+        raise_type_error("maketrans arguments must be bytes-like objects");
+        return MbValue::none();
+    };
+    let Some(to_b) = extract_bytes(to) else {
+        raise_type_error("maketrans arguments must be bytes-like objects");
+        return MbValue::none();
+    };
+    if from_b.len() != to_b.len() {
+        raise_value_error("maketrans arguments must have same length");
+        return MbValue::none();
+    }
+    let mut table: Vec<u8> = (0u8..=255).collect();
+    for (src, dst) in from_b.into_iter().zip(to_b) {
+        table[src as usize] = dst;
+    }
+    MbValue::from_ptr(MbObject::new_bytes(table))
 }
 
 fn fill_byte(arg: MbValue) -> u8 {
@@ -1723,11 +2507,25 @@ pub fn mb_bytes_rindex(
 pub fn mb_bytes_center(receiver: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
     let w = width.as_int().unwrap_or(0).max(0) as usize;
+    // CPython: the fill argument must be a byte string of length 1.
+    if let Some(v) = extract_bytes(fill) {
+        if v.len() != 1 {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "center() argument 2 must be a byte string of length 1, not {}",
+                    super::builtins::value_type_name(fill)
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
     if data.len() >= w {
         return bytes_to_value(receiver, data);
     }
     let pad = w - data.len();
-    let left = pad / 2;
+    // CPython do_center: left bias of `(marg & width & 1)` — matches mb_str_center.
+    let left = pad / 2 + (pad & w & 1);
     let right = pad - left;
     let f = fill_byte(fill);
     let mut out = Vec::with_capacity(w);
@@ -1766,7 +2564,21 @@ pub fn mb_bytes_rjust(receiver: MbValue, width: MbValue, fill: MbValue) -> MbVal
 pub fn mb_bytes_translate(receiver: MbValue, table: MbValue, delete: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
     let table_b = extract_bytes(table);
-    let delete_b = extract_bytes(delete).unwrap_or_default();
+    if let Some(ref t) = table_b {
+        if t.len() != 256 {
+            raise_value_error("translation table must be 256 characters long");
+            return MbValue::none();
+        }
+    }
+    let delete_b = if delete.is_none() {
+        Vec::new()
+    } else {
+        let Some(bytes) = extract_bytes(delete) else {
+            raise_type_error("a bytes-like object is required, not 'int'");
+            return MbValue::none();
+        };
+        bytes
+    };
     let mut out = Vec::with_capacity(data.len());
     for &b in &data {
         if delete_b.contains(&b) {

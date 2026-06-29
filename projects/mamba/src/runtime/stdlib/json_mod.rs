@@ -197,6 +197,21 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                     // Sort keys if requested
                     let effective_val = if sort_keys { sort_dict_keys(val) } else { val };
 
+                    // A custom default=/cls= encoder hook: serialize otherwise-
+                    // unserializable objects via the hook (a JSONEncoder
+                    // subclass instance's default(), or a plain default
+                    // callable). cls() is instantiated to obtain that method.
+                    let hook = if let Some(d) = map.get("default").copied().filter(|v| !v.is_none()) {
+                        d
+                    } else if let Some(c) = map.get("cls").copied().filter(|v| !v.is_none()) {
+                        super::super::class::mb_call0(c)
+                    } else {
+                        MbValue::none()
+                    };
+                    if !hook.is_none() {
+                        return mb_json_dumps_with_hook(effective_val, ensure_ascii, hook);
+                    }
+
                     if let Some(n) = indent {
                         return mb_json_dumps_pretty(effective_val, MbValue::from_int(n));
                     }
@@ -593,6 +608,43 @@ fn format_json_custom(val: &serde_json::Value, item_sep: &str, key_sep: &str) ->
 // ── MbValue → serde_json::Value ──
 
 fn mbvalue_to_json(val: MbValue) -> serde_json::Value {
+    mbvalue_to_json_h(val, MbValue::none())
+}
+
+/// Invoke a json.dumps default hook on an unserializable object: a
+/// JSONEncoder-subclass instance routes to its `default()` method; a plain
+/// `default=` callable is called directly. Returns the replacement value (or
+/// none() with a pending exception if the hook raised).
+fn call_default_hook(hook: MbValue, obj: MbValue) -> MbValue {
+    if let Some(ptr) = hook.as_ptr() {
+        let is_inst = unsafe { matches!(&(*ptr).data, ObjData::Instance { .. }) };
+        if is_inst {
+            let name = MbValue::from_ptr(MbObject::new_str("default".to_string()));
+            let args = MbValue::from_ptr(MbObject::new_list(vec![obj]));
+            return super::super::class::mb_call_method(hook, name, args);
+        }
+    }
+    super::super::class::mb_call1_val(hook, obj)
+}
+
+/// json.dumps with a custom `default=`/`cls=` hook: serialize honoring the hook
+/// for otherwise-unserializable objects. Propagates a hook exception (e.g. the
+/// base encoder's TypeError) instead of producing output.
+fn mb_json_dumps_with_hook(val: MbValue, ensure_ascii: bool, hook: MbValue) -> MbValue {
+    let json_val = mbvalue_to_json_h(val, hook);
+    if super::super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+    let s = serialize_json_cpython(&json_val, ensure_ascii);
+    MbValue::from_ptr(MbObject::new_str(s))
+}
+
+/// Convert an MbValue to a serde_json::Value. When `hook` is non-None it is a
+/// json.dumps `default=` callable or a JSONEncoder-subclass instance whose
+/// `default()` is invoked for otherwise-unserializable objects (set/instance),
+/// mirroring CPython's encoder hook; the returned value is then serialized
+/// recursively. With a None hook this is the plain converter.
+fn mbvalue_to_json_h(val: MbValue, hook: MbValue) -> serde_json::Value {
     if val.is_none() {
         serde_json::Value::Null
     } else if let Some(b) = val.as_bool() {
@@ -613,32 +665,48 @@ fn mbvalue_to_json(val: MbValue) -> serde_json::Value {
                 ObjData::Str(s) => serde_json::Value::String(s.clone()),
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
-                    let arr: Vec<serde_json::Value> =
-                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
+                    let arr: Vec<serde_json::Value> = items
+                        .iter()
+                        .map(|v| mbvalue_to_json_h(*v, hook))
+                        .collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Dict(ref lock) => {
                     let map = lock.read().unwrap();
                     let obj: serde_json::Map<String, serde_json::Value> = map
                         .iter()
-                        .map(|(k, v)| (k.to_string(), mbvalue_to_json(*v)))
+                        .map(|(k, v)| (k.to_string(), mbvalue_to_json_h(*v, hook)))
                         .collect();
                     serde_json::Value::Object(obj)
                 }
                 ObjData::Tuple(items) => {
-                    let arr: Vec<serde_json::Value> =
-                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
+                    let arr: Vec<serde_json::Value> = items
+                        .iter()
+                        .map(|v| mbvalue_to_json_h(*v, hook))
+                        .collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Set(ref lock) => {
+                    if !hook.is_none() {
+                        let r = call_default_hook(hook, val);
+                        return mbvalue_to_json_h(r, hook);
+                    }
                     let items = lock.read().unwrap();
-                    let arr: Vec<serde_json::Value> =
-                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
+                    let arr: Vec<serde_json::Value> = items
+                        .iter()
+                        .map(|v| mbvalue_to_json_h(*v, hook))
+                        .collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::FrozenSet(items) => {
-                    let arr: Vec<serde_json::Value> =
-                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
+                    if !hook.is_none() {
+                        let r = call_default_hook(hook, val);
+                        return mbvalue_to_json_h(r, hook);
+                    }
+                    let arr: Vec<serde_json::Value> = items
+                        .iter()
+                        .map(|v| mbvalue_to_json_h(*v, hook))
+                        .collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Bytes(data) => {
@@ -673,6 +741,10 @@ fn mbvalue_to_json(val: MbValue) -> serde_json::Value {
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
+                }
+                ObjData::Instance { .. } if !hook.is_none() => {
+                    let r = call_default_hook(hook, val);
+                    return mbvalue_to_json_h(r, hook);
                 }
                 _ => serde_json::Value::Null,
             }
@@ -870,6 +942,54 @@ fn serialize_json_cpython(val: &serde_json::Value, ensure_ascii: bool) -> String
     }
 }
 
+fn nesting_exceeds_recursion_limit(s: &str) -> bool {
+    let limit = super::sys_mod::mb_sys_getrecursionlimit()
+        .as_int()
+        .unwrap_or(1000)
+        .max(1);
+    let mut depth = 0i64;
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in s.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '[' | '{' => {
+                depth += 1;
+                if depth >= limit {
+                    return true;
+                }
+            }
+            ']' | '}' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn raise_recursion_error() -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("RecursionError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "maximum recursion depth exceeded while decoding a JSON document".to_string(),
+        )),
+    );
+    MbValue::none()
+}
+
 /// json.dumps(obj, indent=N) → pretty-printed JSON string
 pub fn mb_json_dumps_pretty(val: MbValue, indent: MbValue) -> MbValue {
     let json_val = mbvalue_to_json(val);
@@ -928,16 +1048,57 @@ pub fn mb_json_loads(val: MbValue) -> MbValue {
     });
 
     match json_str {
-        Some(s) => match serde_json::from_str::<serde_json::Value>(&s) {
-            Ok(parsed) => json_to_mbvalue(&parsed),
-            Err(e) => {
-                super::super::exception::mb_raise(
-                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(format!("json.loads: {e}"))),
-                );
-                MbValue::none()
+        Some(s) => {
+            if nesting_exceeds_recursion_limit(&s) {
+                return raise_recursion_error();
             }
-        },
+            match serde_json::from_str::<serde_json::Value>(&s) {
+                Ok(parsed) => json_to_mbvalue(&parsed),
+                Err(e) => {
+                    // Raise a JSONDecodeError instance carrying CPython's
+                    // positional attributes: msg / pos / lineno / colno.
+                    let lineno = e.line() as i64;
+                    let colno = e.column() as i64;
+                    let mut pos: i64 = 0;
+                    for (i, l) in s.split('\n').enumerate() {
+                        if (i as i64) + 1 == lineno {
+                            pos += (colno - 1).max(0);
+                            break;
+                        }
+                        pos += l.chars().count() as i64 + 1;
+                    }
+                    let full = e.to_string();
+                    let msg = full.split(" at line ").next().unwrap_or(&full).to_string();
+                    let inst_ptr = MbObject::new_instance("JSONDecodeError".to_string());
+                    unsafe {
+                        if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+                            let mut m = fields.write().unwrap();
+                            m.insert(
+                                "msg".to_string(),
+                                MbValue::from_ptr(MbObject::new_str(msg.clone())),
+                            );
+                            m.insert("pos".to_string(), MbValue::from_int(pos));
+                            m.insert("lineno".to_string(), MbValue::from_int(lineno));
+                            m.insert("colno".to_string(), MbValue::from_int(colno));
+                            m.insert(
+                                "args".to_string(),
+                                MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+                                    MbObject::new_str(msg),
+                                )])),
+                            );
+                            m.insert(
+                                "__class__".to_string(),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "JSONDecodeError".to_string(),
+                                )),
+                            );
+                        }
+                    }
+                    super::super::class::mb_raise_instance(MbValue::from_ptr(inst_ptr));
+                    MbValue::none()
+                }
+            }
+        }
         None => MbValue::none(),
     }
 }

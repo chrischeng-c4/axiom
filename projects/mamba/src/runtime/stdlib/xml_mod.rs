@@ -40,14 +40,10 @@ macro_rules! disp_binary {
     };
 }
 
-/// Element(tag, attrib={}, **extra) — the trailing kwargs dict may carry
-/// `attrib=` (a real attribute mapping) plus extra attribute kwargs.
-unsafe extern "C" fn d_element(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let tag = a.first().copied().unwrap_or_else(MbValue::none);
+fn xml_attrib_and_extras(args: &[MbValue]) -> (MbValue, Vec<(MbValue, MbValue)>) {
     let mut attrib = MbValue::none();
     let mut extras: Vec<(MbValue, MbValue)> = Vec::new();
-    for v in a.iter().skip(1) {
+    for v in args {
         let is_dict = v
             .as_ptr()
             .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
@@ -55,7 +51,6 @@ unsafe extern "C" fn d_element(args_ptr: *const MbValue, nargs: usize) -> MbValu
         if !is_dict {
             continue;
         }
-        // A kwargs dict carrying `attrib=` unwraps; other keys are extra attrs.
         if let Some(inner) = kwarg_get(*v, "attrib") {
             attrib = inner;
             for pair in
@@ -68,8 +63,25 @@ unsafe extern "C" fn d_element(args_ptr: *const MbValue, nargs: usize) -> MbValu
             }
         } else if attrib.is_none() {
             attrib = *v;
+        } else {
+            for pair in super::super::builtins::extract_items(
+                super::super::dict_ops::mb_dict_items(*v)) {
+                let kv = super::super::builtins::extract_items(pair);
+                if kv.len() == 2 {
+                    extras.push((kv[0], kv[1]));
+                }
+            }
         }
     }
+    (attrib, extras)
+}
+
+/// Element(tag, attrib={}, **extra) — the trailing kwargs dict may carry
+/// `attrib=` (a real attribute mapping) plus extra attribute kwargs.
+unsafe extern "C" fn d_element(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let tag = a.first().copied().unwrap_or_else(MbValue::none);
+    let (attrib, extras) = xml_attrib_and_extras(&a[1..]);
     let elem = mb_xml_element(tag, attrib);
     for (k, v) in extras {
         if let Some(ad) = dict_get_key(elem, "attrib") {
@@ -90,9 +102,13 @@ unsafe extern "C" fn d_indent(args_ptr: *const MbValue, nargs: usize) -> MbValue
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // level= arrives in the trailing kwargs dict (or positional index 2).
     let mut level: i64 = 0;
+    let mut space = "  ".to_string();
     if let Some(last) = a.last() {
         if let Some(v) = kwarg_get(*last, "level").and_then(|v| v.as_int()) {
             level = v;
+        }
+        if let Some(v) = kwarg_get(*last, "space").and_then(extract_str) {
+            space = v;
         }
     }
     if let Some(v) = a.get(2).and_then(|v| v.as_int()) {
@@ -107,7 +123,7 @@ unsafe extern "C" fn d_indent(args_ptr: *const MbValue, nargs: usize) -> MbValue
         );
         return MbValue::none();
     }
-    mb_xml_indent(a.first().copied().unwrap_or_else(MbValue::none))
+    mb_xml_indent_with_space(a.first().copied().unwrap_or_else(MbValue::none), &space)
 }
 disp_binary!(d_register_namespace, mb_xml_register_namespace);
 
@@ -117,8 +133,14 @@ unsafe extern "C" fn d_subelement(args_ptr: *const MbValue, nargs: usize) -> MbV
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let parent = a.get(0).copied().unwrap_or_else(MbValue::none);
     let tag = a.get(1).copied().unwrap_or_else(MbValue::none);
-    let attrib = a.get(2).copied().unwrap_or_else(MbValue::none);
-    subelement_with_attrib(parent, tag, attrib)
+    let (attrib, extras) = xml_attrib_and_extras(if a.len() > 2 { &a[2..] } else { &[] });
+    let child = subelement_with_attrib(parent, tag, attrib);
+    for (k, v) in extras {
+        if let Some(ad) = dict_get_key(child, "attrib") {
+            super::super::dict_ops::mb_dict_setitem(ad, k, v);
+        }
+    }
+    child
 }
 
 /// tostring(elem, encoding=None, xml_declaration=None, short_empty_elements=True)
@@ -128,6 +150,8 @@ unsafe extern "C" fn d_tostring(args_ptr: *const MbValue, nargs: usize) -> MbVal
     let mut encoding: Option<String> = None;
     let mut xml_decl = false;
     let mut short_empty = true;
+    let mut method = "xml".to_string();
+    let mut default_namespace: Option<String> = None;
     if nargs >= 2 {
         // Trailing kwargs dict (runtime appends it as the last positional arg).
         let kwargs = a[nargs - 1];
@@ -140,6 +164,12 @@ unsafe extern "C" fn d_tostring(args_ptr: *const MbValue, nargs: usize) -> MbVal
         if let Some(v) = kwarg_get(kwargs, "short_empty_elements") {
             short_empty = v.as_bool() != Some(false);
         }
+        if let Some(v) = kwarg_get(kwargs, "method").and_then(extract_str) {
+            method = v;
+        }
+        if let Some(v) = kwarg_get(kwargs, "default_namespace").and_then(extract_str) {
+            default_namespace = Some(v);
+        }
         // Positional encoding: tostring(elem, "unicode")
         if encoding.is_none() {
             if let Some(s) = extract_str(a[1]) {
@@ -147,14 +177,47 @@ unsafe extern "C" fn d_tostring(args_ptr: *const MbValue, nargs: usize) -> MbVal
             }
         }
     }
-    tostring_impl(elem, encoding.as_deref(), xml_decl, short_empty)
+    tostring_impl(
+        elem,
+        encoding.as_deref(),
+        xml_decl,
+        short_empty,
+        &method,
+        default_namespace.as_deref(),
+    )
 }
 
-/// ElementTree(root?) — Mamba models the tree wrapper as the root element
-/// itself (getroot() is dispatched on the Element stub and returns self).
+/// ElementTree(root?) — for a concrete root, Mamba models the tree wrapper as
+/// the root element itself. The zero-arg form needs a wrapper so getroot()
+/// returns None and write() raises on the missing root.
 unsafe extern "C" fn d_elementtree(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let empty_tree = || {
+        let tree = new_stub_dict("ElementTree");
+        dict_set_key(tree, "_root", MbValue::none());
+        tree
+    };
+    if let Some(kwargs) = a.last().copied() {
+        if let Some(file) = kwarg_get(kwargs, "file") {
+            return mb_xml_parse(file);
+        }
+        if let Some(element) = kwarg_get(kwargs, "element") {
+            if is_element(element) {
+                unsafe { super::super::rc::retain_if_ptr(element) };
+                return element;
+            }
+            if element.is_none() {
+                return empty_tree();
+            }
+        }
+    }
+    if nargs == 0 {
+        return empty_tree();
+    }
     let arg = a.get(0).copied().unwrap_or_else(MbValue::none);
+    if arg.is_none() {
+        return empty_tree();
+    }
     if is_element(arg) {
         unsafe { super::super::rc::retain_if_ptr(arg) };
         return arg;
@@ -162,10 +225,14 @@ unsafe extern "C" fn d_elementtree(args_ptr: *const MbValue, nargs: usize) -> Mb
     mb_xml_parse(arg)
 }
 
-/// QName(text_or_uri, tag?) → stub dict carrying Clark-notation `.text`.
+/// QName(text_or_uri, tag?) -> stub dict carrying Clark-notation `.text`.
 unsafe extern "C" fn d_qname(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let first = a.get(0).copied().and_then(extract_str).unwrap_or_default();
+    let first = a
+        .get(0)
+        .copied()
+        .and_then(xml_name_value)
+        .unwrap_or_default();
     let second = a.get(1).copied().and_then(extract_str);
     let text = match second {
         Some(tag) => format!("{{{first}}}{tag}"),
@@ -184,6 +251,51 @@ unsafe extern "C" fn d_xmlparser(_args_ptr: *const MbValue, _nargs: usize) -> Mb
         "_data",
         MbValue::from_ptr(MbObject::new_str(String::new())),
     );
+    dict_set_key(
+        stub,
+        "entity",
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
+    stub
+}
+
+/// XMLPullParser(events=("end",)) -> incremental event stub.
+unsafe extern "C" fn d_xmlpullparser(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = if nargs == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let (want_start, want_end, want_comment) = pull_event_flags(
+        args.last()
+            .copied()
+            .and_then(|last| kwarg_get(last, "events"))
+            .or_else(|| args.first().copied()),
+    );
+    let stub = new_stub_dict("XMLPullParser");
+    dict_set_key(
+        stub,
+        "_data",
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+    );
+    dict_set_key(
+        stub,
+        "_events",
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    dict_set_key(
+        stub,
+        "_pull_stack",
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    dict_set_key(
+        stub,
+        "_pull_ns_stack",
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    dict_set_key(stub, "_want_start", MbValue::from_bool(want_start));
+    dict_set_key(stub, "_want_end", MbValue::from_bool(want_end));
+    dict_set_key(stub, "_want_comment", MbValue::from_bool(want_comment));
     stub
 }
 
@@ -207,7 +319,9 @@ unsafe extern "C" fn d_iterparse(args_ptr: *const MbValue, nargs: usize) -> MbVa
     let mut want_start = false;
     let mut want_end = true;
     if nargs >= 2 {
-        if let Some(events) = kwarg_get(a[nargs - 1], "events") {
+        if let Some(events) = kwarg_get(a[nargs - 1], "events")
+            .or_else(|| a.get(1).copied())
+        {
             let names: Vec<String> = seq_items(events)
                 .into_iter()
                 .filter_map(extract_str)
@@ -277,7 +391,7 @@ pub fn register() {
         ("dump", d_tostring as *const () as usize),
         ("iterparse", d_iterparse as *const () as usize),
         ("XMLParser", d_xmlparser as *const () as usize),
-        ("XMLPullParser", d_xml as *const () as usize),
+        ("XMLPullParser", d_xmlpullparser as *const () as usize),
         ("ElementTree", d_elementtree as *const () as usize),
         ("QName", d_qname as *const () as usize),
         ("TreeBuilder", d_treebuilder as *const () as usize),
@@ -471,6 +585,29 @@ fn seq_items(val: MbValue) -> Vec<MbValue> {
     Vec::new()
 }
 
+fn pull_event_flags(events: Option<MbValue>) -> (bool, bool, bool) {
+    let Some(events) = events else {
+        return (false, true, false);
+    };
+    let mut names: Vec<String> = seq_items(events)
+        .into_iter()
+        .filter_map(extract_str)
+        .collect();
+    if names.is_empty() {
+        if let Some(name) = extract_str(events) {
+            names.push(name);
+        }
+    }
+    if names.is_empty() {
+        return (false, true, false);
+    }
+    (
+        names.iter().any(|name| name == "start"),
+        names.iter().any(|name| name == "end"),
+        names.iter().any(|name| name == "comment"),
+    )
+}
+
 /// Read a string key out of an element/stub dict (borrowed — no retain).
 fn dict_get_key(elem: MbValue, key: &str) -> Option<MbValue> {
     let ptr = elem.as_ptr()?;
@@ -480,6 +617,62 @@ fn dict_get_key(elem: MbValue, key: &str) -> Option<MbValue> {
         }
     }
     None
+}
+
+fn dict_string_entries(dict: MbValue) -> Vec<(String, String)> {
+    let Some(ptr) = dict.as_ptr() else {
+        return Vec::new();
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            return lock
+                .read()
+                .unwrap()
+                .iter()
+                .filter_map(|(key, value)| {
+                    extract_str(*value)
+                        .map(|value| (super::super::dict_ops::dict_key_raw_str(key), value))
+                })
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+pub fn qname_text_value(val: MbValue) -> Option<String> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let class = map
+                .get("__class__")
+                .copied()
+                .and_then(extract_str)?;
+            if class == "QName" {
+                return map.get("text").copied().and_then(extract_str);
+            }
+        }
+    }
+    None
+}
+
+pub fn qname_eq_value(a: MbValue, b: MbValue) -> Option<bool> {
+    let a_text = qname_text_value(a);
+    let b_text = qname_text_value(b);
+    if a_text.is_none() && b_text.is_none() {
+        return None;
+    }
+    let Some(left) = a_text.or_else(|| extract_str(a)) else {
+        return Some(false);
+    };
+    let Some(right) = b_text.or_else(|| extract_str(b)) else {
+        return Some(false);
+    };
+    Some(left == right)
+}
+
+fn xml_name_value(val: MbValue) -> Option<String> {
+    qname_text_value(val).or_else(|| extract_str(val))
 }
 
 /// Write a string key into an element/stub dict, retaining the new value and
@@ -514,6 +707,201 @@ fn new_stub_dict(class: &str) -> MbValue {
         }
     }
     MbValue::from_ptr(dict)
+}
+
+fn pop_list_value(list: MbValue) -> Option<MbValue> {
+    let ptr = list.as_ptr()?;
+    unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            return lock.write().unwrap().pop();
+        }
+    }
+    None
+}
+
+fn append_list_value(list: MbValue, value: MbValue) {
+    super::super::list_ops::mb_list_append(list, value);
+    unsafe { super::super::rc::release_if_ptr(value) };
+}
+
+fn pull_wants(receiver: MbValue, key: &str) -> bool {
+    dict_get_key(receiver, key).and_then(|v| v.as_bool()) == Some(true)
+}
+
+fn pull_current_ns(receiver: MbValue) -> String {
+    dict_get_key(receiver, "_pull_ns_stack")
+        .and_then(|stack| seq_items(stack).last().copied())
+        .and_then(extract_str)
+        .unwrap_or_default()
+}
+
+fn pull_push_stack(receiver: MbValue, tag: &str, default_ns: &str) {
+    if let Some(stack) = dict_get_key(receiver, "_pull_stack") {
+        super::super::list_ops::mb_list_append(
+            stack,
+            MbValue::from_ptr(MbObject::new_str(tag.to_string())),
+        );
+    }
+    if let Some(stack) = dict_get_key(receiver, "_pull_ns_stack") {
+        super::super::list_ops::mb_list_append(
+            stack,
+            MbValue::from_ptr(MbObject::new_str(default_ns.to_string())),
+        );
+    }
+}
+
+fn pull_pop_stack(receiver: MbValue, fallback: &str) -> String {
+    if let Some(ns_stack) = dict_get_key(receiver, "_pull_ns_stack") {
+        if let Some(ns) = pop_list_value(ns_stack) {
+            unsafe { super::super::rc::release_if_ptr(ns) };
+        }
+    }
+    if let Some(tag_stack) = dict_get_key(receiver, "_pull_stack") {
+        if let Some(tag) = pop_list_value(tag_stack) {
+            let out = extract_str(tag).unwrap_or_else(|| fallback.to_string());
+            unsafe { super::super::rc::release_if_ptr(tag) };
+            return out;
+        }
+    }
+    fallback.to_string()
+}
+
+fn pull_event_tuple(action: &str, elem: MbValue) -> MbValue {
+    unsafe { super::super::rc::retain_if_ptr(elem) };
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(action.to_string())),
+        elem,
+    ]))
+}
+
+fn pull_queue_event(receiver: MbValue, action: &str, elem: MbValue) {
+    if let Some(events) = dict_get_key(receiver, "_events") {
+        append_list_value(events, pull_event_tuple(action, elem));
+    }
+}
+
+fn parse_xml_tag_attrs(input: &str) -> (String, HashMap<String, String>, bool) {
+    let mut s = input.trim();
+    let self_closing = s.ends_with('/');
+    if self_closing {
+        s = s[..s.len() - 1].trim_end();
+    }
+    let split = s
+        .find(|ch: char| ch.is_ascii_whitespace())
+        .unwrap_or(s.len());
+    let tag = s[..split].to_string();
+    let mut attrs = HashMap::new();
+    let mut rest = s[split..].trim_start();
+    while !rest.is_empty() {
+        let Some(eq) = rest.find('=') else {
+            break;
+        };
+        let name = rest[..eq].trim().to_string();
+        rest = rest[eq + 1..].trim_start();
+        let Some(quote) = rest.as_bytes().first().copied() else {
+            break;
+        };
+        if quote != b'\'' && quote != b'"' {
+            break;
+        }
+        rest = &rest[1..];
+        let Some(end) = rest.as_bytes().iter().position(|b| *b == quote) else {
+            break;
+        };
+        attrs.insert(name, decode_entities(&rest[..end]));
+        rest = rest[end + 1..].trim_start();
+    }
+    (tag, attrs, self_closing)
+}
+
+fn pull_resolve_tag(
+    raw: &str,
+    attrs: &HashMap<String, String>,
+    inherited_ns: &str,
+) -> (String, String) {
+    let mut namespaces = HashMap::new();
+    if !inherited_ns.is_empty() {
+        namespaces.insert(String::new(), inherited_ns.to_string());
+    }
+    for (name, value) in attrs {
+        if name == "xmlns" {
+            namespaces.insert(String::new(), value.clone());
+        } else if let Some(prefix) = name.strip_prefix("xmlns:") {
+            namespaces.insert(prefix.to_string(), value.clone());
+        }
+    }
+    let default_ns = namespaces.get("").cloned().unwrap_or_default();
+    (resolve_xml_name(raw, &namespaces), default_ns)
+}
+
+fn pull_feed_chunk(receiver: MbValue, chunk: &str) {
+    let mut rest = chunk;
+    while let Some(open) = rest.find('<') {
+        rest = &rest[open..];
+        if let Some(after) = rest.strip_prefix("<!--") {
+            let Some(end) = after.find("-->") else {
+                break;
+            };
+            if pull_wants(receiver, "_want_comment") {
+                let comment = mb_xml_comment(MbValue::from_ptr(MbObject::new_str(
+                    after[..end].to_string(),
+                )));
+                pull_queue_event(receiver, "comment", comment);
+                unsafe { super::super::rc::release_if_ptr(comment) };
+            }
+            rest = &after[end + 3..];
+            continue;
+        }
+        if rest.starts_with("<?") || rest.starts_with("<!") {
+            let Some(end) = rest.find('>') else {
+                break;
+            };
+            rest = &rest[end + 1..];
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix("</") {
+            let Some(end) = after.find('>') else {
+                break;
+            };
+            let raw = after[..end].trim();
+            let tag = pull_pop_stack(receiver, raw);
+            if pull_wants(receiver, "_want_end") {
+                let elem = mb_xml_element(
+                    MbValue::from_ptr(MbObject::new_str(tag)),
+                    MbValue::none(),
+                );
+                pull_queue_event(receiver, "end", elem);
+                unsafe { super::super::rc::release_if_ptr(elem) };
+            }
+            rest = &after[end + 1..];
+            continue;
+        }
+        let Some(end) = rest.find('>') else {
+            break;
+        };
+        let (raw_tag, attrs, self_closing) = parse_xml_tag_attrs(&rest[1..end]);
+        if raw_tag.is_empty() {
+            rest = &rest[end + 1..];
+            continue;
+        }
+        let (tag, default_ns) = pull_resolve_tag(&raw_tag, &attrs, &pull_current_ns(receiver));
+        let elem = mb_xml_element(
+            MbValue::from_ptr(MbObject::new_str(tag.clone())),
+            MbValue::none(),
+        );
+        if pull_wants(receiver, "_want_start") {
+            pull_queue_event(receiver, "start", elem);
+        }
+        if self_closing {
+            if pull_wants(receiver, "_want_end") {
+                pull_queue_event(receiver, "end", elem);
+            }
+        } else {
+            pull_push_stack(receiver, &tag, &default_ns);
+        }
+        unsafe { super::super::rc::release_if_ptr(elem) };
+        rest = &rest[end + 1..];
+    }
 }
 
 fn is_element(val: MbValue) -> bool {
@@ -603,7 +991,7 @@ fn source_content(src: MbValue) -> Option<String> {
 /// the `attrib` slot.
 pub fn mb_xml_element(tag: MbValue, attrib: MbValue) -> MbValue {
     let dict = MbObject::new_dict();
-    let tag_str = extract_str(tag).unwrap_or_else(|| "element".to_string());
+    let tag_str = xml_name_value(tag).unwrap_or_else(|| "element".to_string());
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
@@ -661,23 +1049,184 @@ fn escape_text(s: &str) -> String {
 }
 
 fn escape_attr(s: &str) -> String {
-    escape_text(s).replace('"', "&quot;")
-}
-
-/// Map `{uri}local` through registered namespace prefixes. Returns the
-/// display tag plus the (prefix, uri) pair when a mapping applied.
-fn mapped_tag(tag: &str) -> (String, Option<(String, String)>) {
-    if let Some(rest) = tag.strip_prefix('{') {
-        if let Some(close) = rest.find('}') {
-            let uri = &rest[..close];
-            let local = &rest[close + 1..];
-            let prefix = NS_PREFIXES.with(|m| m.borrow().get(uri).cloned());
-            if let Some(p) = prefix {
-                return (format!("{p}:{local}"), Some((p, uri.to_string())));
-            }
+    let mut out = String::new();
+    for ch in escape_text(s).replace('"', "&quot;").chars() {
+        match ch {
+            '\t' => out.push_str("&#09;"),
+            '\n' => out.push_str("&#10;"),
+            '\r' => out.push_str("&#13;"),
+            _ => out.push(ch),
         }
     }
-    (tag.to_string(), None)
+    out
+}
+
+fn ascii_numeric_escape(s: &str) -> String {
+    let mut out = String::new();
+    for ch in s.chars() {
+        if ch.is_ascii() {
+            out.push(ch);
+        } else {
+            out.push_str(&format!("&#{};", ch as u32));
+        }
+    }
+    out
+}
+
+fn encode_serialized_bytes(payload: &str, encoding: Option<&str>) -> Vec<u8> {
+    if encoding.map(|e| e.eq_ignore_ascii_case("us-ascii")).unwrap_or(true) {
+        ascii_numeric_escape(payload).into_bytes()
+    } else {
+        payload.as_bytes().to_vec()
+    }
+}
+
+const XML_NAMESPACE_URI: &str = "http://www.w3.org/XML/1998/namespace";
+
+fn clark_name_parts(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix('{')?;
+    let close = rest.find('}')?;
+    Some((&rest[..close], &rest[close + 1..]))
+}
+
+struct XmlSerContext {
+    uri_to_prefix: HashMap<String, String>,
+    decls: Vec<(String, String)>,
+}
+
+impl XmlSerContext {
+    fn for_tree(elem: MbValue, default_namespace: Option<&str>) -> Self {
+        let mut ctx = Self {
+            uri_to_prefix: HashMap::new(),
+            decls: Vec::new(),
+        };
+        if let Some(ns) = default_namespace.filter(|ns| !ns.is_empty()) {
+            ctx.uri_to_prefix.insert(ns.to_string(), String::new());
+            ctx.decls.push((String::new(), ns.to_string()));
+        }
+        ctx.collect_elem(elem);
+        ctx
+    }
+
+    fn collect_elem(&mut self, elem: MbValue) {
+        let Some(ptr) = elem.as_ptr() else {
+            return;
+        };
+        let (tag, attr_keys, child_items) = unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let map = lock.read().unwrap();
+                let tag = map
+                    .get("tag")
+                    .and_then(|v| extract_str(*v))
+                    .unwrap_or_default();
+                let attr_keys = map
+                    .get("attrib")
+                    .copied()
+                    .and_then(|attrib| attrib.as_ptr())
+                    .and_then(|ap| {
+                        if let ObjData::Dict(ref a_lock) = (*ap).data {
+                            Some(
+                                a_lock
+                                    .read()
+                                    .unwrap()
+                                    .keys()
+                                    .map(super::super::dict_ops::dict_key_raw_str)
+                                    .collect::<Vec<_>>(),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                let child_items = map
+                    .get("_children")
+                    .copied()
+                    .and_then(|children| children.as_ptr())
+                    .and_then(|cp| {
+                        if let ObjData::List(ref list_lock) = (*cp).data {
+                            Some(list_lock.read().unwrap().to_vec())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                (tag, attr_keys, child_items)
+            } else {
+                (String::new(), Vec::new(), Vec::new())
+            }
+        };
+
+        if let Some((uri, _)) = clark_name_parts(&tag) {
+            self.ensure_uri(uri);
+        }
+        for key in attr_keys {
+            if let Some((uri, _)) = clark_name_parts(&key) {
+                self.ensure_uri(uri);
+            }
+        }
+        for child in child_items {
+            self.collect_elem(child);
+        }
+    }
+
+    fn ensure_uri(&mut self, uri: &str) {
+        if uri.is_empty() || uri == XML_NAMESPACE_URI || self.uri_to_prefix.contains_key(uri) {
+            return;
+        }
+        let prefix = NS_PREFIXES
+            .with(|m| m.borrow().get(uri).cloned())
+            .unwrap_or_else(|| self.next_auto_prefix());
+        if uri != XML_NAMESPACE_URI {
+            self.decls.push((prefix.clone(), uri.to_string()));
+        }
+        self.uri_to_prefix.insert(uri.to_string(), prefix);
+    }
+
+    fn next_auto_prefix(&self) -> String {
+        let mut i = if self.uri_to_prefix.values().any(|p| p.is_empty()) {
+            1
+        } else {
+            0
+        };
+        loop {
+            let candidate = format!("ns{i}");
+            if !self.uri_to_prefix.values().any(|p| p == &candidate) {
+                return candidate;
+            }
+            i += 1;
+        }
+    }
+
+    fn display_name(&self, raw: &str, attr: bool) -> String {
+        let Some((uri, local)) = clark_name_parts(raw) else {
+            return raw.to_string();
+        };
+        if uri == XML_NAMESPACE_URI {
+            return format!("xml:{local}");
+        }
+        let Some(prefix) = self.uri_to_prefix.get(uri) else {
+            return raw.to_string();
+        };
+        if prefix.is_empty() && !attr {
+            local.to_string()
+        } else if prefix.is_empty() {
+            local.to_string()
+        } else {
+            format!("{prefix}:{local}")
+        }
+    }
+
+    fn root_declarations(&self) -> String {
+        let mut out = String::new();
+        for (prefix, uri) in &self.decls {
+            if prefix.is_empty() {
+                out.push_str(&format!(" xmlns=\"{}\"", escape_attr(uri)));
+            } else if prefix != "xml" {
+                out.push_str(&format!(" xmlns:{prefix}=\"{}\"", escape_attr(uri)));
+            }
+        }
+        out
+    }
 }
 
 /// tostring(element) with explicit options.
@@ -686,8 +1235,15 @@ fn tostring_impl(
     encoding: Option<&str>,
     xml_declaration: bool,
     short_empty: bool,
+    method: &str,
+    default_namespace: Option<&str>,
 ) -> MbValue {
-    let body = element_to_string(elem, 0, short_empty);
+    let body = if method == "text" {
+        element_text_only(elem)
+    } else {
+        let ctx = XmlSerContext::for_tree(elem, default_namespace);
+        element_to_string(elem, 0, short_empty, method, &ctx)
+    };
     let unicode = encoding == Some("unicode");
     let mut out = String::new();
     if xml_declaration && !unicode {
@@ -700,17 +1256,56 @@ fn tostring_impl(
     if unicode {
         MbValue::from_ptr(MbObject::new_str(out))
     } else {
-        MbValue::from_ptr(MbObject::new_bytes(out.into_bytes()))
+        MbValue::from_ptr(MbObject::new_bytes(encode_serialized_bytes(&out, encoding)))
     }
 }
 
 /// tostring(element) -> XML string (legacy str-returning entry; the module
 /// dispatcher `d_tostring` handles encoding/declaration options).
 pub fn mb_xml_tostring(elem: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str(element_to_string(elem, 0, true)))
+    let ctx = XmlSerContext::for_tree(elem, None);
+    MbValue::from_ptr(MbObject::new_str(element_to_string(
+        elem, 0, true, "xml", &ctx,
+    )))
 }
 
-fn element_to_string(elem: MbValue, depth: usize, short_empty: bool) -> String {
+fn element_text_only(elem: MbValue) -> String {
+    if let Some(ptr) = elem.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let map = lock.read().unwrap();
+                let mut out = map.get("text").and_then(|v| extract_str(*v)).unwrap_or_default();
+                let children = map.get("_children").copied();
+                let tail = map.get("tail").and_then(|v| extract_str(*v)).unwrap_or_default();
+                let child_items: Vec<MbValue> = children
+                    .and_then(|c| c.as_ptr())
+                    .map(|p| {
+                        if let ObjData::List(ref list_lock) = (*p).data {
+                            list_lock.read().unwrap().to_vec()
+                        } else {
+                            Vec::new()
+                        }
+                    })
+                    .unwrap_or_default();
+                drop(map);
+                for child in child_items {
+                    out.push_str(&element_text_only(child));
+                }
+                out.push_str(&tail);
+                return out;
+            }
+        }
+    }
+    String::new()
+}
+
+fn element_to_string(
+    elem: MbValue,
+    depth: usize,
+    short_empty: bool,
+    method: &str,
+    ctx: &XmlSerContext,
+) -> String {
     if let Some(ptr) = elem.as_ptr() {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -747,7 +1342,7 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool) -> String {
                     .get("tag")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_else(|| "?".to_string());
-                let (tag, ns) = mapped_tag(&raw_tag);
+                let tag = ctx.display_name(&raw_tag, false);
                 let text = map
                     .get("text")
                     .and_then(|v| extract_str(*v))
@@ -756,16 +1351,15 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool) -> String {
                 // Build attributes string (xmlns declaration first on the root).
                 let mut attr_str = String::new();
                 if depth == 0 {
-                    if let Some((prefix, uri)) = &ns {
-                        attr_str.push_str(&format!(" xmlns:{prefix}=\"{uri}\""));
-                    }
+                    attr_str.push_str(&ctx.root_declarations());
                 }
                 if let Some(attrib) = map.get("attrib").copied() {
                     if let Some(a_ptr) = attrib.as_ptr() {
                         if let ObjData::Dict(ref a_lock) = (*a_ptr).data {
                             let a_map = a_lock.read().unwrap();
                             for (k, v) in a_map.iter() {
-                                let ks = super::super::dict_ops::dict_key_raw_str(k);
+                                let raw = super::super::dict_ops::dict_key_raw_str(k);
+                                let ks = ctx.display_name(&raw, true);
                                 let vs = extract_str(*v).unwrap_or_default();
                                 attr_str.push_str(&format!(" {ks}=\"{}\"", escape_attr(&vs)));
                             }
@@ -787,6 +1381,10 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool) -> String {
                     .unwrap_or_default();
                 drop(map);
 
+                if method == "html" && is_html_void_tag(&tag) {
+                    return format!("<{tag}{attr_str}>{tail}");
+                }
+
                 if child_items.is_empty() && text.is_none() {
                     if short_empty {
                         return format!("<{tag}{attr_str} />{tail}");
@@ -796,10 +1394,20 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool) -> String {
 
                 let mut result = format!("<{tag}{attr_str}>");
                 if let Some(t) = &text {
-                    result.push_str(&escape_text(t));
+                    if method == "html" && is_html_raw_text_tag(&tag) {
+                        result.push_str(t);
+                    } else {
+                        result.push_str(&escape_text(t));
+                    }
                 }
                 for child in child_items {
-                    result.push_str(&element_to_string(child, depth + 1, short_empty));
+                    result.push_str(&element_to_string(
+                        child,
+                        depth + 1,
+                        short_empty,
+                        method,
+                        ctx,
+                    ));
                 }
                 result.push_str(&format!("</{tag}>"));
                 result.push_str(&tail);
@@ -808,6 +1416,66 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool) -> String {
         }
     }
     String::new()
+}
+
+fn is_html_void_tag(tag: &str) -> bool {
+    matches!(
+        tag.to_ascii_lowercase().as_str(),
+        "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input"
+            | "link" | "meta" | "param" | "source" | "track" | "wbr"
+    )
+}
+
+fn is_html_raw_text_tag(tag: &str) -> bool {
+    matches!(tag.to_ascii_lowercase().as_str(), "script" | "style")
+}
+
+fn has_unqualified_tag(elem: MbValue) -> bool {
+    let tag = dict_get_key(elem, "tag")
+        .and_then(extract_str)
+        .unwrap_or_default();
+    if !tag.is_empty() && !tag.starts_with('{') {
+        return true;
+    }
+    if let Some(children) = dict_get_key(elem, "_children") {
+        for child in seq_items(children) {
+            if has_unqualified_tag(child) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn default_namespace_arg(args: MbValue) -> Option<String> {
+    let items = seq_items(args);
+    for item in items.iter().copied().rev() {
+        if is_dict(item) {
+            if let Some(ns) = kwarg_get(item, "default_namespace") {
+                return extract_str(ns);
+            }
+        }
+    }
+    items.get(3).copied().and_then(extract_str)
+}
+
+fn validate_default_namespace(elem: MbValue, args: MbValue) -> Option<MbValue> {
+    let Some(ns) = default_namespace_arg(args) else {
+        return None;
+    };
+    if ns.is_empty() {
+        return None;
+    }
+    if has_unqualified_tag(elem) {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "cannot use non-qualified names with default_namespace option".to_string(),
+            )),
+        );
+        return Some(MbValue::none());
+    }
+    None
 }
 
 // ── Parsing ──
@@ -837,13 +1505,20 @@ pub fn mb_xml_fromstring(val: MbValue) -> MbValue {
     let bytes = s.as_bytes();
     let mut i = 0;
     skip_prolog(bytes, &mut i);
-    // Undefined entity references are a ParseError (the 5 standard names and
-    // character refs are fine).
-    if let Some(bad) = find_undefined_entity(&s) {
+    // Malformed/undefined entity references outside ignored XML markup are a
+    // ParseError (the 5 standard names and character refs are fine).
+    if let Some(bad) = find_bad_entity_reference(&s) {
         return raise_parse_error(&format!("undefined entity {bad}: line 1, column 0"));
     }
     match parse_element(bytes, &mut i) {
-        Some(elem) => elem,
+        Some(elem) => {
+            skip_trailing_misc(bytes, &mut i);
+            if i < bytes.len() {
+                raise_parse_error("junk after document element: line 1, column 0")
+            } else {
+                elem
+            }
+        }
         None => raise_parse_error(if s.trim().is_empty() {
             "no element found: line 1, column 0"
         } else {
@@ -852,19 +1527,59 @@ pub fn mb_xml_fromstring(val: MbValue) -> MbValue {
     }
 }
 
-/// First `&name;` reference that is not a standard entity or char ref.
-fn find_undefined_entity(s: &str) -> Option<String> {
-    let mut rest = s;
-    while let Some(i) = rest.find('&') {
-        let after = &rest[i + 1..];
-        let end = after.find(';')?;
-        let name = &after[..end];
+/// First malformed `&` reference, or `&name;` reference that is not a standard
+/// entity or char ref. CDATA/comment/PI/DOCTYPE bodies do not expand entities.
+fn find_bad_entity_reference(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"<![CDATA[") {
+            if let Some(end) = find_bytes(&bytes[i + 9..], b"]]>") {
+                i += 9 + end + 3;
+                continue;
+            }
+            return None;
+        }
+        if bytes[i..].starts_with(b"<!--") {
+            if let Some(end) = find_bytes(&bytes[i + 4..], b"-->") {
+                i += 4 + end + 3;
+                continue;
+            }
+            return None;
+        }
+        if bytes[i..].starts_with(b"<?") {
+            if let Some(end) = find_bytes(&bytes[i + 2..], b"?>") {
+                i += 2 + end + 2;
+                continue;
+            }
+            return None;
+        }
+        if bytes[i..].starts_with(b"<!") {
+            if let Some(end) = bytes[i..].iter().position(|b| *b == b'>') {
+                i += end + 1;
+                continue;
+            }
+            return None;
+        }
+        if bytes[i] != b'&' {
+            i += 1;
+            continue;
+        }
+        let after = &bytes[i + 1..];
+        let Some(end) = after.iter().position(|b| *b == b';') else {
+            return Some("&".to_string());
+        };
+        let name = std::str::from_utf8(&after[..end]).unwrap_or("");
         if !matches!(name, "lt" | "gt" | "amp" | "quot" | "apos") && !name.starts_with('#') {
             return Some(format!("&{name};"));
         }
-        rest = &after[end + 1..];
+        i += end + 2;
     }
     None
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|window| window == needle)
 }
 
 /// CPython ElementPath rejections: absolute paths on elements and 0-based
@@ -937,6 +1652,25 @@ fn skip_ws(bytes: &[u8], i: &mut usize) {
     }
 }
 
+fn skip_trailing_misc(bytes: &[u8], i: &mut usize) {
+    loop {
+        skip_ws(bytes, i);
+        if bytes[*i..].starts_with(b"<!--") {
+            if let Some(end) = find_bytes(&bytes[*i + 4..], b"-->") {
+                *i += 4 + end + 3;
+                continue;
+            }
+        }
+        if bytes[*i..].starts_with(b"<?") {
+            if let Some(end) = find_bytes(&bytes[*i + 2..], b"?>") {
+                *i += 2 + end + 2;
+                continue;
+            }
+        }
+        break;
+    }
+}
+
 /// Append parsed text either to the element's `text` (no children yet) or to
 /// the last child's `tail` (CPython mixed-content placement).
 fn append_parsed_text(elem: MbValue, s: &str) {
@@ -958,7 +1692,31 @@ fn append_parsed_text(elem: MbValue, s: &str) {
     );
 }
 
+fn resolve_xml_name(raw: &str, namespaces: &HashMap<String, String>) -> String {
+    if raw.starts_with('{') {
+        return raw.to_string();
+    }
+    if let Some((prefix, local)) = raw.split_once(':') {
+        if let Some(uri) = namespaces.get(prefix) {
+            return format!("{{{uri}}}{local}");
+        }
+    } else if let Some(uri) = namespaces.get("") {
+        if !uri.is_empty() {
+            return format!("{{{uri}}}{raw}");
+        }
+    }
+    raw.to_string()
+}
+
 fn parse_element(bytes: &[u8], i: &mut usize) -> Option<MbValue> {
+    parse_element_with_ns(bytes, i, &HashMap::new())
+}
+
+fn parse_element_with_ns(
+    bytes: &[u8],
+    i: &mut usize,
+    parent_ns: &HashMap<String, String>,
+) -> Option<MbValue> {
     if *i >= bytes.len() || bytes[*i] != b'<' {
         return None;
     }
@@ -975,6 +1733,7 @@ fn parse_element(bytes: &[u8], i: &mut usize) -> Option<MbValue> {
         *i += 1;
     }
     let tag = std::str::from_utf8(&bytes[start..*i]).ok()?.to_string();
+    let mut local_ns = parent_ns.clone();
     // Build element with attributes
     let attrib_dict = MbObject::new_dict();
     loop {
@@ -1022,19 +1781,26 @@ fn parse_element(bytes: &[u8], i: &mut usize) -> Option<MbValue> {
         }
         let attr_val = std::str::from_utf8(&bytes[v_start..*i]).ok()?.to_string();
         *i += 1;
+        let decoded_attr_val = decode_entities(&attr_val);
+        if attr_name == "xmlns" {
+            local_ns.insert(String::new(), decoded_attr_val.clone());
+        } else if let Some(prefix) = attr_name.strip_prefix("xmlns:") {
+            local_ns.insert(prefix.to_string(), decoded_attr_val.clone());
+        }
         unsafe {
             if let ObjData::Dict(ref lock) = (*attrib_dict).data {
                 lock.write().unwrap().insert(
                     attr_name.into(),
-                    MbValue::from_ptr(MbObject::new_str(decode_entities(&attr_val))),
+                    MbValue::from_ptr(MbObject::new_str(decoded_attr_val)),
                 );
             }
         }
     }
     let self_closing = *i > 0 && bytes[*i - 1] == b'/';
     *i += 1; // skip '>'
+    let resolved_tag = resolve_xml_name(&tag, &local_ns);
     let elem = mb_xml_element(
-        MbValue::from_ptr(MbObject::new_str(tag.clone())),
+        MbValue::from_ptr(MbObject::new_str(resolved_tag)),
         MbValue::from_ptr(attrib_dict),
     );
     // mb_xml_element retains the attrib arg; release the construction
@@ -1104,7 +1870,7 @@ fn parse_element(bytes: &[u8], i: &mut usize) -> Option<MbValue> {
             skip_prolog(bytes, i);
             continue;
         }
-        let child = parse_element(bytes, i)?;
+        let child = parse_element_with_ns(bytes, i, &local_ns)?;
         if let Some(children) = dict_get_key(elem, "_children") {
             super::super::list_ops::mb_list_append(children, child);
             // The list retains; drop the construction reference.
@@ -1169,6 +1935,40 @@ fn decode_entities(s: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+fn strip_doctype_decl(s: &str) -> String {
+    let Some(start) = s.find("<!DOCTYPE") else {
+        return s.to_string();
+    };
+    let tail = &s[start..];
+    let end = tail
+        .find("]>")
+        .map(|idx| idx + 2)
+        .or_else(|| tail.find('>').map(|idx| idx + 1));
+    let Some(end) = end else {
+        return s.to_string();
+    };
+    format!("{}{}", &s[..start], &s[start + end..])
+}
+
+fn apply_custom_entities(mut s: String, entities: MbValue) -> String {
+    for (name, value) in dict_string_entries(entities) {
+        s = s.replace(&format!("&{name};"), &value);
+    }
+    s
+}
+
+fn parse_xmlparser_data(receiver: MbValue) -> MbValue {
+    let data = dict_get_key(receiver, "_data")
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let data = strip_doctype_decl(&data);
+    let data = apply_custom_entities(
+        data,
+        dict_get_key(receiver, "entity").unwrap_or_else(MbValue::none),
+    );
+    mb_xml_fromstring(MbValue::from_ptr(MbObject::new_str(data)))
 }
 
 /// parse(source) -> root Element. Accepts a filename path or a
@@ -1285,17 +2085,21 @@ pub fn mb_xml_tostringlist(elem: MbValue) -> MbValue {
 /// indent(elem) — in-place pretty-print with two-space nesting (CPython
 /// `ET.indent(tree, space="  ")` default).
 pub fn mb_xml_indent(elem: MbValue) -> MbValue {
-    indent_rec(elem, 0);
+    mb_xml_indent_with_space(elem, "  ")
+}
+
+fn mb_xml_indent_with_space(elem: MbValue, space: &str) -> MbValue {
+    indent_rec(elem, 0, space);
     MbValue::none()
 }
 
-fn indent_rec(elem: MbValue, depth: usize) {
+fn indent_rec(elem: MbValue, depth: usize, space: &str) {
     let kids = children_items(elem);
     if kids.is_empty() {
         return;
     }
-    let pad_child = format!("\n{}", "  ".repeat(depth + 1));
-    let pad_close = format!("\n{}", "  ".repeat(depth));
+    let pad_child = format!("\n{}", space.repeat(depth + 1));
+    let pad_close = format!("\n{}", space.repeat(depth));
     let blank = |s: Option<String>| s.map_or(true, |t| t.trim().is_empty());
     if blank(element_text_str(elem)) {
         dict_set_key(
@@ -1306,7 +2110,7 @@ fn indent_rec(elem: MbValue, depth: usize) {
     }
     let last = kids.len() - 1;
     for (idx, kid) in kids.iter().enumerate() {
-        indent_rec(*kid, depth + 1);
+        indent_rec(*kid, depth + 1, space);
         let tail = if idx == last { &pad_close } else { &pad_child };
         if blank(dict_get_key(*kid, "tail").and_then(extract_str)) {
             dict_set_key(
@@ -1331,15 +2135,109 @@ pub fn mb_xml_register_namespace(prefix: MbValue, uri: MbValue) -> MbValue {
 
 // ── ElementPath matching (find / findall / findtext / iterfind) ──
 
-struct PathSpec {
-    descendant: bool,
-    tag: String,
-    attr_pred: Option<(String, String)>,
+#[derive(Clone, Debug)]
+enum PathPredicate {
+    AttrExists(String),
+    AttrEq(String, String),
+    AttrNe(String, String),
+    TextEq(String),
+    TextNe(String),
+    Position(usize),
+    LastMinus(usize),
 }
 
-/// Parse the fixture-level ElementPath subset: `tag`, `.//tag`, each with an
-/// optional `[@name='value']` predicate.
-fn parse_pathspec(path: &str) -> PathSpec {
+#[derive(Clone, Debug)]
+struct PathStep {
+    tag: String,
+    predicate: Option<PathPredicate>,
+}
+
+#[derive(Clone, Debug)]
+struct PathSpec {
+    descendant: bool,
+    steps: Vec<PathStep>,
+}
+
+fn quote_trimmed(s: &str) -> String {
+    s.trim().trim_matches(|c| c == '\'' || c == '"').to_string()
+}
+
+fn expand_query_tag(tag: &str, namespaces: &HashMap<String, String>) -> String {
+    if tag == "*" || tag.starts_with('{') {
+        return tag.to_string();
+    }
+    if let Some((prefix, local)) = tag.split_once(':') {
+        if let Some(uri) = namespaces.get(prefix) {
+            return format!("{{{uri}}}{local}");
+        }
+    }
+    tag.to_string()
+}
+
+fn parse_predicate(pred: &str) -> Option<PathPredicate> {
+    let pred = pred.trim();
+    if pred == "last()" {
+        return Some(PathPredicate::LastMinus(0));
+    }
+    if let Some(offset) = pred.strip_prefix("last()-") {
+        if let Ok(n) = offset.parse::<usize>() {
+            return Some(PathPredicate::LastMinus(n));
+        }
+    }
+    if let Ok(n) = pred.parse::<usize>() {
+        return Some(PathPredicate::Position(n));
+    }
+    if let Some(rest) = pred.strip_prefix('@') {
+        if let Some(eq) = rest.find("!=") {
+            return Some(PathPredicate::AttrNe(
+                rest[..eq].trim().to_string(),
+                quote_trimmed(&rest[eq + 2..]),
+            ));
+        }
+        if let Some(eq) = rest.find('=') {
+            return Some(PathPredicate::AttrEq(
+                rest[..eq].trim().to_string(),
+                quote_trimmed(&rest[eq + 1..]),
+            ));
+        }
+        return Some(PathPredicate::AttrExists(rest.trim().to_string()));
+    }
+    if let Some(rest) = pred.strip_prefix(".!=") {
+        return Some(PathPredicate::TextNe(quote_trimmed(rest)));
+    }
+    if let Some(rest) = pred.strip_prefix(".=") {
+        return Some(PathPredicate::TextEq(quote_trimmed(rest)));
+    }
+    None
+}
+
+fn split_path_segments(path: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut brace_depth = 0usize;
+    for (idx, ch) in path.char_indices() {
+        match ch {
+            '{' => brace_depth += 1,
+            '}' if brace_depth > 0 => brace_depth -= 1,
+            '/' if brace_depth == 0 => {
+                if start != idx {
+                    segments.push(&path[start..idx]);
+                }
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if start < path.len() {
+        segments.push(&path[start..]);
+    }
+    segments
+}
+
+/// Parse the fixture-level ElementPath subset: child paths, `.//tag`,
+/// wildcards, simple predicates, and namespace prefixes supplied by
+/// `namespaces=`.
+fn parse_pathspec(path: &str, namespaces: &HashMap<String, String>) -> PathSpec {
     let mut rest = path.trim();
     let mut descendant = false;
     if let Some(r) = rest.strip_prefix(".//") {
@@ -1348,63 +2246,190 @@ fn parse_pathspec(path: &str) -> PathSpec {
     } else if let Some(r) = rest.strip_prefix("./") {
         rest = r;
     }
-    let mut tag = rest.to_string();
-    let mut attr_pred = None;
-    if let Some(open) = rest.find('[') {
-        let pred = rest[open..].trim_start_matches('[').trim_end_matches(']');
-        tag = rest[..open].to_string();
-        if let Some(p) = pred.strip_prefix('@') {
-            if let Some(eq) = p.find('=') {
-                let name = p[..eq].to_string();
-                let raw_val = p[eq + 1..].trim_matches(|c| c == '\'' || c == '"');
-                attr_pred = Some((name, raw_val.to_string()));
+    let steps = split_path_segments(rest)
+        .into_iter()
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut tag = segment;
+            let mut predicate = None;
+            if let Some(open) = segment.find('[') {
+                tag = &segment[..open];
+                let pred = segment[open + 1..].trim_end_matches(']');
+                predicate = parse_predicate(pred);
             }
-        }
-    }
+            PathStep {
+                tag: expand_query_tag(tag, namespaces),
+                predicate,
+            }
+        })
+        .collect();
     PathSpec {
         descendant,
-        tag,
-        attr_pred,
+        steps,
     }
 }
 
-fn elem_matches(elem: MbValue, spec: &PathSpec) -> bool {
-    let tag_ok = spec.tag == "*" || element_tag_str(elem).as_deref() == Some(spec.tag.as_str());
-    if !tag_ok {
-        return false;
+fn tag_matches(actual: &str, pattern: &str) -> bool {
+    if pattern == "*" {
+        return true;
     }
-    if let Some((name, want)) = &spec.attr_pred {
-        if let Some(attrib) = dict_get_key(elem, "attrib") {
-            return dict_get_key(attrib, name).and_then(extract_str).as_deref()
-                == Some(want.as_str());
-        }
-        return false;
+    if pattern == "{}*" {
+        return !actual.starts_with('{');
     }
-    true
+    if let Some(local) = pattern.strip_prefix("{*}") {
+        return actual
+            .strip_prefix('{')
+            .and_then(|rest| rest.split_once('}').map(|(_, name)| name))
+            .unwrap_or(actual)
+            == local;
+    }
+    if let Some(uri) = pattern.strip_prefix('{').and_then(|rest| rest.strip_suffix("}*")) {
+        return actual
+            .strip_prefix('{')
+            .and_then(|rest| rest.split_once('}').map(|(actual_uri, _)| actual_uri))
+            == Some(uri);
+    }
+    actual == pattern
 }
 
-fn collect_descendants(elem: MbValue, spec: &PathSpec, out: &mut Vec<MbValue>) {
+fn element_string_value(elem: MbValue) -> String {
+    let mut out = element_text_str(elem).unwrap_or_default();
     for child in children_items(elem) {
-        if elem_matches(child, spec) {
+        out.push_str(&element_string_value(child));
+    }
+    out
+}
+
+fn non_position_predicate_matches(elem: MbValue, predicate: &Option<PathPredicate>) -> bool {
+    match predicate {
+        Some(PathPredicate::AttrExists(name)) => dict_get_key(elem, "attrib")
+            .and_then(|attrib| dict_get_key(attrib, name))
+            .is_some(),
+        Some(PathPredicate::AttrEq(name, want)) => dict_get_key(elem, "attrib")
+            .and_then(|attrib| dict_get_key(attrib, name))
+            .and_then(extract_str)
+            .as_deref()
+            == Some(want.as_str()),
+        Some(PathPredicate::AttrNe(name, want)) => dict_get_key(elem, "attrib")
+            .and_then(|attrib| dict_get_key(attrib, name))
+            .and_then(extract_str)
+            .is_some_and(|value| value != *want),
+        Some(PathPredicate::TextEq(want)) => element_string_value(elem) == *want,
+        Some(PathPredicate::TextNe(want)) => element_string_value(elem) != *want,
+        Some(PathPredicate::Position(_)) | Some(PathPredicate::LastMinus(_)) | None => true,
+    }
+}
+
+fn elem_matches_step(elem: MbValue, step: &PathStep) -> bool {
+    let tag = element_tag_str(elem).unwrap_or_default();
+    tag_matches(&tag, &step.tag) && non_position_predicate_matches(elem, &step.predicate)
+}
+
+fn apply_position_predicate(matches: Vec<MbValue>, step: &PathStep) -> Vec<MbValue> {
+    match step.predicate {
+        Some(PathPredicate::Position(n)) => {
+            if n == 0 {
+                Vec::new()
+            } else {
+                matches.get(n - 1).copied().into_iter().collect()
+            }
+        }
+        Some(PathPredicate::LastMinus(offset)) => {
+            if matches.len() > offset {
+                matches
+                    .get(matches.len() - 1 - offset)
+                    .copied()
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+        _ => matches,
+    }
+}
+
+fn child_step_matches(parent: MbValue, step: &PathStep) -> Vec<MbValue> {
+    let matches: Vec<MbValue> = children_items(parent)
+        .into_iter()
+        .filter(|child| elem_matches_step(*child, step))
+        .collect();
+    apply_position_predicate(matches, step)
+}
+
+fn collect_descendant_step_matches(elem: MbValue, step: &PathStep, out: &mut Vec<MbValue>) {
+    for child in children_items(elem) {
+        if elem_matches_step(child, step) {
             out.push(child);
         }
-        collect_descendants(child, spec, out);
+        collect_descendant_step_matches(child, step, out);
     }
 }
 
-fn path_matches(elem: MbValue, path: &str) -> Vec<MbValue> {
-    let spec = parse_pathspec(path);
-    let mut out = Vec::new();
+fn path_matches_with_namespaces(
+    elem: MbValue,
+    path: &str,
+    namespaces: &HashMap<String, String>,
+) -> Vec<MbValue> {
+    let spec = parse_pathspec(path, namespaces);
+    if spec.steps.is_empty() {
+        return Vec::new();
+    }
     if spec.descendant {
-        collect_descendants(elem, &spec, &mut out);
-    } else {
-        for child in children_items(elem) {
-            if elem_matches(child, &spec) {
-                out.push(child);
+        let mut current = Vec::new();
+        collect_descendant_step_matches(elem, &spec.steps[0], &mut current);
+        current = apply_position_predicate(current, &spec.steps[0]);
+        for step in spec.steps.iter().skip(1) {
+            current = current
+                .into_iter()
+                .flat_map(|parent| child_step_matches(parent, step))
+                .collect();
+        }
+        return current;
+    }
+    let mut current = vec![elem];
+    for step in &spec.steps {
+        current = current
+            .into_iter()
+            .flat_map(|parent| child_step_matches(parent, step))
+            .collect();
+    }
+    current
+}
+
+#[cfg(test)]
+fn path_matches(elem: MbValue, path: &str) -> Vec<MbValue> {
+    path_matches_with_namespaces(elem, path, &HashMap::new())
+}
+
+fn namespace_map_from_value(val: MbValue) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some(ptr) = val.as_ptr() else {
+        return out;
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            for (key, value) in lock.read().unwrap().iter() {
+                if let Some(uri) = extract_str(*value) {
+                    out.insert(super::super::dict_ops::dict_key_raw_str(key), uri);
+                }
             }
         }
     }
     out
+}
+
+fn namespace_map_from_call(items: &[MbValue]) -> HashMap<String, String> {
+    for item in items.iter().copied().skip(1).rev() {
+        if let Some(ns_val) = kwarg_get(item, "namespaces") {
+            return namespace_map_from_value(ns_val);
+        }
+        let direct = namespace_map_from_value(item);
+        if !direct.is_empty() {
+            return direct;
+        }
+    }
+    HashMap::new()
 }
 
 fn preorder(elem: MbValue, out: &mut Vec<MbValue>) {
@@ -1441,6 +2466,7 @@ pub fn dispatch_xml_stub_method(
     args: MbValue,
 ) -> Option<MbValue> {
     let items = seq_items(args);
+    let namespaces = namespace_map_from_call(&items);
     let arg = |i: usize| items.get(i).copied().unwrap_or_else(MbValue::none);
     let retained = |v: MbValue| {
         unsafe { super::super::rc::retain_if_ptr(v) };
@@ -1472,7 +2498,9 @@ pub fn dispatch_xml_stub_method(
                 if let Some(err) = validate_xpath(&path) {
                     return Some(err);
                 }
-                let found = path_matches(receiver, &path).into_iter().next();
+                let found = path_matches_with_namespaces(receiver, &path, &namespaces)
+                    .into_iter()
+                    .next();
                 Some(found.map(retained).unwrap_or_else(MbValue::none))
             }
             "findall" | "iterfind" => {
@@ -1480,12 +2508,15 @@ pub fn dispatch_xml_stub_method(
                 if let Some(err) = validate_xpath(&path) {
                     return Some(err);
                 }
-                let found = path_matches(receiver, &path);
+                let found = path_matches_with_namespaces(receiver, &path, &namespaces);
                 Some(MbValue::from_ptr(MbObject::new_list_borrowed(found)))
             }
             "findtext" => {
                 let path = extract_str(arg(0)).unwrap_or_default();
-                match path_matches(receiver, &path).into_iter().next() {
+                match path_matches_with_namespaces(receiver, &path, &namespaces)
+                    .into_iter()
+                    .next()
+                {
                     Some(e) => {
                         let text = element_text_str(e).unwrap_or_default();
                         Some(MbValue::from_ptr(MbObject::new_str(text)))
@@ -1594,14 +2625,44 @@ pub fn dispatch_xml_stub_method(
             }
             "getroot" => Some(retained(receiver)),
             "write" => {
-                let payload = element_to_string(receiver, 0, true);
+                if let Some(err) = validate_default_namespace(receiver, args) {
+                    return Some(err);
+                }
+                let kwargs = arg(1);
+                let method = kwarg_get(kwargs, "method")
+                    .and_then(extract_str)
+                    .unwrap_or_else(|| "xml".to_string());
+                let encoding = kwarg_get(kwargs, "encoding").and_then(extract_str);
+                let default_namespace = default_namespace_arg(args);
+                let payload = if method == "text" {
+                    element_text_only(receiver)
+                } else {
+                    let ctx = XmlSerContext::for_tree(receiver, default_namespace.as_deref());
+                    element_to_string(receiver, 0, true, &method, &ctx)
+                };
                 let dest = arg(0);
+                if let Some(path) = extract_str(dest) {
+                    let bytes = encode_serialized_bytes(&payload, encoding.as_deref());
+                    if let Err(err) = std::fs::write(&path, bytes) {
+                        let exc = if err.kind() == std::io::ErrorKind::NotFound {
+                            "FileNotFoundError"
+                        } else {
+                            "OSError"
+                        };
+                        super::super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+                            MbValue::from_ptr(MbObject::new_str(err.to_string())),
+                        );
+                    }
+                    return Some(MbValue::none());
+                }
                 if let Some(ptr) = dest.as_ptr() {
                     unsafe {
                         if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                             if class_name == "BytesIO" {
-                                let bytes =
-                                    MbValue::from_ptr(MbObject::new_bytes(payload.into_bytes()));
+                                let bytes = MbValue::from_ptr(MbObject::new_bytes(
+                                    encode_serialized_bytes(&payload, encoding.as_deref()),
+                                ));
                                 super::io_mod::mb_bytesio_write(dest, bytes);
                                 return Some(MbValue::none());
                             }
@@ -1626,6 +2687,25 @@ pub fn dispatch_xml_stub_method(
                 Some(MbValue::none())
             }
         },
+        "ElementTree" => match name {
+            "getroot" => Some(retained(
+                dict_get_key(receiver, "_root").unwrap_or_else(MbValue::none),
+            )),
+            "write" => {
+                let root = dict_get_key(receiver, "_root").unwrap_or_else(MbValue::none);
+                if root.is_none() {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "'NoneType' object has no attribute 'tag'".to_string(),
+                        )),
+                    );
+                    return Some(MbValue::none());
+                }
+                dispatch_xml_stub_method("Element", "write", root, args)
+            }
+            _ => None,
+        },
         "XMLParser" => match name {
             "feed" => {
                 let existing = dict_get_key(receiver, "_data")
@@ -1640,12 +2720,38 @@ pub fn dispatch_xml_stub_method(
                 Some(MbValue::none())
             }
             "close" => {
-                let data = dict_get_key(receiver, "_data")
+                Some(parse_xmlparser_data(receiver))
+            }
+            _ => None,
+        },
+        "XMLPullParser" => match name {
+            "feed" => {
+                let existing = dict_get_key(receiver, "_data")
                     .and_then(extract_str)
                     .unwrap_or_default();
-                Some(mb_xml_fromstring(MbValue::from_ptr(MbObject::new_str(
-                    data,
-                ))))
+                let chunk = extract_str(arg(0)).unwrap_or_default();
+                dict_set_key(
+                    receiver,
+                    "_data",
+                    MbValue::from_ptr(MbObject::new_str(format!("{existing}{chunk}"))),
+                );
+                pull_feed_chunk(receiver, &chunk);
+                Some(MbValue::none())
+            }
+            "read_events" => {
+                let events = dict_get_key(receiver, "_events").unwrap_or_else(|| {
+                    MbValue::from_ptr(MbObject::new_list(vec![]))
+                });
+                unsafe { super::super::rc::retain_if_ptr(events) };
+                dict_set_key(
+                    receiver,
+                    "_events",
+                    MbValue::from_ptr(MbObject::new_list(vec![])),
+                );
+                Some(events)
+            }
+            "close" => {
+                Some(MbValue::none())
             }
             _ => None,
         },
@@ -1831,6 +2937,57 @@ mod tests {
         let pred = path_matches(nested, ".//c[@id='y']");
         assert_eq!(pred.len(), 1);
         assert_eq!(element_text_str(pred[0]).as_deref(), Some("more"));
+    }
+
+    #[test]
+    fn test_elementpath_query_language_subset() {
+        let root = mb_xml_fromstring(s(
+            "<body><tag class='a'>text</tag><tag class='b'/>\
+             <section><tag class='b' id='inner'>subtext</tag></section></body>",
+        ));
+        assert_eq!(path_matches(root, "tag").len(), 2);
+        assert_eq!(path_matches(root, "section/tag").len(), 1);
+        assert_eq!(path_matches(root, ".//tag[@class]").len(), 3);
+        assert_eq!(path_matches(root, ".//tag[@class!='a']").len(), 2);
+        assert_eq!(path_matches(root, ".//tag[.='subtext']").len(), 1);
+        assert_eq!(path_matches(root, ".//tag[.!='subtext']").len(), 2);
+
+        let linear = mb_xml_fromstring(s(
+            "<body><tag class='a'/><tag class='b'/><tag class='c'/><tag class='d'/></body>",
+        ));
+        let second = path_matches(linear, "./tag[2]");
+        assert_eq!(
+            dict_get_key(dict_get_key(second[0], "attrib").unwrap(), "class")
+                .and_then(extract_str)
+                .as_deref(),
+            Some("b")
+        );
+        let penultimate = path_matches(linear, "./tag[last()-1]");
+        assert_eq!(
+            dict_get_key(dict_get_key(penultimate[0], "attrib").unwrap(), "class")
+                .and_then(extract_str)
+                .as_deref(),
+            Some("c")
+        );
+
+        let nsroot = mb_xml_fromstring(s(
+            "<a xmlns:x='X' xmlns:y='Y'><x:b><c/></x:b><b/><c><x:b/><b/></c><y:b/></a>",
+        ));
+        let mut ns = HashMap::new();
+        ns.insert("xx".to_string(), "X".to_string());
+        assert_eq!(
+            path_matches_with_namespaces(nsroot, "{*}b", &HashMap::new()).len(),
+            3
+        );
+        assert_eq!(
+            path_matches_with_namespaces(nsroot, "{X}*", &HashMap::new()).len(),
+            1
+        );
+        assert_eq!(
+            path_matches_with_namespaces(nsroot, "{}*", &HashMap::new()).len(),
+            2
+        );
+        assert_eq!(path_matches_with_namespaces(nsroot, ".//xx:b", &ns).len(), 2);
     }
 
     #[test]

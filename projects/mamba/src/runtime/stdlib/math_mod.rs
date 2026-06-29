@@ -1371,15 +1371,20 @@ fn extract_seq_values(val: MbValue) -> Option<Vec<MbValue>> {
 
 /// Best-effort conversion of a list/tuple of numerics to `Vec<f64>`.
 fn extract_seq_floats(val: MbValue) -> Option<Vec<f64>> {
-    let items = match val.as_ptr() {
-        Some(ptr) => unsafe {
+    // CPython math.fsum accepts ANY iterable. Fast-path List/Tuple, else fall
+    // back to the shared iterable-collection path so generators, range, set,
+    // dict-keys, etc. expand correctly (matches set.update's gap fix).
+    let items: Vec<MbValue> = if let Some(ptr) = val.as_ptr() {
+        unsafe {
             match &(*ptr).data {
                 ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
                 ObjData::Tuple(items) => items.clone(),
-                _ => return None,
+                _ => super::super::builtins::extract_items(val),
             }
-        },
-        None => return None,
+        }
+    } else {
+        // Generators/iterators are tagged-int handles (no ptr).
+        super::super::builtins::extract_items(val)
     };
     let mut out = Vec::with_capacity(items.len());
     for v in items {

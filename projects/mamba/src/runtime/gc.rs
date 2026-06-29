@@ -273,6 +273,12 @@ pub fn collect() -> usize {
     for addr in &to_free {
         let obj = *addr as *mut MbObject;
         unsafe {
+            super::stdlib::weakref_mod::notify_referent_collected(obj);
+        }
+    }
+    for addr in &to_free {
+        let obj = *addr as *mut MbObject;
+        unsafe {
             super::rc::release_contained_values_pub(obj);
         }
     }
@@ -434,6 +440,9 @@ pub fn gc_get_full_stats() -> (u64, usize, usize, usize, bool, bool) {
 /// gc.collect() -> number of unreachable objects freed
 pub fn mb_gc_collect(_: MbValue) -> MbValue {
     let freed = collect();
+    super::stdlib::weakref_mod::expire_unbound_class_refs();
+    super::stdlib::weakref_mod::expire_unbound_proxies();
+    super::stdlib::weakref_mod::expire_unbound_finalizers();
     MbValue::from_int(freed as i64)
 }
 

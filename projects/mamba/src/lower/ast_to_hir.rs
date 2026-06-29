@@ -9,7 +9,15 @@ use crate::types::{TypeChecker, TypeId};
 /// Converts a parsed + type-checked AST into HIR, resolving all names to
 /// SymbolIds and all types to TypeIds. Desugars compound constructs
 /// (elif chains, augmented assignments).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+#[derive(Clone)]
+enum ParamDefault {
+    Ast(Spanned<ast::Expr>),
+    Frozen(HirExpr),
+}
+
+type ParamInfo = (String, Option<ParamDefault>, ast::ParamKind);
 
 /// Check whether a function body contains `yield` or `yield from` expressions.
 ///
@@ -136,6 +144,7 @@ fn expr_has_yield(expr: &ast::Expr) -> bool {
 
         // Leaf nodes
         ast::Expr::IntLit(_)
+        | ast::Expr::BigIntLit(_)
         | ast::Expr::FloatLit(_)
         | ast::Expr::ComplexLit(_)
         | ast::Expr::StrLit(_)
@@ -231,6 +240,206 @@ fn expr_has_yield(expr: &ast::Expr) -> bool {
     }
 }
 
+fn push_unique_name(out: &mut Vec<String>, name: &str) {
+    if !out.iter().any(|n| n == name) {
+        out.push(name.to_string());
+    }
+}
+
+fn collect_walrus_targets_expr(expr: &Spanned<ast::Expr>, out: &mut Vec<String>) {
+    match &expr.node {
+        ast::Expr::Walrus { target, value } => {
+            push_unique_name(out, target);
+            collect_walrus_targets_expr(value, out);
+        }
+        ast::Expr::BinOp { lhs, rhs, .. } => {
+            collect_walrus_targets_expr(lhs, out);
+            collect_walrus_targets_expr(rhs, out);
+        }
+        ast::Expr::UnaryOp { operand, .. } | ast::Expr::Starred(operand) => {
+            collect_walrus_targets_expr(operand, out);
+        }
+        ast::Expr::Call { func, args } => {
+            collect_walrus_targets_expr(func, out);
+            for arg in args {
+                match arg {
+                    ast::CallArg::Positional(e)
+                    | ast::CallArg::StarArg(e)
+                    | ast::CallArg::DoubleStarArg(e) => collect_walrus_targets_expr(e, out),
+                    ast::CallArg::Keyword { value, .. } => {
+                        collect_walrus_targets_expr(value, out);
+                    }
+                }
+            }
+        }
+        ast::Expr::Attr { object, .. } => collect_walrus_targets_expr(object, out),
+        ast::Expr::Index { object, index } => {
+            collect_walrus_targets_expr(object, out);
+            collect_walrus_targets_expr(index, out);
+        }
+        ast::Expr::Slice { start, stop, step } => {
+            for part in [start, stop, step].into_iter().flatten() {
+                collect_walrus_targets_expr(part, out);
+            }
+        }
+        ast::Expr::ListLit(elems) | ast::Expr::SetLit(elems) | ast::Expr::TupleLit(elems) => {
+            for elem in elems {
+                collect_walrus_targets_expr(elem, out);
+            }
+        }
+        ast::Expr::DictLit(pairs) => {
+            for (key, value) in pairs {
+                if let Some(key) = key {
+                    collect_walrus_targets_expr(key, out);
+                }
+                collect_walrus_targets_expr(value, out);
+            }
+        }
+        ast::Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            collect_walrus_targets_expr(condition, out);
+            collect_walrus_targets_expr(body, out);
+            collect_walrus_targets_expr(else_body, out);
+        }
+        ast::Expr::ListComp {
+            element,
+            generators,
+        }
+        | ast::Expr::SetComp {
+            element,
+            generators,
+        }
+        | ast::Expr::GeneratorExpr {
+            element,
+            generators,
+        } => {
+            collect_walrus_targets_expr(element, out);
+            for gen in generators {
+                for condition in &gen.conditions {
+                    collect_walrus_targets_expr(condition, out);
+                }
+            }
+        }
+        ast::Expr::DictComp {
+            key,
+            value,
+            generators,
+        } => {
+            collect_walrus_targets_expr(key, out);
+            collect_walrus_targets_expr(value, out);
+            for gen in generators {
+                for condition in &gen.conditions {
+                    collect_walrus_targets_expr(condition, out);
+                }
+            }
+        }
+        ast::Expr::FString(parts) => {
+            for part in parts {
+                collect_walrus_targets_fstring_part(part, out);
+            }
+        }
+        ast::Expr::ChainedCompare { operands, .. } => {
+            for operand in operands {
+                collect_walrus_targets_expr(operand, out);
+            }
+        }
+        ast::Expr::UnpackTarget(elems) => {
+            for elem in elems {
+                collect_walrus_targets_expr(elem, out);
+            }
+        }
+        ast::Expr::Await(value) | ast::Expr::YieldFrom(value) => {
+            collect_walrus_targets_expr(value, out);
+        }
+        ast::Expr::Yield(Some(value)) => collect_walrus_targets_expr(value, out),
+        _ => {}
+    }
+}
+
+fn collect_walrus_targets_fstring_part(part: &ast::FStringPart, out: &mut Vec<String>) {
+    match part {
+        ast::FStringPart::Expr(expr, spec) => {
+            collect_walrus_targets_expr(expr, out);
+            for spec_part in spec.iter().flatten() {
+                collect_walrus_targets_fstring_part(spec_part, out);
+            }
+        }
+        ast::FStringPart::Literal(_) => {}
+    }
+}
+
+fn genexpr_walrus_targets(
+    element: &Spanned<ast::Expr>,
+    generators: &[ast::Comprehension],
+) -> Vec<String> {
+    let mut targets = Vec::new();
+    collect_walrus_targets_expr(element, &mut targets);
+    for gen in generators {
+        for condition in &gen.conditions {
+            collect_walrus_targets_expr(condition, &mut targets);
+        }
+    }
+    targets
+}
+
+fn genexpr_body_from_comprehensions(
+    element: &Spanned<ast::Expr>,
+    generators: &[ast::Comprehension],
+    walrus_targets: &[String],
+    span: Span,
+) -> Vec<Spanned<ast::Stmt>> {
+    let yield_expr = Spanned::new(
+        ast::Expr::Yield(Some(Box::new(element.clone()))),
+        element.span,
+    );
+    let mut body = vec![Spanned::new(ast::Stmt::ExprStmt(yield_expr), element.span)];
+
+    for gen in generators.iter().rev() {
+        for condition in gen.conditions.iter().rev() {
+            body = vec![Spanned::new(
+                ast::Stmt::If {
+                    condition: condition.clone(),
+                    body,
+                    elif_clauses: Vec::new(),
+                    else_body: None,
+                },
+                condition.span,
+            )];
+        }
+
+        let stmt = if gen.is_async {
+            ast::Stmt::AsyncFor {
+                targets: gen.targets.clone(),
+                var_ty: None,
+                iter: gen.iter.clone(),
+                body,
+                else_body: None,
+            }
+        } else {
+            ast::Stmt::For {
+                targets: gen.targets.clone(),
+                var_ty: None,
+                iter: gen.iter.clone(),
+                body,
+                else_body: None,
+            }
+        };
+        body = vec![Spanned::new(stmt, gen.iter.span)];
+    }
+
+    if !walrus_targets.is_empty() {
+        body.insert(
+            0,
+            Spanned::new(ast::Stmt::Nonlocal(walrus_targets.to_vec()), span),
+        );
+    }
+
+    body
+}
+
 /// Coarse float/int classification of an AST expression used purely to soundly
 /// infer an unannotated function's return type. `Unknown` means "could be either"
 /// and is treated conservatively (the caller does not force a primitive type).
@@ -292,6 +501,14 @@ fn math_attr_returns_float(attr: &str) -> bool {
     )
 }
 
+/// `math.<name>` float-valued module constants (`math.pi`, `math.tau`, …).
+/// Accessed as a bare `Attr` (not a call), so they need their own float hint;
+/// without it `def f(): return math.pi` infers an int return and the caller
+/// reboxes the float's raw bits as an integer.
+fn math_attr_is_float_const(attr: &str) -> bool {
+    matches!(attr, "pi" | "e" | "tau" | "inf" | "nan")
+}
+
 /// Classify an AST expression as float / int / unknown given an environment of
 /// already-known local/param float hints. Conservative: anything not provably a
 /// float stays `Unknown` (or `Int` for integer-only forms), so we never widen an
@@ -304,7 +521,7 @@ fn ast_expr_float_hint(
     use ast::{BinOp, UnaryOp};
     match expr {
         ast::Expr::FloatLit(_) => FloatHint::Float,
-        ast::Expr::IntLit(_) => FloatHint::Int,
+        ast::Expr::IntLit(_) | ast::Expr::BigIntLit(_) => FloatHint::Int,
         ast::Expr::BoolLit(_) => FloatHint::Int,
         ast::Expr::Ident(name) => env.get(name).copied().unwrap_or(FloatHint::Unknown),
         ast::Expr::UnaryOp { op, operand } => match op {
@@ -368,6 +585,15 @@ fn ast_expr_float_hint(
             }
             FloatHint::Unknown
         }
+        // `math.pi` / `math.tau` / `math.inf` — bare float module constants.
+        ast::Expr::Attr { object, attr } => {
+            if let ast::Expr::Ident(m) = &object.node {
+                if m == "math" && math_attr_is_float_const(attr) {
+                    return FloatHint::Float;
+                }
+            }
+            FloatHint::Unknown
+        }
         // Subscripting a known float-element container (`xs[i]` where `xs` was
         // assigned a list/tuple of all-float elements) yields a float. The
         // container's element-floatness is recorded in `env` under the
@@ -415,11 +641,84 @@ fn ast_container_is_all_float(
 /// Each check fires only where CPython unconditionally raises, so a correct
 /// call never trips it. Checked in CPython's surfacing order so a single-fault
 /// call yields the right message: duplicate value, positional-only-as-keyword,
+/// Recursively collect names `f` that have `f.__defaults__` or
+/// `f.__kwdefaults__` assigned anywhere in the statement tree. Such a runtime
+/// mutation changes the effective default arguments, so static arg-count
+/// validation must not fire for those functions.
+fn collect_mutated_defaults(
+    stmts: &[Spanned<ast::Stmt>],
+    out: &mut std::collections::HashSet<String>,
+) {
+    for s in stmts {
+        if let ast::Stmt::Assign { target, .. } = &s.node {
+            if let ast::Expr::Attr { object, attr } = &target.node {
+                if (attr == "__defaults__" || attr == "__kwdefaults__")
+                    && matches!(&object.node, ast::Expr::Ident(_))
+                {
+                    if let ast::Expr::Ident(n) = &object.node {
+                        out.insert(n.clone());
+                    }
+                }
+            }
+        }
+        // Recurse into compound-statement bodies so a mutation nested in a
+        // loop / conditional / function still disables the check.
+        for body in stmt_child_bodies(&s.node) {
+            collect_mutated_defaults(body, out);
+        }
+    }
+}
+
+/// Child statement-bodies of a compound statement, for recursive walks.
+fn stmt_child_bodies(stmt: &ast::Stmt) -> Vec<&[Spanned<ast::Stmt>]> {
+    let mut bodies: Vec<&[Spanned<ast::Stmt>]> = Vec::new();
+    match stmt {
+        ast::Stmt::If {
+            body, else_body, ..
+        }
+        | ast::Stmt::While {
+            body, else_body, ..
+        }
+        | ast::Stmt::For {
+            body, else_body, ..
+        } => {
+            bodies.push(body);
+            if let Some(e) = else_body {
+                bodies.push(e);
+            }
+        }
+        ast::Stmt::FnDef { body, .. }
+        | ast::Stmt::AsyncFnDef { body, .. }
+        | ast::Stmt::ClassDef { body, .. } => bodies.push(body),
+        ast::Stmt::With { body, .. } | ast::Stmt::AsyncWith { body, .. } => bodies.push(body),
+        ast::Stmt::Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+        } => {
+            bodies.push(body);
+            for h in handlers {
+                bodies.push(&h.body);
+            }
+            if let Some(e) = else_body {
+                bodies.push(e);
+            }
+            if let Some(f) = finally_body {
+                bodies.push(f);
+            }
+        }
+        _ => {}
+    }
+    bodies
+}
+
 /// unexpected keyword, too many positional, missing required keyword-only.
 fn arg_bind_violation(
     fname: &str,
     sig: &[(String, bool, bool, bool, bool, bool)],
     args: &[ast::CallArg],
+    defaults_mutated: bool,
 ) -> Option<String> {
     let has_star = sig.iter().any(|p| p.3);
     let has_dstar = sig.iter().any(|p| p.4);
@@ -485,7 +784,8 @@ fn arg_bind_violation(
     // When keyword-only args are also supplied the count is reported in two
     // segments; otherwise the plain form. Only emit when every supplied keyword
     // binds a keyword-only param, so the two-segment count is exact.
-    if !has_star && n_pos > pos_params.len() && pos_params.iter().all(|p| !p.1) {
+    if !defaults_mutated && !has_star && n_pos > pos_params.len() && pos_params.iter().all(|p| !p.1)
+    {
         let take = pos_params.len();
         let kwonly_supplied = kw_names
             .iter()
@@ -530,6 +830,33 @@ fn arg_bind_violation(
             .join(if n == 2 { " and " } else { ", " });
         return Some(format!(
             "{fname}() missing {n} required keyword-only {word}: {names}"
+        ));
+    }
+
+    // (6) Missing required positional argument(s): a positional param with no
+    // default, not filled by position and not supplied by name. Only fires when
+    // there is no `*args` (which never supplies a *named* param anyway) — a
+    // required positional left unbound is always a TypeError.
+    let missing_pos: Vec<&str> = if defaults_mutated {
+        Vec::new()
+    } else {
+        pos_params
+            .iter()
+            .enumerate()
+            .filter(|(i, p)| *i >= n_pos && !p.1 && !kw_names.contains(&p.0.as_str()))
+            .map(|(_, p)| p.0.as_str())
+            .collect()
+    };
+    if !missing_pos.is_empty() {
+        let n = missing_pos.len();
+        let word = if n == 1 { "argument" } else { "arguments" };
+        let names = missing_pos
+            .iter()
+            .map(|m| format!("'{m}'"))
+            .collect::<Vec<_>>()
+            .join(if n == 2 { " and " } else { ", " });
+        return Some(format!(
+            "{fname}() missing {n} required positional {word}: {names}"
         ));
     }
 
@@ -756,6 +1083,221 @@ fn collect_call_arg_hints(
     walk_stmts(stmts, env, func_ret, out, seen);
 }
 
+fn collect_functools_partial_targets(stmts: &[Spanned<ast::Stmt>], out: &mut HashSet<String>) {
+    fn is_partial_factory(
+        expr: &ast::Expr,
+        module_idents: &HashSet<String>,
+        factory_idents: &HashSet<String>,
+    ) -> bool {
+        match expr {
+            ast::Expr::Attr { object, attr } if attr == "partial" => {
+                matches!(&object.node, ast::Expr::Ident(name) if module_idents.contains(name))
+            }
+            ast::Expr::Ident(name) => factory_idents.contains(name),
+            _ => false,
+        }
+    }
+
+    fn walk_expr(
+        expr: &Spanned<ast::Expr>,
+        module_idents: &HashSet<String>,
+        factory_idents: &HashSet<String>,
+        out: &mut HashSet<String>,
+    ) {
+        match &expr.node {
+            ast::Expr::Call { func, args } => {
+                if is_partial_factory(&func.node, module_idents, factory_idents) {
+                    if let Some(target) = args.iter().find_map(|arg| match arg {
+                        ast::CallArg::Positional(value) => match &value.node {
+                            ast::Expr::Ident(name) => Some(name.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    }) {
+                        out.insert(target);
+                    }
+                }
+                walk_expr(func, module_idents, factory_idents, out);
+                for arg in args {
+                    match arg {
+                        ast::CallArg::Positional(value)
+                        | ast::CallArg::StarArg(value)
+                        | ast::CallArg::DoubleStarArg(value) => {
+                            walk_expr(value, module_idents, factory_idents, out);
+                        }
+                        ast::CallArg::Keyword { value, .. } => {
+                            walk_expr(value, module_idents, factory_idents, out);
+                        }
+                    }
+                }
+            }
+            ast::Expr::BinOp { lhs, rhs, .. } => {
+                walk_expr(lhs, module_idents, factory_idents, out);
+                walk_expr(rhs, module_idents, factory_idents, out);
+            }
+            ast::Expr::UnaryOp { operand, .. } => {
+                walk_expr(operand, module_idents, factory_idents, out);
+            }
+            ast::Expr::Attr { object, .. } => {
+                walk_expr(object, module_idents, factory_idents, out);
+            }
+            ast::Expr::Index { object, index } => {
+                walk_expr(object, module_idents, factory_idents, out);
+                walk_expr(index, module_idents, factory_idents, out);
+            }
+            ast::Expr::ListLit(items) | ast::Expr::TupleLit(items) | ast::Expr::SetLit(items) => {
+                for item in items {
+                    walk_expr(item, module_idents, factory_idents, out);
+                }
+            }
+            ast::Expr::DictLit(entries) => {
+                for (key, value) in entries {
+                    if let Some(key) = key {
+                        walk_expr(key, module_idents, factory_idents, out);
+                    }
+                    walk_expr(value, module_idents, factory_idents, out);
+                }
+            }
+            ast::Expr::IfExpr {
+                condition,
+                body,
+                else_body,
+            } => {
+                walk_expr(condition, module_idents, factory_idents, out);
+                walk_expr(body, module_idents, factory_idents, out);
+                walk_expr(else_body, module_idents, factory_idents, out);
+            }
+            ast::Expr::Lambda { body, .. } => {
+                walk_expr(body, module_idents, factory_idents, out);
+            }
+            ast::Expr::FString(parts) => {
+                fn walk_parts(
+                    parts: &[ast::FStringPart],
+                    module_idents: &HashSet<String>,
+                    factory_idents: &HashSet<String>,
+                    out: &mut HashSet<String>,
+                ) {
+                    for part in parts {
+                        if let ast::FStringPart::Expr(expr, format_spec) = part {
+                            walk_expr(expr, module_idents, factory_idents, out);
+                            if let Some(parts) = format_spec {
+                                walk_parts(parts, module_idents, factory_idents, out);
+                            }
+                        }
+                    }
+                }
+                walk_parts(parts, module_idents, factory_idents, out);
+            }
+            ast::Expr::Yield(Some(value))
+            | ast::Expr::YieldFrom(value)
+            | ast::Expr::Await(value) => {
+                walk_expr(value, module_idents, factory_idents, out);
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_stmts(
+        stmts: &[Spanned<ast::Stmt>],
+        module_idents: &mut HashSet<String>,
+        factory_idents: &mut HashSet<String>,
+        out: &mut HashSet<String>,
+    ) {
+        for stmt in stmts {
+            match &stmt.node {
+                ast::Stmt::Import {
+                    module,
+                    names,
+                    module_alias,
+                } if module.len() == 1 && module[0] == "functools" => {
+                    if let Some(alias) = module_alias {
+                        module_idents.insert(alias.clone());
+                    }
+                    if let Some(names) = names {
+                        for (orig, alias) in names {
+                            if orig == "partial" {
+                                factory_idents
+                                    .insert(alias.clone().unwrap_or_else(|| orig.clone()));
+                            }
+                        }
+                    }
+                }
+                ast::Stmt::ExprStmt(expr) | ast::Stmt::Return(Some(expr)) => {
+                    walk_expr(expr, module_idents, factory_idents, out);
+                }
+                ast::Stmt::Assign { target, value } => {
+                    walk_expr(target, module_idents, factory_idents, out);
+                    walk_expr(value, module_idents, factory_idents, out);
+                }
+                ast::Stmt::VarDecl { value, .. } | ast::Stmt::AugAssign { value, .. } => {
+                    walk_expr(value, module_idents, factory_idents, out);
+                }
+                ast::Stmt::If {
+                    condition,
+                    body,
+                    elif_clauses,
+                    else_body,
+                } => {
+                    walk_expr(condition, module_idents, factory_idents, out);
+                    walk_stmts(body, module_idents, factory_idents, out);
+                    for (condition, body) in elif_clauses {
+                        walk_expr(condition, module_idents, factory_idents, out);
+                        walk_stmts(body, module_idents, factory_idents, out);
+                    }
+                    if let Some(body) = else_body {
+                        walk_stmts(body, module_idents, factory_idents, out);
+                    }
+                }
+                ast::Stmt::While {
+                    condition,
+                    body,
+                    else_body,
+                } => {
+                    walk_expr(condition, module_idents, factory_idents, out);
+                    walk_stmts(body, module_idents, factory_idents, out);
+                    if let Some(body) = else_body {
+                        walk_stmts(body, module_idents, factory_idents, out);
+                    }
+                }
+                ast::Stmt::For {
+                    iter,
+                    body,
+                    else_body,
+                    ..
+                } => {
+                    walk_expr(iter, module_idents, factory_idents, out);
+                    walk_stmts(body, module_idents, factory_idents, out);
+                    if let Some(body) = else_body {
+                        walk_stmts(body, module_idents, factory_idents, out);
+                    }
+                }
+                ast::Stmt::FnDef { body, .. } | ast::Stmt::AsyncFnDef { body, .. } => {
+                    walk_stmts(body, module_idents, factory_idents, out);
+                }
+                ast::Stmt::ClassDef {
+                    body,
+                    bases,
+                    decorators,
+                    ..
+                } => {
+                    for base in bases {
+                        walk_expr(base, module_idents, factory_idents, out);
+                    }
+                    for decorator in decorators {
+                        walk_expr(decorator, module_idents, factory_idents, out);
+                    }
+                    walk_stmts(body, module_idents, factory_idents, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut module_idents = HashSet::from(["functools".to_string()]);
+    let mut factory_idents = HashSet::new();
+    walk_stmts(stmts, &mut module_idents, &mut factory_idents, out);
+}
+
 /// Merge the float hints of all `return` statements in a body into a single
 /// function-level return hint. `Float` only when at least one return is provably
 /// float and none is provably int.
@@ -815,6 +1357,27 @@ fn infer_return_float_hint(
     }
 }
 
+fn add_expr_contains_string_literal(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::StrLit(_) => true,
+        ast::Expr::BinOp {
+            op: ast::BinOp::Add,
+            lhs,
+            rhs,
+        } => {
+            add_expr_contains_string_literal(&lhs.node)
+                || add_expr_contains_string_literal(&rhs.node)
+        }
+        ast::Expr::IfExpr {
+            body, else_body, ..
+        } => {
+            add_expr_contains_string_literal(&body.node)
+                || add_expr_contains_string_literal(&else_body.node)
+        }
+        _ => false,
+    }
+}
+
 /// Infer a function's return type from its `return` statements.
 ///
 /// Recognizes literal returns (Float, Bool, Str, None) and, using the supplied
@@ -829,8 +1392,52 @@ fn infer_return_type_from_ast(
     env: &HashMap<String, FloatHint>,
     func_ret_float: &HashMap<String, FloatHint>,
 ) -> Option<TypeId> {
+    let mut heap_locals = HashSet::new();
+    infer_return_type_from_ast_inner(body, tc, env, func_ret_float, &mut heap_locals)
+}
+
+fn expr_produces_heap_any(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::ListLit(_)
+        | ast::Expr::SetLit(_)
+        | ast::Expr::DictLit(_)
+        | ast::Expr::TupleLit(_) => true,
+        ast::Expr::Call { func, .. } => matches!(
+            &func.node,
+            ast::Expr::Ident(n) if matches!(
+                n.as_str(),
+                "set" | "frozenset" | "dict" | "list" | "tuple" | "sorted"
+            )
+        ),
+        _ => false,
+    }
+}
+
+fn infer_return_type_from_ast_inner(
+    body: &[Spanned<ast::Stmt>],
+    tc: &TypeChecker,
+    env: &HashMap<String, FloatHint>,
+    func_ret_float: &HashMap<String, FloatHint>,
+    heap_locals: &mut HashSet<String>,
+) -> Option<TypeId> {
     for stmt in body {
         match &stmt.node {
+            ast::Stmt::Assign { target, value } => {
+                if let ast::Expr::Ident(name) = &target.node {
+                    if expr_produces_heap_any(&value.node) {
+                        heap_locals.insert(name.clone());
+                    } else {
+                        heap_locals.remove(name);
+                    }
+                }
+            }
+            ast::Stmt::VarDecl { name, value, .. } => {
+                if expr_produces_heap_any(&value.node) {
+                    heap_locals.insert(name.clone());
+                } else {
+                    heap_locals.remove(name);
+                }
+            }
             ast::Stmt::Return(Some(expr)) => {
                 return match &expr.node {
                     ast::Expr::FloatLit(_) => Some(tc.tcx.float()),
@@ -857,6 +1464,20 @@ fn infer_return_type_from_ast(
                     {
                         Some(tc.tcx.any())
                     }
+                    ast::Expr::Ident(name) if heap_locals.contains(name) => Some(tc.tcx.any()),
+                    ast::Expr::BinOp {
+                        op: ast::BinOp::Add,
+                        lhs,
+                        rhs,
+                    } if add_expr_contains_string_literal(&lhs.node)
+                        || add_expr_contains_string_literal(&rhs.node) =>
+                    {
+                        // A string-concat-shaped return is a boxed runtime
+                        // value even when part of the expression is Any. Do
+                        // not let the raw-int fallback make callers compile
+                        // `f() + g()` as primitive iadd over string pointers.
+                        Some(tc.tcx.any())
+                    }
                     _ => {
                         // Consult the float-hint analysis for non-literal returns.
                         // Only force `float` when provably float; otherwise fall
@@ -873,16 +1494,161 @@ fn infer_return_type_from_ast(
                     }
                 };
             }
+            // Recurse into every compound statement that can hold a `return`,
+            // returning the first inferred type. Without this, a function whose
+            // only returns live inside `try`/`while`/`for`/`with`/`match`
+            // bodies had no inferred return type and defaulted to the raw-int
+            // (`int_ty`) convention, so `return True`/`return 1.5` from inside
+            // a `try` block surfaced as `0`/`1` or raw f64 bits at the call
+            // site. Mirrors the existing `if` handling.
             ast::Stmt::If {
                 body: if_body,
+                elif_clauses,
                 else_body,
                 ..
             } => {
-                if let Some(ty) = infer_return_type_from_ast(if_body, tc, env, func_ret_float) {
+                let mut branch_locals = heap_locals.clone();
+                if let Some(ty) = infer_return_type_from_ast_inner(
+                    if_body,
+                    tc,
+                    env,
+                    func_ret_float,
+                    &mut branch_locals,
+                ) {
+                    return Some(ty);
+                }
+                for (_, elif_body) in elif_clauses {
+                    let mut branch_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        elif_body,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut branch_locals,
+                    ) {
+                        return Some(ty);
+                    }
+                }
+                if let Some(els) = else_body {
+                    let mut branch_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        els,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut branch_locals,
+                    ) {
+                        return Some(ty);
+                    }
+                }
+            }
+            ast::Stmt::While {
+                body, else_body, ..
+            }
+            | ast::Stmt::For {
+                body, else_body, ..
+            }
+            | ast::Stmt::AsyncFor {
+                body, else_body, ..
+            } => {
+                let mut body_locals = heap_locals.clone();
+                if let Some(ty) = infer_return_type_from_ast_inner(
+                    body,
+                    tc,
+                    env,
+                    func_ret_float,
+                    &mut body_locals,
+                ) {
                     return Some(ty);
                 }
                 if let Some(els) = else_body {
-                    if let Some(ty) = infer_return_type_from_ast(els, tc, env, func_ret_float) {
+                    let mut else_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        els,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut else_locals,
+                    ) {
+                        return Some(ty);
+                    }
+                }
+            }
+            ast::Stmt::With { body, .. } | ast::Stmt::AsyncWith { body, .. } => {
+                let mut body_locals = heap_locals.clone();
+                if let Some(ty) = infer_return_type_from_ast_inner(
+                    body,
+                    tc,
+                    env,
+                    func_ret_float,
+                    &mut body_locals,
+                ) {
+                    return Some(ty);
+                }
+            }
+            ast::Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                let mut body_locals = heap_locals.clone();
+                if let Some(ty) = infer_return_type_from_ast_inner(
+                    body,
+                    tc,
+                    env,
+                    func_ret_float,
+                    &mut body_locals,
+                ) {
+                    return Some(ty);
+                }
+                for handler in handlers {
+                    let mut handler_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        &handler.body,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut handler_locals,
+                    ) {
+                        return Some(ty);
+                    }
+                }
+                if let Some(els) = else_body {
+                    let mut else_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        els,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut else_locals,
+                    ) {
+                        return Some(ty);
+                    }
+                }
+                if let Some(fin) = finally_body {
+                    let mut finally_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        fin,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut finally_locals,
+                    ) {
+                        return Some(ty);
+                    }
+                }
+            }
+            ast::Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    let mut arm_locals = heap_locals.clone();
+                    if let Some(ty) = infer_return_type_from_ast_inner(
+                        &arm.body,
+                        tc,
+                        env,
+                        func_ret_float,
+                        &mut arm_locals,
+                    ) {
                         return Some(ty);
                     }
                 }
@@ -893,9 +1659,11 @@ fn infer_return_type_from_ast(
     None
 }
 
-/// Collect the names of unannotated params that are used in a value-comparing
-/// position in the body — i.e. as a direct operand of `==`, `!=`, `in`, or
-/// `not in` (including chained comparisons).
+/// Collect the names of unannotated params that must keep boxed value semantics:
+/// direct operands of `==`, `!=`, `in`, or `not in` (including chained
+/// comparisons), and direct arguments to runtime type checks such as
+/// `isinstance` / `issubclass`, and `match` subjects whose patterns require
+/// boxed runtime shape/type tests.
 ///
 /// Unannotated params default to the raw-int (`int_ty`) calling convention so
 /// genuine integer params keep the fast native ABI. But when a param is the
@@ -906,9 +1674,10 @@ fn infer_return_type_from_ast(
 /// just those params to `any` routes their `==`/`in` through the NaN-aware
 /// runtime so value comparison is correct.
 ///
-/// This is intentionally narrow: only equality/membership *operand* positions
-/// trigger promotion. Params used only in arithmetic, indexing, or as kwargs to
-/// native calls (e.g. `datetime(..., hour=h)`, `int(x, base=16)`,
+/// This is intentionally narrow: only equality/membership operand positions,
+/// runtime type-check arguments, and boxed-shape `match` subjects trigger
+/// promotion. Params used only in arithmetic, indexing, or as kwargs to native
+/// calls (e.g. `datetime(..., hour=h)`, `int(x, base=16)`,
 /// `round(x, ndigits=2)`) keep `int_ty`, preserving both the raw-int fast path
 /// and the native kwargs ABI.
 fn collect_value_compared_params(
@@ -993,6 +1762,16 @@ fn stmt_collect_value_compared_params(
         }
         Match { expr, arms } => {
             scan(expr, out);
+            if let ast::Expr::Ident(n) = &expr.node {
+                if params.contains(n)
+                    && arms.iter().any(|a| {
+                        pattern_contains_bool_literal(&a.pattern)
+                            || pattern_needs_boxed_match_subject(&a.pattern)
+                    })
+                {
+                    out.insert(n.clone());
+                }
+            }
             for a in arms {
                 if let Some(g) = &a.guard {
                     scan(g, out);
@@ -1044,6 +1823,34 @@ fn stmt_collect_value_compared_params(
     }
 }
 
+fn pattern_contains_bool_literal(pattern: &Spanned<ast::Pattern>) -> bool {
+    match &pattern.node {
+        ast::Pattern::Literal(ast::Expr::BoolLit(_)) => true,
+        ast::Pattern::Or(patterns) | ast::Pattern::Sequence(patterns) => {
+            patterns.iter().any(pattern_contains_bool_literal)
+        }
+        ast::Pattern::Mapping { pairs, .. } => pairs
+            .iter()
+            .any(|(_, value)| pattern_contains_bool_literal(value)),
+        ast::Pattern::ClassPattern { patterns, .. } => patterns
+            .iter()
+            .any(|(_, pattern)| pattern_contains_bool_literal(pattern)),
+        ast::Pattern::As { pattern, .. } => pattern_contains_bool_literal(pattern),
+        _ => false,
+    }
+}
+
+fn pattern_needs_boxed_match_subject(pattern: &Spanned<ast::Pattern>) -> bool {
+    match &pattern.node {
+        ast::Pattern::Sequence(_)
+        | ast::Pattern::Mapping { .. }
+        | ast::Pattern::ClassPattern { .. } => true,
+        ast::Pattern::Or(patterns) => patterns.iter().any(pattern_needs_boxed_match_subject),
+        ast::Pattern::As { pattern, .. } => pattern_needs_boxed_match_subject(pattern),
+        _ => false,
+    }
+}
+
 fn expr_collect_value_compared_params(
     expr: &ast::Expr,
     params: &std::collections::HashSet<String>,
@@ -1079,6 +1886,19 @@ fn expr_collect_value_compared_params(
                 }
                 if let Some(r) = operands.get(i + 1) {
                     mark(r, out);
+                }
+            }
+        }
+    }
+    if let Call { func, args } = expr {
+        let is_runtime_type_check = matches!(
+            &func.node,
+            ast::Expr::Ident(name) if name == "isinstance" || name == "issubclass"
+        );
+        if is_runtime_type_check {
+            for arg in args.iter().take(2) {
+                if let ast::CallArg::Positional(e) = arg {
+                    mark(e, out);
                 }
             }
         }
@@ -1670,8 +2490,9 @@ fn collect_ast_bindings_inner(pat: &ast::Pattern, names: &mut std::collections::
 /// from the AST parameter list of a `def`. Kinds follow CPython's
 /// `inspect.Parameter` ordinals; defaults are captured only when they are
 /// simple literals (everything else records "has a default" with a None
-/// placeholder). `self` receivers are skipped — CPython bound-method
-/// signatures exclude them.
+/// placeholder). Keep declared receivers in the metadata: unbound functions
+/// such as `Class.__init__` expose `self`, while bound-method presentation
+/// skips it later when the receiver is already supplied.
 fn func_sig_meta(
     params: &[ast::Param],
     return_ty: &Option<Spanned<ast::TypeExpr>>,
@@ -1679,9 +2500,6 @@ fn func_sig_meta(
     use crate::hir::{HirFuncSig, HirParamSig, HirSigDefault};
     let mut out = Vec::new();
     for p in params {
-        if p.name == "self" {
-            continue;
-        }
         let kind = match p.kind {
             ast::ParamKind::Star => 2u8,
             ast::ParamKind::DoubleStar => 4u8,
@@ -1693,6 +2511,7 @@ fn func_sig_meta(
             Option::None => (Option::None, false),
             Some(expr) => match &expr.node {
                 ast::Expr::IntLit(v) => (Some(HirSigDefault::Int(*v)), false),
+                ast::Expr::BigIntLit(_) => (Option::None, true),
                 ast::Expr::FloatLit(v) => (Some(HirSigDefault::Float(*v)), false),
                 ast::Expr::StrLit(s) => (Some(HirSigDefault::Str(s.clone())), false),
                 ast::Expr::BoolLit(b) => (Some(HirSigDefault::Bool(*b)), false),
@@ -1702,6 +2521,7 @@ fn func_sig_meta(
                     operand,
                 } => match &operand.node {
                     ast::Expr::IntLit(v) => (Some(HirSigDefault::Int(v.wrapping_neg())), false),
+                    ast::Expr::BigIntLit(_) => (Option::None, true),
                     ast::Expr::FloatLit(v) => (Some(HirSigDefault::Float(-*v)), false),
                     _ => (Option::None, true),
                 },
@@ -1737,7 +2557,7 @@ fn annotation_repr_opt(ty: &ast::TypeExpr) -> Option<String> {
 
 fn type_expr_repr(ty: &ast::TypeExpr) -> String {
     match ty {
-        ast::TypeExpr::Named(n) => n.clone(),
+        ast::TypeExpr::Named(n) => ast::strip_forward_ref_name(n).unwrap_or(n).to_string(),
         ast::TypeExpr::Generic { name, args } => {
             let inner: Vec<String> = args.iter().map(|a| type_expr_repr(&a.node)).collect();
             format!("{}[{}]", name, inner.join(", "))
@@ -1787,6 +2607,320 @@ fn decorator_is_dataclass(expr: &ast::Expr) -> bool {
         ast::Expr::Call { func, .. } => decorator_is_dataclass(&func.node),
         _ => false,
     }
+}
+
+fn decorator_is_typing_overload(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(n) => n == "overload",
+        ast::Expr::Attr { attr, .. } => attr == "overload",
+        ast::Expr::Call { func, .. } => decorator_is_typing_overload(&func.node),
+        _ => false,
+    }
+}
+
+fn erase_param_annotations(params: &[ast::Param]) -> Vec<ast::Param> {
+    params
+        .iter()
+        .cloned()
+        .map(|mut p| {
+            p.ty = Spanned::new(ast::TypeExpr::Named("Any".to_string()), p.ty.span);
+            p
+        })
+        .collect()
+}
+
+fn decorator_preserves_call_signature(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(n) => matches!(n.as_str(), "contextmanager" | "asynccontextmanager"),
+        ast::Expr::Attr { attr, .. } => {
+            matches!(attr.as_str(), "contextmanager" | "asynccontextmanager")
+        }
+        ast::Expr::Call { func, .. } => decorator_preserves_call_signature(&func.node),
+        _ => false,
+    }
+}
+
+fn namedtuple_call_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Ident(name) => Some(name.as_str()),
+        ast::Expr::Attr { attr, .. } => Some(attr.as_str()),
+        _ => None,
+    }
+}
+
+fn literal_namedtuple_fields(expr: &ast::Expr) -> Option<Vec<String>> {
+    match expr {
+        ast::Expr::StrLit(s) => Some(
+            s.replace(',', " ")
+                .split_whitespace()
+                .map(|field| field.to_string())
+                .collect(),
+        ),
+        ast::Expr::ListLit(items) | ast::Expr::TupleLit(items) => {
+            let mut fields = Vec::with_capacity(items.len());
+            for item in items {
+                let ast::Expr::StrLit(field) = &item.node else {
+                    return None;
+                };
+                fields.push(field.clone());
+            }
+            Some(fields)
+        }
+        _ => None,
+    }
+}
+
+fn literal_namedtuple_base_spec(expr: &ast::Expr) -> Option<NamedTupleBaseSpec> {
+    let ast::Expr::Call { func, args } = expr else {
+        return None;
+    };
+    if namedtuple_call_name(&func.node) != Some("namedtuple") || args.len() < 2 {
+        return None;
+    }
+    let ast::CallArg::Positional(name_arg) = &args[0] else {
+        return None;
+    };
+    let ast::Expr::StrLit(tuple_name) = &name_arg.node else {
+        return None;
+    };
+    let ast::CallArg::Positional(fields_arg) = &args[1] else {
+        return None;
+    };
+    Some(NamedTupleBaseSpec {
+        tuple_name: tuple_name.clone(),
+        fields: literal_namedtuple_fields(&fields_arg.node)?,
+    })
+}
+
+fn is_typing_namedtuple_base(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(name) => name == "NamedTuple",
+        ast::Expr::Attr { attr, .. } => attr == "NamedTuple",
+        _ => false,
+    }
+}
+
+fn class_base_is_typing_generic(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(name) => name == "Generic" || name == "typing.Generic",
+        ast::Expr::Attr { attr, .. } => attr == "Generic",
+        ast::Expr::Index { object, .. } => class_base_is_typing_generic(&object.node),
+        _ => false,
+    }
+}
+
+fn class_body_namedtuple_fields(body: &[Spanned<ast::Stmt>]) -> Vec<String> {
+    body.iter()
+        .filter_map(|stmt| match &stmt.node {
+            ast::Stmt::VarDecl { name, .. } | ast::Stmt::BareAnnotation { name, .. } => {
+                (!name.starts_with("__")).then(|| name.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn class_base_leaf_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Ident(name) => Some(name.as_str()),
+        ast::Expr::Attr { attr, .. } => Some(attr.as_str()),
+        _ => None,
+    }
+}
+
+fn is_enum_base_leaf(name: &str) -> bool {
+    matches!(
+        name,
+        "Enum" | "IntEnum" | "StrEnum" | "Flag" | "IntFlag" | "ReprEnum"
+    )
+}
+
+fn class_bases_include_enum(bases: &[Spanned<ast::Expr>]) -> bool {
+    bases
+        .iter()
+        .any(|base| class_base_leaf_name(&base.node).is_some_and(is_enum_base_leaf))
+}
+
+fn enum_ignore_names_from_expr(expr: &ast::Expr) -> HashSet<String> {
+    let mut out = HashSet::new();
+    match expr {
+        ast::Expr::StrLit(s) => {
+            out.extend(s.split_whitespace().map(str::to_string));
+        }
+        ast::Expr::ListLit(items) | ast::Expr::TupleLit(items) => {
+            for item in items {
+                if let ast::Expr::StrLit(s) = &item.node {
+                    out.insert(s.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+fn enum_ignore_names_for_class(
+    bases: &[Spanned<ast::Expr>],
+    body: &[Spanned<ast::Stmt>],
+) -> HashSet<String> {
+    if !class_bases_include_enum(bases) {
+        return HashSet::new();
+    }
+    let mut ignored = HashSet::new();
+    ignored.insert("_ignore_".to_string());
+    for stmt in body {
+        if let ast::Stmt::Assign { target, value } = &stmt.node {
+            if let ast::Expr::Ident(name) = &target.node {
+                if name == "_ignore_" {
+                    ignored.extend(enum_ignore_names_from_expr(&value.node));
+                }
+            }
+        }
+    }
+    ignored
+}
+
+fn is_zero_arg_vars_call(expr: &ast::Expr) -> bool {
+    matches!(
+        expr,
+        ast::Expr::Call { func, args }
+            if args.is_empty()
+                && matches!(&func.node, ast::Expr::Ident(name) if name == "vars")
+    )
+}
+
+fn range_literal_values(expr: &ast::Expr) -> Option<Vec<i64>> {
+    let ast::Expr::Call { func, args } = expr else {
+        return None;
+    };
+    if !matches!(&func.node, ast::Expr::Ident(name) if name == "range") {
+        return None;
+    }
+    let ints: Vec<i64> = args
+        .iter()
+        .map(|arg| match arg {
+            ast::CallArg::Positional(e) => {
+                if let ast::Expr::IntLit(v) = e.node {
+                    Some(v)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let (start, stop, step) = match ints.as_slice() {
+        [stop] => (0, *stop, 1),
+        [start, stop] => (*start, *stop, 1),
+        [start, stop, step] if *step != 0 => (*start, *stop, *step),
+        _ => return None,
+    };
+    let mut out = Vec::new();
+    let mut cur = start;
+    if step > 0 {
+        while cur < stop {
+            out.push(cur);
+            cur += step;
+        }
+    } else {
+        while cur > stop {
+            out.push(cur);
+            cur += step;
+        }
+    }
+    Some(out)
+}
+
+fn eval_enum_vars_key_expr(expr: &ast::Expr, loop_name: &str, loop_value: i64) -> Option<String> {
+    match expr {
+        ast::Expr::StrLit(s) => Some(s.clone()),
+        ast::Expr::BinOp {
+            op: ast::BinOp::Mod,
+            lhs,
+            rhs,
+        } => {
+            let ast::Expr::StrLit(fmt) = &lhs.node else {
+                return None;
+            };
+            let val = match &rhs.node {
+                ast::Expr::Ident(name) if name == loop_name => loop_value,
+                ast::Expr::IntLit(v) => *v,
+                _ => return None,
+            };
+            Some(fmt.replacen("%d", &val.to_string(), 1))
+        }
+        _ => None,
+    }
+}
+
+fn enum_vars_generated_attrs(
+    body: &[Spanned<ast::Stmt>],
+    ignored: &HashSet<String>,
+) -> Vec<(String, ast::Expr)> {
+    let vars_aliases: HashSet<String> = body
+        .iter()
+        .filter_map(|stmt| {
+            if let ast::Stmt::Assign { target, value } = &stmt.node {
+                if let ast::Expr::Ident(name) = &target.node {
+                    if is_zero_arg_vars_call(&value.node) {
+                        return Some(name.clone());
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+    if vars_aliases.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for stmt in body {
+        let ast::Stmt::For {
+            targets,
+            iter,
+            body: loop_body,
+            ..
+        } = &stmt.node
+        else {
+            continue;
+        };
+        let [loop_name] = targets.as_slice() else {
+            continue;
+        };
+        let Some(values) = range_literal_values(&iter.node) else {
+            continue;
+        };
+        for loop_value in values {
+            for inner in loop_body {
+                let ast::Stmt::Assign { target, value } = &inner.node else {
+                    continue;
+                };
+                let ast::Expr::Index { object, index } = &target.node else {
+                    continue;
+                };
+                let ast::Expr::Ident(alias) = &object.node else {
+                    continue;
+                };
+                if !vars_aliases.contains(alias) {
+                    continue;
+                }
+                let Some(attr_name) = eval_enum_vars_key_expr(&index.node, loop_name, loop_value)
+                else {
+                    continue;
+                };
+                if ignored.contains(&attr_name) {
+                    continue;
+                }
+                let lowered_value = match &value.node {
+                    ast::Expr::Ident(name) if name == loop_name => ast::Expr::IntLit(loop_value),
+                    other => other.clone(),
+                };
+                out.push((attr_name, lowered_value));
+            }
+        }
+    }
+    out
 }
 
 /// Is this class-body default value a `field(...)` / `dataclasses.field(...)`
@@ -1899,8 +3033,8 @@ struct AstLowerer<'a> {
     /// These must be stored/loaded via global storage so both functions share the same slot.
     cell_override_syms: std::collections::HashSet<SymbolId>,
     /// Function parameter info for kwargs resolution at call sites.
-    /// Maps function name → vec of (param_name, default_expr_option).
-    func_param_info: HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
+    /// Maps function name → parameter name/default/kind entries.
+    func_param_info: HashMap<String, Vec<ParamInfo>>,
     /// Static arg-binding validation: top-level function name → param shape
     /// `(name, has_default, kw_only, is_star, is_double_star, pos_only)`,
     /// captured at the def so the call-site validator can raise a
@@ -1910,18 +3044,44 @@ struct AstLowerer<'a> {
     /// splat-free calls are checked, so a violation is unambiguous before we
     /// raise.
     arg_bind_sigs: HashMap<String, Vec<(String, bool, bool, bool, bool, bool)>>,
+    /// Function names whose `__defaults__` / `__kwdefaults__` is assigned at
+    /// runtime. Static arg-count validation (missing/too-many positional) is
+    /// skipped for these — the mutation changes the effective defaults in a way
+    /// the source signature can't see (`def f(x): f.__defaults__=(None,); f()`).
+    funcs_with_mutated_defaults: std::collections::HashSet<String>,
+    /// Functions whose values flow into `functools.partial(...)`. Later calls
+    /// through the partial are dynamic value-calls and pass NaN-boxed MbValue
+    /// arguments, so the target must not use the raw-int fallback ABI.
+    funcs_wrapped_by_functools_partial: std::collections::HashSet<String>,
     /// PEP 557: per-dataclass synthesized __init__ parameter shapes, kept
     /// separately from `func_param_info` so subclasses can prepend their base
     /// dataclass's params (Derived(Counted) accepts Counted's fields first).
-    dataclass_init_params:
-        HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
+    dataclass_init_params: HashMap<String, Vec<ParamInfo>>,
     /// PEP 557: local names bound to `dataclasses.dataclass` / `field` /
-    /// `replace` by a `from dataclasses import ...` statement. Bare-Ident
+    /// `replace` / `make_dataclass` by a `from dataclasses import ...`
+    /// statement. Bare-Ident
     /// calls to these names pack keyword args into a trailing dict (the
     /// native-dispatcher kwargs convention) instead of flattening them to
     /// positionals — `dataclass(frozen=True)` / `field(default_factory=list)`
     /// / `replace(obj, a=99)` all need their keyword names at runtime.
     dataclasses_kwarg_idents: std::collections::HashSet<String>,
+    /// Local module aliases that refer to `functools` (`functools`, or
+    /// `import functools as ft`). Used to recognize `ft.partial(...)`.
+    functools_module_idents: std::collections::HashSet<String>,
+    /// Local names that refer to the `functools.partial` factory, for example
+    /// `from functools import partial as p`.
+    functools_partial_factory_idents: std::collections::HashSet<String>,
+    /// Local names bound to a `functools.partial(...)` instance. Calls through
+    /// these names must keep explicit keyword arguments structural so call-time
+    /// kwargs can override the partial's stored kwargs.
+    functools_partial_kwarg_idents: std::collections::HashSet<String>,
+    /// Local names bound to unittest.mock mock instances. Calls through these
+    /// names must preserve keyword names so call_args records kwargs.
+    unittest_mock_kwarg_idents: std::collections::HashSet<String>,
+    /// Class names whose MRO passes through `types.SimpleNamespace`. Their
+    /// inherited native initializer needs keyword names preserved as a trailing
+    /// kwargs dict; flattening keywords to values builds an empty namespace.
+    simple_namespace_subclass_idents: std::collections::HashSet<String>,
     /// Function-name SymbolId → declared return type. Populated *before* a
     /// function's body is lowered so recursive calls can read the callee's
     /// return type (without this, the call falls through to `any_ty`,
@@ -1936,6 +3096,9 @@ struct AstLowerer<'a> {
     /// Names declared `global` / `nonlocal` in the enclosing function — kept
     /// separate so Assign arms can skip the local-definition promotion.
     local_declared_names: Vec<String>,
+    /// Active `for` target names. A class base that references one of these
+    /// names must be evaluated at the class statement position.
+    runtime_class_base_names: Vec<String>,
     /// Per-function call-site argument float hints: function name → vec of
     /// per-positional-param FloatHint, merged over every call seen in the module.
     /// Used to soundly monomorphize an unannotated param as `float` when it is
@@ -1951,6 +3114,26 @@ struct AstLowerer<'a> {
     /// (e.g. `scale = 0.25; def ff(j): return j * scale`) infers a float return.
     /// Seeded into each function's return-inference env below the params.
     module_float_globals: HashMap<String, FloatHint>,
+    /// Module-scope names that have only a bare annotation so far (`x: int`)
+    /// and no runtime binding. CPython records them in `__annotations__`, but
+    /// reading them before a later assignment raises NameError.
+    module_unbound_annotation_names: std::collections::HashSet<String>,
+    /// Module-scope names that have been deleted. The resolver still knows
+    /// the symbol, so statement lowering must emit the CPython NameError path
+    /// for direct reads until a later assignment rebinds the name.
+    module_deleted_names: std::collections::HashSet<String>,
+    /// Top-level names previously bound by a DECORATED `def`. A later
+    /// non-decorated `def` that redefines such a name must re-store the global
+    /// (the impl wins the name); otherwise the name stays bound to the
+    /// decorator's wrapper/dummy. The bool flags whether the decoration was
+    /// `@typing.overload` — an overload-stub series is followed by a dynamic
+    /// impl, so that impl's unannotated params must lower as `any` (dynamic
+    /// dispatch), not the raw-int default convention.
+    decorated_top_level_names: std::collections::HashMap<String, (SymbolId, bool)>,
+    /// True while lowering a function body. Module annotation-only fast
+    /// NameError lowering must not be baked into function bodies because a
+    /// later module assignment may bind the global before the function runs.
+    in_function_body: bool,
     /// PEP 695 type-parameter names of the function currently being lowered
     /// (`def f[T](x: T) -> T`). A `T`-annotated param/return is a boxed
     /// MbValue at runtime (the TypeVar erases to `any`), so the int-default
@@ -1971,10 +3154,12 @@ impl<'a> AstLowerer<'a> {
                 sym_types: std::collections::HashMap::new(),
                 module_annotations: Vec::new(),
                 func_sigs: std::collections::HashMap::new(),
+                boxed_param_funcs: std::collections::HashSet::new(),
             },
             errors: Vec::new(),
             local_assigned_names: Vec::new(),
             local_declared_names: Vec::new(),
+            runtime_class_base_names: Vec::new(),
             active_type_params: std::collections::HashSet::new(),
             local_names: HashMap::new(),
             local_types: HashMap::new(),
@@ -1984,12 +3169,23 @@ impl<'a> AstLowerer<'a> {
             cell_override_syms: std::collections::HashSet::new(),
             func_param_info: HashMap::new(),
             arg_bind_sigs: HashMap::new(),
+            funcs_with_mutated_defaults: std::collections::HashSet::new(),
+            funcs_wrapped_by_functools_partial: std::collections::HashSet::new(),
             dataclass_init_params: HashMap::new(),
             dataclasses_kwarg_idents: std::collections::HashSet::new(),
+            functools_module_idents: std::iter::once("functools".to_string()).collect(),
+            functools_partial_factory_idents: std::collections::HashSet::new(),
+            functools_partial_kwarg_idents: std::collections::HashSet::new(),
+            unittest_mock_kwarg_idents: std::collections::HashSet::new(),
+            simple_namespace_subclass_idents: std::collections::HashSet::new(),
             func_return_tys: HashMap::new(),
             func_param_float_hint: HashMap::new(),
             func_ret_float_hint: HashMap::new(),
             module_float_globals: HashMap::new(),
+            module_unbound_annotation_names: std::collections::HashSet::new(),
+            module_deleted_names: std::collections::HashSet::new(),
+            decorated_top_level_names: std::collections::HashMap::new(),
+            in_function_body: false,
         }
     }
 
@@ -2015,6 +3211,14 @@ impl<'a> AstLowerer<'a> {
         self.next_local_sym += 1;
         self.local_names.insert(name.to_string(), id);
         self.local_types.insert(id, ty);
+        id
+    }
+
+    fn fresh_function_impl_symbol(&mut self, display_name: &str, ty: TypeId) -> SymbolId {
+        let id = SymbolId(self.next_local_sym);
+        self.next_local_sym += 1;
+        self.result.sym_names.insert(id, display_name.to_string());
+        self.result.sym_types.insert(id, ty);
         id
     }
 
@@ -2052,6 +3256,7 @@ impl<'a> AstLowerer<'a> {
                 "str" => self.checker.tcx.str(),
                 "None" => self.checker.tcx.none(),
                 "Any" => self.checker.tcx.any(),
+                n if ast::strip_forward_ref_name(n).is_some() => self.checker.tcx.any(),
                 _ => {
                     // Try type alias, then class symbol in checker
                     if let Some(id) = self.checker.tcx.resolve_alias(name) {
@@ -2270,6 +3475,11 @@ impl<'a> AstLowerer<'a> {
         // that only ever receive floats are monomorphized as `float` and float
         // returns are typed correctly (the float-return-inference soundness wall).
         self.collect_float_hints(module);
+        collect_mutated_defaults(&module.stmts, &mut self.funcs_with_mutated_defaults);
+        collect_functools_partial_targets(
+            &module.stmts,
+            &mut self.funcs_wrapped_by_functools_partial,
+        );
         for stmt in &module.stmts {
             match &stmt.node {
                 ast::Stmt::FnDef {
@@ -2282,17 +3492,19 @@ impl<'a> AstLowerer<'a> {
                     ..
                 } => {
                     // Register param info for kwargs resolution at call sites.
-                    self.func_param_info.insert(
-                        name.clone(),
-                        params
-                            .iter()
-                            .map(|p| (p.name.clone(), p.default.clone(), p.kind))
-                            .collect(),
-                    );
+                    let (param_info, default_setup) =
+                        self.frozen_param_info(name, params, stmt.span);
+                    self.func_param_info.insert(name.clone(), param_info);
                     // Param shape for static call-site arg-binding validation.
-                    // Only undecorated defs: a decorator can replace the callable
-                    // with an arbitrary wrapper whose signature differs.
-                    if decorators.is_empty() {
+                    // Most decorators can replace the callable with an arbitrary
+                    // wrapper whose signature differs. A small allowlist preserves
+                    // the original call signature, so static CPython-style
+                    // argument binding can still reject malformed calls.
+                    let preserves_declared_signature = decorators.is_empty()
+                        || decorators
+                            .iter()
+                            .all(|d| decorator_preserves_call_signature(&d.node));
+                    if preserves_declared_signature {
                         self.arg_bind_sigs.insert(
                             name.clone(),
                             params
@@ -2315,53 +3527,116 @@ impl<'a> AstLowerer<'a> {
                         self.arg_bind_sigs.remove(name);
                     }
                     let is_decorated = !decorators.is_empty();
+                    let overload_decorated = decorators
+                        .iter()
+                        .any(|d| decorator_is_typing_overload(&d.node));
+                    let erased_params;
+                    let params_for_lower: &[ast::Param] = if overload_decorated {
+                        erased_params = erase_param_annotations(params);
+                        &erased_params
+                    } else {
+                        params
+                    };
+                    let erased_return: Option<Spanned<ast::TypeExpr>> = None;
+                    let return_for_lower = if overload_decorated {
+                        &erased_return
+                    } else {
+                        return_ty
+                    };
                     // PEP 695: make this def's type-param names visible to the
                     // param/return type lowering (TypeVar-annotated values are
                     // boxed `any`, never raw ints).
+                    // A non-decorated impl that follows an `@overload` stub
+                    // series is dynamic: its unannotated params must lower as
+                    // `any` (boxed dispatch), matching how the stubs erased
+                    // their annotations. Otherwise `def g(x): return x*2`
+                    // monomorphizes `x` to int and `g("a")` returns garbage.
+                    let redef_of_overload = !is_decorated
+                        && self
+                            .decorated_top_level_names
+                            .get(name)
+                            .map(|(_, was_overload)| *was_overload)
+                            .unwrap_or(false);
                     let saved_tps = std::mem::replace(
                         &mut self.active_type_params,
                         type_params.iter().map(|p| p.name.clone()).collect(),
                     );
-                    let lowered = if is_decorated {
-                        self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
+                    let lowered = if is_decorated || redef_of_overload {
+                        self.lower_decorated_fn(
+                            name,
+                            params_for_lower,
+                            return_for_lower,
+                            body,
+                            stmt.span,
+                        )
                     } else {
                         self.lower_fn(name, params, return_ty, body, stmt.span)
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
-                        // Introspection: record the declared signature shape so
-                        // module init can prime the runtime FUNC_PARAMS registry
-                        // (inspect.signature / getfullargspec).
-                        self.result
-                            .func_sigs
-                            .insert(func.name.0, func_sig_meta(params, return_ty));
+                        let declared_sig = func_sig_meta(params, return_ty);
                         func.is_generator = contains_yield(body);
                         func.decorators = decorators
                             .iter()
                             .filter_map(|d| self.lower_expr(d))
                             .collect();
+                        self.result.top_level.extend(default_setup);
                         if !func.decorators.is_empty() {
                             // Params were already lowered with any_ty (body expressions
                             // route through NaN-aware runtime dispatch). Force the return
                             // type to any_ty as well so call sites treat the dispatch
                             // result uniformly.
                             let any_ty = self.checker.tcx.any();
+                            let bind_sym = func.name;
+                            let impl_sym = self.fresh_function_impl_symbol(name, any_ty);
+                            func.name = impl_sym;
+                            func.bind_name = Some(bind_sym);
                             func.return_ty = any_ty;
                             // Update func_return_tys so call-site lookup at
                             // ast_to_hir.rs:2053 reads `any` instead of the body-inferred
                             // primitive type — otherwise `add_one(5) == 6` (decorated)
                             // routes through native int compare on NaN-boxed bits and
                             // returns False even though both sides are 6.
+                            self.func_return_tys.insert(bind_sym, any_ty);
                             self.func_return_tys.insert(func.name, any_ty);
                             // Emit a placeholder so decorator application happens at the
                             // correct position in the module execution order (#decorder).
                             self.result.top_level.push(HirStmt::FuncDefPlaceholder {
                                 name: func.name,
+                                bind_name: Some(bind_sym),
                                 span: stmt.span,
+                                redef: false,
+                                func_sig: Some(declared_sig.clone()),
+                            });
+                            // Remember this name was bound by a decorated def so a
+                            // later non-decorated redefinition re-stores the global.
+                            // Record overload-ness so the impl can lower dynamically.
+                            self.decorated_top_level_names
+                                .insert(name.clone(), (bind_sym, overload_decorated));
+                        } else if self.decorated_top_level_names.remove(name).is_some() {
+                            // A non-decorated def redefining a name previously bound
+                            // by a DECORATED def: emit a placeholder flagged as a
+                            // redefinition so module init re-stores the global to
+                            // this impl's FuncRef (otherwise the name stays bound to
+                            // the earlier decorator's wrapper/dummy).
+                            self.result.top_level.push(HirStmt::FuncDefPlaceholder {
+                                name: func.name,
+                                bind_name: None,
+                                span: stmt.span,
+                                redef: true,
+                                func_sig: Some(declared_sig.clone()),
                             });
                         }
+                        // Introspection: record the declared signature shape so
+                        // module init can prime the runtime FUNC_PARAMS registry
+                        // (inspect.signature / getfullargspec).
+                        self.result
+                            .func_sigs
+                            .insert(func.name.0, declared_sig.clone());
+                        func.func_sig = Some(declared_sig);
                         self.result.functions.push(func);
                     }
+                    self.module_unbound_annotation_names.remove(name);
                 }
                 ast::Stmt::AsyncFnDef {
                     name,
@@ -2372,7 +3647,26 @@ impl<'a> AstLowerer<'a> {
                     decorators,
                     ..
                 } => {
+                    let (param_info, default_setup) =
+                        self.frozen_param_info(name, params, stmt.span);
+                    self.func_param_info.insert(name.clone(), param_info);
                     let is_decorated = !decorators.is_empty();
+                    let overload_decorated = decorators
+                        .iter()
+                        .any(|d| decorator_is_typing_overload(&d.node));
+                    let erased_params;
+                    let params_for_lower: &[ast::Param] = if overload_decorated {
+                        erased_params = erase_param_annotations(params);
+                        &erased_params
+                    } else {
+                        params
+                    };
+                    let erased_return: Option<Spanned<ast::TypeExpr>> = None;
+                    let return_for_lower = if overload_decorated {
+                        &erased_return
+                    } else {
+                        return_ty
+                    };
                     // PEP 695: make this def's type-param names visible to the
                     // param/return type lowering (TypeVar-annotated values are
                     // boxed `any`, never raw ints).
@@ -2381,16 +3675,19 @@ impl<'a> AstLowerer<'a> {
                         type_params.iter().map(|p| p.name.clone()).collect(),
                     );
                     let lowered = if is_decorated {
-                        self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
+                        self.lower_decorated_fn(
+                            name,
+                            params_for_lower,
+                            return_for_lower,
+                            body,
+                            stmt.span,
+                        )
                     } else {
                         self.lower_fn(name, params, return_ty, body, stmt.span)
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
-                        // Introspection: same FUNC_PARAMS priming as sync defs.
-                        self.result
-                            .func_sigs
-                            .insert(func.name.0, func_sig_meta(params, return_ty));
+                        let declared_sig = func_sig_meta(params, return_ty);
                         let has_yield = contains_yield(body);
                         // `async def f(): yield` is an async generator — CPython
                         // returns an async-generator object, not a coroutine.
@@ -2416,23 +3713,51 @@ impl<'a> AstLowerer<'a> {
                             .iter()
                             .filter_map(|d| self.lower_expr(d))
                             .collect();
+                        self.result.top_level.extend(default_setup);
                         if !func.decorators.is_empty() {
                             let any_ty = self.checker.tcx.any();
+                            let bind_sym = func.name;
+                            let impl_sym = self.fresh_function_impl_symbol(name, any_ty);
+                            func.name = impl_sym;
+                            func.bind_name = Some(bind_sym);
                             func.return_ty = any_ty;
+                            self.func_return_tys.insert(bind_sym, any_ty);
                             self.func_return_tys.insert(func.name, any_ty);
                             self.result.top_level.push(HirStmt::FuncDefPlaceholder {
                                 name: func.name,
+                                bind_name: Some(bind_sym),
                                 span: stmt.span,
+                                redef: false,
+                                func_sig: Some(declared_sig.clone()),
+                            });
+                            self.decorated_top_level_names
+                                .insert(name.clone(), (bind_sym, overload_decorated));
+                        } else if self.decorated_top_level_names.remove(name).is_some() {
+                            // Non-decorated async def redefining a decorated name —
+                            // re-store the global (see sync FnDef arm).
+                            self.result.top_level.push(HirStmt::FuncDefPlaceholder {
+                                name: func.name,
+                                bind_name: None,
+                                span: stmt.span,
+                                redef: true,
+                                func_sig: Some(declared_sig.clone()),
                             });
                         }
+                        // Introspection: same FUNC_PARAMS priming as sync defs.
+                        self.result
+                            .func_sigs
+                            .insert(func.name.0, declared_sig.clone());
+                        func.func_sig = Some(declared_sig);
                         self.result.functions.push(func);
                     }
+                    self.module_unbound_annotation_names.remove(name);
                 }
                 ast::Stmt::ClassDef {
                     name,
                     body,
                     bases,
                     decorators,
+                    type_params,
                     keyword_args,
                     ..
                 } => {
@@ -2441,12 +3766,38 @@ impl<'a> AstLowerer<'a> {
                         body,
                         bases,
                         decorators,
+                        type_params,
                         keyword_args,
                         stmt.span,
                         true,
+                        false,
                     );
+                    self.module_unbound_annotation_names.remove(name);
                 }
                 _ => {
+                    if let Some(fn_def) =
+                        crate::exec_literal::global_literal_exec_fn_def(&stmt.node)
+                    {
+                        self.func_param_info
+                            .insert(fn_def.name.clone(), Self::ast_param_info(&fn_def.params));
+                        self.arg_bind_sigs.insert(
+                            fn_def.name,
+                            fn_def
+                                .params
+                                .iter()
+                                .map(|p| {
+                                    (
+                                        p.name.clone(),
+                                        p.default.is_some(),
+                                        p.kw_only,
+                                        p.kind == ast::ParamKind::Star,
+                                        p.kind == ast::ParamKind::DoubleStar,
+                                        p.pos_only,
+                                    )
+                                })
+                                .collect(),
+                        );
+                    }
                     // Module-scope variable annotations record their name in the
                     // module __annotations__ dict (CPython: PEP 526 semantics).
                     // `x: int` (BareAnnotation) and `x: int = v` (VarDecl) both
@@ -2456,6 +3807,7 @@ impl<'a> AstLowerer<'a> {
                             self.result
                                 .module_annotations
                                 .push((name.clone(), type_expr_repr(&ty.node)));
+                            self.module_unbound_annotation_names.insert(name.clone());
                         }
                         ast::Stmt::VarDecl { name, ty, .. } => {
                             self.result
@@ -2466,6 +3818,17 @@ impl<'a> AstLowerer<'a> {
                     }
                     if let Some(s) = self.lower_stmt(stmt) {
                         self.result.top_level.push(s);
+                    }
+                    match &stmt.node {
+                        ast::Stmt::VarDecl { name, .. } => {
+                            self.module_unbound_annotation_names.remove(name);
+                        }
+                        ast::Stmt::Assign { target, .. } => {
+                            if let ast::Expr::Ident(name) = &target.node {
+                                self.module_unbound_annotation_names.remove(name);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -2481,6 +3844,58 @@ impl<'a> AstLowerer<'a> {
         span: Span,
     ) -> Option<HirFunction> {
         self.lower_fn_inner(name, params, _return_ty, body, span, false, false)
+    }
+
+    fn ast_param_info(params: &[ast::Param]) -> Vec<ParamInfo> {
+        params
+            .iter()
+            .map(|p| {
+                (
+                    p.name.clone(),
+                    p.default.as_ref().map(|d| ParamDefault::Ast(d.clone())),
+                    p.kind,
+                )
+            })
+            .collect()
+    }
+
+    fn frozen_param_info(
+        &mut self,
+        func_name: &str,
+        params: &[ast::Param],
+        span: Span,
+    ) -> (Vec<ParamInfo>, Vec<HirStmt>) {
+        let mut setup = Vec::new();
+        let mut info = Vec::with_capacity(params.len());
+
+        for (idx, p) in params.iter().enumerate() {
+            let default = match p.default.as_ref() {
+                Some(default_ast) => match self.lower_expr(default_ast) {
+                    Some(default_expr) => {
+                        let hidden_name =
+                            format!("__mamba_default_{func_name}_{idx}_{}", self.next_local_sym);
+                        let default_ty = default_expr.ty();
+                        let hidden_sym = self.define_local(&hidden_name, default_ty);
+                        self.result
+                            .sym_names
+                            .entry(hidden_sym)
+                            .or_insert(hidden_name);
+                        setup.push(HirStmt::Let {
+                            target: hidden_sym,
+                            ty: default_ty,
+                            value: default_expr,
+                            span,
+                        });
+                        Some(ParamDefault::Frozen(HirExpr::Var(hidden_sym, default_ty)))
+                    }
+                    None => Some(ParamDefault::Ast(default_ast.clone())),
+                },
+                None => None,
+            };
+            info.push((p.name.clone(), default, p.kind));
+        }
+
+        (info, setup)
     }
 
     /// Lower a function whose definition is decorated. Decorated functions
@@ -2530,6 +3945,8 @@ impl<'a> AstLowerer<'a> {
         let saved_cell_syms = self.cell_override_syms.clone();
         self.cell_override_syms = std::collections::HashSet::new();
         self.enter_local_scope();
+        let saved_in_function_body = self.in_function_body;
+        self.in_function_body = true;
 
         // Define params in local scope with their actual annotation types (#827 R5).
         // Method params use `any` because they receive NaN-boxed MbValues via mb_call_method.
@@ -2586,7 +4003,13 @@ impl<'a> AstLowerer<'a> {
         // a param only ever called with float arguments is monomorphized as
         // `float` (not the default raw-int) so float NaN-box bits don't leak as
         // ints. Annotated/decorated params are untouched.
-        let param_float_hints = if is_method || is_decorated {
+        let defaults_mutated = self.funcs_with_mutated_defaults.contains(name);
+        let dynamic_partial_target = self.funcs_wrapped_by_functools_partial.contains(name);
+        let force_boxed_params = defaults_mutated || dynamic_partial_target;
+        if force_boxed_params {
+            self.result.boxed_param_funcs.insert(name_id.0);
+        }
+        let param_float_hints = if is_method || is_decorated || force_boxed_params {
             None
         } else {
             self.func_param_float_hint.get(name).cloned()
@@ -2596,6 +4019,8 @@ impl<'a> AstLowerer<'a> {
             .enumerate()
             .map(|(idx, p)| {
                 let param_ty = if is_method {
+                    any_ty
+                } else if force_boxed_params && p.kind == ast::ParamKind::Regular && !p.kw_only {
                     any_ty
                 } else if p.kind == ast::ParamKind::Star || p.kind == ast::ParamKind::DoubleStar {
                     // *args receives a NaN-boxed MbList, **kwargs receives a NaN-boxed MbDict.
@@ -2666,7 +4091,7 @@ impl<'a> AstLowerer<'a> {
             .collect();
 
         // Return type: use annotation if available; otherwise infer from body.
-        let ret_ty = if is_method {
+        let ret_ty = if is_method || defaults_mutated {
             any_ty
         } else {
             let resolved = _return_ty
@@ -2781,6 +4206,7 @@ impl<'a> AstLowerer<'a> {
         self.local_types = saved_local_types;
         self.outer_scope_names = saved_outer_scope;
         self.cell_override_syms = saved_cell_syms;
+        self.in_function_body = saved_in_function_body;
 
         let star_param_pos = params.iter().position(|p| p.kind == ast::ParamKind::Star);
         let has_star_args = star_param_pos.is_some();
@@ -2789,6 +4215,8 @@ impl<'a> AstLowerer<'a> {
             name: name_id,
             params: hir_params,
             return_ty: ret_ty,
+            func_sig: Some(func_sig_meta(params, _return_ty)),
+            bind_name: None,
             body: hir_body,
             span,
             captures,
@@ -2815,14 +4243,16 @@ impl<'a> AstLowerer<'a> {
         body: &[Spanned<ast::Stmt>],
         bases: &[Spanned<ast::Expr>],
         decorators: &[Spanned<ast::Expr>],
+        type_params: &[ast::TypeParam],
         keyword_args: &[(String, Spanned<ast::Expr>)],
         span: crate::source::span::Span,
         placeholder_to_top: bool,
+        force_textual_registration: bool,
     ) -> Option<SymbolId> {
         let placeholder_sym: std::cell::Cell<Option<SymbolId>> = std::cell::Cell::new(None);
         let stmt_span = span;
         let dataclass_decorated = decorators.iter().any(|d| decorator_is_dataclass(&d.node));
-        if let Some(mut cls) = self.lower_class(name, body, stmt_span, dataclass_decorated) {
+        if let Some(mut cls) = self.lower_class(name, body, bases, stmt_span, dataclass_decorated) {
             // PEP 557: register the synthesized __init__'s parameter
             // shape (declaration order; base dataclass fields first;
             // ClassVar / KW_ONLY sentinel / field(init=False) fields
@@ -2832,8 +4262,8 @@ impl<'a> AstLowerer<'a> {
             // class defines its own __init__ (pre-scan already
             // registered it).
             if dataclass_decorated && !self.func_param_info.contains_key(name) {
-                let mut params: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
-                    Vec::new();
+                self.dataclasses_kwarg_idents.insert(name.to_string());
+                let mut params: Vec<ParamInfo> = Vec::new();
                 // Inherited dataclass init params first (single
                 // inheritance chains; names overridden by the
                 // subclass are replaced in place below).
@@ -2875,7 +4305,11 @@ impl<'a> AstLowerer<'a> {
                     {
                         continue;
                     }
-                    let entry = (fname.clone(), default, ast::ParamKind::Regular);
+                    let entry = (
+                        fname.clone(),
+                        default.map(ParamDefault::Ast),
+                        ast::ParamKind::Regular,
+                    );
                     if let Some(pos) = params.iter().position(|(n, _, _)| n == fname) {
                         params[pos] = entry;
                     } else {
@@ -2901,11 +4335,50 @@ impl<'a> AstLowerer<'a> {
                         // resolver doesn't drop the base.
                         self.resolve_name(attr, stmt_span)
                             .or_else(|| Some(self.define_local(attr, self.checker.tcx.any())))
+                    } else if let Some(spec) = literal_namedtuple_base_spec(&b.node) {
+                        self.resolve_name(&spec.tuple_name, stmt_span).or_else(|| {
+                            Some(self.define_local(&spec.tuple_name, self.checker.tcx.any()))
+                        })
                     } else {
                         None
                     }
                 })
                 .collect();
+            if !type_params.is_empty() {
+                let generic = self
+                    .resolve_name("typing.Generic", stmt_span)
+                    .unwrap_or_else(|| self.define_local("typing.Generic", self.checker.tcx.any()));
+                if !cls.all_bases.contains(&generic) {
+                    cls.all_bases.push(generic);
+                }
+            }
+            let has_runtime_bases = bases
+                .iter()
+                .any(|b| self.class_base_needs_runtime_eval(&b.node));
+            if has_runtime_bases {
+                if bases
+                    .iter()
+                    .any(|base| matches!(base.node, ast::Expr::Starred(_)))
+                {
+                    cls.runtime_base_list_expr =
+                        self.lower_runtime_class_base_list(bases, type_params, stmt_span);
+                } else {
+                    cls.runtime_base_exprs =
+                        bases.iter().filter_map(|b| self.lower_expr(b)).collect();
+                }
+            }
+            cls.namedtuple_base = bases
+                .iter()
+                .find_map(|b| literal_namedtuple_base_spec(&b.node))
+                .or_else(|| {
+                    bases
+                        .iter()
+                        .any(|b| is_typing_namedtuple_base(&b.node))
+                        .then(|| NamedTupleBaseSpec {
+                            tuple_name: name.to_string(),
+                            fields: class_body_namedtuple_fields(body),
+                        })
+                });
             // Keep first base for backward compatibility
             cls.base = cls.all_bases.first().copied();
             cls.decorators = decorators
@@ -2933,6 +4406,21 @@ impl<'a> AstLowerer<'a> {
                 .filter(|(k, _)| k != "metaclass")
                 .filter_map(|(k, v)| self.lower_expr(v).map(|expr| (k.clone(), expr)))
                 .collect();
+            let inherits_simple_namespace = bases.iter().any(|b| {
+                let leaf = match &b.node {
+                    ast::Expr::Ident(base_name) => Some(base_name.as_str()),
+                    ast::Expr::Attr { attr, .. } => Some(attr.as_str()),
+                    _ => None,
+                };
+                leaf.is_some_and(|base_name| {
+                    base_name == "SimpleNamespace"
+                        || self.simple_namespace_subclass_idents.contains(base_name)
+                })
+            });
+            if inherits_simple_namespace {
+                self.simple_namespace_subclass_idents
+                    .insert(name.to_string());
+            }
             // Emit a ClassDefPlaceholder so decorator application
             // happens at the textual position (#1690). Without
             // a placeholder, decorators were applied at module-end
@@ -2944,7 +4432,32 @@ impl<'a> AstLowerer<'a> {
             // `X = enum.auto()` must evaluate at the class's
             // textual position, after preceding imports/bindings
             // have run (P2-R3 ordering, #1686 motivation).
-            if !cls.decorators.is_empty() || !cls.class_attr_assigns.is_empty() {
+            // #82: cross-class property decorators such as `@Base.x.setter`
+            // must run after the base class placeholder has materialized the
+            // property object. Classes with bases or explicit metaclasses also
+            // need textual materialization so metaclass inheritance,
+            // __init_subclass__, and metaclass __new__/__init__ observe source
+            // order.
+            let has_cross_class_property_decorator = cls.methods.iter().any(|m| {
+                m.decorators.iter().any(|dec| {
+                    matches!(
+                        dec,
+                        HirExpr::Attr { object, attr, .. }
+                            if matches!(attr.as_str(), "setter" | "deleter" | "getter")
+                                && !matches!(object.as_ref(), HirExpr::Var(..))
+                    )
+                })
+            });
+            if !cls.decorators.is_empty()
+                || !cls.class_attr_assigns.is_empty()
+                || !cls.class_body_stmts.is_empty()
+                || !cls.runtime_base_exprs.is_empty()
+                || cls.runtime_base_list_expr.is_some()
+                || !cls.class_kwargs.is_empty()
+                || cls.metaclass.is_some()
+                || !bases.is_empty()
+                || has_cross_class_property_decorator
+            {
                 if placeholder_to_top {
                     self.result.top_level.push(HirStmt::ClassDefPlaceholder {
                         name: cls.name,
@@ -2953,33 +4466,329 @@ impl<'a> AstLowerer<'a> {
                 }
                 placeholder_sym.set(Some(cls.name));
             }
+            cls.force_textual_registration = force_textual_registration;
             self.result.classes.push(cls);
         }
         placeholder_sym.get()
+    }
+
+    fn class_base_needs_runtime_eval(&mut self, expr: &ast::Expr) -> bool {
+        match expr {
+            ast::Expr::Ident(name) => self.runtime_class_base_names.iter().any(|n| n == name),
+            ast::Expr::Starred(_) => true,
+            ast::Expr::Index { object, .. } => match &object.node {
+                ast::Expr::Ident(name) => name == "Generic",
+                ast::Expr::Attr { attr, .. } => attr == "Generic",
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn lower_runtime_class_base_list(
+        &mut self,
+        bases: &[Spanned<ast::Expr>],
+        type_params: &[ast::TypeParam],
+        span: Span,
+    ) -> Option<HirExpr> {
+        let mut elems: Vec<Spanned<ast::Expr>> = bases.to_vec();
+        if !type_params.is_empty()
+            && !bases
+                .iter()
+                .any(|base| class_base_is_typing_generic(&base.node))
+        {
+            elems.push(Spanned::new(
+                ast::Expr::StrLit("typing.Generic".to_string()),
+                span,
+            ));
+        }
+        self.lower_starred_display(&elems, None)
+    }
+
+    fn stmts_need_class_cell(stmts: &[Spanned<ast::Stmt>]) -> bool {
+        stmts
+            .iter()
+            .any(|stmt| Self::stmt_needs_class_cell(&stmt.node))
+    }
+
+    fn stmt_needs_class_cell(stmt: &ast::Stmt) -> bool {
+        match stmt {
+            ast::Stmt::VarDecl { value, .. } => Self::expr_needs_class_cell(&value.node),
+            ast::Stmt::Assign { target, value } | ast::Stmt::AugAssign { target, value, .. } => {
+                Self::expr_needs_class_cell(&target.node)
+                    || Self::expr_needs_class_cell(&value.node)
+            }
+            ast::Stmt::FnDef { body, .. } | ast::Stmt::AsyncFnDef { body, .. } => {
+                Self::stmts_need_class_cell(body)
+            }
+            ast::Stmt::ClassDef { .. } | ast::Stmt::EnumDef { .. } | ast::Stmt::Pass => false,
+            ast::Stmt::If {
+                condition,
+                body,
+                elif_clauses,
+                else_body,
+            } => {
+                Self::expr_needs_class_cell(&condition.node)
+                    || Self::stmts_need_class_cell(body)
+                    || elif_clauses.iter().any(|(cond, stmts)| {
+                        Self::expr_needs_class_cell(&cond.node)
+                            || Self::stmts_need_class_cell(stmts)
+                    })
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+            }
+            ast::Stmt::While {
+                condition,
+                body,
+                else_body,
+            } => {
+                Self::expr_needs_class_cell(&condition.node)
+                    || Self::stmts_need_class_cell(body)
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+            }
+            ast::Stmt::For {
+                iter,
+                body,
+                else_body,
+                ..
+            }
+            | ast::Stmt::AsyncFor {
+                iter,
+                body,
+                else_body,
+                ..
+            } => {
+                Self::expr_needs_class_cell(&iter.node)
+                    || Self::stmts_need_class_cell(body)
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+            }
+            ast::Stmt::Match { expr, arms } => {
+                Self::expr_needs_class_cell(&expr.node)
+                    || arms
+                        .iter()
+                        .any(|arm| Self::stmts_need_class_cell(&arm.body))
+            }
+            ast::Stmt::Return(value) => value
+                .as_ref()
+                .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node)),
+            ast::Stmt::Break | ast::Stmt::Continue => false,
+            ast::Stmt::Import { .. }
+            | ast::Stmt::BareAnnotation { .. }
+            | ast::Stmt::Global(_)
+            | ast::Stmt::Nonlocal(_) => false,
+            ast::Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                Self::stmts_need_class_cell(body)
+                    || handlers
+                        .iter()
+                        .any(|handler| Self::stmts_need_class_cell(&handler.body))
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+                    || finally_body
+                        .as_ref()
+                        .is_some_and(|stmts| Self::stmts_need_class_cell(stmts))
+            }
+            ast::Stmt::Raise { value, from } => {
+                value
+                    .as_ref()
+                    .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+                    || from
+                        .as_ref()
+                        .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+            }
+            ast::Stmt::With { items, body } | ast::Stmt::AsyncWith { items, body } => {
+                items
+                    .iter()
+                    .any(|item| Self::expr_needs_class_cell(&item.context.node))
+                    || Self::stmts_need_class_cell(body)
+            }
+            ast::Stmt::Assert { test, msg } => {
+                Self::expr_needs_class_cell(&test.node)
+                    || msg
+                        .as_ref()
+                        .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+            }
+            ast::Stmt::Del(target) | ast::Stmt::ExprStmt(target) => {
+                Self::expr_needs_class_cell(&target.node)
+            }
+            ast::Stmt::TypeAlias { value, .. } => Self::expr_needs_class_cell(&value.node),
+        }
+    }
+
+    fn expr_needs_class_cell(expr: &ast::Expr) -> bool {
+        match expr {
+            ast::Expr::Ident(name) => name == "__class__",
+            ast::Expr::Call { func, args } => {
+                let is_zero_arg_super = args.is_empty()
+                    && matches!(&func.node, ast::Expr::Ident(name) if name == "super");
+                is_zero_arg_super
+                    || Self::expr_needs_class_cell(&func.node)
+                    || args.iter().any(Self::call_arg_needs_class_cell)
+            }
+            ast::Expr::BinOp { lhs, rhs, .. } => {
+                Self::expr_needs_class_cell(&lhs.node) || Self::expr_needs_class_cell(&rhs.node)
+            }
+            ast::Expr::UnaryOp { operand, .. }
+            | ast::Expr::Starred(operand)
+            | ast::Expr::YieldFrom(operand)
+            | ast::Expr::Await(operand) => Self::expr_needs_class_cell(&operand.node),
+            ast::Expr::Attr { object, .. } => Self::expr_needs_class_cell(&object.node),
+            ast::Expr::Index { object, index } => {
+                Self::expr_needs_class_cell(&object.node)
+                    || Self::expr_needs_class_cell(&index.node)
+            }
+            ast::Expr::Slice { start, stop, step } => {
+                start
+                    .as_ref()
+                    .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+                    || stop
+                        .as_ref()
+                        .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+                    || step
+                        .as_ref()
+                        .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+            }
+            ast::Expr::ListLit(elements)
+            | ast::Expr::SetLit(elements)
+            | ast::Expr::TupleLit(elements)
+            | ast::Expr::UnpackTarget(elements) => elements
+                .iter()
+                .any(|expr| Self::expr_needs_class_cell(&expr.node)),
+            ast::Expr::DictLit(entries) => entries.iter().any(|(key, value)| {
+                key.as_ref()
+                    .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node))
+                    || Self::expr_needs_class_cell(&value.node)
+            }),
+            ast::Expr::IfExpr {
+                body,
+                condition,
+                else_body,
+            } => {
+                Self::expr_needs_class_cell(&body.node)
+                    || Self::expr_needs_class_cell(&condition.node)
+                    || Self::expr_needs_class_cell(&else_body.node)
+            }
+            ast::Expr::Lambda { body, .. } => Self::expr_needs_class_cell(&body.node),
+            ast::Expr::ListComp {
+                element,
+                generators,
+            }
+            | ast::Expr::SetComp {
+                element,
+                generators,
+            }
+            | ast::Expr::GeneratorExpr {
+                element,
+                generators,
+            } => {
+                Self::expr_needs_class_cell(&element.node)
+                    || generators.iter().any(Self::comprehension_needs_class_cell)
+            }
+            ast::Expr::DictComp {
+                key,
+                value,
+                generators,
+            } => {
+                Self::expr_needs_class_cell(&key.node)
+                    || Self::expr_needs_class_cell(&value.node)
+                    || generators.iter().any(Self::comprehension_needs_class_cell)
+            }
+            ast::Expr::FString(parts) => parts.iter().any(Self::fstring_part_needs_class_cell),
+            ast::Expr::Yield(value) => value
+                .as_ref()
+                .is_some_and(|expr| Self::expr_needs_class_cell(&expr.node)),
+            ast::Expr::Walrus { value, .. } => Self::expr_needs_class_cell(&value.node),
+            ast::Expr::ChainedCompare { operands, .. } => operands
+                .iter()
+                .any(|expr| Self::expr_needs_class_cell(&expr.node)),
+            ast::Expr::IntLit(_)
+            | ast::Expr::BigIntLit(_)
+            | ast::Expr::FloatLit(_)
+            | ast::Expr::ComplexLit(_)
+            | ast::Expr::StrLit(_)
+            | ast::Expr::BytesLit(_)
+            | ast::Expr::BoolLit(_)
+            | ast::Expr::NoneLit
+            | ast::Expr::Ellipsis => false,
+        }
+    }
+
+    fn call_arg_needs_class_cell(arg: &ast::CallArg) -> bool {
+        match arg {
+            ast::CallArg::Positional(expr)
+            | ast::CallArg::Keyword { value: expr, .. }
+            | ast::CallArg::StarArg(expr)
+            | ast::CallArg::DoubleStarArg(expr) => Self::expr_needs_class_cell(&expr.node),
+        }
+    }
+
+    fn comprehension_needs_class_cell(comp: &ast::Comprehension) -> bool {
+        Self::expr_needs_class_cell(&comp.iter.node)
+            || comp
+                .conditions
+                .iter()
+                .any(|expr| Self::expr_needs_class_cell(&expr.node))
+    }
+
+    fn fstring_part_needs_class_cell(part: &ast::FStringPart) -> bool {
+        match part {
+            ast::FStringPart::Literal(_) => false,
+            ast::FStringPart::Expr(expr, spec) => {
+                Self::expr_needs_class_cell(&expr.node)
+                    || spec
+                        .as_ref()
+                        .is_some_and(|parts| parts.iter().any(Self::fstring_part_needs_class_cell))
+            }
+        }
     }
 
     fn lower_class(
         &mut self,
         name: &str,
         body: &[Spanned<ast::Stmt>],
+        bases: &[Spanned<ast::Expr>],
         span: Span,
         dataclass_decorated: bool,
     ) -> Option<HirClass> {
         let name_id = self.resolve_name(name, span)?;
+        self.result
+            .sym_names
+            .entry(name_id)
+            .or_insert_with(|| name.to_string());
         // PEP 557: ordered (field_name, annotation_repr, default_expr) facts
         // from class-body annotations, recorded only for @dataclass classes so
         // the runtime synthesizer can build __init__/__repr__/__eq__/etc.
         let mut dataclass_fields: Vec<(String, String, Option<HirExpr>)> = Vec::new();
         let mut fields = Vec::new();
         let mut methods = Vec::new();
+        let mut class_cell_required = false;
         // Track all method name→SymbolId mappings so they survive scope clears
         let mut method_name_map: Vec<(String, crate::resolve::SymbolId)> = Vec::new();
         // Scan for explicit `__match_args__ = ("x", "y")` in the class body (#827).
         let mut explicit_match_args: Option<Vec<String>> = None;
         // P2-R3: Class-level attribute assignments (e.g., `attr = Verbose()` in class body).
         let mut class_attr_assigns: Vec<(String, HirExpr)> = Vec::new();
+        let mut class_attr_locals: Vec<(String, SymbolId)> = Vec::new();
+        let mut class_attr_saved_names: HashMap<String, Option<SymbolId>> = HashMap::new();
+        let mut class_body_stmts: Vec<HirStmt> = Vec::new();
+        let enum_ignored_names = enum_ignore_names_for_class(bases, body);
         // R14: __slots__ declaration from class body.
         let mut slots: Option<Vec<String>> = None;
+        // PEP 526: ordered (name, annotation_repr) for EVERY annotated class-body
+        // name (`a: int = 1` and bare `x: float`), recorded for all classes so
+        // `C.__annotations__` exposes the mapping (CPython semantics). Values are
+        // the textual annotation, matching mamba's module-level `__annotations__`.
+        let mut class_annotations: Vec<(String, String)> = Vec::new();
 
         // PRE-SCAN: Extract __init__ param names BEFORE any method lowering (#827).
         // lower_fn_inner calls enter_local_scope() which clears local_names, so we must
@@ -3006,17 +4815,43 @@ impl<'a> AstLowerer<'a> {
                     // Register __init__ params (minus self) under the class name so
                     // `ClassName(arg)` call sites can fill defaults via the same
                     // resolution path used for free functions.
-                    let init_param_info: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
-                        params
-                            .iter()
-                            .filter(|p| p.name != "self")
-                            .map(|p| (p.name.clone(), p.default.clone(), p.kind))
-                            .collect();
+                    let init_param_info: Vec<ParamInfo> = params
+                        .iter()
+                        .filter(|p| p.name != "self")
+                        .map(|p| {
+                            (
+                                p.name.clone(),
+                                p.default.as_ref().map(|d| ParamDefault::Ast(d.clone())),
+                                p.kind,
+                            )
+                        })
+                        .collect();
                     self.func_param_info
                         .insert(name.to_string(), init_param_info);
                     break;
                 }
             }
+        }
+
+        macro_rules! push_class_attr {
+            ($attr_name:expr, $val_expr:expr) => {{
+                let attr_name: String = $attr_name;
+                let val_expr: HirExpr = $val_expr;
+                let ty = val_expr.ty();
+                class_attr_assigns.push((attr_name.clone(), val_expr));
+                class_attr_saved_names
+                    .entry(attr_name.clone())
+                    .or_insert_with(|| self.local_names.get(attr_name.as_str()).copied());
+                let sym = self.define_local(&attr_name, ty);
+                self.result
+                    .sym_names
+                    .entry(sym)
+                    .or_insert_with(|| attr_name.clone());
+                self.result.sym_types.entry(sym).or_insert(ty);
+                if !class_attr_locals.iter().any(|(name, _)| name == &attr_name) {
+                    class_attr_locals.push((attr_name, sym));
+                }
+            }};
         }
 
         for stmt in body {
@@ -3028,6 +4863,9 @@ impl<'a> AstLowerer<'a> {
                 } => {
                     // `__match_args__: tuple = ("x", "y")` — typed var declaration (#827)
                     if fname == "__match_args__" {
+                        if let Some(val_expr) = self.lower_expr(value) {
+                            push_class_attr!(fname.clone(), val_expr);
+                        }
                         if let ast::Expr::TupleLit(elems) = &value.node {
                             let names: Vec<String> = elems
                                 .iter()
@@ -3040,8 +4878,11 @@ impl<'a> AstLowerer<'a> {
                                 })
                                 .collect();
                             explicit_match_args = Some(names);
+                        } else {
+                            explicit_match_args = Some(Vec::new());
                         }
                     } else {
+                        class_annotations.push((fname.clone(), type_expr_repr(&ty.node)));
                         if let Some(fid) = self.resolve_name(fname, stmt.span) {
                             fields.push((fid, self.checker.tcx.int()));
                         }
@@ -3053,6 +4894,13 @@ impl<'a> AstLowerer<'a> {
                                 type_expr_repr(&ty.node),
                                 default,
                             ));
+                        } else if fname != "__slots__" {
+                            // `y: str = "hi"` in a non-dataclass class body binds a
+                            // real class attribute (CPython), unlike a bare `x: int`.
+                            // Mirror the plain-assignment path.
+                            if let Some(val_expr) = self.lower_expr(value) {
+                                push_class_attr!(fname.clone(), val_expr);
+                            }
                         }
                     }
                 }
@@ -3060,12 +4908,14 @@ impl<'a> AstLowerer<'a> {
                 // field fact with no default. (Outside dataclasses these are
                 // type-info-only and remain dropped.)
                 ast::Stmt::BareAnnotation { name: fname, ty } => {
+                    class_annotations.push((fname.clone(), type_expr_repr(&ty.node)));
                     if dataclass_decorated {
                         dataclass_fields.push((fname.clone(), type_expr_repr(&ty.node), None));
                     }
                 }
                 ast::Stmt::FnDef {
                     name: mname,
+                    type_params: method_type_params,
                     params,
                     return_ty,
                     body: mbody,
@@ -3074,6 +4924,7 @@ impl<'a> AstLowerer<'a> {
                 }
                 | ast::Stmt::AsyncFnDef {
                     name: mname,
+                    type_params: method_type_params,
                     params,
                     return_ty,
                     body: mbody,
@@ -3094,7 +4945,41 @@ impl<'a> AstLowerer<'a> {
                     };
                     method_name_map.push((mname.to_string(), method_sym));
                     let method_is_decorated = !decorators.is_empty();
-                    if let Some(mut m) = self.lower_fn_inner(
+                    if self.in_function_body {
+                        for param in method_type_params {
+                            let sym = self.define_local(&param.name, self.checker.tcx.any());
+                            self.result
+                                .sym_names
+                                .entry(sym)
+                                .or_insert_with(|| param.name.clone());
+                        }
+                    }
+                    let saved_tps = std::mem::replace(
+                        &mut self.active_type_params,
+                        method_type_params
+                            .iter()
+                            .map(|param| param.name.clone())
+                            .collect(),
+                    );
+                    let hidden_class_locals: Vec<(String, SymbolId, Option<TypeId>)> =
+                        class_attr_locals
+                            .iter()
+                            .filter_map(|(attr_name, attr_sym)| {
+                                if self.local_names.get(attr_name) == Some(attr_sym) {
+                                    let ty = self.local_types.remove(attr_sym);
+                                    self.local_names.remove(attr_name);
+                                    Some((attr_name.clone(), *attr_sym, ty))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                    if Self::stmts_need_class_cell(mbody) {
+                        class_cell_required = true;
+                    }
+                    let saved_class_cell = self.local_names.get("__class__").copied();
+                    self.local_names.insert("__class__".to_string(), name_id);
+                    let lowered_method = self.lower_fn_inner(
                         mname,
                         params,
                         return_ty,
@@ -3102,7 +4987,35 @@ impl<'a> AstLowerer<'a> {
                         stmt.span,
                         true,
                         method_is_decorated,
-                    ) {
+                    );
+                    match saved_class_cell {
+                        Some(sym) => {
+                            self.local_names.insert("__class__".to_string(), sym);
+                        }
+                        None => {
+                            self.local_names.remove("__class__");
+                        }
+                    }
+                    for (attr_name, attr_sym, attr_ty) in hidden_class_locals {
+                        self.local_names.insert(attr_name, attr_sym);
+                        if let Some(ty) = attr_ty {
+                            self.local_types.insert(attr_sym, ty);
+                        }
+                    }
+                    self.active_type_params = saved_tps;
+                    // lower_fn_inner enters/leaves function-local scopes and clears
+                    // local_names. Re-publish the method immediately so later class
+                    // body RHS expressions can reference earlier methods
+                    // (`alias = functools.partialmethod(method, ...)`).
+                    self.local_names.insert(mname.to_string(), method_sym);
+                    self.result
+                        .sym_names
+                        .entry(method_sym)
+                        .or_insert_with(|| mname.to_string());
+                    if let Some(mut m) = lowered_method {
+                        self.result
+                            .func_sigs
+                            .insert(m.name.0, func_sig_meta(params, return_ty));
                         let has_yield = contains_yield(mbody);
                         if is_async_method {
                             // `async def` method: route same way the top-level
@@ -3125,15 +5038,62 @@ impl<'a> AstLowerer<'a> {
                             .iter()
                             .filter_map(|d| self.lower_expr(d))
                             .collect();
+                        for sym in &m.captures {
+                            self.cell_override_syms.insert(*sym);
+                        }
                         methods.push(m);
                     }
+                }
+                ast::Stmt::ClassDef {
+                    name: nested_name,
+                    body: nested_body,
+                    bases: nested_bases,
+                    decorators: nested_decorators,
+                    type_params: nested_type_params,
+                    keyword_args: nested_keyword_args,
+                    ..
+                } => {
+                    let nested_sym = self
+                        .resolve_name(nested_name, stmt.span)
+                        .unwrap_or_else(|| self.define_local(nested_name, self.checker.tcx.any()));
+                    self.result
+                        .sym_names
+                        .entry(nested_sym)
+                        .or_insert_with(|| nested_name.clone());
+                    let nested_placeholder = self.collect_class_stmt(
+                        nested_name,
+                        nested_body,
+                        nested_bases,
+                        nested_decorators,
+                        nested_type_params,
+                        nested_keyword_args,
+                        stmt.span,
+                        false,
+                        false,
+                    );
+                    if let Some(name) = nested_placeholder {
+                        class_body_stmts.push(HirStmt::ClassDefPlaceholder {
+                            name,
+                            span: stmt.span,
+                        });
+                    }
+                    push_class_attr!(
+                        nested_name.clone(),
+                        HirExpr::Var(nested_sym, self.checker.tcx.any())
+                    );
                 }
                 // `__match_args__ = ("x", "y")` — explicit tuple assignment (#827)
                 // `__slots__ = ['x', 'y']` or `__slots__ = ('x', 'y')` — R14
                 // Other assignments → class-level attribute init (P2-R3)
                 ast::Stmt::Assign { target, value } => {
                     if let ast::Expr::Ident(aname) = &target.node {
+                        if enum_ignored_names.contains(aname) {
+                            continue;
+                        }
                         if aname == "__match_args__" {
+                            if let Some(val_expr) = self.lower_expr(value) {
+                                push_class_attr!(aname.clone(), val_expr);
+                            }
                             if let ast::Expr::TupleLit(elems) = &value.node {
                                 let names: Vec<String> = elems
                                     .iter()
@@ -3146,6 +5106,8 @@ impl<'a> AstLowerer<'a> {
                                     })
                                     .collect();
                                 explicit_match_args = Some(names);
+                            } else {
+                                explicit_match_args = Some(Vec::new());
                             }
                         } else if aname == "__slots__" {
                             // R14: Extract __slots__ from list literal or tuple literal.
@@ -3174,12 +5136,33 @@ impl<'a> AstLowerer<'a> {
                             // P2-R3: Class-level attribute assignment (e.g., `attr = Verbose()`).
                             // Lower the value expression and store for emission after class registration.
                             if let Some(val_expr) = self.lower_expr(value) {
-                                class_attr_assigns.push((aname.clone(), val_expr));
+                                push_class_attr!(aname.clone(), val_expr);
+                            }
+                        }
+                    }
+                }
+                ast::Stmt::ExprStmt(expr) => {
+                    if let ast::Expr::Ident(read_name) = &expr.node {
+                        if read_name == name
+                            || (self.resolve_name(read_name, expr.span).is_none()
+                                && !self.outer_scope_names.contains_key(read_name.as_str()))
+                        {
+                            if let Some(raise) = self.name_error_raise(read_name, stmt.span) {
+                                class_body_stmts.push(raise);
                             }
                         }
                     }
                 }
                 _ => {}
+            }
+        }
+        for (attr_name, value_expr) in enum_vars_generated_attrs(body, &enum_ignored_names) {
+            let spanned_value = Spanned {
+                node: value_expr,
+                span,
+            };
+            if let Some(val_expr) = self.lower_expr(&spanned_value) {
+                push_class_attr!(attr_name, val_expr);
             }
         }
 
@@ -3228,6 +5211,41 @@ impl<'a> AstLowerer<'a> {
             }
         });
 
+        // PEP 526: expose `C.__annotations__` as a class attribute mapping every
+        // annotated class-body name to its textual annotation. Built for all
+        // classes (not just dataclasses) so introspection matches CPython.
+        if !class_annotations.is_empty() {
+            let str_ty = self.checker.tcx.str();
+            let any_ty = self.checker.tcx.any();
+            let entries: Vec<(HirExpr, HirExpr)> = class_annotations
+                .iter()
+                .map(|(n, r)| {
+                    (
+                        HirExpr::StrLit(n.clone(), str_ty),
+                        HirExpr::StrLit(r.clone(), str_ty),
+                    )
+                })
+                .collect();
+            push_class_attr!(
+                "__annotations__".to_string(),
+                HirExpr::Dict {
+                    entries,
+                    ty: any_ty,
+                }
+            );
+        }
+
+        for (attr_name, saved) in class_attr_saved_names {
+            match saved {
+                Some(sym) => {
+                    self.local_names.insert(attr_name, sym);
+                }
+                None => {
+                    self.local_names.remove(&attr_name);
+                }
+            }
+        }
+
         // Class-body docstring: first bare string statement (inspect.getdoc).
         let class_doc = body.first().and_then(|s| {
             if let ast::Stmt::ExprStmt(e) = &s.node {
@@ -3244,6 +5262,11 @@ impl<'a> AstLowerer<'a> {
             name: name_id,
             base: None,
             all_bases: Vec::new(),
+            runtime_base_exprs: Vec::new(),
+            runtime_base_list_expr: None,
+            force_textual_registration: false,
+            class_cell_required,
+            namedtuple_base: None,
             fields,
             methods,
             span,
@@ -3251,6 +5274,8 @@ impl<'a> AstLowerer<'a> {
             explicit_match_args: resolved_match_args,
             metaclass: None,
             class_attr_assigns,
+            class_attr_locals,
+            class_body_stmts,
             slots,
             class_kwargs: Vec::new(),
             dataclass_fields,
@@ -3270,24 +5295,43 @@ impl<'a> AstLowerer<'a> {
                 body,
                 bases,
                 decorators,
+                type_params,
                 keyword_args,
                 ..
             } => {
-                let sym = self.collect_class_stmt(
+                let sym = self
+                    .resolve_name(name, stmt.span)
+                    .unwrap_or_else(|| self.define_local(name, self.checker.tcx.any()));
+                self.result
+                    .sym_names
+                    .entry(sym)
+                    .or_insert_with(|| name.clone());
+                let _ = self.collect_class_stmt(
                     name,
                     body,
                     bases,
                     decorators,
+                    type_params,
                     keyword_args,
                     stmt.span,
                     false,
+                    true,
                 );
-                return sym.map(|name| HirStmt::ClassDefPlaceholder {
-                    name,
+                return Some(HirStmt::ClassDefPlaceholder {
+                    name: sym,
                     span: stmt.span,
                 });
             }
             ast::Stmt::VarDecl { name, value, .. } => {
+                if !self.in_function_body {
+                    if let ast::Expr::Ident(read_name) = &value.node {
+                        if self.module_deleted_names.contains(read_name) {
+                            if let Some(raise) = self.name_error_raise(read_name, stmt.span) {
+                                return Some(raise);
+                            }
+                        }
+                    }
+                }
                 let val = self.lower_expr(value)?;
                 // Mirror the Assign first-definition path: when the resolve
                 // pass already recorded a SymbolId for this name in an
@@ -3327,6 +5371,9 @@ impl<'a> AstLowerer<'a> {
                 } else {
                     self.define_local(name, val.ty())
                 };
+                if !self.in_function_body {
+                    self.module_deleted_names.remove(name);
+                }
                 Some(HirStmt::Let {
                     target: sym,
                     ty: val.ty(),
@@ -3337,6 +5384,15 @@ impl<'a> AstLowerer<'a> {
             ast::Stmt::Assign { target, value } => {
                 // Ident assignments: define locally if new, reassign if exists
                 if let ast::Expr::Ident(name) = &target.node {
+                    if !self.in_function_body {
+                        if let ast::Expr::Ident(read_name) = &value.node {
+                            if self.module_deleted_names.contains(read_name) {
+                                if let Some(raise) = self.name_error_raise(read_name, stmt.span) {
+                                    return Some(raise);
+                                }
+                            }
+                        }
+                    }
                     // Alias tracking for the kwargs-dict call convention:
                     // `quantiles = statistics.quantiles` must keep keyword
                     // names at bare-ident call sites, like the import form.
@@ -3348,6 +5404,50 @@ impl<'a> AstLowerer<'a> {
                                 }
                             }
                         }
+                    }
+                    let is_functools_partial_instance = match &value.node {
+                        ast::Expr::Call {
+                            func: call_func, ..
+                        } => match &call_func.node {
+                            ast::Expr::Attr { object, attr } if attr == "partial" => {
+                                matches!(
+                                    &object.node,
+                                    ast::Expr::Ident(module_name)
+                                        if self.functools_module_idents.contains(module_name.as_str())
+                                )
+                            }
+                            ast::Expr::Ident(factory_name) => self
+                                .functools_partial_factory_idents
+                                .contains(factory_name.as_str()),
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                    if is_functools_partial_instance {
+                        self.functools_partial_kwarg_idents.insert(name.clone());
+                    } else {
+                        self.functools_partial_kwarg_idents.remove(name.as_str());
+                    }
+                    let is_unittest_mock_instance = match &value.node {
+                        ast::Expr::Call {
+                            func: call_func, ..
+                        } => match &call_func.node {
+                            ast::Expr::Ident(factory_name) => matches!(
+                                factory_name.as_str(),
+                                "MagicMock"
+                                    | "Mock"
+                                    | "AsyncMock"
+                                    | "PropertyMock"
+                                    | "NonCallableMagicMock"
+                            ),
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                    if is_unittest_mock_instance {
+                        self.unittest_mock_kwarg_idents.insert(name.clone());
+                    } else {
+                        self.unittest_mock_kwarg_idents.remove(name.as_str());
                     }
                     let val = self.lower_expr(value)?;
                     // Python scoping: inside a function body, an assignment
@@ -3362,6 +5462,9 @@ impl<'a> AstLowerer<'a> {
                     if is_function_local_target || self.resolve_name(name, stmt.span).is_none() {
                         // Implicit declaration — creates a fresh local.
                         let sym = self.define_local(name, val.ty());
+                        if !self.in_function_body {
+                            self.module_deleted_names.remove(name);
+                        }
                         return Some(HirStmt::Let {
                             target: sym,
                             ty: val.ty(),
@@ -3370,6 +5473,9 @@ impl<'a> AstLowerer<'a> {
                         });
                     }
                     let sym = self.resolve_name(name, stmt.span)?;
+                    if !self.in_function_body {
+                        self.module_deleted_names.remove(name);
+                    }
                     // If the HIR-inferred val type is a primitive but the
                     // checker tagged the symbol Any (typically because
                     // check_fn_body records non-annotated returns as Any
@@ -3426,7 +5532,10 @@ impl<'a> AstLowerer<'a> {
                 fn hir_atomic(e: &HirExpr) -> bool {
                     matches!(
                         e,
-                        HirExpr::Var(..) | HirExpr::IntLit(..) | HirExpr::FloatLit(..)
+                        HirExpr::Var(..)
+                            | HirExpr::IntLit(..)
+                            | HirExpr::BigIntLit(..)
+                            | HirExpr::FloatLit(..)
                             | HirExpr::StrLit(..) | HirExpr::BoolLit(..) | HirExpr::NoneLit(..)
                             // Slice nodes are special-cased at Index sites
                             // (packed to (start, stop, step)); hoisting one
@@ -3489,26 +5598,26 @@ impl<'a> AstLowerer<'a> {
                 // `a <op>= b` through a runtime helper that calls the in-place
                 // dunder when present and otherwise falls back to the normal
                 // binary op. Primitive targets (int/float/bool) keep the fast
-                // BinOp path below. Only the six ops with an in-place helper
-                // are rerouted; others fall through.
+                // BinOp path below except for @=, which has no primitive fast
+                // path and must still allow the RHS reflected dunder.
                 {
                     use crate::types::Ty;
                     let lhs_primitive = matches!(
                         self.checker.tcx.get(lhs.ty()),
                         Ty::Int | Ty::Float | Ty::Bool
                     );
-                    let helper = if lhs_primitive {
-                        None
-                    } else {
-                        match op {
-                            ast::AugOp::Add => Some("mb_iadd"),
-                            ast::AugOp::Sub => Some("mb_isub"),
-                            ast::AugOp::Mul => Some("mb_imul"),
-                            ast::AugOp::BitAnd => Some("mb_iand"),
-                            ast::AugOp::BitOr => Some("mb_ior"),
-                            ast::AugOp::BitXor => Some("mb_ixor"),
-                            _ => None,
-                        }
+                    let helper = match op {
+                        ast::AugOp::MatMul => Some("mb_imatmul"),
+                        _ if lhs_primitive => None,
+                        ast::AugOp::Add => Some("mb_iadd"),
+                        ast::AugOp::Sub => Some("mb_isub"),
+                        ast::AugOp::Mul => Some("mb_imul"),
+                        ast::AugOp::FloorDiv => Some("mb_ifloordiv"),
+                        ast::AugOp::Pow => Some("mb_ipow"),
+                        ast::AugOp::BitAnd => Some("mb_iand"),
+                        ast::AugOp::BitOr => Some("mb_ior"),
+                        ast::AugOp::BitXor => Some("mb_ixor"),
+                        _ => None,
                     };
                     if let Some(helper) = helper {
                         let any_ty = self.checker.tcx.any();
@@ -3570,6 +5679,15 @@ impl<'a> AstLowerer<'a> {
                 })
             }
             ast::Stmt::Return(expr) => {
+                if let Some(ret_expr) = expr {
+                    if let ast::Expr::Ident(name) = &ret_expr.node {
+                        if self.resolve_name(name, ret_expr.span).is_none()
+                            && !self.outer_scope_names.contains_key(name.as_str())
+                        {
+                            return self.name_error_raise(name, stmt.span);
+                        }
+                    }
+                }
                 let val = expr.as_ref().and_then(|e| self.lower_expr(e));
                 Some(HirStmt::Return {
                     value: val,
@@ -3629,6 +5747,7 @@ impl<'a> AstLowerer<'a> {
                 let it = self.lower_expr(iter)?;
                 let any_ty = self.checker.tcx.any();
                 let span = stmt.span;
+                let is_async = matches!(&stmt.node, ast::Stmt::AsyncFor { .. });
 
                 // Infer element type: explicit annotation > range() → int > any
                 let elem_ty = var_ty
@@ -3659,6 +5778,9 @@ impl<'a> AstLowerer<'a> {
                         value: HirExpr::Var(tmp_sym, any_ty),
                         span,
                     };
+                    let base_stack_len = self.runtime_class_base_names.len();
+                    self.runtime_class_base_names
+                        .extend(targets.iter().cloned());
                     let mut b: Vec<HirStmt> = vec![unpack_stmt];
                     b.extend(body.iter().filter_map(|s| self.lower_stmt(s)));
                     let eb: Vec<HirStmt> = else_body
@@ -3666,33 +5788,81 @@ impl<'a> AstLowerer<'a> {
                         .flat_map(|stmts| stmts.iter())
                         .filter_map(|s| self.lower_stmt(s))
                         .collect();
-                    Some(HirStmt::For {
-                        var: tmp_sym,
-                        iter: it,
-                        body: b,
-                        else_body: eb,
-                        span,
-                    })
+                    self.runtime_class_base_names.truncate(base_stack_len);
+                    if is_async {
+                        Some(HirStmt::AsyncFor {
+                            var: tmp_sym,
+                            iter: it,
+                            body: b,
+                            else_body: eb,
+                            span,
+                        })
+                    } else {
+                        Some(HirStmt::For {
+                            var: tmp_sym,
+                            iter: it,
+                            body: b,
+                            else_body: eb,
+                            span,
+                        })
+                    }
                 } else {
                     let var_id = self.define_local(&targets[0], elem_ty);
+                    let base_stack_len = self.runtime_class_base_names.len();
+                    self.runtime_class_base_names.push(targets[0].clone());
                     let b: Vec<HirStmt> = body.iter().filter_map(|s| self.lower_stmt(s)).collect();
                     let eb: Vec<HirStmt> = else_body
                         .iter()
                         .flat_map(|stmts| stmts.iter())
                         .filter_map(|s| self.lower_stmt(s))
                         .collect();
-                    Some(HirStmt::For {
-                        var: var_id,
-                        iter: it,
-                        body: b,
-                        else_body: eb,
-                        span,
-                    })
+                    self.runtime_class_base_names.truncate(base_stack_len);
+                    if is_async {
+                        Some(HirStmt::AsyncFor {
+                            var: var_id,
+                            iter: it,
+                            body: b,
+                            else_body: eb,
+                            span,
+                        })
+                    } else {
+                        Some(HirStmt::For {
+                            var: var_id,
+                            iter: it,
+                            body: b,
+                            else_body: eb,
+                            span,
+                        })
+                    }
                 }
             }
             ast::Stmt::Break => Some(HirStmt::Break { span: stmt.span }),
             ast::Stmt::Continue => Some(HirStmt::Continue { span: stmt.span }),
             ast::Stmt::ExprStmt(expr) => {
+                // A bare statement that is a reference to a name resolving to
+                // nothing (no local, global, builtin, or outer-scope capture)
+                // is a runtime `NameError` in CPython. The checker's
+                // compile-time "undefined name" diagnostic is suppressed in
+                // such fixtures via `# type: ignore`, so lowering reaches here
+                // with an unresolvable Ident; emit the raise rather than
+                // silently dropping the statement (which printed "no_raise").
+                if let ast::Expr::Ident(name) = &expr.node {
+                    if !self.in_function_body
+                        && (self.module_unbound_annotation_names.contains(name)
+                            || self.module_deleted_names.contains(name))
+                    {
+                        if let Some(raise) = self.name_error_raise(name, stmt.span) {
+                            return Some(raise);
+                        }
+                    }
+                    if self.resolve_name(name, expr.span).is_none()
+                        && !self.outer_scope_names.contains_key(name.as_str())
+                    {
+                        if let Some(raise) = self.name_error_raise(name, stmt.span) {
+                            return Some(raise);
+                        }
+                    }
+                }
                 let e = self.lower_expr(expr)?;
                 Some(HirStmt::Expr {
                     expr: e,
@@ -3756,12 +5926,15 @@ impl<'a> AstLowerer<'a> {
                 module_alias,
             } => {
                 // PEP 557: track local bindings of dataclasses.{dataclass,
-                // field, replace} so bare-Ident calls to them keep keyword
+                // field, replace, make_dataclass} so bare-Ident calls keep keyword
                 // names (trailing-kwargs-dict convention) at the call site.
                 if module.len() == 1 && module[0] == "dataclasses" {
                     if let Some(names) = names {
                         for (orig, alias) in names {
-                            if matches!(orig.as_str(), "dataclass" | "field" | "replace") {
+                            if matches!(
+                                orig.as_str(),
+                                "dataclass" | "field" | "replace" | "make_dataclass"
+                            ) {
                                 self.dataclasses_kwarg_idents
                                     .insert(alias.clone().unwrap_or_else(|| orig.clone()));
                             }
@@ -3782,6 +5955,34 @@ impl<'a> AstLowerer<'a> {
                                     .insert(alias.clone().unwrap_or_else(|| orig.clone()));
                             }
                         }
+                    }
+                }
+                if module.len() == 1 && module[0] == "functools" {
+                    if let Some(alias) = module_alias {
+                        self.functools_module_idents.insert(alias.clone());
+                    }
+                    if let Some(names) = names {
+                        for (orig, alias) in names {
+                            if orig == "partial" {
+                                self.functools_partial_factory_idents
+                                    .insert(alias.clone().unwrap_or_else(|| orig.clone()));
+                            }
+                        }
+                    }
+                }
+                if let Some(names) = names {
+                    for (orig, alias) in names {
+                        if orig != "*" {
+                            let bound = alias.as_deref().unwrap_or(orig.as_str());
+                            self.define_local(bound, self.checker.tcx.any());
+                        }
+                    }
+                } else {
+                    let bound = module_alias
+                        .as_deref()
+                        .or_else(|| module.first().map(String::as_str));
+                    if let Some(bound) = bound {
+                        self.define_local(bound, self.checker.tcx.any());
                     }
                 }
                 Some(HirStmt::Import {
@@ -3829,6 +6030,11 @@ impl<'a> AstLowerer<'a> {
                 })
             }
             ast::Stmt::Del(target) => {
+                if !self.in_function_body {
+                    if let ast::Expr::Ident(name) = &target.node {
+                        self.module_deleted_names.insert(name.clone());
+                    }
+                }
                 let lv = self.lower_lvalue(target)?;
                 Some(HirStmt::Del {
                     target: lv,
@@ -3846,21 +6052,24 @@ impl<'a> AstLowerer<'a> {
                 })
             }
             ast::Stmt::Nonlocal(names) => {
-                let syms: Vec<SymbolId> = names
-                    .iter()
-                    .filter_map(|n| {
-                        // Look up in outer scope first to get the same synthetic SymbolId.
-                        // This ensures inner-function references use the same slot as the outer.
-                        if let Some(&outer_sym) = self.outer_scope_names.get(n.as_str()) {
-                            // Bind the name in the current (inner) scope to the outer SymbolId.
-                            self.local_names.insert(n.clone(), outer_sym);
-                            // Mark this SymbolId as a Cell (shared via global storage).
-                            self.cell_override_syms.insert(outer_sym);
-                            return Some(outer_sym);
-                        }
-                        self.resolve_name(n, stmt.span)
-                    })
-                    .collect();
+                let mut syms: Vec<SymbolId> = Vec::new();
+                for n in names {
+                    // Look up in outer function scope first to get the same
+                    // synthetic SymbolId. Module globals do not satisfy
+                    // `nonlocal`; CPython raises SyntaxError for that case.
+                    if let Some(&outer_sym) = self.outer_scope_names.get(n.as_str()) {
+                        // Bind the name in the current (inner) scope to the outer SymbolId.
+                        self.local_names.insert(n.clone(), outer_sym);
+                        // Mark this SymbolId as a Cell (shared via global storage).
+                        self.cell_override_syms.insert(outer_sym);
+                        syms.push(outer_sym);
+                    } else {
+                        self.errors.push(MambaError::syntax(
+                            stmt.span,
+                            format!("no binding for nonlocal '{n}' found"),
+                        ));
+                    }
+                }
                 Some(HirStmt::Nonlocal {
                     names: syms,
                     span: stmt.span,
@@ -3903,18 +6112,30 @@ impl<'a> AstLowerer<'a> {
                 ..
             } => {
                 // Register param info for kwargs resolution.
-                self.func_param_info.insert(
-                    name.clone(),
-                    params
-                        .iter()
-                        .map(|p| (p.name.clone(), p.default.clone(), p.kind))
-                        .collect(),
-                );
+                self.func_param_info
+                    .insert(name.clone(), Self::ast_param_info(params));
                 // Nested function definition inside a function body.
                 // Define the function name in the current (outer) local scope first so the
                 // outer function body can call it, and so resolve_name works inside lower_fn.
                 let fn_sym = self.define_local(name, self.checker.tcx.any());
                 let is_decorated = !decorators.is_empty();
+                let overload_decorated = decorators
+                    .iter()
+                    .any(|d| decorator_is_typing_overload(&d.node));
+                let erased_params;
+                let params_for_lower: &[ast::Param] = if overload_decorated {
+                    erased_params = erase_param_annotations(params);
+                    &erased_params
+                } else {
+                    params
+                };
+                let erased_return: Option<Spanned<ast::TypeExpr>> = None;
+                let return_for_lower = if overload_decorated {
+                    &erased_return
+                } else {
+                    return_ty
+                };
+                let declared_sig = func_sig_meta(params, return_ty);
                 // PEP 695: see the module-level FnDef arm — type-param names
                 // must reach the param/return type lowering.
                 let saved_tps = std::mem::replace(
@@ -3922,12 +6143,22 @@ impl<'a> AstLowerer<'a> {
                     type_params.iter().map(|p| p.name.clone()).collect(),
                 );
                 let lowered = if is_decorated {
-                    self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
+                    self.lower_decorated_fn(
+                        name,
+                        params_for_lower,
+                        return_for_lower,
+                        body,
+                        stmt.span,
+                    )
                 } else {
                     self.lower_fn(name, params, return_ty, body, stmt.span)
                 };
                 self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
+                    self.result
+                        .func_sigs
+                        .insert(func.name.0, declared_sig.clone());
+                    func.func_sig = Some(declared_sig.clone());
                     func.is_generator = contains_yield(body);
                     func.decorators = decorators
                         .iter()
@@ -3945,10 +6176,14 @@ impl<'a> AstLowerer<'a> {
                 // now in result.functions). The local sym binding allows callers to emit
                 // a Call MirInst against fn_sym.
                 let _ = fn_sym;
-                Some(HirStmt::FuncDefPlaceholder {
+                let placeholder = HirStmt::FuncDefPlaceholder {
                     name: fn_sym,
+                    bind_name: None,
                     span: stmt.span,
-                })
+                    redef: false,
+                    func_sig: Some(declared_sig),
+                };
+                Some(placeholder)
             }
             ast::Stmt::AsyncFnDef {
                 name,
@@ -3968,6 +6203,7 @@ impl<'a> AstLowerer<'a> {
                     &mut self.active_type_params,
                     type_params.iter().map(|p| p.name.clone()).collect(),
                 );
+                let declared_sig = func_sig_meta(params, return_ty);
                 let lowered = if is_decorated {
                     self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                 } else {
@@ -3975,6 +6211,10 @@ impl<'a> AstLowerer<'a> {
                 };
                 self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
+                    self.result
+                        .func_sigs
+                        .insert(func.name.0, declared_sig.clone());
+                    func.func_sig = Some(declared_sig.clone());
                     if contains_yield(body) {
                         // Same async-generator routing as the top-level
                         // AsyncFnDef arm: route through the sync generator
@@ -3995,7 +6235,10 @@ impl<'a> AstLowerer<'a> {
                 let _ = fn_sym;
                 Some(HirStmt::FuncDefPlaceholder {
                     name: fn_sym,
+                    bind_name: None,
                     span: stmt.span,
+                    redef: false,
+                    func_sig: Some(declared_sig),
                 })
             }
             _ => None,
@@ -4046,6 +6289,7 @@ impl<'a> AstLowerer<'a> {
     fn lower_expr(&mut self, expr: &Spanned<ast::Expr>) -> Option<HirExpr> {
         match &expr.node {
             ast::Expr::IntLit(i) => Some(HirExpr::IntLit(*i, self.checker.tcx.int())),
+            ast::Expr::BigIntLit(s) => Some(HirExpr::BigIntLit(s.clone(), self.checker.tcx.int())),
             ast::Expr::FloatLit(f) => Some(HirExpr::FloatLit(*f, self.checker.tcx.float())),
             ast::Expr::ComplexLit(f) => {
                 // Lower `Nj` to `complex(0.0, N)` so the value is an
@@ -4078,7 +6322,10 @@ impl<'a> AstLowerer<'a> {
                 Some(HirExpr::Var(sym, self.checker.tcx.any()))
             }
             ast::Expr::Ident(name) => {
-                let sym = if let Some(id) = self.resolve_name(name, expr.span) {
+                if self.is_function_local_unbound_read(name) {
+                    return Some(self.unbound_local_error_expr(name));
+                }
+                let sym = if let Some(&id) = self.local_names.get(name.as_str()) {
                     id
                 } else if let Some(&outer_id) = self.outer_scope_names.get(name.as_str()) {
                     // Implicit capture: inner function reads outer function's variable
@@ -4088,6 +6335,8 @@ impl<'a> AstLowerer<'a> {
                     self.local_names.insert(name.to_string(), outer_id);
                     self.cell_override_syms.insert(outer_id);
                     outer_id
+                } else if let Some(id) = self.checker.symbols.lookup(name) {
+                    id
                 } else {
                     return None;
                 };
@@ -4097,6 +6346,14 @@ impl<'a> AstLowerer<'a> {
             ast::Expr::BinOp { op, lhs, rhs } => {
                 let l = self.lower_expr(lhs)?;
                 let r = self.lower_expr(rhs)?;
+                if matches!(op, ast::BinOp::MatMul) {
+                    let any_ty = self.checker.tcx.any();
+                    return Some(HirExpr::Call {
+                        func: Box::new(HirExpr::StrLit("mb_matmul".to_string(), any_ty)),
+                        args: vec![l, r],
+                        ty: any_ty,
+                    });
+                }
                 let hir_op = lower_bin_op(*op)?;
                 let ty = match hir_op {
                     // `is` / `is not` always use primitive identity comparison
@@ -4267,7 +6524,10 @@ impl<'a> AstLowerer<'a> {
                             )
                         });
                         if splat_free {
-                            if let Some(msg) = arg_bind_violation(fname, &sig, args) {
+                            let defaults_mutated = self.funcs_with_mutated_defaults.contains(fname);
+                            if let Some(msg) =
+                                arg_bind_violation(fname, &sig, args, defaults_mutated)
+                            {
                                 return Some(HirExpr::Call {
                                     func: Box::new(HirExpr::StrLit(
                                         "mb_arg_bind_error".to_string(),
@@ -4277,6 +6537,150 @@ impl<'a> AstLowerer<'a> {
                                     ty: any_ty,
                                 });
                             }
+                        }
+                    }
+                }
+                if let ast::Expr::Ident(name) = &func.node {
+                    if matches!(name.as_str(), "set" | "frozenset")
+                        && args.iter().all(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                            )
+                        })
+                    {
+                        let positional_count = args
+                            .iter()
+                            .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                            .count();
+                        if positional_count > 1 {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    format!(
+                                        "{} expected at most 1 argument, got {}",
+                                        name, positional_count
+                                    ),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                        if args
+                            .iter()
+                            .any(|a| matches!(a, ast::CallArg::Keyword { .. }))
+                        {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    format!("{}() takes no keyword arguments", name),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                    }
+                }
+                if let ast::Expr::Ident(name) = &func.node {
+                    if name == "sorted"
+                        && args.iter().all(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                            )
+                        })
+                    {
+                        let positional_count = args
+                            .iter()
+                            .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                            .count();
+                        if positional_count != 1
+                            || args.iter().any(|a| {
+                                matches!(
+                                    a,
+                                    ast::CallArg::Keyword { name: n, .. } if n == "iterable"
+                                )
+                            })
+                        {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    format!(
+                                        "sorted expected 1 argument, got {}",
+                                        positional_count
+                                    ),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                    }
+                    if name == "divmod"
+                        && args.iter().all(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                            )
+                        })
+                    {
+                        let positional_count = args
+                            .iter()
+                            .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                            .count();
+                        if positional_count != 2
+                            || args
+                                .iter()
+                                .any(|a| matches!(a, ast::CallArg::Keyword { .. }))
+                        {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    format!(
+                                        "divmod expected 2 arguments, got {}",
+                                        positional_count
+                                    ),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                    }
+                    if name == "type"
+                        && args.iter().all(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                            )
+                        })
+                    {
+                        let positional_count = args
+                            .iter()
+                            .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                            .count();
+                        if positional_count != 1 && positional_count != 3 {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    "type() takes 1 or 3 arguments".to_string(),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
                         }
                     }
                 }
@@ -4301,6 +6705,40 @@ impl<'a> AstLowerer<'a> {
                                     ty: self.checker.tcx.bool(),
                                 });
                             }
+                        }
+                    }
+                    if matches!(
+                        name.as_str(),
+                        "AttributeError" | "NameError" | "ImportError"
+                    ) && args.iter().any(|a| {
+                        matches!(
+                            a,
+                            ast::CallArg::Keyword { .. } | ast::CallArg::DoubleStarArg(_)
+                        )
+                    }) && args.iter().all(|a| !matches!(a, ast::CallArg::StarArg(_)))
+                    {
+                        let pos = HirExpr::List {
+                            elements: args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect(),
+                            ty: any_ty,
+                        };
+                        if let Some(kwargs) = self.build_kwargs_dict(args, any_ty) {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_exception_new_with_args_and_kwargs".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(name.clone(), str_ty), pos, kwargs],
+                                ty: any_ty,
+                            });
                         }
                     }
                 }
@@ -4353,9 +6791,125 @@ impl<'a> AstLowerer<'a> {
                     && args.iter().any(|a| {
                         matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_))
                     });
+                if let ast::Expr::Ident(name) = &func.node {
+                    if name == "open"
+                        && args
+                            .iter()
+                            .any(|a| matches!(a, ast::CallArg::DoubleStarArg(_)))
+                    {
+                        let none_hir = HirExpr::NoneLit(any_ty);
+                        let pos: Vec<HirExpr> = args
+                            .iter()
+                            .filter_map(|a| {
+                                if let ast::CallArg::Positional(e) = a {
+                                    self.lower_expr(e)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        let path = pos.first().cloned().unwrap_or_else(|| none_hir.clone());
+                        let mode = pos
+                            .get(1)
+                            .cloned()
+                            .unwrap_or_else(|| HirExpr::StrLit("r".to_string(), str_ty));
+                        let encoding = pos.get(3).cloned().unwrap_or_else(|| none_hir.clone());
+                        let errors = pos.get(4).cloned().unwrap_or_else(|| none_hir.clone());
+                        let closefd = pos.get(6).cloned().unwrap_or_else(|| none_hir.clone());
+                        let kwargs =
+                            self.build_kwargs_dict(args, any_ty)
+                                .unwrap_or(HirExpr::Dict {
+                                    entries: vec![],
+                                    ty: any_ty,
+                                });
+                        return Some(HirExpr::Call {
+                            func: Box::new(HirExpr::StrLit("mb_open_kwargs".to_string(), any_ty)),
+                            args: vec![path, mode, encoding, errors, closefd, kwargs],
+                            ty: any_ty,
+                        });
+                    }
+                }
                 if has_kwargs || is_format_splat {
                     if let ast::Expr::Ident(name) = &func.node {
                         let none_hir = HirExpr::NoneLit(any_ty);
+
+                        if name == "str"
+                            && args.iter().all(|a| {
+                                !matches!(
+                                    a,
+                                    ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)
+                                )
+                            })
+                        {
+                            let mut object: Option<HirExpr> = None;
+                            let mut encoding: Option<HirExpr> = None;
+                            let mut errors: Option<HirExpr> = None;
+                            let mut positional_index = 0usize;
+                            for a in args {
+                                match a {
+                                    ast::CallArg::Positional(value) => {
+                                        let lowered = self.lower_expr(value)?;
+                                        match positional_index {
+                                            0 => object = Some(lowered),
+                                            1 => encoding = Some(lowered),
+                                            2 => errors = Some(lowered),
+                                            _ => {
+                                                return Some(HirExpr::Call {
+                                                    func: Box::new(HirExpr::StrLit(
+                                                        "mb_arg_bind_error".to_string(),
+                                                        any_ty,
+                                                    )),
+                                                    args: vec![HirExpr::StrLit(
+                                                        "str() takes at most 3 arguments"
+                                                            .to_string(),
+                                                        str_ty,
+                                                    )],
+                                                    ty: any_ty,
+                                                });
+                                            }
+                                        }
+                                        positional_index += 1;
+                                    }
+                                    ast::CallArg::Keyword { name, value } => {
+                                        let lowered = self.lower_expr(value)?;
+                                        match name.as_str() {
+                                            "object" => object = Some(lowered),
+                                            "encoding" => encoding = Some(lowered),
+                                            "errors" => errors = Some(lowered),
+                                            _ => {
+                                                return Some(HirExpr::Call {
+                                                    func: Box::new(HirExpr::StrLit(
+                                                        "mb_arg_bind_error".to_string(),
+                                                        any_ty,
+                                                    )),
+                                                    args: vec![HirExpr::StrLit(
+                                                        format!(
+                                                            "str() got an unexpected keyword argument '{}'",
+                                                            name
+                                                        ),
+                                                        str_ty,
+                                                    )],
+                                                    ty: any_ty,
+                                                });
+                                            }
+                                        }
+                                    }
+                                    ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_) => {}
+                                }
+                            }
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_str_construct".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![
+                                    object.unwrap_or_else(|| none_hir.clone()),
+                                    encoding.unwrap_or_else(|| none_hir.clone()),
+                                    errors.unwrap_or(none_hir),
+                                ],
+                                ty: any_ty,
+                            });
+                        }
 
                         // print(*args, sep=' ', end='\n') → mb_print_kwargs(args_list, sep, end)
                         if name == "print" {
@@ -4412,6 +6966,56 @@ impl<'a> AstLowerer<'a> {
                                     any_ty,
                                 )),
                                 args: vec![args_list, sep, end, file],
+                                ty: any_ty,
+                            });
+                        }
+                        // breakpoint(*args, **kwds) → mb_breakpoint_call(pos_list,
+                        // kwargs_dict). PEP 553 forwards every positional and
+                        // keyword to the current `sys.breakpointhook`; the runtime
+                        // entry reads the live hook and spreads the args to it.
+                        // (#242)
+                        if name == "breakpoint" {
+                            let pos: Vec<HirExpr> = args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            let mut pos_list = HirExpr::List {
+                                elements: pos,
+                                ty: any_ty,
+                            };
+                            // Honor `*seq` positional splats in source order.
+                            for a in args {
+                                if let ast::CallArg::StarArg(e) = a {
+                                    if let Some(he) = self.lower_expr(e) {
+                                        pos_list = HirExpr::Call {
+                                            func: Box::new(HirExpr::StrLit(
+                                                "mb_args_concat".to_string(),
+                                                any_ty,
+                                            )),
+                                            args: vec![pos_list, he],
+                                            ty: any_ty,
+                                        };
+                                    }
+                                }
+                            }
+                            let kwargs_dict =
+                                self.build_kwargs_dict(args, any_ty)
+                                    .unwrap_or(HirExpr::Dict {
+                                        entries: vec![],
+                                        ty: any_ty,
+                                    });
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_breakpoint_call".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![pos_list, kwargs_dict],
                                 ty: any_ty,
                             });
                         }
@@ -4643,11 +7247,10 @@ impl<'a> AstLowerer<'a> {
                             }
                         }
                         // open(file, mode='r', buffering=-1, encoding=None, ...) →
-                        // mb_open(path, mode). mb_open only consumes (path, mode);
-                        // text decoding is UTF-8/lossy regardless of `encoding`. The
-                        // generic path flattens keyword values positionally, which
-                        // misroutes `open(p, encoding='utf-8')` as mode='utf-8'.
-                        // Pull `mode` from positional[1] or the `mode=` keyword.
+                        // mb_open_ex(path, mode, encoding, errors). Pull named
+                        // kwargs explicitly so the generic path does not flatten
+                        // keyword values positionally (e.g. misrouting
+                        // `open(p, encoding='utf-8')` as mode='utf-8').
                         if name == "open" {
                             let pos: Vec<HirExpr> = args
                                 .iter()
@@ -4674,9 +7277,43 @@ impl<'a> AstLowerer<'a> {
                                     })
                                 })
                                 .unwrap_or_else(|| HirExpr::StrLit("r".to_string(), str_ty));
+                            drop(pos_iter);
+                            // open(file, mode, buffering, encoding, errors, ...):
+                            // `encoding=` is positional 3, `errors=` positional 4.
+                            // Record both so `f.encoding` / `f.errors` reflect them.
+                            let mut kw = |key: &str, pos_idx: usize| -> HirExpr {
+                                args.iter()
+                                    .enumerate()
+                                    .find_map(|(i, a)| match a {
+                                        ast::CallArg::Positional(e) if i == pos_idx => {
+                                            self.lower_expr(e)
+                                        }
+                                        ast::CallArg::Keyword { name: n, value } if n == key => {
+                                            self.lower_expr(value)
+                                        }
+                                        _ => None,
+                                    })
+                                    .unwrap_or_else(|| none_hir.clone())
+                            };
+                            let encoding = kw("encoding", 3);
+                            let errors = kw("errors", 4);
+                            // closefd is positional 6 (after newline at 5); None
+                            // means the default True (no borrowed-fd guard).
+                            let closefd = kw("closefd", 6);
+                            let opener = kw("opener", 7);
+                            if !matches!(opener, HirExpr::NoneLit(_)) {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_open_with_opener".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![path, mode, encoding, errors, closefd, opener],
+                                    ty: any_ty,
+                                });
+                            }
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_open".to_string(), any_ty)),
-                                args: vec![path, mode],
+                                func: Box::new(HirExpr::StrLit("mb_open_ex".to_string(), any_ty)),
+                                args: vec![path, mode, encoding, errors, closefd],
                                 ty: any_ty,
                             });
                         }
@@ -4885,20 +7522,25 @@ impl<'a> AstLowerer<'a> {
                     // We pack all positional args into a list and use mb_call_spread.
                     // For `f(*lst)` with only a star arg, the list IS the spread list.
                     // For `f(a, *lst, b)`, we build a combined [a] + lst + [b] list.
-                    let mut list_elems: Vec<HirExpr> = Vec::new();
-                    let mut star_exprs: Vec<HirExpr> = Vec::new();
-                    // Keyword args in a `*args` call (e.g. `heapq.merge(*streams,
-                    // key=fn)`) must NOT be flattened into the positional spread
-                    // list — that loses the keyword name and mis-positions the
-                    // value as a leading "iterable". Collect them separately so
-                    // they can be appended as a trailing kwargs dict the native
-                    // (args_ptr, nargs) dispatcher recovers by convention.
+                    // Build ordered segments preserving SOURCE ORDER:
+                    //   f(a, *xs, c, *ys)  →  [a] ++ xs ++ [c] ++ ys
+                    // Consecutive positionals coalesce into one List segment; each
+                    // *star is its own iterable segment. The prior code collected
+                    // ALL positionals into a single leading slab, so a positional
+                    // AFTER a star (`f(*xs, c)`) was mis-ordered to the front
+                    // (`[c] ++ xs`). Keyword args in a `*args` call (e.g.
+                    // `heapq.merge(*streams, key=fn)`) must NOT be flattened into
+                    // the positional spread — they are collected separately and
+                    // appended as a trailing kwargs dict the native dispatcher
+                    // recovers by convention.
+                    let mut segments: Vec<HirExpr> = Vec::new();
+                    let mut pending: Vec<HirExpr> = Vec::new();
                     let mut kw_entries: Vec<(HirExpr, HirExpr)> = Vec::new();
                     for a in args {
                         match a {
                             ast::CallArg::Positional(e) => {
                                 if let Some(he) = self.lower_expr(e) {
-                                    list_elems.push(he);
+                                    pending.push(he);
                                 }
                             }
                             ast::CallArg::Keyword { name, value } => {
@@ -4908,50 +7550,67 @@ impl<'a> AstLowerer<'a> {
                                 }
                             }
                             ast::CallArg::StarArg(e) => {
+                                if !pending.is_empty() {
+                                    segments.push(HirExpr::List {
+                                        elements: std::mem::take(&mut pending),
+                                        ty: any_ty,
+                                    });
+                                }
                                 if let Some(he) = self.lower_expr(e) {
-                                    star_exprs.push(he);
+                                    segments.push(he);
                                 }
                             }
                             ast::CallArg::DoubleStarArg(_) => {}
                         }
                     }
-                    // Lowering shapes:
-                    //   f(*xs)                  → spread_list = xs                  (pure splat)
-                    //   f(a, b, *xs)            → spread_list = mb_args_concat([a, b], xs)
-                    //   f(a, *xs, *ys)          → spread_list = mb_args_concat(mb_args_concat([a], xs), ys)
-                    //   f(a, b) without splat   → not this path (has_star == false)
-                    // Suffix-positional (e.g. `f(*xs, c)`) is interleaved with pre-star
-                    // into `list_elems` by the loop above; we conservatively prepend the
-                    // whole `list_elems` slab in front of the splat. That is correct for
-                    // `f(prefix, *xs)` (the common case driven by #2098 — struct.pack,
-                    // assertRaises forwarding); a post-star positional drops to the end
-                    // of the combined list, which is wrong only for the rare
-                    // `f(*xs, c)` shape — tracked as a follow-up.
-                    let mut spread_list = if list_elems.is_empty() && star_exprs.len() == 1 {
-                        star_exprs.remove(0)
-                    } else if star_exprs.is_empty() {
-                        // Unreachable in practice (has_star implies a StarArg branch
-                        // pushed something into star_exprs), kept as a safety net.
+                    if !pending.is_empty() {
+                        segments.push(HirExpr::List {
+                            elements: std::mem::take(&mut pending),
+                            ty: any_ty,
+                        });
+                    }
+                    // Fold segments left-to-right with mb_args_concat, which
+                    // REQUIRES its prefix (first arg) to be a materialized List —
+                    // a non-list prefix is treated as empty and its items lost. So
+                    // when the first segment is a bare starred iterable (`f(*xs)`),
+                    // seed the fold from an empty list; a List-valued first segment
+                    // is used directly. A lone segment (`f(*xs)`) passes straight
+                    // through to mb_call_spread.
+                    let mut spread_list = if segments.len() == 1 {
+                        segments.remove(0)
+                    } else if segments.is_empty() {
                         HirExpr::List {
-                            elements: list_elems.clone(),
+                            elements: Vec::new(),
                             ty: any_ty,
                         }
                     } else {
-                        let prefix = HirExpr::List {
-                            elements: list_elems.clone(),
-                            ty: any_ty,
+                        let mut seg_iter = segments.into_iter();
+                        let first = seg_iter.next().unwrap();
+                        let mut acc = if matches!(first, HirExpr::List { .. }) {
+                            first
+                        } else {
+                            HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_args_concat".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![
+                                    HirExpr::List {
+                                        elements: Vec::new(),
+                                        ty: any_ty,
+                                    },
+                                    first,
+                                ],
+                                ty: any_ty,
+                            }
                         };
-                        // Fold each star expr in turn so multi-star calls work:
-                        //   acc_0 = prefix
-                        //   acc_{i+1} = mb_args_concat(acc_i, star_i)
-                        let mut acc = prefix;
-                        for star in star_exprs.drain(..) {
+                        for seg in seg_iter {
                             acc = HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit(
                                     "mb_args_concat".to_string(),
                                     any_ty,
                                 )),
-                                args: vec![acc, star],
+                                args: vec![acc, seg],
                                 ty: any_ty,
                             };
                         }
@@ -5053,6 +7712,30 @@ impl<'a> AstLowerer<'a> {
                             });
                         }
                     }
+                    // A bare-Ident `*`-splat call that ALSO carries a `**mapping`
+                    // (`collect(0, *[1,2], k=9, **{"m":8})`) must bind its keywords
+                    // — the generic mb_call_spread below drops them. Route through
+                    // mb_call_spread_kwargs with the already-expanded positional
+                    // spread list plus the merged kwargs dict. Scoped to calls with
+                    // a `**` splat (explicit-kwargs-only `*`-splat calls keep their
+                    // existing handling); the builtin idents (zip/min/max/sum/print)
+                    // returned earlier.
+                    if matches!(func.node, ast::Expr::Ident(_))
+                        && args
+                            .iter()
+                            .any(|a| matches!(a, ast::CallArg::DoubleStarArg(_)))
+                    {
+                        if let Some(kwargs_dict) = self.build_kwargs_dict(args, any_ty) {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_call_spread_kwargs".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![f, spread_list, kwargs_dict],
+                                ty: any_ty,
+                            });
+                        }
+                    }
                     return Some(HirExpr::Call {
                         func: Box::new(HirExpr::StrLit("mb_call_spread".to_string(), any_ty)),
                         args: vec![f, spread_list],
@@ -5114,15 +7797,58 @@ impl<'a> AstLowerer<'a> {
                         None
                     };
                     if let Some(ref fname) = func_name {
-                        if let Some(param_info) = self.func_param_info.get(fname).cloned() {
-                            // Separate regular params from *args/**kwargs for ordered resolution.
-                            let regular_params: Vec<(
-                                usize,
-                                &(String, Option<Spanned<ast::Expr>>, ast::ParamKind),
-                            )> = param_info
+                        let param_info = if self.dataclasses_kwarg_idents.contains(fname.as_str()) {
+                            None
+                        } else {
+                            self.func_param_info.get(fname).cloned()
+                        };
+                        if let Some(param_info) = param_info {
+                            if self.funcs_with_mutated_defaults.contains(fname) {
+                                if let Some(call) = self.build_mutated_defaults_call(
+                                    f.clone(),
+                                    fname,
+                                    &param_info,
+                                    args,
+                                    any_ty,
+                                ) {
+                                    return Some(call);
+                                }
+                            }
+                            // A `**mapping` splat has dynamic keys the static
+                            // reorder below cannot bind (it only matches literal
+                            // keyword names; the splat would be dropped). Route the
+                            // whole call through mb_call_spread_kwargs, which binds
+                            // the kwargs dict — including to a `**kwargs` receiver —
+                            // at runtime.
+                            if args
+                                .iter()
+                                .any(|a| matches!(a, ast::CallArg::DoubleStarArg(_)))
+                            {
+                                return Some(self.build_spread_kwargs_call(f, args, any_ty));
+                            }
+                            // Separate positionally-bindable regular params from keyword-only
+                            // slots. ParamInfo preserves ParamKind, while kw-only is tracked
+                            // in arg_bind_sigs from the original AST signature.
+                            let kwonly_names: std::collections::HashSet<String> = self
+                                .arg_bind_sigs
+                                .get(fname)
+                                .map(|sig| {
+                                    sig.iter().filter(|p| p.2).map(|p| p.0.clone()).collect()
+                                })
+                                .unwrap_or_default();
+                            let regular_params: Vec<(usize, &ParamInfo)> = param_info
                                 .iter()
                                 .enumerate()
-                                .filter(|(_, (_, _, k))| *k == ast::ParamKind::Regular)
+                                .filter(|(_, (name, _, k))| {
+                                    *k == ast::ParamKind::Regular && !kwonly_names.contains(name)
+                                })
+                                .collect();
+                            let kwonly_params: Vec<(usize, &ParamInfo)> = param_info
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, (name, _, k))| {
+                                    *k == ast::ParamKind::Regular && kwonly_names.contains(name)
+                                })
                                 .collect();
                             let has_star = param_info
                                 .iter()
@@ -5130,6 +7856,9 @@ impl<'a> AstLowerer<'a> {
                             let has_dstar = param_info
                                 .iter()
                                 .any(|(_, _, k)| *k == ast::ParamKind::DoubleStar);
+                            if has_star && !kwonly_names.is_empty() {
+                                return Some(self.build_spread_kwargs_call(f, args, any_ty));
+                            }
                             // Positional-only param names: a keyword of the same
                             // name does NOT bind the param (CPython) — with
                             // **kwargs it lands in the dict. pos_only is only in
@@ -5145,85 +7874,105 @@ impl<'a> AstLowerer<'a> {
                             } else {
                                 std::collections::HashSet::new()
                             };
-                            let mut ordered: Vec<Option<HirExpr>> =
-                                vec![None; regular_params.len()];
-                            let mut excess_pos: Vec<HirExpr> = Vec::new();
-                            let mut excess_kw: Vec<(String, HirExpr)> = Vec::new();
-                            let mut pos_idx = 0;
+                            let mut positional_values: Vec<HirExpr> = Vec::new();
+                            let mut keyword_values: Vec<(String, HirExpr)> = Vec::new();
                             for a in args {
                                 match a {
                                     ast::CallArg::Positional(e) => {
-                                        if pos_idx < regular_params.len() {
-                                            ordered[pos_idx] = self.lower_expr(e);
-                                            pos_idx += 1;
-                                        } else if has_star {
-                                            if let Some(expr) = self.lower_expr(e) {
-                                                excess_pos.push(expr);
-                                            }
+                                        if let Some(expr) = self.lower_expr(e) {
+                                            positional_values.push(expr);
                                         }
                                     }
                                     ast::CallArg::Keyword { name: kw, value } => {
-                                        // Try to match keyword arg to a regular param name —
-                                        // but never a positional-only param (it cannot be
-                                        // filled by keyword; the keyword belongs in **kwargs).
-                                        let matched = if posonly_names.contains(kw) {
-                                            None
-                                        } else {
-                                            regular_params.iter().position(|(_, (n, _, _))| n == kw)
-                                        };
-                                        if let Some(idx) = matched {
-                                            ordered[idx] = self.lower_expr(value);
-                                        } else if has_dstar {
-                                            // Unmatched (or positional-only) kwargs go to the
-                                            // **kwargs dict.
-                                            if let Some(expr) = self.lower_expr(value) {
-                                                excess_kw.push((kw.clone(), expr));
-                                            }
+                                        if let Some(expr) = self.lower_expr(value) {
+                                            keyword_values.push((kw.clone(), expr));
                                         }
                                     }
                                     _ => {}
                                 }
                             }
-                            // Fill defaults for missing regular args.
-                            for (i, (orig_idx, _)) in regular_params.iter().enumerate() {
-                                if ordered[i].is_none() {
-                                    let (_, ref default, _) = param_info[*orig_idx];
-                                    if let Some(ref def_expr) = default {
-                                        ordered[i] = self.lower_expr(def_expr);
+                            let mut used_kw: std::collections::HashSet<String> =
+                                std::collections::HashSet::new();
+                            let mut hir_args: Vec<HirExpr> = Vec::new();
+                            let excess_pos_values: Vec<HirExpr> = if has_star {
+                                positional_values
+                                    .iter()
+                                    .skip(regular_params.len())
+                                    .cloned()
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                            for (i, (orig_idx, (name, default, _))) in
+                                regular_params.iter().enumerate()
+                            {
+                                if i < positional_values.len() {
+                                    hir_args.push(positional_values[i].clone());
+                                    if keyword_values.iter().any(|(kw, _)| kw == name) {
+                                        used_kw.insert(name.clone());
+                                    }
+                                } else if !posonly_names.contains(name) {
+                                    if let Some((kw, expr)) =
+                                        keyword_values.iter().find(|(kw, _)| kw == name)
+                                    {
+                                        used_kw.insert(kw.clone());
+                                        hir_args.push(expr.clone());
+                                    } else if let Some(def_expr) = default {
+                                        match def_expr {
+                                            ParamDefault::Ast(expr) => {
+                                                if let Some(lowered) = self.lower_expr(expr) {
+                                                    hir_args.push(lowered);
+                                                }
+                                            }
+                                            ParamDefault::Frozen(expr) => {
+                                                hir_args.push(expr.clone())
+                                            }
+                                        }
+                                    }
+                                } else if let Some(def_expr) = &param_info[*orig_idx].1 {
+                                    match def_expr {
+                                        ParamDefault::Ast(expr) => {
+                                            if let Some(lowered) = self.lower_expr(expr) {
+                                                hir_args.push(lowered);
+                                            }
+                                        }
+                                        ParamDefault::Frozen(expr) => hir_args.push(expr.clone()),
                                     }
                                 }
                             }
-                            // Build final HirExpr args: regular_args... [, *args_list] [, **kwargs_dict]
-                            // Note: excess positional/keyword args are NOT appended here.
-                            // They are handled at MIR lowering time via variadic packing.
-                            // However, we pass them as trailing HirExpr elements so the MIR
-                            // lowering can recognize them.
-                            let mut hir_args: Vec<HirExpr> =
-                                ordered.into_iter().flatten().collect();
-                            // For *args: append excess positional args (MIR will pack them)
-                            hir_args.extend(excess_pos);
-                            // For **kwargs: if present, skip here — handled at MIR level
-                            // We store excess kwargs as a dict literal in the call args.
-                            if has_dstar && !excess_kw.is_empty() {
-                                let dict_entries: Vec<(HirExpr, HirExpr)> = excess_kw
+                            for (_orig_idx, (name, default, _)) in kwonly_params {
+                                if let Some((kw, expr)) =
+                                    keyword_values.iter().find(|(kw, _)| kw == name)
+                                {
+                                    used_kw.insert(kw.clone());
+                                    hir_args.push(expr.clone());
+                                } else if let Some(def_expr) = default {
+                                    match def_expr {
+                                        ParamDefault::Ast(expr) => {
+                                            if let Some(lowered) = self.lower_expr(expr) {
+                                                hir_args.push(lowered);
+                                            }
+                                        }
+                                        ParamDefault::Frozen(expr) => hir_args.push(expr.clone()),
+                                    }
+                                }
+                            }
+                            if has_star {
+                                hir_args.extend(excess_pos_values);
+                            }
+                            if has_dstar {
+                                let dict_entries: Vec<(HirExpr, HirExpr)> = keyword_values
                                     .into_iter()
+                                    .filter(|(kw, _)| !used_kw.contains(kw))
                                     .map(|(k, v)| {
                                         let key = HirExpr::StrLit(k, self.checker.tcx.str());
                                         (key, v)
                                     })
                                     .collect();
-                                let dict = HirExpr::Dict {
+                                hir_args.push(HirExpr::Dict {
                                     entries: dict_entries,
                                     ty: any_ty,
-                                };
-                                hir_args.push(dict);
-                            } else if has_dstar {
-                                // No excess kwargs — pass an empty dict
-                                let dict = HirExpr::Dict {
-                                    entries: vec![],
-                                    ty: any_ty,
-                                };
-                                hir_args.push(dict);
+                                });
                             }
                             return Some(HirExpr::Call {
                                 func: Box::new(f),
@@ -5259,8 +8008,10 @@ impl<'a> AstLowerer<'a> {
                     ast::Expr::Ident(name) if matches!(
                         name.as_str(),
                         "Counter" | "OrderedDict" | "deque" | "defaultdict" | "dict"
-                            // namedtuple takes rename= / defaults= / module=
-                            | "namedtuple"
+                            // namedtuple takes rename= / defaults= / module=;
+                            // typing.NamedTuple's keyword field form / mixed-form
+                            // TypeError check reads a trailing kwargs dict.
+                            | "namedtuple" | "NamedTuple"
                             // UserDict seeds its payload from kwargs
                             | "UserDict"
                             // unittest.mock factories take config kwargs
@@ -5268,12 +8019,81 @@ impl<'a> AstLowerer<'a> {
                             | "MagicMock" | "Mock" | "AsyncMock" | "PropertyMock"
                             | "NonCallableMock" | "NonCallableMagicMock"
                             | "patch" | "mock_open" | "call"
+                            // operator.methodcaller(name, *args, **kwargs)
+                            // stores call-time kwargs for the later method call.
+                            | "methodcaller"
                             // urllib.parse functions with behavioral kwargs
                             | "parse_qs" | "parse_qsl" | "urlencode"
+                            // quote/unquote take safe= / encoding= / errors=;
+                            // their native dispatchers read a trailing kwargs
+                            // dict, so a bare from-import must keep the keyword
+                            // names rather than flattening them to positional.
+                            | "quote" | "unquote"
+                            // property(fget=, fset=, fdel=, doc=) keyword form
+                            | "property"
+                            // decimal.localcontext(prec=, rounding=, Emin=, …)
+                            // and Context(...) read a trailing kwargs dict.
+                            | "localcontext" | "Context"
+                            // urllib.request.Request(url, data=, headers=,
+                            // method=) — its native dispatcher reads a trailing
+                            // kwargs dict, so a bare `Request(...)` (from-import)
+                            // must keep the keyword names instead of flattening.
+                            | "Request"
+                            // builtins.open(file, mode=..., encoding=..., closefd=...)
+                            // reads a trailing kwargs dict in its native dispatcher.
+                            | "open"
+                            // xml.etree.ElementTree constructors use **extra
+                            // keyword attributes as element attrib entries.
+                            | "Element" | "SubElement"
+                            // xml.etree.ElementTree.indent reads space=/level=
+                            // from the trailing kwargs dict.
+                            | "indent"
                     ) || self.dataclasses_kwarg_idents.contains(name.as_str())
                 );
-                let pack_trailing_kwargs = (is_method_call && has_any_kwargs)
-                    || (is_native_kwargs_ident && (has_any_kwargs || has_dstar));
+                let is_type_metaclass_kwargs = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name) if name == "type"
+                ) && (has_dstar
+                    || args.iter().any(|a| {
+                        matches!(
+                            a,
+                            ast::CallArg::Keyword { name, .. } if name == "metaclass"
+                        )
+                    }));
+                let is_simple_namespace_subclass_kwargs = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name)
+                        if self.simple_namespace_subclass_idents.contains(name.as_str())
+                );
+                let pack_trailing_kwargs = (is_method_call && (has_any_kwargs || has_dstar))
+                    || (is_native_kwargs_ident && (has_any_kwargs || has_dstar))
+                    || (is_type_metaclass_kwargs && (has_any_kwargs || has_dstar))
+                    || (is_simple_namespace_subclass_kwargs && (has_any_kwargs || has_dstar));
+
+                let is_functools_partial_kwarg_ident = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name)
+                        if self.functools_partial_kwarg_idents.contains(name.as_str())
+                );
+                let is_unittest_mock_kwarg_ident = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name)
+                        if self.unittest_mock_kwarg_idents.contains(name.as_str())
+                );
+                // Dynamic callables such as a bound method stored in a variable
+                // must keep keyword names alive so runtime binding can reject
+                // unknown names (or bind them to FUNC_PARAMS). Known method and
+                // native surfaces above still use their trailing-dict convention.
+                if (has_any_kwargs || has_dstar)
+                    && !pack_trailing_kwargs
+                    && !has_star
+                    && (matches!(&func.node, ast::Expr::Ident(_))
+                        || is_functools_partial_kwarg_ident
+                        || is_unittest_mock_kwarg_ident)
+                {
+                    return Some(self.build_spread_kwargs_call(f, args, any_ty));
+                }
+
                 let hir_args: Vec<HirExpr> = if pack_trailing_kwargs {
                     let mut out: Vec<HirExpr> = Vec::new();
                     // Trailing kwargs accumulator: runs of explicit keywords
@@ -5388,6 +8208,32 @@ impl<'a> AstLowerer<'a> {
                 } else {
                     self.checker.tcx.any()
                 };
+                // Method call carrying keyword args: route to mb_call_method_kwargs
+                // so the runtime binds the keywords to the method's parameters by
+                // name (mb_call_method only takes positional args). `hir_args` is
+                // [pos..., kwargs_dict]; split it into a positional list + the dict.
+                if is_method_call && pack_trailing_kwargs {
+                    if let HirExpr::Attr { object, attr, .. } = f {
+                        let mut parts = hir_args;
+                        let kwargs_dict = parts.pop().unwrap_or(HirExpr::Dict {
+                            entries: vec![],
+                            ty: any_ty,
+                        });
+                        let pos_list = HirExpr::List {
+                            elements: parts,
+                            ty: any_ty,
+                        };
+                        let name_str = HirExpr::StrLit(attr, self.checker.tcx.str());
+                        return Some(HirExpr::Call {
+                            func: Box::new(HirExpr::StrLit(
+                                "mb_call_method_kwargs".to_string(),
+                                any_ty,
+                            )),
+                            args: vec![*object, name_str, pos_list, kwargs_dict],
+                            ty: any_ty,
+                        });
+                    }
+                }
                 Some(HirExpr::Call {
                     func: Box::new(f),
                     args: hir_args,
@@ -5533,6 +8379,21 @@ impl<'a> AstLowerer<'a> {
                             .map(Box::new)
                     })
                     .collect();
+                // CPython inspect.Parameter kind ordinals (mirrors the `def`
+                // signature lowering): 0 POSITIONAL_ONLY, 1 POSITIONAL_OR_KEYWORD,
+                // 2 VAR_POSITIONAL, 3 KEYWORD_ONLY, 4 VAR_KEYWORD. Threaded so a
+                // lambda's __code__.co_posonlyargcount / co_kwonlyargcount report
+                // the `/` and `*` markers.
+                let hir_param_kinds: Vec<u8> = params
+                    .iter()
+                    .map(|p| match p.kind {
+                        ast::ParamKind::Star => 2u8,
+                        ast::ParamKind::DoubleStar => 4u8,
+                        ast::ParamKind::Regular if p.kw_only => 3u8,
+                        ast::ParamKind::Regular if p.pos_only => 0u8,
+                        ast::ParamKind::Regular => 1u8,
+                    })
+                    .collect();
                 // Temporarily register lambda params in local_names so resolve_name()
                 // finds them when lowering the body.  Type-checker scopes are already
                 // popped at lowering time, so we inject the params manually and then
@@ -5578,6 +8439,7 @@ impl<'a> AstLowerer<'a> {
                 let ty = any_ty;
                 Some(HirExpr::Lambda {
                     params: hir_params,
+                    param_kinds: hir_param_kinds,
                     defaults: hir_defaults,
                     body: Box::new(body_expr),
                     ty,
@@ -5659,6 +8521,43 @@ impl<'a> AstLowerer<'a> {
                 element,
                 generators,
             } => {
+                let walrus_targets = genexpr_walrus_targets(element, generators);
+                let any_ty = self.checker.tcx.any();
+                for target in &walrus_targets {
+                    if !self.local_names.contains_key(target) {
+                        self.define_local(target, any_ty);
+                    }
+                }
+
+                if self.in_function_body {
+                    let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
+                    let fn_sym = self.define_local(&fn_name, any_ty);
+                    let body = genexpr_body_from_comprehensions(
+                        element,
+                        generators,
+                        &walrus_targets,
+                        expr.span,
+                    );
+                    let return_ty: Option<Spanned<ast::TypeExpr>> = None;
+                    if let Some(mut func) =
+                        self.lower_fn(&fn_name, &[], &return_ty, &body, expr.span)
+                    {
+                        let int_ty = self.checker.tcx.int();
+                        func.is_generator = true;
+                        func.return_ty = int_ty;
+                        self.func_return_tys.insert(func.name, int_ty);
+                        for sym in &func.captures {
+                            self.cell_override_syms.insert(*sym);
+                        }
+                        self.result.functions.push(func);
+                        return Some(HirExpr::Call {
+                            func: Box::new(HirExpr::Var(fn_sym, any_ty)),
+                            args: Vec::new(),
+                            ty: int_ty,
+                        });
+                    }
+                }
+
                 // Desugar generator expression to an ITERATOR over an eager list
                 // comprehension. A genexpr is a single-use iterator in CPython, so
                 // `next(genexpr)` must work and the value must not be reusable/
@@ -6005,10 +8904,16 @@ impl<'a> AstLowerer<'a> {
         for (name, old_sym) in saved {
             match old_sym {
                 Some(id) => {
-                    self.local_names.insert(name, id);
+                    self.local_names.insert(name.clone(), id);
+                    if !self.in_function_body {
+                        self.module_deleted_names.remove(&name);
+                    }
                 }
                 None => {
                     self.local_names.remove(&name);
+                    if !self.in_function_body {
+                        self.module_deleted_names.insert(name);
+                    }
                 }
             }
         }
@@ -6039,6 +8944,8 @@ impl<'a> AstLowerer<'a> {
                 Some(HirComprehension {
                     var,
                     extra_vars,
+                    unpack_target: g.unpack_target,
+                    target_reads_before_bind: g.target_reads_before_bind.clone(),
                     iter,
                     conditions,
                     is_async: g.is_async,
@@ -6259,6 +9166,262 @@ impl<'a> AstLowerer<'a> {
         }
         // Fall back to global scope (functions, classes — still in checker)
         self.checker.symbols.lookup(name)
+    }
+
+    fn is_function_local_unbound_read(&self, name: &str) -> bool {
+        self.in_function_body
+            && self.local_assigned_names.iter().any(|n| n == name)
+            && !self.local_declared_names.iter().any(|n| n == name)
+            && !self.local_names.contains_key(name)
+    }
+
+    fn unbound_local_error_expr(&self, name: &str) -> HirExpr {
+        let any_ty = self.checker.tcx.any();
+        HirExpr::Call {
+            func: Box::new(HirExpr::StrLit(
+                "mb_unbound_local_error_value".to_string(),
+                any_ty,
+            )),
+            args: vec![HirExpr::StrLit(name.to_string(), self.checker.tcx.str())],
+            ty: any_ty,
+        }
+    }
+
+    fn build_mutated_defaults_call(
+        &mut self,
+        f: HirExpr,
+        fname: &str,
+        param_info: &[ParamInfo],
+        args: &[ast::CallArg],
+        any_ty: TypeId,
+    ) -> Option<HirExpr> {
+        if args
+            .iter()
+            .any(|a| matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)))
+            || param_info
+                .iter()
+                .any(|(_, _, k)| matches!(k, ast::ParamKind::Star | ast::ParamKind::DoubleStar))
+        {
+            return None;
+        }
+
+        let kwonly_names: std::collections::HashSet<String> = self
+            .arg_bind_sigs
+            .get(fname)
+            .map(|sig| sig.iter().filter(|p| p.2).map(|p| p.0.clone()).collect())
+            .unwrap_or_default();
+        if !kwonly_names.is_empty() {
+            return None;
+        }
+        let posonly_names: std::collections::HashSet<String> = self
+            .arg_bind_sigs
+            .get(fname)
+            .map(|sig| sig.iter().filter(|p| p.5).map(|p| p.0.clone()).collect())
+            .unwrap_or_default();
+        let regular_params: Vec<&ParamInfo> = param_info
+            .iter()
+            .filter(|(name, _, k)| *k == ast::ParamKind::Regular && !kwonly_names.contains(name))
+            .collect();
+        let mut positional_values: Vec<HirExpr> = Vec::new();
+        let mut keyword_values: Vec<(String, HirExpr)> = Vec::new();
+        for a in args {
+            match a {
+                ast::CallArg::Positional(e) => {
+                    positional_values.push(self.lower_expr(e)?);
+                }
+                ast::CallArg::Keyword { name, value } => {
+                    keyword_values.push((name.clone(), self.lower_expr(value)?));
+                }
+                _ => return None,
+            }
+        }
+        if positional_values.len() > regular_params.len() {
+            return None;
+        }
+
+        let defaults_attr = HirExpr::Attr {
+            object: Box::new(f.clone()),
+            attr: "__defaults__".to_string(),
+            ty: any_ty,
+        };
+        let int_ty = self.checker.tcx.int();
+        let regular_count = regular_params.len() as i64;
+        let mut hir_args = Vec::with_capacity(regular_params.len());
+        for (i, (name, _, _)) in regular_params.into_iter().enumerate() {
+            if i < positional_values.len() {
+                hir_args.push(positional_values[i].clone());
+            } else if !posonly_names.contains(name) {
+                if let Some((_kw, expr)) = keyword_values.iter().find(|(kw, _)| kw == name) {
+                    hir_args.push(expr.clone());
+                    continue;
+                }
+                hir_args.push(HirExpr::Index {
+                    object: Box::new(defaults_attr.clone()),
+                    index: Box::new(HirExpr::IntLit(i as i64 - regular_count, int_ty)),
+                    ty: any_ty,
+                });
+            } else {
+                hir_args.push(HirExpr::Index {
+                    object: Box::new(defaults_attr.clone()),
+                    index: Box::new(HirExpr::IntLit(i as i64 - regular_count, int_ty)),
+                    ty: any_ty,
+                });
+            }
+        }
+        Some(HirExpr::Call {
+            func: Box::new(f),
+            args: hir_args,
+            ty: any_ty,
+        })
+    }
+
+    /// Build a `mb_call_spread_kwargs(f, pos_list, kwargs_dict)` call for a
+    /// call carrying a `**mapping` splat. Positionals (and any `*` splats) form
+    /// the ordered positional list; explicit keywords and each `**mapping` merge
+    /// in source order via mb_dict_merge into the kwargs dict. The runtime helper
+    /// binds the kwargs dict to the callee's declared params (or `**kwargs`
+    /// receiver) at call time — the static reorder can't, since the keys are
+    /// dynamic.
+    fn build_spread_kwargs_call(
+        &mut self,
+        f: HirExpr,
+        args: &[ast::CallArg],
+        any_ty: TypeId,
+    ) -> HirExpr {
+        let merge = |acc: HirExpr, next: HirExpr| HirExpr::Call {
+            func: Box::new(HirExpr::StrLit("mb_dict_merge".to_string(), any_ty)),
+            args: vec![acc, next],
+            ty: any_ty,
+        };
+        let mut pos_elems: Vec<HirExpr> = Vec::new();
+        let mut kw_acc: Option<HirExpr> = None;
+        let mut pend: Vec<(HirExpr, HirExpr)> = Vec::new();
+        for a in args {
+            match a {
+                ast::CallArg::Positional(e) | ast::CallArg::StarArg(e) => {
+                    if let Some(he) = self.lower_expr(e) {
+                        pos_elems.push(he);
+                    }
+                }
+                ast::CallArg::Keyword { name, value } => {
+                    if let Some(he) = self.lower_expr(value) {
+                        pend.push((HirExpr::StrLit(name.clone(), self.checker.tcx.str()), he));
+                    }
+                }
+                ast::CallArg::DoubleStarArg(e) => {
+                    if let Some(he) = self.lower_expr(e) {
+                        if !pend.is_empty() {
+                            let chunk = HirExpr::Dict {
+                                entries: std::mem::take(&mut pend),
+                                ty: any_ty,
+                            };
+                            kw_acc = Some(match kw_acc.take() {
+                                None => chunk,
+                                Some(prev) => merge(prev, chunk),
+                            });
+                        }
+                        kw_acc = Some(match kw_acc.take() {
+                            None => he,
+                            Some(prev) => merge(prev, he),
+                        });
+                    }
+                }
+            }
+        }
+        if !pend.is_empty() {
+            let chunk = HirExpr::Dict {
+                entries: pend,
+                ty: any_ty,
+            };
+            kw_acc = Some(match kw_acc.take() {
+                None => chunk,
+                Some(prev) => merge(prev, chunk),
+            });
+        }
+        let kwargs_dict = kw_acc.unwrap_or(HirExpr::Dict {
+            entries: vec![],
+            ty: any_ty,
+        });
+        let pos_list = HirExpr::List {
+            elements: pos_elems,
+            ty: any_ty,
+        };
+        HirExpr::Call {
+            func: Box::new(HirExpr::StrLit("mb_call_spread_kwargs".to_string(), any_ty)),
+            args: vec![f, pos_list, kwargs_dict],
+            ty: any_ty,
+        }
+    }
+
+    /// Build the merged kwargs dict for a call's explicit keywords and
+    /// `**mapping` splats, in source order (later wins, via mb_dict_merge).
+    /// Returns None when the call has no keyword/`**` arguments.
+    fn build_kwargs_dict(&mut self, args: &[ast::CallArg], any_ty: TypeId) -> Option<HirExpr> {
+        let merge = |acc: HirExpr, next: HirExpr| HirExpr::Call {
+            func: Box::new(HirExpr::StrLit("mb_dict_merge".to_string(), any_ty)),
+            args: vec![acc, next],
+            ty: any_ty,
+        };
+        let mut kw_acc: Option<HirExpr> = None;
+        let mut pend: Vec<(HirExpr, HirExpr)> = Vec::new();
+        for a in args {
+            match a {
+                ast::CallArg::Keyword { name, value } => {
+                    if let Some(he) = self.lower_expr(value) {
+                        pend.push((HirExpr::StrLit(name.clone(), self.checker.tcx.str()), he));
+                    }
+                }
+                ast::CallArg::DoubleStarArg(e) => {
+                    if let Some(he) = self.lower_expr(e) {
+                        if !pend.is_empty() {
+                            let chunk = HirExpr::Dict {
+                                entries: std::mem::take(&mut pend),
+                                ty: any_ty,
+                            };
+                            kw_acc = Some(match kw_acc.take() {
+                                None => chunk,
+                                Some(prev) => merge(prev, chunk),
+                            });
+                        }
+                        kw_acc = Some(match kw_acc.take() {
+                            None => he,
+                            Some(prev) => merge(prev, he),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !pend.is_empty() {
+            let chunk = HirExpr::Dict {
+                entries: pend,
+                ty: any_ty,
+            };
+            kw_acc = Some(match kw_acc.take() {
+                None => chunk,
+                Some(prev) => merge(prev, chunk),
+            });
+        }
+        kw_acc
+    }
+
+    /// Build `raise NameError(..., name='<name>')` as a HirStmt for a reference
+    /// to an undefined name.
+    fn name_error_raise(&self, name: &str, span: Span) -> Option<HirStmt> {
+        let any_ty = self.checker.tcx.any();
+        let call = HirExpr::Call {
+            func: Box::new(HirExpr::StrLit(
+                "mb_name_error_with_name".to_string(),
+                any_ty,
+            )),
+            args: vec![HirExpr::StrLit(name.to_string(), self.checker.tcx.str())],
+            ty: any_ty,
+        };
+        Some(HirStmt::Raise {
+            value: Some(call),
+            from: None,
+            span,
+        })
     }
 
     #[allow(dead_code)]
@@ -7053,6 +10216,33 @@ mod tests {
     }
 
     #[test]
+    fn test_lower_fn_returning_local_heap_value_is_any() {
+        let mut checker = TypeChecker::new();
+        checker
+            .symbols
+            .define("groups".to_string(), crate::resolve::SymbolKind::Function);
+        let module = Module {
+            stmts: vec![sp(Stmt::FnDef {
+                decorators: vec![],
+                name: "groups".to_string(),
+                type_params: vec![],
+                params: vec![],
+                return_ty: None,
+                body: vec![
+                    sp(Stmt::Assign {
+                        target: sp(Expr::Ident("out".to_string())),
+                        value: sp(Expr::ListLit(vec![])),
+                    }),
+                    sp(Stmt::Return(Some(sp(Expr::Ident("out".to_string()))))),
+                ],
+            })],
+        };
+        let hir = lower_module(&module, &checker).unwrap();
+        assert_eq!(hir.functions.len(), 1);
+        assert_eq!(hir.functions[0].return_ty, checker.tcx.any());
+    }
+
+    #[test]
     fn test_lower_fn_nested_def() {
         // Nested function should appear in hir.functions as well as outer
         let mut checker = TypeChecker::new();
@@ -7246,6 +10436,101 @@ mod tests {
     }
 
     #[test]
+    fn test_lower_method_class_cell_preserves_class_symbol_name() {
+        let hir = helper_lower_with_classes(
+            vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "WithClassRef".to_string(),
+                type_params: vec![],
+                bases: vec![],
+                keyword_args: vec![],
+                body: vec![sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "method".to_string(),
+                    type_params: vec![],
+                    params: vec![make_param("self")],
+                    return_ty: None,
+                    body: vec![sp(Stmt::Return(Some(sp(Expr::Ident(
+                        "__class__".to_string(),
+                    )))))],
+                })],
+            })],
+            &["WithClassRef"],
+        );
+
+        let class = &hir.classes[0];
+        assert_eq!(
+            hir.sym_names.get(&class.name).map(String::as_str),
+            Some("WithClassRef")
+        );
+        assert!(
+            class.methods[0].captures.contains(&class.name),
+            "method __class__ reference must capture the enclosing class symbol"
+        );
+        assert!(class.class_cell_required);
+    }
+
+    #[test]
+    fn test_lower_class_attr_call_can_reference_prior_method() {
+        let mut checker = TypeChecker::new();
+        checker
+            .symbols
+            .define("Adder".to_string(), crate::resolve::SymbolKind::Class);
+        checker.symbols.define(
+            "functools".to_string(),
+            crate::resolve::SymbolKind::Variable,
+        );
+        let module = Module {
+            stmts: vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "Adder".to_string(),
+                type_params: vec![],
+                bases: vec![],
+                keyword_args: vec![],
+                body: vec![
+                    sp(Stmt::FnDef {
+                        decorators: vec![],
+                        name: "add".to_string(),
+                        type_params: vec![],
+                        params: vec![make_param("self"), make_param("a"), make_param("b")],
+                        return_ty: None,
+                        body: vec![sp(Stmt::Return(Some(sp(Expr::BinOp {
+                            op: BinOp::Add,
+                            lhs: Box::new(sp(Expr::Ident("a".to_string()))),
+                            rhs: Box::new(sp(Expr::Ident("b".to_string()))),
+                        }))))],
+                    }),
+                    sp(Stmt::Assign {
+                        target: sp(Expr::Ident("add_one".to_string())),
+                        value: sp(Expr::Call {
+                            func: Box::new(sp(Expr::Attr {
+                                object: Box::new(sp(Expr::Ident("functools".to_string()))),
+                                attr: "partialmethod".to_string(),
+                            })),
+                            args: vec![
+                                CallArg::Positional(sp(Expr::Ident("add".to_string()))),
+                                CallArg::Positional(sp(Expr::IntLit(1))),
+                            ],
+                        }),
+                    }),
+                ],
+            })],
+        };
+        let hir = lower_module(&module, &checker).unwrap();
+        let class = &hir.classes[0];
+        let method_sym = class.methods[0].name;
+        let (_, attr_expr) = class
+            .class_attr_assigns
+            .iter()
+            .find(|(name, _)| name == "add_one")
+            .expect("missing add_one class attr");
+        let HirExpr::Call { args, .. } = attr_expr else {
+            panic!("add_one must lower to a partialmethod call");
+        };
+        assert!(matches!(&args[0], HirExpr::Var(sym, _) if *sym == method_sym));
+    }
+
+    #[test]
     fn test_lower_class_with_field() {
         // Field name "myfield" must also be pre-registered so resolve_name can find it.
         let mut checker = TypeChecker::new();
@@ -7272,6 +10557,216 @@ mod tests {
         let hir = lower_module(&module, &checker).unwrap();
         assert_eq!(hir.classes.len(), 1);
         assert_eq!(hir.classes[0].fields.len(), 1);
+    }
+
+    #[test]
+    fn test_lower_enum_base_keeps_class_attrs() {
+        let hir = helper_lower_with_classes(
+            vec![
+                sp(Stmt::Import {
+                    module: vec!["enum".to_string()],
+                    names: Some(vec![("Enum".to_string(), None)]),
+                    module_alias: None,
+                }),
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Color".to_string(),
+                    type_params: vec![],
+                    bases: vec![sp(Expr::Ident("Enum".to_string()))],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Assign {
+                        target: sp(Expr::Ident("RED".to_string())),
+                        value: sp(Expr::IntLit(1)),
+                    })],
+                }),
+            ],
+            &["Color"],
+        );
+        assert_eq!(hir.classes.len(), 1);
+        let class = &hir.classes[0];
+        assert!(class
+            .class_attr_assigns
+            .iter()
+            .any(|(name, _)| name == "RED"));
+    }
+
+    #[test]
+    fn test_lower_enum_ignore_vars_generated_attrs() {
+        let hir = helper_lower_with_classes(
+            vec![
+                sp(Stmt::Import {
+                    module: vec!["enum".to_string()],
+                    names: None,
+                    module_alias: None,
+                }),
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Days".to_string(),
+                    type_params: vec![],
+                    bases: vec![sp(Expr::Attr {
+                        object: Box::new(sp(Expr::Ident("enum".to_string()))),
+                        attr: "Enum".to_string(),
+                    })],
+                    keyword_args: vec![],
+                    body: vec![
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("_ignore_".to_string())),
+                            value: sp(Expr::StrLit("Days i".to_string())),
+                        }),
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("Days".to_string())),
+                            value: sp(Expr::Call {
+                                func: Box::new(sp(Expr::Ident("vars".to_string()))),
+                                args: vec![],
+                            }),
+                        }),
+                        sp(Stmt::For {
+                            targets: vec!["i".to_string()],
+                            var_ty: None,
+                            iter: sp(Expr::Call {
+                                func: Box::new(sp(Expr::Ident("range".to_string()))),
+                                args: vec![
+                                    CallArg::Positional(sp(Expr::IntLit(1))),
+                                    CallArg::Positional(sp(Expr::IntLit(4))),
+                                ],
+                            }),
+                            body: vec![sp(Stmt::Assign {
+                                target: sp(Expr::Index {
+                                    object: Box::new(sp(Expr::Ident("Days".to_string()))),
+                                    index: Box::new(sp(Expr::BinOp {
+                                        op: BinOp::Mod,
+                                        lhs: Box::new(sp(Expr::StrLit("DAY_%d".to_string()))),
+                                        rhs: Box::new(sp(Expr::Ident("i".to_string()))),
+                                    })),
+                                }),
+                                value: sp(Expr::Ident("i".to_string())),
+                            })],
+                            else_body: None,
+                        }),
+                    ],
+                }),
+            ],
+            &["Days"],
+        );
+        assert_eq!(hir.classes.len(), 1);
+        let class = &hir.classes[0];
+        let names: Vec<&str> = class
+            .class_attr_assigns
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert!(names.contains(&"DAY_1"));
+        assert!(names.contains(&"DAY_2"));
+        assert!(names.contains(&"DAY_3"));
+        assert!(!names.contains(&"Days"));
+        assert!(!names.contains(&"i"));
+        assert!(!names.contains(&"_ignore_"));
+    }
+
+    #[test]
+    fn test_lower_nested_class_as_class_attr() {
+        let hir = helper_lower_with_classes(
+            vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "Outer".to_string(),
+                type_params: vec![],
+                bases: vec![],
+                keyword_args: vec![],
+                body: vec![sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Inner".to_string(),
+                    type_params: vec![],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Pass)],
+                })],
+            })],
+            &["Outer"],
+        );
+        assert_eq!(hir.classes.len(), 2);
+        assert!(hir.classes.iter().any(|class| {
+            class
+                .class_attr_assigns
+                .iter()
+                .any(|(name, value)| name == "Inner" && matches!(value, HirExpr::Var(..)))
+        }));
+    }
+
+    #[test]
+    fn test_lower_nested_class_with_attrs_runs_before_outer_attr_binding() {
+        let hir = helper_lower_with_classes(
+            vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "Outer".to_string(),
+                type_params: vec![],
+                bases: vec![],
+                keyword_args: vec![],
+                body: vec![sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Inner".to_string(),
+                    type_params: vec![],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Assign {
+                        target: sp(Expr::Ident("flavor".to_string())),
+                        value: sp(Expr::StrLit("inner".to_string())),
+                    })],
+                })],
+            })],
+            &["Outer"],
+        );
+        let inner_sym = hir
+            .sym_names
+            .iter()
+            .find_map(|(sym, name)| (name == "Inner").then_some(*sym))
+            .expect("Inner symbol should be present");
+        let outer = hir
+            .classes
+            .iter()
+            .find(|class| hir.sym_names.get(&class.name).is_some_and(|name| name == "Outer"))
+            .expect("Outer class should be present");
+        assert!(
+            outer
+                .class_body_stmts
+                .iter()
+                .any(|stmt| matches!(stmt, HirStmt::ClassDefPlaceholder { name, .. } if *name == inner_sym)),
+            "Inner placeholder must run before Outer binds Inner as a class attr"
+        );
+    }
+
+    #[test]
+    fn test_lower_starred_generic_class_bases_as_runtime_list() {
+        let hir = helper_lower_with_classes(
+            vec![
+                sp(Stmt::VarDecl {
+                    name: "bases".to_string(),
+                    ty: sp(TypeExpr::Named("Any".to_string())),
+                    value: sp(Expr::ListLit(vec![sp(Expr::Ident("Base".to_string()))])),
+                }),
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Starred".to_string(),
+                    type_params: vec![TypeParam::plain("T")],
+                    bases: vec![sp(Expr::Starred(Box::new(sp(Expr::Ident(
+                        "bases".to_string(),
+                    )))))],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Pass)],
+                }),
+            ],
+            &["Base", "Starred"],
+        );
+        let class = hir
+            .classes
+            .iter()
+            .find(|class| class.runtime_base_list_expr.is_some())
+            .expect("Starred class should lower with a runtime base list");
+        assert!(
+            hir.top_level
+                .iter()
+                .any(|stmt| matches!(stmt, HirStmt::ClassDefPlaceholder { name, .. } if *name == class.name)),
+            "starred class bases require a textual class placeholder"
+        );
     }
 
     #[test]
@@ -7733,6 +11228,8 @@ mod tests {
     fn test_lower_list_comp() {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
+            unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![sp(Expr::IntLit(1))])),
             conditions: vec![],
             is_async: false,
@@ -7752,6 +11249,8 @@ mod tests {
     fn test_lower_dict_comp() {
         let gen = Comprehension {
             targets: vec!["k".to_string()],
+            unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: false,
@@ -7774,6 +11273,8 @@ mod tests {
     fn test_lower_set_comp() {
         let gen = Comprehension {
             targets: vec!["s".to_string()],
+            unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: false,
@@ -7792,12 +11293,14 @@ mod tests {
     }
 
     #[test]
-    fn test_lower_generator_expr_desugared_to_list_comp() {
-        // GeneratorExpr is desugared to mb_iter(<ListComp>): the eager list
-        // comprehension is wrapped in an iterator so the genexpr keeps
-        // single-use iterator identity (next() works, no len()/indexing).
+    fn test_lower_generator_expr_to_synthetic_generator() {
+        // Top-level GeneratorExpr lowers to an eager iterator fallback. The
+        // synthetic generator path is reserved for function bodies where the
+        // generator runtime has a valid caller frame context.
         let gen = Comprehension {
             targets: vec!["g".to_string()],
+            unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: false,
@@ -7806,18 +11309,48 @@ mod tests {
             element: Box::new(sp(Expr::IntLit(0))),
             generators: vec![gen],
         })))]);
+        assert!(hir.functions.is_empty());
         match &hir.top_level[0] {
             HirStmt::Expr {
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert!(
-                    matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"),
-                    "genexpr must lower to an mb_iter call"
-                );
-                assert!(matches!(args.first(), Some(HirExpr::ListComp { .. })));
+                assert_eq!(args.len(), 1);
+                assert!(matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"));
+                assert!(matches!(&args[0], HirExpr::ListComp { .. }));
             }
-            other => panic!("expected mb_iter(ListComp) call, got {other:?}"),
+            other => panic!("expected iterator fallback call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_lower_walrus_generator_expr_to_synthetic_generator() {
+        let gen = Comprehension {
+            targets: vec!["g".to_string()],
+            unpack_target: false,
+            target_reads_before_bind: Vec::new(),
+            iter: sp(Expr::ListLit(vec![sp(Expr::IntLit(1))])),
+            conditions: vec![],
+            is_async: false,
+        };
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::GeneratorExpr {
+            element: Box::new(sp(Expr::Walrus {
+                target: "seen".to_string(),
+                value: Box::new(sp(Expr::Ident("g".to_string()))),
+            })),
+            generators: vec![gen],
+        })))]);
+        assert!(hir.functions.is_empty());
+        match &hir.top_level[0] {
+            HirStmt::Expr {
+                expr: HirExpr::Call { func, args, .. },
+                ..
+            } => {
+                assert_eq!(args.len(), 1);
+                assert!(matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"));
+                assert!(matches!(&args[0], HirExpr::ListComp { .. }));
+            }
+            other => panic!("expected iterator fallback call, got {other:?}"),
         }
     }
 
@@ -7825,6 +11358,8 @@ mod tests {
     fn test_lower_list_comp_with_filter() {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
+            unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![
                 sp(Expr::IntLit(1)),
                 sp(Expr::IntLit(2)),
@@ -7851,6 +11386,8 @@ mod tests {
     fn test_lower_list_comp_async() {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
+            unpack_target: false,
+            target_reads_before_bind: Vec::new(),
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: true,
@@ -7952,6 +11489,41 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn test_lower_match_class_pattern_promotes_unannotated_subject_param() {
+        let mut checker = TypeChecker::new();
+        checker
+            .symbols
+            .define("kind".to_string(), crate::resolve::SymbolKind::Function);
+        checker
+            .symbols
+            .define("bool".to_string(), crate::resolve::SymbolKind::Class);
+        let module = Module {
+            stmts: vec![sp(Stmt::FnDef {
+                decorators: vec![],
+                name: "kind".to_string(),
+                type_params: vec![],
+                params: vec![make_param("x")],
+                return_ty: None,
+                body: vec![sp(Stmt::Match {
+                    expr: sp(Expr::Ident("x".to_string())),
+                    arms: vec![MatchArm {
+                        pattern: sp(Pattern::ClassPattern {
+                            cls: vec!["bool".to_string()],
+                            patterns: vec![(None, sp(Pattern::Binding("b".to_string())))],
+                        }),
+                        guard: None,
+                        body: vec![sp(Stmt::Pass)],
+                        span: Span::dummy(),
+                    }],
+                })],
+            })],
+        };
+        let hir = lower_module(&module, &checker).expect("lower failed");
+        assert_eq!(hir.functions.len(), 1);
+        assert_eq!(hir.functions[0].params[0].1, checker.tcx.any());
+    }
+
     // -------------------------------------------------------------------------
     // 17. Del statement
     // -------------------------------------------------------------------------
@@ -8044,9 +11616,17 @@ mod tests {
 
     #[test]
     fn test_lower_nonlocal_decl() {
-        // `nonlocal x` at top level — syms vec will be empty (no outer scope)
-        let hir = helper_lower(vec![sp(Stmt::Nonlocal(vec!["n".to_string()]))]);
-        assert!(matches!(&hir.top_level[0], HirStmt::Nonlocal { .. }));
+        // `nonlocal x` at top level is a compile-time SyntaxError.
+        let checker = TypeChecker::new();
+        let module = Module {
+            stmts: vec![sp(Stmt::Nonlocal(vec!["n".to_string()]))],
+        };
+        let err = lower_module(&module, &checker).expect_err("nonlocal must fail");
+        assert!(
+            err[0].to_string().contains("nonlocal"),
+            "error should mention nonlocal: {:?}",
+            err
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -8133,6 +11713,172 @@ mod tests {
             &hir.top_level[0],
             HirStmt::Expr { expr: HirExpr::Call { args, .. }, .. } if args.len() == 1
         ));
+    }
+
+    #[test]
+    fn test_lower_set_constructor_two_positional_args_raises_type_error() {
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Call {
+            func: Box::new(sp(Expr::Ident("set".to_string()))),
+            args: vec![
+                CallArg::Positional(sp(Expr::ListLit(vec![]))),
+                CallArg::Positional(sp(Expr::IntLit(2))),
+            ],
+        })))]);
+        let HirStmt::Expr {
+            expr: HirExpr::Call { func, args, .. },
+            ..
+        } = &hir.top_level[0]
+        else {
+            panic!("expected lowered TypeError call");
+        };
+        assert!(matches!(
+            func.as_ref(),
+            HirExpr::StrLit(name, _) if name == "mb_arg_bind_error"
+        ));
+        assert!(matches!(
+            args.as_slice(),
+            [HirExpr::StrLit(msg, _)]
+                if msg == "set expected at most 1 argument, got 2"
+        ));
+    }
+
+    #[test]
+    fn test_lower_mutated_defaults_call_reads_live_defaults() {
+        let mut a = make_param("a");
+        a.pos_only = true;
+        let mut b = make_param("b");
+        b.pos_only = true;
+        b.default = Some(sp(Expr::IntLit(2)));
+        let mut c = make_param("c");
+        c.default = Some(sp(Expr::IntLit(3)));
+
+        let stmts = vec![
+            sp(Stmt::FnDef {
+                decorators: vec![],
+                name: "m".to_string(),
+                type_params: vec![],
+                params: vec![a, b, c],
+                return_ty: None,
+                body: vec![sp(Stmt::Return(None))],
+            }),
+            sp(Stmt::Assign {
+                target: sp(Expr::Attr {
+                    object: Box::new(sp(Expr::Ident("m".to_string()))),
+                    attr: "__defaults__".to_string(),
+                }),
+                value: sp(Expr::TupleLit(vec![
+                    sp(Expr::IntLit(1)),
+                    sp(Expr::IntLit(2)),
+                    sp(Expr::IntLit(3)),
+                ])),
+            }),
+            sp(Stmt::ExprStmt(sp(Expr::Call {
+                func: Box::new(sp(Expr::Ident("m".to_string()))),
+                args: vec![],
+            }))),
+        ];
+        let mut checker = TypeChecker::new();
+        checker
+            .symbols
+            .define("m".to_string(), crate::resolve::SymbolKind::Function);
+        let any_ty = checker.tcx.any();
+        let module = Module { stmts };
+        let hir = lower_module(&module, &checker).expect("lower failed");
+
+        assert!(
+            !hir.boxed_param_funcs.is_empty(),
+            "defaults-mutated function must be marked for boxed-param runtime calls"
+        );
+        assert!(hir.functions.iter().any(|func| {
+            func.params.iter().all(|(_, ty)| *ty == any_ty) && func.return_ty == any_ty
+        }));
+
+        let Some(HirStmt::Expr {
+            expr: HirExpr::Call { args, .. },
+            ..
+        }) = hir.top_level.last()
+        else {
+            panic!("expected final call expression");
+        };
+        assert_eq!(args.len(), 3);
+        for (idx, arg) in args.iter().enumerate() {
+            assert!(matches!(
+                arg,
+                HirExpr::Index {
+                    object,
+                    index,
+                    ..
+                } if matches!(
+                    (object.as_ref(), index.as_ref()),
+                    (
+                        HirExpr::Attr { attr, .. },
+                        HirExpr::IntLit(n, _),
+                    ) if attr == "__defaults__" && *n == idx as i64 - 3
+                )
+            ));
+        }
+    }
+
+    #[test]
+    fn test_lower_dynamic_ident_call_with_kwargs_preserves_keyword_names() {
+        let hir = helper_lower(vec![
+            sp(Stmt::VarDecl {
+                name: "closure".to_string(),
+                ty: sp(TypeExpr::Named("Any".to_string())),
+                value: sp(Expr::IntLit(0)),
+            }),
+            sp(Stmt::ExprStmt(sp(Expr::Call {
+                func: Box::new(sp(Expr::Ident("closure".to_string()))),
+                args: vec![CallArg::Keyword {
+                    name: "_O2__arg".to_string(),
+                    value: sp(Expr::IntLit(2)),
+                }],
+            }))),
+        ]);
+        let HirStmt::Expr {
+            expr: HirExpr::Call { func, args, .. },
+            ..
+        } = &hir.top_level[1]
+        else {
+            panic!("expected lowered dynamic call");
+        };
+        assert!(matches!(
+            func.as_ref(),
+            HirExpr::StrLit(name, _) if name == "mb_call_spread_kwargs"
+        ));
+        assert_eq!(args.len(), 3);
+        assert!(matches!(&args[1], HirExpr::List { elements, .. } if elements.is_empty()));
+        assert!(matches!(
+            &args[2],
+            HirExpr::Dict { entries, .. }
+                if matches!(entries.as_slice(), [(HirExpr::StrLit(name, _), _)] if name == "_O2__arg")
+        ));
+    }
+
+    #[test]
+    fn test_lower_str_keyword_constructor_uses_decode_helper() {
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Call {
+            func: Box::new(sp(Expr::Ident("str".to_string()))),
+            args: vec![CallArg::Keyword {
+                name: "object".to_string(),
+                value: sp(Expr::StrLit("bar".to_string())),
+            }],
+        })))]);
+        let HirStmt::Expr {
+            expr: HirExpr::Call { func, args, .. },
+            ..
+        } = &hir.top_level[0]
+        else {
+            panic!("expected lowered str call");
+        };
+        assert!(matches!(
+            func.as_ref(),
+            HirExpr::StrLit(name, _) if name == "mb_str_construct"
+        ));
+        assert_eq!(args.len(), 3);
+        assert!(matches!(&args[0], HirExpr::StrLit(value, _) if value == "bar"));
+        assert!(matches!(&args[1], HirExpr::NoneLit(_)));
+        assert!(matches!(&args[2], HirExpr::NoneLit(_)));
     }
 
     #[test]
@@ -8578,6 +12324,49 @@ mod tests {
             &hir.top_level[0],
             HirStmt::FuncDefPlaceholder { .. }
         ));
+    }
+
+    #[test]
+    fn test_function_default_is_frozen_at_definition_site() {
+        let mut param = make_param("x");
+        param.default = Some(sp(Expr::Walrus {
+            target: "n".to_string(),
+            value: Box::new(sp(Expr::IntLit(5))),
+        }));
+        let hir = helper_lower_with_fns(
+            vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".to_string(),
+                    type_params: vec![],
+                    params: vec![param],
+                    return_ty: None,
+                    body: vec![sp(Stmt::Return(Some(sp(Expr::Ident("x".to_string())))))],
+                }),
+                sp(Stmt::ExprStmt(sp(Expr::Call {
+                    func: Box::new(sp(Expr::Ident("f".to_string()))),
+                    args: vec![],
+                }))),
+            ],
+            &["f"],
+        );
+
+        let HirStmt::Let {
+            target: default_sym,
+            value: HirExpr::Walrus { .. },
+            ..
+        } = &hir.top_level[0]
+        else {
+            panic!("expected hidden default Let before call");
+        };
+        let HirStmt::Expr {
+            expr: HirExpr::Call { args, .. },
+            ..
+        } = &hir.top_level[1]
+        else {
+            panic!("expected f() call after hidden default Let");
+        };
+        assert!(matches!(args.as_slice(), [HirExpr::Var(sym, _)] if sym == default_sym));
     }
 
     #[test]

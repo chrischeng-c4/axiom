@@ -16,21 +16,22 @@
 //   - Repeating an install at the same version is an idempotent
 //     no-op that emits `no_op` to stderr.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const TOOLS_DIR_ENV: &str = "MAMBA_TOOLS_DIR";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 
 pub fn cmd_install(sub: &ArgMatches) -> Result<()> {
     if sub.get_flag("list") {
-        return action_list();
+        return list_tools();
     }
     if let Some(name) = sub.get_one::<String>("uninstall") {
-        return action_uninstall(name);
+        return uninstall_tool(name);
     }
     let name = sub
         .get_one::<String>("name")
@@ -41,10 +42,10 @@ pub fn cmd_install(sub: &ArgMatches) -> Result<()> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os(FROZEN_INDEX_ENV).map(PathBuf::from))
         .context("no frozen index configured (pass --index DIR or set $MAMBA_FROZEN_INDEX)")?;
-    action_install(name, explicit_version.as_deref(), &index)
+    install_tool(name, explicit_version.as_deref(), &index)
 }
 
-fn action_install(name: &str, explicit_version: Option<&str>, index: &Path) -> Result<()> {
+pub fn install_tool(name: &str, explicit_version: Option<&str>, index: &Path) -> Result<()> {
     let normalized = normalize_pep503(name);
     let pkg_dir = index.join(&normalized);
     if !pkg_dir.exists() {
@@ -101,7 +102,7 @@ fn action_install(name: &str, explicit_version: Option<&str>, index: &Path) -> R
     Ok(())
 }
 
-fn action_list() -> Result<()> {
+pub fn list_tools() -> Result<()> {
     let tools_root = resolve_tools_root()?;
     if !tools_root.exists() {
         return Ok(());
@@ -144,7 +145,7 @@ fn action_list() -> Result<()> {
     Ok(())
 }
 
-fn action_uninstall(name: &str) -> Result<()> {
+pub fn uninstall_tool(name: &str) -> Result<()> {
     let tools_root = resolve_tools_root()?;
     let tool_dir = tools_root.join(normalize_pep503(name));
     if !tool_dir.exists() {
@@ -152,6 +153,40 @@ fn action_uninstall(name: &str) -> Result<()> {
         return Ok(());
     }
     fs::remove_dir_all(&tool_dir).with_context(|| format!("remove {}", tool_dir.display()))?;
+    Ok(())
+}
+
+pub fn is_tool_installed(name: &str) -> Result<bool> {
+    Ok(resolve_tools_root()?
+        .join(normalize_pep503(name))
+        .join("manifest.toml")
+        .exists())
+}
+
+pub fn run_installed_tool(name: &str, args: &[String]) -> Result<()> {
+    let tools_root = resolve_tools_root()?;
+    let normalized = normalize_pep503(name);
+    let tool_dir = tools_root.join(&normalized);
+    if !tool_dir.join("manifest.toml").exists() {
+        bail!("tool `{name}` is not installed (run `mamba tool install {name}` first)");
+    }
+    let script = tool_dir.join("pkg").join(format!("{normalized}.py"));
+    if !script.exists() {
+        bail!(
+            "tool `{name}` is missing executable payload {}",
+            script.display()
+        );
+    }
+
+    let status = Command::new(std::env::current_exe().context("resolve current mamba binary")?)
+        .arg("run")
+        .arg(&script)
+        .args(args)
+        .status()
+        .with_context(|| format!("run tool `{name}` via {}", script.display()))?;
+    if !status.success() {
+        bail!("tool `{name}` exited with {status}");
+    }
     Ok(())
 }
 

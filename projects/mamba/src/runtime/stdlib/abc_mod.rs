@@ -142,6 +142,10 @@ pub fn register() {
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
         map.insert(
+            dispatch_abc_cls as *const () as usize as u64,
+            "ABC".to_string(),
+        );
+        map.insert(
             dispatch_abcmeta as *const () as usize as u64,
             "ABCMeta".to_string(),
         );

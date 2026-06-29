@@ -44,6 +44,7 @@ thiserror.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 clap.workspace = true
+clap_complete = "4"
 tokio.workspace = true
 reqwest.workspace = true
 
@@ -105,6 +106,7 @@ zip = { version = "0.6", default-features = false, features = ["deflate"] }
 # Sdist (`.tar.gz`) unpack for PEP 517 build path (Tick 18). Pure-Rust tar
 # reader; works with the existing flate2 GzDecoder for the gzip layer.
 tar = "0.4"
+zstd = "0.13"
 
 # HTML parsing for PEP 503 Simple API
 scraper.workspace = true
@@ -144,6 +146,17 @@ crc32fast = "1"
 # `_decimal` (libmpdec C extension); native-shim tier:compute, used as
 # the 3rd cross-family data point under the perf-is-the-product framing.
 rust_decimal = "1"
+# IDNA + Punycode text codecs. Already present in the workspace lockfile via
+# URL dependencies; mamba depends on it directly for codec parity.
+idna = "1.1"
+
+# Real SQLite backend for the `sqlite3` stdlib module (bundled = compiled
+# from source, no system lib dependency). Drives sqlite3 conformance.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# IANA tz database for zoneinfo.ZoneInfo / datetime DST-aware offsets
+# (already in the workspace lock at 0.9, so no new transitive deps).
+chrono-tz = "0.9"
 
 # Coroutine stack allocation for generators (#1187)
 libc = "0.2"
@@ -171,6 +184,8 @@ target-lexicon = "0.13"
 
 # Unicode general-category + numeric properties (CPython parity for str.isdigit / isdecimal / isnumeric)
 unicode-properties = "0.1"
+# Unicode XID_Start / XID_Continue tables for CPython str.isidentifier parity.
+unicode-xid = "0.2"
 # Real NFC/NFD/NFKC/NFKD engine for the unicodedata module (already in the
 # workspace lockfile via other deps).
 unicode-normalization = "0.1"

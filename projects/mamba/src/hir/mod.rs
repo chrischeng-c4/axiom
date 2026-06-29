@@ -1,7 +1,7 @@
 use crate::resolve::SymbolId;
 use crate::source::span::Span;
 use crate::types::TypeId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// HIR Module — desugared, all names resolved to SymbolId, types resolved to TypeId.
 #[derive(Debug, Clone)]
@@ -24,6 +24,10 @@ pub struct HirModule {
     /// Primed into the runtime FUNC_PARAMS registry at module init so
     /// `inspect.signature(f)` reflects the real declared signature.
     pub func_sigs: HashMap<u32, HirFuncSig>,
+    /// SymbolId.0 entries whose params use the boxed MbValue ABI even for
+    /// regular positional parameters. Runtime dynamic calls may safely fill
+    /// missing values from boxed `__defaults__` for these functions.
+    pub boxed_param_funcs: HashSet<u32>,
 }
 
 /// Introspection signature metadata for one user-defined function.
@@ -66,6 +70,14 @@ pub struct HirFunction {
     pub name: SymbolId,
     pub params: Vec<(SymbolId, TypeId)>,
     pub return_ty: TypeId,
+    /// Per-definition signature metadata. This must travel with the function
+    /// occurrence, not only in HirModule.func_sigs keyed by SymbolId, because
+    /// Python permits repeated helper defs with the same name.
+    pub func_sig: Option<HirFuncSig>,
+    /// Public symbol this function definition binds after decorators run.
+    /// Usually None/name; decorated repeated defs can use a unique implementation
+    /// symbol while rebinding the same public Python name.
+    pub bind_name: Option<SymbolId>,
     pub body: Vec<HirStmt>,
     pub span: Span,
     /// Captured variable symbols (for closures)
@@ -89,12 +101,32 @@ pub struct HirFunction {
 }
 
 #[derive(Debug, Clone)]
+pub struct NamedTupleBaseSpec {
+    pub tuple_name: String,
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct HirClass {
     pub name: SymbolId,
     pub base: Option<SymbolId>,
     /// All base classes for multiple inheritance (P1 OOP conformance).
     /// When non-empty, takes priority over `base` for MRO computation.
     pub all_bases: Vec<SymbolId>,
+    /// Base expressions that must be evaluated at the class statement's
+    /// runtime position before the class registry's MRO is final.
+    pub runtime_base_exprs: Vec<HirExpr>,
+    /// A fully materialized base list expression for class headers that use
+    /// starred base unpacking, e.g. `class C[T](*bases): ...`.
+    pub runtime_base_list_expr: Option<HirExpr>,
+    /// Class statements lowered into an executable statement stream must be
+    /// registered exactly when their ClassDefPlaceholder executes.
+    pub force_textual_registration: bool,
+    /// True when a method body references the implicit class cell via
+    /// `__class__` or zero-arg `super()`.
+    pub class_cell_required: bool,
+    /// Literal `namedtuple("T", [...])` base metadata for namedtuple subclasses.
+    pub namedtuple_base: Option<NamedTupleBaseSpec>,
     pub fields: Vec<(SymbolId, TypeId)>,
     pub methods: Vec<HirFunction>,
     pub span: Span,
@@ -108,6 +140,15 @@ pub struct HirClass {
     /// e.g., `attr = Verbose()` in class body → (attr_name, value_expr).
     /// Used for descriptor protocol support.
     pub class_attr_assigns: Vec<(String, HirExpr)>,
+    /// Class-body local symbols for class attributes. These make subsequent
+    /// class-body expressions resolve earlier assignments (`y = [fn() for fn
+    /// in items]`) while final storage still goes through class attributes.
+    pub class_attr_locals: Vec<(String, SymbolId)>,
+    /// Narrow executable class-body statements that must run at the class
+    /// definition point before attributes/decorators. Currently used for
+    /// CPython runtime NameError on unresolved bare-name reads in class bodies
+    /// and nested class textual materialization before outer class attrs.
+    pub class_body_stmts: Vec<HirStmt>,
     /// `__slots__` declaration from class body (R14).
     /// e.g., `__slots__ = ['x', 'y']` → Some(vec!["x", "y"])
     pub slots: Option<Vec<String>>,
@@ -189,6 +230,13 @@ pub enum HirStmt {
         else_body: Vec<HirStmt>,
         span: Span,
     },
+    AsyncFor {
+        var: SymbolId,
+        iter: HirExpr,
+        body: Vec<HirStmt>,
+        else_body: Vec<HirStmt>,
+        span: Span,
+    },
     Break {
         span: Span,
     },
@@ -245,9 +293,16 @@ pub enum HirStmt {
     },
     /// Placeholder for a function definition in the top-level order.
     /// Used to emit decorator applications at the correct position (#decorder).
+    /// `redef` marks a non-decorated `def` that redefines a name previously
+    /// bound by a DECORATED `def` in the same top-level scope: the impl must
+    /// re-store the global so it wins the name (otherwise the name stays bound
+    /// to the earlier decorator's wrapper/dummy).
     FuncDefPlaceholder {
         name: SymbolId,
+        bind_name: Option<SymbolId>,
         span: Span,
+        redef: bool,
+        func_sig: Option<HirFuncSig>,
     },
     /// Placeholder for a decorated class definition in the top-level order.
     /// Class registration itself happens at the top of the module body
@@ -291,6 +346,7 @@ pub enum HirLValue {
 #[derive(Debug, Clone)]
 pub enum HirExpr {
     IntLit(i64, TypeId),
+    BigIntLit(String, TypeId),
     FloatLit(f64, TypeId),
     StrLit(String, TypeId),
     BytesLit(Vec<u8>, TypeId),
@@ -358,6 +414,7 @@ pub enum HirExpr {
     /// Defaults are evaluated at closure creation time per Python semantics.
     Lambda {
         params: Vec<(SymbolId, TypeId)>,
+        param_kinds: Vec<u8>,
         defaults: Vec<Option<Box<HirExpr>>>,
         body: Box<HirExpr>,
         ty: TypeId,
@@ -426,6 +483,8 @@ pub enum HirExpr {
 pub struct HirComprehension {
     pub var: SymbolId,
     pub extra_vars: Vec<SymbolId>,
+    pub unpack_target: bool,
+    pub target_reads_before_bind: Vec<String>,
     pub iter: HirExpr,
     pub conditions: Vec<HirExpr>,
     pub is_async: bool,
@@ -490,6 +549,7 @@ impl HirExpr {
     pub fn ty(&self) -> TypeId {
         match self {
             HirExpr::IntLit(_, t)
+            | HirExpr::BigIntLit(_, t)
             | HirExpr::FloatLit(_, t)
             | HirExpr::StrLit(_, t)
             | HirExpr::BytesLit(_, t)
@@ -707,6 +767,7 @@ mod tests {
             sym_types: HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
         assert!(module.functions.is_empty());
         assert!(module.classes.is_empty());
@@ -793,6 +854,8 @@ mod tests {
             name: SymbolId(0),
             params: vec![(SymbolId(1), int_ty), (SymbolId(2), int_ty)],
             return_ty: int_ty,
+            func_sig: None,
+            bind_name: None,
             body: vec![],
             span: Span::dummy(),
             captures: vec![SymbolId(10)],
@@ -817,6 +880,11 @@ mod tests {
             name: SymbolId(0),
             base: Some(SymbolId(1)),
             all_bases: vec![SymbolId(1)],
+            runtime_base_exprs: Vec::new(),
+            runtime_base_list_expr: None,
+            force_textual_registration: false,
+            class_cell_required: false,
+            namedtuple_base: None,
             fields: vec![(SymbolId(2), int_ty)],
             methods: vec![],
             span: Span::dummy(),
@@ -824,6 +892,8 @@ mod tests {
             explicit_match_args: None,
             metaclass: None,
             class_attr_assigns: vec![],
+            class_attr_locals: vec![],
+            class_body_stmts: vec![],
             slots: None,
             class_kwargs: vec![],
             dataclass_fields: vec![],

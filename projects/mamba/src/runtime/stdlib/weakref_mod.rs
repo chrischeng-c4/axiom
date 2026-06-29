@@ -1,13 +1,13 @@
-// HANDWRITE-BEGIN reason: #1466 — no real weakref semantics, GC integration
-// required. Mamba's runtime is refcount-only, so every entry below ships a
-// strong-reference stub that preserves API SHAPE but cannot honour the
-// CPython contract (referent expiry, callback firing on collection,
-// auto-eviction of WeakSet / WeakValueDictionary entries, ReferenceError
-// on dead-proxy access, `finalize.alive` flip). Closing this gap requires
-// a GC / liveness-tracking subsystem in `runtime::rc` (or a successor)
-// that can publish referent-collected events to a per-object weak-ref
-// table. Tracked under #1466 (conformance(mamba/stdlib): weakref); also
-// see legacy #437.
+// HANDWRITE-BEGIN reason: #1466 — partial weakref semantics; full GC
+// integration still required. Mamba now has a small refcount/GC collection
+// notification path for selected proxy wrappers, so dead proxy access can
+// raise ReferenceError for covered referents, and a narrow global-liveness
+// sweep expires weakref.ref objects for covered module-global referents. Most
+// weakref container, finalize, and general ref-expiry semantics still use
+// strong stubs that preserve API shape without the full CPython contract.
+// Closing the remaining gap requires broader liveness tracking.
+// Tracked under #1466 (conformance(mamba/stdlib): weakref); also see legacy
+// #437.
 //
 // Surface coverage vs `cpython312_surface.json` weakref entry: 13/13
 // (100%) — all CPython 3.12 public names registered. Stub semantics
@@ -27,18 +27,20 @@ use rustc_hash::FxHashMap;
 ///   WeakKeyDictionary, WeakMethod, WeakSet, WeakValueDictionary,
 ///   finalize, getweakrefcount, getweakrefs, itertools, proxy, ref, sys.
 ///
-/// Carve-out: NO REAL WEAK SEMANTICS.
+/// Carve-out: PARTIAL WEAK SEMANTICS.
 ///
-/// Real weak references require GC integration (tracking live objects and
-/// invalidating references when the referent is collected). Mamba's
-/// runtime is refcount-only, so this module ships strong-reference stubs
-/// that preserve API shape without true weakness:
+/// Full weak references require broad GC integration (tracking live objects,
+/// invalidating references, firing callbacks, and evicting containers when the
+/// referent is collected). Mamba currently preserves API shape plus a covered
+/// proxy-death and module-global ref-callback subsets:
 ///
 ///   - `ref(obj, callback=None)`: returns an Instance carrying a strong
-///     pointer to `obj` (the referent never expires under our refcount
-///     world). The callback, if any, is stored but never invoked.
-///   - `proxy(obj, callback=None)`: returns `obj` unchanged — no proxy
-///     wrapper, so `ReferenceError` cannot be raised.
+///     pointer to `obj` for most referents. Refs expire, and callbacks fire,
+///     only for the covered module-global liveness sweep.
+///   - `proxy(obj, callback=None)`: returns `obj` unchanged for legacy
+///     live-object alias cases. Hash-sensitive and socket referents receive a
+///     proxy wrapper that can be marked dead by rc/GC collection notifications
+///     and raises `ReferenceError` on non-internal access after expiry.
 ///   - `WeakSet` / `WeakKeyDictionary` / `WeakValueDictionary` /
 ///     `WeakMethod` / `finalize`: Instance stubs that behave like their
 ///     strong-ref equivalents. Entries persist for the lifetime of the
@@ -52,29 +54,35 @@ use rustc_hash::FxHashMap;
 ///   - `itertools` / `sys`: CPython leaks these submodule imports into
 ///     `weakref`'s namespace; we mirror that with module placeholders.
 ///
-/// Tracked under #437 — promote to real weak references once the GC /
-/// liveness-tracking work lands.
+/// Tracked under #437/#1466 — promote to real weak references once the broader
+/// GC / liveness-tracking work lands.
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 
-// A per-referent weak-reference registry. Mamba's runtime is refcount-only,
-// so we model CPython's liveness contract for the *live-object* cases by
-// strong-holding the referent (the registry keeps it alive) and tracking the
-// ref/proxy objects created for it. This lets the live-object semantics that
-// the bulk of the CPython test-suite exercises behave correctly:
+// A per-referent weak-reference registry. Mamba's runtime is still mostly
+// refcount-only, so we model CPython's liveness contract for the common
+// *live-object* cases by tracking the ref/proxy objects created for a referent.
+// This lets the live-object semantics that the bulk of the CPython test-suite
+// exercises behave correctly:
 //
 //   * `weakref.ref(obj)` (no callback) is *reused* — two no-callback refs to
 //     the same object are the same object (`r1 is r2`).
 //   * `getweakrefcount(obj)` returns the number of live ref/proxy objects.
 //   * `getweakrefs(obj)` returns them in creation order.
 //
-// Dead-ref / collection-timing semantics (a ref expiring after the referent
-// is GC'd, callbacks firing on collection) remain out of scope: that needs a
-// real GC, tracked under gh #1466.
+// Selected proxy wrappers are also marked dead from rc/GC collection
+// notifications. Ref callbacks fire for the covered module-global liveness
+// sweep. General dead-ref timing and weak container eviction remain out of
+// scope: that needs broader liveness work, tracked under gh #1466.
 thread_local! {
     // referent identity (pointer-or-folded-bits key) -> ordered list of the
     // ref/proxy MbValue objects created against it.
     static WEAKREF_REGISTRY: std::cell::RefCell<HashMap<u64, Vec<MbValue>>> =
+        std::cell::RefCell::new(HashMap::new());
+    // weakref.finalize uses an internal weakref in CPython. Keep it separate
+    // from getweakrefcount/getweakrefs so the public ref/proxy inventory stays
+    // stable while gc.collect can still find pending finalizers.
+    static FINALIZE_REGISTRY: std::cell::RefCell<HashMap<u64, Vec<MbValue>>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
@@ -105,8 +113,21 @@ fn ref_callback(wref: MbValue) -> MbValue {
 /// Register a freshly-created ref/proxy object for `obj` in creation order.
 fn registry_push(obj: MbValue, wref: MbValue) {
     let key = referent_key(obj);
+    unsafe {
+        super::super::rc::retain_if_ptr(wref);
+    }
     WEAKREF_REGISTRY.with(|r| {
         r.borrow_mut().entry(key).or_default().push(wref);
+    });
+}
+
+fn finalize_registry_push(obj: MbValue, fin: MbValue) {
+    let key = referent_key(obj);
+    unsafe {
+        super::super::rc::retain_if_ptr(fin);
+    }
+    FINALIZE_REGISTRY.with(|r| {
+        r.borrow_mut().entry(key).or_default().push(fin);
     });
 }
 
@@ -128,6 +149,524 @@ fn registry_find_plain_ref(obj: MbValue) -> Option<MbValue> {
             })
         })
     })
+}
+
+/// Find an existing *no-callback* proxy wrapper for `obj`.
+fn registry_find_plain_proxy(obj: MbValue) -> Option<MbValue> {
+    let key = referent_key(obj);
+    WEAKREF_REGISTRY.with(|r| {
+        r.borrow().get(&key).and_then(|v| {
+            v.iter().copied().find(|&w| {
+                if let Some(ptr) = w.as_ptr() {
+                    unsafe {
+                        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                            return matches!(class_name.as_str(), "ProxyType" | "CallableProxyType")
+                                && ref_callback(w).is_none();
+                        }
+                    }
+                }
+                false
+            })
+        })
+    })
+}
+
+fn referent_needs_proxy_hash_guard(obj: MbValue) -> bool {
+    let Some(ptr) = obj.as_ptr() else { return false; };
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            return super::super::class::class_own_members(class_name)
+                .into_iter()
+                .any(|(name, _, _)| name == "__hash__");
+        }
+    }
+    false
+}
+
+fn referent_needs_proxy_wrapper(obj: MbValue) -> bool {
+    if is_int_backed_function_handle(obj) {
+        return true;
+    }
+    if matches!(super::collections_mod::user_wrapper_data(obj), Some(("list", _))) {
+        return true;
+    }
+    if referent_needs_proxy_hash_guard(obj) {
+        return true;
+    }
+    let Some(ptr) = obj.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if super::super::class::class_is_user_defined(class_name)
+                    || class_name == "socket.socket"
+        )
+    }
+}
+
+fn is_int_backed_function_handle(obj: MbValue) -> bool {
+    obj.as_int().is_some_and(|id| id >= 0)
+        && (!super::super::closure::mb_closure_get_func(obj).is_none()
+            || super::super::closure::mb_func_is_registered(obj))
+}
+
+fn is_proxy_instance(val: MbValue) -> bool {
+    let Some(ptr) = val.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType")
+        )
+    }
+}
+
+fn is_internal_proxy_attr(attr_name: &str) -> bool {
+    matches!(
+        attr_name,
+        "__class__"
+            | "__callback__"
+            | "_callback"
+            | "_target"
+            | "_target_id"
+            | "_dead"
+            | "_global_tracked"
+            | "_target_is_function_handle"
+            | "_class_object_name"
+    )
+}
+
+fn target_id_addr(target_id: MbValue) -> Option<usize> {
+    if let Some(addr) = target_id.as_int() {
+        return Some(addr as usize);
+    }
+    extract_str(target_id).and_then(|s| usize::from_str_radix(&s, 16).ok())
+}
+
+fn user_class_object_name(obj: MbValue) -> Option<String> {
+    let name = super::super::class::resolve_class_name(obj)?;
+    super::super::class::class_is_user_defined(&name).then_some(name)
+}
+
+pub fn reference_target(wref: MbValue) -> MbValue {
+    let Some(ptr) = wref.as_ptr() else {
+        return MbValue::none();
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "ReferenceType" => {
+                let fields = fields.read().unwrap();
+                if fields
+                    .get("_dead")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return MbValue::none();
+                }
+                if let Some(target) = fields
+                    .get("_target")
+                    .copied()
+                    .filter(|target| !target.is_none())
+                {
+                    super::super::rc::retain_if_ptr(target);
+                    return target;
+                }
+                if let Some(target) = fields
+                    .get("_target_id")
+                    .copied()
+                    .and_then(target_id_addr)
+                    .map(|addr| MbValue::from_ptr(addr as *mut MbObject))
+                {
+                    super::super::rc::retain_if_ptr(target);
+                    return target;
+                }
+                MbValue::none()
+            }
+            _ => MbValue::none(),
+        }
+    }
+}
+
+fn class_ref_target_name(wref: MbValue) -> Option<String> {
+    let ptr = wref.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "ReferenceType" => {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("_class_object_name")
+                    .copied()
+                    .and_then(extract_str)
+            }
+            _ => None,
+        }
+    }
+}
+
+fn class_ref_has_live_global(target: MbValue, target_name: &str) -> bool {
+    super::super::closure::snapshot_global_id_namespace()
+        .values()
+        .copied()
+        .any(|value| {
+            if value.to_bits() == target.to_bits() {
+                return true;
+            }
+            super::super::class::resolve_class_name(value).as_deref() == Some(target_name)
+        })
+}
+
+fn value_has_live_global(target: MbValue) -> bool {
+    super::super::closure::snapshot_global_id_namespace()
+        .values()
+        .copied()
+        .any(|value| value.to_bits() == target.to_bits())
+}
+
+pub(crate) fn expire_unbound_class_refs() {
+    let refs: Vec<MbValue> = WEAKREF_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .values()
+            .flat_map(|items| items.iter().copied())
+            .collect()
+    });
+    for wref in refs {
+        let Some(target_name) = class_ref_target_name(wref) else {
+            continue;
+        };
+        let target = reference_target(wref);
+        if target.is_none() {
+            mark_weakref_dead(wref);
+            continue;
+        }
+        if !class_ref_has_live_global(target, &target_name) {
+            mark_weakref_dead(wref);
+        }
+        unsafe {
+            super::super::rc::release_if_ptr(target);
+        }
+    }
+}
+
+pub(crate) fn expire_unbound_ref_callbacks() {
+    let refs: Vec<MbValue> = WEAKREF_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .values()
+            .flat_map(|items| items.iter().copied())
+            .collect()
+    });
+    for wref in refs {
+        if !ref_tracks_global_liveness(wref) {
+            continue;
+        }
+        let target = reference_target(wref);
+        if target.is_none() {
+            if mark_weakref_dead(wref) {
+                fire_ref_callback(wref);
+            }
+            continue;
+        }
+        if !value_has_live_global(target) && mark_weakref_dead(wref) {
+            fire_ref_callback(wref);
+        }
+        unsafe {
+            super::super::rc::release_if_ptr(target);
+        }
+    }
+}
+
+fn finalize_is_alive(fin: MbValue) -> bool {
+    let Some(ptr) = fin.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "finalize" => fields
+                .read()
+                .unwrap()
+                .get("alive")
+                .copied()
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+}
+
+fn finalize_target(fin: MbValue) -> Option<MbValue> {
+    let ptr = fin.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "finalize" => fields
+                .read()
+                .unwrap()
+                .get("_obj")
+                .copied()
+                .filter(|target| !target.is_none()),
+            _ => None,
+        }
+    }
+}
+
+fn finalizer_target_collectible(target: MbValue) -> bool {
+    !value_has_live_global(target)
+}
+
+fn run_finalize_once(fin: MbValue) {
+    if !finalize_is_alive(fin) {
+        return;
+    }
+    unsafe {
+        finalize_call(fin, MbValue::none());
+    }
+}
+
+fn proxy_tracks_global_liveness(proxy: MbValue) -> bool {
+    let Some(ptr) = proxy.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { fields, .. } => fields
+                .read()
+                .unwrap()
+                .get("_global_tracked")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+}
+
+pub(crate) fn expire_unbound_finalizers() {
+    let finalizers: Vec<MbValue> = FINALIZE_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .values()
+            .flat_map(|items| items.iter().copied())
+            .collect()
+    });
+    for fin in finalizers {
+        let Some(target) = finalize_target(fin) else {
+            continue;
+        };
+        if finalizer_target_collectible(target) {
+            run_finalize_once(fin);
+        }
+    }
+}
+
+pub(crate) fn expire_unbound_proxies() {
+    let refs: Vec<MbValue> = WEAKREF_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .values()
+            .flat_map(|items| items.iter().copied())
+            .collect()
+    });
+    for wref in refs {
+        if !is_proxy_instance(wref) || proxy_is_dead(wref) {
+            continue;
+        }
+        if !proxy_tracks_global_liveness(wref) {
+            continue;
+        }
+        let Some(target) = proxy_target(wref) else {
+            mark_weakref_dead(wref);
+            continue;
+        };
+        if !value_has_live_global(target) {
+            mark_weakref_dead(wref);
+        }
+    }
+}
+
+pub fn proxy_target(proxy: MbValue) -> Option<MbValue> {
+    let ptr = proxy.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields }
+                if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType") =>
+            {
+                let fields = fields.read().unwrap();
+                if fields
+                    .get("_dead")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return None;
+                }
+                if let Some(target) = fields
+                    .get("_target")
+                    .copied()
+                    .filter(|target| !target.is_none())
+                {
+                    return Some(target);
+                }
+                fields
+                    .get("_target_id")
+                    .copied()
+                    .and_then(target_id_addr)
+                    .map(|addr| MbValue::from_ptr(addr as *mut MbObject))
+            }
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn proxy_is_dead(proxy: MbValue) -> bool {
+    let Some(ptr) = proxy.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields }
+                if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType") =>
+            {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("_dead")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+pub(crate) fn proxy_target_or_raise(proxy: MbValue) -> Option<MbValue> {
+    if is_proxy_instance(proxy) && proxy_is_dead(proxy) {
+        raise_reference_error();
+        return Some(MbValue::none());
+    }
+    proxy_target(proxy)
+}
+
+pub(crate) fn proxy_references_int_function(proxy: MbValue) -> bool {
+    let Some(ptr) = proxy.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields }
+                if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType") =>
+            {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("_target_is_function_handle")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+pub(crate) fn proxy_dead_attr_access(proxy: MbValue, attr_name: &str) -> bool {
+    is_proxy_instance(proxy) && proxy_is_dead(proxy) && !is_internal_proxy_attr(attr_name)
+}
+
+pub(crate) fn raise_reference_error() {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ReferenceError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "weakly-referenced object no longer exists".to_string(),
+        )),
+    );
+}
+
+fn mark_weakref_dead(wref: MbValue) -> bool {
+    let Some(ptr) = wref.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+            if !matches!(
+                class_name.as_str(),
+                "ReferenceType" | "ProxyType" | "CallableProxyType"
+            ) {
+                return false;
+            }
+            let mut fields = fields.write().unwrap();
+            if fields
+                .get("_dead")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return false;
+            }
+            if fields.contains_key("_target") {
+                fields.insert("_target".to_string(), MbValue::none());
+            }
+            if let Some(dead) = fields.get_mut("_dead") {
+                *dead = MbValue::from_bool(true);
+            } else {
+                fields.insert("_dead".to_string(), MbValue::from_bool(true));
+            }
+            return true;
+        }
+    }
+    false
+}
+
+fn ref_tracks_global_liveness(wref: MbValue) -> bool {
+    let Some(ptr) = wref.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "ReferenceType" => fields
+                .read()
+                .unwrap()
+                .get("_global_tracked")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+}
+
+fn fire_ref_callback(wref: MbValue) {
+    let callback = ref_callback(wref);
+    if callback.is_none() {
+        return;
+    }
+    let _ = super::super::class::mb_call_method1(callback, wref);
+}
+
+pub(crate) unsafe fn notify_referent_collected(obj: *mut MbObject) {
+    if obj.is_null() {
+        return;
+    }
+    let referent = MbValue::from_ptr(obj);
+    let key = referent_key(referent);
+    let weakrefs = WEAKREF_REGISTRY.with(|r| r.borrow_mut().remove(&key));
+    if let Some(weakrefs) = weakrefs {
+        for wref in weakrefs {
+            mark_weakref_dead(wref);
+            // Do not release the registry's retained weakref/proxy during the
+            // referent's deallocation path. rc/GC sweep can already be walking
+            // the same object graph, and re-entering proxy field cleanup here is
+            // not safe until weakref liveness is fully owned by GC.
+        }
+    }
+    let finalizers = FINALIZE_REGISTRY.with(|r| r.borrow_mut().remove(&key));
+    if let Some(finalizers) = finalizers {
+        for fin in finalizers {
+            run_finalize_once(fin);
+            // The finalize registry owns a retain like WEAKREF_REGISTRY. Keep
+            // it during deallocation to avoid re-entering Instance cleanup from
+            // the referent's release path.
+        }
+    }
 }
 
 /// Extract a string from an MbValue.
@@ -270,12 +809,18 @@ unsafe extern "C" fn finalize_call(self_v: MbValue, _args: MbValue) -> MbValue {
     if !alive {
         return MbValue::none();
     }
-    unsafe {
+    let old_obj = unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            fields
-                .write()
-                .unwrap()
-                .insert("alive".to_string(), MbValue::from_bool(false));
+            let mut fields = fields.write().unwrap();
+            fields.insert("alive".to_string(), MbValue::from_bool(false));
+            fields.insert("_obj".to_string(), MbValue::none())
+        } else {
+            None
+        }
+    };
+    unsafe {
+        if let Some(old_obj) = old_obj {
+            super::super::rc::release_if_ptr(old_obj);
         }
     }
     super::super::builtins::mb_call_spread(func, call_args)
@@ -373,34 +918,131 @@ fn wk_args(args: MbValue) -> Vec<MbValue> {
         .unwrap_or_default()
 }
 
+fn prune_weak_set_data(data: MbValue) {
+    let Some(ptr) = data.as_ptr() else {
+        return;
+    };
+    let stale = unsafe {
+        if let ObjData::Set(ref lock) = (*ptr).data {
+            lock.read()
+                .unwrap()
+                .iter()
+                .copied()
+                .filter(|item| !value_has_live_global(*item))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        }
+    };
+    if stale.is_empty() {
+        return;
+    }
+    unsafe {
+        if let ObjData::Set(ref lock) = (*ptr).data {
+            let mut set = lock.write().unwrap();
+            for item in stale {
+                if let Some(removed) = set.set_remove(item) {
+                    super::super::rc::release_if_ptr(removed);
+                }
+            }
+        }
+    }
+}
+
+fn ws_data_pruned(self_v: MbValue) -> MbValue {
+    let data = wk_data(self_v);
+    prune_weak_set_data(data);
+    data
+}
+
 unsafe extern "C" fn ws_add(self_v: MbValue, args: MbValue) -> MbValue {
     let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
     if reject_non_weakreferenceable(item) {
         return MbValue::none();
     }
-    super::super::set_ops::mb_set_add(wk_data(self_v), item);
+    super::super::set_ops::mb_set_add(ws_data_pruned(self_v), item);
     MbValue::none()
 }
 
 unsafe extern "C" fn ws_discard(self_v: MbValue, args: MbValue) -> MbValue {
     let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::set_ops::mb_set_discard(wk_data(self_v), item);
+    super::super::set_ops::mb_set_discard(ws_data_pruned(self_v), item);
     MbValue::none()
 }
 
 unsafe extern "C" fn ws_remove(self_v: MbValue, args: MbValue) -> MbValue {
     let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::set_ops::mb_set_remove(wk_data(self_v), item);
+    super::super::set_ops::mb_set_remove(ws_data_pruned(self_v), item);
     MbValue::none()
 }
 
 unsafe extern "C" fn ws_contains(self_v: MbValue, args: MbValue) -> MbValue {
     let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::set_ops::mb_set_contains(wk_data(self_v), item)
+    super::super::set_ops::mb_set_contains(ws_data_pruned(self_v), item)
 }
 
 unsafe extern "C" fn ws_len(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::set_ops::mb_set_len(wk_data(self_v))
+    super::super::set_ops::mb_set_len(ws_data_pruned(self_v))
+}
+
+fn ws_dispatch_set_method(name: &str, self_v: MbValue, args: MbValue) -> MbValue {
+    super::super::set_ops::dispatch_set_method(name, ws_data_pruned(self_v), args)
+}
+
+unsafe extern "C" fn ws_clear(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("clear", self_v, args)
+}
+
+unsafe extern "C" fn ws_copy(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("copy", self_v, args)
+}
+
+unsafe extern "C" fn ws_difference(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("difference", self_v, args)
+}
+
+unsafe extern "C" fn ws_difference_update(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("difference_update", self_v, args)
+}
+
+unsafe extern "C" fn ws_intersection(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("intersection", self_v, args)
+}
+
+unsafe extern "C" fn ws_intersection_update(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("intersection_update", self_v, args)
+}
+
+unsafe extern "C" fn ws_isdisjoint(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("isdisjoint", self_v, args)
+}
+
+unsafe extern "C" fn ws_issubset(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("issubset", self_v, args)
+}
+
+unsafe extern "C" fn ws_issuperset(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("issuperset", self_v, args)
+}
+
+unsafe extern "C" fn ws_pop(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("pop", self_v, args)
+}
+
+unsafe extern "C" fn ws_symmetric_difference(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("symmetric_difference", self_v, args)
+}
+
+unsafe extern "C" fn ws_symmetric_difference_update(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("symmetric_difference_update", self_v, args)
+}
+
+unsafe extern "C" fn ws_union(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("union", self_v, args)
+}
+
+unsafe extern "C" fn ws_update(self_v: MbValue, args: MbValue) -> MbValue {
+    ws_dispatch_set_method("update", self_v, args)
 }
 
 unsafe extern "C" fn wvd_setitem(self_v: MbValue, args: MbValue) -> MbValue {
@@ -410,14 +1052,14 @@ unsafe extern "C" fn wvd_setitem(self_v: MbValue, args: MbValue) -> MbValue {
     if reject_non_weakreferenceable(val) {
         return MbValue::none();
     }
-    super::super::dict_ops::mb_dict_setitem(wk_data(self_v), key, val);
+    super::super::dict_ops::mb_dict_setitem(wvd_data_pruned(self_v), key, val);
     MbValue::none()
 }
 
 unsafe extern "C" fn wvd_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
     let sentinel = MbValue::from_bits(u64::MAX);
-    let found = super::super::dict_ops::mb_dict_get(wk_data(self_v), key, sentinel);
+    let found = super::super::dict_ops::mb_dict_get(wvd_data_pruned(self_v), key, sentinel);
     if found.to_bits() == u64::MAX {
         let key_repr = super::super::builtins::mb_repr(key);
         let ks = key_repr
@@ -443,34 +1085,164 @@ unsafe extern "C" fn wvd_get(self_v: MbValue, args: MbValue) -> MbValue {
     let a = wk_args(args);
     let key = a.first().copied().unwrap_or_else(MbValue::none);
     let default = a.get(1).copied().unwrap_or_else(MbValue::none);
-    super::super::dict_ops::mb_dict_get(wk_data(self_v), key, default)
+    super::super::dict_ops::mb_dict_get(wvd_data_pruned(self_v), key, default)
 }
 
 unsafe extern "C" fn wvd_contains(self_v: MbValue, args: MbValue) -> MbValue {
     let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::dict_ops::mb_dict_contains(wk_data(self_v), key)
+    super::super::dict_ops::mb_dict_contains(wvd_data_pruned(self_v), key)
 }
 
 unsafe extern "C" fn wvd_len(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::dict_ops::mb_dict_len(wk_data(self_v))
+    super::super::dict_ops::mb_dict_len(wvd_data_pruned(self_v))
 }
 
 unsafe extern "C" fn wvd_delitem(self_v: MbValue, args: MbValue) -> MbValue {
     let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
-    super::super::dict_ops::mb_dict_delitem(wk_data(self_v), key);
+    super::super::dict_ops::mb_dict_delitem(wvd_data_pruned(self_v), key);
     MbValue::none()
 }
 
 unsafe extern "C" fn wvd_keys(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::dict_ops::mb_dict_keys(wk_data(self_v))
+    super::super::dict_ops::mb_dict_keys(wvd_data_pruned(self_v))
 }
 
 unsafe extern "C" fn wvd_values(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::dict_ops::mb_dict_values(wk_data(self_v))
+    super::super::dict_ops::mb_dict_values(wvd_data_pruned(self_v))
 }
 
 unsafe extern "C" fn wvd_items(self_v: MbValue, _args: MbValue) -> MbValue {
-    super::super::dict_ops::mb_dict_items(wk_data(self_v))
+    super::super::dict_ops::mb_dict_items(wvd_data_pruned(self_v))
+}
+
+fn prune_weak_value_dict_data(data: MbValue) {
+    let Some(ptr) = data.as_ptr() else {
+        return;
+    };
+    let stale_keys = unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .unwrap()
+                .iter()
+                .filter_map(|(key, value)| {
+                    (!value_has_live_global(*value))
+                        .then(|| super::super::dict_ops::dict_key_to_mbvalue(key))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        }
+    };
+    for key in stale_keys {
+        super::super::dict_ops::mb_dict_delitem(data, key);
+        unsafe {
+            super::super::rc::release_if_ptr(key);
+        }
+    }
+}
+
+fn wvd_data_pruned(self_v: MbValue) -> MbValue {
+    let data = wk_data(self_v);
+    prune_weak_value_dict_data(data);
+    data
+}
+
+fn weak_key_dict_key_is_live(key: &super::super::dict_ops::DictKey) -> bool {
+    let key_val = super::super::dict_ops::dict_key_to_mbvalue(key);
+    let live = value_has_live_global(key_val);
+    unsafe {
+        super::super::rc::release_if_ptr(key_val);
+    }
+    live
+}
+
+fn prune_weak_key_dict_data(data: MbValue) {
+    let Some(ptr) = data.as_ptr() else {
+        return;
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.write()
+                .unwrap()
+                .retain(|key, _| weak_key_dict_key_is_live(key));
+        }
+    }
+}
+
+fn wkd_data_pruned(self_v: MbValue) -> MbValue {
+    let data = wk_data(self_v);
+    prune_weak_key_dict_data(data);
+    data
+}
+
+unsafe extern "C" fn wkd_setitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = wk_args(args);
+    let key = a.first().copied().unwrap_or_else(MbValue::none);
+    let val = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if reject_non_weakreferenceable(key) {
+        return MbValue::none();
+    }
+    super::super::dict_ops::mb_dict_setitem(wkd_data_pruned(self_v), key, val);
+    MbValue::none()
+}
+
+unsafe extern "C" fn wkd_getitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let found = super::super::dict_ops::mb_dict_get(wkd_data_pruned(self_v), key, sentinel);
+    if found.to_bits() == u64::MAX {
+        let key_repr = super::super::builtins::mb_repr(key);
+        let ks = key_repr
+            .as_ptr()
+            .and_then(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(ks)),
+        );
+        return MbValue::none();
+    }
+    found
+}
+
+unsafe extern "C" fn wkd_get(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = wk_args(args);
+    let key = a.first().copied().unwrap_or_else(MbValue::none);
+    let default = a.get(1).copied().unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_get(wkd_data_pruned(self_v), key, default)
+}
+
+unsafe extern "C" fn wkd_contains(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_contains(wkd_data_pruned(self_v), key)
+}
+
+unsafe extern "C" fn wkd_len(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_len(wkd_data_pruned(self_v))
+}
+
+unsafe extern "C" fn wkd_delitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_delitem(wkd_data_pruned(self_v), key);
+    MbValue::none()
+}
+
+unsafe extern "C" fn wkd_keys(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_keys(wkd_data_pruned(self_v))
+}
+
+unsafe extern "C" fn wkd_values(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_values(wkd_data_pruned(self_v))
+}
+
+unsafe extern "C" fn wkd_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_items(wkd_data_pruned(self_v))
 }
 
 // ---------------------------------------------------------------------------
@@ -487,7 +1259,16 @@ fn reject_non_weakreferenceable(obj: MbValue) -> bool {
         Some("NoneType")
     } else if obj.is_bool() {
         Some("bool")
-    } else if obj.is_int() {
+    } else if obj
+        .as_int()
+        .is_some_and(|id| {
+            id < 0
+                || !(super::uuid_mod::is_uuid_handle(id as u64)
+                    || super::super::generator::is_known_generator(obj)
+                    || super::super::iter::mb_is_iterator_handle(obj)
+                    || is_int_backed_function_handle(obj))
+        })
+    {
         Some("int")
     } else if obj.is_float() {
         Some("float")
@@ -547,9 +1328,21 @@ pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
         }
     }
     let target_id = MbValue::from_int(referent_key(obj) as i64);
+    let class_object_name = user_class_object_name(obj);
     let mut fields = FxHashMap::default();
     fields.insert("_target".to_string(), obj);
     fields.insert("_target_id".to_string(), target_id);
+    fields.insert("_dead".to_string(), MbValue::from_bool(false));
+    fields.insert(
+        "_global_tracked".to_string(),
+        MbValue::from_bool(value_has_live_global(obj)),
+    );
+    if let Some(name) = class_object_name {
+        fields.insert(
+            "_class_object_name".to_string(),
+            MbValue::from_ptr(MbObject::new_str(name)),
+        );
+    }
     // `__callback__` is the public CPython attribute (None when no callback);
     // `_callback` kept as a legacy alias.
     fields.insert("__callback__".to_string(), callback);
@@ -578,26 +1371,70 @@ pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
 /// Legacy mamba surface (not part of CPython's weakref module). Real
 /// CPython users call the ref like a function: `r()`. We keep this
 /// helper for backward compatibility; it now returns the stored
-/// `_target` strong ref (which never expires under carve-out).
+/// live target, or None after a target-id-only weak ref expires.
 pub fn mb_weakref_deref(wref: MbValue) -> MbValue {
-    if let Some(ptr) = wref.as_ptr() {
-        unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let f = fields.read().unwrap();
-                if let Some(t) = f.get("_target") {
-                    return *t;
-                }
-            }
-        }
-    }
-    MbValue::none()
+    reference_target(wref)
 }
 
-/// weakref.proxy(obj, callback=None) -> obj (carve-out).
-pub fn mb_weakref_proxy(obj: MbValue, _callback: MbValue) -> MbValue {
+/// weakref.proxy(obj, callback=None) -> proxy wrapper for referents whose
+/// observable contract needs proxy identity/dead-target checks; otherwise keep
+/// the legacy live-object alias carve-out.
+pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
     if reject_non_weakreferenceable(obj) {
         return MbValue::none();
     }
+    if referent_needs_proxy_wrapper(obj) {
+        if callback.is_none() {
+            if let Some(existing) = registry_find_plain_proxy(obj) {
+                unsafe { super::super::rc::retain_if_ptr(existing); }
+                return existing;
+            }
+        }
+        let class_name = if super::super::builtins::mb_callable(obj)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            "CallableProxyType"
+        } else {
+            "ProxyType"
+        };
+        let function_handle = is_int_backed_function_handle(obj);
+        let target_id = MbValue::from_ptr(MbObject::new_str(format!("{:012x}", referent_key(obj))));
+        let mut fields = FxHashMap::default();
+        fields.insert("_target_id".to_string(), target_id);
+        if function_handle {
+            fields.insert("_target".to_string(), obj);
+            fields.insert(
+                "_target_is_function_handle".to_string(),
+                MbValue::from_bool(true),
+            );
+        }
+        fields.insert("_dead".to_string(), MbValue::from_bool(false));
+        fields.insert(
+            "_global_tracked".to_string(),
+            MbValue::from_bool(value_has_live_global(obj)),
+        );
+        fields.insert("__callback__".to_string(), callback);
+        fields.insert("_callback".to_string(), callback);
+        fields.insert(
+            "__class__".to_string(),
+            MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+        );
+        let proxy = Box::new(MbObject {
+            header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+            data: ObjData::Instance {
+                class_name: class_name.to_string(),
+                fields: RwLock::new(fields),
+            },
+        });
+        let proxy = MbValue::from_ptr(Box::into_raw(proxy));
+        registry_push(obj, proxy);
+        return proxy;
+    }
+    // The proxy carve-out returns the referent itself. The argument cleanup and
+    // returned alias each consume an owned slot, so keep both references alive.
+    unsafe { super::super::rc::retain_if_ptr(obj); }
+    unsafe { super::super::rc::retain_if_ptr(obj); }
     obj
 }
 
@@ -656,6 +1493,12 @@ fn referent_type_name(target: MbValue) -> String {
             }
         }
     }
+    if target
+        .as_int()
+        .is_some_and(|id| id >= 0 && super::uuid_mod::is_uuid_handle(id as u64))
+    {
+        return "UUID".to_string();
+    }
     if target.as_int().is_some() {
         return "int".to_string();
     }
@@ -668,17 +1511,65 @@ fn referent_type_name(target: MbValue) -> String {
     "object".to_string()
 }
 
+fn weakref_entry_is_publicly_live(
+    wref: MbValue,
+    globals: &std::collections::HashMap<i64, MbValue>,
+) -> bool {
+    if !globals
+        .values()
+        .copied()
+        .any(|value| value.to_bits() == wref.to_bits())
+    {
+        return false;
+    }
+    let Some(ptr) = wref.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields }
+                if matches!(
+                    class_name.as_str(),
+                    "ReferenceType" | "ProxyType" | "CallableProxyType"
+                ) =>
+            {
+                !fields
+                    .read()
+                    .unwrap()
+                    .get("_dead")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+fn live_registry_items(obj: MbValue) -> Vec<MbValue> {
+    let key = referent_key(obj);
+    let globals = super::super::closure::snapshot_global_id_namespace();
+    WEAKREF_REGISTRY.with(|r| {
+        r.borrow()
+            .get(&key)
+            .map(|items| {
+                items
+                    .iter()
+                    .copied()
+                    .filter(|wref| weakref_entry_is_publicly_live(*wref, &globals))
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
 /// weakref.getweakrefcount(obj) -> number of live ref/proxy objects.
 pub fn mb_weakref_getweakrefcount(obj: MbValue) -> MbValue {
-    let key = referent_key(obj);
-    let n = WEAKREF_REGISTRY.with(|r| r.borrow().get(&key).map(|v| v.len()).unwrap_or(0));
-    MbValue::from_int(n as i64)
+    MbValue::from_int(live_registry_items(obj).len() as i64)
 }
 
 /// weakref.getweakrefs(obj) -> list of live ref/proxy objects (creation order).
 pub fn mb_weakref_getweakrefs(obj: MbValue) -> MbValue {
-    let key = referent_key(obj);
-    let items = WEAKREF_REGISTRY.with(|r| r.borrow().get(&key).cloned().unwrap_or_default());
+    let items = live_registry_items(obj);
     for &w in &items {
         unsafe {
             super::super::rc::retain_if_ptr(w);
@@ -785,9 +1676,11 @@ pub fn mb_weakref_weak_method(method: MbValue) -> MbValue {
 }
 
 /// weakref.finalize(obj, func, /*args*/) -> Instance stub.
-///
-/// Carve-out: the finalizer is stored but never invoked (no GC hook).
 pub fn mb_weakref_finalize(obj: MbValue, func: MbValue) -> MbValue {
+    unsafe {
+        super::super::rc::retain_if_ptr(obj);
+        super::super::rc::retain_if_ptr(func);
+    }
     let mut fields = FxHashMap::default();
     fields.insert("_obj".to_string(), obj);
     fields.insert("_func".to_string(), func);
@@ -806,7 +1699,9 @@ pub fn mb_weakref_finalize(obj: MbValue, func: MbValue) -> MbValue {
             fields: RwLock::new(fields),
         },
     });
-    MbValue::from_ptr(Box::into_raw(obj_inst))
+    let fin = MbValue::from_ptr(Box::into_raw(obj_inst));
+    finalize_registry_push(obj, fin);
+    fin
 }
 
 // ---------------------------------------------------------------------------
@@ -830,14 +1725,33 @@ fn register_weakref_classes() {
     super::super::class::mb_class_register("ReferenceType", vec![], rt);
 
     let mut ws: Map<String, MbValue> = Map::new();
-    ws.insert("add".into(), var(ws_add as *const () as usize));
-    ws.insert("discard".into(), var(ws_discard as *const () as usize));
-    ws.insert("remove".into(), var(ws_remove as *const () as usize));
-    ws.insert(
-        "__contains__".into(),
-        var(ws_contains as *const () as usize),
-    );
-    ws.insert("__len__".into(), var(ws_len as *const () as usize));
+    let ws_methods: &[(&str, usize)] = &[
+        ("__contains__", ws_contains as usize),
+        ("__len__", ws_len as usize),
+        ("add", ws_add as usize),
+        ("clear", ws_clear as usize),
+        ("copy", ws_copy as usize),
+        ("difference", ws_difference as usize),
+        ("difference_update", ws_difference_update as usize),
+        ("discard", ws_discard as usize),
+        ("intersection", ws_intersection as usize),
+        ("intersection_update", ws_intersection_update as usize),
+        ("isdisjoint", ws_isdisjoint as usize),
+        ("issubset", ws_issubset as usize),
+        ("issuperset", ws_issuperset as usize),
+        ("pop", ws_pop as usize),
+        ("remove", ws_remove as usize),
+        ("symmetric_difference", ws_symmetric_difference as usize),
+        (
+            "symmetric_difference_update",
+            ws_symmetric_difference_update as usize,
+        ),
+        ("union", ws_union as usize),
+        ("update", ws_update as usize),
+    ];
+    for (name, addr) in ws_methods {
+        ws.insert((*name).into(), var(*addr));
+    }
     super::super::class::mb_class_register("WeakSet", vec![], ws);
 
     let wvd_methods: &[(&str, usize)] = &[
@@ -851,9 +1765,23 @@ fn register_weakref_classes() {
         ("values", wvd_values as usize),
         ("items", wvd_items as usize),
     ];
-    for cls in ["WeakValueDictionary", "WeakKeyDictionary"] {
+    let wkd_methods: &[(&str, usize)] = &[
+        ("__setitem__", wkd_setitem as usize),
+        ("__getitem__", wkd_getitem as usize),
+        ("__delitem__", wkd_delitem as usize),
+        ("__contains__", wkd_contains as usize),
+        ("__len__", wkd_len as usize),
+        ("get", wkd_get as usize),
+        ("keys", wkd_keys as usize),
+        ("values", wkd_values as usize),
+        ("items", wkd_items as usize),
+    ];
+    for (cls, methods) in [
+        ("WeakValueDictionary", wvd_methods),
+        ("WeakKeyDictionary", wkd_methods),
+    ] {
         let mut m: Map<String, MbValue> = Map::new();
-        for (name, addr) in wvd_methods {
+        for (name, addr) in methods {
             m.insert((*name).to_string(), var(*addr));
         }
         super::super::class::mb_class_register(cls, vec![], m);
@@ -961,6 +1889,40 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    static FINALIZE_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static REF_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static REF_CALLBACK_ARG_BITS: AtomicU64 = AtomicU64::new(0);
+
+    unsafe extern "C" fn finalize_test_callback(
+        _args_ptr: *const MbValue,
+        _nargs: usize,
+    ) -> MbValue {
+        FINALIZE_CALLBACK_COUNT.fetch_add(1, Ordering::SeqCst);
+        MbValue::none()
+    }
+
+    fn finalize_test_func() -> MbValue {
+        let addr = finalize_test_callback as *const () as usize;
+        crate::runtime::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    }
+
+    extern "C" fn ref_test_callback(wref: MbValue) -> MbValue {
+        REF_CALLBACK_COUNT.fetch_add(1, Ordering::SeqCst);
+        REF_CALLBACK_ARG_BITS.store(wref.to_bits(), Ordering::SeqCst);
+        MbValue::none()
+    }
+
+    fn registered_ref_test_callback() -> MbValue {
+        let addr = ref_test_callback as *const () as usize;
+        let callback = MbValue::from_func(addr);
+        let mut methods = HashMap::new();
+        methods.insert("__call__".to_string(), callback);
+        crate::runtime::class::mb_class_register("WeakRefCallbackHook", vec![], methods);
+        callback
+    }
 
     fn get_field(instance: MbValue, field: &str) -> MbValue {
         if let Some(ptr) = instance.as_ptr() {
@@ -1011,6 +1973,48 @@ mod tests {
     }
 
     #[test]
+    fn test_ref_callback_fires_once_after_global_rebind() {
+        REF_CALLBACK_COUNT.store(0, Ordering::SeqCst);
+        REF_CALLBACK_ARG_BITS.store(0, Ordering::SeqCst);
+
+        let obj = target();
+        let global_id = MbValue::from_bits(9021);
+        crate::runtime::closure::mb_global_set_id(global_id, obj);
+        let wref = mb_weakref_ref(obj, registered_ref_test_callback());
+
+        expire_unbound_ref_callbacks();
+        assert_eq!(REF_CALLBACK_COUNT.load(Ordering::SeqCst), 0);
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        expire_unbound_ref_callbacks();
+        assert_eq!(REF_CALLBACK_COUNT.load(Ordering::SeqCst), 1);
+        assert_eq!(REF_CALLBACK_ARG_BITS.load(Ordering::SeqCst), wref.to_bits());
+        assert!(reference_target(wref).is_none());
+
+        expire_unbound_ref_callbacks();
+        assert_eq!(REF_CALLBACK_COUNT.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_plain_ref_expires_after_global_rebind() {
+        let obj = target();
+        let global_id = MbValue::from_bits(9022);
+        crate::runtime::closure::mb_global_set_id(global_id, obj);
+        let wref = mb_weakref_ref(obj, MbValue::none());
+
+        expire_unbound_ref_callbacks();
+        let alive = reference_target(wref);
+        assert_eq!(alive.as_ptr(), obj.as_ptr());
+        unsafe {
+            crate::runtime::rc::release_if_ptr(alive);
+        }
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        expire_unbound_ref_callbacks();
+        assert!(reference_target(wref).is_none());
+    }
+
+    #[test]
     fn test_deref_returns_target() {
         // Carve-out: deref returns the strong-ref target, not None.
         let obj = target();
@@ -1019,12 +2023,81 @@ mod tests {
         assert_eq!(r.as_ptr(), obj.as_ptr());
     }
 
+    #[test]
+    fn test_class_object_ref_expires_after_global_rebind() {
+        let class_name = "WeakRefClassTarget";
+        crate::runtime::class::mb_class_define_multi(
+            MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+            MbValue::none(),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        let obj = crate::runtime::builtins::make_type_object(class_name);
+        let global_id = MbValue::from_bits(9001);
+        crate::runtime::closure::mb_global_set_id(global_id, obj);
+        let wref = mb_weakref_ref(obj, MbValue::none());
+
+        let alive = reference_target(wref);
+        assert_eq!(alive.as_ptr(), obj.as_ptr());
+        unsafe {
+            crate::runtime::rc::release_if_ptr(alive);
+        }
+
+        expire_unbound_class_refs();
+        let still_alive = reference_target(wref);
+        assert_eq!(still_alive.as_ptr(), obj.as_ptr());
+        unsafe {
+            crate::runtime::rc::release_if_ptr(still_alive);
+        }
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        expire_unbound_class_refs();
+
+        assert!(reference_target(wref).is_none());
+    }
+
+    #[test]
+    fn test_ref_accepts_uuid_integer_handle() {
+        let obj = super::super::uuid_mod::mb_uuid_uuid4();
+        let wref = mb_weakref_ref(obj, MbValue::none());
+        assert!(wref.as_ptr().is_some());
+        assert_eq!(get_field(wref, "_target").to_bits(), obj.to_bits());
+        assert_eq!(referent_type_name(obj), "UUID");
+    }
+
+    #[test]
+    fn test_ref_still_rejects_plain_int() {
+        assert!(reject_non_weakreferenceable(MbValue::from_int(1)));
+        crate::runtime::exception::mb_clear_exception();
+    }
+
     // -- proxy --
 
     #[test]
     fn test_proxy_returns_object() {
         let v = target();
         assert_eq!(mb_weakref_proxy(v, MbValue::none()).as_ptr(), v.as_ptr());
+    }
+
+    #[test]
+    fn test_proxy_wraps_userlist() {
+        let v = super::super::collections_mod::mb_userlist_new(MbValue::none());
+        let proxy = mb_weakref_proxy(v, MbValue::none());
+        assert!(is_proxy_instance(proxy));
+        assert_eq!(proxy_target(proxy).and_then(|t| t.as_ptr()), v.as_ptr());
+    }
+
+    #[test]
+    fn test_userlist_proxy_bool_forwards_to_backing_list() {
+        let v = super::super::collections_mod::mb_userlist_new(MbValue::none());
+        let proxy = mb_weakref_proxy(v, MbValue::none());
+        assert_eq!(crate::runtime::builtins::mb_bool(proxy).as_bool(), Some(false));
+
+        let backing = super::super::collections_mod::user_wrapper_data(v)
+            .expect("expected UserList backing")
+            .1;
+        crate::runtime::list_ops::mb_list_append(backing, MbValue::from_int(12));
+        assert_eq!(crate::runtime::builtins::mb_bool(proxy).as_bool(), Some(true));
     }
 
     #[test]
@@ -1040,6 +2113,24 @@ mod tests {
     fn test_getweakrefcount_zero() {
         let v = MbValue::from_int(1);
         assert_eq!(mb_weakref_getweakrefcount(v).as_int(), Some(0));
+    }
+
+    #[test]
+    fn test_getweakrefcount_drops_deleted_global_ref() {
+        let obj = target();
+        let r1 = mb_weakref_ref(obj, MbValue::from_int(1));
+        let r2 = mb_weakref_ref(obj, MbValue::from_int(2));
+        let r1_global = MbValue::from_bits(9101);
+        let r2_global = MbValue::from_bits(9102);
+        crate::runtime::closure::mb_global_set_id(r1_global, r1);
+        crate::runtime::closure::mb_global_set_id(r2_global, r2);
+
+        assert_eq!(mb_weakref_getweakrefcount(obj).as_int(), Some(2));
+
+        crate::runtime::closure::mb_global_set_id(r1_global, MbValue::none());
+        assert_eq!(mb_weakref_getweakrefcount(obj).as_int(), Some(1));
+
+        crate::runtime::closure::mb_global_set_id(r2_global, MbValue::none());
     }
 
     #[test]
@@ -1071,6 +2162,57 @@ mod tests {
     }
 
     #[test]
+    fn test_weak_set_prunes_unbound_member() {
+        let s = mb_weakref_weak_set();
+        let item = target();
+        let global_id = MbValue::from_bits(9202);
+        crate::runtime::closure::mb_global_set_id(global_id, item);
+        let args = MbValue::from_ptr(MbObject::new_list(vec![item]));
+
+        unsafe {
+            ws_add(s, args);
+        }
+        let contains_args = MbValue::from_ptr(MbObject::new_list(vec![item]));
+        assert_eq!(
+            unsafe { ws_contains(s, contains_args) }.as_bool(),
+            Some(true)
+        );
+        assert_eq!(unsafe { ws_len(s, MbValue::none()) }.as_int(), Some(1));
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        assert_eq!(unsafe { ws_len(s, MbValue::none()) }.as_int(), Some(0));
+    }
+
+    #[test]
+    fn test_weak_set_registers_public_set_methods() {
+        register_weakref_classes();
+        for method in [
+            "add",
+            "clear",
+            "copy",
+            "difference",
+            "difference_update",
+            "discard",
+            "intersection",
+            "intersection_update",
+            "isdisjoint",
+            "issubset",
+            "issuperset",
+            "pop",
+            "remove",
+            "symmetric_difference",
+            "symmetric_difference_update",
+            "union",
+            "update",
+        ] {
+            assert!(
+                !crate::runtime::class::lookup_method("WeakSet", method).is_none(),
+                "missing WeakSet method {method}"
+            );
+        }
+    }
+
+    #[test]
     fn test_weak_key_dict_is_instance_with_dict_data() {
         let d = mb_weakref_weak_key_dict();
         assert_eq!(
@@ -1084,6 +2226,29 @@ mod tests {
     }
 
     #[test]
+    fn test_weak_key_dict_accepts_plain_value_and_prunes_unbound_key() {
+        let d = mb_weakref_weak_key_dict();
+        let key = target();
+        let global_id = MbValue::from_bits(9201);
+        crate::runtime::closure::mb_global_set_id(global_id, key);
+        let value = MbValue::from_ptr(MbObject::new_str("data".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![key, value]));
+
+        unsafe {
+            wkd_setitem(d, args);
+        }
+        let contains_args = MbValue::from_ptr(MbObject::new_list(vec![key]));
+        assert_eq!(
+            unsafe { wkd_contains(d, contains_args) }.as_bool(),
+            Some(true)
+        );
+        assert_eq!(unsafe { wkd_len(d, MbValue::none()) }.as_int(), Some(1));
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        assert_eq!(unsafe { wkd_len(d, MbValue::none()) }.as_int(), Some(0));
+    }
+
+    #[test]
     fn test_weak_value_dict_is_instance_with_dict_data() {
         let d = mb_weakref_weak_value_dict();
         assert_eq!(
@@ -1094,6 +2259,34 @@ mod tests {
         unsafe {
             assert!(matches!(&(*data.as_ptr().unwrap()).data, ObjData::Dict(_)));
         }
+    }
+
+    #[test]
+    fn test_weak_value_dict_prunes_unbound_value() {
+        let d = mb_weakref_weak_value_dict();
+        let value = target();
+        let global_id = MbValue::from_bits(9203);
+        crate::runtime::closure::mb_global_set_id(global_id, value);
+        let key = MbValue::from_ptr(MbObject::new_str("x".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![key, value]));
+
+        unsafe {
+            wvd_setitem(d, args);
+        }
+        let contains_args = MbValue::from_ptr(MbObject::new_list(vec![key]));
+        assert_eq!(
+            unsafe { wvd_contains(d, contains_args) }.as_bool(),
+            Some(true)
+        );
+        assert_eq!(unsafe { wvd_len(d, MbValue::none()) }.as_int(), Some(1));
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        let contains_args = MbValue::from_ptr(MbObject::new_list(vec![key]));
+        assert_eq!(
+            unsafe { wvd_contains(d, contains_args) }.as_bool(),
+            Some(false)
+        );
+        assert_eq!(unsafe { wvd_len(d, MbValue::none()) }.as_int(), Some(0));
     }
 
     // -- WeakMethod --
@@ -1123,6 +2316,30 @@ mod tests {
         assert_eq!(get_field(f, "alive").as_bool(), Some(true));
         assert_eq!(get_field(f, "_obj").as_int(), Some(1));
         assert_eq!(get_field(f, "_func").as_int(), Some(2));
+    }
+
+    #[test]
+    fn test_finalize_expires_once_after_global_rebind() {
+        FINALIZE_CALLBACK_COUNT.store(0, Ordering::SeqCst);
+        let obj = target();
+        let global_id = MbValue::from_bits(9011);
+        crate::runtime::closure::mb_global_set_id(global_id, obj);
+        let f = mb_weakref_finalize(obj, finalize_test_func());
+        unsafe {
+            crate::runtime::rc::release_if_ptr(obj);
+        }
+
+        expire_unbound_finalizers();
+        assert_eq!(get_field(f, "alive").as_bool(), Some(true));
+        assert_eq!(FINALIZE_CALLBACK_COUNT.load(Ordering::SeqCst), 0);
+
+        crate::runtime::closure::mb_global_set_id(global_id, MbValue::none());
+        expire_unbound_finalizers();
+        assert_eq!(get_field(f, "alive").as_bool(), Some(false));
+        assert_eq!(FINALIZE_CALLBACK_COUNT.load(Ordering::SeqCst), 1);
+
+        expire_unbound_finalizers();
+        assert_eq!(FINALIZE_CALLBACK_COUNT.load(Ordering::SeqCst), 1);
     }
 
     // -- class stubs --

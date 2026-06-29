@@ -76,20 +76,24 @@ fn build_index() -> tempfile::TempDir {
 
 fn setup_locked_project(proj: &Path, index: &Path) {
     assert!(run(proj, &["init"]).status.success());
-    assert!(run(
-        proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
-    assert!(run(proj, &["lock", "--index", index.to_str().unwrap()])
+    assert!(
+        run(
+            proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.to_str().unwrap()
+            ]
+        )
         .status
-        .success());
+        .success()
+    );
+    assert!(
+        run(proj, &["lock", "--index", index.to_str().unwrap()])
+            .status
+            .success()
+    );
 }
 
 #[test]
@@ -154,6 +158,46 @@ fn sync_second_run_is_a_clean_noop() {
         std::fs::read(proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py")).unwrap();
     assert_eq!(lock_a, lock_b, "lockfile byte-identical across syncs");
     assert_eq!(init_a, init_b, "package init.py untouched on no-op");
+}
+
+#[test]
+fn sync_check_reports_environment_drift_without_mutation() {
+    let index = build_index();
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    setup_locked_project(&proj, index.path());
+
+    let before = std::fs::read(proj.join("mamba.lock")).unwrap();
+    let out = run(&proj, &["sync", "--check"]);
+    assert!(!out.status.success(), "sync --check must fail before sync");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not synchronized"),
+        "stderr names drift: {stderr:?}"
+    );
+    assert!(
+        !proj.join(".venv").exists(),
+        "failed sync --check must not create .venv"
+    );
+    assert_eq!(
+        before,
+        std::fs::read(proj.join("mamba.lock")).unwrap(),
+        "sync --check must not rewrite the lockfile"
+    );
+
+    assert!(run(&proj, &["sync"]).status.success());
+    let synced = run(&proj, &["sync", "--check"]);
+    assert!(
+        synced.status.success(),
+        "sync --check must pass after sync; stderr: {}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&synced.stdout).contains("synchronized"),
+        "stdout names synchronized env: {}",
+        String::from_utf8_lossy(&synced.stdout)
+    );
 }
 
 #[test]
@@ -272,6 +316,77 @@ fn sync_downloads_and_verifies_wheel_when_url_and_sha_present() {
         sidecar_body.trim(),
         body_sha,
         "sidecar must record the verified sha"
+    );
+}
+
+#[test]
+fn sync_download_uses_stored_auth_credentials() {
+    use sha2::{Digest, Sha256};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (server_url, body_sha) = rt.block_on(async {
+        use mamba::pkgmanage::pkgmgr::auth_header::basic_auth;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let body = b"auth-sync-fake-wheel-bytes";
+        let mut hasher = Sha256::new();
+        hasher.update(body);
+        let digest = format!("{:x}", hasher.finalize());
+        let expected_auth = basic_auth("__token__", "secret-token").unwrap();
+        Mock::given(method("GET"))
+            .and(path("/files/auth_sync_pkg-1.0.0-py3-none-any.whl"))
+            .and(header("authorization", expected_auth.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        std::mem::forget(server);
+        (url, digest)
+    });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let creds = tmp.path().join("credentials");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+    let login = Command::new(mamba_bin())
+        .args(["auth", "login", &server_url, "--token", "secret-token"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba auth login");
+    assert!(
+        login.status.success(),
+        "auth login must succeed: {}",
+        String::from_utf8_lossy(&login.stderr)
+    );
+
+    let wheel_url = format!("{server_url}/files/auth_sync_pkg-1.0.0-py3-none-any.whl");
+    let lock = format!(
+        "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"auth_sync_pkg\"\nversion = \"1.0.0\"\nsha256 = \"{body_sha}\"\nurl = \"{wheel_url}\"\nsource = \"pypi://auth_sync_pkg/1.0.0\"\ndependencies = []\n"
+    );
+    std::fs::write(proj.join("mamba.lock"), lock).unwrap();
+
+    let out = Command::new(mamba_bin())
+        .args(["sync"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .env("MAMBA_CACHE_DIR", &cache)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba sync");
+    assert!(
+        out.status.success(),
+        "authenticated sync must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let wheel = cache.join("artifacts/auth-sync-pkg/auth_sync_pkg-1.0.0-py3-none-any.whl");
+    assert!(
+        wheel.exists(),
+        "downloaded wheel missing: {}",
+        wheel.display()
     );
 }
 

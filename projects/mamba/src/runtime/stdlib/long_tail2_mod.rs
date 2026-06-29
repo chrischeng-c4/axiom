@@ -1,4 +1,4 @@
-use super::super::rc::MbObject;
+use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 /// Long-tail stub batch 2 for Mamba (#1261).
 ///
@@ -30,6 +30,113 @@ unsafe extern "C" fn dispatch_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
 }
 
+fn new_str(s: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.to_string()))
+}
+
+fn make_type_obj(name: &str, module: &str) -> MbValue {
+    let obj = MbObject::new_instance("type".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*obj).data {
+            let mut map = fields.write().unwrap();
+            map.insert("__name__".to_string(), new_str(name));
+            map.insert("__qualname__".to_string(), new_str(name));
+            map.insert("__module__".to_string(), new_str(module));
+        }
+    }
+    MbValue::from_ptr(obj)
+}
+
+fn extract_args(args: MbValue) -> Vec<MbValue> {
+    args.as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                Some(lock.read().unwrap().to_vec())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn is_bytes_like(v: MbValue) -> bool {
+    v.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+        .unwrap_or(false)
+}
+
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(new_str("TypeError"), new_str(msg));
+    MbValue::none()
+}
+
+unsafe extern "C" fn write_transport_write(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    let data = items.first().copied().unwrap_or_else(MbValue::none);
+    if !is_bytes_like(data) {
+        return raise_type_error("WriteTransport.write() argument must be bytes-like");
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn raw_turtle_write(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(move_arg) = items.get(1) {
+        if !move_arg.is_bool() {
+            return raise_type_error("RawTurtle.write() move argument must be bool");
+        }
+    }
+    MbValue::none()
+}
+
+fn register_variadic_method_class(class_name: &str, method_name: &str, addr: usize) {
+    super::super::module::register_variadic_func(addr as u64);
+    let mut methods = HashMap::new();
+    methods.insert(method_name.to_string(), MbValue::from_func(addr));
+    super::super::class::mb_class_register(class_name, vec!["object".to_string()], methods);
+}
+
+/// logging.config.fileConfig(fname) — validates the config file: a missing
+/// path raises FileNotFoundError and a file with no INI sections (e.g. empty)
+/// raises RuntimeError, matching CPython. Full INI-driven logger setup is not
+/// modeled, so a well-formed file is accepted as a no-op.
+unsafe extern "C" fn dispatch_file_config(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let path = a.first().copied().and_then(|v| {
+        v.as_ptr().and_then(|p| unsafe {
+            if let super::super::rc::ObjData::Str(ref s) = (*p).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+    });
+    if let Some(path) = path {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                if !content.contains('[') {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "{path} does not contain configuration information"
+                        ))),
+                    );
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "[Errno 2] No such file or directory: '{path}'"
+                    ))),
+                );
+            }
+            Err(_) => {}
+        }
+    }
+    MbValue::none()
+}
+
 fn register_addrs(addrs: &[usize]) {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
@@ -46,6 +153,16 @@ fn register_with(
     consts_int: &[(&str, i64)],
     consts_str: &[(&str, &str)],
 ) {
+    let attrs = build_attrs(classes, dispatchers, consts_int, consts_str);
+    super::register_module(name, attrs);
+}
+
+fn build_attrs(
+    classes: &[&str],
+    dispatchers: &[(&str, usize)],
+    consts_int: &[(&str, i64)],
+    consts_str: &[(&str, &str)],
+) -> HashMap<String, MbValue> {
     let mut attrs = HashMap::new();
     let shell = dispatch_class_shell as *const () as usize;
     let mut addrs = vec![shell];
@@ -66,7 +183,59 @@ fn register_with(
         );
     }
     register_addrs(&addrs);
-    super::register_module(name, attrs);
+    attrs
+}
+
+fn register_asyncio_transports() {
+    let mut attrs = build_attrs(
+        &[
+            "BaseTransport", "ReadTransport", "WriteTransport", "Transport",
+            "DatagramTransport", "SubprocessTransport",
+        ],
+        &[],
+        &[],
+        &[],
+    );
+    attrs.insert(
+        "WriteTransport".into(),
+        make_type_obj("WriteTransport", "asyncio.transports"),
+    );
+    register_variadic_method_class(
+        "WriteTransport",
+        "write",
+        write_transport_write as *const () as usize,
+    );
+    super::register_module("asyncio.transports", attrs);
+}
+
+fn register_turtle() {
+    let mut attrs = build_attrs(
+        &[
+            "Turtle", "RawTurtle", "Pen", "Screen", "TurtleScreen", "TNavigator",
+            "Vec2D", "ScrolledCanvas", "TurtleGraphicsError",
+        ],
+        &[
+            ("forward", dispatch_noop as *const () as usize),
+            ("backward", dispatch_noop as *const () as usize),
+            ("left", dispatch_noop as *const () as usize),
+            ("right", dispatch_noop as *const () as usize),
+            ("setheading", dispatch_noop as *const () as usize),
+            ("position", dispatch_empty_list as *const () as usize),
+            ("goto", dispatch_noop as *const () as usize),
+            ("done", dispatch_noop as *const () as usize),
+            ("bye", dispatch_noop as *const () as usize),
+            ("mainloop", dispatch_noop as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    attrs.insert("RawTurtle".into(), make_type_obj("RawTurtle", "turtle"));
+    register_variadic_method_class(
+        "RawTurtle",
+        "write",
+        raw_turtle_write as *const () as usize,
+    );
+    super::register_module("turtle", attrs);
 }
 
 pub fn register() {
@@ -168,8 +337,7 @@ pub fn register() {
     register_with(
         "logging.config",
         &[
-            // classes / configurators
-            "BaseConfigurator",
+            // classes / configurators (present-only shells)
             "ConvertingDict",
             "ConvertingList",
             "ConvertingMixin",
@@ -194,9 +362,15 @@ pub fn register() {
         ],
         &[
             ("dictConfig", dispatch_noop as *const () as usize),
-            ("fileConfig", dispatch_noop as *const () as usize),
+            ("fileConfig", dispatch_file_config as *const () as usize),
             ("listen", dispatch_class_shell as *const () as usize),
             ("stopListening", dispatch_noop as *const () as usize),
+            // BaseConfigurator is a real class: stores config + convert() resolves
+            // cfg:// references (raises KeyError/ValueError on bad refs).
+            (
+                "BaseConfigurator",
+                super::logging_mod::dispatch_baseconfigurator as *const () as usize,
+            ),
             ("valid_ident", dispatch_false as *const () as usize),
         ],
         &[("DEFAULT_LOGGING_CONFIG_PORT", 9030), ("RESET_ERROR", 54)],
@@ -333,20 +507,7 @@ pub fn register() {
         &[],
         &[],
     );
-    register_with(
-        "asyncio.transports",
-        &[
-            "BaseTransport",
-            "ReadTransport",
-            "WriteTransport",
-            "Transport",
-            "DatagramTransport",
-            "SubprocessTransport",
-        ],
-        &[],
-        &[],
-        &[],
-    );
+    register_asyncio_transports();
     register_with(
         "asyncio.events",
         &[
@@ -656,34 +817,7 @@ pub fn register() {
         &[],
     );
 
-    register_with(
-        "turtle",
-        &[
-            "Turtle",
-            "RawTurtle",
-            "Pen",
-            "Screen",
-            "TurtleScreen",
-            "TNavigator",
-            "Vec2D",
-            "ScrolledCanvas",
-            "TurtleGraphicsError",
-        ],
-        &[
-            ("forward", dispatch_noop as *const () as usize),
-            ("backward", dispatch_noop as *const () as usize),
-            ("left", dispatch_noop as *const () as usize),
-            ("right", dispatch_noop as *const () as usize),
-            ("setheading", dispatch_noop as *const () as usize),
-            ("position", dispatch_empty_list as *const () as usize),
-            ("goto", dispatch_noop as *const () as usize),
-            ("done", dispatch_noop as *const () as usize),
-            ("bye", dispatch_noop as *const () as usize),
-            ("mainloop", dispatch_noop as *const () as usize),
-        ],
-        &[],
-        &[],
-    );
+    register_turtle();
 
     register_with(
         "curses",

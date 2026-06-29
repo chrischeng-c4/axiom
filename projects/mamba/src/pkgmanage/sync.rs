@@ -21,10 +21,12 @@
 //
 // No partial state on failure: lockfile is never rewritten by sync.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::pkgmanage::provider;
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
@@ -55,6 +57,21 @@ pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
     let site = venv_dir.join(SITE_PACKAGES);
 
     let plan = plan_install(&packages, &site);
+    if sub.get_flag("check") {
+        if !venv_dir.join("pyvenv.cfg").exists() {
+            bail!("environment is not synchronized with mamba.lock; missing .venv/pyvenv.cfg");
+        }
+        if !plan.is_empty() {
+            let missing = plan
+                .iter()
+                .map(|p| format!("{}=={}", p.name, p.version))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("environment is not synchronized with mamba.lock; pending packages: {missing}");
+        }
+        println!("environment is synchronized with mamba.lock");
+        return Ok(());
+    }
     if plan.is_empty() && venv_dir.exists() {
         eprintln!("no_op: environment already in sync with mamba.lock");
         return Ok(());
@@ -118,6 +135,20 @@ pub(crate) struct LockedPkg {
     /// path. When non-empty alongside `url`, sync streams the artifact via
     /// [`IndexClient::download_artifact`] which verifies the hash.
     pub(crate) sha256: String,
+    /// Optional source kind recorded by the lockfile. Direct local wheel
+    /// entries use `direct_file` and intentionally leave `url` empty so sync
+    /// stays offline.
+    pub(crate) source_kind: String,
+    /// Optional source path for local/direct entries.
+    pub(crate) path: String,
+    /// First-party provider name for mamba-owned replacement packages.
+    pub(crate) provider: String,
+    /// Import/API packages exposed by a provider distribution.
+    pub(crate) provides: Vec<String>,
+    /// Upstream API surface this provider targets.
+    pub(crate) compatibility: String,
+    /// Provider maturity label, e.g. experimental.
+    pub(crate) maturity: String,
 }
 
 pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
@@ -152,14 +183,57 @@ pub(crate) fn parse_locked_packages(lock_src: &str) -> Result<Vec<LockedPkg>> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let source_kind = tbl
+            .get("source_kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let path = tbl
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let provider = tbl
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let provides = string_array(tbl, "provides");
+        let compatibility = tbl
+            .get("compatibility")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let maturity = tbl
+            .get("maturity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         out.push(LockedPkg {
             name,
             version,
             url,
             sha256,
+            source_kind,
+            path,
+            provider,
+            provides,
+            compatibility,
+            maturity,
         });
     }
     Ok(out)
+}
+
+fn string_array(tbl: &toml::value::Table, key: &str) -> Vec<String> {
+    tbl.get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Stream every locked artifact through the shared async IndexClient,
@@ -202,12 +276,14 @@ fn download_and_verify_parallel(plan: &[LockedPkg], max_concurrent: usize) -> Re
                     .acquire()
                     .await
                     .expect("sync semaphore never closes mid-flight");
+                let auth_header = crate::pkgmanage::auth::authorization_for_url(&pkg.url)?;
                 let client = IndexClient {
                     index_url: derive_index_url(&pkg.url),
                     cache_dir: (*cache).clone(),
                     max_concurrent: 4,
                     timeout_secs: 60,
                     retry_max: 3,
+                    auth_header,
                 };
                 let file = ReleaseFile {
                     filename: derive_filename(&pkg.url, &pkg.name, &pkg.version),
@@ -318,6 +394,17 @@ fn plan_install(packages: &[LockedPkg], site: &Path) -> Vec<LockedPkg> {
 }
 
 fn is_installed(site: &Path, pkg: &LockedPkg) -> bool {
+    if pkg.source_kind == "mamba_provider" {
+        return dist_marker_installed(site, pkg)
+            && pkg
+                .provides
+                .iter()
+                .all(|alias| provider_alias_installed(site, alias, &pkg.name));
+    }
+    dist_marker_installed(site, pkg)
+}
+
+fn dist_marker_installed(site: &Path, pkg: &LockedPkg) -> bool {
     let dir = site.join(normalize_module_name(&pkg.name));
     dir.join("__init__.py").exists()
         && dir.join("INSTALLER").exists()
@@ -328,13 +415,18 @@ fn is_installed(site: &Path, pkg: &LockedPkg) -> bool {
 }
 
 fn materialize_stub(site: &Path, pkg: &LockedPkg) -> Result<()> {
+    if pkg.source_kind == "mamba_provider" {
+        return materialize_mamba_provider(site, pkg);
+    }
     let dir = site.join(normalize_module_name(&pkg.name));
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let init_body = format!(
         "# stub-installed by `mamba sync` from a frozen local index\n\
          __mamba_pkg__ = {:?}\n\
-         __version__ = {:?}\n",
-        pkg.name, pkg.version
+         __version__ = {:?}\n\
+         __mamba_source_kind__ = {:?}\n\
+         __mamba_source_path__ = {:?}\n",
+        pkg.name, pkg.version, pkg.source_kind, pkg.path
     );
     fs::write(dir.join("__init__.py"), init_body)
         .with_context(|| format!("write {}/__init__.py", dir.display()))?;
@@ -342,6 +434,80 @@ fn materialize_stub(site: &Path, pkg: &LockedPkg) -> Result<()> {
         .with_context(|| format!("write {}/INSTALLER", dir.display()))?;
     fs::write(dir.join("VERSION"), format!("{}\n", pkg.version))
         .with_context(|| format!("write {}/VERSION", dir.display()))?;
+    Ok(())
+}
+
+fn materialize_mamba_provider(site: &Path, pkg: &LockedPkg) -> Result<()> {
+    let provider_pkg = provider::locked_mamba_package(
+        &pkg.name,
+        &pkg.version,
+        &pkg.provider,
+        &pkg.provides,
+        &pkg.compatibility,
+        &pkg.maturity,
+    )?;
+    for alias in &provider_pkg.provides {
+        ensure_provider_alias_available(site, alias, &provider_pkg.distribution)?;
+    }
+    for file in provider::provider_files(&provider_pkg)? {
+        let path = site.join(&file.relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        fs::write(&path, file.body).with_context(|| format!("write {}", path.display()))?;
+    }
+
+    let dist_dir = site.join(normalize_module_name(&pkg.name));
+    fs::create_dir_all(&dist_dir).with_context(|| format!("create {}", dist_dir.display()))?;
+    fs::write(dist_dir.join("INSTALLER"), b"mamba\n")
+        .with_context(|| format!("write {}/INSTALLER", dist_dir.display()))?;
+    fs::write(dist_dir.join("VERSION"), format!("{}\n", pkg.version))
+        .with_context(|| format!("write {}/VERSION", dist_dir.display()))?;
+    fs::write(dist_dir.join("PROVIDER"), format!("{}\n", pkg.provider))
+        .with_context(|| format!("write {}/PROVIDER", dist_dir.display()))?;
+    Ok(())
+}
+
+fn provider_alias_installed(site: &Path, alias: &str, distribution: &str) -> bool {
+    let init = site.join(normalize_module_name(alias)).join("__init__.py");
+    fs::read_to_string(init)
+        .ok()
+        .map(|body| {
+            body.contains(&format!(
+                "__mamba_provider_distribution__ = {:?}",
+                distribution
+            ))
+        })
+        .unwrap_or(false)
+}
+
+fn ensure_provider_alias_available(site: &Path, alias: &str, distribution: &str) -> Result<()> {
+    let module = normalize_module_name(alias);
+    let package_dir = site.join(&module);
+    let init = package_dir.join("__init__.py");
+    let module_file = site.join(format!("{module}.py"));
+    if module_file.exists() {
+        bail!(
+            "mamba provider package `{distribution}` would overwrite existing module file `{}`",
+            module_file.display()
+        );
+    }
+    if init.exists() {
+        let body = fs::read_to_string(&init).with_context(|| format!("read {}", init.display()))?;
+        if !body.contains(&format!(
+            "__mamba_provider_distribution__ = {:?}",
+            distribution
+        )) {
+            bail!(
+                "mamba provider package `{distribution}` would overwrite existing import package `{alias}`"
+            );
+        }
+    } else if package_dir.exists() {
+        bail!(
+            "mamba provider package `{distribution}` would overwrite existing import package directory `{}`",
+            package_dir.display()
+        );
+    }
     Ok(())
 }
 
@@ -401,6 +567,31 @@ dependencies = []
         assert_eq!(pkgs.len(), 1);
         assert_eq!(pkgs[0].name, "foo");
         assert_eq!(pkgs[0].version, "1.2.3");
+    }
+
+    #[test]
+    fn parse_provider_metadata() {
+        let src = r#"
+format_version = 1
+input_hash = "x"
+
+[[package]]
+name = "mamba-httpx-compat"
+version = "0.1.0"
+sha256 = ""
+url = ""
+source_kind = "mamba_provider"
+provider = "mamba"
+provides = ["httpx"]
+compatibility = "httpx"
+maturity = "experimental"
+source = "mamba-provider://mamba/mamba-httpx-compat/0.1.0"
+dependencies = []
+"#;
+        let pkgs = parse_locked_packages(src).unwrap();
+        assert_eq!(pkgs[0].provider, "mamba");
+        assert_eq!(pkgs[0].provides, vec!["httpx"]);
+        assert_eq!(pkgs[0].compatibility, "httpx");
     }
 
     #[test]

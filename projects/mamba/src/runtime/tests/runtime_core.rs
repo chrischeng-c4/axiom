@@ -296,7 +296,7 @@ fn test_generator_lifecycle() {
     let name = MbValue::from_ptr(MbObject::new_str("test_gen".to_string()));
     // Create a generator with a dummy body function (we won't start it)
     let body_fn = MbValue::none();
-    let gen = mb_generator_create(name, body_fn);
+    let gen = mb_generator_create(name, body_fn, MbValue::none());
 
     assert_eq!(mb_generator_is_exhausted(gen).as_bool(), Some(false));
 

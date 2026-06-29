@@ -152,7 +152,6 @@ subject    = "pickle.dumps"
 kind       = "mechanical"
 call       = "pickle.dumps(i for i in range(3))"
 expect_exc = "(TypeError, pickle.PicklingError)"
-xfail      = "pickle shim serializes unsupported objects to the 'N' (None) sentinel instead of raising (src/runtime/stdlib/pickle_mod.rs:220)"
 source     = "Lib/test/test_pickle.py"
 
 [[case]]

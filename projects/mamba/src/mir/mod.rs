@@ -142,6 +142,8 @@ pub enum MirInst {
     },
     /// GLOBAL_NAMESPACE[name] = value — store to module-level namespace
     StoreGlobal { name: SymbolId, value: VReg },
+    /// del GLOBAL_NAMESPACE[name] — remove from module-level namespace
+    DeleteGlobal { name: SymbolId },
     /// dest = cells[cell_idx].get() — load through cell indirection (nonlocal)
     LoadCell {
         dest: VReg,
@@ -226,6 +228,7 @@ impl MirUnaryOp {
 #[derive(Debug, Clone)]
 pub enum MirConst {
     Int(i64),
+    BigInt(String),
     Float(f64),
     Bool(bool),
     Str(String),

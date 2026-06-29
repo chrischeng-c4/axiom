@@ -12,8 +12,9 @@
 //!     stores `returncode` plus the captured streams; `communicate()`,
 //!     `wait()`, `poll()`, `kill()`/`terminate()`/`send_signal()` and the
 //!     context-manager dunders dispatch through the registered Popen
-//!     class. `Popen.stdin`/`stdout`/`stderr` attribute streams are still
-//!     plain None fields (no live pipe objects).
+//!     class. `Popen.stdout`/`stderr` are in-memory pipe stream stubs when
+//!     those selectors are `PIPE`; `stdin=PIPE` is buffered in memory and
+//!     delivered to the child on the first `wait()`.
 //!   - `shell=True` keyword argument is not parsed. The argv-list shape
 //!     (`run(["cmd", "arg"])`) and the whitespace-split string shape
 //!     (`run("cmd arg")`) are both honored, mirroring the existing
@@ -43,9 +44,6 @@
 //!         the raised `CalledProcessError` is not caught by name (catching
 //!         the builtin family — `ValueError`, `TypeError`,
 //!         `FileNotFoundError` — works). Lane-B: needs `exception.rs`.
-//!       * `Popen.communicate()` / `.wait()` / `.poll()` are instance
-//!         methods on a native class name; dispatching them requires a
-//!         `class.rs` branch. Lane-B.
 //!       * Fixtures that re-exec the interpreter via
 //!         `[sys.executable, "-c", code]` need mamba's CLI to accept `-c`
 //!         (main.rs), independent of this module.
@@ -350,6 +348,18 @@ fn extract_arg_token(val: MbValue) -> Result<String, ()> {
                 ObjData::Bytes(b) => {
                     return Ok(String::from_utf8_lossy(b).to_string());
                 }
+                // os.PathLike: an instance defining __fspath__ — decode by
+                // calling it (CPython's os.fspath path).
+                ObjData::Instance { ref class_name, .. } => {
+                    if !super::super::class::lookup_method(class_name, "__fspath__").is_none() {
+                        let mname = MbValue::from_ptr(MbObject::new_str("__fspath__".to_string()));
+                        let empty = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                        let r = super::super::class::mb_call_method(val, mname, empty);
+                        if let Some(s) = extract_str(r) {
+                            return Ok(s);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -478,6 +488,141 @@ fn new_instance_with_fields(class_name: &str, fields: FxHashMap<String, MbValue>
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+fn instance_field(instance: MbValue, field: &str) -> Option<MbValue> {
+    instance.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(field).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn instance_set_field(instance: MbValue, field: &str, val: MbValue) {
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.write().unwrap().insert(field.to_string(), val);
+            }
+        }
+    }
+}
+
+fn value_bytes(val: MbValue) -> Option<Vec<u8>> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Bytes(bytes) => Some(bytes.clone()),
+            ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
+            ObjData::Str(s) => Some(s.as_bytes().to_vec()),
+            _ => None,
+        }
+    })
+}
+
+fn bytesio_buffer_value(stream: MbValue) -> Vec<u8> {
+    instance_field(stream, "_buffer")
+        .and_then(value_bytes)
+        .unwrap_or_default()
+}
+
+fn normalize_text_newlines(text: String) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn decode_utf16_units(data: &[u8], big_endian: bool) -> String {
+    let mut units = Vec::with_capacity(data.len() / 2);
+    for chunk in data.chunks_exact(2) {
+        let bytes = [chunk[0], chunk[1]];
+        units.push(if big_endian {
+            u16::from_be_bytes(bytes)
+        } else {
+            u16::from_le_bytes(bytes)
+        });
+    }
+    String::from_utf16_lossy(&units)
+}
+
+fn decode_utf16_auto(data: &[u8]) -> String {
+    if data.starts_with(&[0xfe, 0xff]) {
+        decode_utf16_units(&data[2..], true)
+    } else if data.starts_with(&[0xff, 0xfe]) {
+        decode_utf16_units(&data[2..], false)
+    } else {
+        decode_utf16_units(data, false)
+    }
+}
+
+fn decode_utf32_units(data: &[u8], big_endian: bool) -> String {
+    let mut out = String::new();
+    for chunk in data.chunks_exact(4) {
+        let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+        let code = if big_endian {
+            u32::from_be_bytes(bytes)
+        } else {
+            u32::from_le_bytes(bytes)
+        };
+        out.push(char::from_u32(code).unwrap_or(char::REPLACEMENT_CHARACTER));
+    }
+    out
+}
+
+fn decode_utf32_auto(data: &[u8]) -> String {
+    if data.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
+        decode_utf32_units(&data[4..], true)
+    } else if data.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
+        decode_utf32_units(&data[4..], false)
+    } else {
+        decode_utf32_units(data, false)
+    }
+}
+
+fn decode_subprocess_text(data: &[u8], encoding: Option<&str>) -> String {
+    let decoded = match encoding
+        .unwrap_or("utf-8")
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .as_str()
+    {
+        "utf-16" | "utf16" => decode_utf16_auto(data),
+        "utf-16-le" | "utf16-le" => decode_utf16_units(data, false),
+        "utf-16-be" | "utf16-be" => decode_utf16_units(data, true),
+        "utf-32" | "utf32" => decode_utf32_auto(data),
+        "utf-32-le" | "utf32-le" => decode_utf32_units(data, false),
+        "utf-32-be" | "utf32-be" => decode_utf32_units(data, true),
+        _ => String::from_utf8_lossy(data).into_owned(),
+    };
+    normalize_text_newlines(decoded)
+}
+
+fn pipe_stream_value(data: Vec<u8>, captured: bool, text: bool, encoding: Option<&str>) -> MbValue {
+    if !captured {
+        return MbValue::none();
+    }
+    if text {
+        return super::io_mod::mb_stringio_new_with(decode_subprocess_text(&data, encoding));
+    }
+    super::io_mod::mb_bytesio_new_with(data)
+}
+
+fn close_stream_value(stream: MbValue) {
+    let Some(ptr) = stream.as_ptr() else {
+        return;
+    };
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            match class_name.as_str() {
+                "BytesIO" => {
+                    super::io_mod::mb_bytesio_close(stream);
+                }
+                "StringIO" => {
+                    super::io_mod::mb_stringio_close(stream);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 /// Build a CompletedProcess Instance — `returncode`, `stdout`, `stderr`,
 /// and `args`. Used as the public return shape of `run`.
 fn make_completed_process(
@@ -581,7 +726,9 @@ struct SpawnOpts {
     check: bool,
     capture_output: bool,
     text: bool,
-    /// stdout/stderr selectors: 0 inherit, -1 PIPE, -2 STDOUT, -3 DEVNULL.
+    encoding: Option<String>,
+    /// stdin/stdout/stderr selectors: 0 inherit, -1 PIPE, -2 STDOUT, -3 DEVNULL.
+    stdin_sel: i64,
     stdout_sel: i64,
     stderr_sel: i64,
     timeout: Option<f64>,
@@ -650,9 +797,11 @@ fn parse_spawn_opts(a: &[MbValue]) -> SpawnOpts {
     });
     opts.check = dict_get(kw, "check").and_then(|v| v.as_bool()) == Some(true);
     opts.capture_output = dict_get(kw, "capture_output").and_then(|v| v.as_bool()) == Some(true);
+    opts.encoding = dict_get(kw, "encoding").and_then(extract_str);
     opts.text = dict_get(kw, "text").and_then(|v| v.as_bool()) == Some(true)
-        || dict_get(kw, "encoding").is_some()
+        || opts.encoding.is_some()
         || dict_get(kw, "universal_newlines").and_then(|v| v.as_bool()) == Some(true);
+    opts.stdin_sel = dict_get(kw, "stdin").and_then(|v| v.as_int()).unwrap_or(0);
     opts.stdout_sel = dict_get(kw, "stdout").and_then(|v| v.as_int()).unwrap_or(0);
     opts.stderr_sel = dict_get(kw, "stderr").and_then(|v| v.as_int()).unwrap_or(0);
     opts.timeout =
@@ -679,7 +828,7 @@ fn spawn_with_opts(
     if let Some(ref cwd) = opts.cwd {
         cmd.current_dir(cwd);
     }
-    cmd.stdin(if opts.input.is_some() {
+    cmd.stdin(if opts.input.is_some() || opts.stdin_sel == -1 {
         Stdio::piped()
     } else {
         Stdio::null()
@@ -711,6 +860,10 @@ fn spawn_with_opts(
             let _ = stdin.write_all(input);
             // Drop closes the pipe so the child sees EOF.
         }
+    } else if opts.stdin_sel == -1 {
+        // Drop the pipe immediately so children reading stdin see EOF instead
+        // of blocking forever when callers requested PIPE without input.
+        let _ = child.stdin.take();
     }
 
     // Drain pipes on threads so a chatty child can't deadlock against an
@@ -783,14 +936,12 @@ fn spawn_with_opts(
     Ok((returncode_of(&status), stdout, stderr))
 }
 
-fn stream_value(data: Vec<u8>, captured: bool, text: bool) -> MbValue {
+fn stream_value(data: Vec<u8>, captured: bool, text: bool, encoding: Option<&str>) -> MbValue {
     if !captured {
         return MbValue::none();
     }
     if text {
-        MbValue::from_ptr(MbObject::new_str(
-            String::from_utf8_lossy(&data).replace("\r\n", "\n"),
-        ))
+        MbValue::from_ptr(MbObject::new_str(decode_subprocess_text(&data, encoding)))
     } else {
         MbValue::from_ptr(MbObject::new_bytes(data))
     }
@@ -822,25 +973,28 @@ pub fn mb_subprocess_run_all(a: &[MbValue]) -> MbValue {
         return MbValue::none();
     };
 
-    if opts.check && code != 0 {
-        return raise(
-            "CalledProcessError",
-            &format!("Command '{cmd_args:?}' returned non-zero exit status {code}."),
-        );
-    }
-
     let out_captured = opts.capture_output || opts.stdout_sel == -1;
     let err_captured = opts.capture_output || opts.stderr_sel == -1;
+
+    if opts.check && code != 0 {
+        // Raise a CalledProcessError *instance* carrying returncode / cmd /
+        // output / stderr so `except CalledProcessError as exc:` can read
+        // exc.returncode (a bare string exception left it None).
+        let out_v = stream_value(stdout, out_captured, opts.text, opts.encoding.as_deref());
+        let err_v = stream_value(stderr, err_captured, opts.text, opts.encoding.as_deref());
+        return raise_called_process_error(code, &cmd_args, out_v, err_v);
+    }
+
     let mut f = FxHashMap::default();
     f.insert("args".into(), args);
     f.insert("returncode".into(), MbValue::from_int(code as i64));
     f.insert(
         "stdout".into(),
-        stream_value(stdout, out_captured, opts.text),
+        stream_value(stdout, out_captured, opts.text, opts.encoding.as_deref()),
     );
     f.insert(
         "stderr".into(),
-        stream_value(stderr, err_captured, opts.text),
+        stream_value(stderr, err_captured, opts.text, opts.encoding.as_deref()),
     );
     new_instance_with_fields("CompletedProcess", f)
 }
@@ -899,7 +1053,7 @@ pub fn mb_subprocess_check_output_all(a: &[MbValue]) -> MbValue {
         return MbValue::none();
     };
     if code == 0 {
-        return stream_value(stdout, true, opts.text);
+        return stream_value(stdout, true, opts.text, opts.encoding.as_deref());
     }
     let out = MbValue::from_ptr(MbObject::new_bytes(stdout));
     let err = MbValue::from_ptr(MbObject::new_bytes(stderr));
@@ -1070,17 +1224,18 @@ pub fn mb_subprocess_popen(args: MbValue) -> MbValue {
 
 /// subprocess.Popen(args, bufsize=...) -> Popen instance
 ///
-/// Carve-out: runs the command synchronously to completion. The returned
-/// instance carries `args`, `returncode`, `stdout`, `stderr`, plus
-/// `pid` (best-effort, 0 if unavailable) and None placeholders for
-/// `stdin` / `stdout` / `stderr` so the `p = Popen(...); p.returncode`
-/// pattern works.
+/// Carve-out: runs the command synchronously to completion except for
+/// `stdin=PIPE`, where stdin bytes are buffered in `p.stdin` and the child
+/// runs on the first `wait()`. The returned instance carries `args`,
+/// `returncode`, `stdout`, `stderr`, plus `pid` (best-effort, 0 if unavailable)
+/// and stream placeholders so the `p = Popen(...); p.returncode` pattern works.
 ///
 /// Validation performed before any spawn, mirroring CPython:
 ///   - the second positional (`bufsize`) must be an int, else `TypeError`;
 ///   - an embedded NUL byte in any argv token raises `ValueError`.
 pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
     let args = a.first().copied().unwrap_or_else(MbValue::none);
+    let opts = parse_spawn_opts(a);
 
     // bufsize (2nd positional) must be an integer. CPython raises
     // `TypeError("bufsize must be an integer")` for e.g. `Popen(argv,
@@ -1118,9 +1273,50 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
     fields.insert("stdin".into(), MbValue::none());
     fields.insert("stdout".into(), MbValue::none());
     fields.insert("stderr".into(), MbValue::none());
+    fields.insert("_text".into(), MbValue::from_bool(opts.text));
+    fields.insert("_stdin_sel".into(), MbValue::from_int(opts.stdin_sel));
+    fields.insert("_stdout_sel".into(), MbValue::from_int(opts.stdout_sel));
+    fields.insert("_stderr_sel".into(), MbValue::from_int(opts.stderr_sel));
+    fields.insert(
+        "_capture_output".into(),
+        MbValue::from_bool(opts.capture_output),
+    );
+    if let Some(ref encoding) = opts.encoding {
+        fields.insert(
+            "_encoding".into(),
+            MbValue::from_ptr(MbObject::new_str(encoding.clone())),
+        );
+    }
 
     if cmd_args.is_empty() {
         fields.insert("returncode".into(), MbValue::from_int(-1));
+        fields.insert("pid".into(), MbValue::from_int(0));
+        return new_instance_with_fields("Popen", fields);
+    }
+
+    if opts.stdin_sel == -1 {
+        let stdin_pipe = super::io_mod::mb_bytesio_new();
+        retain(stdin_pipe);
+        fields.insert("stdin".into(), stdin_pipe);
+        fields.insert("_stdin_pipe".into(), stdin_pipe);
+        fields.insert(
+            "stdout".into(),
+            pipe_stream_value(
+                Vec::new(),
+                opts.stdout_sel == -1,
+                opts.text,
+                opts.encoding.as_deref(),
+            ),
+        );
+        fields.insert(
+            "stderr".into(),
+            pipe_stream_value(
+                Vec::new(),
+                opts.stderr_sel == -1,
+                opts.text,
+                opts.encoding.as_deref(),
+            ),
+        );
         fields.insert("pid".into(), MbValue::from_int(0));
         return new_instance_with_fields("Popen", fields);
     }
@@ -1132,17 +1328,41 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
     match result {
         Ok(output) => {
             let code = returncode_of(&output.status);
+            let mut stdout = output.stdout;
+            let mut stderr = output.stderr;
+            if opts.stderr_sel == -2 {
+                stdout.extend_from_slice(&stderr);
+                stderr.clear();
+            }
             fields.insert("returncode".into(), MbValue::from_int(code as i64));
             fields.insert("pid".into(), MbValue::from_int(0));
+            fields.insert(
+                "stdout".into(),
+                pipe_stream_value(
+                    stdout.clone(),
+                    opts.stdout_sel == -1,
+                    opts.text,
+                    opts.encoding.as_deref(),
+                ),
+            );
+            fields.insert(
+                "stderr".into(),
+                pipe_stream_value(
+                    stderr.clone(),
+                    opts.stderr_sel == -1,
+                    opts.text,
+                    opts.encoding.as_deref(),
+                ),
+            );
             // Captured child streams for `communicate()` — the carve-out
             // runs the child synchronously, so they are fully available.
             fields.insert(
                 "_captured_stdout".into(),
-                MbValue::from_ptr(MbObject::new_bytes(output.stdout)),
+                MbValue::from_ptr(MbObject::new_bytes(stdout)),
             );
             fields.insert(
                 "_captured_stderr".into(),
-                MbValue::from_ptr(MbObject::new_bytes(output.stderr)),
+                MbValue::from_ptr(MbObject::new_bytes(stderr)),
             );
         }
         // A missing/unexecutable command raises the OSError family, matching
@@ -1185,20 +1405,45 @@ unsafe extern "C" fn completed_check_returncode(self_v: MbValue, _args: MbValue)
 /// the captured streams; a post-hoc `input` cannot be delivered and is
 /// ignored.
 unsafe extern "C" fn popen_communicate(self_v: MbValue, _args: MbValue) -> MbValue {
-    let field = |name: &str| -> MbValue {
-        if let Some(ptr) = self_v.as_ptr() {
-            unsafe {
-                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                    if let Some(v) = fields.read().unwrap().get(name).copied() {
-                        return v;
-                    }
-                }
-            }
-        }
-        MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+    if instance_field(self_v, "returncode").is_none() {
+        let _ = unsafe { popen_wait(self_v, MbValue::none()) };
+    }
+
+    let text = instance_field(self_v, "_text")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let encoding = instance_field(self_v, "_encoding").and_then(extract_str);
+    let capture_output = instance_field(self_v, "_capture_output")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let stdout_sel = instance_field(self_v, "_stdout_sel")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    let stderr_sel = instance_field(self_v, "_stderr_sel")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    let stdout_captured = capture_output || stdout_sel == -1;
+    let stderr_captured = capture_output || stderr_sel == -1;
+    let captured_bytes = |name: &str| -> Vec<u8> {
+        instance_field(self_v, name)
+            .and_then(value_bytes)
+            .unwrap_or_default()
     };
-    let out = field("_captured_stdout");
-    let err = field("_captured_stderr");
+    let make_stream = |data: Vec<u8>, captured: bool| -> MbValue {
+        if !captured {
+            return MbValue::none();
+        }
+        if text {
+            MbValue::from_ptr(MbObject::new_str(decode_subprocess_text(
+                &data,
+                encoding.as_deref(),
+            )))
+        } else {
+            MbValue::from_ptr(MbObject::new_bytes(data))
+        }
+    };
+    let out = make_stream(captured_bytes("_captured_stdout"), stdout_captured);
+    let err = make_stream(captured_bytes("_captured_stderr"), stderr_captured);
     MbValue::from_ptr(MbObject::new_tuple(vec![out, err]))
 }
 
@@ -1216,32 +1461,113 @@ unsafe extern "C" fn popen_kill(_self_v: MbValue, _args: MbValue) -> MbValue {
 /// `with Popen(...) as p:` — enter returns self; exit closes the
 /// (already-drained) pipes and never suppresses exceptions.
 unsafe extern "C" fn popen_enter(self_v: MbValue, _args: MbValue) -> MbValue {
+    unsafe { super::super::rc::retain_if_ptr(self_v) };
     self_v
 }
 
-unsafe extern "C" fn popen_exit(_self_v: MbValue, _args: MbValue) -> MbValue {
+unsafe extern "C" fn popen_exit(self_v: MbValue, _args: MbValue) -> MbValue {
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let fields = fields.read().unwrap();
+                for name in ["stdin", "stdout", "stderr"] {
+                    if let Some(stream) = fields.get(name).copied() {
+                        close_stream_value(stream);
+                    }
+                }
+            }
+        }
+    }
     MbValue::from_bool(false)
+}
+
+fn popen_run_deferred_stdin(self_v: MbValue) -> MbValue {
+    let Some(args) = instance_field(self_v, "args") else {
+        return MbValue::none();
+    };
+    let Ok(cmd_args) = extract_args(args) else {
+        return MbValue::none();
+    };
+    if cmd_args.is_empty() {
+        return MbValue::none();
+    }
+
+    let input = instance_field(self_v, "_stdin_pipe")
+        .map(bytesio_buffer_value)
+        .unwrap_or_default();
+    let opts = SpawnOpts {
+        input: Some(input),
+        stdin_sel: -1,
+        stdout_sel: instance_field(self_v, "_stdout_sel")
+            .and_then(|v| v.as_int())
+            .unwrap_or(0),
+        stderr_sel: instance_field(self_v, "_stderr_sel")
+            .and_then(|v| v.as_int())
+            .unwrap_or(0),
+        capture_output: instance_field(self_v, "_capture_output")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        text: instance_field(self_v, "_text")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        encoding: instance_field(self_v, "_encoding").and_then(extract_str),
+        ..SpawnOpts::default()
+    };
+
+    let Ok((code, stdout, stderr)) = spawn_with_opts(&cmd_args, &opts, false) else {
+        return MbValue::none();
+    };
+    let out_captured = opts.capture_output || opts.stdout_sel == -1;
+    let err_captured = opts.capture_output || opts.stderr_sel == -1;
+    let out_v = stream_value(
+        stdout.clone(),
+        out_captured,
+        opts.text,
+        opts.encoding.as_deref(),
+    );
+    let err_v = stream_value(
+        stderr.clone(),
+        err_captured,
+        opts.text,
+        opts.encoding.as_deref(),
+    );
+
+    instance_set_field(self_v, "returncode", MbValue::from_int(code as i64));
+    instance_set_field(self_v, "pid", MbValue::from_int(0));
+    instance_set_field(self_v, "stdout", out_v);
+    instance_set_field(self_v, "stderr", err_v);
+    instance_set_field(
+        self_v,
+        "_captured_stdout",
+        MbValue::from_ptr(MbObject::new_bytes(stdout)),
+    );
+    instance_set_field(
+        self_v,
+        "_captured_stderr",
+        MbValue::from_ptr(MbObject::new_bytes(stderr)),
+    );
+
+    MbValue::from_int(code as i64)
 }
 
 /// `Popen.wait(timeout=None)` -> returncode (int).
 ///
-/// Carve-out: the constructor already runs the child synchronously to
-/// completion and records `returncode`, so `wait()` simply returns the stored
-/// `returncode` field. This matches CPython's contract that `wait()` returns
-/// `self.returncode` and is idempotent (a second `wait()` returns the same
-/// value). The `timeout` positional/keyword is accepted and ignored — the
-/// child has already exited, so no `TimeoutExpired` can occur here.
+/// Carve-out: the constructor usually runs the child synchronously to
+/// completion and records `returncode`. For `stdin=PIPE`, the constructor
+/// buffers manual writes in `p.stdin`; the first `wait()` spawns the child with
+/// those bytes and records `returncode`. Either path then returns the stored
+/// value, so a second `wait()` is idempotent. The `timeout`
+/// positional/keyword is accepted and ignored.
 ///
 /// Registered as a variadic method on the native "Popen" class so
 /// `p.wait()` dispatches through the normal instance-method path. `_args`
 /// holds the packed positional list (`[timeout]`), which is unused.
 unsafe extern "C" fn popen_wait(self_v: MbValue, _args: MbValue) -> MbValue {
-    if let Some(ptr) = self_v.as_ptr() {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            if let Some(rc) = fields.read().unwrap().get("returncode").copied() {
-                return rc;
-            }
-        }
+    if let Some(rc) = instance_field(self_v, "returncode") {
+        return rc;
+    }
+    if instance_field(self_v, "_stdin_pipe").is_some() {
+        return popen_run_deferred_stdin(self_v);
     }
     MbValue::none()
 }

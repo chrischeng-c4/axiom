@@ -9,7 +9,7 @@
 # case = "typevar_bound_lazy_forward_ref"
 # subject = "typing.TypeVar"
 # kind = "semantic"
-# xfail = "LazyBound.__type_params__ returns None and the lazy-bound TypeVar machinery is absent on mamba (probed 2026-05-29)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -115,6 +115,17 @@ fn raise(exc: &str, msg: &str) {
     super::super::exception::mb_raise(new_str(exc), new_str(msg));
 }
 
+/// Raise `SystemExit(code)` as an instance so a caught `except SystemExit as e`
+/// sees `e.code == code` (CPython argparse exits 2 on any parse error). A bare
+/// string SystemExit leaves `.code` None.
+fn raise_exit(code: i64) {
+    let inst = MbValue::from_ptr(MbObject::new_instance("SystemExit".to_string()));
+    set_field(inst, "code", MbValue::from_int(code));
+    set_field(inst, "args",
+        MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(code)])));
+    super::super::class::mb_raise_instance(inst);
+}
+
 // ── Argument-spec parsing (shared by add_argument) ──
 
 /// Internal description of one declared argument, stored as an Action instance.
@@ -397,29 +408,15 @@ unsafe extern "C" fn method_add_argument(self_v: MbValue, args: MbValue) -> MbVa
     // resolved keywords (option_strings, dest, **kwargs) — matching CPython.
     if !custom_action.is_none() {
         let opt_list = new_list(spec.option_strings.iter().map(|s| new_str(s)).collect());
-        // Build kwargs dict mirroring the resolved spec for the Action __init__.
-        let init_kwargs = MbObject::new_dict();
-        unsafe {
-            if let ObjData::Dict(ref lock) = (*init_kwargs).data {
-                let mut g = lock.write().unwrap();
-                let mut put = |k: &str, v: MbValue| {
-                    super::super::rc::retain_if_ptr(v);
-                    g.insert(DictKey::Str(k.to_string()), v);
-                };
-                put("const", spec.const_v);
-                put("default", spec.default_v);
-                put("nargs", spec.nargs);
-                put("type", spec.type_v);
-                put("choices", spec.choices);
-                put("help", spec.help_v);
-                put("metavar", spec.metavar);
-                put("required", MbValue::from_bool(spec.required));
-            }
-        }
+        // The generic user-class init path does not expand a trailing kwargs
+        // dict yet; pass the CPython-resolved `const` / `default` slots
+        // positionally so user Action __init__ methods observe them at
+        // add_argument time.
         let ctor_args = new_list(vec![
             opt_list,
             new_str(&spec.dest),
-            MbValue::from_ptr(init_kwargs),
+            spec.const_v,
+            spec.default_v,
         ]);
         let built = super::super::class::mb_instance_new_with_init(custom_action, ctor_args);
         // The user Action __init__ (if any) raising propagates as a pending
@@ -532,12 +529,12 @@ unsafe extern "C" fn method_get_default(self_v: MbValue, args: MbValue) -> MbVal
 unsafe extern "C" fn method_error(self_v: MbValue, args: MbValue) -> MbValue {
     let _ = self_v;
     let items = seq_items(args);
-    let msg = items
+    let _msg = items
         .first()
         .copied()
         .and_then(extract_str)
         .unwrap_or_default();
-    raise("SystemExit", &msg);
+    raise_exit(2);
     MbValue::none()
 }
 
@@ -558,7 +555,7 @@ unsafe extern "C" fn method_exit(self_v: MbValue, args: MbValue) -> MbValue {
         })
         .and_then(|v| v.as_int())
         .unwrap_or(0);
-    raise("SystemExit", &status.to_string());
+    raise_exit(status);
     MbValue::none()
 }
 
@@ -573,6 +570,9 @@ unsafe extern "C" fn method_add_subparsers(self_v: MbValue, args: MbValue) -> Mb
             if let Some(dest) = dict_get(kw, "dest") {
                 set_field(subs, "dest", dest);
             }
+            if let Some(required) = dict_get(kw, "required") {
+                set_field(subs, "required", required);
+            }
         }
     }
     set_field(self_v, "_subparsers", subs);
@@ -586,7 +586,7 @@ unsafe extern "C" fn method_parse_args(self_v: MbValue, args: MbValue) -> MbValu
     let (ns, extras) = run_parser(self_v, &argv, false);
     if !extras.is_empty() {
         let msg = format!("unrecognized arguments: {}", extras.join(" "));
-        raise("SystemExit", &msg);
+        let _ = &msg; raise_exit(2);
         return MbValue::none();
     }
     ns
@@ -810,7 +810,7 @@ fn apply_type(type_v: MbValue, raw: &str, parser: MbValue, argname: &str) -> MbV
         let msg = format!("{label}invalid {raw}: '{raw}'");
         let _ = exc_type;
         if exit_on_error(parser) {
-            raise("SystemExit", &msg);
+            let _ = &msg; raise_exit(2);
         } else {
             raise("ArgumentError", &msg);
         }
@@ -1020,6 +1020,22 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
     // Assign collected positionals to positional actions.
     assign_positionals(ns, &positionals, &positional_values, &mut extras, parser);
 
+    // Check if required subcommand was provided.
+    if let Some(subs) = get_field(parser, "_subparsers") {
+        if !subs.is_none() {
+            if get_field(subs, "required").and_then(|v| v.as_bool()) == Some(true) {
+                if let Some(dest_v) = get_field(subs, "dest") {
+                    if let Some(dest) = extract_str(dest_v) {
+                        if get_field(ns, &dest).is_none() {
+                            raise_exit(2);
+                            return (ns, extras);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Required-optional check.
     for act in &optionals {
         if get_field(*act, "required").and_then(|v| v.as_bool()) == Some(true) {
@@ -1027,11 +1043,7 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
                 .and_then(extract_str)
                 .unwrap_or_default();
             if !seen_dests.contains(&dest) {
-                let metavar = optional_display_name(*act);
-                raise(
-                    "SystemExit",
-                    &format!("the following arguments are required: {metavar}"),
-                );
+                raise_exit(2);
                 return (ns, extras);
             }
         }
@@ -1080,10 +1092,7 @@ fn assign_positionals(
             }
             "+" => {
                 if vi >= values.len() {
-                    raise(
-                        "SystemExit",
-                        &format!("the following arguments are required: {dest}"),
-                    );
+                    raise_exit(2);
                     return;
                 }
                 let collected: Vec<MbValue> = values[vi..]
@@ -1112,10 +1121,7 @@ fn assign_positionals(
                     set_field(ns, &dest, v);
                     vi += 1;
                 } else {
-                    raise(
-                        "SystemExit",
-                        &format!("the following arguments are required: {dest}"),
-                    );
+                    raise_exit(2);
                     return;
                 }
             }
@@ -1128,7 +1134,7 @@ fn assign_positionals(
 
 fn check_choice(choices: MbValue, value: MbValue, raw: &str, _parser: MbValue) {
     if !in_choices(choices, value) {
-        raise("SystemExit", &format!("argument: invalid choice: '{raw}'"));
+        raise_exit(2);
     }
 }
 
@@ -1161,10 +1167,7 @@ fn take_value(
         return (coerced, 2);
     }
     // Missing value.
-    raise(
-        "SystemExit",
-        &format!("argument {}: expected one argument", argv[i]),
-    );
+    raise_exit(2);
     (MbValue::none(), 1)
 }
 
@@ -1173,14 +1176,36 @@ fn invoke_custom_action(
     parser: MbValue,
     ns: MbValue,
     values: MbValue,
-    _option_string: &str,
+    option_string: &str,
 ) {
-    // The stored Action was already constructed; call its __call__. The
-    // 4th argument `option_string` is left to its default — mamba's instance
-    // method dispatch caps a bound call at 4 total values (self + 3), so a
-    // 4-positional call (self + 4) would hit the arity fallback and silently
-    // no-op. `__call__(self, parser, namespace, values, option_string=None)`
-    // fires correctly with three positional args.
+    // The stored Action was already constructed; call its user-defined
+    // __call__(self, parser, namespace, values, option_string). Route directly
+    // through callable spread because mb_call_method's closure-handle fallback
+    // only supplies `self`, which makes Action subclass callbacks silently no-op.
+    if let Some(ptr) = custom_action_inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let call_method = super::super::class::lookup_method(class_name, "__call__");
+                if !call_method.is_none() {
+                    let option_value = if option_string.is_empty() {
+                        MbValue::none()
+                    } else {
+                        new_str(option_string)
+                    };
+                    let call_args = new_list(vec![
+                        custom_action_inst,
+                        parser,
+                        ns,
+                        values,
+                        option_value,
+                    ]);
+                    super::super::builtins::mb_call_spread(call_method, call_args);
+                    return;
+                }
+            }
+        }
+    }
+
     let call_args = new_list(vec![parser, ns, values]);
     let name = new_str("__call__");
     super::super::class::mb_call_method(custom_action_inst, name, call_args);

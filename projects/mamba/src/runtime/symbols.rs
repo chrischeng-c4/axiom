@@ -43,6 +43,8 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
     use super::module;
     use super::pep695;
     use super::set_ops;
+    use super::stdlib::functools_mod;
+    use super::stdlib::traceback_mod;
     use super::string_ops;
     use super::tokio_exec;
     use super::tuple_ops;
@@ -188,6 +190,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_str_construct",
+            builtins::mb_str_construct
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_abs",
             builtins::mb_abs as fn(super::MbValue) -> super::MbValue,
             [I64],
@@ -219,6 +228,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_type3_kwargs",
+            builtins::mb_type3_kwargs
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_builtin_type_obj",
             builtins::mb_builtin_type_obj as fn(super::MbValue) -> super::MbValue,
             [I64],
@@ -227,6 +248,31 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_range",
             builtins::mb_range as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_range_no_args",
+            builtins::mb_range_no_args as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_range_2",
+            builtins::mb_range_2 as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_range_3",
+            builtins::mb_range_3
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_range_too_many_args",
+            builtins::mb_range_too_many_args as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
         ),
@@ -247,6 +293,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             "mb_breakpoint",
             builtins::mb_breakpoint as fn() -> super::MbValue,
             [],
+            I64
+        ),
+        rt_sym!(
+            "mb_breakpoint_call",
+            builtins::mb_breakpoint_call as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
             I64
         ),
         rt_sym!(
@@ -276,6 +328,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_mul",
             builtins::mb_mul as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_matmul",
+            class::mb_matmul as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
@@ -330,6 +388,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_eq",
             builtins::mb_eq as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_match_bool_literal",
+            builtins::mb_match_bool_literal as fn(super::MbValue, i64) -> super::MbValue,
             [I64, I64],
             I64
         ),
@@ -552,6 +616,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_ifloordiv",
+            class::mb_ifloordiv as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_imatmul",
+            class::mb_imatmul as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_iand",
             class::mb_iand as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -566,6 +642,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_ixor",
             class::mb_ixor as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_ipow",
+            class::mb_ipow as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
@@ -987,10 +1069,22 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_list_for_unpack",
+            list_ops::mb_list_for_unpack as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_seq_len_boxed",
             list_ops::mb_seq_len_boxed as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
+        ),
+        rt_sym!(
+            "mb_unpack_check_arity",
+            list_ops::mb_unpack_check_arity as fn(super::MbValue, i64, bool),
+            [I64, I64, I64],
+            Void
         ),
         rt_sym!(
             "mb_seq_len",
@@ -1187,6 +1281,24 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_dict_items",
             dict_ops::mb_dict_items as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_dict_keys_view",
+            dict_ops::mb_dict_keys_view as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_dict_values_view",
+            dict_ops::mb_dict_values_view as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_dict_items_view",
+            dict_ops::mb_dict_items_view as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
         ),
@@ -1422,6 +1534,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_save_handled_exc",
+            exception::mb_save_handled_exc as fn() -> i64,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_restore_handled_exc",
+            exception::mb_restore_handled_exc as fn(i64),
+            [I64],
+            Void
+        ),
+        rt_sym!(
             "mb_exception_matches",
             exception::mb_exception_matches as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -1438,6 +1562,25 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             exception::mb_exception_new_with_args
                 as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exception_new_with_args_and_kwargs",
+            exception::mb_exception_new_with_args_and_kwargs
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_name_error_with_name",
+            exception::mb_name_error_with_name as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_unbound_local_error_value",
+            exception::mb_unbound_local_error_value as fn(super::MbValue) -> super::MbValue,
+            [I64],
             I64
         ),
         rt_sym!(
@@ -1551,9 +1694,34 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_class_update_bases",
+            class::mb_class_update_bases as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
             "mb_class_set_metaclass",
             class::mb_class_set_metaclass as fn(super::MbValue, super::MbValue),
             [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_class_finalize_definition",
+            class::mb_class_finalize_definition as fn(super::MbValue),
+            [I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_class_mark_classcell_required",
+            class::mb_class_mark_classcell_required as fn(super::MbValue),
+            [I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_class_set_namedtuple_base",
+            class::mb_class_set_namedtuple_base
+                as fn(super::MbValue, super::MbValue, super::MbValue),
+            [I64, I64, I64],
             Void
         ),
         rt_sym!(
@@ -1716,13 +1884,20 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         // ── Generator ──
         rt_sym!(
             "mb_generator_create",
-            generator::mb_generator_create as fn(super::MbValue, super::MbValue) -> super::MbValue,
-            [I64, I64],
+            generator::mb_generator_create
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
             I64
         ),
         rt_sym!(
             "mb_generator_store_arg",
             generator::mb_generator_store_arg as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_generator_set_local_names",
+            generator::mb_generator_set_local_names as fn(super::MbValue, super::MbValue),
             [I64, I64],
             Void
         ),
@@ -1796,6 +1971,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_closure_new_with_cells",
+            closure::mb_closure_new_with_cells
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_closure_get_capture",
             closure::mb_closure_get_capture as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -1850,8 +2032,26 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_func_set_flags",
+            closure::mb_func_set_flags as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_func_set_freevars",
+            closure::mb_func_set_freevars as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
             "mb_func_set_params",
             closure::mb_func_set_params as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_func_set_boxed_params",
+            closure::mb_func_set_boxed_params as fn(super::MbValue, super::MbValue),
             [I64, I64],
             Void
         ),
@@ -1864,6 +2064,59 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_func_set_srcinfo",
             closure::mb_func_set_srcinfo as fn(super::MbValue, super::MbValue, super::MbValue),
+            [I64, I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_traceback_walk_stack_frame",
+            traceback_mod::mb_traceback_walk_stack_frame
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_traceback_reset_stack",
+            traceback_mod::mb_traceback_reset_stack as fn(),
+            [],
+            Void
+        ),
+        rt_sym!(
+            "mb_traceback_push_frame",
+            traceback_mod::mb_traceback_push_frame
+                as fn(super::MbValue, super::MbValue, super::MbValue),
+            [I64, I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_traceback_pop_frame",
+            traceback_mod::mb_traceback_pop_frame as fn(),
+            [],
+            Void
+        ),
+        rt_sym!(
+            "mb_traceback_capture_raise",
+            traceback_mod::mb_traceback_capture_raise as fn(super::MbValue),
+            [I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_singledispatch_register_annotation",
+            functools_mod::mb_singledispatch_register_annotation
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_functools_singledispatchmethod",
+            functools_mod::mb_functools_singledispatchmethod
+                as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_singledispatchmethod_register_value",
+            functools_mod::mb_singledispatchmethod_register_value
+                as fn(super::MbValue, super::MbValue, super::MbValue),
             [I64, I64, I64],
             Void
         ),
@@ -1903,6 +2156,24 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64],
             Void
         ),
+        rt_sym!(
+            "mb_capture_cell_set_id",
+            closure::mb_capture_cell_set_id as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_capture_cell_reset_id",
+            closure::mb_capture_cell_reset_id as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_global_del_id",
+            closure::mb_global_del_id as fn(super::MbValue),
+            [I64],
+            Void
+        ),
         // ── Cell variables (nonlocal) ──
         rt_sym!(
             "mb_cell_new",
@@ -1930,9 +2201,22 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_import_relative",
+            module::mb_import_relative as fn(super::MbValue, i64) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_module_getattr",
             module::mb_module_getattr as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_module_getattr_relative",
+            module::mb_module_getattr_relative
+                as fn(super::MbValue, i64, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
             I64
         ),
         rt_sym!(
@@ -1961,6 +2245,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_import_relative_star",
+            module::mb_import_relative_star as fn(super::MbValue, i64) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_add_search_path",
             module::mb_add_search_path as fn(super::MbValue),
             [I64],
@@ -1986,6 +2276,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_async_iter",
+            async_rt::mb_async_iter as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_async_next_or_stop",
+            async_rt::mb_async_next_or_stop as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_coroutine_complete",
             async_rt::mb_coroutine_complete as fn(super::MbValue, super::MbValue),
             [I64, I64],
@@ -2002,6 +2304,36 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             async_rt::mb_coroutine_set_body as fn(super::MbValue, super::MbValue),
             [I64, I64],
             Void
+        ),
+        rt_sym!(
+            "mb_coroutine_set_close_raises",
+            async_rt::mb_coroutine_set_close_raises as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_coroutine_should_suspend",
+            async_rt::mb_coroutine_should_suspend as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_coroutine_get_state_i64",
+            async_rt::mb_coroutine_get_state_i64 as fn(super::MbValue) -> i64,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_coroutine_set_state_i64",
+            async_rt::mb_coroutine_set_state_i64 as fn(super::MbValue, i64),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_coroutine_take_resume_value",
+            async_rt::mb_coroutine_take_resume_value as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
         ),
         rt_sym!(
             "mb_coroutine_get_local",
@@ -2104,6 +2436,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_property_new",
             class::mb_property_new as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_property_from_args",
+            class::mb_property_from_args as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
         ),
@@ -2347,6 +2685,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64, I64],
             I64
         ),
+        rt_sym!(
+            "mb_call_method_kwargs",
+            class::mb_call_method_kwargs
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64
+        ),
         // ── GC ──
         rt_sym!(
             "mb_gc_collect",
@@ -2376,8 +2726,27 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_recursion_enter",
+            super::stdlib::sys_mod::mb_recursion_enter as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_recursion_leave",
+            super::stdlib::sys_mod::mb_recursion_leave as fn(),
+            [],
+            Void
+        ),
+        rt_sym!(
             "mb_sys_getsizeof",
             super::stdlib::sys_mod::mb_sys_getsizeof as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_sys_getframe_with_locals",
+            super::stdlib::sys_mod::mb_sys_getframe_with_locals
+                as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
         ),
@@ -2605,6 +2974,47 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             "mb_open",
             file_io::mb_open as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_open_ex",
+            file_io::mb_open_ex
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_open_kwargs",
+            file_io::mb_open_kwargs
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_open_with_opener",
+            file_io::mb_open_with_opener
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64, I64],
             I64
         ),
         rt_sym!(
@@ -3027,6 +3437,46 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_exception_group_construct",
+            exception::mb_exception_group_construct
+                as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exception_group_construct_and_raise",
+            exception::mb_exception_group_construct_and_raise
+                as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exception_group_construct_and_raise_with_context",
+            exception::mb_exception_group_construct_and_raise_with_context
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exception_group_construct_and_raise_from",
+            exception::mb_exception_group_construct_and_raise_from
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exception_group_construct_and_raise_from_with_context",
+            exception::mb_exception_group_construct_and_raise_from_with_context
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_except_star",
             exception::mb_except_star as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -3093,9 +3543,35 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_eval_with_globals",
+            builtins::mb_eval_with_globals as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_eval_with_namespaces",
+            builtins::mb_eval_with_namespaces
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_exec",
             builtins::mb_exec as fn(super::MbValue) -> super::MbValue,
             [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exec_with_globals",
+            builtins::mb_exec_with_globals as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_exec_with_globals_locals",
+            builtins::mb_exec_with_globals_locals
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
             I64
         ),
         rt_sym!(
@@ -3382,31 +3858,6 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_sqlite3_connect",
             super::stdlib::sqlite3_mod::mb_sqlite3_connect as fn(super::MbValue) -> super::MbValue,
-            [I64],
-            I64
-        ),
-        rt_sym!(
-            "mb_sqlite3_execute",
-            super::stdlib::sqlite3_mod::mb_sqlite3_execute
-                as fn(super::MbValue, super::MbValue) -> super::MbValue,
-            [I64, I64],
-            I64
-        ),
-        rt_sym!(
-            "mb_sqlite3_fetchall",
-            super::stdlib::sqlite3_mod::mb_sqlite3_fetchall as fn(super::MbValue) -> super::MbValue,
-            [I64],
-            I64
-        ),
-        rt_sym!(
-            "mb_sqlite3_commit",
-            super::stdlib::sqlite3_mod::mb_sqlite3_commit as fn(super::MbValue) -> super::MbValue,
-            [I64],
-            I64
-        ),
-        rt_sym!(
-            "mb_sqlite3_close",
-            super::stdlib::sqlite3_mod::mb_sqlite3_close as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
         ),
@@ -3992,8 +4443,11 @@ mod tests {
             "mb_cell_get",
             "mb_cell_set",
             "mb_import",
+            "mb_import_relative",
             "mb_module_getattr",
+            "mb_module_getattr_relative",
             "mb_import_star",
+            "mb_import_relative_star",
             "mb_bigint_add",
         ] {
             assert!(

@@ -56,6 +56,74 @@ thread_local! {
     /// it around so `format_exc()` can stringify the latest handled exception
     /// even after the except-block has exited.
     static LAST_HANDLED_EXCEPTION: std::cell::RefCell<Option<MbException>> = std::cell::RefCell::new(None);
+    /// Save/restore stack for the "currently handled exception" (CPython
+    /// clears it when an except-handler region unwinds). Each entry snapshots
+    /// BOTH `LAST_HANDLED_EXCEPTION` (here) and `class.rs`'s `LAST_CAUGHT_VALUE`
+    /// (read via the bits getter). `mb_save_handled_exc` pushes a snapshot at
+    /// try-entry and returns its index; `mb_restore_handled_exc` pops back to
+    /// that index and reinstates the snapshot when the region exits.
+    static HANDLED_EXC_SAVE_STACK: std::cell::RefCell<Vec<(Option<MbException>, u64)>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+/// Snapshot the currently-handled-exception state (both thread-locals) at
+/// try-entry, push it on the save stack, and return a token (the slot index).
+/// The snapshot is taken BEFORE any `except` handler runs `mb_catch_exception*`,
+/// so it captures the *enclosing* frame's handled exception (which CPython
+/// restores once this handler region unwinds).
+pub fn mb_save_handled_exc() -> i64 {
+    let last_handled = LAST_HANDLED_EXCEPTION.with(|h| h.borrow().clone());
+    let last_caught_bits = super::class::last_caught_value_bits();
+    // Park an owned reference to the caught value while it sits on the save
+    // stack so it can't be freed before we restore it (LAST_CAUGHT_VALUE itself
+    // is a borrowed slot — its owner is the live except handler's binding, which
+    // may be dropped before the region we are nested in exits).
+    unsafe {
+        super::rc::retain_if_ptr(MbValue::from_bits(last_caught_bits));
+    }
+    HANDLED_EXC_SAVE_STACK.with(|s| {
+        let mut stack = s.borrow_mut();
+        let token = stack.len() as i64;
+        stack.push((last_handled, last_caught_bits));
+        token
+    })
+}
+
+/// Restore the handled-exception state captured by `mb_save_handled_exc` for
+/// `token`, then drop that slot (and any deeper ones). Restoring at the
+/// region-exit edges (handler fall-through / return-from-handler) reinstates
+/// the enclosing frame's handled exception, so `sys.exception()` /
+/// `sys.exc_info()` / `traceback.format_exc()` no longer leak the just-handled
+/// exception. Idempotent: a token at/above the current depth is a no-op.
+pub fn mb_restore_handled_exc(token: i64) {
+    if token < 0 {
+        return;
+    }
+    let token = token as usize;
+    // Pop this slot and every deeper one. The slot at `token` is reinstated;
+    // the deeper ones (whose own regions were exited abnormally without a
+    // matching restore — e.g. a raise that propagated past them) are discarded.
+    // Each carried a parked retain (see mb_save_handled_exc) that must be
+    // released exactly once now.
+    let popped = HANDLED_EXC_SAVE_STACK.with(|s| {
+        let mut stack = s.borrow_mut();
+        if token >= stack.len() {
+            return Vec::new();
+        }
+        stack.split_off(token)
+    });
+    if let Some((last_handled, last_caught_bits)) = popped.first().cloned() {
+        LAST_HANDLED_EXCEPTION.with(|h| {
+            *h.borrow_mut() = last_handled;
+        });
+        super::class::set_last_caught_value_bits(last_caught_bits);
+    }
+    // Release every parked retain we just removed from the stack.
+    for (_, bits) in &popped {
+        unsafe {
+            super::rc::release_if_ptr(MbValue::from_bits(*bits));
+        }
+    }
 }
 
 /// Public read accessor for the most-recently caught exception.
@@ -87,11 +155,11 @@ pub fn mb_exception_new(exc_type: MbValue, message: MbValue) -> MbValue {
     store_exception_as_value(exc)
 }
 
-/// Create a new exception instance preserving all constructor arguments in the `args` tuple.
-/// Used for `ExcType(arg1, arg2, ...)` expressions so `e.args` returns all arguments.
-pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbValue {
-    let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    // Extract all args from the list
+fn new_str_value(s: impl Into<String>) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.into()))
+}
+
+fn list_items(args_list: MbValue) -> Vec<MbValue> {
     let mut arg_items: Vec<MbValue> = Vec::new();
     if let Some(ptr) = args_list.as_ptr() {
         unsafe {
@@ -100,39 +168,150 @@ pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbVa
             }
         }
     }
-    // First arg is the message (as str); rest are additional args
+    arg_items
+}
+
+fn tuple_items(value: MbValue) -> Option<Vec<MbValue>> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Tuple(ref items) = (*ptr).data {
+            Some(items.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn value_as_i64(value: MbValue) -> Option<i64> {
+    value.as_int_pyint()
+}
+
+fn value_as_bytes(value: MbValue) -> Option<Vec<u8>> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Bytes(data) => Some(data.clone()),
+            ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
+            _ => None,
+        }
+    })
+}
+
+fn insert_borrowed_field(fields: &mut FxHashMap<String, MbValue>, key: &str, value: MbValue) {
+    unsafe {
+        super::rc::retain_if_ptr(value);
+    }
+    fields.insert(key.to_string(), value);
+}
+
+fn raise_type_error_message(message: impl Into<String>) {
+    mb_raise(new_str_value("TypeError"), new_str_value(message.into()));
+}
+
+fn populate_import_error_fields(fields: &mut FxHashMap<String, MbValue>, arg_items: &[MbValue]) {
+    let msg = arg_items.first().copied().unwrap_or_else(MbValue::none);
+    insert_borrowed_field(fields, "msg", msg);
+    fields.insert("name".to_string(), MbValue::none());
+    fields.insert("path".to_string(), MbValue::none());
+}
+
+fn populate_syntax_error_fields(fields: &mut FxHashMap<String, MbValue>, arg_items: &[MbValue]) -> bool {
+    let msg = arg_items.first().copied().unwrap_or_else(MbValue::none);
+    insert_borrowed_field(fields, "msg", msg);
+    fields.insert("filename".to_string(), MbValue::none());
+    fields.insert("lineno".to_string(), MbValue::none());
+    fields.insert("offset".to_string(), MbValue::none());
+    fields.insert("text".to_string(), MbValue::none());
+    fields.insert("end_lineno".to_string(), MbValue::none());
+    fields.insert("end_offset".to_string(), MbValue::none());
+
+    let Some(details) = arg_items.get(1).copied() else {
+        return true;
+    };
+    let Some(items) = tuple_items(details) else {
+        raise_type_error_message("SyntaxError() argument 2 must be a tuple");
+        return false;
+    };
+    if items.len() != 4 && items.len() != 6 {
+        raise_type_error_message("SyntaxError() argument 2 must be a 4-item or 6-item tuple");
+        return false;
+    }
+    insert_borrowed_field(fields, "filename", items[0]);
+    insert_borrowed_field(fields, "lineno", items[1]);
+    insert_borrowed_field(fields, "offset", items[2]);
+    insert_borrowed_field(fields, "text", items[3]);
+    if items.len() == 6 {
+        insert_borrowed_field(fields, "end_lineno", items[4]);
+        insert_borrowed_field(fields, "end_offset", items[5]);
+    }
+    true
+}
+
+fn populate_unicode_error_fields(
+    fields: &mut FxHashMap<String, MbValue>,
+    type_name: &str,
+    arg_items: &[MbValue],
+) {
+    let slots: &[&str] = match type_name {
+        "UnicodeEncodeError" | "UnicodeDecodeError" => &["encoding", "object", "start", "end", "reason"],
+        "UnicodeTranslateError" => &["object", "start", "end", "reason"],
+        _ => return,
+    };
+    for (idx, key) in slots.iter().enumerate() {
+        let value = arg_items.get(idx).copied().unwrap_or_else(MbValue::none);
+        insert_borrowed_field(fields, key, value);
+    }
+}
+
+fn populate_exception_fields(
+    fields: &mut FxHashMap<String, MbValue>,
+    type_name: &str,
+    arg_items: &[MbValue],
+    include_chain_fields: bool,
+) -> bool {
     let msg = if let Some(first) = arg_items.first() {
         extract_str(*first).unwrap_or_default()
     } else {
         String::new()
     };
-    // Build instance fields directly (avoids circular dep with class.rs)
-    let mut fields = FxHashMap::default();
-    fields.insert(
-        "message".to_string(),
-        MbValue::from_ptr(MbObject::new_str(msg.clone())),
-    );
-    fields.insert(
-        "__type__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(type_name.clone())),
-    );
-    fields.insert("__cause__".to_string(), MbValue::none());
-    fields.insert("__context__".to_string(), MbValue::none());
-    fields.insert(
-        "__suppress_context__".to_string(),
-        MbValue::from_bool(false),
-    );
-    // StopIteration stores the first arg as `.value` (CPython semantics).
+    fields.insert("message".to_string(), new_str_value(msg));
+    fields.insert("__type__".to_string(), new_str_value(type_name.to_string()));
+    if include_chain_fields {
+        fields.insert("__cause__".to_string(), MbValue::none());
+        fields.insert("__context__".to_string(), MbValue::none());
+        fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
+    }
     if type_name == "StopIteration" {
         let value_val = arg_items.first().copied().unwrap_or_else(MbValue::none);
-        unsafe {
-            super::rc::retain_if_ptr(value_val);
-        }
-        fields.insert("value".to_string(), value_val);
+        insert_borrowed_field(fields, "value", value_val);
     }
-    // args = tuple of all constructor arguments (preserves all args, including non-string ones)
-    let args_tuple = MbValue::from_ptr(MbObject::new_tuple(arg_items));
+    if type_name == "AttributeError" {
+        fields.insert("name".to_string(), MbValue::none());
+        fields.insert("obj".to_string(), MbValue::none());
+    } else if type_name == "NameError" {
+        fields.insert("name".to_string(), MbValue::none());
+    } else if type_name == "ImportError" || type_name == "ModuleNotFoundError" {
+        populate_import_error_fields(fields, arg_items);
+    } else if type_name == "SyntaxError" || type_name == "IndentationError" || type_name == "TabError" {
+        if !populate_syntax_error_fields(fields, arg_items) {
+            return false;
+        }
+    } else if matches!(type_name, "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError") {
+        populate_unicode_error_fields(fields, type_name, arg_items);
+    }
+    let args_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(arg_items.to_vec()));
     fields.insert("args".to_string(), args_tuple);
+    true
+}
+
+/// Create a new exception instance preserving all constructor arguments in the `args` tuple.
+/// Used for `ExcType(arg1, arg2, ...)` expressions so `e.args` returns all arguments.
+pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbValue {
+    let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
+    let arg_items = list_items(args_list);
+    // Build instance fields directly (avoids circular dep with class.rs)
+    let mut fields = FxHashMap::default();
+    if !populate_exception_fields(&mut fields, &type_name, &arg_items, true) {
+        return MbValue::none();
+    }
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -144,6 +323,262 @@ pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbVa
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
+}
+
+pub fn mb_exception_init_instance(instance: MbValue, args_list: MbValue) -> MbValue {
+    let type_name = instance
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "Exception".to_string());
+    let arg_items = list_items(args_list);
+    let mut new_fields = FxHashMap::default();
+    if !populate_exception_fields(&mut new_fields, &type_name, &arg_items, false) {
+        return MbValue::none();
+    }
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut guard = fields.write().unwrap();
+                for (key, value) in new_fields {
+                    let old = guard.insert(key, value);
+                    if let Some(prev) = old {
+                        super::rc::release_if_ptr(prev);
+                    }
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+fn dict_get_str(dict: MbValue, key: &str) -> Option<MbValue> {
+    dict.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn dict_string_keys(dict: MbValue) -> Vec<String> {
+    dict.as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                Some(
+                    lock.read()
+                        .unwrap()
+                        .keys()
+                        .filter_map(|key| match key {
+                            super::dict_ops::DictKey::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn set_exception_field(instance: MbValue, key: &str, value: MbValue) {
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::rc::retain_if_ptr(value);
+                let old = fields.write().unwrap().insert(key.to_string(), value);
+                if let Some(prev) = old {
+                    super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+}
+
+fn instance_field(instance: MbValue, key: &str) -> Option<MbValue> {
+    instance.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn stringish_value(value: MbValue) -> String {
+    extract_str(value).unwrap_or_else(|| super::string_ops::value_to_string(value))
+}
+
+fn unicode_char_escape(ch: char) -> String {
+    let cp = ch as u32;
+    if cp <= 0xff {
+        format!("\\x{cp:02x}")
+    } else if cp <= 0xffff {
+        format!("\\u{cp:04x}")
+    } else {
+        format!("\\U{cp:08x}")
+    }
+}
+
+fn unicode_char_at(value: MbValue, index: i64) -> Option<char> {
+    if index < 0 {
+        return None;
+    }
+    extract_str(value)?.chars().nth(index as usize)
+}
+
+fn unicode_range_fields(instance: MbValue) -> Option<(i64, i64, String)> {
+    let start = value_as_i64(instance_field(instance, "start")?)?;
+    let end = value_as_i64(instance_field(instance, "end")?)?;
+    let reason = stringish_value(instance_field(instance, "reason").unwrap_or_else(MbValue::none));
+    Some((start, end, reason))
+}
+
+pub fn unicode_error_str(class_name: &str, instance: MbValue) -> Option<String> {
+    if !matches!(class_name, "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError") {
+        return None;
+    }
+    let object = instance_field(instance, "object").unwrap_or_else(MbValue::none);
+    if object.is_none() {
+        return Some(String::new());
+    }
+    let (start, end, reason) = match unicode_range_fields(instance) {
+        Some(parts) => parts,
+        None => return Some(String::new()),
+    };
+    let range_end = end.saturating_sub(1);
+    match class_name {
+        "UnicodeEncodeError" => {
+            let encoding = stringish_value(instance_field(instance, "encoding").unwrap_or_else(MbValue::none));
+            if end == start + 1 {
+                let ch = unicode_char_at(object, start).map(unicode_char_escape).unwrap_or_default();
+                Some(format!("'{encoding}' codec can't encode character '{ch}' in position {start}: {reason}"))
+            } else {
+                Some(format!("'{encoding}' codec can't encode characters in position {start}-{range_end}: {reason}"))
+            }
+        }
+        "UnicodeDecodeError" => {
+            let encoding = stringish_value(instance_field(instance, "encoding").unwrap_or_else(MbValue::none));
+            let bytes = match value_as_bytes(object) {
+                Some(bytes) => bytes,
+                None => return Some(String::new()),
+            };
+            if end == start + 1 {
+                let byte = bytes.get(start as usize).copied().unwrap_or_default();
+                Some(format!("'{encoding}' codec can't decode byte 0x{byte:02x} in position {start}: {reason}"))
+            } else {
+                Some(format!("'{encoding}' codec can't decode bytes in position {start}-{range_end}: {reason}"))
+            }
+        }
+        "UnicodeTranslateError" => {
+            if end == start + 1 {
+                let ch = unicode_char_at(object, start).map(unicode_char_escape).unwrap_or_default();
+                Some(format!("can't translate character '{ch}' in position {start}: {reason}"))
+            } else {
+                Some(format!("can't translate characters in position {start}-{range_end}: {reason}"))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Create an exception instance from positional args plus keyword metadata.
+/// Consumes CPython's small set of built-in exception keyword-only attrs.
+pub fn mb_exception_new_with_args_and_kwargs(
+    exc_type: MbValue,
+    args_list: MbValue,
+    kwargs_dict: MbValue,
+) -> MbValue {
+    let type_name = super::class::resolve_class_name(exc_type)
+        .or_else(|| extract_str(exc_type))
+        .unwrap_or_else(|| "Exception".to_string());
+    let allowed: &[&str] = match type_name.as_str() {
+        "AttributeError" => &["name", "obj"],
+        "NameError" | "UnboundLocalError" => &["name"],
+        "ImportError" | "ModuleNotFoundError" => &["name", "path"],
+        _ => &[],
+    };
+    for key in dict_string_keys(kwargs_dict) {
+        if !allowed.contains(&key.as_str()) {
+            raise_type_error_message(format!("'{key}' is an invalid keyword argument for {type_name}()"));
+            return MbValue::none();
+        }
+    }
+    let instance = mb_exception_new_with_args(
+        MbValue::from_ptr(MbObject::new_str(type_name.clone())),
+        args_list,
+    );
+    if instance.is_none() {
+        return instance;
+    }
+    if type_name == "AttributeError" {
+        if let Some(name) = dict_get_str(kwargs_dict, "name") {
+            set_exception_field(instance, "name", name);
+        }
+        if let Some(obj) = dict_get_str(kwargs_dict, "obj") {
+            set_exception_field(instance, "obj", obj);
+        }
+    } else if type_name == "NameError" || type_name == "UnboundLocalError" {
+        if let Some(name) = dict_get_str(kwargs_dict, "name") {
+            set_exception_field(instance, "name", name);
+        }
+    } else if type_name == "ImportError" || type_name == "ModuleNotFoundError" {
+        if let Some(name) = dict_get_str(kwargs_dict, "name") {
+            set_exception_field(instance, "name", name);
+        }
+        if let Some(path) = dict_get_str(kwargs_dict, "path") {
+            set_exception_field(instance, "path", path);
+        }
+    }
+    instance
+}
+
+pub fn mb_attribute_error_with_name_obj(msg: &str, name: &str, obj: MbValue) -> MbValue {
+    let exc_type = MbValue::from_ptr(MbObject::new_str("AttributeError".to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str(msg.to_string()),
+    )]));
+    let instance = mb_exception_new_with_args(exc_type, args);
+    set_exception_field(
+        instance,
+        "name",
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    set_exception_field(instance, "obj", obj);
+    instance
+}
+
+pub fn mb_name_error_with_name(name: MbValue) -> MbValue {
+    let name_s = extract_str(name).unwrap_or_default();
+    let exc_type = MbValue::from_ptr(MbObject::new_str("NameError".to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str(format!("name '{name_s}' is not defined")),
+    )]));
+    let instance = mb_exception_new_with_args(exc_type, args);
+    set_exception_field(
+        instance,
+        "name",
+        MbValue::from_ptr(MbObject::new_str(name_s)),
+    );
+    instance
+}
+
+pub fn mb_unbound_local_error_value(name: MbValue) -> MbValue {
+    let name_s = extract_str(name).unwrap_or_default();
+    mb_raise(
+        MbValue::from_ptr(MbObject::new_str("UnboundLocalError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "cannot access local variable '{name_s}' where it is not associated with a value"
+        ))),
+    );
+    MbValue::none()
 }
 
 /// Convert a MbException to a MbValue (stored as an Instance object).
@@ -187,6 +622,12 @@ fn store_exception_as_value(exc: MbException) -> MbValue {
         "args".to_string(),
         MbValue::from_ptr(MbObject::new_tuple(args_items)),
     );
+    if exc.exc_type == "AttributeError" {
+        fields.insert("name".to_string(), MbValue::none());
+        fields.insert("obj".to_string(), MbValue::none());
+    } else if exc.exc_type == "NameError" {
+        fields.insert("name".to_string(), MbValue::none());
+    }
     // StopIteration.value: generator return value takes priority; for
     // explicit `raise StopIteration(x)` the constructor argument is kept
     // in `exc.message` and surfaced here as a string fallback.
@@ -198,6 +639,12 @@ fn store_exception_as_value(exc: MbException) -> MbValue {
             stop_val
         };
         fields.insert("value".to_string(), value_val);
+    }
+    if !exc.traceback.is_empty() {
+        fields.insert(
+            "__traceback__".to_string(),
+            super::stdlib::traceback_mod::make_tb_from_traceback_entries(&exc.traceback),
+        );
     }
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
@@ -239,6 +686,7 @@ fn message_display(message: MbValue) -> String {
 pub fn mb_raise(exc_type: MbValue, message: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = message_display(message);
+    super::class::clear_last_raised_instance();
     // Also signal StopIteration via the iterator flag for user-defined __next__
     if type_name == "StopIteration" {
         super::iter::signal_stop_iteration();
@@ -290,6 +738,7 @@ fn mbvalue_to_mbexception(exc: MbValue, depth: u32) -> Option<MbException> {
 pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = message_display(message);
+    super::class::clear_last_raised_instance();
     let mut exc = MbException::new(&type_name, &msg);
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
@@ -308,6 +757,7 @@ pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
 pub fn mb_raise_with_context(exc_type: MbValue, message: MbValue, context: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = message_display(message);
+    super::class::clear_last_raised_instance();
     let mut exc = MbException::new(&type_name, &msg);
     if !context.is_none() {
         exc.context = mbvalue_to_mbexception(context, 0).map(Box::new);
@@ -327,6 +777,7 @@ pub fn mb_raise_from_with_context(
 ) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = message_display(message);
+    super::class::clear_last_raised_instance();
     let mut exc = MbException::new(&type_name, &msg);
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
@@ -397,32 +848,48 @@ pub fn mb_catch_exception() -> MbValue {
 pub fn mb_exception_matches(exc: MbValue, exc_type: MbValue) -> MbValue {
     let actual_type = get_exception_type(exc).unwrap_or_default();
 
-    // Support tuple of exception types: except (ValueError, TypeError)
+    let mut targets = Vec::new();
+    if collect_matcher_targets(exc_type, &mut targets).is_err() {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "catching classes that do not inherit from BaseException is not allowed"
+                    .to_string(),
+            )),
+        );
+        return MbValue::from_bool(false);
+    }
+
+    let matches = targets
+        .iter()
+        .any(|target| actual_type == *target || is_subclass_of(&actual_type, target));
+    MbValue::from_bool(matches)
+}
+
+fn collect_matcher_targets(exc_type: MbValue, out: &mut Vec<String>) -> Result<(), ()> {
     if let Some(ptr) = exc_type.as_ptr() {
         unsafe {
             if let ObjData::Tuple(ref items) = (*ptr).data {
                 for item in items {
-                    // Resolve the handler type's name from a Str, a func value
-                    // (NATIVE_TYPE_NAMES — e.g. urllib.error.URLError), or a
-                    // type-object Instance (__name__), so `except SomeExc` works
-                    // regardless of how the exception class is exposed.
-                    let target = super::class::resolve_class_name(*item).unwrap_or_default();
-                    if actual_type == target || is_subclass_of(&actual_type, &target) {
-                        return MbValue::from_bool(true);
-                    }
+                    collect_matcher_targets(*item, out)?;
                 }
-                return MbValue::from_bool(false);
+                return Ok(());
             }
         }
     }
-
-    let target_type = super::class::resolve_class_name(exc_type).unwrap_or_default();
-    let matches = actual_type == target_type || is_subclass_of(&actual_type, &target_type);
-    MbValue::from_bool(matches)
+    let Some(target) = super::class::resolve_class_name(exc_type) else {
+        return Err(());
+    };
+    if !is_subclass_of(&target, "BaseException") {
+        return Err(());
+    }
+    out.push(target);
+    Ok(())
 }
 
 /// Clear the current exception (used after successful except handling).
 pub fn mb_clear_exception() {
+    super::class::clear_last_raised_instance();
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = None;
     });
@@ -430,13 +897,23 @@ pub fn mb_clear_exception() {
 
 /// Set the current exception directly (for use by class.rs raise_instance).
 pub fn set_current_exception(exc: MbException) {
+    super::class::clear_last_raised_instance();
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
     });
 }
 
+pub fn set_current_traceback(entries: Vec<(String, u32, String)>) {
+    CURRENT_EXCEPTION.with(|cell| {
+        if let Some(exc) = cell.borrow_mut().as_mut() {
+            exc.traceback = entries;
+        }
+    });
+}
+
 /// Clear the current exception state (for use by class.rs catch_exception_instance).
 pub fn clear_current_exception() {
+    super::class::clear_last_raised_instance();
     CURRENT_EXCEPTION.with(|cell| {
         if cell.borrow().is_some() {
             *cell.borrow_mut() = None;
@@ -543,7 +1020,7 @@ pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
         | "Warning" | "DeprecationWarning" | "RuntimeWarning" | "UserWarning"
         | "SyntaxWarning" | "FutureWarning" | "PendingDeprecationWarning"
         | "UnicodeWarning" | "BytesWarning" | "ResourceWarning"
-        | "ImportWarning" | "EncodingWarning"
+        | "ImportWarning" | "EncodingWarning" | "InvalidTZPathWarning"
         // subprocess exception tree (subprocess_mod.rs raises these). All
         // ultimately derive from Exception.
         | "SubprocessError" | "CalledProcessError" | "TimeoutExpired"
@@ -570,9 +1047,35 @@ pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
     )
 }
 
+fn builtin_exception_is_exception_subclass(name: &str) -> bool {
+    if matches!(
+        name,
+        "BaseException"
+            | "SystemExit"
+            | "KeyboardInterrupt"
+            | "GeneratorExit"
+            | "BaseExceptionGroup"
+    ) {
+        return false;
+    }
+    is_builtin_exception_name(name)
+}
+
 /// Simplified exception hierarchy check.
 pub fn is_subclass_of(child: &str, parent: &str) -> bool {
-    if parent == "Exception" || parent == "BaseException" {
+    if parent == "Exception" {
+        if builtin_exception_is_exception_subclass(child) {
+            return true;
+        }
+        if child == "Error" || is_configparser_error_subclass(child) {
+            return true;
+        }
+        if super::class::class_mro_any(child, builtin_exception_is_exception_subclass) {
+            return true;
+        }
+        return super::class::check_class_hierarchy(child, parent);
+    }
+    if parent == "BaseException" {
         if is_builtin_exception_name(child) {
             return true;
         }
@@ -603,7 +1106,9 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
             child,
             "ZeroDivisionError" | "OverflowError" | "FloatingPointError"
         ),
-        "LookupError" => matches!(child, "IndexError" | "KeyError"),
+        "LookupError" => matches!(child, "IndexError" | "KeyError" | "ZoneInfoNotFoundError"),
+        // zoneinfo.ZoneInfoNotFoundError derives from KeyError.
+        "KeyError" => matches!(child, "ZoneInfoNotFoundError"),
         "UnicodeError" => matches!(
             child,
             "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"
@@ -667,7 +1172,10 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
                 | "ResourceWarning"
                 | "ImportWarning"
                 | "EncodingWarning"
+                | "InvalidTZPathWarning"
         ),
+        // zoneinfo.InvalidTZPathWarning derives from RuntimeWarning.
+        "RuntimeWarning" => matches!(child, "InvalidTZPathWarning"),
         // subprocess: SubprocessError ⊂ Exception; CalledProcessError and
         // TimeoutExpired ⊂ SubprocessError (Python 3.12).
         "SubprocessError" => matches!(child, "CalledProcessError" | "TimeoutExpired"),
@@ -824,6 +1332,16 @@ pub fn mb_import_error(msg: &str) -> MbValue {
 /// Create an ExceptionGroup: ExceptionGroup(message, [exc1, exc2, ...])
 /// The `exceptions` field is always stored as a tuple (matching CPython).
 pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue {
+    mb_exception_group_new_as(message, exceptions, "ExceptionGroup")
+}
+
+/// Like `mb_exception_group_new` but stamps a specific class name (so a
+/// `BaseExceptionGroup` / subclass keeps its identity in isinstance and repr).
+pub fn mb_exception_group_new_as(
+    message: MbValue,
+    exceptions: MbValue,
+    class_name: &str,
+) -> MbValue {
     let msg = message_display(message);
     // Convert exceptions list to tuple (CPython stores as tuple)
     let exc_tuple = if let Some(ptr) = exceptions.as_ptr() {
@@ -847,7 +1365,7 @@ pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue 
     );
     fields.insert(
         "__type__".to_string(),
-        MbValue::from_ptr(MbObject::new_str("ExceptionGroup".to_string())),
+        MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
     );
     fields.insert("exceptions".to_string(), exc_tuple);
     let obj = Box::new(MbObject {
@@ -856,85 +1374,219 @@ pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue 
             kind: ObjKind::Instance,
         },
         data: ObjData::Instance {
-            class_name: "ExceptionGroup".to_string(),
+            class_name: class_name.to_string(),
             fields: crate::runtime::rc::MbRwLock::new(fields),
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+/// PEP 654 constructor narrowing: `BaseExceptionGroup(msg, excs)` returns an
+/// `ExceptionGroup` when every member is an `Exception` (not a bare
+/// `BaseException` such as KeyboardInterrupt); otherwise it stays a
+/// `BaseExceptionGroup`. `ExceptionGroup` and user subclasses keep their name.
+/// True if `m` is a bare `BaseException` member (NOT an `Exception` subclass),
+/// which cannot be nested in an `ExceptionGroup`. `is_subclass_of(_, "Exception")`
+/// over-reports (early-return on any builtin exc name), so test the known
+/// BaseException-only roots; `BaseExceptionGroup` itself derives from
+/// BaseException, not Exception.
+pub fn eg_member_is_bare_base(m: MbValue) -> bool {
+    m.as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*p).data {
+                matches!(
+                    class_name.as_str(),
+                    "BaseException" | "KeyboardInterrupt" | "SystemExit"
+                        | "GeneratorExit" | "BaseExceptionGroup"
+                )
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false)
+}
+
+fn narrow_eg_class_name(cn: &str, members: &[MbValue]) -> String {
+    if cn != "BaseExceptionGroup" {
+        return cn.to_string();
+    }
+    if members.iter().all(|m| !eg_member_is_bare_base(*m)) {
+        "ExceptionGroup".to_string()
+    } else {
+        "BaseExceptionGroup".to_string()
+    }
+}
+
+/// True if `v` is an exception *instance* (an Instance whose class is in the
+/// exception tree) — not an exception *type* (a name-string) nor a plain value.
+fn is_exception_instance(v: MbValue) -> bool {
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                return is_builtin_exception_name(class_name)
+                    || super::class::class_mro_any(class_name, is_builtin_exception_name)
+                    || is_subclass_of(class_name, "BaseException");
+            }
+        }
+    }
+    false
+}
+
+/// `(Base)ExceptionGroup(message, exceptions)` constructor with full CPython
+/// argument validation. Returns the group, or None with a pending TypeError/
+/// ValueError on a bad argument. `args_list` is the list of positional args;
+/// `class_name` is "ExceptionGroup" / "BaseExceptionGroup".
+pub fn mb_exception_group_construct(args_list: MbValue, class_name: MbValue) -> MbValue {
+    let cn = extract_str(class_name).unwrap_or_else(|| "ExceptionGroup".to_string());
+    let items = super::builtins::extract_items(args_list);
+    // Exactly two positional arguments.
+    if items.len() != 2 {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{cn}() takes exactly 2 arguments ({} given)",
+                items.len()
+            ))),
+        );
+        return MbValue::none();
+    }
+    let message = items[0];
+    let exceptions = items[1];
+    // 1. message must be a str.
+    let msg_is_str = message
+        .as_ptr()
+        .map(|p| matches!(unsafe { &(*p).data }, ObjData::Str(_)))
+        .unwrap_or(false);
+    if !msg_is_str {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "argument 1 must be str, not {}",
+                super::builtins::value_type_name(message)
+            ))),
+        );
+        return MbValue::none();
+    }
+    // 2. exceptions must be a sequence (list or tuple).
+    let seq: Option<Vec<MbValue>> = exceptions.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::List(ref lock) => Some(lock.read().unwrap().to_vec()),
+            ObjData::Tuple(ref items) => Some(items.clone()),
+            _ => None,
+        }
+    });
+    let Some(seq) = seq else {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "second argument (exceptions) must be a sequence".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    // 3. non-empty.
+    if seq.is_empty() {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "second argument (exceptions) must be a non-empty sequence".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    // 4. every element must be an exception instance.
+    for (i, it) in seq.iter().enumerate() {
+        if !is_exception_instance(*it) {
+            mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "Item {i} of second argument (exceptions) is not an exception"
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
+    // PEP 654: only BaseExceptionGroup may hold a bare BaseException; an
+    // ExceptionGroup (or a subclass of it) raises TypeError.
+    if cn != "BaseExceptionGroup" && seq.iter().any(|m| eg_member_is_bare_base(*m)) {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(eg_nest_error_message(&cn))),
+        );
+        return MbValue::none();
+    }
+    let actual = narrow_eg_class_name(&cn, &seq);
+    mb_exception_group_new_as(message, exceptions, &actual)
+}
+
+/// The CPython TypeError text for nesting a BaseException in a non-base group:
+/// the plain `ExceptionGroup` reads "an ExceptionGroup", a subclass `'Name'`.
+pub fn eg_nest_error_message(cn: &str) -> String {
+    if cn == "ExceptionGroup" {
+        "Cannot nest BaseExceptions in an ExceptionGroup".to_string()
+    } else {
+        format!("Cannot nest BaseExceptions in '{cn}'")
+    }
+}
+
+/// `raise (Base)ExceptionGroup(...)` path: validate + build via
+/// mb_exception_group_construct, then raise the group. A validation failure
+/// leaves its TypeError/ValueError pending and is not overwritten.
+pub fn mb_exception_group_construct_and_raise(args_list: MbValue, class_name: MbValue) -> MbValue {
+    let group = mb_exception_group_construct(args_list, class_name);
+    if !group.is_none() {
+        super::class::mb_raise_instance(group);
+    }
+    MbValue::none()
+}
+
+pub fn mb_exception_group_construct_and_raise_with_context(
+    args_list: MbValue,
+    class_name: MbValue,
+    context: MbValue,
+) -> MbValue {
+    let group = mb_exception_group_construct(args_list, class_name);
+    if !group.is_none() {
+        super::class::mb_raise_instance_with_context(group, context);
+    }
+    MbValue::none()
+}
+
+pub fn mb_exception_group_construct_and_raise_from(
+    args_list: MbValue,
+    class_name: MbValue,
+    cause: MbValue,
+) -> MbValue {
+    let group = mb_exception_group_construct(args_list, class_name);
+    if !group.is_none() {
+        super::class::mb_raise_instance_from(group, cause);
+    }
+    MbValue::none()
+}
+
+pub fn mb_exception_group_construct_and_raise_from_with_context(
+    args_list: MbValue,
+    class_name: MbValue,
+    cause: MbValue,
+    context: MbValue,
+) -> MbValue {
+    let group = mb_exception_group_construct(args_list, class_name);
+    if !group.is_none() {
+        super::class::mb_raise_instance_from_with_context(group, cause, context);
+    }
+    MbValue::none()
+}
+
 /// except* handler: match exceptions in a group by type.
 /// Returns (matched, rest) tuple — matched is an ExceptionGroup of matching
 /// exceptions, rest is an ExceptionGroup of non-matching (or None if all matched).
 pub fn mb_except_star(group: MbValue, exc_type: MbValue) -> MbValue {
-    let target_type = extract_str(exc_type).unwrap_or_default();
-
-    // Get exceptions tuple/list from group
-    let exceptions = group.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            let fields = fields.read().unwrap();
-            fields.get("exceptions").copied()
-        } else {
-            None
-        }
-    });
-
-    let mut matched = Vec::new();
-    let mut rest = Vec::new();
-
-    if let Some(exc_collection) = exceptions {
-        if let Some(ptr) = exc_collection.as_ptr() {
-            unsafe {
-                // Support both Tuple and List storage
-                let items: Vec<MbValue> = match &(*ptr).data {
-                    ObjData::Tuple(items) => items.clone(),
-                    ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-                    _ => vec![],
-                };
-                for exc in items.iter() {
-                    let actual_type = get_exception_type(*exc).unwrap_or_default();
-                    if actual_type == target_type || is_subclass_of(&actual_type, &target_type) {
-                        matched.push(*exc);
-                    } else {
-                        rest.push(*exc);
-                    }
-                }
-            }
-        }
-    }
-
-    let msg = group
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let fields = fields.read().unwrap();
-                fields.get("message").and_then(|v| extract_str(*v))
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    let matched_val = if matched.is_empty() {
-        MbValue::none()
-    } else {
-        // Use new_list_borrowed: exceptions are shared with the original group
-        mb_exception_group_new(
-            MbValue::from_ptr(MbObject::new_str(msg.clone())),
-            MbValue::from_ptr(MbObject::new_list_borrowed(matched)),
-        )
+    let cond = match parse_eg_condition(exc_type) {
+        Ok(c) => c,
+        Err(()) => return MbValue::none(),
     };
-
-    let rest_val = if rest.is_empty() {
-        MbValue::none()
-    } else {
-        mb_exception_group_new(
-            MbValue::from_ptr(MbObject::new_str(msg)),
-            MbValue::from_ptr(MbObject::new_list_borrowed(rest)),
-        )
-    };
-
-    MbValue::from_ptr(MbObject::new_tuple(vec![matched_val, rest_val]))
+    let (matched, rest) = eg_split_rec(group, &cond);
+    MbValue::from_ptr(MbObject::new_tuple(vec![matched, rest]))
 }
 
 // ── R1: Built-in Exception Class Registration ──
@@ -1028,6 +1680,8 @@ pub fn register_builtin_exceptions() {
     super::class::mb_class_register("LookupError", vec!["Exception".into()], empty());
     super::class::mb_class_register("IndexError", vec!["LookupError".into()], empty());
     super::class::mb_class_register("KeyError", vec!["LookupError".into()], empty());
+    // zoneinfo.ZoneInfoNotFoundError derives from KeyError (CPython).
+    super::class::mb_class_register("ZoneInfoNotFoundError", vec!["KeyError".into()], empty());
 
     // Value / Unicode hierarchy
     super::class::mb_class_register("ValueError", vec!["Exception".into()], empty());
@@ -1105,6 +1759,7 @@ pub fn register_builtin_exceptions() {
     super::class::mb_class_register("UnicodeWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("BytesWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("ResourceWarning", vec!["Warning".into()], empty());
+    super::class::mb_class_register("InvalidTZPathWarning", vec!["RuntimeWarning".into()], empty());
     super::class::mb_class_register("ImportWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("EncodingWarning", vec!["Warning".into()], empty());
 
@@ -1123,6 +1778,12 @@ pub fn register_builtin_exceptions() {
 /// Retrieve the current exception without clearing the pending state.
 /// Returns `MbValue::none()` if no exception is pending.
 pub fn mb_get_exception() -> MbValue {
+    let has_current = CURRENT_EXCEPTION.with(|cell| cell.borrow().is_some());
+    if has_current {
+        if let Some(instance) = super::class::peek_last_raised_instance() {
+            return instance;
+        }
+    }
     CURRENT_EXCEPTION.with(|cell| match cell.borrow().as_ref() {
         Some(exc) => {
             let val = store_exception_as_value(MbException {
@@ -1318,18 +1979,97 @@ fn eg_child_exceptions(group: MbValue) -> Vec<MbValue> {
     vec![]
 }
 
+fn eg_class_name(group: MbValue) -> String {
+    group
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "ExceptionGroup".to_string())
+}
+
+fn eg_copy_notes(from: MbValue, to: MbValue) {
+    let notes = from.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get("__notes__").copied()
+        } else {
+            None
+        }
+    });
+    let Some(notes) = notes else {
+        return;
+    };
+    let Some(notes_ptr) = notes.as_ptr() else {
+        return;
+    };
+    let copied = unsafe {
+        match &(*notes_ptr).data {
+            ObjData::List(lock) => {
+                let items = lock.read().unwrap().to_vec();
+                Some(MbValue::from_ptr(MbObject::new_list_borrowed(items)))
+            }
+            _ => None,
+        }
+    };
+    let Some(copied) = copied else {
+        return;
+    };
+    if let Some(to_ptr) = to.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*to_ptr).data {
+                fields
+                    .write()
+                    .unwrap()
+                    .insert("__notes__".to_string(), copied);
+            }
+        }
+    }
+}
+
 /// Derive a new group from `group` carrying `excs`, preserving the message
 /// (CPython's `derive` + metadata copy). Retains the borrowed children.
 fn eg_derive(group: MbValue, excs: Vec<MbValue>) -> MbValue {
+    let class_name = eg_class_name(group);
+    if class_name != "ExceptionGroup" && class_name != "BaseExceptionGroup" {
+        let derive = super::class::lookup_method(&class_name, "derive");
+        if !derive.is_none() {
+            let exc_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(excs));
+            let args = MbValue::from_ptr(MbObject::new_list(vec![exc_tuple]));
+            let derived = super::class::mb_call_method(
+                group,
+                MbValue::from_ptr(MbObject::new_str("derive".to_string())),
+                args,
+            );
+            if is_exception_group_value(derived) {
+                eg_copy_notes(group, derived);
+                return derived;
+            }
+            mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "derive must return an instance of BaseExceptionGroup".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
+
     for e in &excs {
         unsafe {
             super::rc::retain_if_ptr(*e);
         }
     }
-    mb_exception_group_new(
+    let derived = mb_exception_group_new_as(
         MbValue::from_ptr(MbObject::new_str(eg_message(group))),
         MbValue::from_ptr(MbObject::new_list_borrowed(excs)),
-    )
+        &class_name,
+    );
+    eg_copy_notes(group, derived);
+    derived
 }
 
 /// Recursive `split` per PEP 654. Returns `(matched, rest)` where each side is a

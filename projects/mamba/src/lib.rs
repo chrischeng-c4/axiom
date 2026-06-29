@@ -4,6 +4,7 @@ pub mod conformance;
 pub mod diagnostic;
 pub mod driver;
 pub mod error;
+pub(crate) mod exec_literal;
 pub mod ffi;
 pub mod hir;
 pub mod lexer;

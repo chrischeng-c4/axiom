@@ -36,7 +36,10 @@ thread_local! {
     /// flag mirrors CPython's two-table routing: `add_type(..., strict=True)`
     /// (the default) lands in the strict-visible table, `strict=False` in the
     /// loose-only table that only `strict=False` lookups consult.
-    static USER_TYPES: RefCell<Vec<(String, String, bool)>> = const { RefCell::new(Vec::new()) };
+    // The type is stored as an MbValue (not String) so add_type can preserve a
+    // non-str type object (CPython allows it) and guess_type returns it verbatim.
+    // ptr-typed values are retain'd on insert and release'd on clear.
+    static USER_TYPES: RefCell<Vec<(String, MbValue, bool)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Compile-time baked (suffix, mime-type) table — mirrors CPython 3.12
@@ -338,24 +341,27 @@ fn resolve_value_strict(args: &[MbValue], value_kw: &str) -> (MbValue, bool) {
 /// then the static `TYPES_MAP`, and finally (when `strict` is false) the
 /// non-standard `COMMON_TYPES` table. Suffix is the lowercased extension
 /// including the leading dot (e.g. `.html`).
-fn lookup_type(suffix: &str, strict: bool) -> Option<String> {
+fn lookup_type(suffix: &str, strict: bool) -> Option<MbValue> {
     let user = USER_TYPES.with(|t| {
         t.borrow()
             .iter()
             // A loose-only (`strict=False`) user entry is invisible to a strict
             // lookup; strict entries are visible to both.
             .find(|(ext, _, entry_strict)| ext == suffix && (*entry_strict || !strict))
-            .map(|(_, ty, _)| ty.clone())
+            .map(|(_, ty, _)| {
+                unsafe { super::super::rc::retain_if_ptr(*ty); }
+                *ty
+            })
     });
     if user.is_some() {
         return user;
     }
     if let Some(ty) = TYPES_MAP.iter().find(|(ext, _)| *ext == suffix) {
-        return Some(ty.1.to_string());
+        return Some(MbValue::from_ptr(MbObject::new_str(ty.1.to_string())));
     }
     if !strict {
         if let Some(ty) = COMMON_TYPES.iter().find(|(ext, _)| *ext == suffix) {
-            return Some(ty.1.to_string());
+            return Some(MbValue::from_ptr(MbObject::new_str(ty.1.to_string())));
         }
     }
     None
@@ -506,15 +512,11 @@ pub fn mb_mimetypes_guess_type(url: MbValue, strict: MbValue) -> MbValue {
 
     // Types map: lowercase the final extension before lookup.
     let ext_lower = ext.to_lowercase();
-    let type_str = if ext_lower.is_empty() {
-        None
+    let type_val = if ext_lower.is_empty() {
+        MbValue::none()
     } else {
-        lookup_type(&ext_lower, strict_flag)
+        lookup_type(&ext_lower, strict_flag).unwrap_or_else(MbValue::none)
     };
-
-    let type_val = type_str
-        .map(|s| MbValue::from_ptr(MbObject::new_str(s)))
-        .unwrap_or_else(MbValue::none);
     let enc_val = encoding
         .map(|s| MbValue::from_ptr(MbObject::new_str(s)))
         .unwrap_or_else(MbValue::none);
@@ -536,7 +538,7 @@ fn collect_extensions(target: &str, strict: bool) -> Vec<String> {
     USER_TYPES.with(|t| {
         for (ext, ty, entry_strict) in t.borrow().iter() {
             // Loose-only user entries surface only under a `strict=False` query.
-            if ty == target && (*entry_strict || !strict) {
+            if extract_str(*ty).as_deref() == Some(target) && (*entry_strict || !strict) {
                 push(ext.clone());
             }
         }
@@ -585,12 +587,14 @@ pub fn mb_mimetypes_guess_all_extensions(type_val: MbValue, strict: MbValue) -> 
 /// `strict=False` registration lands in the loose-only table so it surfaces
 /// only under `strict=False` lookups (mirrors CPython's two-table model).
 pub fn mb_mimetypes_add_type(type_val: MbValue, ext_val: MbValue, strict: MbValue) -> MbValue {
-    let type_s = extract_str(type_val).unwrap_or_default();
     let ext_s = extract_str(ext_val).unwrap_or_default();
     let strict_flag = !matches!(strict.as_bool(), Some(false));
-    if !type_s.is_empty() && !ext_s.is_empty() {
+    // CPython accepts any type object (not just str); store it verbatim. An
+    // empty extension or a None type is a no-op.
+    if !ext_s.is_empty() && !type_val.is_none() {
+        unsafe { super::super::rc::retain_if_ptr(type_val); }
         USER_TYPES.with(|t| {
-            t.borrow_mut().push((ext_s, type_s, strict_flag));
+            t.borrow_mut().push((ext_s, type_val, strict_flag));
         });
     }
     MbValue::none()
@@ -651,8 +655,23 @@ pub fn mb_mimetypes_MimeTypes() -> MbValue {
     MbValue::from_ptr(dict)
 }
 
-/// init(files=None) -> None  — no-op; the static table is always live.
+/// init(files=None) -> None — reset the module-level registry maps.
 pub fn mb_mimetypes_init(_files: MbValue) -> MbValue {
+    // CPython's init() rebuilds the registry from the system mime files; mamba
+    // has no system files, so reset to the static defaults by clearing the
+    // user-added types (so an add_type() before init() is forgotten) and by
+    // replacing the public maps with fresh dict objects.
+    USER_TYPES.with(|t| {
+        let mut v = t.borrow_mut();
+        for (_, ty, _) in v.iter() {
+            unsafe { super::super::rc::release_if_ptr(*ty); }
+        }
+        v.clear();
+    });
+    set_module_map("types_map", build_static_dict(TYPES_MAP));
+    set_module_map("encodings_map", build_static_dict(ENCODINGS_MAP));
+    set_module_map("suffix_map", build_static_dict(SUFFIX_MAP));
+    set_module_map("common_types", build_static_dict(COMMON_TYPES));
     MbValue::none()
 }
 
@@ -802,6 +821,20 @@ fn build_static_dict(entries: &[(&str, &str)]) -> MbValue {
         }
     }
     MbValue::from_ptr(dict)
+}
+
+fn str_value(s: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.to_string()))
+}
+
+fn set_module_map(attr: &str, value: MbValue) {
+    super::super::module::mb_module_setattr(str_value("mimetypes"), str_value(attr), value);
+    let cached = super::super::module::MODULES.with(|mods| {
+        mods.borrow().get("mimetypes").and_then(|module| module.cached_value)
+    });
+    if let Some(module_value) = cached {
+        super::super::dict_ops::mb_dict_setitem(module_value, str_value(attr), value);
+    }
 }
 
 /// Register the mimetypes module.

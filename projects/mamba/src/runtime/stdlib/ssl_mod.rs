@@ -38,6 +38,18 @@ fn make_ns(pairs: &[(&str, MbValue)]) -> MbValue {
     MbValue::from_ptr(dict)
 }
 
+fn ssl_method_members() -> &'static [(&'static str, i64)] {
+    &[
+        ("PROTOCOL_TLS", 2),
+        ("PROTOCOL_SSLv23", 2),
+        ("PROTOCOL_TLS_CLIENT", 16),
+        ("PROTOCOL_TLS_SERVER", 17),
+        ("PROTOCOL_TLSv1", 3),
+        ("PROTOCOL_TLSv1_1", 4),
+        ("PROTOCOL_TLSv1_2", 5),
+    ]
+}
+
 unsafe extern "C" fn dispatch_ssl_context(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
@@ -55,7 +67,7 @@ unsafe extern "C" fn dispatch_create_default_context(a: *const MbValue, n: usize
         }
     }
     let inst = MbValue::from_ptr(MbObject::new_instance("SSLContext".to_string()));
-    seed_context_fields(inst, protocol);
+    seed_context_fields(inst, protocol, MbValue::from_int(protocol));
     inst
 }
 
@@ -269,14 +281,16 @@ fn get_field(inst: MbValue, key: &str) -> Option<MbValue> {
 
 /// Int coercion that also accepts bool (CPython int-conversion of True/False).
 fn as_int_like(v: MbValue) -> Option<i64> {
-    v.as_int().or_else(|| v.as_bool().map(|b| b as i64))
+    v.as_int()
+        .or_else(|| v.as_bool().map(|b| b as i64))
+        .or_else(|| super::enum_class::int_member_value(v).and_then(|raw| raw.as_int()))
 }
 
 /// Seed a fresh SSLContext instance with CPython 3.12 defaults for `protocol`.
 /// PROTOCOL_TLS_CLIENT (16) verifies by default; everything else does not.
-fn seed_context_fields(inst: MbValue, protocol: i64) {
+fn seed_context_fields(inst: MbValue, protocol: i64, protocol_value: MbValue) {
     let is_client = protocol == 16;
-    set_field(inst, "protocol", MbValue::from_int(protocol));
+    set_field(inst, "protocol", protocol_value);
     set_field(inst, "minimum_version", MbValue::from_int(-2)); // TLSVersion.MINIMUM_SUPPORTED
     set_field(inst, "maximum_version", MbValue::from_int(-1)); // TLSVersion.MAXIMUM_SUPPORTED
     set_field(
@@ -324,7 +338,112 @@ unsafe extern "C" fn init_ssl_context(self_v: MbValue, args: MbValue) -> MbValue
             &format!("invalid or unsupported protocol version {protocol}"),
         );
     }
-    seed_context_fields(self_v, protocol);
+    let protocol_value = if protocol_arg.is_none() {
+        MbValue::from_int(protocol)
+    } else {
+        protocol_arg
+    };
+    seed_context_fields(self_v, protocol, protocol_value);
+    MbValue::none()
+}
+
+// ── MemoryBIO ───────────────────────────────────────────────────────────────
+
+fn memory_bio_buffer(inst: MbValue) -> Vec<u8> {
+    get_field(inst, "_buffer")
+        .and_then(|v| v.as_ptr())
+        .and_then(|p| unsafe {
+            if let ObjData::Bytes(ref b) = (*p).data {
+                Some(b.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn memory_bio_eof_written(inst: MbValue) -> bool {
+    get_field(inst, "_eof_written")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn memory_bio_set_state(inst: MbValue, data: Vec<u8>, eof_written: bool) {
+    let pending = data.len() as i64;
+    set_field(inst, "_buffer", MbValue::from_ptr(MbObject::new_bytes(data)));
+    set_field(inst, "_eof_written", MbValue::from_bool(eof_written));
+    set_field(inst, "pending", MbValue::from_int(pending));
+    set_field(inst, "eof", MbValue::from_bool(eof_written && pending == 0));
+}
+
+fn is_non_contiguous_memoryview(v: MbValue) -> bool {
+    let Some(ptr) = v.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+            if class_name == "memoryview" {
+                return fields.read().unwrap()
+                    .get("_contiguous")
+                    .and_then(|flag| flag.as_bool())
+                    == Some(false);
+            }
+        }
+    }
+    false
+}
+
+unsafe extern "C" fn memory_bio_init(self_v: MbValue, args: MbValue) -> MbValue {
+    if !args_vec(args).is_empty() {
+        return raise_err("TypeError", "MemoryBIO() takes no arguments");
+    }
+    memory_bio_set_state(self_v, Vec::new(), false);
+    MbValue::none()
+}
+
+unsafe extern "C" fn memory_bio_write(self_v: MbValue, args: MbValue) -> MbValue {
+    let data_arg = first_arg(args);
+    if is_non_contiguous_memoryview(data_arg) {
+        return raise_err("BufferError", "memoryview: underlying buffer is not contiguous");
+    }
+    let Some(bytes) = super::super::builtins::try_bytes_like(data_arg) else {
+        return raise_err(
+            "TypeError",
+            &format!("a bytes-like object is required, not '{}'", py_type_name(data_arg)),
+        );
+    };
+    let mut buf = memory_bio_buffer(self_v);
+    let written = bytes.len() as i64;
+    buf.extend_from_slice(&bytes);
+    memory_bio_set_state(self_v, buf, memory_bio_eof_written(self_v));
+    MbValue::from_int(written)
+}
+
+unsafe extern "C" fn memory_bio_read(self_v: MbValue, args: MbValue) -> MbValue {
+    let size_arg = first_arg(args);
+    let size = if size_arg.is_none() {
+        None
+    } else {
+        match as_int_like(size_arg) {
+            Some(n) if n >= 0 => Some(n as usize),
+            Some(_) => None,
+            None => {
+                return raise_err(
+                    "TypeError",
+                    &format!("'{}' object cannot be interpreted as an integer", py_type_name(size_arg)),
+                );
+            }
+        }
+    };
+    let mut buf = memory_bio_buffer(self_v);
+    let take = size.unwrap_or(buf.len()).min(buf.len());
+    let out: Vec<u8> = buf.drain(0..take).collect();
+    memory_bio_set_state(self_v, buf, memory_bio_eof_written(self_v));
+    MbValue::from_ptr(MbObject::new_bytes(out))
+}
+
+unsafe extern "C" fn memory_bio_write_eof(self_v: MbValue, _args: MbValue) -> MbValue {
+    memory_bio_set_state(self_v, memory_bio_buffer(self_v), true);
     MbValue::none()
 }
 
@@ -840,13 +959,44 @@ unsafe extern "C" fn ctx_load_path_checked(_self_v: MbValue, args: MbValue) -> M
     MbValue::none()
 }
 
+fn str_value(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn class_name_value(v: MbValue) -> Option<String> {
+    str_value(v).or_else(|| get_field(v, "__name__").and_then(str_value))
+}
+
+fn ssl_wrapper_instance(class_name: &str, fields: &[(&str, MbValue)]) -> MbValue {
+    let inst = MbValue::from_ptr(MbObject::new_instance(class_name.to_string()));
+    for (key, val) in fields {
+        set_field(inst, key, *val);
+    }
+    inst
+}
+
 /// `SSLContext.wrap_socket(sock, ...)` — TLS itself is not wired yet, but the
 /// CPython argument contract holds: a non-socket first argument fails with
 /// AttributeError when wrap_socket reaches for the socket surface.
-unsafe extern "C" fn ctx_wrap_socket(_self_v: MbValue, args: MbValue) -> MbValue {
-    let sock = first_arg(args);
-    let is_instance = sock
-        .as_ptr()
+unsafe extern "C" fn ctx_wrap_socket(self_v: MbValue, args: MbValue) -> MbValue {
+    let (pos, kwargs) = split_method_kwargs(
+        args,
+        &[
+            "server_side",
+            "do_handshake_on_connect",
+            "suppress_ragged_eofs",
+            "server_hostname",
+            "session",
+        ],
+    );
+    let sock = pos.first().copied().unwrap_or_else(MbValue::none);
+    let is_instance = sock.as_ptr()
         .map(|p| matches!((*p).data, ObjData::Instance { .. }))
         .unwrap_or(false);
     if !is_instance {
@@ -855,7 +1005,60 @@ unsafe extern "C" fn ctx_wrap_socket(_self_v: MbValue, args: MbValue) -> MbValue
             &format!("'{}' object has no attribute 'fileno'", py_type_name(sock)),
         );
     }
-    MbValue::none()
+    let server_side = kwarg(kwargs, "server_side")
+        .or_else(|| pos.get(1).copied())
+        .map(|v| super::super::builtins::mb_bool(v).as_bool().unwrap_or(false))
+        .unwrap_or(false);
+    let server_hostname = kwarg(kwargs, "server_hostname")
+        .or_else(|| pos.get(4).copied());
+    if server_side && server_hostname.map_or(false, |v| !v.is_none()) {
+        return raise_err("ValueError", "server_hostname can only be specified in client mode");
+    }
+    if let Some(v) = server_hostname {
+        if let Some(err) = validate_server_hostname(v) {
+            return err;
+        }
+    }
+    let class_name = get_field(self_v, "sslsocket_class")
+        .and_then(class_name_value)
+        .unwrap_or_else(|| "SSLSocket".to_string());
+    let timeout = get_field(sock, "_timeout").unwrap_or_else(MbValue::none);
+    ssl_wrapper_instance(
+        &class_name,
+        &[
+            ("_context", self_v),
+            ("_socket", sock),
+            ("_timeout", timeout),
+            ("server_side", MbValue::from_bool(server_side)),
+        ],
+    )
+}
+
+unsafe extern "C" fn ctx_wrap_bio(self_v: MbValue, args: MbValue) -> MbValue {
+    let (pos, kwargs) = split_method_kwargs(
+        args,
+        &["server_side", "server_hostname", "session"],
+    );
+    let server_hostname = kwarg(kwargs, "server_hostname")
+        .or_else(|| pos.get(3).copied());
+    if let Some(v) = server_hostname {
+        if let Some(err) = validate_server_hostname(v) {
+            return err;
+        }
+    }
+    let class_name = get_field(self_v, "sslobject_class")
+        .and_then(class_name_value)
+        .unwrap_or_else(|| "SSLObject".to_string());
+    let incoming = pos.first().copied().unwrap_or_else(MbValue::none);
+    let outgoing = pos.get(1).copied().unwrap_or_else(MbValue::none);
+    ssl_wrapper_instance(
+        &class_name,
+        &[
+            ("_context", self_v),
+            ("incoming", incoming),
+            ("outgoing", outgoing),
+        ],
+    )
 }
 
 /// Named curves OpenSSL 3.x accepts for set_ecdh_curve.
@@ -918,6 +1121,70 @@ fn args_vec(args: MbValue) -> Vec<MbValue> {
     Vec::new()
 }
 
+fn is_allowed_kwargs_dict(v: MbValue, allowed: &[&str]) -> bool {
+    let Some(ptr) = v.as_ptr() else { return false };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            return !map.is_empty() && map.keys().all(|k| matches!(
+                k,
+                DictKey::Str(s) if allowed.contains(&s.as_str())
+            ));
+        }
+    }
+    false
+}
+
+fn split_method_kwargs(args: MbValue, allowed: &[&str]) -> (Vec<MbValue>, Option<MbValue>) {
+    let mut items = args_vec(args);
+    let kwargs = match items.last().copied() {
+        Some(last) if is_allowed_kwargs_dict(last, allowed) => {
+            items.pop();
+            Some(last)
+        }
+        _ => None,
+    };
+    (items, kwargs)
+}
+
+fn kwarg(kwargs: Option<MbValue>, key: &str) -> Option<MbValue> {
+    let ptr = kwargs?.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            return lock.read().unwrap().get(&DictKey::Str(key.to_string())).copied();
+        }
+    }
+    None
+}
+
+fn validate_server_hostname(v: MbValue) -> Option<MbValue> {
+    if v.is_none() {
+        return None;
+    }
+    let s = match v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    }) {
+        Some(s) => s,
+        None => {
+            return Some(raise_err(
+                "TypeError",
+                &format!("server_hostname must be str, not {}", py_type_name(v)),
+            ));
+        }
+    };
+    if s.contains('\0') {
+        return Some(raise_err("TypeError", "server_hostname cannot contain NUL"));
+    }
+    if s.is_empty() || s.starts_with('.') {
+        return Some(raise_err("ValueError", "server_hostname cannot be empty or start with a dot"));
+    }
+    None
+}
+
 /// `SSLError.__init__` — OSError-style: 2+ args store (errno, strerror);
 /// `args` always carries the full constructor tuple.
 unsafe extern "C" fn ssl_error_init(self_v: MbValue, args: MbValue) -> MbValue {
@@ -963,6 +1230,29 @@ unsafe extern "C" fn ssl_object_init(_self_v: MbValue, _args: MbValue) -> MbValu
 unsafe extern "C" fn ssl_socket_init(_self_v: MbValue, _args: MbValue) -> MbValue {
     raise_err("TypeError",
         "SSLSocket does not have a public constructor. Instances are returned by SSLContext.wrap_socket().")
+}
+
+unsafe extern "C" fn ssl_wrapper_enter(self_v: MbValue, _args: MbValue) -> MbValue {
+    unsafe {
+        super::super::rc::retain_if_ptr(self_v);
+    }
+    self_v
+}
+
+unsafe extern "C" fn ssl_wrapper_exit(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_bool(false)
+}
+
+unsafe extern "C" fn ssl_socket_gettimeout(self_v: MbValue, _args: MbValue) -> MbValue {
+    get_field(self_v, "_timeout").unwrap_or_else(MbValue::none)
+}
+
+unsafe extern "C" fn ssl_socket_unconnected_io(_self_v: MbValue, _args: MbValue) -> MbValue {
+    raise_err("OSError", "Underlying socket is not connected")
+}
+
+unsafe extern "C" fn ssl_socket_not_implemented(_self_v: MbValue, _args: MbValue) -> MbValue {
+    raise_err("NotImplementedError", "SSLSocket method is not implemented")
 }
 
 /// Register the ssl exception taxonomy + `SSLContext` in CLASS_REGISTRY.
@@ -1020,11 +1310,35 @@ fn register_ssl_classes() {
         let sock_init = ssl_socket_init as usize;
         super::super::module::register_variadic_func(obj_init as u64);
         super::super::module::register_variadic_func(sock_init as u64);
+        let enter_addr = ssl_wrapper_enter as usize;
+        let exit_addr = ssl_wrapper_exit as usize;
+        super::super::module::register_variadic_func(enter_addr as u64);
+        super::super::module::register_variadic_func(exit_addr as u64);
         let mut obj_methods: HashMap<String, MbValue> = HashMap::new();
         obj_methods.insert("__init__".to_string(), MbValue::from_func(obj_init));
+        obj_methods.insert("__enter__".to_string(), MbValue::from_func(enter_addr));
+        obj_methods.insert("__exit__".to_string(), MbValue::from_func(exit_addr));
         super::super::class::mb_class_register("SSLObject", Vec::new(), obj_methods);
         let mut sock_methods: HashMap<String, MbValue> = HashMap::new();
         sock_methods.insert("__init__".to_string(), MbValue::from_func(sock_init));
+        sock_methods.insert("__enter__".to_string(), MbValue::from_func(enter_addr));
+        sock_methods.insert("__exit__".to_string(), MbValue::from_func(exit_addr));
+        for (name, addr) in [
+            ("gettimeout", ssl_socket_gettimeout as usize),
+            ("recv", ssl_socket_unconnected_io as usize),
+            ("recv_into", ssl_socket_unconnected_io as usize),
+            ("recvfrom", ssl_socket_unconnected_io as usize),
+            ("recvfrom_into", ssl_socket_unconnected_io as usize),
+            ("send", ssl_socket_unconnected_io as usize),
+            ("sendto", ssl_socket_unconnected_io as usize),
+            ("dup", ssl_socket_not_implemented as usize),
+            ("sendmsg", ssl_socket_not_implemented as usize),
+            ("recvmsg", ssl_socket_not_implemented as usize),
+            ("recvmsg_into", ssl_socket_not_implemented as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            sock_methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
         super::super::class::mb_class_register("SSLSocket", Vec::new(), sock_methods);
     }
 
@@ -1045,6 +1359,8 @@ fn register_ssl_classes() {
             ("load_verify_locations", ctx_load_path_checked as usize),
             ("set_ecdh_curve", ctx_set_ecdh_curve as usize),
             ("wrap_socket", ctx_wrap_socket as usize),
+            ("wrap_bio", ctx_wrap_bio as usize),
+            ("set_servername_callback", ctx_set_servername_callback as usize),
         ];
         for (m, addr) in typed {
             super::super::module::register_variadic_func(*addr as u64);
@@ -1054,8 +1370,6 @@ fn register_ssl_classes() {
             "load_default_certs",
             "set_alpn_protocols",
             "set_npn_protocols",
-            "wrap_bio",
-            "set_servername_callback",
             "cert_store_stats",
             "get_ca_certs",
         ] {
@@ -1063,19 +1377,45 @@ fn register_ssl_classes() {
         }
         super::super::class::mb_class_register("SSLContext", Vec::new(), methods);
     }
+
+    // MemoryBIO: an in-memory byte FIFO used by SSLObject/wrap_bio tests.
+    {
+        let init_addr = memory_bio_init as usize;
+        super::super::module::register_variadic_func(init_addr as u64);
+        let mut methods: HashMap<String, MbValue> = HashMap::new();
+        methods.insert("__init__".to_string(), MbValue::from_func(init_addr));
+        for (name, addr) in [
+            ("write", memory_bio_write as usize),
+            ("read", memory_bio_read as usize),
+            ("write_eof", memory_bio_write_eof as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
+        super::super::class::mb_class_register("MemoryBIO", Vec::new(), methods);
+    }
+}
+
+/// SSLContext.set_servername_callback(cb): the callback must be None or a
+/// callable (CPython raises TypeError otherwise). Otherwise a no-op stub.
+unsafe extern "C" fn ctx_set_servername_callback(_self_v: MbValue, args: MbValue) -> MbValue {
+    let cb = first_arg(args);
+    if !cb.is_none() && super::super::builtins::mb_callable(cb).as_bool() != Some(true) {
+        return raise_err("TypeError", "not a callable object");
+    }
+    MbValue::none()
 }
 
 pub fn register() {
     let mut attrs = HashMap::new();
 
-    // Protocol constants (CPython 3.12 ssl.h verbatim).
-    attrs.insert("PROTOCOL_TLS".into(), MbValue::from_int(2));
-    attrs.insert("PROTOCOL_SSLv23".into(), MbValue::from_int(2));
-    attrs.insert("PROTOCOL_TLS_CLIENT".into(), MbValue::from_int(16));
-    attrs.insert("PROTOCOL_TLS_SERVER".into(), MbValue::from_int(17));
-    attrs.insert("PROTOCOL_TLSv1".into(), MbValue::from_int(3));
-    attrs.insert("PROTOCOL_TLSv1_1".into(), MbValue::from_int(4));
-    attrs.insert("PROTOCOL_TLSv1_2".into(), MbValue::from_int(5));
+    // Protocol constants (CPython 3.12 ssl.h verbatim). These are
+    // `_SSLMethod` IntEnum members, not raw ints; aliases share the canonical
+    // member for their value (PROTOCOL_SSLv23 aliases PROTOCOL_TLS).
+    let ssl_method_values = super::enum_class::register_int_enum("_SSLMethod", ssl_method_members());
+    for ((name, _), member) in ssl_method_members().iter().zip(ssl_method_values.iter()) {
+        attrs.insert((*name).into(), *member);
+    }
 
     // Cert verification.
     attrs.insert("CERT_NONE".into(), MbValue::from_int(0));
@@ -1328,6 +1668,7 @@ pub fn register() {
         "SSLContext",
         "SSLObject",
         "SSLSocket",
+        "MemoryBIO",
         "SSLError",
         "SSLZeroReturnError",
         "SSLWantReadError",
@@ -1389,7 +1730,6 @@ pub fn register() {
             dispatch_create_default_context as *const () as usize,
         ),
         ("SSLSession", dispatch_class_shell as *const () as usize),
-        ("MemoryBIO", dispatch_class_shell as *const () as usize),
         ("wrap_socket", dispatch_wrap_socket as *const () as usize),
         (
             "match_hostname",

@@ -69,16 +69,25 @@ fn gcd(mut a: i64, mut b: i64) -> i64 {
 ///   - `den > 0` (sign carried by `num`)
 ///   - `gcd(|num|, den) == 1`
 ///   - `den != 0` always (we coerce `Fraction(_, 0)` to `0/1`)
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct FractionState {
     num: i64,
     den: i64,
+    component_class: Option<String>,
 }
 
 impl FractionState {
     fn new(num: i64, den: i64) -> Self {
+        Self::new_with_component(num, den, None)
+    }
+
+    fn new_with_component(num: i64, den: i64, component_class: Option<String>) -> Self {
         if den == 0 {
-            return FractionState { num: 0, den: 1 };
+            return FractionState {
+                num: 0,
+                den: 1,
+                component_class,
+            };
         }
         let g = gcd(num, den);
         let mut n = num / g;
@@ -87,7 +96,11 @@ impl FractionState {
             n = -n;
             d = -d;
         }
-        FractionState { num: n, den: d }
+        FractionState {
+            num: n,
+            den: d,
+            component_class,
+        }
     }
 }
 
@@ -197,11 +210,11 @@ fn make_handle(state: FractionState) -> MbValue {
 fn load(handle: MbValue) -> FractionState {
     if let Some(id) = handle.as_int() {
         let id = id as u64;
-        if let Some(s) = FRACTIONS.with(|m| m.borrow().get(&id).copied()) {
+        if let Some(s) = FRACTIONS.with(|m| m.borrow().get(&id).cloned()) {
             return s;
         }
     }
-    FractionState { num: 0, den: 1 }
+    FractionState::new(0, 1)
 }
 
 /// Coerce an MbValue to a `FractionState` — handle if known, else
@@ -209,12 +222,111 @@ fn load(handle: MbValue) -> FractionState {
 fn coerce(val: MbValue) -> FractionState {
     if let Some(id) = val.as_int() {
         let id_u = id as u64;
-        if let Some(s) = FRACTIONS.with(|m| m.borrow().get(&id_u).copied()) {
+        if let Some(s) = FRACTIONS.with(|m| m.borrow().get(&id_u).cloned()) {
             return s;
         }
-        return FractionState { num: id, den: 1 };
+        return FractionState::new(id, 1);
     }
-    FractionState { num: 0, den: 1 }
+    if let Some(b) = val.as_bool() {
+        return FractionState::new(b as i64, 1);
+    }
+    if let Some((value, class_name)) = int_subclass_value(val) {
+        return FractionState::new_with_component(value, 1, Some(class_name));
+    }
+    if let Some((num, den)) = rational_components(val) {
+        let n = coerce(num);
+        let d = coerce(den);
+        let component = n.component_class.clone().or_else(|| d.component_class.clone());
+        return FractionState::new_with_component(
+            n.num.saturating_mul(d.den),
+            n.den.saturating_mul(d.num),
+            component,
+        );
+    }
+    FractionState::new(0, 1)
+}
+
+fn unsupported_fraction_arg(val: MbValue) -> bool {
+    val.as_ptr().is_some_and(|p| {
+        matches!(
+            unsafe { &(*p).data },
+            ObjData::List(_)
+                | ObjData::Tuple(_)
+                | ObjData::Dict(_)
+                | ObjData::Set(_)
+                | ObjData::FrozenSet(_)
+                | ObjData::Bytes(_)
+                | ObjData::ByteArray(_)
+        )
+    })
+}
+
+fn raise_fraction_type_error(val: MbValue) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "argument should be a string or a Rational instance, not '{}'",
+            super::super::builtins::value_type_name(val)
+        ))),
+    );
+    MbValue::none()
+}
+
+fn int_subclass_value(val: MbValue) -> Option<(i64, String)> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if !super::super::class::check_class_hierarchy(class_name, "int") {
+                return None;
+            }
+            let payload = fields
+                .read()
+                .unwrap()
+                .get(super::super::class::INT_SUBCLASS_VALUE_FIELD)
+                .copied()?;
+            let value = super::super::builtins::mb_int(payload).as_int()?;
+            Some((value, class_name.clone()))
+        } else {
+            None
+        }
+    }
+}
+
+fn rational_components(val: MbValue) -> Option<(MbValue, MbValue)> {
+    if val.as_ptr().is_none() {
+        return None;
+    }
+    let numerator_attr = MbValue::from_ptr(MbObject::new_str("numerator".to_string()));
+    let denominator_attr = MbValue::from_ptr(MbObject::new_str("denominator".to_string()));
+    let num = super::super::class::mb_getattr(val, numerator_attr);
+    if super::super::exception::mb_has_exception().as_bool() == Some(true) || num.is_none() {
+        super::super::exception::mb_clear_exception();
+        return None;
+    }
+    let den = super::super::class::mb_getattr(val, denominator_attr);
+    if super::super::exception::mb_has_exception().as_bool() == Some(true) || den.is_none() {
+        super::super::exception::mb_clear_exception();
+        return None;
+    }
+    Some((num, den))
+}
+
+fn component_int(value: i64, component_class: Option<&str>) -> MbValue {
+    let Some(class_name) = component_class else {
+        return int_mb(value);
+    };
+    let class = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![int_mb(value)]));
+    let instance = super::super::class::mb_instance_new_with_init(class, args);
+    if instance.is_none() {
+        int_mb(value)
+    } else {
+        instance
+    }
 }
 
 // ── Public surface — free functions used by both dispatch thunks
@@ -337,6 +449,9 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
             return mb_fraction_from_float(num);
         }
     }
+    if unsupported_fraction_arg(den) {
+        return raise_fraction_type_error(den);
+    }
     // ── Explicit zero denominator: Fraction(n, 0) -> ZeroDivisionError. Guarded
     //    on `!den.is_none()` so a single-arg `Fraction(n)` (den omitted ->
     //    None) never trips this; only an actually-supplied zero denominator
@@ -347,40 +462,23 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
     // An argument that is not a number / string / Rational (e.g. a list)
     // has no Fraction conversion: CPython raises TypeError rather than
     // silently coercing to Fraction(0).
-    if let Some(p) = num.as_ptr() {
-        if matches!(
-            unsafe { &(*p).data },
-            ObjData::List(_)
-                | ObjData::Tuple(_)
-                | ObjData::Dict(_)
-                | ObjData::Set(_)
-                | ObjData::FrozenSet(_)
-                | ObjData::Bytes(_)
-                | ObjData::ByteArray(_)
-        ) {
-            super::super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(format!(
-                    "argument should be a string or a Rational instance, not '{}'",
-                    super::super::builtins::value_type_name(num)
-                ))),
-            );
-            return MbValue::none();
-        }
+    if unsupported_fraction_arg(num) {
+        return raise_fraction_type_error(num);
     }
     let a = coerce(num);
     // Single-argument form: `Fraction(5)` (den omitted → None) means
     // denominator 1, NOT `coerce(None)` (which is 0/1 and collapsed every
     // single-arg integer Fraction to zero).
     let b = if den.is_none() {
-        FractionState { num: 1, den: 1 }
+        FractionState::new(1, 1)
     } else {
         coerce(den)
     };
     // (a_n / a_d) / (b_n / b_d)  =  a_n * b_d / (a_d * b_n)
     let n = a.num.saturating_mul(b.den);
     let d = a.den.saturating_mul(b.num);
-    make_handle(FractionState::new(n, d))
+    let component = a.component_class.clone().or_else(|| b.component_class.clone());
+    make_handle(FractionState::new_with_component(n, d, component))
 }
 
 /// `Fraction.from_float(f)` — build the exact rational expansion of the
@@ -390,7 +488,7 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
 pub fn mb_fraction_from_float(f: MbValue) -> MbValue {
     let v = f.as_float().unwrap_or(0.0);
     if !v.is_finite() {
-        return make_handle(FractionState { num: 0, den: 1 });
+        return make_handle(FractionState::new(0, 1));
     }
     // Exact decomposition: v = ±mant * 2^e with mant < 2^53.
     let bits = v.to_bits();
@@ -421,12 +519,14 @@ pub fn mb_fraction_from_float(f: MbValue) -> MbValue {
 
 /// `f.numerator` attribute read.
 pub fn mb_fraction_numerator(handle: MbValue) -> MbValue {
-    int_mb(load(handle).num)
+    let s = load(handle);
+    component_int(s.num, s.component_class.as_deref())
 }
 
 /// `f.denominator` attribute read.
 pub fn mb_fraction_denominator(handle: MbValue) -> MbValue {
-    int_mb(load(handle).den)
+    let s = load(handle);
+    component_int(s.den, s.component_class.as_deref())
 }
 
 /// `f.real` — for rationals, identical to `f` itself.
@@ -565,7 +665,7 @@ pub fn mb_fraction_mod(a: MbValue, b: MbValue) -> MbValue {
     // a mod b  =  a - (a // b) * b
     let av = coerce(a);
     let bv = coerce(b);
-    let q = div_states(av, bv);
+    let q = div_states(av.clone(), bv.clone());
     let floor = q.num.div_euclid(q.den);
     let prod = mul_states(FractionState::new(floor, 1), bv);
     make_handle(sub_states(av, prod))
@@ -587,7 +687,7 @@ pub fn mb_fraction_pow(a: MbValue, n: MbValue) -> MbValue {
     let base = coerce(a);
     let exp = n.as_int().unwrap_or(0);
     if exp == 0 {
-        return make_handle(FractionState { num: 1, den: 1 });
+        return make_handle(FractionState::new(1, 1));
     }
     let abs_exp = exp.unsigned_abs() as u32;
     let mut num = 1_i64;
@@ -609,17 +709,19 @@ pub fn mb_fraction_pos(handle: MbValue) -> MbValue {
 }
 pub fn mb_fraction_neg(handle: MbValue) -> MbValue {
     let s = load(handle);
-    make_handle(FractionState {
-        num: -s.num,
-        den: s.den,
-    })
+    make_handle(FractionState::new_with_component(
+        -s.num,
+        s.den,
+        s.component_class,
+    ))
 }
 pub fn mb_fraction_abs(handle: MbValue) -> MbValue {
     let s = load(handle);
-    make_handle(FractionState {
-        num: s.num.abs(),
-        den: s.den,
-    })
+    make_handle(FractionState::new_with_component(
+        s.num.abs(),
+        s.den,
+        s.component_class,
+    ))
 }
 pub fn mb_fraction_trunc(handle: MbValue) -> MbValue {
     let s = load(handle);

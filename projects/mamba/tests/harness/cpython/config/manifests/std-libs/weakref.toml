@@ -365,7 +365,6 @@ subject   = "weakref.WeakValueDictionary"
 kind      = "semantic"
 module    = "weakref"
 intent    = "WeakValueDictionary drops an entry once its value is collected"
-xfail     = "mamba refcount-only: WeakValueDictionary does not auto-remove collected values (gh #1466)"
 source    = "Lib/test/test_weakref.py"
 
 [[case]]
@@ -375,7 +374,6 @@ subject   = "weakref.WeakKeyDictionary"
 kind      = "semantic"
 module    = "weakref"
 intent    = "WeakKeyDictionary drops an entry once its key is collected"
-xfail     = "mamba refcount-only: WeakKeyDictionary does not auto-remove collected keys (gh #1466)"
 source    = "Lib/test/test_weakref.py"
 
 [[case]]
@@ -385,7 +383,6 @@ subject   = "weakref.WeakSet"
 kind      = "semantic"
 module    = "weakref"
 intent    = "WeakSet drops a member once it is collected"
-xfail     = "mamba refcount-only: WeakSet does not auto-remove collected members (gh #1466)"
 source    = "Lib/test/test_weakref.py"
 
 [[case]]

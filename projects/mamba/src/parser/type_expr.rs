@@ -83,7 +83,9 @@ impl<'a> Parser<'a> {
                     name.push('.');
                     name.push_str(self.text_at(s, e));
                 }
-                if self.peek_kind() == Some(TokenKind::LBracket) {
+                if self.peek_kind() == Some(TokenKind::LParen) {
+                    self.parse_type_call_annotation(start, &name)
+                } else if self.peek_kind() == Some(TokenKind::LBracket) {
                     self.advance();
                     let mut args = vec![self.parse_type_expr()?];
                     while self.peek_kind() == Some(TokenKind::Comma) {
@@ -132,11 +134,15 @@ impl<'a> Parser<'a> {
                 }
             }
             // String literal type annotation: `-> "TypeName"` (PEP 484 forward reference).
-            // Treat the string content as a type name (resolves to Any if unknown).
+            // Preserve that it came from a string so type checking treats it as
+            // a forward reference while runtime introspection sees the text.
             TokenKind::Str(v) | TokenKind::TripleStr(v) | TokenKind::RawStr(v) => {
                 let name = v.clone();
                 self.advance();
-                Ok(Spanned::new(TypeExpr::Named(name), self.span_from(start)))
+                Ok(Spanned::new(
+                    TypeExpr::Named(super::ast::forward_ref_name(&name)),
+                    self.span_from(start),
+                ))
             }
             TokenKind::None_ => {
                 self.advance();
@@ -195,6 +201,7 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_expr()?;
                 let lit_name = match &expr.node {
                     super::ast::Expr::IntLit(v) => Some(v.to_string()),
+                    super::ast::Expr::BigIntLit(v) => Some(v.clone()),
                     super::ast::Expr::FloatLit(v) => Some(v.to_string()),
                     super::ast::Expr::BoolLit(b) => Some(if *b {
                         "True".to_string()
@@ -209,6 +216,54 @@ impl<'a> Parser<'a> {
                 ))
             }
         }
+    }
+
+    fn parse_type_call_annotation(
+        &mut self,
+        start: u32,
+        name: &str,
+    ) -> crate::error::Result<Spanned<TypeExpr>> {
+        self.expect(TokenKind::LParen)?;
+        let mut forward_arg = None;
+        if self.peek_kind() != Some(TokenKind::RParen) {
+            let first_arg = self.parse_expr()?;
+            if name.rsplit('.').next() == Some("ForwardRef") {
+                if let super::ast::Expr::StrLit(s) = first_arg.node {
+                    forward_arg = Some(s);
+                }
+            }
+            let mut depth = 0usize;
+            loop {
+                let Some(kind) = self.peek_kind() else {
+                    break;
+                };
+                match kind {
+                    TokenKind::RParen if depth == 0 => break,
+                    TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
+                        depth += 1;
+                        self.advance();
+                    }
+                    TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                        depth = depth.saturating_sub(1);
+                        self.advance();
+                    }
+                    TokenKind::Eof => {
+                        return Err(MambaError::syntax(
+                            self.span_from(start),
+                            "unterminated annotation call",
+                        ));
+                    }
+                    _ => {
+                        self.advance();
+                    }
+                }
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+        let name = forward_arg
+            .map(|s| super::ast::forward_ref_name(&s))
+            .unwrap_or_else(|| "Any".to_string());
+        Ok(Spanned::new(TypeExpr::Named(name), self.span_from(start)))
     }
 }
 
@@ -423,6 +478,25 @@ mod tests {
             TypeExpr::Generic { name, args } => {
                 assert_eq!(name, "list");
                 assert_eq!(args.len(), 1);
+                assert!(matches!(&args[0].node, TypeExpr::Generic { .. }));
+            }
+            other => panic!("expected nested Generic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_forward_ref_call_annotation() {
+        match parse_type("ForwardRef('CC')") {
+            TypeExpr::Named(n) => assert_eq!(strip_forward_ref_name(&n), Some("CC")),
+            other => panic!("expected forward-ref Named, got {other:?}"),
+        }
+        match parse_type("typing.ForwardRef('int', module='mod')") {
+            TypeExpr::Named(n) => assert_eq!(strip_forward_ref_name(&n), Some("int")),
+            other => panic!("expected forward-ref Named, got {other:?}"),
+        }
+        match parse_type("list[list[ForwardRef('CC')]]") {
+            TypeExpr::Generic { name, args } => {
+                assert_eq!(name, "list");
                 assert!(matches!(&args[0].node, TypeExpr::Generic { .. }));
             }
             other => panic!("expected nested Generic, got {other:?}"),

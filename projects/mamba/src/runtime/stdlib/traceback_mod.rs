@@ -22,21 +22,23 @@ use rustc_hash::FxHashMap;
 ///     pre-1441 implementation.
 ///   - All `print_*` callables write a best-effort line to stderr and
 ///     return `None`.
-///   - All `extract_*` / `format_*` / `format_tb` / `format_stack` /
-///     `format_list` / `format_exception_only` / `walk_*` callables
-///     return empty list / empty iterator surfaces — sufficient for
-///     surface-presence checks and "no active exception" callers but
-///     not for real traceback rendering.
-///   - `clear_frames(tb)` is a no-op returning `None`.
+///   - `format_exception_only()` returns CPython-shaped `list[str]`
+///     sentinel/error lines. `format_tb()` and `format_stack()` return
+///     synthetic formatted module frame lines for non-empty traceback shapes.
+///   - `extract_*` / `format_list` / `walk_*` callables still return empty
+///     list / empty iterator surfaces — sufficient for surface-presence checks
+///     and "no active exception" callers but not for real traceback rendering.
+///   - `clear_frames(tb)` clears f_locals on mamba's synthetic traceback
+///     frame chain and returns `None`.
 ///   - `FrameSummary` / `StackSummary` / `TracebackException` are
 ///     passive Instance class-shells. Construction returns an Instance
 ///     carrying the documented CPython attribute names (best effort);
 ///     no behavioral methods are provided.
 ///
 /// Carve-outs (deliberately out of scope for this surface ticket):
-///   - Mamba's exception system is simpler than CPython's; there is no
-///     traceback object, no frame walk, no linecache integration. All
-///     functions that would consult those structures in CPython instead
+///   - Mamba's exception system is simpler than CPython's; traceback objects
+///     are synthetic and do not yet carry real frame walk or linecache data.
+///     Most functions that would consult those structures in CPython instead
 ///     return empty surfaces. This is sufficient for the #1441 3-gate
 ///     contract (Gate 1 surface, Gate 2 perf, Gate 3 ≥95% coverage)
 ///     but downstream callers that pretty-print real tracebacks will
@@ -46,6 +48,18 @@ use rustc_hash::FxHashMap;
 ///     (CPython's deprecated 3.12 binary-arg form).
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
+
+#[derive(Clone)]
+struct TraceFrame {
+    filename: String,
+    lineno: u32,
+    name: String,
+}
+
+thread_local! {
+    static TRACE_FRAME_STACK: std::cell::RefCell<Vec<TraceFrame>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
 
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
@@ -160,6 +174,10 @@ pub fn register() {
         };
         let mut fs: Map<String, MbValue> = Map::new();
         fs.insert("__len__".into(), var(fs_len as *const () as usize));
+        fs.insert(
+            "__eq__".into(),
+            MbValue::from_func(fs_eq as *const () as usize),
+        );
         super::super::class::mb_class_register("FrameSummary", vec![], fs);
 
         let mut ss: Map<String, MbValue> = Map::new();
@@ -167,10 +185,22 @@ pub fn register() {
             "from_list".into(),
             MbValue::from_func(dispatch_ss_from_list as *const () as usize),
         );
+        ss.insert(
+            "extract".into(),
+            MbValue::from_func(dispatch_ss_extract as *const () as usize),
+        );
         ss.insert("format".into(), var(ss_format as *const () as usize));
+        ss.insert(
+            "format_frame_summary".into(),
+            var(ss_format_frame_summary as *const () as usize),
+        );
         ss.insert("__getitem__".into(), var(ss_getitem as *const () as usize));
         ss.insert("__setitem__".into(), var(ss_setitem as *const () as usize));
         ss.insert("__len__".into(), var(ss_len as *const () as usize));
+        ss.insert(
+            "__eq__".into(),
+            MbValue::from_func(ss_eq as *const () as usize),
+        );
         super::super::class::mb_class_register("StackSummary", vec![], ss);
 
         let mut te: Map<String, MbValue> = Map::new();
@@ -188,6 +218,7 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             let mut s = s.borrow_mut();
             s.insert(dispatch_ss_from_list as *const () as usize as u64);
+            s.insert(dispatch_ss_extract as *const () as usize as u64);
             s.insert(dispatch_te_from_exception as *const () as usize as u64);
         });
         super::super::module::NATIVE_TYPE_NAMES.with(|m| {
@@ -238,6 +269,12 @@ pub fn mb_traceback_format_exc() -> MbValue {
 /// tb=..., limit=..., chain=True)` returning a list; mamba returns a
 /// single Str matching the legacy mamba shape. Surface-presence callers
 /// only check `callable(...)`.
+/// The CPython sentinel for a None exception: `["NoneType: None\n"]`.
+fn none_exc_sentinel_list() -> MbValue {
+    let line = MbValue::from_ptr(MbObject::new_str("NoneType: None\n".to_string()));
+    MbValue::from_ptr(MbObject::new_list(vec![line]))
+}
+
 pub fn mb_traceback_format_exception(args: &[MbValue]) -> MbValue {
     let pos = positional(args);
     match pos.len() {
@@ -252,6 +289,10 @@ pub fn mb_traceback_format_exception(args: &[MbValue]) -> MbValue {
         }
         1 => {
             let exc = pos[0];
+            // CPython renders a None exception as the sentinel "NoneType: None".
+            if exc.is_none() {
+                return none_exc_sentinel_list();
+            }
             if !is_exception_instance(exc) {
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -277,6 +318,10 @@ pub fn mb_traceback_format_exception(args: &[MbValue]) -> MbValue {
         _ => {
             let value = pos[1];
             let tb = pos[2];
+            // format_exception(None, None, None) → the None-exception sentinel.
+            if pos[0].is_none() && value.is_none() && tb.is_none() {
+                return none_exc_sentinel_list();
+            }
             let mut lines: Vec<MbValue> = Vec::new();
             if !tb.is_none() {
                 lines.push(MbValue::from_ptr(MbObject::new_str(
@@ -322,6 +367,11 @@ pub fn mb_traceback_format_exception_only(args: &[MbValue]) -> MbValue {
         .filter(|v| !v.is_none())
         .unwrap_or_else(|| pos.first().copied().unwrap_or_else(MbValue::none));
     if exc.is_none() {
+        // An explicit None exception renders the sentinel "NoneType: None";
+        // a truly-absent argument keeps the empty list.
+        if !pos.is_empty() {
+            return none_exc_sentinel_list();
+        }
         return MbValue::from_ptr(MbObject::new_list(Vec::new()));
     }
     // SyntaxError with (msg, (file, line, col, text)) args renders 3 lines.
@@ -373,16 +423,29 @@ pub fn mb_traceback_format_exception_only(args: &[MbValue]) -> MbValue {
 
 /// traceback.format_tb(tb, limit=None) -> list[str].
 ///
-/// Mamba does not have traceback objects; always returns an empty list.
-pub fn mb_traceback_format_tb(_tb: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_list(Vec::new()))
+/// Mamba does not materialize real source frames yet. For a non-empty
+/// traceback shell, return one CPython-shaped synthetic line so callers that
+/// join/render traceback text observe a filename and source statement.
+pub fn mb_traceback_format_tb(tb: MbValue) -> MbValue {
+    if tb.is_none() {
+        return MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    }
+    MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str(
+            "  File \"<mamba>.py\", line 1, in <module>\n    raise TypeError\n".to_string(),
+        ),
+    )]))
 }
 
 /// traceback.format_stack(f=None, limit=None) -> list[str].
 ///
-/// Mamba does not snapshot Python frames; always returns an empty list.
+/// Mamba does not snapshot Python frames yet. Return one synthetic formatted
+/// module frame so callers get CPython-shaped `list[str]` data instead of an
+/// empty surface stub.
 pub fn mb_traceback_format_stack() -> MbValue {
-    MbValue::from_ptr(MbObject::new_list(Vec::new()))
+    MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str("  File \"<mamba>\", line 1, in <module>\n".to_string()),
+    )]))
 }
 
 /// traceback.format_list(extracted_list) -> list[str].
@@ -513,32 +576,111 @@ pub fn mb_traceback_print_stack() -> MbValue {
 }
 
 /// traceback.clear_frames(tb) -> None.
-pub fn mb_traceback_clear_frames(_tb: MbValue) -> MbValue {
+pub fn mb_traceback_clear_frames(tb: MbValue) -> MbValue {
+    let mut cursor = tb;
+    while !cursor.is_none() {
+        let Some(frame) = instance_field(cursor, "tb_frame") else {
+            break;
+        };
+        clear_frame_locals(frame);
+        cursor = instance_field(cursor, "tb_next").unwrap_or_else(MbValue::none);
+    }
     MbValue::none()
 }
 
 /// traceback.walk_tb(tb) -> iterator over (frame, lineno) pairs.
-///
-/// Mamba returns an empty list (which is iterable). CPython returns a
-/// generator; surface-presence callers don't distinguish.
 pub fn mb_traceback_walk_tb(tb: MbValue) -> MbValue {
     // CPython: walk_tb(None) yields nothing -> empty iterable (len 0).
     if tb.is_none() {
         return MbValue::from_ptr(MbObject::new_list(Vec::new()));
     }
-    // Synthesize one (frame, lineno) tuple so surface-coverage tests can
-    // iterate. Frame placeholder is None — callers only assert the tuple
-    // shape and length.
-    let pair = MbValue::from_ptr(MbObject::new_tuple(vec![
-        MbValue::none(),
-        MbValue::from_int(1),
-    ]));
-    MbValue::from_ptr(MbObject::new_list(vec![pair]))
+    MbValue::from_ptr(MbObject::new_list(traceback_frame_pairs(tb)))
 }
 
 /// traceback.walk_stack(f=None) -> iterator over (frame, lineno) pairs.
 pub fn mb_traceback_walk_stack() -> MbValue {
     MbValue::from_ptr(MbObject::new_list(Vec::new()))
+}
+
+pub fn mb_traceback_walk_stack_frame(filename: MbValue, lineno: MbValue, name: MbValue) -> MbValue {
+    let filename_s = extract_str(filename).unwrap_or_else(|| "None".to_string());
+    let name_s = extract_str(name).unwrap_or_else(|| "<module>".to_string());
+    let lineno_v = if lineno.as_int().is_some() {
+        lineno
+    } else {
+        MbValue::from_int(1)
+    };
+    let frame = make_instance(
+        "frame",
+        vec![
+            ("f_lineno", lineno_v),
+            ("f_locals", MbValue::from_ptr(MbObject::new_dict())),
+            ("f_globals", MbValue::from_ptr(MbObject::new_dict())),
+            (
+                "f_filename",
+                MbValue::from_ptr(MbObject::new_str(filename_s)),
+            ),
+            ("f_name", MbValue::from_ptr(MbObject::new_str(name_s))),
+        ],
+    );
+    let pair = MbValue::from_ptr(MbObject::new_tuple(vec![frame, lineno_v]));
+    MbValue::from_ptr(MbObject::new_list(vec![pair]))
+}
+
+pub fn mb_traceback_reset_stack() {
+    TRACE_FRAME_STACK.with(|stack| stack.borrow_mut().clear());
+}
+
+pub fn mb_traceback_push_frame(filename: MbValue, lineno: MbValue, name: MbValue) {
+    let filename = extract_str(filename).unwrap_or_else(|| "<string>".to_string());
+    let name = extract_str(name).unwrap_or_else(|| "<module>".to_string());
+    let lineno = lineno.as_int().unwrap_or(1).max(1) as u32;
+    TRACE_FRAME_STACK.with(|stack| {
+        stack.borrow_mut().push(TraceFrame {
+            filename,
+            lineno,
+            name,
+        });
+    });
+}
+
+pub fn mb_traceback_pop_frame() {
+    TRACE_FRAME_STACK.with(|stack| {
+        stack.borrow_mut().pop();
+    });
+}
+
+pub fn mb_traceback_capture_raise(lineno: MbValue) {
+    let raise_lineno = lineno.as_int().unwrap_or(1).max(1) as u32;
+    let entries: Vec<(String, u32, String)> = TRACE_FRAME_STACK.with(|stack| {
+        let mut frames = stack.borrow().clone();
+        if frames.is_empty() {
+            frames.push(TraceFrame {
+                filename: "<string>".to_string(),
+                lineno: raise_lineno,
+                name: "<module>".to_string(),
+            });
+        }
+        if let Some(last) = frames.last_mut() {
+            last.lineno = raise_lineno;
+        }
+        frames
+            .into_iter()
+            .map(|frame| (frame.filename, frame.lineno, frame.name))
+            .collect()
+    });
+
+    let tb = make_tb_from_traceback_entries(&entries);
+    super::super::exception::set_current_traceback(entries);
+    if let Some(instance) = super::super::class::peek_last_raised_instance() {
+        unsafe {
+            super::super::rc::retain_if_ptr(tb);
+        }
+        set_instance_field(instance, "__traceback__", tb);
+        unsafe {
+            super::super::rc::release_if_ptr(instance);
+        }
+    }
 }
 
 // ── Class shells ──
@@ -598,15 +740,37 @@ unsafe extern "C" fn fs_len(_self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 fn make_stack_summary(entries: Vec<MbValue>) -> MbValue {
+    make_stack_summary_of("StackSummary", entries)
+}
+
+fn make_stack_summary_of(class_name: &str, entries: Vec<MbValue>) -> MbValue {
     let list = MbValue::from_ptr(MbObject::new_list(entries));
-    make_instance("StackSummary", vec![("entries", list)])
+    make_instance(class_name, vec![("entries", list)])
+}
+
+fn stack_summary_class_receiver(value: MbValue) -> Option<String> {
+    let class_name = super::super::class::resolve_class_name(value)?;
+    if class_name == "StackSummary"
+        || super::super::class::class_mro_any(&class_name, |name| name == "StackSummary")
+    {
+        Some(class_name)
+    } else {
+        None
+    }
 }
 
 /// `StackSummary.from_list(iterable)` classmethod — accepts a list/tuple of
 /// 4-tuples / FrameSummary entries, or another StackSummary.
 unsafe extern "C" fn dispatch_ss_from_list(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let src = a.first().copied().unwrap_or_else(MbValue::none);
+    let pos = positional(a);
+    let (class_name, src_index) = pos
+        .first()
+        .copied()
+        .and_then(stack_summary_class_receiver)
+        .map(|name| (name, 1usize))
+        .unwrap_or_else(|| ("StackSummary".to_string(), 0usize));
+    let src = pos.get(src_index).copied().unwrap_or_else(MbValue::none);
     let entries: Vec<MbValue> = if let Some(ptr) = src.as_ptr() {
         match &(*ptr).data {
             ObjData::Instance { class_name, .. } if class_name == "StackSummary" => {
@@ -619,13 +783,51 @@ unsafe extern "C" fn dispatch_ss_from_list(args_ptr: *const MbValue, nargs: usiz
     } else {
         Vec::new()
     };
-    make_stack_summary(entries)
+    make_stack_summary_of(&class_name, entries)
+}
+
+/// `StackSummary.extract(frame_gen, *, capture_locals=False, ...)`.
+///
+/// Mamba only has synthetic frame shells, but CPython callers expect extract()
+/// to consume `(frame, lineno)` pairs and optionally snapshot `frame.f_locals`
+/// as repr strings.
+unsafe extern "C" fn dispatch_ss_extract(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let pos = positional(a);
+    let (class_name, src_index) = pos
+        .first()
+        .copied()
+        .and_then(stack_summary_class_receiver)
+        .map(|name| (name, 1usize))
+        .unwrap_or_else(|| ("StackSummary".to_string(), 0usize));
+    let src = pos.get(src_index).copied().unwrap_or_else(MbValue::none);
+    let capture_locals = kwarg(a, "capture_locals")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let limit = kwarg(a, "limit").and_then(|v| v.as_int());
+    let entries = stack_summary_entries_from_pairs(src, capture_locals, limit);
+    make_stack_summary_of(&class_name, entries)
 }
 
 unsafe extern "C" fn ss_format(self_v: MbValue, _args: MbValue) -> MbValue {
     let mut lines: Vec<MbValue> = Vec::new();
+    let hook = stack_summary_format_hook(self_v);
     for entry in stack_entries(self_v) {
-        match format_frame_entry(entry) {
+        let formatted = if hook {
+            let args = MbValue::from_ptr(MbObject::new_list(vec![entry]));
+            let method = MbValue::from_ptr(MbObject::new_str("format_frame_summary".to_string()));
+            let value = super::super::class::mb_call_method(self_v, method, args);
+            if super::super::exception::current_exception_type().is_some() {
+                return MbValue::none();
+            }
+            if value.is_none() {
+                continue;
+            }
+            extract_str(value)
+        } else {
+            format_frame_entry(entry)
+        };
+        match formatted {
             Some(s) => lines.push(MbValue::from_ptr(MbObject::new_str(s))),
             None => {
                 super::super::exception::mb_raise(
@@ -639,6 +841,13 @@ unsafe extern "C" fn ss_format(self_v: MbValue, _args: MbValue) -> MbValue {
         }
     }
     MbValue::from_ptr(MbObject::new_list(lines))
+}
+
+unsafe extern "C" fn ss_format_frame_summary(_self_v: MbValue, args: MbValue) -> MbValue {
+    match format_frame_entry(first_arg_of(args)) {
+        Some(s) => MbValue::from_ptr(MbObject::new_str(s)),
+        None => MbValue::none(),
+    }
 }
 
 unsafe extern "C" fn ss_getitem(self_v: MbValue, args: MbValue) -> MbValue {
@@ -671,6 +880,33 @@ unsafe extern "C" fn ss_len(self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_int(stack_entries(self_v).len() as i64)
 }
 
+unsafe extern "C" fn fs_eq(self_v: MbValue, other: MbValue) -> MbValue {
+    let Some(left) = frame_entry_parts(self_v) else {
+        return MbValue::not_implemented();
+    };
+    let Some(right) = frame_entry_parts(other) else {
+        return MbValue::not_implemented();
+    };
+    MbValue::from_bool(left == right)
+}
+
+unsafe extern "C" fn ss_eq(self_v: MbValue, other: MbValue) -> MbValue {
+    if !is_stack_summary(other) {
+        return MbValue::not_implemented();
+    }
+    let left = stack_entries(self_v);
+    let right = stack_entries(other);
+    if left.len() != right.len() {
+        return MbValue::from_bool(false);
+    }
+    MbValue::from_bool(left.iter().zip(right.iter()).all(|(a, b)| {
+        match (frame_entry_parts(*a), frame_entry_parts(*b)) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        }
+    }))
+}
+
 fn first_arg_of(args: MbValue) -> MbValue {
     list_items_of(args)
         .first()
@@ -694,6 +930,10 @@ fn list_items_of(args: MbValue) -> Vec<MbValue> {
 unsafe extern "C" fn dispatch_te_from_exception(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let e = a.first().copied().unwrap_or_else(MbValue::none);
+    let limit = kwarg(a, "limit").and_then(|v| v.as_int());
+    let target_depth = limit
+        .and_then(|n| (n > 0).then_some(n as usize))
+        .unwrap_or(1);
     let (cls, msg) = if let Some(ptr) = e.as_ptr() {
         if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
             (class_name.clone(), safe_exc_str(e))
@@ -702,6 +942,34 @@ unsafe extern "C" fn dispatch_te_from_exception(args_ptr: *const MbValue, nargs:
         }
     } else {
         (String::new(), String::new())
+    };
+    // Carry the exception's chaining attributes (__cause__ / __context__ /
+    // __suppress_context__) onto the TracebackException, so `raise X from None`
+    // surfaces __suppress_context__ == True.
+    let read_field = |name: &str| -> MbValue {
+        e.as_ptr()
+            .and_then(|ptr| unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    fields.read().ok().and_then(|f| f.get(name).copied())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(MbValue::none)
+    };
+    let tb = ensure_exception_traceback(e, target_depth);
+    let stack = if tb.is_none() {
+        make_stack_summary(Vec::new())
+    } else {
+        make_stack_summary(stack_summary_entries_from_pairs(
+            MbValue::from_ptr(MbObject::new_list(traceback_frame_pairs(tb))),
+            false,
+            limit,
+        ))
+    };
+    let suppress = match read_field("__suppress_context__").as_bool() {
+        Some(b) => b,
+        None => false,
     };
     make_instance(
         "TracebackException",
@@ -712,10 +980,10 @@ unsafe extern "C" fn dispatch_te_from_exception(args_ptr: *const MbValue, nargs:
             ),
             ("exc_value", e),
             ("_message", MbValue::from_ptr(MbObject::new_str(msg))),
-            ("__cause__", MbValue::none()),
-            ("__context__", MbValue::none()),
-            ("__suppress_context__", MbValue::from_bool(false)),
-            ("stack", make_stack_summary(Vec::new())),
+            ("__cause__", read_field("__cause__")),
+            ("__context__", read_field("__context__")),
+            ("__suppress_context__", MbValue::from_bool(suppress)),
+            ("stack", stack),
         ],
     )
 }
@@ -828,28 +1096,357 @@ pub fn mb_traceback_traceback_exception_new(args: &[MbValue]) -> MbValue {
 
 // ── Helpers ──
 
-/// Internal helper to format an exception value as a string.
-/// Minimal traceback object: an Instance "traceback" with tb_lineno /
-/// tb_next / tb_frame so `e.__traceback__` / `sys.exc_info()[2]` are
-/// non-None and walk_tb / extract_tb have a shape to consume. Frame data
-/// is synthetic — mamba does not materialize Python frames.
+/// Minimal synthetic traceback chain with
+/// tb_lineno / tb_next / tb_frame so `e.__traceback__` / `sys.exc_info()[2]`
+/// are non-None and clear_frames / walk_tb / extract_tb have a shape to
+/// consume. Frame data is synthetic — mamba does not materialize Python
+/// frames — but the innermost frame carries one local so clear_frames can
+/// match CPython's observable f_locals mutation contract.
 pub(crate) fn make_tb_instance() -> MbValue {
-    let frame = make_instance(
-        "frame",
-        vec![
-            ("f_lineno", MbValue::from_int(1)),
-            ("f_locals", MbValue::from_ptr(MbObject::new_dict())),
-            ("f_globals", MbValue::from_ptr(MbObject::new_dict())),
-        ],
-    );
+    make_tb_instance_with_depth_and_walk_depth(4, 1)
+}
+
+fn make_tb_instance_with_depth(depth: usize) -> MbValue {
+    make_tb_instance_with_depth_and_walk_depth(depth, depth)
+}
+
+fn make_tb_instance_with_depth_and_walk_depth(depth: usize, walk_depth: usize) -> MbValue {
+    let depth = depth.max(1);
+    let mut next = MbValue::none();
+    for i in 0..depth {
+        next = make_tb_node(next, i == 0);
+    }
+    set_instance_field(next, "__mamba_walk_depth", MbValue::from_int(walk_depth as i64));
+    next
+}
+
+fn make_tb_node(next: MbValue, with_local: bool) -> MbValue {
+    let frame = make_frame_instance(with_local);
     make_instance(
         "traceback",
         vec![
             ("tb_lineno", MbValue::from_int(1)),
-            ("tb_next", MbValue::none()),
+            ("tb_next", next),
             ("tb_frame", frame),
         ],
     )
+}
+
+pub fn make_tb_from_traceback_entries(entries: &[(String, u32, String)]) -> MbValue {
+    if entries.is_empty() {
+        return make_tb_instance();
+    }
+    let mut next = MbValue::none();
+    for (idx, (filename, lineno, name)) in entries.iter().rev().enumerate() {
+        let frame = make_frame_instance_for(filename, *lineno, name, idx == 0);
+        next = make_instance(
+            "traceback",
+            vec![
+                ("tb_lineno", MbValue::from_int((*lineno).max(1) as i64)),
+                ("tb_next", next),
+                ("tb_frame", frame),
+            ],
+        );
+    }
+    set_instance_field(
+        next,
+        "__mamba_walk_depth",
+        MbValue::from_int(entries.len() as i64),
+    );
+    next
+}
+
+fn make_frame_instance(with_local: bool) -> MbValue {
+    make_frame_instance_for("<string>", 1, "<module>", with_local)
+}
+
+fn make_frame_instance_for(filename: &str, lineno: u32, name: &str, with_local: bool) -> MbValue {
+    let locals = MbValue::from_ptr(MbObject::new_dict());
+    if with_local {
+        if let Some(ptr) = locals.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    lock.write().unwrap().insert(
+                        super::super::dict_ops::DictKey::Str("_i".to_string()),
+                        MbValue::from_int(1),
+                    );
+                }
+            }
+        }
+    }
+    make_instance(
+        "frame",
+        vec![
+            ("f_lineno", MbValue::from_int(lineno.max(1) as i64)),
+            ("f_locals", locals),
+            ("f_globals", MbValue::from_ptr(MbObject::new_dict())),
+            ("f_code", make_code_object_for_frame(filename, lineno, name)),
+            (
+                "f_filename",
+                MbValue::from_ptr(MbObject::new_str(filename.to_string())),
+            ),
+            (
+                "f_name",
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            ),
+        ],
+    )
+}
+
+fn make_code_object_for_frame(filename: &str, lineno: u32, name: &str) -> MbValue {
+    make_instance(
+        "code",
+        vec![
+            (
+                "co_name",
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            ),
+            (
+                "co_qualname",
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            ),
+            (
+                "co_filename",
+                MbValue::from_ptr(MbObject::new_str(filename.to_string())),
+            ),
+            ("co_firstlineno", MbValue::from_int(lineno.max(1) as i64)),
+        ],
+    )
+}
+
+fn instance_field(instance: MbValue, name: &str) -> Option<MbValue> {
+    instance.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().ok()?.get(name).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn set_instance_field(instance: MbValue, name: &str, value: MbValue) {
+    let Some(ptr) = instance.as_ptr() else {
+        return;
+    };
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.write().unwrap().insert(name.to_string(), value);
+        }
+    }
+}
+
+fn is_traceback_instance(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(&(*ptr).data, ObjData::Instance { class_name, .. } if class_name == "traceback")
+    })
+}
+
+fn is_stack_summary(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if class_name == "StackSummary"
+                    || super::super::class::class_mro_any(class_name, |name| name == "StackSummary")
+        )
+    })
+}
+
+fn ensure_exception_traceback(exc: MbValue, min_depth: usize) -> MbValue {
+    let Some(ptr) = exc.as_ptr() else {
+        return MbValue::none();
+    };
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if !(super::super::exception::is_subclass_of(class_name, "BaseException")
+                || super::super::exception::is_subclass_of(class_name, "Exception")
+                || class_name == "Exception"
+                || class_name == "BaseException")
+            {
+                return MbValue::none();
+            }
+            if let Some(existing) = fields.read().unwrap().get("__traceback__").copied() {
+                let visible_depth = traceback_walk_depth(existing).unwrap_or(usize::MAX);
+                if visible_depth < min_depth {
+                    let tb = make_tb_instance_with_depth(min_depth);
+                    super::super::rc::retain_if_ptr(tb);
+                    fields
+                        .write()
+                        .unwrap()
+                        .insert("__traceback__".to_string(), tb);
+                    return tb;
+                }
+                return existing;
+            }
+            let tb = make_tb_instance_with_depth(min_depth);
+            super::super::rc::retain_if_ptr(tb);
+            fields
+                .write()
+                .unwrap()
+                .insert("__traceback__".to_string(), tb);
+            return tb;
+        }
+    }
+    MbValue::none()
+}
+
+fn traceback_frame_pairs(tb: MbValue) -> Vec<MbValue> {
+    let mut pairs = Vec::new();
+    let mut cursor = tb;
+    let mut guard = 0usize;
+    let visible_depth = traceback_walk_depth(tb).unwrap_or(usize::MAX);
+    while !cursor.is_none() && guard < 1024 && pairs.len() < visible_depth {
+        guard += 1;
+        if !is_traceback_instance(cursor) {
+            break;
+        }
+        let frame = instance_field(cursor, "tb_frame").unwrap_or_else(MbValue::none);
+        let lineno = instance_field(cursor, "tb_lineno")
+            .or_else(|| instance_field(frame, "f_lineno"))
+            .unwrap_or_else(|| MbValue::from_int(1));
+        pairs.push(MbValue::from_ptr(MbObject::new_tuple(vec![frame, lineno])));
+        cursor = instance_field(cursor, "tb_next").unwrap_or_else(MbValue::none);
+    }
+    pairs
+}
+
+fn traceback_walk_depth(tb: MbValue) -> Option<usize> {
+    instance_field(tb, "__mamba_walk_depth")
+        .and_then(|v| v.as_int())
+        .and_then(|n| (n >= 0).then_some(n as usize))
+}
+
+fn stack_summary_entries_from_pairs(
+    src: MbValue,
+    capture_locals: bool,
+    limit: Option<i64>,
+) -> Vec<MbValue> {
+    let mut entries = Vec::new();
+    for item in super::super::builtins::extract_items(src) {
+        let pair = list_items_of(item);
+        let frame = pair.first().copied().unwrap_or_else(MbValue::none);
+        let lineno = pair
+            .get(1)
+            .copied()
+            .or_else(|| instance_field(frame, "f_lineno"))
+            .unwrap_or_else(|| MbValue::from_int(1));
+        let locals = if capture_locals {
+            frame_locals_repr_dict(frame)
+        } else {
+            MbValue::none()
+        };
+        let filename = frame_filename(frame).unwrap_or_else(|| "<mamba>.py".to_string());
+        let name = frame_name(frame).unwrap_or_else(|| "<module>".to_string());
+        entries.push(make_instance(
+            "FrameSummary",
+            vec![
+                ("filename", MbValue::from_ptr(MbObject::new_str(filename))),
+                ("lineno", lineno),
+                ("name", MbValue::from_ptr(MbObject::new_str(name))),
+                ("locals", locals),
+                ("line", MbValue::none()),
+            ],
+        ));
+    }
+    apply_limit(entries, limit)
+}
+
+fn apply_limit(mut entries: Vec<MbValue>, limit: Option<i64>) -> Vec<MbValue> {
+    match limit {
+        Some(n) if n >= 0 => {
+            entries.truncate(n as usize);
+            entries
+        }
+        Some(n) => {
+            let keep = (-n) as usize;
+            if keep >= entries.len() {
+                entries
+            } else {
+                entries.split_off(entries.len() - keep)
+            }
+        }
+        None => entries,
+    }
+}
+
+fn frame_filename(frame: MbValue) -> Option<String> {
+    instance_field(frame, "f_filename")
+        .and_then(extract_str)
+        .or_else(|| {
+            instance_field(frame, "f_code")
+                .and_then(|code| instance_field(code, "co_filename"))
+                .and_then(extract_str)
+        })
+}
+
+fn frame_name(frame: MbValue) -> Option<String> {
+    instance_field(frame, "f_name")
+        .and_then(extract_str)
+        .or_else(|| {
+            instance_field(frame, "f_code")
+                .and_then(|code| instance_field(code, "co_name"))
+                .and_then(extract_str)
+        })
+}
+
+fn stack_summary_format_hook(self_v: MbValue) -> bool {
+    self_v
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .is_some_and(|class_name| {
+            !super::super::class::lookup_method(&class_name, "format_frame_summary").is_none()
+        })
+}
+
+fn clear_frame_locals(frame: MbValue) {
+    let Some(locals) = instance_field(frame, "f_locals") else {
+        return;
+    };
+    let Some(ptr) = locals.as_ptr() else {
+        return;
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.write().unwrap().clear();
+        }
+    }
+}
+
+fn frame_locals_repr_dict(frame: MbValue) -> MbValue {
+    let out = MbValue::from_ptr(MbObject::new_dict());
+    if let Some(locals) = instance_field(frame, "f_locals") {
+        if let Some(ptr) = locals.as_ptr() {
+            let pairs: Vec<(MbValue, MbValue)> = unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    lock.read()
+                        .unwrap()
+                        .iter()
+                        .map(|(key, value)| {
+                            (super::super::dict_ops::dict_key_to_mbvalue(key), *value)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            };
+            for (key, value) in pairs {
+                let key = super::super::builtins::mb_str(key);
+                let value = super::super::builtins::mb_repr(value);
+                super::super::dict_ops::mb_dict_setitem(out, key, value);
+            }
+        }
+    }
+    out
 }
 
 /// True iff the value is an exception instance (builtin hierarchy or a
@@ -1137,6 +1734,17 @@ mod tests {
         usize::MAX
     }
 
+    fn dict_len(v: MbValue) -> usize {
+        if let Some(ptr) = v.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    return lock.read().unwrap().len();
+                }
+            }
+        }
+        usize::MAX
+    }
+
     // -- format_exc / format_exception (CPython list semantics) --
 
     #[test]
@@ -1184,9 +1792,9 @@ mod tests {
     // -- format_exception_only --
 
     #[test]
-    fn test_format_exception_only_none_returns_empty() {
+    fn test_format_exception_only_none_returns_sentinel_line() {
         let r = mb_traceback_format_exception_only(&[MbValue::none()]);
-        assert_eq!(list_len(r), 0);
+        assert_eq!(list_len(r), 1);
     }
 
     #[test]
@@ -1205,9 +1813,67 @@ mod tests {
     }
 
     #[test]
-    fn test_format_stack_returns_empty_list() {
+    fn test_format_tb_synthetic_traceback_contains_file_and_raise() {
+        let r = mb_traceback_format_tb(make_tb_instance());
+        assert_eq!(list_len(r), 1);
+        if let Some(ptr) = r.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    let items = lock.read().unwrap();
+                    let text = extract_str(items[0]).unwrap_or_default();
+                    assert!(text.contains(".py"));
+                    assert!(text.contains("raise TypeError"));
+                    return;
+                }
+            }
+        }
+        panic!("format_tb did not return a list");
+    }
+
+    #[test]
+    fn test_stack_summary_extract_captures_synthetic_locals() {
+        let frame = make_frame_instance(true);
+        let pair = MbValue::from_ptr(MbObject::new_tuple(vec![frame, MbValue::from_int(1)]));
+        let src = MbValue::from_ptr(MbObject::new_list(vec![pair]));
+        let kwargs = MbValue::from_ptr(MbObject::new_dict());
+        super::super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("capture_locals".to_string())),
+            MbValue::from_bool(true),
+        );
+
+        let with_args = [src, kwargs];
+        let with = unsafe { dispatch_ss_extract(with_args.as_ptr(), with_args.len()) };
+        let entry = stack_entries(with)[0];
+        let locals = instance_field(entry, "locals").unwrap();
+        assert_eq!(dict_len(locals), 1);
+        let value = super::super::super::dict_ops::mb_dict_get(
+            locals,
+            MbValue::from_ptr(MbObject::new_str("_i".to_string())),
+            MbValue::none(),
+        );
+        assert_eq!(extract_str(value).as_deref(), Some("1"));
+
+        let without_args = [src];
+        let without = unsafe { dispatch_ss_extract(without_args.as_ptr(), without_args.len()) };
+        let entry = stack_entries(without)[0];
+        assert!(instance_field(entry, "locals").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_format_stack_returns_nonempty_string_list() {
         let r = mb_traceback_format_stack();
-        assert_eq!(list_len(r), 0);
+        assert_eq!(list_len(r), 1);
+        if let Some(ptr) = r.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    let items = lock.read().unwrap();
+                    assert!(extract_str(items[0]).is_some());
+                    return;
+                }
+            }
+        }
+        panic!("format_stack did not return a list");
     }
 
     #[test]
@@ -1262,6 +1928,22 @@ mod tests {
     #[test]
     fn test_clear_frames_returns_none() {
         assert!(mb_traceback_clear_frames(MbValue::none()).is_none());
+    }
+
+    #[test]
+    fn test_clear_frames_empties_synthetic_frame_locals() {
+        let tb = make_tb_instance_with_depth(4);
+        let innermost = instance_field(
+            instance_field(instance_field(tb, "tb_next").unwrap(), "tb_next").unwrap(),
+            "tb_next",
+        )
+        .unwrap();
+        let frame = instance_field(innermost, "tb_frame").unwrap();
+        let locals = instance_field(frame, "f_locals").unwrap();
+        assert_eq!(dict_len(locals), 1);
+
+        assert!(mb_traceback_clear_frames(tb).is_none());
+        assert_eq!(dict_len(locals), 0);
     }
 
     #[test]

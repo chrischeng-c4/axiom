@@ -9,7 +9,7 @@
 # case = "make_dataclass_field_spec_forms"
 # subject = "dataclasses.make_dataclass"
 # kind = "semantic"
-# xfail = "mamba make_dataclass does not honor mixed field-spec forms (repo memory project_mamba_class_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = "make_dataclass.py"
 # status = "filled"

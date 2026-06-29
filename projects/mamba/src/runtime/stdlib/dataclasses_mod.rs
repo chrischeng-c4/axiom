@@ -21,9 +21,7 @@ use super::super::value::MbValue;
 ///   `FrozenInstanceError`.
 ///
 /// Helpers (`fields`, `asdict`, `astuple`, `replace`, `is_dataclass`,
-/// `field`) operate on the same registry. `make_dataclass` stays a stub:
-/// runtime class synthesis (registering a brand-new class with compiled
-/// methods at runtime) is not yet supported by the class system.
+/// `field`, `make_dataclass`) operate on the same registry.
 use std::collections::HashMap;
 
 fn extract_str(val: MbValue) -> Option<String> {
@@ -409,6 +407,25 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
                 };
                 f.default = take("default");
                 f.default_factory = take("default_factory");
+                // A non-callable default_factory is a TypeError (CPython raises
+                // it when the factory is invoked; we reject at decoration time,
+                // which the same try/except observes).
+                if let Some(fac) = f.default_factory {
+                    if !fac.is_none()
+                        && super::super::builtins::mb_callable(fac).as_bool() != Some(true)
+                    {
+                        super::super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "default_factory must be callable".to_string(),
+                            )),
+                        );
+                        unsafe {
+                            release_if_ptr(d);
+                        }
+                        return;
+                    }
+                }
                 f.metadata = take("metadata");
                 f.init = truthy_flag(marker_get(d, "init"), true);
                 f.repr = truthy_flag(marker_get(d, "repr"), true);
@@ -743,15 +760,28 @@ fn resolve_default(f: &DcField, marker: Option<MbValue>) -> Option<(MbValue, boo
     None
 }
 
-/// The synthesized dataclass `__init__`: bind positional args to
-/// init-participating fields in declaration order, fill defaults /
-/// default_factory, forward InitVars to `__post_init__`, seed init=False
-/// fields from their defaults, then call `__post_init__` when defined.
-pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: MbValue) {
-    let Some(d) = lookup_dc(class_name) else {
-        return;
-    };
-    let args: Vec<MbValue> = args_list
+fn kwargs_from_trailing_dict(val: MbValue) -> Option<HashMap<String, MbValue>> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let guard = lock.read().unwrap();
+            if guard.is_empty() {
+                return None;
+            }
+            let mut out = HashMap::new();
+            for (k, v) in guard.iter() {
+                let Some(key) = k.as_str() else { return None };
+                out.insert(key.to_string(), *v);
+            }
+            Some(out)
+        } else {
+            None
+        }
+    }
+}
+
+fn split_init_call_args(args_list: MbValue) -> (Vec<MbValue>, HashMap<String, MbValue>) {
+    let mut args: Vec<MbValue> = args_list
         .as_ptr()
         .map(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
@@ -761,12 +791,66 @@ pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: 
             }
         })
         .unwrap_or_default();
+    let kwargs = args
+        .last()
+        .copied()
+        .and_then(kwargs_from_trailing_dict)
+        .unwrap_or_default();
+    if !kwargs.is_empty() {
+        args.pop();
+    }
+    (args, kwargs)
+}
+
+fn raise_dataclass_type_error(msg: String) {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg)),
+    );
+}
+
+/// The synthesized dataclass `__init__`: bind positional args to
+/// init-participating fields in declaration order, fill defaults /
+/// default_factory, forward InitVars to `__post_init__`, seed init=False
+/// fields from their defaults, then call `__post_init__` when defined.
+pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: MbValue) {
+    let Some(d) = lookup_dc(class_name) else {
+        return;
+    };
+    let (args, mut kwargs) = split_init_call_args(args_list);
+    let positional_capacity = d
+        .fields
+        .iter()
+        .filter(|f| !f.is_classvar && f.init && !f.kw_only)
+        .count();
+    if args.len() > positional_capacity {
+        raise_dataclass_type_error(format!(
+            "{class_name}.__init__() takes {positional_capacity} positional arguments but {} were given",
+            args.len(),
+        ));
+        return;
+    }
 
     let mut initvars: Vec<MbValue> = Vec::new();
     let mut pos = 0usize;
     for f in d.fields.iter().filter(|f| !f.is_classvar && f.init) {
-        let supplied = args.get(pos).copied();
-        pos += 1;
+        let supplied_pos = if !f.kw_only {
+            let v = args.get(pos).copied();
+            if v.is_some() {
+                pos += 1;
+            }
+            v
+        } else {
+            None
+        };
+        if supplied_pos.is_some() && kwargs.contains_key(&f.name) {
+            raise_dataclass_type_error(format!(
+                "{class_name}.__init__() got multiple values for argument '{}'",
+                f.name,
+            ));
+            return;
+        }
+        let supplied = supplied_pos.or_else(|| kwargs.remove(&f.name));
         let (val, owned) = match supplied {
             Some(v) if !is_field_marker(v) => (v, false),
             other => {
@@ -774,13 +858,15 @@ pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: 
                 match resolve_default(f, marker) {
                     Some(pair) => pair,
                     None => {
-                        super::super::exception::mb_raise(
-                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(format!(
-                                "{class_name}.__init__() missing required positional argument: '{}'",
-                                f.name,
-                            ))),
-                        );
+                        let kind = if f.kw_only {
+                            "keyword-only"
+                        } else {
+                            "positional"
+                        };
+                        raise_dataclass_type_error(format!(
+                            "{class_name}.__init__() missing required {kind} argument: '{}'",
+                            f.name,
+                        ));
                         return;
                     }
                 }
@@ -797,6 +883,12 @@ pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: 
                 }
             }
         }
+    }
+    if let Some(name) = kwargs.keys().next().cloned() {
+        raise_dataclass_type_error(format!(
+            "{class_name}.__init__() got an unexpected keyword argument '{name}'",
+        ));
+        return;
     }
 
     // init=False real fields still get their declared default / factory.
@@ -938,8 +1030,19 @@ unsafe extern "C" fn dispatch_field(args_ptr: *const MbValue, nargs: usize) -> M
 fn dc_name_of(obj: MbValue) -> Option<String> {
     let direct = extract_str(obj).or_else(|| {
         obj.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                Some(class_name.clone())
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
+                if class_name == "type" {
+                    fields
+                        .read()
+                        .ok()
+                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                } else {
+                    Some(class_name.clone())
+                }
             } else {
                 None
             }
@@ -1007,7 +1110,14 @@ fn fields_tuple_for(class_name: &str) -> MbValue {
                     }
                     None => MbValue::from_ptr(MbObject::new_dict()),
                 };
-                m.insert("metadata".to_string(), metadata);
+                // CPython exposes Field.metadata as a read-only
+                // types.MappingProxyType view over the mapping: reads forward,
+                // item assignment raises TypeError.
+                let proxy = MbObject::new_instance("mappingproxy".to_string());
+                if let ObjData::Instance { fields: ref pf, .. } = (*proxy).data {
+                    pf.write().unwrap().insert("_mapping".to_string(), metadata);
+                }
+                m.insert("metadata".to_string(), MbValue::from_ptr(proxy));
                 m.insert("hash".to_string(), MbValue::from_bool(f.compare));
             }
         }
@@ -1198,9 +1308,23 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
             }
         }
     };
+    for f in d.fields.iter().filter(|f| f.is_initvar && f.init) {
+        if change_of(&f.name).is_none() && resolve_default(f, None).is_none() {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "InitVar '{}' must be specified with replace()",
+                    f.name
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
 
     let new_inst = MbValue::from_ptr(MbObject::new_instance(name.clone()));
     let mut init_args: Vec<MbValue> = Vec::new();
+    let kw_args = super::super::dict_ops::mb_dict_new();
+    let mut has_kw_args = false;
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
@@ -1209,12 +1333,25 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
                     let v = change_of(&f.name)
                         .or_else(|| guard.get(&f.name).copied())
                         .unwrap_or_else(MbValue::none);
-                    // The temp args list owns one reference per element.
-                    retain_if_ptr(v);
-                    init_args.push(v);
+                    if f.kw_only {
+                        super::super::dict_ops::mb_dict_setitem(
+                            kw_args,
+                            MbValue::from_ptr(MbObject::new_str(f.name.clone())),
+                            v,
+                        );
+                        has_kw_args = true;
+                    } else {
+                        // The temp args list owns one reference per element.
+                        retain_if_ptr(v);
+                        init_args.push(v);
+                    }
                 }
             }
         }
+    }
+    if has_kw_args {
+        retain_if_ptr(kw_args);
+        init_args.push(kw_args);
     }
     let args_list = MbValue::from_ptr(MbObject::new_list(init_args));
     dc_run_synth_init(&name, new_inst, args_list);
@@ -1222,16 +1359,116 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
     unsafe {
         release_if_ptr(args_list);
     }
+    if has_kw_args {
+        unsafe {
+            release_if_ptr(kw_args);
+        }
+    }
     new_inst
 }
 
-/// make_dataclass(cls_name, fields, ...) — STUB. Building a working class at
-/// runtime needs runtime class synthesis (a registered class with no compiled
-/// body), which the class system does not support yet. Returns the first
-/// argument unchanged so the surface fixture (presence + callability) passes.
+fn get_kwarg(kwargs: MbValue, key: &str) -> Option<MbValue> {
+    let ptr = kwargs.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .unwrap()
+                .get(&super::super::dict_ops::DictKey::Str(key.to_string()))
+                .copied()
+        } else {
+            None
+        }
+    }
+}
+
+fn runtime_type_repr(val: MbValue) -> String {
+    super::super::class::resolve_class_name(val)
+        .or_else(|| extract_str(val))
+        .unwrap_or_else(|| "typing.Any".to_string())
+}
+
+fn parse_make_dataclass_field_spec(spec: MbValue) -> Option<(String, String, Option<MbValue>)> {
+    if let Some(name) = extract_str(spec) {
+        return Some((name, "typing.Any".to_string(), None));
+    }
+    let ptr = spec.as_ptr()?;
+    unsafe {
+        if let ObjData::Tuple(items) = &(*ptr).data {
+            let name = items.first().and_then(|v| extract_str(*v))?;
+            let ty = items
+                .get(1)
+                .map(|v| runtime_type_repr(*v))
+                .unwrap_or_else(|| "typing.Any".to_string());
+            let default = items.get(2).copied();
+            if let Some(v) = default {
+                retain_if_ptr(v);
+            }
+            Some((name, ty, default))
+        } else {
+            None
+        }
+    }
+}
+
+fn parse_make_dataclass_fields(fields_v: MbValue) -> Vec<(String, String, Option<MbValue>)> {
+    let Some(ptr) = fields_v.as_ptr() else {
+        return Vec::new();
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::List(lock) => lock
+                .read()
+                .unwrap()
+                .iter()
+                .filter_map(|v| parse_make_dataclass_field_spec(*v))
+                .collect(),
+            ObjData::Tuple(items) => items
+                .iter()
+                .filter_map(|v| parse_make_dataclass_field_spec(*v))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// make_dataclass(cls_name, fields, ...) — synthesize a registered runtime
+/// class, then feed generated field facts through the same dataclass registry
+/// path used by the `@dataclass` decorator.
 unsafe extern "C" fn dispatch_make_dataclass(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    a.first().copied().unwrap_or_else(MbValue::none)
+    let Some(name_v) = a.first().copied() else {
+        return MbValue::none();
+    };
+    let Some(name) = extract_str(name_v) else {
+        return name_v;
+    };
+    let fields_v = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let kwargs_index = a.iter().enumerate().rev().find_map(|(idx, v)| {
+        v.as_ptr()
+            .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .then_some(idx)
+    });
+    let kwargs = kwargs_index
+        .map(|idx| a[idx])
+        .unwrap_or_else(MbValue::none);
+    let positional_bases = a.get(2).copied().filter(|_| kwargs_index != Some(2));
+    let bases = get_kwarg(kwargs, "bases")
+        .or(positional_bases)
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_tuple(Vec::new())));
+    let namespace = get_kwarg(kwargs, "namespace")
+        .or_else(|| get_kwarg(kwargs, "ns"))
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
+    let type_obj = super::super::builtins::mb_type3(name_v, bases, namespace);
+    if type_obj.is_none() {
+        return type_obj;
+    }
+
+    let field_specs = parse_make_dataclass_fields(fields_v);
+    PENDING_FIELDS.with(|reg| {
+        reg.borrow_mut().insert(name.clone(), field_specs);
+    });
+    decorate_class(&name, parse_options(kwargs));
+    type_obj
 }
 
 /// Model `dataclasses.FrozenInstanceError` as a type-object Instance
@@ -1429,6 +1666,64 @@ mod tests {
         dc_run_synth_init("TInit", inst, args);
         assert_eq!(get_field(inst, "x").as_int(), Some(5));
         assert_eq!(get_field(inst, "y").as_int(), Some(9));
+    }
+
+    #[test]
+    fn test_synth_init_binds_kw_only_fields_from_keywords() {
+        cleanup_all_dataclasses();
+        register_test_class("TKwOnly");
+        record("TKwOnly", "a", "int", None);
+        record("TKwOnly", "b", "int", None);
+        decorate_class(
+            "TKwOnly",
+            DcOptions {
+                kw_only: true,
+                ..DcOptions::default()
+            },
+        );
+        let inst = MbValue::from_ptr(MbObject::new_instance("TKwOnly".to_string()));
+        let kwargs = super::super::super::dict_ops::mb_dict_new();
+        super::super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("a".to_string())),
+            MbValue::from_int(1),
+        );
+        super::super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("b".to_string())),
+            MbValue::from_int(2),
+        );
+        let args = MbValue::from_ptr(MbObject::new_list(vec![kwargs]));
+        dc_run_synth_init("TKwOnly", inst, args);
+        assert_eq!(get_field(inst, "a").as_int(), Some(1));
+        assert_eq!(get_field(inst, "b").as_int(), Some(2));
+    }
+
+    #[test]
+    fn test_synth_init_rejects_kw_only_positionals() {
+        cleanup_all_dataclasses();
+        super::super::super::exception::clear_current_exception();
+        register_test_class("TKwOnlyReject");
+        record("TKwOnlyReject", "a", "int", None);
+        record("TKwOnlyReject", "b", "int", None);
+        decorate_class(
+            "TKwOnlyReject",
+            DcOptions {
+                kw_only: true,
+                ..DcOptions::default()
+            },
+        );
+        let inst = MbValue::from_ptr(MbObject::new_instance("TKwOnlyReject".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
+        dc_run_synth_init("TKwOnlyReject", inst, args);
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
+        );
+        super::super::super::exception::clear_current_exception();
     }
 
     #[test]

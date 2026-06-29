@@ -52,11 +52,23 @@ pub(crate) fn restore_stdlib_arg_check(prev: bool) {
     SUPPRESS_STDLIB_ARG_CHECK.with(|c| c.set(prev));
 }
 
+fn is_pep695_lazy_thunk_arg(
+    func_name: Option<&str>,
+    positional_index: usize,
+    arg: &Spanned<Expr>,
+) -> bool {
+    matches!(arg.node, Expr::Lambda { .. })
+        && matches!(
+            (func_name, positional_index),
+            (Some("__mb_pep695_typevar__"), 2 | 3) | (Some("__mb_pep695_type_alias__"), 1)
+        )
+}
+
 /// Expression, operator, and pattern type checking.
 impl TypeChecker {
     pub(crate) fn check_expr(&mut self, expr: &Spanned<Expr>) -> TypeId {
         match &expr.node {
-            Expr::IntLit(_) => self.tcx.int(),
+            Expr::IntLit(_) | Expr::BigIntLit(_) => self.tcx.int(),
             Expr::FloatLit(_) => self.tcx.float(),
             Expr::ComplexLit(_) => self.tcx.any(), // heap ObjData::Complex (ast_to_hir lowers to `complex(0, N)`)
             Expr::StrLit(_) => self.tcx.str(),
@@ -96,7 +108,7 @@ impl TypeChecker {
                         // call time. If we're inside a function (current_return_ty is
                         // set), treat the undefined name as Any rather than erroring.
                         // Module-level free names stay hard errors.
-                        if self.current_return_ty.is_some() {
+                        if self.current_return_ty.is_some() || self.allow_runtime_unresolved_names {
                             self.tcx.any()
                         } else {
                             self.error(expr.span, format!("undefined name: `{name}`"));
@@ -221,7 +233,15 @@ impl TypeChecker {
                         for arg in args {
                             match arg {
                                 CallArg::Positional(a) => {
-                                    let at = self.check_expr(a);
+                                    let at = if is_pep695_lazy_thunk_arg(
+                                        func_name.as_deref(),
+                                        param_idx,
+                                        a,
+                                    ) {
+                                        self.tcx.any()
+                                    } else {
+                                        self.check_expr(a)
+                                    };
                                     arg_types.push(at);
                                     if matches!(
                                         func_name.as_deref(),
@@ -234,18 +254,6 @@ impl TypeChecker {
                                             format!(
                                                 "{}() arg 2 must be a type or tuple of types",
                                                 func_name.as_deref().unwrap_or("isinstance"),
-                                            ),
-                                        );
-                                    }
-                                    if func_name.as_deref() == Some("len")
-                                        && param_idx == 0
-                                        && !self.len_accepts_static_type(at)
-                                    {
-                                        self.error(
-                                            a.span,
-                                            format!(
-                                                "object of type `{}` has no len()",
-                                                self.ty_name(at),
                                             ),
                                         );
                                     }
@@ -530,9 +538,32 @@ impl TypeChecker {
                         Ty::List(inner) => *inner,
                         _ => self.tcx.any(),
                     };
-                    for name in &gen.targets {
+                    // Tuple-destructuring targets (`for a, b in pairs`) bind
+                    // each target to the corresponding tuple ELEMENT type, not
+                    // the whole element type — otherwise `a * b` became a bogus
+                    // tuple*tuple "arithmetic requires numeric types" hard error.
+                    // Mirrors the statement-`for` handling in check_stmt; shape
+                    // mismatch / non-tuple element → Any, deferring to runtime
+                    // unpacking.
+                    let target_elem_tys: Option<Vec<TypeId>> = if gen.unpack_target {
+                        match self.tcx.get(elem_ty) {
+                            Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    for (i, name) in gen.targets.iter().enumerate() {
+                        let t = if gen.unpack_target {
+                            target_elem_tys
+                                .as_ref()
+                                .map(|ts| ts[i])
+                                .unwrap_or_else(|| self.tcx.any())
+                        } else {
+                            elem_ty
+                        };
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
-                        self.set_sym_type(sym.0, elem_ty);
+                        self.set_sym_type(sym.0, t);
                     }
                     for cond in &gen.conditions {
                         self.check_expr(cond);
@@ -556,9 +587,32 @@ impl TypeChecker {
                         Ty::List(inner) => *inner,
                         _ => self.tcx.any(),
                     };
-                    for name in &gen.targets {
+                    // Tuple-destructuring targets (`for a, b in pairs`) bind
+                    // each target to the corresponding tuple ELEMENT type, not
+                    // the whole element type — otherwise `a * b` became a bogus
+                    // tuple*tuple "arithmetic requires numeric types" hard error.
+                    // Mirrors the statement-`for` handling in check_stmt; shape
+                    // mismatch / non-tuple element → Any, deferring to runtime
+                    // unpacking.
+                    let target_elem_tys: Option<Vec<TypeId>> = if gen.unpack_target {
+                        match self.tcx.get(elem_ty) {
+                            Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    for (i, name) in gen.targets.iter().enumerate() {
+                        let t = if gen.unpack_target {
+                            target_elem_tys
+                                .as_ref()
+                                .map(|ts| ts[i])
+                                .unwrap_or_else(|| self.tcx.any())
+                        } else {
+                            elem_ty
+                        };
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
-                        self.set_sym_type(sym.0, elem_ty);
+                        self.set_sym_type(sym.0, t);
                     }
                     for cond in &gen.conditions {
                         self.check_expr(cond);
@@ -591,8 +645,15 @@ impl TypeChecker {
                 // outer variable's type (e.g. outer `i = 0` flipped from int
                 // to float when an inner `(i := i + 1)` walrus was lowered).
                 let sym = if self.comprehension_depth > 0 {
-                    self.symbols
-                        .define_in_enclosing_scope(target.clone(), SymbolKind::Variable)
+                    // Escape ALL enclosing comprehension scopes (one pushed per
+                    // nesting level) to the nearest non-comprehension scope, so a
+                    // walrus in a nested comprehension still binds in the real
+                    // enclosing scope (nested_comp_walrus_leaks_enclosing).
+                    self.symbols.define_levels_up(
+                        self.comprehension_depth as usize,
+                        target.clone(),
+                        SymbolKind::Variable,
+                    )
                 } else {
                     self.symbols.define(target.clone(), SymbolKind::Variable)
                 };
@@ -614,15 +675,6 @@ impl TypeChecker {
                 }
                 self.tcx.error()
             }
-        }
-    }
-
-    fn len_accepts_static_type(&self, ty: TypeId) -> bool {
-        match self.tcx.get(ty) {
-            Ty::Any | Ty::Error => true,
-            Ty::Str | Ty::List(_) | Ty::Dict(_, _) | Ty::Tuple(_) => true,
-            Ty::Class { .. } => true,
-            _ => false,
         }
     }
 
@@ -723,7 +775,11 @@ impl TypeChecker {
         };
 
         let Some(sig) = sig else { return };
-        if !sig.enforceable {
+        let strict_keyword_wall = self.strict_type_fixture
+            && sig.module == "keyword"
+            && sig.qualifier.is_empty()
+            && matches!(sig.name, "iskeyword" | "issoftkeyword");
+        if !sig.enforceable && !strict_keyword_wall {
             return;
         }
 

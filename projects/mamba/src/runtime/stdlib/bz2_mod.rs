@@ -208,6 +208,7 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
         &mode,
         kwargs_str(args, "encoding"),
         kwargs_str(args, "errors"),
+        kwargs_str(args, "newline"),
     )
 }
 
@@ -326,30 +327,116 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
     let Some(data) = items.iter().copied().find(|v| !is_kwargs_dict(*v)) else {
         return raise_type_error("decompress() missing required argument 'data' (pos 1)");
     };
-    let out = with_bytes(data, |b| {
-        let mut dec = BzDecoder::new(b);
-        let mut buf = Vec::with_capacity(b.len().saturating_mul(4));
-        dec.read_to_end(&mut buf).map(|_| buf)
-    });
-    match out {
-        Ok(buf) => {
-            // A complete stream was decoded → end-of-stream reached.
-            set_field(self_obj, "eof", MbValue::from_bool(true));
-            set_field(self_obj, "needs_input", MbValue::from_bool(false));
-            MbValue::from_ptr(MbObject::new_bytes(buf))
-        }
-        // A decode failure here is ambiguous between truly-invalid data and a
-        // not-yet-complete incremental feed. CPython's incremental
-        // decompressor does NOT raise on a partial-but-valid chunk, so we must
-        // not raise a *wrong* exception on valid input: return empty bytes
-        // ("needs more input") and leave `eof` False. The single-shot EOFError
-        // contract (re-decompress after a completed stream) is enforced above
-        // via the `eof` guard, which is the only error case this stub models.
-        Err(_) => {
-            set_field(self_obj, "needs_input", MbValue::from_bool(true));
-            MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+    // max_length: `max_length=` keyword (default -1 = unbounded). The whole
+    // stream is decoded once into `_outbuf`; each call serves up to max_length
+    // bytes and keeps the remainder, so bounded reads reassemble (CPython).
+    let max_length = items.iter().copied()
+        .find(|v| is_kwargs_dict(*v))
+        .and_then(|d| {
+            let r = super::super::dict_ops::mb_dict_get(
+                d,
+                MbValue::from_ptr(MbObject::new_str("max_length".to_string())),
+                MbValue::from_bits(u64::MAX),
+            );
+            if r.to_bits() == u64::MAX { None } else { r.as_int() }
+        })
+        .unwrap_or(-1);
+
+    let stream_done = field_bool(self_obj, "_stream_done");
+    let mut outbuf = field_bytes(self_obj, "_outbuf");
+    if outbuf.is_empty() && !stream_done {
+        let out = with_bytes(data, |b| {
+            let mut dec = BzDecoder::new(b);
+            let mut buf = Vec::with_capacity(b.len().saturating_mul(4));
+            dec.read_to_end(&mut buf).map(|_| {
+                // Bytes after the decoded bz2 stream are `unused_data`.
+                let consumed = (dec.total_in() as usize).min(b.len());
+                (buf, b[consumed..].to_vec())
+            })
+        });
+        match out {
+            Ok((buf, unused)) => {
+                outbuf = buf;
+                set_field(self_obj, "_stream_done", MbValue::from_bool(true));
+                if !unused.is_empty() {
+                    set_field(self_obj, "unused_data",
+                        MbValue::from_ptr(MbObject::new_bytes(unused)));
+                }
+            }
+            // A decode failure here is ambiguous between truly-invalid data and
+            // a not-yet-complete incremental feed; CPython does not raise on a
+            // partial-but-valid chunk, so return b"" ("needs more input").
+            Err(_) => {
+                set_field(self_obj, "needs_input", MbValue::from_bool(true));
+                return MbValue::from_ptr(MbObject::new_bytes(Vec::new()));
+            }
         }
     }
+    // Serve up to max_length bytes from the decoded buffer; keep the rest.
+    let n = if max_length < 0 {
+        outbuf.len()
+    } else {
+        (max_length as usize).min(outbuf.len())
+    };
+    let ret = outbuf[..n].to_vec();
+    let rest = outbuf[n..].to_vec();
+    let drained = rest.is_empty();
+    let done = field_bool(self_obj, "_stream_done");
+    set_field(self_obj, "_outbuf", MbValue::from_ptr(MbObject::new_bytes(rest)));
+    set_field(self_obj, "eof", MbValue::from_bool(done && drained));
+    set_field(self_obj, "needs_input", MbValue::from_bool(drained && !done));
+    MbValue::from_ptr(MbObject::new_bytes(ret))
+}
+
+/// Read an Instance's bytes field into a Vec (empty when missing/not bytes).
+fn field_bytes(instance: MbValue, name: &str) -> Vec<u8> {
+    instance.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let v = fields.read().unwrap().get(name).copied()?;
+            Some(with_bytes(v, |b| b.to_vec()))
+        } else {
+            None
+        }
+    }).unwrap_or_default()
+}
+
+/// bz2.BZ2Compressor(compresslevel=9) -> a stateful incremental compressor.
+/// mamba buffers all input across compress() calls and emits the whole bz2
+/// stream from flush(); the concatenation of compress()+flush() outputs is a
+/// valid stream that round-trips through BZ2Decompressor (compresslevel is
+/// accepted and ignored — the backend always uses best).
+unsafe extern "C" fn dispatch_bz2compressor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    let obj = MbObject::new_instance("bz2.BZ2Compressor".to_string());
+    let val = MbValue::from_ptr(obj);
+    set_field(val, "_buf", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+    set_field(val, "_flushed", MbValue::from_bool(false));
+    val
+}
+
+/// BZ2Compressor.compress(data) — buffer `data`, return b"" (the full stream
+/// is emitted by flush()).
+extern "C" fn mb_bz2compressor_compress(self_obj: MbValue, args: MbValue) -> MbValue {
+    if field_bool(self_obj, "_flushed") {
+        return raise_value_error("Compressor has been flushed");
+    }
+    let items = method_args(args);
+    let Some(data) = items.iter().copied().find(|v| !is_kwargs_dict(*v)) else {
+        return raise_type_error("compress() missing required argument 'data' (pos 1)");
+    };
+    let mut buf = field_bytes(self_obj, "_buf");
+    with_bytes(data, |b| buf.extend_from_slice(b));
+    set_field(self_obj, "_buf", MbValue::from_ptr(MbObject::new_bytes(buf)));
+    MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+}
+
+/// BZ2Compressor.flush() — compress all buffered input into one bz2 stream.
+extern "C" fn mb_bz2compressor_flush(self_obj: MbValue, _args: MbValue) -> MbValue {
+    if field_bool(self_obj, "_flushed") {
+        return raise_value_error("Repeated call to flush()");
+    }
+    set_field(self_obj, "_flushed", MbValue::from_bool(true));
+    let buf = field_bytes(self_obj, "_buf");
+    mb_bz2_compress(MbValue::from_ptr(MbObject::new_bytes(buf)))
 }
 
 /// Build a class-shell `Instance` carrying the named attributes so that
@@ -400,12 +487,29 @@ pub fn register() {
         });
     }
 
-    // BZ2Compressor stays an attribute-presence shell (no constructor
-    // fixture exercises it for the errors dimension).
+    // BZ2Compressor — a real incremental compressor (buffer-all + flush).
+    let bz2comp_addr = dispatch_bz2compressor as usize;
     attrs.insert(
         "BZ2Compressor".to_string(),
-        class_shell("BZ2Compressor", &["compress", "flush"]),
+        MbValue::from_func(bz2comp_addr),
     );
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(bz2comp_addr as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(bz2comp_addr as u64, "BZ2Compressor".to_string());
+    });
+    {
+        let c_addr = mb_bz2compressor_compress as usize;
+        let f_addr = mb_bz2compressor_flush as usize;
+        super::super::module::register_variadic_func(c_addr as u64);
+        super::super::module::register_variadic_func(f_addr as u64);
+        let mut methods: HashMap<String, MbValue> = HashMap::new();
+        methods.insert("compress".to_string(), MbValue::from_func(c_addr));
+        methods.insert("flush".to_string(), MbValue::from_func(f_addr));
+        super::super::class::mb_class_register("bz2.BZ2Compressor", vec![], methods.clone());
+        super::super::class::mb_class_register("BZ2Compressor", vec![], methods);
+    }
 
     // BZ2File / BZ2Decompressor are real callable constructors that validate
     // their arguments eagerly (mode / compresslevel / EOF) and raise the
@@ -509,6 +613,41 @@ pub fn mb_bz2_open(_filename: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_str("bz2.open".to_string()))
 }
 
+fn decompress_bz2_streams(b: &[u8]) -> Result<Vec<u8>, ()> {
+    if b.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut out = Vec::with_capacity(b.len().saturating_mul(4));
+    let mut offset = 0usize;
+    let mut decoded_any = false;
+
+    while offset < b.len() {
+        let before_len = out.len();
+        let mut dec = BzDecoder::new(&b[offset..]);
+        match dec.read_to_end(&mut out) {
+            Ok(_) => {
+                let consumed = (dec.total_in() as usize).min(b.len() - offset);
+                if consumed == 0 {
+                    out.truncate(before_len);
+                    return if decoded_any { Ok(out) } else { Err(()) };
+                }
+                decoded_any = true;
+                offset += consumed;
+            }
+            Err(err) => {
+                out.truncate(before_len);
+                if decoded_any && err.kind() != std::io::ErrorKind::UnexpectedEof {
+                    return Ok(out);
+                }
+                return Err(());
+            }
+        }
+    }
+
+    if decoded_any { Ok(out) } else { Err(()) }
+}
+
 /// bz2.decompress(data) -> bytes (real bzip2 stream decode).
 ///
 /// CPython returns `b''` for empty input and raises `OSError` ("Invalid
@@ -516,16 +655,7 @@ pub fn mb_bz2_open(_filename: MbValue) -> MbValue {
 /// input is special-cased to `b''` *before* the decoder so a valid empty
 /// payload never trips the error path.
 pub fn mb_bz2_decompress(data: MbValue) -> MbValue {
-    let out = with_bytes(data, |b| {
-        if b.is_empty() {
-            return Ok(Vec::new());
-        }
-        // CPython decodes concatenated streams (multi-stream payloads
-        // decompress to the joined plaintext).
-        let mut dec = bzip2::read::MultiBzDecoder::new(b);
-        let mut buf = Vec::with_capacity(b.len() * 4);
-        dec.read_to_end(&mut buf).map(|_| buf)
-    });
+    let out = with_bytes(data, decompress_bz2_streams);
     match out {
         Ok(buf) => MbValue::from_ptr(MbObject::new_bytes(buf)),
         Err(_) => raise_os_error("Invalid data stream"),
@@ -634,6 +764,41 @@ mod tests {
         let cb = get_bytes_val(compressed).expect("compressed bytes");
         let dec = mb_bz2_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
         assert_eq!(get_bytes_val(dec), Some(payload));
+    }
+
+    #[test]
+    fn test_decompress_ignores_trailing_junk_after_stream() {
+        let payload = b"bz2 payload".to_vec();
+        let compressed = mb_bz2_compress(MbValue::from_ptr(
+            MbObject::new_bytes(payload.clone()),
+        ));
+        let mut cb = get_bytes_val(compressed).expect("compressed bytes");
+        cb.extend_from_slice(b"not a bzip2 stream");
+
+        let dec = mb_bz2_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
+        assert_eq!(get_bytes_val(dec), Some(payload));
+    }
+
+    #[test]
+    fn test_decompress_joins_streams_before_trailing_junk() {
+        let left = b"left".to_vec();
+        let right = b"right".to_vec();
+        let mut joined = get_bytes_val(mb_bz2_compress(MbValue::from_ptr(
+            MbObject::new_bytes(left.clone()),
+        )))
+        .expect("left compressed bytes");
+        joined.extend(
+            get_bytes_val(mb_bz2_compress(MbValue::from_ptr(
+                MbObject::new_bytes(right.clone()),
+            )))
+            .expect("right compressed bytes"),
+        );
+        joined.extend_from_slice(b"trailing junk");
+
+        let dec = mb_bz2_decompress(MbValue::from_ptr(MbObject::new_bytes(joined)));
+        let mut expected = left;
+        expected.extend(right);
+        assert_eq!(get_bytes_val(dec), Some(expected));
     }
 
     #[test]

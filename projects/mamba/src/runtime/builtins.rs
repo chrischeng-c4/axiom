@@ -170,10 +170,18 @@ pub fn mb_unbox_float(val: MbValue) -> f64 {
 /// and the JIT entry caller expects a raw i64.
 pub fn mb_unbox_int_if_boxed(val: MbValue) -> i64 {
     if let Some(i) = val.as_int() {
-        i
-    } else {
-        val.to_bits() as i64
+        return i;
     }
+    // A BigInt that fits i64 unboxes to its exact value, so raw integer
+    // comparisons (==, <, …) value-compare correctly across distinct
+    // allocations — without this, `-9223372036854775807 == -9223372036854775807`
+    // compared two BigInt pointers and was False (#99). A BigInt larger than
+    // i64 cannot be a register int, so fall back to the boxed bits.
+    use num_traits::ToPrimitive;
+    if let Some(i) = unsafe { super::bigint_ops::extract_bigint(val) }.and_then(|b| b.to_i64()) {
+        return i;
+    }
+    val.to_bits() as i64
 }
 
 /// Unbox a NaN-boxed bool if tagged; otherwise pass through. See
@@ -532,13 +540,7 @@ pub fn mb_print(val: MbValue) -> MbValue {
                 ObjData::Complex(re, im) => {
                     // CPython: when real component is +0.0, print just `{im}j`
                     // (no parens). Negative-zero real keeps the parenthesized form.
-                    if *re == 0.0 && re.is_sign_positive() {
-                        mb_outln!("{}j", im);
-                    } else if *im >= 0.0 {
-                        mb_outln!("({}+{}j)", re, im);
-                    } else {
-                        mb_outln!("({}{}j)", re, im);
-                    }
+                    mb_outln!("{}", super::string_ops::complex_repr_string(*re, *im));
                 }
                 ObjData::CodeObject { filename, mode, .. } => {
                     mb_outln!("<code object <module> at {filename} mode={mode}>")
@@ -750,27 +752,17 @@ fn print_repr(val: MbValue) {
         // Class-body enum member inside a container: "<Color.RED: 1>".
         mb_out!("{s}");
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(codepoints) = super::string_ops::surrogate_codepoints(val) {
+            mb_out!(
+                "{}",
+                super::string_ops::repr_string_from_codepoints(&codepoints)
+            );
+            return;
+        }
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => {
-                    let has_single = s.contains('\'');
-                    let has_double = s.contains('"');
-                    let use_double = has_single && !has_double;
-                    let quote_char = if use_double { '"' } else { '\'' };
-                    mb_out!("{}", quote_char);
-                    for c in s.chars() {
-                        match c {
-                            '\\' => mb_out!("\\\\"),
-                            '\'' if !use_double => mb_out!("\\'"),
-                            '"' if use_double => mb_out!("\\\""),
-                            '\n' => mb_out!("\\n"),
-                            '\r' => mb_out!("\\r"),
-                            '\t' => mb_out!("\\t"),
-                            c if (c as u32) < 0x20 => mb_out!("\\x{:02x}", c as u32),
-                            c => mb_out!("{}", c),
-                        }
-                    }
-                    mb_out!("{}", quote_char);
+                    mb_out!("{}", super::string_ops::repr_string(s));
                 }
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
@@ -852,6 +844,26 @@ fn print_repr(val: MbValue) {
                                 mb_out!("{s}");
                                 return;
                             }
+                        }
+                    }
+                    // Type objects in a container repr as `<class 'name'>`,
+                    // matching mb_repr / the print path (e.g. `[int, str]`).
+                    if class_name == "type" {
+                        let name = fields
+                            .read()
+                            .ok()
+                            .and_then(|f| f.get("__name__").copied())
+                            .and_then(|v| v.as_ptr())
+                            .and_then(|p| {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(name) = name {
+                            mb_out!("<class '{name}'>");
+                            return;
                         }
                     }
                     // namedtuple instances render as Point(x=1, y=2) in
@@ -960,13 +972,7 @@ fn print_repr(val: MbValue) {
                     mb_out!("bytearray(b{})", format_bytes_inner(&data));
                 }
                 ObjData::Complex(re, im) => {
-                    if *re == 0.0 && re.is_sign_positive() {
-                        mb_out!("{}j", im);
-                    } else if *im >= 0.0 {
-                        mb_out!("({}+{}j)", re, im);
-                    } else {
-                        mb_out!("({}{}j)", re, im);
-                    }
+                    mb_out!("{}", super::string_ops::complex_repr_string(*re, *im));
                 }
                 ObjData::BigInt(big) => mb_out!("{big}"),
                 _ => mb_out!("..."),
@@ -981,25 +987,84 @@ fn print_dict_key(k: &super::dict_ops::DictKey) {
 }
 
 /// len(value) — return the length of a collection.
+/// Validate the result of a user `__len__` call per CPython: it must be a
+/// non-negative integer. A non-integer return raises `TypeError`; a negative
+/// one raises `ValueError`. If the `__len__` call itself already raised, the
+/// pending exception is propagated untouched. `True`/`False` count as 1/0 and
+/// arbitrary-precision ints pass through. Returns the validated value, or
+/// `none()` after raising (the caller's epilogue check observes the pending
+/// exception). This keeps `len(obj)` and `bool(obj)` reporting the *same*
+/// error for an illegal `__len__`.
+pub(crate) fn validate_len_result(result: MbValue) -> MbValue {
+    // The __len__ call itself raised — propagate without re-judging the value.
+    if super::exception::current_exception_type().is_some() {
+        return result;
+    }
+    // bool is an int subclass; True == 1, False == 0 (both >= 0).
+    if result.is_bool() {
+        return result;
+    }
+    if let Some(n) = result.as_int() {
+        if n < 0 {
+            raise_value_error("__len__() should return >= 0".to_string());
+            return MbValue::none();
+        }
+        return result;
+    }
+    // Arbitrary-precision ints are valid (non-negative) lengths.
+    if let Some(ptr) = result.as_ptr() {
+        unsafe {
+            if let ObjData::BigInt(_) = (*ptr).data {
+                return result;
+            }
+        }
+    }
+    // Any non-integer return is a TypeError, matching CPython's len().
+    let tn = value_type_name(result);
+    raise_type_error(format!("'{tn}' object cannot be interpreted as an integer"));
+    MbValue::none()
+}
+
+fn len_type_error(val: MbValue) -> MbValue {
+    raise_type_error(format!(
+        "object of type '{}' has no len()",
+        value_type_name(val),
+    ));
+    MbValue::none()
+}
+
 pub fn mb_len(val: MbValue) -> MbValue {
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(val) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_len(target);
+    }
     // Iterator handles encode as tagged ints. For range iterators we can
     // compute the remaining element count in O(1) from (current, stop, step);
     // for other iterators we fall through and return 0 to match the prior
     // behavior (non-sequence iterators don't have len() in CPython either).
     if val.is_int() {
         if let Some(n) = super::iter::mb_iter_range_len(val) {
-            return MbValue::from_int(n);
+            // A range length can exceed 2^47 (e.g. `len(range(sys.maxsize))`),
+            // which overflows a NaN-boxed int — promote to BigInt.
+            return super::iter::mb_iter_range_len_value(val)
+                .unwrap_or_else(|| super::bigint_ops::int_from_i64(n));
         }
         let id = val.as_int().unwrap_or(0) as u64;
         if super::stdlib::array_mod::is_array_handle(id) {
             return super::stdlib::array_mod::mb_array_len(val);
         }
+        return len_type_error(val);
     }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
                 // Python 3 `len(str)` is the number of Unicode code points, not bytes.
                 ObjData::Str(s) => {
+                    if let Some(n) = super::string_ops::surrogate_len(val) {
+                        return MbValue::from_int(n as i64);
+                    }
                     // Class-body enum classes: len(Color) is the canonical
                     // member count, not the class-name string length.
                     if let Some(n) = super::stdlib::enum_class::class_member_count(s) {
@@ -1030,6 +1095,14 @@ pub fn mb_len(val: MbValue) -> MbValue {
                     ref class_name,
                     ref fields,
                 } => {
+                    if let Some(n) = super::dict_ops::dict_view_len(val) {
+                        return MbValue::from_int(n);
+                    }
+                    // Class-body enum classes may surface as type objects;
+                    // resolve them back to the class-name registry entry.
+                    if let Some(n) = super::stdlib::enum_class::class_member_count_for_value(val) {
+                        return MbValue::from_int(n);
+                    }
                     // namedtuple instances: len reflects declared field count.
                     if let Some(vals) = super::stdlib::collections_mod::namedtuple_values(val) {
                         return MbValue::from_int(vals.len() as i64);
@@ -1038,8 +1111,13 @@ pub fn mb_len(val: MbValue) -> MbValue {
                     if let Some(items) = super::stdlib::enum_mod::functional_enum_members(val) {
                         return MbValue::from_int(items.len() as i64);
                     }
-                    // memoryview: forward len() to the underlying bytes-like buffer.
+                    // memoryview: len() is the first shape dimension, not
+                    // the raw byte length for multi-dimensional casts.
                     if class_name == "memoryview" {
+                        let shape = fields.read().unwrap().get("_shape").copied();
+                        if let Some(n) = shape.and_then(mb_first_index_value) {
+                            return MbValue::from_int(n);
+                        }
                         let buf = fields.read().unwrap().get("_buffer").copied();
                         if let Some(b) = buf {
                             if let Some(bp) = b.as_ptr() {
@@ -1073,11 +1151,14 @@ pub fn mb_len(val: MbValue) -> MbValue {
                         }
                         return MbValue::from_int(0);
                     }
-                    // dict-like collections (defaultdict, Counter, OrderedDict):
-                    // forward len() to the backing `_data` dict.
+                    // dict-like collections (defaultdict, Counter, OrderedDict)
+                    // and contextvars.Context: forward len() to the backing
+                    // `_data` dict. Context's `_data` is the captured
+                    // ContextVar → value snapshot. Issue #282.
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"
                         || class_name == "collections.OrderedDict"
+                        || class_name == "Context"
                     {
                         let data = fields.read().unwrap().get("_data").copied();
                         if let Some(d) = data {
@@ -1098,7 +1179,8 @@ pub fn mb_len(val: MbValue) -> MbValue {
                         let method_name =
                             MbValue::from_ptr(MbObject::new_str("__len__".to_string()));
                         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-                        return super::class::mb_call_method(val, method_name, args);
+                        let result = super::class::mb_call_method(val, method_name, args);
+                        return validate_len_result(result);
                     }
                     if let Some(f) = fields.read().unwrap().get("__len__").copied() {
                         if let Some(addr) = f.as_func() {
@@ -1109,6 +1191,11 @@ pub fn mb_len(val: MbValue) -> MbValue {
                                 return f(items.as_ptr(), items.len());
                             }
                         }
+                    }
+                    if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__len__")
+                    {
+                        return mb_len(payload);
                     }
                     // Plain Mock / AsyncMock have no __len__ (only MagicMock
                     // registers the magic table): len() raises TypeError.
@@ -1135,13 +1222,13 @@ pub fn mb_len(val: MbValue) -> MbValue {
                         );
                         return MbValue::none();
                     }
-                    MbValue::from_int(0)
+                    len_type_error(val)
                 }
-                _ => MbValue::from_int(0),
+                _ => len_type_error(val),
             }
         }
     } else {
-        MbValue::from_int(0)
+        len_type_error(val)
     }
 }
 
@@ -1213,6 +1300,9 @@ pub(crate) fn value_type_name(val: MbValue) -> String {
     if val.is_ellipsis() {
         return "ellipsis".to_string();
     }
+    if let Some(iter_type) = super::iter::mb_iter_type_name(val) {
+        return iter_type.to_string();
+    }
     if val.is_int() {
         return "int".to_string();
     }
@@ -1229,6 +1319,9 @@ pub(crate) fn value_type_name(val: MbValue) -> String {
                 ObjData::List(_) => "list",
                 ObjData::Dict(_) => "dict",
                 ObjData::Tuple(_) => "tuple",
+                ObjData::Instance { class_name, .. } if class_name == "__instance_dict_proxy__" => {
+                    "dict"
+                }
                 ObjData::Set(_) => "set",
                 ObjData::FrozenSet(_) => "frozenset",
                 ObjData::Bytes(_) => "bytes",
@@ -1259,6 +1352,11 @@ pub(crate) fn raise_type_error(msg: String) {
     );
 }
 
+fn type_error_value(msg: impl Into<String>) -> MbValue {
+    raise_type_error(msg.into());
+    MbValue::none()
+}
+
 /// Raise a ValueError with the given message through the runtime exception
 /// machinery so it is catchable from user code.
 pub(crate) fn raise_value_error(msg: String) {
@@ -1268,8 +1366,87 @@ pub(crate) fn raise_value_error(msg: String) {
     );
 }
 
+fn int_enum_like_value(val: MbValue) -> Option<MbValue> {
+    super::stdlib::enum_class::int_member_value(val)
+        .or_else(|| super::stdlib::signal_mod::signal_enum_int_value(val))
+        .or_else(|| super::stdlib::http_mod::http_status_member_value(val))
+}
+
+fn int_subclass_payload_for_dunder(val: MbValue, dunder: &str) -> Option<MbValue> {
+    val.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*p).data
+        {
+            if !super::class::check_class_hierarchy(class_name, "int")
+                || super::class::class_defines_own_method(class_name, dunder)
+            {
+                return None;
+            }
+            fields
+                .read()
+                .unwrap()
+                .get(super::class::INT_SUBCLASS_VALUE_FIELD)
+                .copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn float_subclass_payload_for_dunder(val: MbValue, dunder: &str) -> Option<MbValue> {
+    val.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*p).data
+        {
+            if !super::class::check_class_hierarchy(class_name, "float")
+                || super::class::class_defines_own_method(class_name, dunder)
+            {
+                return None;
+            }
+            fields
+                .read()
+                .unwrap()
+                .get(super::class::FLOAT_SUBCLASS_VALUE_FIELD)
+                .copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn int_subclass_numeric_operands(
+    a: MbValue,
+    b: MbValue,
+    dunder: &str,
+) -> Option<(MbValue, MbValue)> {
+    let av = int_subclass_payload_for_dunder(a, dunder);
+    let bv = int_subclass_payload_for_dunder(b, dunder);
+    if av.is_some() || bv.is_some() {
+        Some((av.unwrap_or(a), bv.unwrap_or(b)))
+    } else {
+        None
+    }
+}
+
+fn numeric_subclass_operands(a: MbValue, b: MbValue, dunder: &str) -> Option<(MbValue, MbValue)> {
+    let av = int_subclass_payload_for_dunder(a, dunder)
+        .or_else(|| float_subclass_payload_for_dunder(a, dunder));
+    let bv = int_subclass_payload_for_dunder(b, dunder)
+        .or_else(|| float_subclass_payload_for_dunder(b, dunder));
+    if av.is_some() || bv.is_some() {
+        Some((av.unwrap_or(a), bv.unwrap_or(b)))
+    } else {
+        None
+    }
+}
+
 /// int(value) — convert to integer.
 pub fn mb_int(val: MbValue) -> MbValue {
+    let val = int_enum_like_value(val).unwrap_or(val);
     if is_decimal_handle_value(val) {
         return super::stdlib::decimal_mod::mb_decimal_int(val);
     }
@@ -1369,7 +1546,22 @@ pub fn mb_int(val: MbValue) -> MbValue {
             // int(instance) — dispatch the __int__ dunder when the class
             // registers one (ipaddress addresses, user numeric types);
             // fall back to __index__ (CPython int() accepts SupportsIndex).
-            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
+                if super::class::check_class_hierarchy(class_name, "int") {
+                    if let Some(value) = fields
+                        .read()
+                        .unwrap()
+                        .get(super::class::INT_SUBCLASS_VALUE_FIELD)
+                        .copied()
+                    {
+                        super::rc::retain_if_ptr(value);
+                        return value;
+                    }
+                }
                 for dunder in ["__int__", "__index__"] {
                     let method = super::class::lookup_method(class_name, dunder);
                     if !method.is_none() {
@@ -1457,14 +1649,9 @@ pub fn mb_float(val: MbValue) -> MbValue {
                 );
                 return MbValue::none();
             }
-            // float(b"2.3") / float(bytearray(b"2.3")) — CPython parses ASCII
-            // bytes-like the same as a string (memoryview slices materialize as
-            // bytes in mamba, so this also covers `float(memoryview(...)[a:b])`).
-            let bytes_text: Option<Vec<u8>> = match (*ptr).data {
-                ObjData::Bytes(ref b) => Some(b.clone()),
-                ObjData::ByteArray(ref lock) => Some(lock.read().unwrap().clone()),
-                _ => None,
-            };
+            // float(b"2.3") / float(bytearray(...)) / float(memoryview(...))
+            // — CPython parses bytes-like ASCII the same as a string.
+            let bytes_text = try_bytes_like(val);
             if let Some(raw) = bytes_text {
                 let text = String::from_utf8_lossy(&raw);
                 if let Some(f) = parse_pyfloat_text(&text) {
@@ -1518,6 +1705,12 @@ pub fn mb_float(val: MbValue) -> MbValue {
 
 /// bool(value) — truthiness check.
 pub fn mb_bool(val: MbValue) -> MbValue {
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(val) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_bool(target);
+    }
     if is_decimal_handle_value(val) {
         return super::stdlib::decimal_mod::mb_decimal_bool(val);
     }
@@ -1532,8 +1725,8 @@ pub fn mb_bool(val: MbValue) -> MbValue {
         // `bool(range(5, 5)) == False`); other iterator kinds are objects,
         // truthy by identity.
         if super::iter::is_iter_handle(val) {
-            match super::iter::mb_iter_range_len(val) {
-                Some(n) => n != 0,
+            match super::iter::mb_iter_range_is_nonempty(val) {
+                Some(nonempty) => nonempty,
                 None => true,
             }
         } else {
@@ -1544,6 +1737,9 @@ pub fn mb_bool(val: MbValue) -> MbValue {
     } else if let Some(b) = val.as_bool() {
         b
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(n) = super::string_ops::surrogate_len(val) {
+            return MbValue::from_bool(n != 0);
+        }
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => !s.is_empty(),
@@ -1564,20 +1760,54 @@ pub fn mb_bool(val: MbValue) -> MbValue {
                     let bool_method = super::class::lookup_method(class_name, "__bool__");
                     if !bool_method.is_none() {
                         let result = super::class::mb_call_method1(bool_method, val);
+                        if super::exception::mb_has_exception().as_bool() == Some(true) {
+                            return MbValue::from_bool(false);
+                        }
                         if let Some(bv) = result.as_bool() {
                             return MbValue::from_bool(bv);
                         }
                         if let Some(iv) = result.as_int() {
                             return MbValue::from_bool(iv != 0);
                         }
+                        raise_type_error(format!(
+                            "__bool__ should return bool, returned {}",
+                            value_type_name(result)
+                        ));
+                        return MbValue::from_bool(false);
+                    } else if super::class::class_bool_is_blocked(class_name) {
+                        // `__bool__ = None` disables truth-testing; calling the
+                        // None slot raises, even when __len__ exists.
+                        raise_type_error("'NoneType' object is not callable".to_string());
+                        return MbValue::from_bool(false);
                     }
-                    // __len__ fallback
+                    // __len__ fallback (validated like len(), so bool() and
+                    // len() surface the same error for an illegal __len__).
                     let len_method = super::class::lookup_method(class_name, "__len__");
                     if !len_method.is_none() {
                         let result = super::class::mb_call_method1(len_method, val);
-                        if let Some(iv) = result.as_int() {
+                        let checked = validate_len_result(result);
+                        if let Some(iv) = checked.as_int() {
                             return MbValue::from_bool(iv != 0);
                         }
+                        if checked.is_bool() {
+                            return MbValue::from_bool(checked.as_bool() == Some(true));
+                        }
+                        if let Some(p) = checked.as_ptr() {
+                            if let ObjData::BigInt(ref b) = (*p).data {
+                                use num_traits::Zero;
+                                return MbValue::from_bool(!b.is_zero());
+                            }
+                        }
+                        // validate_len_result raised: fall through with a
+                        // pending exception (the value below is discarded).
+                    } else if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__len__")
+                    {
+                        return mb_bool(payload);
+                    } else if let Some((_kind, payload)) =
+                        super::stdlib::collections_mod::user_wrapper_data(val)
+                    {
+                        return mb_bool(payload);
                     }
                     true
                 }
@@ -1621,6 +1851,9 @@ pub fn mb_str(val: MbValue) -> MbValue {
     if let Some((_, data)) = super::stdlib::collections_mod::user_wrapper_data(val) {
         return mb_str(data);
     }
+    if let Some(text) = super::stdlib::xml_mod::qname_text_value(val) {
+        return MbValue::from_ptr(MbObject::new_str(text));
+    }
     let s = if let Some(i) = val.as_int() {
         // UUID handles are int-tagged but render as the canonical
         // 8-4-4-4-12 form (#1475 — keep `print(uuid.uuid4())` honest
@@ -1647,6 +1880,9 @@ pub fn mb_str(val: MbValue) -> MbValue {
     } else if val.is_ellipsis() {
         "Ellipsis".to_string()
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(codepoints) = super::string_ops::surrogate_codepoints(val) {
+            return super::string_ops::new_surrogate_codepoints_str(codepoints);
+        }
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => {
@@ -1662,6 +1898,39 @@ pub fn mb_str(val: MbValue) -> MbValue {
     };
     let obj = MbObject::new_str(s);
     MbValue::from_ptr(obj)
+}
+
+fn is_str_value(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) })
+}
+
+fn is_bytes_or_bytearray_value(v: MbValue) -> bool {
+    v.as_ptr().is_some_and(|ptr| unsafe {
+        matches!((*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+    })
+}
+
+/// str(object, encoding, errors) constructor form for bytes-like decoding.
+pub fn mb_str_construct(object: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
+    let has_encoding = !encoding.is_none();
+    let has_errors = !errors.is_none();
+    if !has_encoding && !has_errors {
+        return mb_str(object);
+    }
+    if !is_bytes_or_bytearray_value(object) {
+        return type_error_value("decoding to str: need a bytes-like object");
+    }
+    if !has_encoding {
+        return type_error_value("str() missing required argument 'encoding' (pos 2)");
+    }
+    if !is_str_value(encoding) {
+        return type_error_value("str() argument 'encoding' must be str");
+    }
+    if has_errors && !is_str_value(errors) {
+        return type_error_value("str() argument 'errors' must be str");
+    }
+    super::bytes_ops::mb_bytes_decode_with(object, encoding, errors)
 }
 
 /// abs(value) — absolute value.
@@ -1737,6 +2006,14 @@ pub fn mb_abs(val: MbValue) -> MbValue {
 /// Used by complex-aware arithmetic helpers to coerce mixed operands.
 /// (#1256 — complex arithmetic gap)
 fn as_complex_pair(val: MbValue) -> Option<(f64, f64)> {
+    // Decimal / Fraction are tagged-int handles: as_int() below would read the
+    // handle id as a bogus real component (`Decimal("3.0") == 3+0j` compared the
+    // handle id against 3.0 → False). They are not directly complex-coercible
+    // here; (Decimal/Fraction vs complex) equality flows through the
+    // numeric-handle path in mb_values_eq instead.
+    if is_decimal_handle_value(val) || is_fraction_handle_value(val) {
+        return None;
+    }
     if let Some(i) = val.as_int() {
         return Some((i as f64, 0.0));
     }
@@ -1753,6 +2030,9 @@ fn as_complex_pair(val: MbValue) -> Option<(f64, f64)> {
             }
         }
     }
+    if let Some(("complex", payload)) = super::class::builtin_data_payload(val) {
+        return as_complex_pair(payload);
+    }
     None
 }
 
@@ -1762,10 +2042,49 @@ fn as_complex_pair(val: MbValue) -> Option<(f64, f64)> {
 fn is_complex_obj(val: MbValue) -> bool {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
-            return matches!((*ptr).data, ObjData::Complex(_, _));
+            if matches!((*ptr).data, ObjData::Complex(_, _)) {
+                return true;
+            }
         }
     }
-    false
+    matches!(super::class::builtin_data_payload(val), Some(("complex", _)))
+}
+
+/// True iff `val` is a number complex comparison can be defined against
+/// (int / float / bool / complex / arbitrary-precision int). Anything else
+/// makes `complex.__eq__`/`__ne__` return NotImplemented, per CPython.
+fn is_complex_cmp_operand(val: MbValue) -> bool {
+    if val.is_int() || val.is_float() || val.as_bool().is_some() {
+        return true;
+    }
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            if matches!((*ptr).data, ObjData::Complex(_, _) | ObjData::BigInt(_)) {
+                return true;
+            }
+        }
+    }
+    matches!(super::class::builtin_data_payload(val), Some(("complex", _)))
+}
+
+/// Compute an unbound complex comparison dunder `complex.<method>(a, b)`.
+/// Returns `Some(result)` for the six rich-comparison dunders, `None` for any
+/// other method name. __eq__/__ne__ yield a bool when `b` is numeric and
+/// NotImplemented otherwise; the ordering dunders are always NotImplemented
+/// (complex has no ordering). Shared by the unbound-method-wrapper call path
+/// and the direct `complex.__eq__(a, b)` method-call path (mb_call_method).
+pub(crate) fn complex_cmp_dunder(method: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
+    match method {
+        "__eq__" | "__ne__" => Some(if !is_complex_cmp_operand(b) {
+            MbValue::not_implemented()
+        } else if method == "__eq__" {
+            mb_eq(a, b)
+        } else {
+            mb_ne(a, b)
+        }),
+        "__lt__" | "__le__" | "__gt__" | "__ge__" => Some(MbValue::not_implemented()),
+        _ => None,
+    }
 }
 
 /// Parse a CPython-style complex literal from a string body.
@@ -1912,13 +2231,36 @@ pub fn mb_dunder_import(name: MbValue) -> MbValue {
     super::module::mb_import(name)
 }
 
-/// memoryview(obj) — minimal view over a bytes-like source.
-/// Stored as Instance(class_name="memoryview") with a single
-/// `_buffer` field holding the underlying bytes/bytearray. Real
-/// CPython memoryviews carry shape/strides/format metadata; we
-/// support only the byte-flat case (format='B', ndim=1, readonly).
+fn mb_str_value(val: MbValue) -> Option<String> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn mb_first_index_value(val: MbValue) -> Option<i64> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Tuple(items) => items.first().and_then(|v| resolve_index_value(*v)),
+            ObjData::List(lock) => lock
+                .read()
+                .unwrap()
+                .first()
+                .and_then(|v| resolve_index_value(*v)),
+            _ => None,
+        }
+    }
+}
+
+/// memoryview(obj) — view over a bytes-like source.
+/// Stored as Instance(class_name="memoryview") with `_buffer` holding the
+/// readable bytes-like payload and buffer metadata used by cast/index/list.
 pub fn mb_memoryview(obj: MbValue) -> MbValue {
-    if try_bytes_like(obj).is_none() {
+    let Some(bytes) = try_bytes_like(obj) else {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(
@@ -1926,13 +2268,89 @@ pub fn mb_memoryview(obj: MbValue) -> MbValue {
             )),
         );
         return MbValue::none();
-    }
+    };
+    let inherited = obj.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+            if class_name == "memoryview" {
+                let f = fields.read().unwrap();
+                return Some((
+                    f.get("_obj").copied(),
+                    f.get("_contiguous").copied(),
+                    f.get("_stride").copied(),
+                    f.get("_readonly").copied(),
+                    f.get("_format").copied(),
+                    f.get("_itemsize").copied(),
+                    f.get("_shape").copied(),
+                    f.get("_strides").copied(),
+                ));
+            }
+        }
+        None
+    });
+    let array_metadata = obj.as_int().and_then(|id| {
+        if super::stdlib::array_mod::is_array_handle(id as u64) {
+            let format = mb_str_value(super::stdlib::array_mod::mb_array_typecode_attr(obj))
+                .unwrap_or_else(|| "B".to_string());
+            let itemsize = super::stdlib::array_mod::mb_array_itemsize_attr(obj)
+                .as_int()
+                .unwrap_or(1)
+                .max(1);
+            Some((format, itemsize))
+        } else {
+            None
+        }
+    });
     let inst = MbObject::new_instance("memoryview".to_string());
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
             let mut f = fields.write().unwrap();
             super::rc::retain_if_ptr(obj);
             f.insert("_buffer".to_string(), obj);
+            let obj_field = inherited.and_then(|m| m.0).unwrap_or(obj);
+            super::rc::retain_if_ptr(obj_field);
+            f.insert("_obj".to_string(), obj_field);
+            if let Some((_, contiguous, stride, readonly, format, itemsize, shape, strides)) =
+                inherited
+            {
+                if let Some(v) = contiguous {
+                    f.insert("_contiguous".to_string(), v);
+                }
+                if let Some(v) = stride {
+                    f.insert("_stride".to_string(), v);
+                }
+                if let Some(v) = readonly {
+                    f.insert("_readonly".to_string(), v);
+                }
+                for (key, value) in [
+                    ("_format", format),
+                    ("_itemsize", itemsize),
+                    ("_shape", shape),
+                    ("_strides", strides),
+                ] {
+                    if let Some(v) = value {
+                        super::rc::retain_if_ptr(v);
+                        f.insert(key.to_string(), v);
+                    }
+                }
+            } else {
+                let (format, itemsize) = array_metadata.unwrap_or_else(|| ("B".to_string(), 1));
+                let elements = (bytes.len() as i64) / itemsize;
+                f.insert("_contiguous".to_string(), MbValue::from_bool(true));
+                f.insert("_stride".to_string(), MbValue::from_int(1));
+                f.insert(
+                    "_format".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(format)),
+                );
+                f.insert("_itemsize".to_string(), MbValue::from_int(itemsize));
+                f.insert(
+                    "_shape".to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(elements)])),
+                );
+                f.insert(
+                    "_strides".to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(itemsize)])),
+                );
+            }
         }
     }
     MbValue::from_ptr(inst)
@@ -1953,12 +2371,48 @@ pub fn mb_breakpoint() -> MbValue {
     MbValue::none()
 }
 
+/// breakpoint(*args, **kwds) — PEP 553 entry. CPython forwards all
+/// positional and keyword arguments to `sys.breakpointhook`. mamba's
+/// default hook (`mb_breakpoint`) is a native stub that ignores them,
+/// but user code may reassign `sys.breakpointhook` (e.g. tests install a
+/// mock), so the call must read the *current* hook from the module
+/// registry and forward `pos_list` / `kwargs_dict` to it. Only when the
+/// hook is still the default native stub do we fall back to the
+/// argument-dropping notice. (#242)
+pub fn mb_breakpoint_call(pos_list: MbValue, kwargs_dict: MbValue) -> MbValue {
+    // Read the live `sys.breakpointhook`. A `sys.breakpointhook = ...`
+    // assignment routes through `mb_setattr` on the materialized `sys`
+    // module object, so the override lands in the module's cached value
+    // dict — read it back from there first, falling back to the registry's
+    // `attrs` map for the default registration.
+    let hook = super::module::mb_module_value_getattr("sys", "breakpointhook")
+        .or_else(|| super::module::mb_module_attr_lookup("sys", "breakpointhook"));
+    match hook {
+        // A user-installed callable (function / mock / partial / instance):
+        // forward args + kwargs exactly as CPython does. Native funcs are the
+        // default stub — handle them via the notice path below.
+        Some(h)
+            if !h.is_none()
+                && !resolve_callable(h)
+                    .map(|a| super::module::is_native_func(a as u64))
+                    .unwrap_or(false) =>
+        {
+            mb_call_spread_kwargs(h, pos_list, kwargs_dict)
+        }
+        // Default hook (native stub) or unset: keep the legacy notice
+        // behavior (respects PYTHONBREAKPOINT=0).
+        _ => mb_breakpoint(),
+    }
+}
+
 /// type(value) — return a type object with __name__ attribute.
 /// Returns an Instance object with class_name="type" and a __name__ field
 /// so that `type(x).__name__` works like Python.
 pub fn mb_type(val: MbValue) -> MbValue {
     let name = if let Some(iter_type) = super::iter::mb_iter_type_name(val) {
         iter_type
+    } else if val.is_int() && super::async_rt::is_known_coroutine(val) {
+        "coroutine"
     } else if val.is_int() {
         // uuid handles (NAMESPACE_*, uuid4(), ...) are int-tagged values; report
         // their real type so `type(uuid.NAMESPACE_DNS).__name__ == "UUID"`.
@@ -1996,6 +2450,27 @@ pub fn mb_type(val: MbValue) -> MbValue {
                 ObjData::List(_) => "list",
                 ObjData::Dict(_) => "dict",
                 ObjData::Tuple(_) => "tuple",
+                ObjData::Instance { class_name, .. } if class_name == "__instance_dict_proxy__" => {
+                    return make_type_object("dict");
+                }
+                ObjData::Instance { class_name, fields } if class_name == "type" => {
+                    if let Some(type_name) = fields.read().ok().and_then(|f| {
+                        f.get("__name__").and_then(|v| {
+                            v.as_ptr().and_then(|p| {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                    }) {
+                        if let Some(meta) = super::class::class_metaclass_name(&type_name) {
+                            return make_type_object(&meta);
+                        }
+                    }
+                    return make_type_object(class_name);
+                }
                 ObjData::Instance { class_name, .. } => {
                     return make_type_object(class_name);
                 }
@@ -2026,6 +2501,22 @@ pub fn mb_type_no_args() -> MbValue {
 
 pub fn mb_type2(_name: MbValue, _bases: MbValue) -> MbValue {
     mb_type_no_args()
+}
+
+pub(crate) fn reject_non_constructible_type_object(name: &str) -> Option<MbValue> {
+    if !matches!(
+        name,
+        "list_iterator" | "list_reverseiterator" | "range_iterator"
+    ) {
+        return None;
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "cannot create '{name}' instances"
+        ))),
+    );
+    Some(MbValue::none())
 }
 
 // ── Type object singleton cache ────────────────────────────────────────────────
@@ -2112,6 +2603,23 @@ pub fn mb_builtin_type_obj(name: MbValue) -> MbValue {
     make_type_object(&name_str)
 }
 
+fn value_is_abstractmethod_marker(val: MbValue) -> bool {
+    let Some(ptr) = val.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            return lock
+                .read()
+                .unwrap()
+                .get("__isabstractmethod__")
+                .and_then(|v| v.as_bool())
+                == Some(true);
+        }
+    }
+    false
+}
+
 /// type(name, bases, dict) — 3-arg form: dynamically create a new class.
 ///
 /// `name` is a string (the class name), `bases` is a tuple of base class names
@@ -2125,63 +2633,67 @@ pub fn mb_builtin_type_obj(name: MbValue) -> MbValue {
 // @spec .aw/changes/mamba-type-3arg/groups/mamba-type-3arg-core/specs/mamba-type-3arg-spec.md#R4
 pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     // 1. Extract name string
-    let class_name = name
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "dynamic_class".to_string());
+    let Some(class_name) = name.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    }) else {
+        raise_type_error("type.__new__() argument 1 must be str, not object".to_string());
+        return MbValue::none();
+    };
 
     // 2. Extract bases tuple -> list of base class name strings
-    let base_names: Vec<String> = if let Some(ptr) = bases.as_ptr() {
-        unsafe {
-            match &(*ptr).data {
-                ObjData::Tuple(items) => {
-                    let names: Vec<String> = items
-                        .iter()
-                        .filter_map(|item| {
-                            item.as_ptr().and_then(|p| match &(*p).data {
-                                ObjData::Str(s) => Some(s.clone()),
-                                ObjData::Instance {
-                                    class_name: cn,
-                                    fields,
-                                } => {
-                                    if cn == "type" {
-                                        fields.read().ok().and_then(|f| {
-                                            f.get("__name__").and_then(|v| {
-                                                v.as_ptr().and_then(|vp| {
-                                                    if let ObjData::Str(ref s) = (*vp).data {
-                                                        Some(s.clone())
-                                                    } else {
-                                                        None
-                                                    }
-                                                })
-                                            })
-                                        })
-                                    } else {
-                                        Some(cn.clone())
-                                    }
-                                }
-                                _ => None,
-                            })
-                        })
-                        .collect();
-                    if names.is_empty() {
-                        vec!["object".to_string()]
-                    } else {
-                        names
-                    }
-                }
-                _ => vec!["object".to_string()],
-            }
+    let Some(base_items) = bases.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Tuple(items) = &(*ptr).data {
+            Some(items.clone())
+        } else {
+            None
         }
-    } else {
-        vec!["object".to_string()]
+    }) else {
+        raise_type_error("type.__new__() argument 2 must be tuple, not list".to_string());
+        return MbValue::none();
     };
+    let mut base_names = Vec::new();
+    for item in base_items {
+        let Some(base_name) = super::class::resolve_class_name(item) else {
+            raise_type_error(
+                "metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases"
+                    .to_string(),
+            );
+            return MbValue::none();
+        };
+        if base_name == "bool" {
+            raise_type_error("type 'bool' is not an acceptable base type".to_string());
+            return MbValue::none();
+        }
+        base_names.push(base_name);
+    }
+    if base_names.is_empty() {
+        base_names.push("object".to_string());
+    }
+    let layout_bases = base_names
+        .iter()
+        .filter(|name| {
+            matches!(
+                name.as_str(),
+                "int"
+                    | "str"
+                    | "float"
+                    | "complex"
+                    | "list"
+                    | "dict"
+                    | "tuple"
+                    | "set"
+                    | "frozenset"
+            )
+        })
+        .count();
+    if layout_bases > 1 {
+        raise_type_error("multiple bases have instance lay-out conflict".to_string());
+        return MbValue::none();
+    }
 
     // 3. Extract dict -> class attributes and methods
     // #974: Improved callable detection — TAG_FUNC, closure handles (TAG_INT),
@@ -2189,26 +2701,57 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     // __repr__, etc. passed through the dict are properly dispatched.
     let mut methods = std::collections::HashMap::new();
     let mut class_attrs: Vec<(String, MbValue)> = Vec::new();
-    if let Some(ptr) = dict.as_ptr() {
+    let mut abstract_names: Vec<String> = Vec::new();
+    let namespace_dict = super::dict_ops::mb_dict_new();
+    let dict_source = if dict
+        .as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+    {
+        dict
+    } else if let Some(backing) = super::class::unwrap_dictlike_data(dict) {
+        backing
+    } else {
+        raise_type_error("type.__new__() argument 3 must be dict".to_string());
+        return MbValue::none();
+    };
+    if let Some(ptr) = dict_source.as_ptr() {
         unsafe {
-            if let ObjData::Dict(ref lock) = (*ptr).data {
-                let pairs = lock.read().unwrap();
-                for (k, v) in pairs.iter() {
-                    let key = k.to_string();
-                    let is_callable = resolve_callable(*v).is_some();
-                    let is_dunder = key.starts_with("__") && key.ends_with("__");
-                    if is_callable || (is_dunder && !v.is_none()) {
-                        methods.insert(key, *v);
-                    } else {
-                        class_attrs.push((key, *v));
+            let ObjData::Dict(ref lock) = (*ptr).data else {
+                raise_type_error("type.__new__() argument 3 must be dict".to_string());
+                return MbValue::none();
+            };
+            let pairs = lock.read().unwrap();
+            for (k, v) in pairs.iter() {
+                let key = k.to_string();
+                if key == "__classcell__" {
+                    if !super::class::consume_classcell_marker_for_type_new(&class_name, *v) {
+                        return MbValue::none();
                     }
+                    continue;
+                }
+                super::dict_ops::mb_dict_setitem(
+                    namespace_dict,
+                    MbValue::from_ptr(MbObject::new_str(key.clone())),
+                    *v,
+                );
+                if value_is_abstractmethod_marker(*v) {
+                    abstract_names.push(key.clone());
+                }
+                let is_callable = resolve_callable(*v).is_some();
+                let is_dunder = key.starts_with("__") && key.ends_with("__");
+                let is_metadata_dunder =
+                    matches!(key.as_str(), "__qualname__" | "__doc__" | "__module__");
+                if is_callable || (is_dunder && !is_metadata_dunder && !v.is_none()) {
+                    methods.insert(key, *v);
+                } else {
+                    class_attrs.push((key, *v));
                 }
             }
         }
     }
 
     // 4. Register the class in the class registry
-    super::class::mb_class_register(&class_name, base_names, methods);
+    super::class::mb_class_register(&class_name, base_names.clone(), methods);
 
     // 5. Set class attributes (non-method entries from dict)
     let cls_name_val = MbValue::from_ptr(MbObject::new_str(class_name.clone()));
@@ -2216,9 +2759,81 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
         let attr_name_val = MbValue::from_ptr(MbObject::new_str(key.clone()));
         super::class::mb_class_set_class_attr(cls_name_val, attr_name_val, *val);
     }
+    if !abstract_names.is_empty() {
+        let names = MbValue::from_ptr(MbObject::new_list(
+            abstract_names
+                .into_iter()
+                .map(|name| MbValue::from_ptr(MbObject::new_str(name)))
+                .collect(),
+        ));
+        super::class::mb_class_set_abstractmethods(
+            MbValue::from_ptr(MbObject::new_str(class_name.clone())),
+            names,
+        );
+    }
 
-    // 6. Return a type object
-    make_type_object(&class_name)
+    // 6. Return a type object with CPython-visible class metadata.
+    let type_obj = make_type_object(&class_name);
+    if let Some(ptr) = type_obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let qualname = super::dict_ops::mb_dict_get(
+                    namespace_dict,
+                    MbValue::from_ptr(MbObject::new_str("__qualname__".to_string())),
+                    MbValue::none(),
+                );
+                let doc = super::dict_ops::mb_dict_get(
+                    namespace_dict,
+                    MbValue::from_ptr(MbObject::new_str("__doc__".to_string())),
+                    MbValue::none(),
+                );
+                let mut guard = fields.write().unwrap();
+                guard.insert("__qualname__".to_string(), if qualname.is_none() {
+                    MbValue::from_ptr(MbObject::new_str(class_name.clone()))
+                } else {
+                    qualname
+                });
+                guard.insert("__doc__".to_string(), doc);
+                guard.insert("__mamba_type_namespace__".to_string(), namespace_dict);
+            }
+        }
+    }
+    type_obj
+}
+
+pub fn mb_type3_kwargs(name: MbValue, bases: MbValue, dict: MbValue, kwargs: MbValue) -> MbValue {
+    let type_obj = mb_type3(name, bases, dict);
+    let Some(class_name) = super::class::resolve_class_name(type_obj) else {
+        return type_obj;
+    };
+    let metaclass = kwargs.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().ok().and_then(|map| {
+                map.get(&super::dict_ops::DictKey::Str("metaclass".to_string()))
+                    .copied()
+            })
+        } else {
+            None
+        }
+    });
+    if let Some(meta) = metaclass {
+        let Some(meta_name) = super::class::resolve_class_name(meta) else {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("metaclass must be a class".to_string())),
+            );
+            return MbValue::none();
+        };
+        super::class::mb_class_set_metaclass(
+            MbValue::from_ptr(MbObject::new_str(class_name.clone())),
+            MbValue::from_ptr(MbObject::new_str(meta_name)),
+        );
+        super::class::mb_class_finalize_definition_with_namespace(
+            MbValue::from_ptr(MbObject::new_str(class_name)),
+            dict,
+        );
+    }
+    type_obj
 }
 
 /// range(stop) — produce a CPython-style reusable range handle.
@@ -2228,15 +2843,42 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
 /// mamba is type-strict, so we enforce the same rule instead of silently
 /// coercing a non-int to `0` (the prior `as_int_pyint().unwrap_or(0)` behavior).
 ///
-/// Returns `true` and raises a TypeError when `v` is not int-like, otherwise
-/// `false`. Accepts unboxed int/bool and boxed `BigInt` (large int literals).
-fn range_arg_raises_if_non_int(v: MbValue) -> bool {
+/// Coerce a `range()` constructor argument through CPython's SupportsIndex
+/// protocol. Plain ints, bools, and boxed BigInt values pass through; user
+/// instances may define `__index__`. Missing or invalid index values raise
+/// TypeError, while exceptions raised by `__index__` propagate unchanged.
+fn range_arg_to_index_value(v: MbValue) -> Option<MbValue> {
     if v.is_int() || v.is_bool() {
-        return false;
+        return Some(v);
     }
     if let Some(ptr) = v.as_ptr() {
-        if let ObjData::BigInt(_) = unsafe { &(*ptr).data } {
-            return false;
+        unsafe {
+            match &(*ptr).data {
+                ObjData::BigInt(_) => return Some(v),
+                ObjData::Instance { class_name, .. } => {
+                    let method = super::class::lookup_method(class_name, "__index__");
+                    if !method.is_none() {
+                        let result = super::class::mb_call_method1(method, v);
+                        if super::exception::current_exception_type().is_some() {
+                            return None;
+                        }
+                        if result.is_int() || result.is_bool() {
+                            return Some(result);
+                        }
+                        if let Some(result_ptr) = result.as_ptr() {
+                            if let ObjData::BigInt(_) = (*result_ptr).data {
+                                return Some(result);
+                            }
+                        }
+                        raise_type_error(format!(
+                            "__index__ returned non-int (type {})",
+                            value_type_name(result)
+                        ));
+                        return None;
+                    }
+                }
+                _ => {}
+            }
         }
     }
     super::exception::mb_raise(
@@ -2246,21 +2888,51 @@ fn range_arg_raises_if_non_int(v: MbValue) -> bool {
             add_operand_type_name(v),
         ))),
     );
-    true
+    None
+}
+
+fn range_index_value_is_zero(v: MbValue) -> bool {
+    v.as_int_pyint() == Some(0)
+        || unsafe { super::bigint_ops::extract_bigint(v) }
+            .is_some_and(|b| b == num_bigint::BigInt::from(0))
+}
+
+pub fn mb_range_no_args() -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "range expected at least 1 argument, got 0".to_string(),
+        )),
+    );
+    MbValue::none()
+}
+
+pub fn mb_range_too_many_args(n: MbValue) -> MbValue {
+    let count = n.as_int_pyint().unwrap_or(0);
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "range expected at most 3 arguments, got {count}"
+        ))),
+    );
+    MbValue::none()
 }
 
 pub fn mb_range(stop: MbValue) -> MbValue {
-    if range_arg_raises_if_non_int(stop) {
+    let Some(stop) = range_arg_to_index_value(stop) else {
         return MbValue::none();
-    }
+    };
     super::iter::mb_range_iter(MbValue::from_int(0), stop, MbValue::from_int(1))
 }
 
 /// `range(start, stop)` — produce a CPython-style reusable range handle.
 pub fn mb_range_2(start: MbValue, stop: MbValue) -> MbValue {
-    if range_arg_raises_if_non_int(start) || range_arg_raises_if_non_int(stop) {
+    let Some(start) = range_arg_to_index_value(start) else {
         return MbValue::none();
-    }
+    };
+    let Some(stop) = range_arg_to_index_value(stop) else {
+        return MbValue::none();
+    };
     super::iter::mb_range_iter(start, stop, MbValue::from_int(1))
 }
 
@@ -2305,13 +2977,16 @@ pub fn mb_slice(start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
 pub fn mb_range_3(start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
     // CPython validates argument types (TypeError) before the zero-step
     // ValueError: `range(0, 3, 0.0)` raises TypeError, not ValueError.
-    if range_arg_raises_if_non_int(start)
-        || range_arg_raises_if_non_int(stop)
-        || range_arg_raises_if_non_int(step)
-    {
+    let Some(start) = range_arg_to_index_value(start) else {
         return MbValue::none();
-    }
-    if step.as_int_pyint() == Some(0) {
+    };
+    let Some(stop) = range_arg_to_index_value(stop) else {
+        return MbValue::none();
+    };
+    let Some(step) = range_arg_to_index_value(step) else {
+        return MbValue::none();
+    };
+    if range_index_value_is_zero(step) {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
             MbValue::from_ptr(MbObject::new_str(
@@ -2552,6 +3227,11 @@ fn numeric_handle_binop(op: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
 }
 
 pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
+    if let Some((na, nb)) = numeric_subclass_operands(a, b, "__add__") {
+        return mb_add(na, nb);
+    }
     if is_array_handle_value(a) || is_array_handle_value(b) {
         return super::stdlib::array_mod::mb_array_concat(a, b);
     }
@@ -2589,6 +3269,35 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
             match (af, bf) {
                 (Some(af), Some(bf)) => MbValue::from_float(af + bf),
                 _ => {
+                    // Str + non-str where the right operand is an inline value
+                    // (for example int/bool) does not enter the pointer-pair
+                    // concat block below, but CPython still gives the
+                    // sequence-specific TypeError instead of the generic
+                    // binary-operator message.
+                    if let Some(pa) = a.as_ptr() {
+                        unsafe {
+                            if matches!(&(*pa).data, ObjData::Str(_)) {
+                                let b_is_str = b
+                                    .as_ptr()
+                                    .map_or(false, |p| matches!(&(*p).data, ObjData::Str(_)));
+                                let b_is_instance = b.as_ptr().map_or(false, |p| {
+                                    matches!(&(*p).data, ObjData::Instance { .. })
+                                });
+                                if !b_is_str && !b_is_instance {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "TypeError".to_string(),
+                                        )),
+                                        MbValue::from_ptr(MbObject::new_str(format!(
+                                            "can only concatenate str (not \"{}\") to str",
+                                            add_operand_type_name(b)
+                                        ))),
+                                    );
+                                    return MbValue::none();
+                                }
+                            }
+                        }
+                    }
                     // List + List → concatenation
                     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
                         unsafe {
@@ -2715,6 +3424,38 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                         {
                             return MbValue::from_ptr(MbObject::new_complex(ar + br, ai + bi));
                         }
+                        // The non-complex operand didn't coerce. A BigInt too
+                        // large for a C double raises OverflowError (CPython:
+                        // `1j + 10**1000`); a representable BigInt folds in;
+                        // anything else (None, str, …) is a TypeError instead of
+                        // a silent None. Reached only as the primitive fallback
+                        // after dunder dispatch (`__add__`/`__radd__`) misses.
+                        let (cplx, other) = if is_complex_obj(a) { (a, b) } else { (b, a) };
+                        if is_bigint_value(other) {
+                            match unsafe { super::bigint_ops::int_as_f64(other) } {
+                                Some(x) if x.is_finite() => {
+                                    let (ar, ai) = as_complex_pair(cplx).unwrap_or((0.0, 0.0));
+                                    return MbValue::from_ptr(MbObject::new_complex(ar + x, ai));
+                                }
+                                _ => {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "OverflowError".to_string(),
+                                        )),
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "int too large to convert to float".to_string(),
+                                        )),
+                                    );
+                                    return MbValue::none();
+                                }
+                            }
+                        }
+                        raise_type_error(format!(
+                            "unsupported operand type(s) for +: '{}' and '{}'",
+                            value_type_name(a),
+                            value_type_name(b)
+                        ));
+                        return MbValue::none();
                     }
                     // statistics.NormalDist translation / combination.
                     if let Some(r) = super::stdlib::statistics_mod::normaldist_binop("+", a, b) {
@@ -2722,6 +3463,49 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                     }
                     if raise_datetime_op_type_error("+", a, b) {
                         return MbValue::none();
+                    }
+                    // A builtin sequence subclass on the right that is not
+                    // compatible with the left sequence type still gets the
+                    // sequence-specific TypeError, unless it defines a real
+                    // reflected add hook to take over (`tuple + RHS.__radd__`).
+                    if let Some(kind) = a.as_ptr().and_then(|p| match unsafe { &(*p).data } {
+                        ObjData::List(_) => Some("list"),
+                        ObjData::Tuple(_) => Some("tuple"),
+                        _ => None,
+                    }) {
+                        if let Some(pb) = b.as_ptr() {
+                            unsafe {
+                                if let ObjData::Instance { class_name, .. } = &(*pb).data {
+                                    let is_sequence_subclass =
+                                        ["list", "tuple"].iter().any(|base| {
+                                            class_name == *base
+                                                || super::class::check_class_hierarchy(
+                                                    class_name, base,
+                                                )
+                                        });
+                                    let is_same_sequence = class_name == kind
+                                        || super::class::check_class_hierarchy(class_name, kind);
+                                    let has_reflected_add =
+                                        !super::class::lookup_method(class_name, "__radd__")
+                                            .is_none();
+                                    if is_sequence_subclass
+                                        && !is_same_sequence
+                                        && !has_reflected_add
+                                    {
+                                        super::exception::mb_raise(
+                                            MbValue::from_ptr(MbObject::new_str(
+                                                "TypeError".to_string(),
+                                            )),
+                                            MbValue::from_ptr(MbObject::new_str(format!(
+                                                "can only concatenate {kind} (not \"{}\") to {kind}",
+                                                value_type_name(b)
+                                            ))),
+                                        );
+                                        return MbValue::none();
+                                    }
+                                }
+                            }
+                        }
                     }
                     // Genuinely unsupported operand pair (e.g. `1.0 + "x"`):
                     // CPython raises TypeError. Preserve the None fallback when
@@ -2778,23 +3562,28 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("-", a, b) {
         return r;
     }
     if let Some(r) = bigint_numeric_binop("-", a, b) {
         return r;
     }
+    if let Some(result) = super::dict_ops::dict_view_sub(a, b) {
+        return result;
+    }
     // Int fast path first — matches mb_add's ordering. fib_recursive and
     // every other int-arith hot loop runs `n - 1` through here on every
     // iteration; the set-difference dispatch was paying two as_ptr()
     // bit-tests plus an unsafe deref+matches before falling through.
-    match (a.as_int(), b.as_int()) {
+    match (a.as_int_pyint(), b.as_int_pyint()) {
         (Some(ai), Some(bi)) => return MbValue::from_int(ai.wrapping_sub(bi)),
         _ => {}
     }
     // Float / mixed-numeric fallback.
-    let af = a.as_int().map(|i| i as f64).or(a.as_float());
-    let bf = b.as_int().map(|i| i as f64).or(b.as_float());
+    let af = a.as_int_pyint().map(|i| i as f64).or(a.as_float());
+    let bf = b.as_int_pyint().map(|i| i as f64).or(b.as_float());
     if let (Some(af), Some(bf)) = (af, bf) {
         return MbValue::from_float(af - bf);
     }
@@ -2884,6 +3673,9 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
     {
         return r;
     }
+    if let Some(result) = super::dict_ops::dict_view_or(a, b) {
+        return result;
+    }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
             let a_is_setlike = matches!((*pa).data, ObjData::Set(_) | ObjData::FrozenSet(_));
@@ -2893,6 +3685,16 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
             }
             if matches!((*pa).data, ObjData::Dict(_)) && matches!((*pb).data, ObjData::Dict(_)) {
                 return super::dict_ops::mb_dict_or(a, b);
+            }
+            // `dict | <non-dict>` reaches here only as the fallback for `|=`
+            // (`mb_ior` → `mb_inplace` hands the dict receiver to `mb_bitor`,
+            // since `dict` has no Instance `__ior__`). PEP 584's in-place merge
+            // is as permissive as `dict.update`: it accepts any iterable of
+            // key/value pairs and mutates the receiver in place. Route it to
+            // `mb_dict_ior`, which validates and raises TypeError/ValueError to
+            // match CPython.
+            if matches!((*pa).data, ObjData::Dict(_)) {
+                return super::dict_ops::mb_dict_ior(a, b);
             }
             // Counter | Counter — CPython multiset max. (#1636)
             if super::stdlib::collections_mod::is_counter_instance(a)
@@ -3031,6 +3833,12 @@ fn collect_union_operand(v: MbValue, out: &mut Vec<MbValue>) -> bool {
                     out.push(v);
                     true
                 }
+                // PEP 585/604: a generic alias (`list[int]`, `list[T]`) is a
+                // valid union operand — `list[T] | int` joins it as a member.
+                ObjData::Instance { class_name, .. } if class_name == "typing.Alias" => {
+                    out.push(v);
+                    true
+                }
                 _ => false,
             }
         }
@@ -3039,12 +3847,17 @@ fn collect_union_operand(v: MbValue, out: &mut Vec<MbValue>) -> bool {
     }
 }
 
-fn make_union_type_value(parts: Vec<MbValue>) -> MbValue {
+pub(crate) fn make_union_type_value(parts: Vec<MbValue>) -> MbValue {
+    // __parameters__: the free TypeVars in the members (computed before `parts`
+    // is moved into the __args__ tuple).
+    let params = super::stdlib::typing_mod::typevar_params_tuple(&parts);
     let args = MbValue::from_ptr(MbObject::new_tuple(parts));
     let inst = MbObject::new_instance("UnionType".to_string());
     unsafe {
         if let ObjData::Instance { fields, .. } = &(*inst).data {
-            fields.write().unwrap().insert("__args__".to_string(), args);
+            let mut f = fields.write().unwrap();
+            f.insert("__args__".to_string(), args);
+            f.insert("__parameters__".to_string(), params);
         }
     }
     MbValue::from_ptr(inst)
@@ -3135,6 +3948,7 @@ pub(crate) fn is_type_name(s: &str) -> bool {
             | "NoneType"
             | "range"
             | "slice"
+            | "super"
     ) || super::class::class_is_registered(s)
 }
 
@@ -3145,6 +3959,9 @@ pub fn mb_bitand(a: MbValue, b: MbValue) -> MbValue {
         super::stdlib::enum_class::flag_binop(a, b, super::stdlib::enum_class::FlagOp::And)
     {
         return r;
+    }
+    if let Some(result) = super::dict_ops::dict_view_and(a, b) {
+        return result;
     }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
@@ -3201,6 +4018,9 @@ pub fn mb_bitxor(a: MbValue, b: MbValue) -> MbValue {
     {
         return r;
     }
+    if let Some(result) = super::dict_ops::dict_view_xor(a, b) {
+        return result;
+    }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
             let a_is_setlike = matches!((*pa).data, ObjData::Set(_) | ObjData::FrozenSet(_));
@@ -3242,9 +4062,29 @@ pub fn mb_bitxor(a: MbValue, b: MbValue) -> MbValue {
 /// registered, so `binop_to_runtime` returned None and codegen emitted a raw
 /// shift over NaN-boxed bits).
 pub fn mb_lshift(a: MbValue, b: MbValue) -> MbValue {
-    match (a.as_int(), b.as_int()) {
-        (Some(ai), Some(bi)) if bi >= 0 => MbValue::from_int(ai.wrapping_shl(bi as u32)),
-        _ => MbValue::none(),
+    let bi = match b.as_int() {
+        Some(x) if x >= 0 => x,
+        _ => return MbValue::none(),
+    };
+    // Fast path: inline base whose shift result is recoverable in i64
+    // (no bits shifted out). `int_from_i64` still promotes to BigInt when the
+    // value exceeds the inline range, so `1 << 48` is exact.
+    if let Some(ai) = a.as_int() {
+        if bi < 63 {
+            let shifted = ai.wrapping_shl(bi as u32);
+            if (shifted >> bi) == ai {
+                return super::bigint_ops::int_from_i64(shifted);
+            }
+        }
+        if ai == 0 {
+            return MbValue::from_int(0);
+        }
+    }
+    // General path: arbitrary-precision shift (handles i64 overflow — e.g.
+    // `1 << 64` must yield 2**64, not wrap to 1 — and BigInt bases).
+    match unsafe { super::bigint_ops::to_bigint(a) } {
+        Some(big) => super::bigint_ops::normalize_bigint(big << (bi as u64)),
+        None => MbValue::none(),
     }
 }
 
@@ -3258,6 +4098,8 @@ pub fn mb_rshift(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("*", a, b) {
         return r;
     }
@@ -3352,6 +4194,15 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
                         ar * bi + ai * br,
                     ));
                 }
+                // complex * non-numeric (e.g. `1j * None`) → TypeError, not a
+                // silent None. Reached only as the primitive fallback after
+                // dunder dispatch (`__mul__`/`__rmul__`) misses.
+                raise_type_error(format!(
+                    "unsupported operand type(s) for *: '{}' and '{}'",
+                    value_type_name(a),
+                    value_type_name(b)
+                ));
+                return MbValue::none();
             }
             let af = a.as_int().map(|i| i as f64).or(a.as_float());
             let bf = b.as_int().map(|i| i as f64).or(b.as_float());
@@ -3447,6 +4298,8 @@ fn floor_divmod_i128(a: i128, b: i128) -> (i128, i128) {
 }
 
 pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("/", a, b) {
         return r;
     }
@@ -3526,6 +4379,8 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("%", a, b) {
         return r;
     }
@@ -3606,6 +4461,9 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
             if let ObjData::Str(ref tmpl) = (*ptr).data {
                 return super::string_ops::mb_str_percent_format(tmpl.clone(), b);
             }
+            if matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) {
+                return super::bytes_ops::mb_bytes_percent_format(a, b);
+            }
         }
     }
     if raise_datetime_op_type_error("%", a, b) {
@@ -3645,6 +4503,13 @@ pub fn mb_neg(a: MbValue) -> MbValue {
                 }
                 return super::bigint_ops::bigint_from_big(neg);
             }
+            // -Counter — flip every count, then drop the now-non-positive ones
+            // (CPython multiset semantics). `+c` routes through the generic
+            // unary dispatcher's Counter arm; `-c` is lowered straight to
+            // mb_neg, so it needs the same handling here.
+            if super::stdlib::collections_mod::is_counter_instance(a) {
+                return super::stdlib::collections_mod::mb_counter_unary(a, true);
+            }
             // -timedelta — negate the exact microsecond total.
             if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(a) {
                 return super::stdlib::datetime_mod::timedelta_from_us(-us);
@@ -3681,6 +4546,11 @@ pub fn mb_neg(a: MbValue) -> MbValue {
 /// equality / dispatch). Side-effect-free, safe to call from comparison
 /// paths.
 pub fn try_bytes_like(v: MbValue) -> Option<Vec<u8>> {
+    if let Some(id) = v.as_int() {
+        if super::stdlib::array_mod::is_array_handle(id as u64) {
+            return try_bytes_like(super::stdlib::array_mod::mb_array_tobytes(v));
+        }
+    }
     let ptr = v.as_ptr()?;
     unsafe {
         match &(*ptr).data {
@@ -3735,6 +4605,10 @@ pub fn mb_eq(a: MbValue, b: MbValue) -> MbValue {
     MbValue::from_bool(mb_values_eq(a, b))
 }
 
+pub fn mb_match_bool_literal(subject: MbValue, expected: i64) -> MbValue {
+    MbValue::from_bool(subject.as_bool() == Some(expected != 0))
+}
+
 /// CPython `PyObject_RichCompareBool(a, b, Py_EQ)`: identity-first, then value
 /// equality. Container comparisons (list/tuple/set/dict `==`, `in`, count,
 /// subset/superset) use this so a self-unequal element such as NaN still
@@ -3743,6 +4617,32 @@ pub fn mb_eq(a: MbValue, b: MbValue) -> MbValue {
 /// `nan == nan` stays False.
 fn mb_richcmp_eq(a: MbValue, b: MbValue) -> bool {
     mb_values_identical(a, b) || mb_values_eq(a, b)
+}
+
+fn generic_alias_origin_args(
+    class_name: &str,
+    fields: &super::rc::MbRwLock<super::rc::InstanceFields>,
+) -> Option<(MbValue, Vec<MbValue>)> {
+    let (origin_key, args_key) = match class_name {
+        "GenericAlias" => ("__origin__", "__args__"),
+        "types.GenericAlias" => ("_origin", "_args"),
+        _ => return None,
+    };
+    let (origin, args_val) = {
+        let g = fields.read().ok()?;
+        (*g.get(origin_key)?, *g.get(args_key)?)
+    };
+    let args = args_val
+        .as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(items) => items.to_vec(),
+                ObjData::List(lock) => lock.read().unwrap().iter().copied().collect(),
+                _ => vec![args_val],
+            }
+        })
+        .unwrap_or_else(|| vec![args_val]);
+    Some((origin, args))
 }
 
 /// Try the reflected __eq__ on `obj` (i.e. obj.__eq__(other)).
@@ -3797,8 +4697,68 @@ fn slice_as_tuple(v: MbValue) -> Option<MbValue> {
     None
 }
 
+fn mappingproxy_mapping(v: MbValue) -> Option<MbValue> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if class_name == "mappingproxy" {
+                return fields.read().unwrap().get("_mapping").copied();
+            }
+        }
+    }
+    None
+}
+
+fn bound_method_parts(v: MbValue) -> Option<(MbValue, MbValue)> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if class_name == "method" {
+                let guard = fields.read().unwrap();
+                let func = guard.get("__func__").copied().unwrap_or_else(MbValue::none);
+                let recv = guard.get("__self__").copied().unwrap_or_else(MbValue::none);
+                return Some((func, recv));
+            }
+        }
+    }
+    None
+}
+
 /// Deep structural equality for MbValues.
 fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
+    if let Some(eq) = super::stdlib::xml_mod::qname_eq_value(a, b) {
+        return eq;
+    }
+    // UserList / UserDict / UserString compare by their backing payload, so
+    // `UserList([0,1]) == [0,1]` and `UserList(x) == UserList(x)` hold (CPython
+    // forwards __eq__ to self.data). Unwrap any wrapper operand, then recurse.
+    let ua = super::stdlib::collections_mod::user_wrapper_data(a);
+    let ub = super::stdlib::collections_mod::user_wrapper_data(b);
+    if ua.is_some() || ub.is_some() {
+        let la = ua.map(|(_, d)| d).unwrap_or(a);
+        let lb = ub.map(|(_, d)| d).unwrap_or(b);
+        return mb_values_eq(la, lb);
+    }
+    let da = super::class::unwrap_dictlike_data(a);
+    let db = super::class::unwrap_dictlike_data(b);
+    if da.is_some() || db.is_some() {
+        let la = da.unwrap_or(a);
+        let lb = db.unwrap_or(b);
+        return mb_values_eq(la, lb);
+    }
+    // PEP 604 union cross-representation equality: a `X | Y` UnionType equals
+    // the typing.Union[X, Y] alias (and is order-insensitive) by member set.
+    if let Some(eq) = super::stdlib::typing_mod::union_values_equal(a, b) {
+        return eq;
+    }
     // slice == slice compares (start, stop, step) structurally (CPython).
     if let (Some(ta), Some(tb)) = (slice_as_tuple(a), slice_as_tuple(b)) {
         return mb_values_eq(ta, tb);
@@ -3833,6 +4793,9 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     {
         return super::stdlib::decimal_mod::mb_numeric_handle_eq(a, b).unwrap_or(false);
     }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__eq__") {
+        return mb_values_eq(na, nb);
+    }
     // NaN check: Python float NaN != NaN (IEEE 754). Must check before bit comparison.
     if let (Some(fa), Some(fb)) = (a.as_float(), b.as_float()) {
         return fa == fb; // IEEE 754: NaN == NaN is false
@@ -3840,6 +4803,23 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     // Fast path: identical bits (safe for non-float types)
     if a.to_bits() == b.to_bits() {
         return true;
+    }
+    if let Some(eq) = super::dict_ops::dict_view_eq(a, b) {
+        return eq;
+    }
+    if let Some(ma) = mappingproxy_mapping(a) {
+        let rhs = mappingproxy_mapping(b).unwrap_or(b);
+        return mb_values_eq(ma, rhs);
+    }
+    if let Some(mb) = mappingproxy_mapping(b) {
+        return mb_values_eq(a, mb);
+    }
+    match (bound_method_parts(a), bound_method_parts(b)) {
+        (Some((af, aself)), Some((bf, bself))) => {
+            return af.to_bits() == bf.to_bits() && aself.to_bits() == bself.to_bits();
+        }
+        (Some(_), None) | (None, Some(_)) => return false,
+        (None, None) => {}
     }
     // Bool/int cross-comparison: Python `True == 1` and `False == 0` (#827)
     if a.is_bool() && b.is_int() {
@@ -3945,22 +4925,6 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
             return eq;
         }
     }
-    // `range(N)` materialises to a list (see `mb_range`) while `range(start,
-    // stop[, step])` returns an iterator handle (see `mb_range_iter`). Make
-    // `range(0, 5) == range(5)` agree by comparing the range iterator's
-    // virtual elements against the materialised list without consuming the
-    // iterator. Only Range-kind iterators participate.
-    if let (Some(ptr), true) = (a.as_ptr(), super::iter::is_iter_handle(b)) {
-        if let Some(eq) = list_vs_range_iter_eq(ptr, b) {
-            return eq;
-        }
-    }
-    if let (Some(ptr), true) = (b.as_ptr(), super::iter::is_iter_handle(a)) {
-        if let Some(eq) = list_vs_range_iter_eq(ptr, a) {
-            return eq;
-        }
-    }
-
     // Counter == Counter — multiset equality: missing keys count as zero
     // (CPython Counter.__eq__). Counter vs plain dict falls back to exact
     // dict equality on the backing data (dict.__eq__ semantics).
@@ -4060,19 +5024,34 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         }
     }
 
+    // DATA-payload builtin subclasses compare through their hidden str/list/dict
+    // payload only when neither side supplies an explicit __eq__ method.
+    {
+        let ap = super::class::builtin_data_payload_if_unoverridden(a, "__eq__")
+            .map(|(_, payload)| payload);
+        let bp = super::class::builtin_data_payload_if_unoverridden(b, "__eq__")
+            .map(|(_, payload)| payload);
+        if ap.is_some() || bp.is_some() {
+            return mb_values_eq(ap.unwrap_or(a), bp.unwrap_or(b));
+        }
+    }
+
     // Structural equality for heap objects
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
             return match (&(*pa).data, &(*pb).data) {
                 (ObjData::List(la), ObjData::List(lb)) => {
-                    let a = la.read().unwrap();
-                    let b = lb.read().unwrap();
-                    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
+                    let a = super::list_ops::retained_list_snapshot(la);
+                    let b = super::list_ops::retained_list_snapshot(lb);
+                    a.len() == b.len()
+                        && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
                 }
                 (ObjData::Tuple(a), ObjData::Tuple(b)) => {
                     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
                 }
-                (ObjData::Str(a), ObjData::Str(b)) => a == b,
+                (ObjData::Str(sa), ObjData::Str(sb)) => {
+                    super::string_ops::string_values_equal_if_surrogate(a, b).unwrap_or(sa == sb)
+                }
                 (ObjData::Set(la), ObjData::Set(lb)) => {
                     let a = la.read().unwrap();
                     let b = lb.read().unwrap();
@@ -4213,6 +5192,31 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                         _ => false,
                     };
                 }
+                // PEP 585 / types.GenericAlias equality: two generic aliases
+                // compare by origin and args, not heap identity. This covers
+                // lazy bound expressions such as Sequence[S] rebuilt on demand.
+                (
+                    ObjData::Instance {
+                        class_name: ca,
+                        fields: fa,
+                    },
+                    ObjData::Instance {
+                        class_name: cb,
+                        fields: fb,
+                    },
+                ) if matches!(ca.as_str(), "GenericAlias" | "types.GenericAlias")
+                    || matches!(cb.as_str(), "GenericAlias" | "types.GenericAlias") =>
+                {
+                    let Some((oa, aa)) = generic_alias_origin_args(ca, fa) else {
+                        return false;
+                    };
+                    let Some((ob, ab)) = generic_alias_origin_args(cb, fb) else {
+                        return false;
+                    };
+                    return mb_richcmp_eq(oa, ob)
+                        && aa.len() == ab.len()
+                        && aa.iter().zip(ab.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y));
+                }
                 (
                     ObjData::Instance {
                         class_name: ca,
@@ -4351,6 +5355,50 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
     if a.to_bits() == b.to_bits() {
         return true;
     }
+    let user_iter_a = super::iter::mb_userdefined_iterator_target(a);
+    let user_iter_b = super::iter::mb_userdefined_iterator_target(b);
+    if user_iter_a.is_some_and(|target| target.to_bits() == b.to_bits())
+        || user_iter_b.is_some_and(|target| target.to_bits() == a.to_bits())
+        || user_iter_a
+            .zip(user_iter_b)
+            .is_some_and(|(target_a, target_b)| target_a.to_bits() == target_b.to_bits())
+    {
+        return true;
+    }
+    if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
+        unsafe {
+            let str_value = |v: MbValue| -> Option<String> {
+                v.as_ptr().and_then(|p| {
+                    if let ObjData::Str(ref s) = (*p).data {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+            };
+            let unbound_key = |p: *mut MbObject| -> Option<(String, String)> {
+                if let ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                } = (*p).data
+                {
+                    if class_name == "__unbound_method__" {
+                        let f = fields.read().unwrap();
+                        return Some((
+                            str_value(f.get("__type__").copied().unwrap_or(MbValue::none()))?,
+                            str_value(f.get("__method__").copied().unwrap_or(MbValue::none()))?,
+                        ));
+                    }
+                }
+                None
+            };
+            if let (Some((ta, ma)), Some((tb, mb))) = (unbound_key(pa), unbound_key(pb)) {
+                if ta == tb && ma == mb {
+                    return true;
+                }
+            }
+        }
+    }
     // Class identity: a class is represented at runtime as its (uniquely-naming)
     // class-name string, so two distinct string allocations that both name the
     // same registered class refer to the same class object. This makes
@@ -4462,33 +5510,6 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
     false
 }
 
-/// Compare a list `ObjData::List` (heap pointer) against an unexhausted
-/// Range-kind iterator handle without consuming the iterator. Returns
-/// `Some(equal)` when `handle` is in fact a range iterator, otherwise
-/// `None` (caller falls through to default `false`). Used so that
-/// `range(0, 5) == range(5)` agrees while range(N) materialises to a list.
-fn list_vs_range_iter_eq(list_ptr: *mut MbObject, handle: MbValue) -> Option<bool> {
-    let (mut cur, stop, step) = super::iter::mb_iter_range_params(handle)?;
-    unsafe {
-        if let ObjData::List(ref lock) = (*list_ptr).data {
-            let items = lock.read().unwrap();
-            for v in items.iter() {
-                let in_range = (step > 0 && cur < stop) || (step < 0 && cur > stop);
-                if !in_range {
-                    return Some(false);
-                }
-                if v.as_int() != Some(cur) {
-                    return Some(false);
-                }
-                cur += step;
-            }
-            let still_in_range = (step > 0 && cur < stop) || (step < 0 && cur > stop);
-            return Some(!still_in_range);
-        }
-    }
-    None
-}
-
 /// Ordering on complex is undefined in Python: raise the CPython-exact
 /// TypeError when either operand is a complex object. Returns true when an
 /// exception was raised (caller must bail with a dummy value).
@@ -4521,6 +5542,18 @@ fn enum_ordering_guard(a: MbValue, b: MbValue, op: &str) -> bool {
     false
 }
 
+fn range_ordering_guard(a: MbValue, b: MbValue, op: &str) -> bool {
+    if super::iter::is_range_handle(a) || super::iter::is_range_handle(b) {
+        raise_type_error(format!(
+            "'{op}' not supported between instances of '{}' and '{}'",
+            value_type_name(a),
+            value_type_name(b)
+        ));
+        return true;
+    }
+    false
+}
+
 /// The elements of a set-like value (`set` or `frozenset`), or None for any
 /// other value. Used so subset/superset comparisons treat the two types
 /// interchangeably, matching CPython.
@@ -4535,6 +5568,11 @@ fn setlike_items(v: MbValue) -> Option<Vec<MbValue>> {
 }
 
 pub fn mb_lt(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
+    if range_ordering_guard(a, b, "<") {
+        return MbValue::from_bool(false);
+    }
     if enum_ordering_guard(a, b, "<") {
         return MbValue::from_bool(false);
     }
@@ -4553,11 +5591,17 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
     if complex_ordering_guard(a, b, "<") {
         return false;
     }
+    if range_ordering_guard(a, b, "<") {
+        return false;
+    }
     // functools.cmp_to_key key objects delegate ordering to the wrapped cmp.
     if super::stdlib::functools_mod::is_cmp_to_key_obj(a) {
         if let Some(r) = super::stdlib::functools_mod::mb_functools_cmp_to_key_richcmp(a, b, "lt") {
             return r;
         }
+    }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__lt__") {
+        return mb_values_lt(na, nb);
     }
     // functools.total_ordering: derive __lt__ from the class's seed op.
     if super::stdlib::functools_mod::is_total_ordering_instance(a) {
@@ -4626,8 +5670,8 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
         unsafe {
             return match (&(*pa).data, &(*pb).data) {
                 (ObjData::List(la), ObjData::List(lb)) => {
-                    let a = la.read().unwrap();
-                    let b = lb.read().unwrap();
+                    let a = super::list_ops::retained_list_snapshot(la);
+                    let b = super::list_ops::retained_list_snapshot(lb);
                     seq_lt(&a, &b)
                 }
                 (ObjData::Tuple(a), ObjData::Tuple(b)) => seq_lt(a, b),
@@ -4701,7 +5745,8 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
                 }
                 // Instance: dispatch __lt__ dunder
                 (ObjData::Instance { class_name, .. }, _) => {
-                    dispatch_richcmp_dunder(a, b, class_name, "__lt__")
+                    dispatch_richcmp_dunder_result(a, b, class_name, "__lt__")
+                        .unwrap_or_else(|| values_lt_fallback(a, b))
                 }
                 _ => values_lt_fallback(a, b),
             };
@@ -4733,30 +5778,45 @@ fn values_lt_fallback(a: MbValue, b: MbValue) -> bool {
 }
 
 /// Dispatch a rich comparison dunder (__lt__, __le__, __gt__, __ge__) on an Instance.
-fn dispatch_richcmp_dunder(a: MbValue, b: MbValue, class_name: &str, dunder: &str) -> bool {
+fn dispatch_richcmp_dunder_result(
+    a: MbValue,
+    b: MbValue,
+    class_name: &str,
+    dunder: &str,
+) -> Option<bool> {
     let method = super::class::lookup_method(class_name, dunder);
-    if !method.is_none() {
-        let method_name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
-        let args = MbValue::from_ptr(MbObject::new_list(vec![b]));
-        let result = super::class::mb_call_method(a, method_name, args);
-        if let Some(bv) = result.as_bool() {
-            return bv;
-        }
-        if let Some(iv) = result.as_int() {
-            return iv != 0;
-        }
+    if method.is_none() {
+        return None;
     }
-    false
+    let method_name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![b]));
+    let result = super::class::mb_call_method(a, method_name, args);
+    if result.is_not_implemented() {
+        return None;
+    }
+    if let Some(bv) = result.as_bool() {
+        return Some(bv);
+    }
+    if let Some(iv) = result.as_int() {
+        return Some(iv != 0);
+    }
+    Some(false)
+}
+
+fn dispatch_richcmp_dunder(a: MbValue, b: MbValue, class_name: &str, dunder: &str) -> bool {
+    dispatch_richcmp_dunder_result(a, b, class_name, dunder).unwrap_or(false)
 }
 
 /// Lexicographic less-than for MbValue sequences.
 pub fn seq_lt(a: &[MbValue], b: &[MbValue]) -> bool {
+    // CPython compares sequences element-wise: find the first position where
+    // the elements are unequal, then decide with `<` there. Probing equality
+    // first (rather than `x < y` / `y < x`) means an equal but unorderable
+    // head — e.g. `(None, 2) < (None, 1)` — never triggers `None < None`; only
+    // a genuinely differing, unorderable pair raises TypeError (as it should).
     for (x, y) in a.iter().zip(b.iter()) {
-        if mb_values_lt(*x, *y) {
-            return true;
-        }
-        if mb_values_lt(*y, *x) {
-            return false;
+        if !mb_values_eq(*x, *y) {
+            return mb_values_lt(*x, *y);
         }
     }
     a.len() < b.len()
@@ -4781,6 +5841,22 @@ fn raise_if_not_iterable(args: MbValue) -> bool {
             value_type_name(args)
         ));
         return true;
+    }
+    if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if !super::class::lookup_method(class_name, "__iter__").is_none() {
+                    return false;
+                }
+                let iter = super::iter::mb_iter(args);
+                if iter.is_none() {
+                    return true;
+                }
+                if super::iter::is_iter_handle(iter) {
+                    super::iter::mb_iter_release(iter);
+                }
+            }
+        }
     }
     false
 }
@@ -4810,7 +5886,7 @@ pub fn mb_max(args: MbValue) -> MbValue {
     let items = extract_items(args);
     if items.is_empty() {
         // CPython: max(()) raises ValueError (no silent None default).
-        raise_value_error("max() arg is an empty sequence".to_string());
+        raise_value_error("max() iterable argument is empty".to_string());
         return MbValue::none();
     }
     items
@@ -4855,6 +5931,20 @@ fn sum_fold_add(acc: MbValue, item: MbValue) -> MbValue {
     MbValue::none()
 }
 
+/// One Neumaier (improved Kahan–Babuška) compensated-summation step.
+/// CPython 3.12's `sum()` uses this for the float path so that, e.g.,
+/// `sum([1.0, 1e101, 1.0, -1e101]) == 2.0` and `sum([0.1]*10) == 1.0`.
+#[inline]
+fn neumaier_step(ftotal: f64, c: f64, x: f64) -> (f64, f64) {
+    let t = ftotal + x;
+    let c = if ftotal.abs() >= x.abs() {
+        c + ((ftotal - t) + x)
+    } else {
+        c + ((x - t) + ftotal)
+    };
+    (t, c)
+}
+
 fn sum_from(args: MbValue, start: MbValue) -> MbValue {
     if raise_if_not_iterable(args) {
         return MbValue::none();
@@ -4871,10 +5961,14 @@ fn sum_from(args: MbValue, start: MbValue) -> MbValue {
         let mut total: i128 = start.as_int_pyint().unwrap_or(0) as i128;
         let mut is_float = start.is_float();
         let mut ftotal: f64 = start.as_float().unwrap_or(0.0);
+        // Neumaier compensation term — only meaningful once is_float is set.
+        let mut c: f64 = 0.0;
         for item in &items {
             if let Some(i) = item.as_int_pyint() {
                 if is_float {
-                    ftotal += i as f64;
+                    let (nt, nc) = neumaier_step(ftotal, c, i as f64);
+                    ftotal = nt;
+                    c = nc;
                 } else {
                     total += i as i128;
                 }
@@ -4882,12 +5976,15 @@ fn sum_from(args: MbValue, start: MbValue) -> MbValue {
                 if !is_float {
                     ftotal = total as f64;
                     is_float = true;
+                    c = 0.0;
                 }
-                ftotal += f;
+                let (nt, nc) = neumaier_step(ftotal, c, f);
+                ftotal = nt;
+                c = nc;
             }
         }
         if is_float {
-            return MbValue::from_float(ftotal);
+            return MbValue::from_float(ftotal + c);
         }
         if let Ok(small) = i64::try_from(total) {
             return super::bigint_ops::int_from_i64(small);
@@ -4906,6 +6003,15 @@ fn sum_from(args: MbValue, start: MbValue) -> MbValue {
 }
 
 /// sorted(iterable, reverse=False) — return a new sorted list.
+#[inline]
+fn stable_order_for_reverse(order: std::cmp::Ordering, do_reverse: bool) -> std::cmp::Ordering {
+    if do_reverse {
+        order.reverse()
+    } else {
+        order
+    }
+}
+
 pub fn mb_sorted(iterable: MbValue, reverse: MbValue) -> MbValue {
     if iterable.as_ptr().is_none()
         && !super::iter::mb_is_iterator_handle(iterable)
@@ -4931,26 +6037,28 @@ pub fn mb_sorted(iterable: MbValue, reverse: MbValue) -> MbValue {
         let first_is_float = !first_is_int && items[0].is_float();
 
         if first_is_int && items.iter().all(|v| v.is_int()) {
-            // All integers — use sort_unstable_by_key which extracts the key
-            // once per element and uses native i64 comparison.
-            items.sort_unstable_by_key(|v| v.as_int_unchecked());
+            items.sort_by(|a, b| {
+                stable_order_for_reverse(
+                    a.as_int_unchecked().cmp(&b.as_int_unchecked()),
+                    do_reverse,
+                )
+            });
         } else if (first_is_int || first_is_float)
             && items.iter().all(|v| v.is_int() || v.is_float())
         {
-            // All numeric (mixed int/float) — direct f64 sort.
-            items.sort_unstable_by(|a, b| {
+            items.sort_by(|a, b| {
                 let af = a.as_int().map(|i| i as f64).or(a.as_float()).unwrap_or(0.0);
                 let bf = b.as_int().map(|i| i as f64).or(b.as_float()).unwrap_or(0.0);
-                af.partial_cmp(&bf).unwrap_or(std::cmp::Ordering::Equal)
+                stable_order_for_reverse(
+                    af.partial_cmp(&bf).unwrap_or(std::cmp::Ordering::Equal),
+                    do_reverse,
+                )
             });
         } else {
-            items.sort_by(|a, b| mb_value_cmp(*a, *b));
+            items.sort_by(|a, b| stable_order_for_reverse(mb_value_cmp(*a, *b), do_reverse));
         }
     }
 
-    if do_reverse {
-        items.reverse();
-    }
     // Items are borrowed from the source container via extract_items — retain them.
     MbValue::from_ptr(MbObject::new_list_borrowed(items))
 }
@@ -4997,8 +6105,8 @@ fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
                     return ta.len().cmp(&tb.len());
                 }
                 (ObjData::List(ref la), ObjData::List(ref lb)) => {
-                    let la = la.read().unwrap();
-                    let lb = lb.read().unwrap();
+                    let la = super::list_ops::retained_list_snapshot(la);
+                    let lb = super::list_ops::retained_list_snapshot(lb);
                     for (ea, eb) in la.iter().zip(lb.iter()) {
                         let cmp = mb_value_cmp(*ea, *eb);
                         if cmp != std::cmp::Ordering::Equal {
@@ -5022,13 +6130,19 @@ fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
             }
         }
     }
-    // CPython: sorting mixed unorderable types raises TypeError — route
-    // through mb_values_lt, which raises the exact unorderable message.
-    if mb_values_lt(a, b) {
-        return std::cmp::Ordering::Less;
+    // Equal values — including equal-but-unorderable ones like None — compare
+    // Equal without ever invoking `<`, so an element-wise tuple/list sort whose
+    // heads are equal (`sorted([(None, 2), (None, 1)])`) doesn't choke on
+    // `None < None`. Only a genuinely differing, unorderable pair falls through
+    // to mb_values_lt, which raises CPython's exact unorderable-types message.
+    if mb_values_eq(a, b) {
+        return std::cmp::Ordering::Equal;
     }
     if mb_values_lt(b, a) {
         return std::cmp::Ordering::Greater;
+    }
+    if mb_values_lt(a, b) {
+        return std::cmp::Ordering::Less;
     }
     std::cmp::Ordering::Equal
 }
@@ -5075,6 +6189,14 @@ pub fn extract_items(val: MbValue) -> Vec<MbValue> {
                         .collect();
                 }
                 ObjData::Instance { .. } => {
+                    if let Some(items) = super::dict_ops::dict_view_elements(val) {
+                        return items;
+                    }
+                    if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__iter__")
+                    {
+                        return extract_items(payload);
+                    }
                     // User iterable: go through iterator protocol.
                     // Fall through to the iterator handling below.
                 }
@@ -5094,11 +6216,25 @@ pub fn extract_items(val: MbValue) -> Vec<MbValue> {
     }
     // Fallback: standard iterator protocol.
     let mut items = Vec::new();
+    // A generator/iterator that raises mid-iteration leaves a pending
+    // exception; stop and let the caller (set()/list()/heapq.merge/sorted/…)
+    // propagate it rather than swallowing it as end-of-iteration. StopIteration
+    // is the normal exhaustion signal and must not be treated as an error.
+    let raised = || {
+        super::exception::mb_has_exception().as_bool() == Some(true)
+            && super::exception::current_exception_type().as_deref() != Some("StopIteration")
+    };
     loop {
         if super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
             break;
         }
+        if raised() {
+            break;
+        }
         let item = super::iter::mb_next(iter_handle);
+        if raised() {
+            break;
+        }
         if item.is_none() && super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
             break;
         }
@@ -5149,6 +6285,12 @@ pub fn mb_repr(val: MbValue) -> MbValue {
         if let Some(r) = super::iter::mb_iter_repr(val) {
             return MbValue::from_ptr(MbObject::new_str(r));
         }
+        if super::async_rt::is_known_coroutine(val) {
+            return MbValue::from_ptr(MbObject::new_str(format!(
+                "<coroutine object at 0x{:x}>",
+                i
+            )));
+        }
         format!("{i}")
     } else if let Some(f) = val.as_float() {
         super::string_ops::python_float_repr(f)
@@ -5180,44 +6322,14 @@ pub fn mb_repr(val: MbValue) -> MbValue {
         };
         format!("<function {name} at 0x{addr:x}>")
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(codepoints) = super::string_ops::surrogate_codepoints(val) {
+            return MbValue::from_ptr(MbObject::new_str(
+                super::string_ops::repr_string_from_codepoints(&codepoints),
+            ));
+        }
         unsafe {
             match &(*ptr).data {
-                ObjData::Str(s) => {
-                    // CPython quoting: use single quotes unless string contains '
-                    // but not ", in which case use double quotes.
-                    let has_single = s.contains('\'');
-                    let has_double = s.contains('"');
-                    let use_double = has_single && !has_double;
-                    let quote_char = if use_double { '"' } else { '\'' };
-
-                    let mut escaped = String::with_capacity(s.len() + 2);
-                    for c in s.chars() {
-                        match c {
-                            '\\' => escaped.push_str("\\\\"),
-                            '\'' if !use_double => escaped.push_str("\\'"),
-                            '"' if use_double => escaped.push_str("\\\""),
-                            '\n' => escaped.push_str("\\n"),
-                            '\r' => escaped.push_str("\\r"),
-                            '\t' => escaped.push_str("\\t"),
-                            '\x07' => escaped.push_str("\\a"),
-                            '\x08' => escaped.push_str("\\b"),
-                            '\x0C' => escaped.push_str("\\f"),
-                            '\x0B' => escaped.push_str("\\v"),
-                            c if c.is_control() => {
-                                // C0 (0x00-0x1f) and C1 (0x7f-0x9f) — escape
-                                // as \xNN; higher Unicode controls as \uNNNN.
-                                let cp = c as u32;
-                                if cp < 0x100 {
-                                    escaped.push_str(&format!("\\x{:02x}", cp));
-                                } else {
-                                    escaped.push_str(&format!("\\u{:04x}", cp));
-                                }
-                            }
-                            c => escaped.push(c),
-                        }
-                    }
-                    format!("{quote_char}{escaped}{quote_char}")
-                }
+                ObjData::Str(s) => super::string_ops::repr_string(s),
                 ObjData::Bytes(data) => format!("b{}", format_bytes_inner(data)),
                 ObjData::ByteArray(ref lock) => {
                     let data = lock.read().unwrap();
@@ -5227,8 +6339,60 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     class_name,
                     ref fields,
                 } => {
+                    if class_name == "coroutine_wrapper" {
+                        return MbValue::from_ptr(MbObject::new_str(format!(
+                            "<coroutine_wrapper object at 0x{:x}>",
+                            ptr as usize
+                        )));
+                    }
                     if class_name == "UnionType" {
                         return MbValue::from_ptr(MbObject::new_str(union_type_repr(val)));
+                    }
+                    // zoneinfo.ZoneInfo(key='America/New_York')
+                    if class_name == "ZoneInfo" {
+                        if let Some(k) = fields.read().ok().and_then(|f| f.get("key").copied()) {
+                            let key_repr = mb_repr(k);
+                            if let Some(p) = key_repr.as_ptr() {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    return MbValue::from_ptr(MbObject::new_str(format!(
+                                        "zoneinfo.ZoneInfo(key={s})"
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                    // A bare object() instance reprs as `<object object at 0xADDR>`
+                    // (CPython's object.__repr__). User subclasses that don't
+                    // override __repr__ get the same shape with their class name,
+                    // handled by the generic fallback below.
+                    if class_name == "object" {
+                        return MbValue::from_ptr(MbObject::new_str(format!(
+                            "<object object at 0x{:x}>",
+                            ptr as usize
+                        )));
+                    }
+                    // Type objects (make_type_object: a "type"-class instance
+                    // carrying __name__): repr is `<class 'name'>`, matching
+                    // CPython and the print path. Without this, `repr(int)` /
+                    // `repr(defaultdict(int))`'s factory showed `<type instance>`.
+                    if class_name == "type" {
+                        let name = fields
+                            .read()
+                            .ok()
+                            .and_then(|f| f.get("__name__").copied())
+                            .and_then(|v| v.as_ptr())
+                            .and_then(|p| {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(name) = name {
+                            return MbValue::from_ptr(MbObject::new_str(format!(
+                                "<class '{name}'>"
+                            )));
+                        }
                     }
                     // Class-body enum member without a user __repr__:
                     // repr(Color.RED) → "<Color.RED: 1>".
@@ -5272,6 +6436,19 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                         return MbValue::from_ptr(MbObject::new_str(
                             super::stdlib::collections_mod::ordereddict_repr(val),
                         ));
+                    }
+                    if class_name == "mappingproxy" {
+                        let mapping = fields.read().unwrap().get("_mapping").copied();
+                        if let Some(mapping) = mapping {
+                            let inner = mb_repr(mapping);
+                            if let Some(ip) = inner.as_ptr() {
+                                if let ObjData::Str(ref s) = (*ip).data {
+                                    return MbValue::from_ptr(MbObject::new_str(format!(
+                                        "mappingproxy({s})"
+                                    )));
+                                }
+                            }
+                        }
                     }
                     // re.Match / re.Pattern CPython-style repr. (#1642)
                     if class_name == "re.Match" {
@@ -5347,6 +6524,11 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             }
                         }
                     }
+                    if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__repr__")
+                    {
+                        return mb_repr(payload);
+                    }
                     // PEP 557: dataclass synthesized __repr__ —
                     // `Cls(f1=v1, f2=v2)` over repr=True fields in declaration
                     // order. Only reached when no user __repr__ is defined.
@@ -5354,11 +6536,14 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     {
                         return MbValue::from_ptr(MbObject::new_str(s));
                     }
-                    if class_name == "SimpleNamespace" {
+                    if class_name == "SimpleNamespace"
+                        || super::class::check_class_hierarchy(class_name, "SimpleNamespace")
+                    {
                         // CPython renders `namespace(field=repr(value), ...)` in
                         // INSERTION order (tracked in the hidden `__ns_order__`
                         // list), with a direct self-reference shown as
-                        // `namespace(...)`.
+                        // `namespace(...)`. Subclasses use their class name as
+                        // the repr prefix.
                         let self_ptr = val.as_ptr();
                         let guard = fields.read().unwrap();
                         // Preferred order from `__ns_order__`; any field missing
@@ -5396,12 +6581,17 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                                 keys.push(k.clone());
                             }
                         }
+                        let repr_prefix = if class_name == "SimpleNamespace" {
+                            "namespace"
+                        } else {
+                            class_name.as_str()
+                        };
                         let parts: Vec<String> = keys
                             .iter()
                             .filter_map(|k| {
                                 let v = *guard.get(k)?;
                                 Some(if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
-                                    format!("{k}=namespace(...)")
+                                    format!("{k}={repr_prefix}(...)")
                                 } else {
                                     let r = mb_repr(v);
                                     let rs = r
@@ -5420,9 +6610,53 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             .collect();
                         drop(guard);
                         return MbValue::from_ptr(MbObject::new_str(format!(
-                            "namespace({})",
+                            "{repr_prefix}({})",
                             parts.join(", ")
                         )));
+                    }
+                    // PEP 654 ExceptionGroup repr: `ClassName('message', [child
+                    // reprs])` — recursive over the `.exceptions` tuple. Gated to
+                    // EG-shaped instances (subclass of BaseExceptionGroup with an
+                    // `exceptions` tuple field) so plain exceptions are unaffected.
+                    if super::exception::is_subclass_of(class_name, "BaseExceptionGroup")
+                        || super::exception::is_subclass_of(class_name, "ExceptionGroup")
+                        || class_name == "BaseExceptionGroup"
+                        || class_name == "ExceptionGroup"
+                    {
+                        let guard = fields.read().unwrap();
+                        let msg_v = guard.get("message").copied();
+                        let exc_v = guard.get("exceptions").copied();
+                        drop(guard);
+                        if let (Some(msg_v), Some(exc_v)) = (msg_v, exc_v) {
+                            let children: Option<Vec<MbValue>> = exc_v.as_ptr().and_then(|p| {
+                                if let ObjData::Tuple(ref t) = (*p).data {
+                                    Some(t.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                            if let Some(children) = children {
+                                let repr_s = |v: MbValue| -> String {
+                                    mb_repr(v)
+                                        .as_ptr()
+                                        .and_then(|p| {
+                                            if let ObjData::Str(ref s) = (*p).data {
+                                                Some(s.clone())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or_else(|| "None".to_string())
+                                };
+                                let msg_r = repr_s(msg_v);
+                                let kids: Vec<String> =
+                                    children.iter().map(|c| repr_s(*c)).collect();
+                                return MbValue::from_ptr(MbObject::new_str(format!(
+                                    "{class_name}({msg_r}, [{}])",
+                                    kids.join(", ")
+                                )));
+                            }
+                        }
                     }
                     if is_exception_class {
                         // CPython repr: ClassName(repr(arg0), repr(arg1), ...)
@@ -5522,7 +6756,63 @@ fn frozenset_hash(items: &[MbValue]) -> i64 {
 }
 
 /// hash(value) — return hash of a value.
+/// Hash a float into mamba's 48-bit signed int hash domain. Integral floats
+/// hash like the equivalent int (so `hash(7.0) == hash(7)`); ±inf / nan use
+/// CPython's fixed sentinels; fractional values fold their bits. Shared by the
+/// float and complex arms of mb_hash so `hash(complex(x, 0)) == hash(x)`.
+fn float_hash_i64(f: f64) -> i64 {
+    if f.is_finite() && f == f.floor() && f.abs() < (1i64 << 53) as f64 {
+        let i = f as i64;
+        if i == -1 {
+            -2
+        } else {
+            i
+        }
+    } else if f.is_nan() {
+        0
+    } else if f.is_infinite() {
+        if f > 0.0 {
+            314159
+        } else {
+            -314159
+        }
+    } else {
+        let folded = (f.to_bits() ^ (f.to_bits() >> 32)) & 0x0000_FFFF_FFFF_FFFF;
+        let hash = ((folded as i64) << 16) >> 16;
+        if hash == -1 {
+            -2
+        } else {
+            hash
+        }
+    }
+}
+
 pub fn mb_hash(val: MbValue) -> MbValue {
+    let val = int_enum_like_value(val).unwrap_or(val);
+    // Python 3.12: slice is hashable, with `hash(slice(a,b,c)) ==
+    // hash((a,b,c))`. Delegating to the tuple hash also reproduces CPython's
+    // error for an unhashable component — `hash(slice(1,2,[]))` raises
+    // `TypeError: unhashable type: 'list'` (not 'slice').
+    if let Some(ptr) = val.as_ptr() {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = unsafe { &(*ptr).data }
+        {
+            if class_name == "slice" {
+                let (start, stop, step) = {
+                    let f = fields.read().unwrap();
+                    (
+                        f.get("start").copied().unwrap_or(MbValue::none()),
+                        f.get("stop").copied().unwrap_or(MbValue::none()),
+                        f.get("step").copied().unwrap_or(MbValue::none()),
+                    )
+                };
+                let tup = MbValue::from_ptr(MbObject::new_tuple(vec![start, stop, step]));
+                return super::tuple_ops::mb_tuple_hash(tup);
+            }
+        }
+    }
     if is_decimal_handle_value(val) || is_fraction_handle_value(val) {
         // Hash must agree with `==` across numeric types: integral values
         // hash like the int, float-exact values hash like the float.
@@ -5536,26 +6826,17 @@ pub fn mb_hash(val: MbValue) -> MbValue {
         }
         return super::string_ops::mb_str_hash(mb_str(val));
     }
+    if let Some(hash) = super::iter::range_hash(val) {
+        return hash;
+    }
     if let Some(i) = val.as_int() {
         // CPython remaps hash(-1) to -2 because -1 is used internally
         // as an error sentinel in the C API.
         MbValue::from_int(if i == -1 { -2 } else { i })
     } else if let Some(f) = val.as_float() {
-        // CPython: hash(float) == hash(int) when float is integral.
-        // For integral floats, return hash of the integer value.
-        if f.is_finite() && f == f.floor() && f.abs() < (1i64 << 53) as f64 {
-            let i = f as i64;
-            MbValue::from_int(if i == -1 { -2 } else { i })
-        } else if f.is_nan() {
-            MbValue::from_int(0)
-        } else if f.is_infinite() {
-            MbValue::from_int(if f > 0.0 { 314159 } else { -314159 })
-        } else {
-            // Non-integral float: fold bits into Mamba's 48-bit int payload.
-            let folded = (f.to_bits() ^ (f.to_bits() >> 32)) & 0x0000_FFFF_FFFF_FFFF;
-            let hash = ((folded as i64) << 16) >> 16;
-            MbValue::from_int(if hash == -1 { -2 } else { hash })
-        }
+        // CPython: hash(float) == hash(int) when float is integral. Folds
+        // fractional values; see float_hash_i64.
+        MbValue::from_int(float_hash_i64(f))
     } else if let Some(b) = val.as_bool() {
         MbValue::from_int(b as i64)
     } else if val.is_none() {
@@ -5566,7 +6847,19 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                 ObjData::Str(_) => super::string_ops::mb_str_hash(val),
                 ObjData::Tuple(_) => super::tuple_ops::mb_tuple_hash(val),
                 ObjData::FrozenSet(items) => MbValue::from_int(frozenset_hash(items)),
+                // CPython: hash(z) = float_hash(re) + HASH_IMAG * float_hash(im)
+                // (HASH_IMAG = 1000003). A real-valued complex (im == 0) hashes
+                // exactly like float_hash(re), so hash(complex(x, 0)) == hash(x).
+                ObjData::Complex(re, im) => {
+                    let h = float_hash_i64(*re)
+                        .wrapping_add(1000003i64.wrapping_mul(float_hash_i64(*im)));
+                    MbValue::from_int(if h == -1 { -2 } else { h })
+                }
                 ObjData::Instance { class_name, .. } => {
+                    if matches!(class_name.as_str(), "ProxyType" | "CallableProxyType") {
+                        raise_type_error(format!("unhashable type: 'weakref.{class_name}'"));
+                        return MbValue::none();
+                    }
                     // namedtuple instances hash like the equivalent plain
                     // tuple: hash(Point(11, 22)) == hash((11, 22)).
                     if let Some(vals) = super::stdlib::collections_mod::namedtuple_values(val) {
@@ -5599,10 +6892,28 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                         );
                         return MbValue::none();
                     }
-                    // __hash__ dunder dispatch
-                    let hash_method = super::class::lookup_method(class_name, "__hash__");
-                    if !hash_method.is_none() {
+                    // PEP 604 `X | Y` union: hash by member set, matching
+                    // typing.Union[...] so the two representations hash alike
+                    // (int | str and typing.Union[int, str] are equal).
+                    if class_name == "UnionType" {
+                        return super::stdlib::typing_mod::alias_hash_value(val);
+                    }
+                    // __hash__ dunder dispatch. Explicit `__hash__ = None`
+                    // is not a miss: it makes instances unhashable.
+                    if let Some(hash_method) =
+                        super::class::lookup_method_including_none(class_name, "__hash__")
+                    {
+                        if hash_method.is_none() {
+                            raise_type_error(format!(
+                                "unhashable type: '{}'",
+                                value_type_name(val)
+                            ));
+                            return MbValue::none();
+                        }
                         let result = super::class::mb_call_method1(hash_method, val);
+                        if super::exception::current_exception_type().is_some() {
+                            return MbValue::none();
+                        }
                         if let Some(i) = result.as_int() {
                             return MbValue::from_int(if i == -1 { -2 } else { i });
                         }
@@ -5740,9 +7051,7 @@ pub fn mb_chr(val: MbValue) -> MbValue {
         if let Some(c) = char::from_u32(i as u32) {
             return MbValue::from_ptr(MbObject::new_str(c.to_string()));
         }
-        // Lone surrogate (valid in CPython, unrepresentable in a Rust
-        // String) — keep the legacy silent None rather than a wrong raise.
-        return MbValue::none();
+        return super::string_ops::new_lone_surrogate_str(i as u32);
     }
     // BigInt code points are always out of the 0x110000 range.
     if unsafe { super::bigint_ops::extract_bigint(val).is_some() } {
@@ -5755,6 +7064,15 @@ pub fn mb_chr(val: MbValue) -> MbValue {
 
 /// ord(c) — return Unicode code point for a single character.
 pub fn mb_ord(val: MbValue) -> MbValue {
+    if let Some(codepoint) = super::string_ops::surrogate_single_codepoint(val) {
+        return MbValue::from_int(codepoint as i64);
+    }
+    if let Some(n) = super::string_ops::surrogate_len(val) {
+        raise_type_error(format!(
+            "ord() expected a character, but string of length {n} found"
+        ));
+        return MbValue::none();
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match (*ptr).data {
@@ -5881,6 +7199,8 @@ fn raise_zero_neg_pow() -> MbValue {
 
 /// pow(base, exp) — power operator.
 pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
+    let base = int_enum_like_value(base).unwrap_or(base);
+    let exp = int_enum_like_value(exp).unwrap_or(exp);
     if let Some(r) = numeric_handle_binop("**", base, exp) {
         return r;
     }
@@ -6469,10 +7789,7 @@ pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> Mb
             indexed.push((item, k));
         }
 
-        indexed.sort_by(|a, b| mb_value_cmp(a.1, b.1));
-        if do_reverse {
-            indexed.reverse();
-        }
+        indexed.sort_by(|a, b| stable_order_for_reverse(mb_value_cmp(a.1, b.1), do_reverse));
         let sorted_items: Vec<MbValue> = indexed.into_iter().map(|(v, _)| v).collect();
         // Items borrowed from source container — retain.
         MbValue::from_ptr(MbObject::new_list_borrowed(sorted_items))
@@ -6483,13 +7800,16 @@ pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> Mb
             && sorted_items[0].is_int()
             && sorted_items.iter().all(|v| v.is_int())
         {
-            sorted_items
-                .sort_unstable_by(|a, b| a.as_int().unwrap_or(0).cmp(&b.as_int().unwrap_or(0)));
+            sorted_items.sort_by(|a, b| {
+                stable_order_for_reverse(
+                    a.as_int().unwrap_or(0).cmp(&b.as_int().unwrap_or(0)),
+                    do_reverse,
+                )
+            });
         } else {
-            sorted_items.sort_by(|a, b| mb_value_cmp(*a, *b));
-        }
-        if do_reverse {
-            sorted_items.reverse();
+            sorted_items.sort_by(|a, b| {
+                stable_order_for_reverse(mb_value_cmp(*a, *b), do_reverse)
+            });
         }
         // Items borrowed from source container — retain.
         MbValue::from_ptr(MbObject::new_list_borrowed(sorted_items))
@@ -6526,6 +7846,8 @@ pub fn mb_min_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
                 super::class::mb_call1_val(key, item)
             } else if let Some(ref name) = named_key {
                 call_named_callable(name, item).unwrap_or(item)
+            } else if key.as_ptr().is_some() {
+                super::class::mb_call1_val(key, item)
             } else {
                 item
             }
@@ -6584,6 +7906,8 @@ pub fn mb_max_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
                 super::class::mb_call1_val(key, item)
             } else if let Some(ref name) = named_key {
                 call_named_callable(name, item).unwrap_or(item)
+            } else if key.as_ptr().is_some() {
+                super::class::mb_call1_val(key, item)
             } else {
                 item
             }
@@ -7024,6 +8348,12 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
         unsafe {
             match &(*ptr).data {
                 ObjData::Instance { class_name, .. } => {
+                    if super::stdlib::enum_mod::is_functional_enum_class(obj) {
+                        return MbValue::from_bool(true);
+                    }
+                    if class_name == "__exec_function__" {
+                        return MbValue::from_bool(true);
+                    }
                     if class_name == "__unbound_method__" || class_name == "__bound_native_method__"
                     {
                         return MbValue::from_bool(true);
@@ -7033,6 +8363,9 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
                     // is callable: `mb_call_spread` knows how to prepend the
                     // bound args and dispatch the wrapped func.
                     if class_name == "functools.partial" {
+                        return MbValue::from_bool(true);
+                    }
+                    if class_name == "functools._singledispatchmethod_bound" {
                         return MbValue::from_bool(true);
                     }
                     if class_name == "collections.abc._register_bound"
@@ -7127,6 +8460,9 @@ fn ascii_repr(val: MbValue) -> String {
     } else if val.is_none() {
         "None".to_string()
     } else if let Some(ptr) = val.as_ptr() {
+        if let Some(codepoints) = super::string_ops::surrogate_codepoints(val) {
+            return super::string_ops::ascii_string_from_codepoints(&codepoints);
+        }
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => {
@@ -7357,6 +8693,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 // Bound native method (`f = gen.uniform; f(10, 10)`): the
                 // Instance carries the receiver + method name; dispatch as a
                 // normal method call.
+                if class_name == "__exec_function__" {
+                    return mb_exec_function_call(func, items);
+                }
                 if class_name == "__bound_native_method__" {
                     let g = fields.read().unwrap();
                     let recv = g.get("__self__").copied().unwrap_or_else(MbValue::none);
@@ -7364,6 +8703,23 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     drop(g);
                     let rest = MbValue::from_ptr(MbObject::new_list(items));
                     return super::class::mb_call_method(recv, mname, rest);
+                }
+                if class_name == "method" {
+                    let g = fields.read().unwrap();
+                    let func_v = g.get("__func__").copied().unwrap_or_else(MbValue::none);
+                    let self_v = g.get("__self__").copied().unwrap_or_else(MbValue::none);
+                    drop(g);
+                    let mut all_args = Vec::with_capacity(items.len() + 1);
+                    all_args.push(self_v);
+                    all_args.extend(items);
+                    super::class::append_missing_method_defaults(func_v, &mut all_args, 1);
+                    let args_list = MbValue::from_ptr(MbObject::new_list(all_args));
+                    return mb_call_spread(func_v, args_list);
+                }
+                if class_name == "functools._singledispatchmethod_bound" {
+                    return super::stdlib::functools_mod::mb_singledispatchmethod_call_bound(
+                        func, items,
+                    );
                 }
                 if class_name == "__unbound_method__" {
                     let guard = fields.read().unwrap();
@@ -7380,6 +8736,95 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         })
                         .unwrap_or_default();
                     drop(guard);
+                    let method_str = method_name
+                        .as_ptr()
+                        .and_then(|p| match &(*p).data {
+                            ObjData::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    if method_str == "__new__" {
+                        if let Some(result) =
+                            super::class::builtin_type_new_unbound(&type_name, &items)
+                        {
+                            return result;
+                        }
+                    }
+                    if type_name == "type" && method_str == "__init__" {
+                        return super::class::type_init_unbound(&items);
+                    }
+                    if type_name == "collections.Counter" && method_str == "fromkeys" {
+                        return super::class::mb_counter_fromkeys_not_implemented();
+                    }
+                    if type_name == "dict" && method_str == "fromkeys" {
+                        let iterable = items.first().copied().unwrap_or_else(MbValue::none);
+                        let value = items.get(1).copied().unwrap_or_else(MbValue::none);
+                        return super::dict_ops::mb_dict_fromkeys(iterable, value);
+                    }
+                    if type_name == "object" && method_str == "__new__" {
+                        return super::class::object_new_unbound(&items);
+                    }
+                    if type_name == "object" && method_str == "__init__" {
+                        return super::class::object_init_unbound(&items);
+                    }
+                    if type_name == "object" {
+                        match method_str.as_str() {
+                            "__setattr__" => return super::class::object_setattr_unbound(&items),
+                            "__delattr__" => return super::class::object_delattr_unbound(&items),
+                            "__getattribute__" => {
+                                return super::class::object_getattribute_unbound(&items)
+                            }
+                            _ => {}
+                        }
+                    }
+                    if items.is_empty() {
+                        if let Some(result) =
+                            super::stdlib::string_constants_mod::static_no_self_error(
+                                &type_name,
+                                &method_str,
+                            )
+                        {
+                            return result;
+                        }
+                    }
+                    if matches!(method_str.as_str(), "extract" | "from_list")
+                        && (type_name == "StackSummary"
+                            || super::class::class_mro_any(&type_name, |name| {
+                                name == "StackSummary"
+                            }))
+                    {
+                        let m = super::class::lookup_method(&type_name, &method_str);
+                        if let Some(addr) = m.as_func() {
+                            if super::module::is_native_func(addr as u64) {
+                                let mut all_items = Vec::with_capacity(items.len() + 1);
+                                all_items
+                                    .push(MbValue::from_ptr(MbObject::new_str(type_name.clone())));
+                                all_items.extend(items.iter().copied());
+                                let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+                                    std::mem::transmute(addr);
+                                return f(all_items.as_ptr(), all_items.len());
+                            }
+                        }
+                    }
+                    // complex comparison dunders accessed unbound
+                    // (`complex.__eq__(a, b)` etc.). __eq__/__ne__ return a bool
+                    // when the other operand is numeric and NotImplemented
+                    // otherwise; ordering dunders are always NotImplemented
+                    // (complex has no ordering). The arg slab is [a, b].
+                    if type_name == "complex" {
+                        let method_str = method_name
+                            .as_ptr()
+                            .and_then(|p| match &(*p).data {
+                                ObjData::Str(s) => Some(s.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        let a = items.first().copied().unwrap_or_else(MbValue::none);
+                        let b = items.get(1).copied().unwrap_or_else(MbValue::none);
+                        if let Some(result) = complex_cmp_dunder(&method_str, a, b) {
+                            return result;
+                        }
+                    }
                     // Native classmethods (`datetime.date.today`,
                     // `datetime.datetime.fromordinal`): the registered method
                     // value is itself a raw `(args_ptr, nargs)` dispatcher, so
@@ -7412,6 +8857,14 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                 return f(items.as_ptr(), items.len());
                             }
                         }
+                    }
+                    if (type_name == "bytes" || type_name == "bytearray")
+                        && method_str == "maketrans"
+                    {
+                        return super::bytes_ops::mb_bytes_maketrans(
+                            items.first().copied().unwrap_or_else(MbValue::none),
+                            items.get(1).copied().unwrap_or_else(MbValue::none),
+                        );
                     }
                     // `random.Random.getrandbits(self, n)` — unbound calls on
                     // the Random base must reach the NATIVE generator (the
@@ -7528,6 +8981,16 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     {
                         return result;
                     }
+                    if let Some(result) =
+                        super::class::mb_user_abc_reject_abstract_instantiation(&name)
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        super::class::mb_contextlib_abc_reject_abstract_instantiation(&name)
+                    {
+                        return result;
+                    }
                     if name == "ReferenceType" {
                         let obj_arg = items.first().copied().unwrap_or_else(MbValue::none);
                         let cb_arg = items.get(1).copied().unwrap_or_else(MbValue::none);
@@ -7536,27 +8999,131 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     // Builtin type constructors: int(), str(), bool(), float(), etc.
                     // Route to the real constructor rather than creating a stub Instance.
                     {
-                        let arg0 = items.first().copied().unwrap_or_else(MbValue::none);
                         let result = match name.as_str() {
-                            "int" => Some(mb_int(arg0)),
-                            "float" => Some(mb_float(arg0)),
-                            "str" => Some(mb_str(arg0)),
-                            "bool" => Some(mb_bool(arg0)),
-                            "list" => Some(super::list_ops::mb_list_from_iterable(arg0)),
-                            "tuple" => Some(super::tuple_ops::mb_tuple_from_iterable(arg0)),
-                            "dict" => Some(super::dict_ops::mb_dict_from_pairs(arg0)),
-                            "set" => Some(mb_set_from_iterable(arg0)),
-                            "frozenset" => Some(mb_frozenset_new(arg0)),
-                            "complex" => Some(mb_complex(
-                                items
-                                    .first()
-                                    .copied()
-                                    .unwrap_or_else(|| MbValue::from_int(0)),
-                                items
-                                    .get(1)
-                                    .copied()
-                                    .unwrap_or_else(|| MbValue::from_int(0)),
-                            )),
+                            // Singleton types: `type(None)()` / `type(...)()` /
+                            // `type(NotImplemented)()` with no args return the
+                            // singleton itself; any argument is a TypeError.
+                            "NoneType" | "ellipsis" | "NotImplementedType" => {
+                                if !items.is_empty() {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "TypeError".to_string(),
+                                        )),
+                                        MbValue::from_ptr(MbObject::new_str(format!(
+                                            "{name} takes no arguments"
+                                        ))),
+                                    );
+                                    Some(MbValue::none())
+                                } else {
+                                    Some(match name.as_str() {
+                                        "NoneType" => MbValue::none(),
+                                        "ellipsis" => MbValue::ellipsis(),
+                                        _ => MbValue::not_implemented(),
+                                    })
+                                }
+                            }
+                            "int" => Some(match items.len() {
+                                0 => MbValue::from_int(0),
+                                1 => mb_int(items[0]),
+                                2 => mb_int_base(items[0], items[1]),
+                                n => type_error_value(format!(
+                                    "int() takes at most 2 arguments ({n} given)"
+                                )),
+                            }),
+                            "float" => Some(match items.len() {
+                                0 => MbValue::from_float(0.0),
+                                1 => mb_float(items[0]),
+                                n => type_error_value(format!(
+                                    "float expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "str" => Some(match items.len() {
+                                0 => MbValue::from_ptr(MbObject::new_str(String::new())),
+                                1 => mb_str(items[0]),
+                                2 => mb_str_construct(items[0], items[1], MbValue::none()),
+                                3 => mb_str_construct(items[0], items[1], items[2]),
+                                n => type_error_value(format!(
+                                    "str() takes at most 3 arguments ({n} given)"
+                                )),
+                            }),
+                            "bool" => Some(match items.len() {
+                                0 => MbValue::from_bool(false),
+                                1 => mb_bool(items[0]),
+                                n => type_error_value(format!(
+                                    "bool expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "list" => Some(match items.len() {
+                                0 => super::list_ops::mb_list_new(),
+                                1 => super::list_ops::mb_list_from_iterable(items[0]),
+                                n => type_error_value(format!(
+                                    "list expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "tuple" => Some(match items.len() {
+                                0 => super::tuple_ops::mb_tuple_new(),
+                                1 => super::tuple_ops::mb_tuple_from_iterable(items[0]),
+                                n => type_error_value(format!(
+                                    "tuple expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "dict" => Some(match items.len() {
+                                0 => super::dict_ops::mb_dict_new(),
+                                1 => super::dict_ops::mb_dict_from_pairs(items[0]),
+                                n => type_error_value(format!(
+                                    "dict expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "set" => Some(match items.len() {
+                                0 => super::set_ops::mb_set_new(),
+                                1 => mb_set_from_iterable(items[0]),
+                                n => type_error_value(format!(
+                                    "set expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "frozenset" => Some(match items.len() {
+                                0 => mb_frozenset_new(MbValue::none()),
+                                1 => mb_frozenset_new(items[0]),
+                                n => type_error_value(format!(
+                                    "frozenset expected at most 1 argument, got {n}"
+                                )),
+                            }),
+                            "mappingproxy" => {
+                                if items.len() != 1 {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "TypeError".to_string(),
+                                        )),
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "mappingproxy() takes exactly one argument".to_string(),
+                                        )),
+                                    );
+                                    Some(MbValue::none())
+                                } else {
+                                    let mut fields = rustc_hash::FxHashMap::default();
+                                    super::rc::retain_if_ptr(items[0]);
+                                    fields.insert("_mapping".to_string(), items[0]);
+                                    let obj = Box::new(MbObject {
+                                        header: super::rc::MbObjectHeader {
+                                            rc: std::sync::atomic::AtomicU32::new(1),
+                                            kind: super::rc::ObjKind::Instance,
+                                        },
+                                        data: ObjData::Instance {
+                                            class_name: "mappingproxy".to_string(),
+                                            fields: crate::runtime::rc::MbRwLock::new(fields),
+                                        },
+                                    });
+                                    Some(MbValue::from_ptr(Box::into_raw(obj)))
+                                }
+                            }
+                            "complex" => Some(match items.len() {
+                                0 => mb_complex(MbValue::from_int(0), MbValue::from_int(0)),
+                                1 => mb_complex(items[0], MbValue::from_int(0)),
+                                2 => mb_complex(items[0], items[1]),
+                                n => type_error_value(format!(
+                                    "complex() takes at most 2 arguments ({n} given)"
+                                )),
+                            }),
                             // types.CodeType(...) — the 18-arg 3.12 positional
                             // constructor; zips positionals onto the co_* field
                             // order and returns a real code object.
@@ -7612,15 +9179,21 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                 }
                                 1 => mb_range(items[0]),
                                 2 => mb_range_2(items[0], items[1]),
-                                _ => mb_range_3(items[0], items[1], items[2]),
+                                3 => mb_range_3(items[0], items[1], items[2]),
+                                n => type_error_value(format!(
+                                    "range expected at most 3 arguments, got {n}"
+                                )),
                             }),
-                            "enumerate" => Some(super::iter::mb_enumerate(
-                                items.first().copied().unwrap_or_else(MbValue::none),
-                                items
-                                    .get(1)
-                                    .copied()
-                                    .unwrap_or_else(|| MbValue::from_int(0)),
-                            )),
+                            "enumerate" => Some(match items.len() {
+                                0 => type_error_value(
+                                    "enumerate() missing required argument 'iterable' (pos 1)",
+                                ),
+                                1 => super::iter::mb_enumerate(items[0], MbValue::from_int(0)),
+                                2 => super::iter::mb_enumerate(items[0], items[1]),
+                                n => type_error_value(format!(
+                                    "enumerate() takes at most 2 arguments ({n} given)"
+                                )),
+                            }),
                             "zip" => Some(if items.len() == 2 {
                                 super::iter::mb_zip(items[0], items[1])
                             } else {
@@ -7632,36 +9205,72 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                 items.first().copied().unwrap_or_else(MbValue::none),
                                 items.get(1).copied().unwrap_or_else(MbValue::none),
                             )),
-                            "filter" => Some(mb_filter(
-                                items.first().copied().unwrap_or_else(MbValue::none),
-                                items.get(1).copied().unwrap_or_else(MbValue::none),
-                            )),
-                            "reversed" => Some(super::iter::mb_reversed(
-                                items.first().copied().unwrap_or_else(MbValue::none),
-                            )),
-                            "memoryview" => Some(mb_memoryview(arg0)),
+                            "filter" => Some(match items.len() {
+                                2 => mb_filter(items[0], items[1]),
+                                n => type_error_value(format!(
+                                    "filter expected 2 arguments, got {n}"
+                                )),
+                            }),
+                            "reversed" => Some(match items.len() {
+                                1 => super::iter::mb_reversed(items[0]),
+                                n => type_error_value(format!(
+                                    "reversed expected 1 argument, got {n}"
+                                )),
+                            }),
+                            "memoryview" => Some(match items.len() {
+                                1 => mb_memoryview(items[0]),
+                                n if n > 1 => type_error_value(format!(
+                                    "memoryview() takes at most 1 argument ({n} given)"
+                                )),
+                                _ => mb_memoryview(MbValue::none()),
+                            }),
                             "slice" => Some(match items.len() {
                                 0 => mb_slice_no_args(),
                                 1 => mb_slice(MbValue::none(), items[0], MbValue::none()),
                                 2 => mb_slice(items[0], items[1], MbValue::none()),
-                                _ => mb_slice(items[0], items[1], items[2]),
+                                3 => mb_slice(items[0], items[1], items[2]),
+                                n => type_error_value(format!(
+                                    "slice expected at most 3 arguments, got {n}"
+                                )),
                             }),
-                            "object" => Some(super::class::mb_instance_new(
-                                MbValue::from_ptr(MbObject::new_str("object".to_string())),
-                                MbValue::none(),
-                            )),
-                            "property" => Some(super::class::mb_property_new(arg0)),
-                            "classmethod" => Some(super::class::mb_classmethod_new(arg0)),
-                            "staticmethod" => Some(super::class::mb_staticmethod_new(arg0)),
-                            "bytes" => Some(if let Some(enc) = items.get(1).copied() {
-                                super::bytes_ops::mb_bytes_new_encoded(arg0, enc)
+                            "object" => Some(if items.is_empty() {
+                                super::class::mb_instance_new(
+                                    MbValue::from_ptr(MbObject::new_str("object".to_string())),
+                                    MbValue::none(),
+                                )
                             } else {
-                                super::bytes_ops::mb_bytes_new_checked(arg0)
+                                type_error_value("object() takes no arguments")
                             }),
-                            "bytearray" => Some(if let Some(enc) = items.get(1).copied() {
-                                super::bytes_ops::mb_bytearray_new_encoded(arg0, enc)
-                            } else {
-                                super::bytes_ops::mb_bytearray_new_checked(arg0)
+                            "property" => Some(super::class::mb_property_construct(&items)),
+                            "classmethod" => Some(match items.len() {
+                                1 => super::class::mb_classmethod_new(items[0]),
+                                n => type_error_value(format!(
+                                    "classmethod expected 1 argument, got {n}"
+                                )),
+                            }),
+                            "staticmethod" => Some(match items.len() {
+                                1 => super::class::mb_staticmethod_new(items[0]),
+                                n => type_error_value(format!(
+                                    "staticmethod expected 1 argument, got {n}"
+                                )),
+                            }),
+                            "bytes" => Some(match items.len() {
+                                0 => super::bytes_ops::mb_bytes_new_checked(MbValue::none()),
+                                1 => super::bytes_ops::mb_bytes_new_checked(items[0]),
+                                2 | 3 => super::bytes_ops::mb_bytes_new_encoded(items[0], items[1]),
+                                n => type_error_value(format!(
+                                    "bytes() takes at most 3 arguments ({n} given)"
+                                )),
+                            }),
+                            "bytearray" => Some(match items.len() {
+                                0 => super::bytes_ops::mb_bytearray_new_checked(MbValue::none()),
+                                1 => super::bytes_ops::mb_bytearray_new_checked(items[0]),
+                                2 | 3 => {
+                                    super::bytes_ops::mb_bytearray_new_encoded(items[0], items[1])
+                                }
+                                n => type_error_value(format!(
+                                    "bytearray() takes at most 3 arguments ({n} given)"
+                                )),
                             }),
                             _ => None,
                         };
@@ -7670,6 +9279,47 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         }
                     }
                     if !name.is_empty() {
+                        // zoneinfo.ZoneInfo(key): mamba has no IANA tz database
+                        // (only UTC). Validate the key like CPython: a path-
+                        // traversal/absolute key is a ValueError; any unknown
+                        // zone is a ZoneInfoNotFoundError (a KeyError subclass).
+                        if name == "ZoneInfo" {
+                            let zi_key: Option<String> = items
+                                .first()
+                                .and_then(|v| v.as_ptr())
+                                .and_then(|p| match &(*p).data {
+                                    super::rc::ObjData::Str(ref s) => Some(s.clone()),
+                                    _ => None,
+                                });
+                            if let Some(key) = zi_key {
+                                if key.starts_with('/') || key.split('/').any(|c| c == "..") {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                                        MbValue::from_ptr(MbObject::new_str(format!(
+                                            "ZoneInfo key {key:?} is not a valid IANA time zone name"
+                                        ))),
+                                    );
+                                    return MbValue::none();
+                                }
+                                if !super::stdlib::long_tail3_mod::is_known_zone(&key) {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "ZoneInfoNotFoundError".to_string(),
+                                        )),
+                                        MbValue::from_ptr(MbObject::new_str(format!(
+                                            "No time zone found with key {key}"
+                                        ))),
+                                    );
+                                    return MbValue::none();
+                                }
+                                // Strong cache: repeated ZoneInfo(key) returns the
+                                // SAME instance (CPython). no_cache() bypasses this.
+                                return super::stdlib::long_tail3_mod::zoneinfo_cached(&key);
+                            }
+                        }
+                        if let Some(result) = reject_non_constructible_type_object(&name) {
+                            return result;
+                        }
                         // If `name` is a registered native class that has a
                         // registered `__init__`, run the REAL constructor so
                         // the instance is properly initialised (e.g. unittest
@@ -7679,7 +9329,10 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         // `__init__` still fall through to the generic stub,
                         // preserving the ZoneInfo/Path/... `_arg0`/`key` shape.
                         if super::class::class_is_registered(&name)
-                            && !super::class::lookup_method(&name, "__init__").is_none()
+                            && (!super::class::lookup_method(&name, "__init__").is_none()
+                                || super::stdlib::dataclasses_mod::dc_has_synth_init(&name)
+                                || super::class::class_has_builtin_data_payload_base(&name)
+                                || super::class::check_class_hierarchy(&name, "int"))
                         {
                             let args_list = MbValue::from_ptr(MbObject::new_list(items.clone()));
                             return super::class::mb_instance_new_with_init(
@@ -7754,16 +9407,22 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     drop(f);
                     return super::stdlib::traceback_mod::mb_traceback_exception_format(receiver);
                 }
-                // weakref.ref(obj)() — return _target. Strong-ref carve-out.
+                // weakref.ref(obj)() — return the live target, or None after expiry.
                 if class_name == "ReferenceType" {
-                    let f = fields.read().unwrap();
-                    let target = f.get("_target").copied().unwrap_or_else(MbValue::none);
-                    drop(f);
-                    super::rc::retain_if_ptr(target);
-                    return target;
+                    return super::stdlib::weakref_mod::reference_target(func);
                 }
                 if class_name == "collections.namedtuple_factory" {
                     return super::stdlib::collections_mod::mb_namedtuple_create(func, &items);
+                }
+                if class_name == "HTTPStatus" {
+                    let arg = items.first().copied().unwrap_or_else(MbValue::none);
+                    return super::stdlib::http_mod::mb_httpstatus_call(arg);
+                }
+                // Functional-API enum class objects reached through dotted
+                // module-call lowering, e.g. uuid.SafeUUID(0).
+                if super::stdlib::enum_mod::is_functional_enum_class(func) {
+                    let arg = items.first().copied().unwrap_or_else(MbValue::none);
+                    return super::stdlib::enum_mod::mb_functional_enum_call(func, arg);
                 }
                 // functools.lru_cache wrapper: look up cache or invoke inner.
                 if class_name == "functools.lru_cache_wrapper" {
@@ -7820,6 +9479,19 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         func, items,
                     );
                 }
+                // Calling a singledispatch wrapper dispatches on arg[0]'s type.
+                if class_name == "functools.singledispatch" {
+                    let _ = fields;
+                    return super::stdlib::functools_mod::mb_singledispatch_call(func, items);
+                }
+                // `@f.register(type)` decorator instance applied to an impl.
+                if class_name == "functools._sd_register" {
+                    let _ = fields;
+                    let impl_val = items.first().copied().unwrap_or_else(MbValue::none);
+                    return super::stdlib::functools_mod::mb_singledispatch_register_apply(
+                        func, impl_val,
+                    );
+                }
                 // __call__ dunder dispatch for callable instances
                 let call_method = super::class::lookup_method(class_name, "__call__");
                 if !call_method.is_none() {
@@ -7847,6 +9519,10 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
         // (e.g. a float, whose untagged bits lack a NaN-prefix), so the re-box
         // steps below must pass it through rather than mis-boxing it as an int.
         let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
+        // *args/**kwargs presence: addr-registry (native / struct-seq) with a
+        // func_params fallback for user JIT functions, which register these flags
+        // by symbol-id rather than address.
+        let (has_star, has_kwargs) = detect_star_kw(func, Some(raw_addr));
         // Partial-default dispatch for closure handles: if the closure
         // declares more params than the call supplies, fill the missing
         // trailing slots from `defaults`. Skipped for variadic / native /
@@ -7855,8 +9531,8 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
         let mut items = items;
         if arity > items.len()
             && !super::module::is_native_func(raw_addr as u64)
-            && !super::module::is_variadic_func(raw_addr as u64)
-            && !super::module::is_kwargs_func(raw_addr as u64)
+            && !has_star
+            && !has_kwargs
         {
             let defaults = super::closure::closure_defaults(func);
             let needed = arity - items.len();
@@ -7865,66 +9541,57 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 items.extend_from_slice(&defaults[take_from..]);
             }
         }
+        if super::closure::func_has_boxed_params(func)
+            && !super::module::is_native_func(raw_addr as u64)
+            && !has_star
+            && !has_kwargs
+        {
+            if let Some(frame) = bind_declared_call_frame(func, &items, &[]) {
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
+                }
+                items = frame;
+            }
+        }
         // Native extern functions use (args_ptr, nargs) convention (#1132).
         if super::module::is_native_func(raw_addr as u64) {
             let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
                 unsafe { std::mem::transmute(raw_addr) };
             return unsafe { f(items.as_ptr(), items.len()) };
         }
-        // Variadic JIT functions (*args [, **kwargs]): compiled with an args-list
-        // parameter, optionally followed by a kwargs-dict parameter.
-        let has_star = super::module::is_variadic_func(raw_addr as u64);
-        let has_kwargs = super::module::is_kwargs_func(raw_addr as u64);
+        // Variadic / **kwargs JIT functions. The entry ABI lists every declared
+        // parameter in order, so it is f(regular_0, .., regular_{R-1},
+        // [args_list], [kwargs_dict]) — a function with leading regular params
+        // receives them as individual arguments BEFORE the packed *args list
+        // (`def full(a, b=2, *args, **kwargs)` → f(a, b, args_list, kwargs_dict)).
+        // Build that frame: regular slots (filling trailing defaults when the
+        // spread is short), *args collects the positional overflow, **kwargs is
+        // an empty dict (a positional spread carries no keywords). Then fall
+        // through to the fixed-arity dispatch.
         if has_star || has_kwargs {
-            let raw_result = {
-                let args_list = if has_star {
-                    Some(MbValue::from_ptr(MbObject::new_list(items.clone())))
-                } else {
-                    None
-                };
-                let kwargs_dict = if has_kwargs {
-                    Some(MbValue::from_ptr(MbObject::new_dict()))
-                } else {
-                    None
-                };
-                unsafe {
-                    match (args_list, kwargs_dict) {
-                        (Some(al), Some(kd)) => {
-                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                std::mem::transmute(raw_addr);
-                            f(al, kd)
-                        }
-                        (Some(al), None) => {
-                            let f: extern "C" fn(MbValue) -> MbValue =
-                                std::mem::transmute(raw_addr);
-                            f(al)
-                        }
-                        (None, Some(kd)) => {
-                            let f: extern "C" fn(MbValue) -> MbValue =
-                                std::mem::transmute(raw_addr);
-                            f(kd)
-                        }
-                        (None, None) => unreachable!(),
-                    }
+            let empty_kw: Vec<(String, MbValue)> = Vec::new();
+            if let Some(frame) = bind_declared_call_frame(func, &items, &empty_kw) {
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
                 }
-            };
-            if is_boxed_ret {
-                return raw_result;
-            }
-            let bits = raw_result.to_bits();
-            const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-            return if bits & NAN_PREFIX == NAN_PREFIX {
-                raw_result
+                items = frame;
             } else {
-                mb_box_int(bits as i64)
-            };
+                let mut frame: Vec<MbValue> = Vec::new();
+                if has_star {
+                    frame.push(MbValue::from_ptr(MbObject::new_list(items)));
+                }
+                if has_kwargs {
+                    frame.push(MbValue::from_ptr(MbObject::new_dict()));
+                }
+                items = frame;
+            }
         }
         // SAFETY: the function was compiled with the matching arity.
         // JIT-compiled functions use SystemV/C calling convention and may return
         // unboxed raw i64 values (CheckedAdd unboxes inline ints for perf),
         // so we re-box the result via mb_box_int.
         // REQ: extern "C" ABI required — JIT emits SystemV, not Rust ABI.
-        let raw_result: MbValue = unsafe {
+        let raw_result: MbValue = super::closure::with_closure_cells(func, || unsafe {
             match items.len() {
                 0 => {
                     let f: extern "C" fn() -> MbValue = std::mem::transmute(raw_addr);
@@ -7997,21 +9664,19 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 }
                 _ => MbValue::none(),
             }
-        };
-        // Re-box: JIT functions may return raw i64 for ints (unboxed by
-        // CheckedAdd). If the result has no NaN prefix, treat it as a raw int.
-        // Already-boxed values (NaN-boxed ints, ptrs, bools, none) pass through.
-        // An any/object-returning callee's result is already a valid MbValue
-        // (possibly a no-NaN-prefix float) → pass through untouched.
-        if is_boxed_ret {
-            return raw_result;
-        }
-        let bits = raw_result.to_bits();
-        const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-        if bits & NAN_PREFIX == NAN_PREFIX {
-            raw_result // Already NaN-boxed
+        });
+        // Re-box primitive returns through mb_box_int. It preserves real
+        // NaN-boxed values but also correctly boxes raw negative i64 values,
+        // whose high bits otherwise look like a NaN-box prefix.
+        let result = if is_boxed_ret {
+            raw_result
         } else {
-            mb_box_int(bits as i64) // Raw i64 → NaN-box it
+            mb_box_int(raw_result.to_bits() as i64)
+        };
+        if super::stdlib::types_mod::is_coroutine_generator(result) {
+            result
+        } else {
+            super::stdlib::types_mod::mark_coroutine_result(func, result)
         }
     } else {
         MbValue::none()
@@ -8051,6 +9716,229 @@ fn merge_kwargs_dicts(a: MbValue, b: MbValue) -> MbValue {
     out
 }
 
+fn callable_display_name(func: MbValue) -> String {
+    super::closure::mb_func_get_name(func)
+        .as_ptr()
+        .and_then(|fp| unsafe {
+            match &(*fp).data {
+                ObjData::Str(ref s) => Some(s.clone()),
+                _ => None,
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn bind_declared_call_frame(
+    func: MbValue,
+    pos: &[MbValue],
+    kw_pairs: &[(String, MbValue)],
+) -> Option<Vec<MbValue>> {
+    let params = super::closure::func_params(func)?;
+    let has_varargs = params.iter().any(|p| p.kind == 2);
+    let has_varkw = params.iter().any(|p| p.kind == 4);
+    let mut frame: Vec<MbValue> = Vec::with_capacity(params.len());
+    let mut pos_idx = 0usize;
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let fname = callable_display_name(func);
+    for p in &params {
+        match p.kind {
+            0 => {
+                if pos_idx < pos.len() {
+                    frame.push(pos[pos_idx]);
+                    pos_idx += 1;
+                } else if p.has_default {
+                    frame.push(p.default);
+                } else {
+                    frame.push(MbValue::none());
+                }
+            }
+            1 => {
+                if pos_idx < pos.len() {
+                    if kw_pairs.iter().any(|(k, _)| *k == p.name) {
+                        raise_type_error(format!(
+                            "{fname}() got multiple values for argument '{}'",
+                            p.name
+                        ));
+                        return Some(Vec::new());
+                    }
+                    frame.push(pos[pos_idx]);
+                    pos_idx += 1;
+                } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
+                    used.insert(k.clone());
+                    frame.push(*v);
+                } else if p.has_default {
+                    frame.push(p.default);
+                } else {
+                    frame.push(MbValue::none());
+                }
+            }
+            2 => {
+                let rest = if pos_idx < pos.len() {
+                    pos[pos_idx..].to_vec()
+                } else {
+                    Vec::new()
+                };
+                pos_idx = pos.len();
+                frame.push(MbValue::from_ptr(MbObject::new_list(rest)));
+            }
+            3 => {
+                if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
+                    used.insert(k.clone());
+                    frame.push(*v);
+                } else if p.has_default {
+                    frame.push(p.default);
+                } else {
+                    frame.push(MbValue::none());
+                }
+            }
+            4 => {
+                let extra = super::dict_ops::mb_dict_new();
+                for (k, v) in kw_pairs {
+                    if !used.contains(k) {
+                        unsafe {
+                            super::rc::retain_if_ptr(*v);
+                        }
+                        super::dict_ops::mb_dict_setitem(
+                            extra,
+                            MbValue::from_ptr(MbObject::new_str(k.clone())),
+                            *v,
+                        );
+                    }
+                }
+                frame.push(extra);
+            }
+            _ => {}
+        }
+    }
+    if !has_varargs && pos_idx < pos.len() {
+        raise_type_error(format!(
+            "{fname}() takes {} positional arguments but {} were given",
+            params.iter().filter(|p| matches!(p.kind, 0 | 1)).count(),
+            pos.len()
+        ));
+        return Some(Vec::new());
+    }
+    if !has_varkw {
+        if let Some((bad, _)) = kw_pairs.iter().find(|(k, _)| !used.contains(k.as_str())) {
+            raise_type_error(format!(
+                "{fname}() got an unexpected keyword argument '{bad}'"
+            ));
+            return Some(Vec::new());
+        }
+    }
+    Some(frame)
+}
+
+/// Dispatch a JIT-compiled function by its exact frame arity (SystemV/C ABI),
+/// reboxing a raw-int return unless the callee is `any`/object-returning.
+/// Shared by the variadic spread + kwargs binding paths so the entry ABI
+/// `f(regular_0, .., args_list, kwargs_dict)` is honoured uniformly.
+fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) -> MbValue {
+    let raw_result: MbValue = unsafe {
+        match items.len() {
+            0 => {
+                let f: extern "C" fn() -> MbValue = std::mem::transmute(raw_addr);
+                f()
+            }
+            1 => {
+                let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(raw_addr);
+                f(items[0])
+            }
+            2 => {
+                let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
+                f(items[0], items[1])
+            }
+            3 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(raw_addr);
+                f(items[0], items[1], items[2])
+            }
+            4 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(raw_addr);
+                f(items[0], items[1], items[2], items[3])
+            }
+            5 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(raw_addr);
+                f(items[0], items[1], items[2], items[3], items[4])
+            }
+            6 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(items[0], items[1], items[2], items[3], items[4], items[5])
+            }
+            7 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6],
+                )
+            }
+            8 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
+                )
+            }
+            _ => MbValue::none(),
+        }
+    };
+    if is_boxed_ret {
+        return raw_result;
+    }
+    mb_box_int(raw_result.to_bits() as i64)
+}
+
+/// Detect `(*args, **kwargs)` presence for a callable. The addr-keyed
+/// registries (`is_variadic_func` / `is_kwargs_func`) only cover native and
+/// struct-seq targets; user JIT functions register their declared params but
+/// not addr flags, so fall back to the params registry (kind 2 = VAR_POSITIONAL,
+/// 4 = VAR_KEYWORD — inspect.Parameter ordinals). Without this, a `f(**d)` call
+/// to a `def f(*a, **k)` user function failed the has_star/has_kw gate and lost
+/// its keyword bindings.
+fn detect_star_kw(func: MbValue, addr: Option<usize>) -> (bool, bool) {
+    let mut has_star = addr
+        .map(|a| super::module::is_variadic_func(a as u64))
+        .unwrap_or(false);
+    let mut has_kw = addr
+        .map(|a| super::module::is_kwargs_func(a as u64))
+        .unwrap_or(false);
+    if !has_star || !has_kw {
+        if let Some(params) = super::closure::func_params(func) {
+            if params.iter().any(|p| p.kind == 2) {
+                has_star = true;
+            }
+            if params.iter().any(|p| p.kind == 4) {
+                has_kw = true;
+            }
+        }
+    }
+    (has_star, has_kw)
+}
+
 /// Invoke `func` with a structurally-separated positional args list and
 /// kwargs dict, honoring the compiled variadic/kwargs ABI. Used by
 /// `mb_call_spread_kwargs` for `(*args, **kw)` targets.
@@ -8068,30 +9956,33 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
         return unsafe { f(items.as_ptr(), items.len()) };
     }
     let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
-    let has_star = super::module::is_variadic_func(raw_addr as u64);
-    let has_kwargs = super::module::is_kwargs_func(raw_addr as u64);
-    let raw_result = unsafe {
-        if has_star && has_kwargs {
-            let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
-            f(args_list, kwargs_dict)
-        } else if has_kwargs {
-            let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(raw_addr);
-            f(kwargs_dict)
-        } else {
-            // No declared kwargs slot: fall back to positional spread.
-            return mb_call_spread(func, args_list);
+    let (has_star, has_kwargs) = detect_star_kw(func, Some(raw_addr));
+    if !has_star && !has_kwargs {
+        // No declared variadic/kwargs slot: fall back to positional spread.
+        return mb_call_spread(func, args_list);
+    }
+    // Build the variadic entry frame: f(regular_0, .., regular_{R-1},
+    // [args_list], [kwargs_dict]). Regular params bind from positionals first,
+    // then from keyword args by name (filling defaults); positional overflow
+    // packs into *args and unmatched keywords into **kwargs. Without the regular
+    // split, `full(**{"a":1,"b":2,"k":99})` to `def full(a,b=2,*args,**kwargs)`
+    // passed the kwargs dict as `a` and read garbage for the trailing slots.
+    let pos = extract_items(args_list);
+    let kw_pairs = kwargs_dict_pairs(kwargs_dict);
+    if let Some(frame) = bind_declared_call_frame(func, &pos, &kw_pairs) {
+        if super::exception::current_exception_type().is_some() {
+            return MbValue::none();
         }
-    };
-    if is_boxed_ret {
-        return raw_result;
+        return dispatch_jit_frame(raw_addr, &frame, is_boxed_ret);
     }
-    let bits = raw_result.to_bits();
-    const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-    if bits & NAN_PREFIX == NAN_PREFIX {
-        raw_result
-    } else {
-        mb_box_int(bits as i64)
+    let mut frame = Vec::new();
+    if has_star {
+        frame.push(MbValue::from_ptr(MbObject::new_list(pos)));
     }
+    if has_kwargs {
+        frame.push(kwargs_dict);
+    }
+    dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
 }
 
 /// Dynamic call with positional args AND keyword args kept structurally
@@ -8141,16 +10032,198 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     if kw_pairs.is_empty() {
         return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(pos)));
     }
+    if let Some(type_name) = super::class::resolve_class_name(func).or_else(|| {
+        func.as_ptr().and_then(|ptr| unsafe {
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+    }) {
+        if type_name == "list" {
+            raise_type_error("list() takes no keyword arguments".to_string());
+            return MbValue::none();
+        }
+    }
+    if let Some(ptr) = func.as_ptr() {
+        unsafe {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
+                if class_name == "method" {
+                    let guard = fields.read().unwrap();
+                    let func_v = guard.get("__func__").copied().unwrap_or_else(MbValue::none);
+                    let self_v = guard.get("__self__").copied().unwrap_or_else(MbValue::none);
+                    drop(guard);
+                    let addr = resolve_callable(func_v);
+                    let is_native = addr
+                        .map(|a| super::module::is_native_func(a as u64))
+                        .unwrap_or(false);
+                    let (has_star, has_kw) = if is_native {
+                        (
+                            addr.map(|a| super::module::is_variadic_func(a as u64))
+                                .unwrap_or(false),
+                            addr.map(|a| super::module::is_kwargs_func(a as u64))
+                                .unwrap_or(false),
+                        )
+                    } else {
+                        detect_star_kw(func_v, addr)
+                    };
+                    if !has_star && !is_native {
+                        if let Some(params) = super::closure::func_params(func_v) {
+                            let regulars: Vec<&super::closure::MbParamInfo> =
+                                params.iter().filter(|p| p.kind <= 1).collect();
+                            let mut items: Vec<MbValue> =
+                                Vec::with_capacity(regulars.len() + pos.len() + 1);
+                            let mut used = std::collections::HashSet::new();
+                            let mut pos_iter = pos.iter().copied();
+                            for p in &regulars {
+                                if let Some(v) = pos_iter.next() {
+                                    if kw_pairs.iter().any(|(k, _)| *k == p.name) {
+                                        let fname = super::closure::mb_func_get_name(func_v)
+                                            .as_ptr()
+                                            .and_then(|fp| unsafe {
+                                                match &(*fp).data {
+                                                    ObjData::Str(ref s) => Some(s.clone()),
+                                                    _ => None,
+                                                }
+                                            })
+                                            .unwrap_or_default();
+                                        raise_type_error(format!(
+                                            "{fname}() got multiple values for argument '{}'",
+                                            p.name
+                                        ));
+                                        return MbValue::none();
+                                    }
+                                    items.push(v);
+                                } else if let Some((k, v)) =
+                                    kw_pairs.iter().find(|(k, _)| *k == p.name)
+                                {
+                                    used.insert(k.clone());
+                                    items.push(*v);
+                                } else if p.has_default {
+                                    items.push(p.default);
+                                } else {
+                                    items.push(MbValue::none());
+                                }
+                            }
+                            items.extend(pos_iter);
+                            if !has_kw {
+                                let declared: std::collections::HashSet<String> = params
+                                    .iter()
+                                    .filter(|p| p.kind <= 3)
+                                    .map(|p| p.name.clone())
+                                    .collect();
+                                if let Some((bad, _)) = kw_pairs
+                                    .iter()
+                                    .find(|(k, _)| !used.contains(k) && !declared.contains(k))
+                                {
+                                    let fname = super::closure::mb_func_get_name(func_v)
+                                        .as_ptr()
+                                        .and_then(|fp| unsafe {
+                                            match &(*fp).data {
+                                                ObjData::Str(ref s) => Some(s.clone()),
+                                                _ => None,
+                                            }
+                                        })
+                                        .unwrap_or_default();
+                                    raise_type_error(format!(
+                                        "{fname}() got an unexpected keyword argument '{bad}'"
+                                    ));
+                                    return MbValue::none();
+                                }
+                            }
+                            if has_kw {
+                                let extra = super::dict_ops::mb_dict_new();
+                                for (k, v) in &kw_pairs {
+                                    if !used.contains(k) {
+                                        unsafe {
+                                            super::rc::retain_if_ptr(*v);
+                                        }
+                                        super::dict_ops::mb_dict_setitem(
+                                            extra,
+                                            MbValue::from_ptr(MbObject::new_str(k.clone())),
+                                            *v,
+                                        );
+                                    }
+                                }
+                                items.push(extra);
+                            }
+                            let mut bound_items = Vec::with_capacity(items.len() + 1);
+                            bound_items.push(self_v);
+                            bound_items.extend(items);
+                            return mb_call_spread(
+                                func_v,
+                                MbValue::from_ptr(MbObject::new_list(bound_items)),
+                            );
+                        }
+                    }
+                    let mut combined = Vec::with_capacity(pos.len() + 1);
+                    combined.push(self_v);
+                    combined.extend(pos.iter().copied());
+                    return mb_call_spread(func_v, MbValue::from_ptr(MbObject::new_list(combined)));
+                }
+                if class_name == "__bound_native_method__" {
+                    let guard = fields.read().unwrap();
+                    let recv = guard.get("__self__").copied().unwrap_or_else(MbValue::none);
+                    let method = guard
+                        .get("__method__")
+                        .copied()
+                        .unwrap_or_else(MbValue::none);
+                    drop(guard);
+                    return super::class::mb_call_method_kwargs(
+                        recv,
+                        method,
+                        MbValue::from_ptr(MbObject::new_list(pos)),
+                        kwargs_dict,
+                    );
+                }
+            }
+        }
+    }
+    if let Some(type_name) = super::class::resolve_class_name(func).or_else(|| {
+        func.as_ptr().and_then(|ptr| unsafe {
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+    }) {
+        if super::exception::is_builtin_exception_name(&type_name) {
+            return super::exception::mb_exception_new_with_args_and_kwargs(
+                func,
+                MbValue::from_ptr(MbObject::new_list(pos)),
+                kwargs_dict,
+            );
+        }
+        if super::class::class_is_registered(&type_name) {
+            return super::class::mb_instance_new_with_init_kwargs(
+                MbValue::from_ptr(MbObject::new_str(type_name)),
+                MbValue::from_ptr(MbObject::new_list(pos)),
+                kwargs_dict,
+            );
+        }
+    }
     let addr = resolve_callable(func);
     let is_native = addr
         .map(|a| super::module::is_native_func(a as u64))
         .unwrap_or(false);
-    let has_star = addr
-        .map(|a| super::module::is_variadic_func(a as u64))
-        .unwrap_or(false);
-    let has_kw = addr
-        .map(|a| super::module::is_kwargs_func(a as u64))
-        .unwrap_or(false);
+    let (has_star, has_kw) = if is_native {
+        // Native targets keep the addr-registry answer (the flattened-positional
+        // convention in step 5 depends on it); skip the params fallback.
+        (
+            addr.map(|a| super::module::is_variadic_func(a as u64))
+                .unwrap_or(false),
+            addr.map(|a| super::module::is_kwargs_func(a as u64))
+                .unwrap_or(false),
+        )
+    } else {
+        detect_star_kw(func, addr)
+    };
 
     // 3. `*args`-style user target: all positionals pack into one args list;
     //    the keywords pack into the kwargs dict. (Leading regular params
@@ -8158,29 +10231,57 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     //    already carries them positionally.) Native dispatchers are excluded:
     //    they expect the flattened-positional convention (step 5).
     if has_star && !is_native {
-        if has_kw {
-            return invoke_args_kwargs(
-                func,
-                MbValue::from_ptr(MbObject::new_list(pos)),
-                kwargs_dict,
-            );
-        }
-        // *args without **kwargs: keywords cannot bind — fall through to the
-        // flatten fallback below.
+        return invoke_args_kwargs(
+            func,
+            MbValue::from_ptr(MbObject::new_list(pos)),
+            kwargs_dict,
+        );
+    }
+    if has_kw && !is_native {
+        return invoke_args_kwargs(
+            func,
+            MbValue::from_ptr(MbObject::new_list(pos)),
+            kwargs_dict,
+        );
     }
 
     // 4. Regular / keyword-only user target with declared parameters: bind
     //    keyword args to their named positional slots, filling defaults.
     if !has_star && !is_native {
         if let Some(params) = super::closure::func_params(func) {
-            let regulars: Vec<&super::closure::MbParamInfo> =
-                params.iter().filter(|p| p.kind <= 1).collect();
-            let mut items: Vec<MbValue> = Vec::with_capacity(regulars.len() + pos.len());
+            let callable_params: Vec<&super::closure::MbParamInfo> =
+                params.iter().filter(|p| p.kind <= 3).collect();
+            let mut items: Vec<MbValue> = Vec::with_capacity(callable_params.len() + pos.len());
             let mut used = std::collections::HashSet::new();
             let mut pos_iter = pos.iter().copied();
-            for p in &regulars {
-                if let Some(v) = pos_iter.next() {
-                    items.push(v);
+            for p in &callable_params {
+                if p.kind <= 1 {
+                    if let Some(v) = pos_iter.next() {
+                        if kw_pairs.iter().any(|(k, _)| *k == p.name) {
+                            let fname = super::closure::mb_func_get_name(func)
+                                .as_ptr()
+                                .and_then(|fp| unsafe {
+                                    match &(*fp).data {
+                                        ObjData::Str(ref s) => Some(s.clone()),
+                                        _ => None,
+                                    }
+                                })
+                                .unwrap_or_default();
+                            raise_type_error(format!(
+                                "{fname}() got multiple values for argument '{}'",
+                                p.name
+                            ));
+                            return MbValue::none();
+                        }
+                        items.push(v);
+                    } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
+                        used.insert(k.clone());
+                        items.push(*v);
+                    } else if p.has_default {
+                        items.push(p.default);
+                    } else {
+                        items.push(MbValue::none());
+                    }
                 } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
                     used.insert(k.clone());
                     items.push(*v);
@@ -8191,6 +10292,31 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
                 }
             }
             items.extend(pos_iter);
+            if !has_kw {
+                let declared: std::collections::HashSet<String> = params
+                    .iter()
+                    .filter(|p| p.kind <= 3)
+                    .map(|p| p.name.clone())
+                    .collect();
+                if let Some((bad, _)) = kw_pairs
+                    .iter()
+                    .find(|(k, _)| !used.contains(k) && !declared.contains(k))
+                {
+                    let fname = super::closure::mb_func_get_name(func)
+                        .as_ptr()
+                        .and_then(|fp| unsafe {
+                            match &(*fp).data {
+                                ObjData::Str(ref s) => Some(s.clone()),
+                                _ => None,
+                            }
+                        })
+                        .unwrap_or_default();
+                    raise_type_error(format!(
+                        "{fname}() got an unexpected keyword argument '{bad}'"
+                    ));
+                    return MbValue::none();
+                }
+            }
             if has_kw {
                 let extra = super::dict_ops::mb_dict_new();
                 for (k, v) in &kw_pairs {
@@ -8227,6 +10353,8 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
 
 /// floor division: a // b
 pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("//", a, b) {
         return r;
     }
@@ -8312,13 +10440,21 @@ pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
 
 /// gt comparison: a > b
 pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
     // complex ordering raises in CPython — guard here so the message carries
     // '>' (delegating to mb_lt(b, a) would mislabel the operator).
     if complex_ordering_guard(a, b, ">") {
         return MbValue::from_bool(false);
     }
+    if range_ordering_guard(a, b, ">") {
+        return MbValue::from_bool(false);
+    }
     if enum_ordering_guard(a, b, ">") {
         return MbValue::from_bool(false);
+    }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__gt__") {
+        return mb_lt(nb, na);
     }
     // Try __gt__ dunder on a first
     if let Some(pa) = a.as_ptr() {
@@ -8339,17 +10475,45 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
             return MbValue::from_bool(r);
         }
     }
+    // Reflected fallback: `a > b` where `b` is an instance defining __lt__ and
+    // `a` did not handle __gt__ (e.g. `5 > Num(2)` with a plain int on the left)
+    // → b.__lt__(a), matching CPython's reflected-comparison rule. Without this,
+    // the `mb_lt(b, a)` tail mishandles an instance-vs-inline-primitive pair
+    // (mb_values_lt dispatches __lt__ only when both operands are heap objects)
+    // and wrongly answers False. (mb_ge needs no such arm because its mb_le(b,a)
+    // tail dispatches the instance's __le__ directly.)
+    if let Some(pb) = b.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*pb).data {
+                if !super::class::lookup_method(class_name, "__lt__").is_none() {
+                    return MbValue::from_bool(dispatch_richcmp_dunder(b, a, class_name, "__lt__"));
+                }
+            }
+        }
+    }
     mb_lt(b, a)
 }
 
 /// le comparison: a <= b
 pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
     // complex ordering raises in CPython — guard with the '<=' op symbol.
     if complex_ordering_guard(a, b, "<=") {
         return MbValue::from_bool(false);
     }
+    if range_ordering_guard(a, b, "<=") {
+        return MbValue::from_bool(false);
+    }
     if enum_ordering_guard(a, b, "<=") {
         return MbValue::from_bool(false);
+    }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__le__") {
+        let lt_result = mb_lt(na, nb);
+        let eq_result = mb_eq(na, nb);
+        return MbValue::from_bool(
+            lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false),
+        );
     }
     // Try __le__ dunder on a first
     if let Some(pa) = a.as_ptr() {
@@ -8370,6 +10534,18 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
             return MbValue::from_bool(r);
         }
     }
+    // Reflected fallback: `a <= b` where `b` is an instance defining __ge__
+    // and `a` did not handle __le__ (e.g. `{1} <= Probe()` with a set on the left)
+    // → b.__ge__(a), matching CPython's reflected-comparison rule.
+    if let Some(pb) = b.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*pb).data {
+                if !super::class::lookup_method(class_name, "__ge__").is_none() {
+                    return MbValue::from_bool(dispatch_richcmp_dunder(b, a, class_name, "__ge__"));
+                }
+            }
+        }
+    }
     let lt_result = mb_lt(a, b);
     let eq_result = mb_eq(a, b);
     MbValue::from_bool(lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false))
@@ -8377,12 +10553,24 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
 
 /// ge comparison: a >= b
 pub fn mb_ge(a: MbValue, b: MbValue) -> MbValue {
+    let a = int_enum_like_value(a).unwrap_or(a);
+    let b = int_enum_like_value(b).unwrap_or(b);
     // complex ordering raises in CPython — guard with the '>=' op symbol.
     if complex_ordering_guard(a, b, ">=") {
         return MbValue::from_bool(false);
     }
+    if range_ordering_guard(a, b, ">=") {
+        return MbValue::from_bool(false);
+    }
     if enum_ordering_guard(a, b, ">=") {
         return MbValue::from_bool(false);
+    }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__ge__") {
+        let lt_result = mb_lt(nb, na);
+        let eq_result = mb_eq(na, nb);
+        return MbValue::from_bool(
+            lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false),
+        );
     }
     // Try __ge__ dunder on a first
     if let Some(pa) = a.as_ptr() {
@@ -8415,6 +10603,12 @@ pub fn mb_ne(a: MbValue, b: MbValue) -> MbValue {
 /// Python truthiness for any MbValue — returns 1 (true) or 0 (false) as raw i64.
 /// Used by guards in match/case and other conditions where the value may be a heap object.
 pub fn mb_is_truthy(val: MbValue) -> i64 {
+    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(val) {
+        if target.is_none() {
+            return 0;
+        }
+        return mb_is_truthy(target);
+    }
     if val.is_none() {
         return 0;
     }
@@ -8523,14 +10717,42 @@ pub fn mb_is_truthy(val: MbValue) -> i64 {
                         if let Some(iv) = result.as_int() {
                             return if iv != 0 { 1 } else { 0 };
                         }
+                    } else if super::class::class_bool_is_blocked(class_name) {
+                        // `__bool__ = None` disables truth-testing entirely.
+                        raise_type_error("'NoneType' object is not callable".to_string());
+                        return 0;
                     }
-                    // __len__ fallback: truthy if len != 0
+                    // __len__ fallback: truthy if len != 0 (validated).
                     let len_method = super::class::lookup_method(class_name, "__len__");
                     if !len_method.is_none() {
                         let result = super::class::mb_call_method1(len_method, val);
-                        if let Some(iv) = result.as_int() {
+                        let checked = validate_len_result(result);
+                        if let Some(iv) = checked.as_int() {
                             return if iv != 0 { 1 } else { 0 };
                         }
+                        if checked.is_bool() {
+                            return if checked.as_bool() == Some(true) {
+                                1
+                            } else {
+                                0
+                            };
+                        }
+                        if let Some(p) = checked.as_ptr() {
+                            if let ObjData::BigInt(ref b) = (*p).data {
+                                use num_traits::Zero;
+                                return if b.is_zero() { 0 } else { 1 };
+                            }
+                        }
+                        // validate_len_result raised: fall through with a
+                        // pending exception (the value below is discarded).
+                    } else if let Some((_base, payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(val, "__len__")
+                    {
+                        return mb_is_truthy(payload);
+                    } else if let Some((_kind, payload)) =
+                        super::stdlib::collections_mod::user_wrapper_data(val)
+                    {
+                        return mb_is_truthy(payload);
                     }
                     // Empty Flag members (value 0, e.g. `RED & BLUE`) are
                     // falsy; plain Enum members stay default-truthy.
@@ -8603,22 +10825,9 @@ pub fn mb_set_from_iterable(args: MbValue) -> MbValue {
 /// assert statement failure — raise AssertionError via exception system.
 pub fn mb_assertion_error(msg: MbValue) {
     let exc_type = MbValue::from_ptr(MbObject::new_str("AssertionError".to_string()));
-    let message = if msg.is_none() || msg == MbValue::from_int(0) {
-        MbValue::from_ptr(MbObject::new_str(String::new()))
-    } else if let Some(ptr) = msg.as_ptr() {
-        let s = unsafe {
-            match &(*ptr).data {
-                ObjData::Str(s) => s.clone(),
-                _ => format!("{:?}", msg),
-            }
-        };
-        MbValue::from_ptr(MbObject::new_str(s))
-    } else if let Some(i) = msg.as_int() {
-        MbValue::from_ptr(MbObject::new_str(format!("{i}")))
-    } else {
-        MbValue::from_ptr(MbObject::new_str(String::new()))
-    };
-    super::exception::mb_raise(exc_type, message);
+    let args = MbValue::from_ptr(MbObject::new_list(vec![msg]));
+    let instance = super::exception::mb_exception_new_with_args(exc_type, args);
+    super::class::mb_raise_instance(instance);
 }
 
 /// assert statement failure — no message variant.
@@ -8648,9 +10857,29 @@ pub fn mb_assertion_error_no_msg() {
 /// surface; the full scope-bound eval that CPython exposes still
 /// needs the parser+interpreter integration tracked under #1256.
 pub fn mb_eval(expr: MbValue) -> MbValue {
+    mb_eval_impl(expr, None, None)
+}
+
+pub fn mb_eval_with_globals(expr: MbValue, globals: MbValue) -> MbValue {
+    mb_eval_impl(expr, Some(globals), None)
+}
+
+pub fn mb_eval_with_namespaces(expr: MbValue, globals: MbValue, locals: MbValue) -> MbValue {
+    mb_eval_impl(expr, Some(globals), Some(locals))
+}
+
+fn mb_eval_impl(expr: MbValue, globals: Option<MbValue>, locals: Option<MbValue>) -> MbValue {
     use crate::lexer;
     use crate::parser::Parser;
     use crate::source::SourceMap;
+
+    if let Some(ptr) = expr.as_ptr() {
+        unsafe {
+            if let ObjData::CodeObject { mode, ast, .. } = &(*ptr).data {
+                return mb_eval_code_object(mode, ast, globals, locals);
+            }
+        }
+    }
 
     let source = if let Some(ptr) = expr.as_ptr() {
         unsafe {
@@ -8670,16 +10899,56 @@ pub fn mb_eval(expr: MbValue) -> MbValue {
     parser.skip_newlines();
     let ast = match parser.parse_expr() {
         Ok(e) => e,
-        Err(err) => {
+        Err(_err) => {
             // CPython: eval of unparseable source raises SyntaxError.
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(err.to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "invalid syntax (<string>, line 1)".to_string(),
+                )),
             );
             return MbValue::none();
         }
     };
-    eval_expr(&ast.node)
+    if globals.is_some() || locals.is_some() {
+        let mut ctx = ExecContext {
+            globals,
+            locals,
+            ..ExecContext::default()
+        };
+        exec_eval_expr(&mut ctx, &ast.node)
+    } else {
+        eval_expr(&ast.node)
+    }
+}
+
+fn mb_eval_code_object(
+    mode: &str,
+    ast: &crate::parser::ast::Module,
+    globals: Option<MbValue>,
+    locals: Option<MbValue>,
+) -> MbValue {
+    let mut ctx = ExecContext {
+        globals,
+        locals,
+        ..ExecContext::default()
+    };
+    if mode == "eval" {
+        if let Some(stmt) = ast.stmts.first() {
+            if let crate::parser::ast::Stmt::ExprStmt(expr) = &stmt.node {
+                return exec_eval_expr(&mut ctx, &expr.node);
+            }
+        }
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "eval() arg 1 must be a string, bytes or code object".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    exec_stmts_with_context(&mut ctx, &ast.stmts);
+    MbValue::none()
 }
 
 /// Pending-exception probe for the eval tree walker: sub-evaluations raise
@@ -8689,10 +10958,72 @@ fn eval_pending() -> bool {
     super::exception::mb_has_exception().as_bool() == Some(true)
 }
 
+fn eval_dotted_path(expr: &crate::parser::ast::Expr) -> Option<Vec<String>> {
+    use crate::parser::ast::Expr;
+    match expr {
+        Expr::Ident(name) => Some(vec![name.clone()]),
+        Expr::Attr { object, attr } => {
+            let mut parts = eval_dotted_path(&object.node)?;
+            parts.push(attr.clone());
+            Some(parts)
+        }
+        _ => None,
+    }
+}
+
+fn eval_str_value(val: MbValue) -> Option<String> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn eval_call_values(args: &[crate::parser::ast::CallArg]) -> Option<(Vec<MbValue>, bool)> {
+    use crate::parser::ast::CallArg;
+    let mut vals = Vec::new();
+    let kwargs = super::dict_ops::mb_dict_new();
+    let mut has_kwargs = false;
+    for arg in args {
+        match arg {
+            CallArg::Positional(e) => {
+                vals.push(eval_expr(&e.node));
+                if eval_pending() {
+                    return None;
+                }
+            }
+            CallArg::Keyword { name, value } => {
+                let v = eval_expr(&value.node);
+                if eval_pending() {
+                    return None;
+                }
+                super::dict_ops::mb_dict_setitem(
+                    kwargs,
+                    MbValue::from_ptr(MbObject::new_str(name.clone())),
+                    v,
+                );
+                has_kwargs = true;
+            }
+            CallArg::StarArg(_) | CallArg::DoubleStarArg(_) => return None,
+        }
+    }
+    if has_kwargs {
+        vals.push(kwargs);
+    }
+    Some((vals, has_kwargs))
+}
+
+fn eval_make_args_list(vals: &[MbValue]) -> MbValue {
+    MbValue::from_ptr(MbObject::new_list(vals.to_vec()))
+}
+
 fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
     use crate::parser::ast::Expr;
     match expr {
         Expr::IntLit(i) => MbValue::from_int(*i),
+        Expr::BigIntLit(s) => super::bigint_ops::bigint_from_literal(s),
         Expr::FloatLit(f) => MbValue::from_float(*f),
         Expr::BoolLit(b) => MbValue::from_bool(*b),
         Expr::NoneLit => MbValue::none(),
@@ -8701,6 +11032,9 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
         Expr::ComplexLit(imag) => MbValue::from_ptr(MbObject::new_complex(0.0, *imag)),
         Expr::Ellipsis => MbValue::ellipsis(),
         Expr::Ident(name) => {
+            if super::exception::is_builtin_exception_name(name) {
+                return make_type_object(name);
+            }
             // Resolve module globals by name (the globals() introspection
             // path); unknown names raise NameError like CPython eval.
             let globals = super::closure::build_globals_dict();
@@ -8848,7 +11182,54 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
             // Narrow constructor support so `eval(repr(x))` round-trips for
             // the stdlib numeric handle types (Decimal('0.3'),
             // Fraction(3, 4)). Only positional literal-ish args evaluate.
-            if let Expr::Ident(name) = &func.node {
+            if let Some(path) = eval_dotted_path(&func.node) {
+                let (vals, has_kwargs) = match eval_call_values(args) {
+                    Some(v) => v,
+                    None => return MbValue::none(),
+                };
+                match path.as_slice() {
+                    [name] if name == "Decimal" && !has_kwargs && vals.len() == 1 => {
+                        return super::stdlib::decimal_mod::mb_decimal_new(vals[0]);
+                    }
+                    [name]
+                        if name == "Fraction" && !has_kwargs && (1..=2).contains(&vals.len()) =>
+                    {
+                        return super::stdlib::fractions_mod::mb_fraction_new(
+                            vals[0],
+                            vals.get(1).copied().unwrap_or_else(MbValue::none),
+                        );
+                    }
+                    [name] if name == "repr" && !has_kwargs && vals.len() == 1 => {
+                        return mb_repr(vals[0])
+                    }
+                    [name] if name == "str" && !has_kwargs && vals.len() == 1 => {
+                        return mb_str(vals[0])
+                    }
+                    [name] if super::exception::is_builtin_exception_name(name) && !has_kwargs => {
+                        let typ = make_type_object(name);
+                        let args_list = eval_make_args_list(&vals);
+                        return mb_call_spread(typ, args_list);
+                    }
+                    [module, name]
+                        if module == "contextlib" && name == "suppress" && !has_kwargs =>
+                    {
+                        return super::stdlib::contextlib_mod::mb_contextlib_suppress_instance(
+                            vals,
+                        );
+                    }
+                    [module, ctor] if module == "datetime" && ctor == "timedelta" => {
+                        return super::stdlib::datetime_mod::mb_timedelta_new(MbValue::from_ptr(
+                            MbObject::new_list(vals),
+                        ));
+                    }
+                    [module, ctor] if module == "datetime" && ctor == "timezone" && !has_kwargs => {
+                        let offset = vals.first().copied().unwrap_or_else(MbValue::none);
+                        let name = vals.get(1).copied().and_then(eval_str_value);
+                        return super::stdlib::datetime_mod::timezone_from_offset(offset, name);
+                    }
+                    _ => {}
+                }
+            } else if let Expr::Ident(name) = &func.node {
                 let vals: Vec<MbValue> = args
                     .iter()
                     .filter_map(|a| match a {
@@ -8875,7 +11256,7 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
             // Calling a non-callable literal ((1)() in an eval'd f-string)
             // raises TypeError like CPython.
             let callee_type = match &func.node {
-                Expr::IntLit(_) => Some("int"),
+                Expr::IntLit(_) | Expr::BigIntLit(_) => Some("int"),
                 Expr::FloatLit(_) => Some("float"),
                 Expr::StrLit(_) => Some("str"),
                 Expr::BoolLit(_) => Some("bool"),
@@ -8893,8 +11274,1395 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
             }
             MbValue::none()
         }
+        Expr::Attr { .. } => {
+            if let Some(path) = eval_dotted_path(expr) {
+                match path.as_slice() {
+                    [module, class, attr]
+                        if module == "datetime"
+                            && class == "timezone"
+                            && matches!(attr.as_str(), "utc" | "min" | "max") =>
+                    {
+                        return super::stdlib::datetime_mod::timezone_class_attr(attr)
+                            .unwrap_or_else(MbValue::none);
+                    }
+                    _ => {}
+                }
+            }
+            MbValue::none()
+        }
         _ => MbValue::none(),
     }
+}
+
+fn exec_has_pending_exception() -> bool {
+    super::exception::mb_has_exception().as_bool() == Some(true)
+}
+
+#[derive(Default)]
+struct ExecContext {
+    class_match_args: FxHashMap<String, Option<MbValue>>,
+    type_vars: std::collections::HashSet<String>,
+    functions: FxHashMap<String, ExecFunction>,
+    frames: Vec<FxHashMap<String, MbValue>>,
+    globals: Option<MbValue>,
+    locals: Option<MbValue>,
+}
+
+#[derive(Clone)]
+struct ExecFunction {
+    params: Vec<String>,
+    defaults: Vec<Option<MbValue>>,
+    body: Vec<crate::source::span::Spanned<crate::parser::ast::Stmt>>,
+}
+
+#[derive(Clone)]
+struct ExecFunctionBinding {
+    name: String,
+    is_async: bool,
+    globals: Option<MbValue>,
+    function: ExecFunction,
+}
+
+static EXEC_FUNCTIONS: std::sync::LazyLock<std::sync::RwLock<FxHashMap<u64, ExecFunctionBinding>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(FxHashMap::default()));
+static NEXT_EXEC_FUNCTION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+#[derive(Clone, Copy)]
+enum ExecFlow {
+    Normal,
+    Return(MbValue),
+    Break,
+    Continue,
+}
+
+fn exec_raise_type_error(message: String) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(message)),
+    );
+}
+
+fn exec_match_type_name(value: MbValue) -> &'static str {
+    if value.is_none() {
+        return "NoneType";
+    }
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            return match &(*ptr).data {
+                ObjData::Tuple(_) => "tuple",
+                ObjData::List(_) => "list",
+                ObjData::Str(_) => "str",
+                ObjData::Bytes(_) => "bytes",
+                ObjData::ByteArray(_) => "bytearray",
+                ObjData::Dict(_) => "dict",
+                ObjData::Set(_) => "set",
+                _ => "object",
+            };
+        }
+    }
+    if value.as_bool().is_some() {
+        "bool"
+    } else if value.as_int().is_some() {
+        "int"
+    } else if value.as_float().is_some() {
+        "float"
+    } else {
+        "object"
+    }
+}
+
+fn exec_raise_class_pattern_count_error(class_name: &str, accepted: usize, given: usize) {
+    let sub = if accepted == 1 {
+        "sub-pattern"
+    } else {
+        "sub-patterns"
+    };
+    exec_raise_type_error(format!(
+        "{class_name}() accepts {accepted} positional {sub} ({given} given)"
+    ));
+}
+
+fn exec_is_typevar_constructor(expr: &crate::parser::ast::Expr) -> bool {
+    let crate::parser::ast::Expr::Call { func, .. } = expr else {
+        return false;
+    };
+    matches!(
+        eval_dotted_path(&func.node).as_deref(),
+        Some([name]) if name == "TypeVar"
+    ) || matches!(
+        eval_dotted_path(&func.node).as_deref(),
+        Some([module, name]) if module == "typing" && name == "TypeVar"
+    )
+}
+
+fn exec_is_typing_generic_expr(expr: &crate::parser::ast::Expr) -> bool {
+    matches!(eval_dotted_path(expr).as_deref(), Some([name]) if name == "Generic")
+        || matches!(
+            eval_dotted_path(expr).as_deref(),
+            Some([module, name]) if module == "typing" && name == "Generic"
+        )
+}
+
+fn exec_base_is_typing_generic(base: &crate::parser::ast::Expr) -> bool {
+    use crate::parser::ast::Expr;
+    match base {
+        Expr::Index { object, .. } => exec_is_typing_generic_expr(&object.node),
+        _ => exec_is_typing_generic_expr(base),
+    }
+}
+
+fn exec_base_is_object(base: &crate::parser::ast::Expr) -> bool {
+    matches!(eval_dotted_path(base).as_deref(), Some([name]) if name == "object")
+}
+
+fn exec_collect_index_idents(expr: &crate::parser::ast::Expr, out: &mut Vec<String>) {
+    use crate::parser::ast::Expr;
+    match expr {
+        Expr::Ident(name) => out.push(name.clone()),
+        Expr::Index { object, index } => {
+            exec_collect_index_idents(&object.node, out);
+            exec_collect_index_idents(&index.node, out);
+        }
+        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::SetLit(items) => {
+            for item in items {
+                exec_collect_index_idents(&item.node, out);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            exec_collect_index_idents(&lhs.node, out);
+            exec_collect_index_idents(&rhs.node, out);
+        }
+        Expr::Attr { .. }
+        | Expr::Call { .. }
+        | Expr::IntLit(_)
+        | Expr::BigIntLit(_)
+        | Expr::FloatLit(_)
+        | Expr::ComplexLit(_)
+        | Expr::StrLit(_)
+        | Expr::BytesLit(_)
+        | Expr::BoolLit(_)
+        | Expr::NoneLit
+        | Expr::Ellipsis
+        | Expr::UnaryOp { .. }
+        | Expr::Slice { .. }
+        | Expr::DictLit(_)
+        | Expr::IfExpr { .. }
+        | Expr::ChainedCompare { .. }
+        | Expr::Lambda { .. }
+        | Expr::FString(_)
+        | Expr::ListComp { .. }
+        | Expr::SetComp { .. }
+        | Expr::DictComp { .. }
+        | Expr::GeneratorExpr { .. }
+        | Expr::Await(_)
+        | Expr::Yield(_)
+        | Expr::YieldFrom(_)
+        | Expr::Walrus { .. }
+        | Expr::Starred(_)
+        | Expr::UnpackTarget(_) => {}
+    }
+}
+
+fn exec_validate_pep695_class_bases(
+    ctx: &ExecContext,
+    type_params: &[crate::parser::ast::TypeParam],
+    bases: &[crate::source::span::Spanned<crate::parser::ast::Expr>],
+) {
+    if type_params.is_empty() {
+        return;
+    }
+
+    if bases
+        .iter()
+        .any(|base| exec_base_is_typing_generic(&base.node))
+    {
+        exec_raise_type_error("Cannot inherit from Generic[...] multiple times.".to_string());
+        return;
+    }
+
+    if bases.iter().any(|base| exec_base_is_object(&base.node)) {
+        exec_raise_type_error(
+            "Cannot create a consistent method resolution order (MRO) for bases object, Generic"
+                .to_string(),
+        );
+        return;
+    }
+
+    let declared: std::collections::HashSet<&str> = type_params
+        .iter()
+        .map(|param| param.name.as_str())
+        .collect();
+    for base in bases {
+        let crate::parser::ast::Expr::Index { index, .. } = &base.node else {
+            continue;
+        };
+        let mut names = Vec::new();
+        exec_collect_index_idents(&index.node, &mut names);
+        if let Some(name) = names
+            .iter()
+            .find(|name| ctx.type_vars.contains(*name) && !declared.contains(name.as_str()))
+        {
+            exec_raise_type_error(format!(
+                "Some type variables (~{name}) are not listed in Generic"
+            ));
+            return;
+        }
+    }
+}
+
+fn exec_subject_class_name(expr: &crate::parser::ast::Expr) -> Option<String> {
+    use crate::parser::ast::{CallArg, Expr};
+    let Expr::Call { func, args } = expr else {
+        return None;
+    };
+    if args
+        .iter()
+        .any(|arg| !matches!(arg, CallArg::Positional(_)))
+    {
+        return None;
+    }
+    match &func.node {
+        Expr::Ident(name) => Some(name.clone()),
+        Expr::Attr { attr, .. } => Some(attr.clone()),
+        _ => None,
+    }
+}
+
+fn exec_validate_class_pattern(
+    ctx: &ExecContext,
+    subject_class: &str,
+    pattern: &crate::parser::ast::Pattern,
+) {
+    use crate::parser::ast::Pattern;
+    let Pattern::ClassPattern { cls, patterns } = pattern else {
+        return;
+    };
+    let Some(pattern_class) = cls.last() else {
+        return;
+    };
+    if pattern_class != subject_class {
+        return;
+    }
+
+    let positional = patterns.iter().filter(|(name, _)| name.is_none()).count();
+    let match_args = ctx.class_match_args.get(subject_class).copied().flatten();
+    let items = match match_args {
+        Some(value) => {
+            if let Some(ptr) = value.as_ptr() {
+                unsafe {
+                    match &(*ptr).data {
+                        ObjData::Tuple(items) => items.clone(),
+                        _ => {
+                            exec_raise_type_error(format!(
+                                "{subject_class}.__match_args__ must be a tuple (got {})",
+                                exec_match_type_name(value)
+                            ));
+                            return;
+                        }
+                    }
+                }
+            } else {
+                exec_raise_type_error(format!(
+                    "{subject_class}.__match_args__ must be a tuple (got {})",
+                    exec_match_type_name(value)
+                ));
+                return;
+            }
+        }
+        None => Vec::new(),
+    };
+
+    if positional > items.len() {
+        exec_raise_class_pattern_count_error(subject_class, items.len(), positional);
+        return;
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for item in items.iter().take(positional) {
+        let Some(name) = eval_str_value(*item) else {
+            exec_raise_type_error(format!(
+                "__match_args__ elements must be strings (got {})",
+                exec_match_type_name(*item)
+            ));
+            return;
+        };
+        if !seen.insert(name.clone()) {
+            exec_raise_type_error(format!(
+                "{subject_class}() got multiple sub-patterns for attribute '{name}'"
+            ));
+            return;
+        }
+    }
+    for (keyword, _) in patterns.iter().filter(|(name, _)| name.is_some()) {
+        if let Some(name) = keyword {
+            if !seen.insert(name.clone()) {
+                exec_raise_type_error(format!(
+                    "{subject_class}() got multiple sub-patterns for attribute '{name}'"
+                ));
+                return;
+            }
+        }
+    }
+}
+
+fn exec_store_global(ctx: &ExecContext, name: &str, value: MbValue) {
+    let Some(globals) = ctx.globals else {
+        return;
+    };
+    super::dict_ops::mb_dict_setitem(
+        globals,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        value,
+    );
+}
+
+fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
+    if let Some(frame) = ctx.frames.last() {
+        if let Some(&value) = frame.get(name) {
+            return Some(value);
+        }
+    }
+    if let Some(locals) = ctx.locals {
+        let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+        if super::dict_ops::mb_dict_contains(locals, key)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            return Some(super::dict_ops::mb_dict_get(locals, key, MbValue::none()));
+        }
+    }
+    let globals = ctx.globals?;
+    let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    if super::dict_ops::mb_dict_contains(globals, key)
+        .as_bool()
+        .unwrap_or(false)
+    {
+        Some(super::dict_ops::mb_dict_get(globals, key, MbValue::none()))
+    } else {
+        None
+    }
+}
+
+fn exec_store_name(ctx: &mut ExecContext, name: &str, value: MbValue) {
+    if let Some(frame) = ctx.frames.last_mut() {
+        frame.insert(name.to_string(), value);
+    } else if let Some(locals) = ctx.locals {
+        super::dict_ops::mb_dict_setitem(
+            locals,
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            value,
+        );
+    } else {
+        exec_store_global(ctx, name, value);
+    }
+}
+
+fn make_exec_function_value(name: &str, is_async: bool, return_value: MbValue) -> MbValue {
+    let inst = MbObject::new_instance("__exec_function__".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut guard = fields.write().unwrap();
+            guard.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            guard.insert("__is_async__".to_string(), MbValue::from_bool(is_async));
+            unsafe {
+                super::rc::retain_if_ptr(return_value);
+            }
+            guard.insert("__return__".to_string(), return_value);
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn make_exec_function_body_value(
+    name: &str,
+    is_async: bool,
+    function: ExecFunction,
+    globals: Option<MbValue>,
+) -> MbValue {
+    if let Some(globals) = globals {
+        unsafe {
+            super::rc::retain_if_ptr(globals);
+        }
+    }
+    for default in &function.defaults {
+        if let Some(value) = default {
+            unsafe {
+                super::rc::retain_if_ptr(*value);
+            }
+        }
+    }
+    let id = NEXT_EXEC_FUNCTION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    EXEC_FUNCTIONS.write().unwrap().insert(
+        id,
+        ExecFunctionBinding {
+            name: name.to_string(),
+            is_async,
+            globals,
+            function,
+        },
+    );
+
+    let inst = MbObject::new_instance("__exec_function__".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut guard = fields.write().unwrap();
+            guard.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            guard.insert("__is_async__".to_string(), MbValue::from_bool(is_async));
+            guard.insert("__function_id__".to_string(), MbValue::from_int(id as i64));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn exec_function_field(func: MbValue, key: &str) -> Option<MbValue> {
+    let ptr = func.as_ptr()?;
+    unsafe {
+        let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        else {
+            return None;
+        };
+        if class_name != "__exec_function__" {
+            return None;
+        }
+        fields.read().unwrap().get(key).copied()
+    }
+}
+
+pub fn mb_exec_function_is_async(func: MbValue) -> bool {
+    exec_function_field(func, "__is_async__")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+pub fn mb_exec_function_call(func: MbValue, args: Vec<MbValue>) -> MbValue {
+    if let Some(id) = exec_function_field(func, "__function_id__").and_then(|value| value.as_int())
+    {
+        if let Some(binding) = EXEC_FUNCTIONS.read().unwrap().get(&(id as u64)).cloned() {
+            let mut ctx = ExecContext {
+                globals: binding.globals,
+                ..ExecContext::default()
+            };
+            let return_value = exec_call_function(&mut ctx, &binding.function, &args);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            if binding.is_async {
+                let coro = super::async_rt::mb_coroutine_new(
+                    MbValue::from_ptr(MbObject::new_str(binding.name)),
+                    MbValue::from_ptr(MbObject::new_list(Vec::new())),
+                );
+                super::async_rt::mb_coroutine_complete(coro, return_value);
+                return coro;
+            }
+            return return_value;
+        }
+    }
+    if !args.is_empty() {
+        exec_raise_type_error(format!(
+            "function takes 0 arguments but {} were given",
+            args.len()
+        ));
+        return MbValue::none();
+    }
+    let return_value = exec_function_field(func, "__return__").unwrap_or_else(MbValue::none);
+    unsafe {
+        super::rc::retain_if_ptr(return_value);
+    }
+    if mb_exec_function_is_async(func) {
+        let name = exec_function_field(func, "__name__")
+            .and_then(eval_str_value)
+            .unwrap_or_else(|| "<exec coroutine>".to_string());
+        let coro = super::async_rt::mb_coroutine_new(
+            MbValue::from_ptr(MbObject::new_str(name)),
+            MbValue::from_ptr(MbObject::new_list(Vec::new())),
+        );
+        super::async_rt::mb_coroutine_complete(coro, return_value);
+        return coro;
+    }
+    return_value
+}
+
+fn exec_truthy(value: MbValue) -> bool {
+    if let Some(b) = value.as_bool() {
+        return b;
+    }
+    if let Some(i) = value.as_int_pyint() {
+        return i != 0;
+    }
+    if let Some(f) = value.as_float() {
+        return f != 0.0;
+    }
+    if value.is_none() {
+        return false;
+    }
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Str(s) => !s.is_empty(),
+                ObjData::Bytes(b) => !b.is_empty(),
+                ObjData::ByteArray(lock) => !lock.read().unwrap().is_empty(),
+                ObjData::List(lock) => !lock.read().unwrap().is_empty(),
+                ObjData::Tuple(items) => !items.is_empty(),
+                ObjData::Dict(lock) => !lock.read().unwrap().is_empty(),
+                ObjData::Set(lock) => !lock.read().unwrap().is_empty(),
+                ObjData::FrozenSet(items) => !items.is_empty(),
+                _ => true,
+            }
+        }
+    } else {
+        true
+    }
+}
+
+fn exec_eval_call_args(
+    ctx: &mut ExecContext,
+    args: &[crate::parser::ast::CallArg],
+) -> Option<Vec<MbValue>> {
+    use crate::parser::ast::CallArg;
+    let mut values = Vec::with_capacity(args.len());
+    for arg in args {
+        match arg {
+            CallArg::Positional(expr) => {
+                values.push(exec_eval_expr(ctx, &expr.node));
+                if exec_has_pending_exception() {
+                    return None;
+                }
+            }
+            CallArg::Keyword { .. } | CallArg::StarArg(_) | CallArg::DoubleStarArg(_) => {
+                return None;
+            }
+        }
+    }
+    Some(values)
+}
+
+fn exec_range_values(args: &[MbValue]) -> MbValue {
+    let (start, stop, step) = match args {
+        [stop] => (0, stop.as_int_pyint().unwrap_or(0), 1),
+        [start, stop] => (
+            start.as_int_pyint().unwrap_or(0),
+            stop.as_int_pyint().unwrap_or(0),
+            1,
+        ),
+        [start, stop, step] => (
+            start.as_int_pyint().unwrap_or(0),
+            stop.as_int_pyint().unwrap_or(0),
+            step.as_int_pyint().unwrap_or(0),
+        ),
+        _ => return MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    };
+    if step == 0 {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "range() arg 3 must not be zero".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    let mut items = Vec::new();
+    let mut cur = start;
+    if step > 0 {
+        while cur < stop {
+            items.push(MbValue::from_int(cur));
+            cur += step;
+        }
+    } else {
+        while cur > stop {
+            items.push(MbValue::from_int(cur));
+            cur += step;
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+fn exec_call_function(ctx: &mut ExecContext, func: &ExecFunction, args: &[MbValue]) -> MbValue {
+    if args.len() > func.params.len() {
+        exec_raise_type_error(format!(
+            "function takes {} arguments but {} were given",
+            func.params.len(),
+            args.len()
+        ));
+        return MbValue::none();
+    }
+    let mut frame = FxHashMap::default();
+    for (idx, param) in func.params.iter().enumerate() {
+        let value = if let Some(value) = args.get(idx) {
+            *value
+        } else if let Some(Some(default)) = func.defaults.get(idx) {
+            *default
+        } else {
+            exec_raise_type_error(format!("missing required argument: '{param}'"));
+            return MbValue::none();
+        };
+        frame.insert(param.clone(), value);
+    }
+    ctx.frames.push(frame);
+    let flow = exec_block_flow(ctx, &func.body);
+    ctx.frames.pop();
+    match flow {
+        ExecFlow::Return(value) => value,
+        ExecFlow::Normal | ExecFlow::Break | ExecFlow::Continue => MbValue::none(),
+    }
+}
+
+fn exec_static_return_value(
+    ctx: &mut ExecContext,
+    body: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+) -> MbValue {
+    let Some(stmt) = body.iter().find(|stmt| {
+        matches!(
+            stmt.node,
+            crate::parser::ast::Stmt::Return(_) | crate::parser::ast::Stmt::ExprStmt(_)
+        )
+    }) else {
+        return MbValue::none();
+    };
+    match &stmt.node {
+        crate::parser::ast::Stmt::Return(Some(expr)) => Some(exec_eval_expr(ctx, &expr.node)),
+        crate::parser::ast::Stmt::Return(None) => Some(MbValue::none()),
+        crate::parser::ast::Stmt::ExprStmt(expr) => Some(exec_eval_expr(ctx, &expr.node)),
+        _ => None,
+    }
+    .unwrap_or_else(MbValue::none)
+}
+
+fn exec_eval_fstring_parts(
+    ctx: &mut ExecContext,
+    parts: &[crate::parser::ast::FStringPart],
+) -> Option<String> {
+    let mut out = String::new();
+    for part in parts {
+        match part {
+            crate::parser::ast::FStringPart::Literal(text) => out.push_str(text),
+            crate::parser::ast::FStringPart::Expr(expr, spec) => {
+                let value = exec_eval_expr(ctx, &expr.node);
+                if exec_has_pending_exception() {
+                    return None;
+                }
+                let formatted = match spec {
+                    None => super::string_ops::mb_fstring_value(value),
+                    Some(spec_parts) => {
+                        let spec_text = exec_eval_fstring_parts(ctx, spec_parts)?;
+                        super::string_ops::mb_format_value(
+                            value,
+                            MbValue::from_ptr(MbObject::new_str(spec_text)),
+                        )
+                    }
+                };
+                if exec_has_pending_exception() {
+                    return None;
+                }
+                if let Some(ptr) = formatted.as_ptr() {
+                    unsafe {
+                        if let ObjData::Str(text) = &(*ptr).data {
+                            out.push_str(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbValue {
+    use crate::parser::ast::Expr;
+    match expr {
+        Expr::IntLit(i) => MbValue::from_int(*i),
+        Expr::BigIntLit(s) => super::bigint_ops::bigint_from_literal(s),
+        Expr::FloatLit(f) => MbValue::from_float(*f),
+        Expr::BoolLit(b) => MbValue::from_bool(*b),
+        Expr::NoneLit => MbValue::none(),
+        Expr::StrLit(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
+        Expr::BytesLit(b) => MbValue::from_ptr(MbObject::new_bytes(b.clone())),
+        Expr::ComplexLit(imag) => MbValue::from_ptr(MbObject::new_complex(0.0, *imag)),
+        Expr::Ellipsis => MbValue::ellipsis(),
+        Expr::Ident(name) => {
+            if let Some(value) = exec_lookup_name(ctx, name) {
+                return value;
+            }
+            if super::exception::is_builtin_exception_name(name) {
+                return make_type_object(name);
+            }
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("NameError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!("name '{name}' is not defined"))),
+            );
+            MbValue::none()
+        }
+        Expr::FString(parts) => exec_eval_fstring_parts(ctx, parts)
+            .map(|text| MbValue::from_ptr(MbObject::new_str(text)))
+            .unwrap_or_else(MbValue::none),
+        Expr::BinOp { op, lhs, rhs } => {
+            let left = exec_eval_expr(ctx, &lhs.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            match op {
+                crate::parser::ast::BinOp::And if !exec_truthy(left) => return left,
+                crate::parser::ast::BinOp::Or if exec_truthy(left) => return left,
+                _ => {}
+            }
+            let right = exec_eval_expr(ctx, &rhs.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            eval_binop(*op, left, right)
+        }
+        Expr::UnaryOp { op, operand } => {
+            let value = exec_eval_expr(ctx, &operand.node);
+            eval_unaryop(*op, value)
+        }
+        Expr::ListLit(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                values.push(exec_eval_expr(ctx, &item.node));
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+            }
+            MbValue::from_ptr(MbObject::new_list(values))
+        }
+        Expr::TupleLit(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                values.push(exec_eval_expr(ctx, &item.node));
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+            }
+            MbValue::from_ptr(MbObject::new_tuple(values))
+        }
+        Expr::SetLit(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                values.push(exec_eval_expr(ctx, &item.node));
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+            }
+            super::set_ops::mb_set_from_list(MbValue::from_ptr(MbObject::new_list(values)))
+        }
+        Expr::DictLit(entries) => {
+            let dict = super::dict_ops::mb_dict_new();
+            for (key, value) in entries {
+                if let Some(key_expr) = key {
+                    let key = exec_eval_expr(ctx, &key_expr.node);
+                    if exec_has_pending_exception() {
+                        return MbValue::none();
+                    }
+                    let value = exec_eval_expr(ctx, &value.node);
+                    if exec_has_pending_exception() {
+                        return MbValue::none();
+                    }
+                    super::dict_ops::mb_dict_setitem(dict, key, value);
+                }
+            }
+            dict
+        }
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            let condition = exec_eval_expr(ctx, &condition.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            if exec_truthy(condition) {
+                exec_eval_expr(ctx, &body.node)
+            } else {
+                exec_eval_expr(ctx, &else_body.node)
+            }
+        }
+        Expr::ChainedCompare { operands, ops } => {
+            if operands.is_empty() {
+                return MbValue::from_bool(true);
+            }
+            let mut prev = exec_eval_expr(ctx, &operands[0].node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            for (idx, op) in ops.iter().enumerate() {
+                let next = exec_eval_expr(ctx, &operands[idx + 1].node);
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+                let result = eval_binop(*op, prev, next);
+                if !result.as_bool().unwrap_or(false) {
+                    return MbValue::from_bool(false);
+                }
+                prev = next;
+            }
+            MbValue::from_bool(true)
+        }
+        Expr::Call { func, args } => {
+            let values = match exec_eval_call_args(ctx, args) {
+                Some(values) => values,
+                None => return MbValue::none(),
+            };
+            if let Expr::Ident(name) = &func.node {
+                if name == "range" {
+                    return exec_range_values(&values);
+                }
+                if name == "repr" && values.len() == 1 {
+                    return mb_repr(values[0]);
+                }
+                if name == "str" && values.len() == 1 {
+                    return mb_str(values[0]);
+                }
+                if super::exception::is_builtin_exception_name(name) {
+                    let typ = make_type_object(name);
+                    let args_list = MbValue::from_ptr(MbObject::new_list(values));
+                    return mb_call_spread(typ, args_list);
+                }
+                if let Some(func) = ctx.functions.get(name).cloned() {
+                    return exec_call_function(ctx, &func, &values);
+                }
+            }
+            if let Expr::Attr { object, attr } = &func.node {
+                let receiver = exec_eval_expr(ctx, &object.node);
+                if exec_has_pending_exception() {
+                    return MbValue::none();
+                }
+                if attr == "append" && values.len() == 1 {
+                    super::list_ops::mb_list_append(receiver, values[0]);
+                    return MbValue::none();
+                }
+                return super::class::mb_call_method(
+                    receiver,
+                    MbValue::from_ptr(MbObject::new_str(attr.clone())),
+                    MbValue::from_ptr(MbObject::new_list(values)),
+                );
+            }
+            eval_expr(expr)
+        }
+        Expr::Attr { object, attr } => {
+            let receiver = exec_eval_expr(ctx, &object.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            if receiver.is_none() {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'NoneType' object has no attribute '{attr}'"
+                    ))),
+                );
+                return MbValue::none();
+            }
+            super::class::mb_getattr(receiver, MbValue::from_ptr(MbObject::new_str(attr.clone())))
+        }
+        Expr::Index { object, index } => {
+            let object = exec_eval_expr(ctx, &object.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            let index = exec_eval_expr(ctx, &index.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            super::class::mb_obj_getitem(object, index)
+        }
+        _ => eval_expr(expr),
+    }
+}
+
+fn exec_bind_targets(ctx: &mut ExecContext, targets: &[String], value: MbValue) {
+    if let [name] = targets {
+        exec_store_name(ctx, name, value);
+        return;
+    }
+    let items = extract_items(value);
+    for (name, item) in targets.iter().zip(items) {
+        exec_store_name(ctx, name, item);
+    }
+}
+
+fn exec_assignment_target_names(expr: &crate::parser::ast::Expr, out: &mut Vec<String>) -> bool {
+    use crate::parser::ast::Expr;
+    match expr {
+        Expr::Ident(name) => {
+            out.push(name.clone());
+            true
+        }
+        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::UnpackTarget(items) => items
+            .iter()
+            .all(|item| exec_assignment_target_names(&item.node, out)),
+        Expr::Starred(inner) => exec_assignment_target_names(&inner.node, out),
+        _ => false,
+    }
+}
+
+fn exec_handler_matches(
+    ctx: &mut ExecContext,
+    handler: &crate::parser::ast::ExceptHandler,
+    exc: MbValue,
+) -> bool {
+    let Some(exc_type) = &handler.exc_type else {
+        return true;
+    };
+    let expected = exec_eval_expr(ctx, &exc_type.node);
+    if exec_has_pending_exception() {
+        return false;
+    }
+    let matched = super::exception::mb_exception_matches(exc, expected);
+    if exec_has_pending_exception() {
+        return false;
+    }
+    matched.as_bool().unwrap_or(false)
+}
+
+fn exec_import_stmt(
+    ctx: &ExecContext,
+    module: &[String],
+    names: &Option<Vec<(String, Option<String>)>>,
+    module_alias: &Option<String>,
+) {
+    let module_name = module.join(".");
+    let module_name_val = MbValue::from_ptr(MbObject::new_str(module_name.clone()));
+
+    if let Some(names) = names {
+        let is_star = names.len() == 1 && names[0].0 == "*";
+        if is_star {
+            let exports = super::module::mb_import_star(module_name_val);
+            if exec_has_pending_exception() {
+                return;
+            }
+            for (name, value) in kwargs_dict_pairs(exports) {
+                exec_store_global(ctx, &name, value);
+            }
+            return;
+        }
+
+        let _ = super::module::mb_import(module_name_val);
+        if exec_has_pending_exception() {
+            return;
+        }
+        for (name, alias) in names {
+            let attr = MbValue::from_ptr(MbObject::new_str(name.clone()));
+            let module_name_val = MbValue::from_ptr(MbObject::new_str(module_name.clone()));
+            let value = super::module::mb_module_getattr(module_name_val, attr);
+            if exec_has_pending_exception() {
+                return;
+            }
+            let bound = alias.as_deref().unwrap_or(name.as_str());
+            exec_store_global(ctx, bound, value);
+        }
+        return;
+    }
+
+    let value = super::module::mb_import(module_name_val);
+    if exec_has_pending_exception() {
+        return;
+    }
+    if let Some(alias) = module_alias {
+        exec_store_global(ctx, alias, value);
+    } else if let Some(top_name) = module.first() {
+        let bound_value = if module.len() > 1 {
+            super::module::mb_import(MbValue::from_ptr(MbObject::new_str(top_name.clone())))
+        } else {
+            value
+        };
+        exec_store_global(ctx, top_name, bound_value);
+    }
+}
+
+fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> ExecFlow {
+    use crate::parser::ast::Stmt;
+    match stmt {
+        Stmt::Pass => ExecFlow::Normal,
+        Stmt::Import {
+            module,
+            names,
+            module_alias,
+        } => {
+            exec_import_stmt(ctx, module, names, module_alias);
+            ExecFlow::Normal
+        }
+        Stmt::Assign { target, value } => {
+            let mut target_names = Vec::new();
+            if exec_assignment_target_names(&target.node, &mut target_names) {
+                if exec_is_typevar_constructor(&value.node) {
+                    if let Some(name) = target_names.first() {
+                        ctx.type_vars.insert(name.clone());
+                    }
+                }
+                if ctx.globals.is_some() || !ctx.frames.is_empty() {
+                    let assigned = exec_eval_expr(ctx, &value.node);
+                    if !exec_has_pending_exception() {
+                        exec_bind_targets(ctx, &target_names, assigned);
+                    }
+                }
+            }
+            ExecFlow::Normal
+        }
+        Stmt::VarDecl { name, value, .. } => {
+            if exec_is_typevar_constructor(&value.node) {
+                ctx.type_vars.insert(name.clone());
+            }
+            if ctx.globals.is_some() || !ctx.frames.is_empty() {
+                let assigned = exec_eval_expr(ctx, &value.node);
+                if !exec_has_pending_exception() {
+                    exec_store_name(ctx, name, assigned);
+                }
+            }
+            ExecFlow::Normal
+        }
+        Stmt::ClassDef {
+            name,
+            type_params,
+            bases,
+            body,
+            ..
+        } => {
+            exec_validate_pep695_class_bases(ctx, type_params, bases);
+            if exec_has_pending_exception() {
+                return ExecFlow::Normal;
+            }
+            let mut match_args = None;
+            for class_stmt in body {
+                match &class_stmt.node {
+                    Stmt::Assign { target, value } => {
+                        if let crate::parser::ast::Expr::Ident(attr) = &target.node {
+                            if attr == "__match_args__" {
+                                match_args = Some(exec_eval_expr(ctx, &value.node));
+                                if exec_has_pending_exception() {
+                                    return ExecFlow::Normal;
+                                }
+                            }
+                        }
+                    }
+                    Stmt::VarDecl {
+                        name: attr, value, ..
+                    } if attr == "__match_args__" => {
+                        match_args = Some(exec_eval_expr(ctx, &value.node));
+                        if exec_has_pending_exception() {
+                            return ExecFlow::Normal;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ctx.class_match_args.insert(name.clone(), match_args);
+            ExecFlow::Normal
+        }
+        Stmt::FnDef {
+            decorators,
+            name,
+            params,
+            body,
+            ..
+        } => {
+            let mut param_names = Vec::with_capacity(params.len());
+            let mut defaults = Vec::with_capacity(params.len());
+            for param in params {
+                param_names.push(param.name.clone());
+                let default = match &param.default {
+                    Some(default) => {
+                        let value = exec_eval_expr(ctx, &default.node);
+                        if exec_has_pending_exception() {
+                            return ExecFlow::Normal;
+                        }
+                        Some(value)
+                    }
+                    None => None,
+                };
+                defaults.push(default);
+            }
+            let mut decorator_values = Vec::with_capacity(decorators.len());
+            for decorator in decorators {
+                let value = exec_eval_expr(ctx, &decorator.node);
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+                decorator_values.push(value);
+            }
+            let mut decorated_value = MbValue::none();
+            for decorator in decorator_values.into_iter().rev() {
+                if mb_callable(decorator).as_bool() != Some(true) {
+                    let type_name = exec_match_type_name(decorator);
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{type_name}' object is not callable"
+                        ))),
+                    );
+                    return ExecFlow::Normal;
+                }
+                decorated_value = mb_call_spread(
+                    decorator,
+                    MbValue::from_ptr(MbObject::new_list(vec![decorated_value])),
+                );
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+            }
+            ctx.functions.insert(
+                name.clone(),
+                ExecFunction {
+                    params: param_names,
+                    defaults,
+                    body: body.clone(),
+                },
+            );
+            if decorators.is_empty() {
+                let function = ctx.functions.get(name).cloned().unwrap_or(ExecFunction {
+                    params: Vec::new(),
+                    defaults: Vec::new(),
+                    body: body.clone(),
+                });
+                let func_value = make_exec_function_body_value(name, false, function, ctx.globals);
+                exec_store_name(ctx, name, func_value);
+            }
+            ExecFlow::Normal
+        }
+        Stmt::AsyncFnDef {
+            decorators,
+            name,
+            params,
+            body,
+            ..
+        } => {
+            if decorators.is_empty() {
+                let mut param_names = Vec::with_capacity(params.len());
+                let mut defaults = Vec::with_capacity(params.len());
+                for param in params {
+                    param_names.push(param.name.clone());
+                    let default = match &param.default {
+                        Some(default) => {
+                            let value = exec_eval_expr(ctx, &default.node);
+                            if exec_has_pending_exception() {
+                                return ExecFlow::Normal;
+                            }
+                            Some(value)
+                        }
+                        None => None,
+                    };
+                    defaults.push(default);
+                }
+                let function = ExecFunction {
+                    params: param_names,
+                    defaults,
+                    body: body.clone(),
+                };
+                let func_value = make_exec_function_body_value(name, true, function, ctx.globals);
+                exec_store_name(ctx, name, func_value);
+            }
+            ExecFlow::Normal
+        }
+        Stmt::Return(value) => {
+            let value = value
+                .as_ref()
+                .map(|expr| exec_eval_expr(ctx, &expr.node))
+                .unwrap_or_else(MbValue::none);
+            ExecFlow::Return(value)
+        }
+        Stmt::Break => ExecFlow::Break,
+        Stmt::Continue => ExecFlow::Continue,
+        Stmt::If {
+            condition,
+            body,
+            elif_clauses,
+            else_body,
+        } => {
+            let condition = exec_eval_expr(ctx, &condition.node);
+            if exec_has_pending_exception() {
+                return ExecFlow::Normal;
+            }
+            if exec_truthy(condition) {
+                return exec_block_flow(ctx, body);
+            }
+            for (elif, elif_body) in elif_clauses {
+                let condition = exec_eval_expr(ctx, &elif.node);
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+                if exec_truthy(condition) {
+                    return exec_block_flow(ctx, elif_body);
+                }
+            }
+            if let Some(else_body) = else_body {
+                exec_block_flow(ctx, else_body)
+            } else {
+                ExecFlow::Normal
+            }
+        }
+        Stmt::For {
+            targets,
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
+            let iterable = exec_eval_expr(ctx, &iter.node);
+            if exec_has_pending_exception() {
+                return ExecFlow::Normal;
+            }
+            let mut broke = false;
+            for item in extract_items(iterable) {
+                exec_bind_targets(ctx, targets, item);
+                let flow = exec_block_flow(ctx, body);
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+                match flow {
+                    ExecFlow::Normal => {}
+                    ExecFlow::Continue => continue,
+                    ExecFlow::Break => {
+                        broke = true;
+                        break;
+                    }
+                    ExecFlow::Return(_) => return flow,
+                }
+            }
+            if !broke {
+                if let Some(else_body) = else_body {
+                    return exec_block_flow(ctx, else_body);
+                }
+            }
+            ExecFlow::Normal
+        }
+        Stmt::ExprStmt(expr) => {
+            let _ = exec_eval_expr(ctx, &expr.node);
+            ExecFlow::Normal
+        }
+        Stmt::Match { expr, arms } => {
+            if let Some(subject_class) = exec_subject_class_name(&expr.node) {
+                for arm in arms {
+                    exec_validate_class_pattern(ctx, &subject_class, &arm.pattern.node);
+                    if exec_has_pending_exception() {
+                        return ExecFlow::Normal;
+                    }
+                }
+            }
+            ExecFlow::Normal
+        }
+        Stmt::Raise { value, from } => {
+            let Some(value) = value else {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "No active exception to reraise".to_string(),
+                    )),
+                );
+                return ExecFlow::Normal;
+            };
+            let raised = exec_eval_expr(ctx, &value.node);
+            if exec_has_pending_exception() {
+                return ExecFlow::Normal;
+            }
+            if let Some(cause_expr) = from {
+                let _ = exec_eval_expr(ctx, &cause_expr.node);
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+            }
+            super::class::mb_raise_instance(raised);
+            ExecFlow::Normal
+        }
+        Stmt::Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+        } => {
+            let mut flow = exec_block_flow(ctx, body);
+            let mut unhandled = None;
+            if exec_has_pending_exception() {
+                let exc = super::exception::mb_catch_exception();
+                let mut handled = false;
+                for handler in handlers {
+                    if exec_handler_matches(ctx, handler, exc) {
+                        if let Some(name) = &handler.name {
+                            exec_store_name(ctx, name, exc);
+                        }
+                        flow = exec_block_flow(ctx, &handler.body);
+                        handled = true;
+                        break;
+                    }
+                }
+                if !handled {
+                    unhandled = Some(exc);
+                    flow = ExecFlow::Normal;
+                }
+            } else if matches!(flow, ExecFlow::Normal) {
+                if let Some(else_body) = else_body {
+                    flow = exec_block_flow(ctx, else_body);
+                }
+            }
+            if let Some(finally_body) = finally_body {
+                let finally_flow = exec_block_flow(ctx, finally_body);
+                if !matches!(finally_flow, ExecFlow::Normal) || exec_has_pending_exception() {
+                    unhandled = None;
+                    flow = finally_flow;
+                }
+            }
+            if let Some(exc) = unhandled {
+                super::exception::mb_reraise(exc);
+            }
+            flow
+        }
+        Stmt::With { items, body } => {
+            let mut managers = Vec::with_capacity(items.len());
+            for item in items {
+                let manager = exec_eval_expr(ctx, &item.context.node);
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+                let _ = super::class::mb_context_enter(manager);
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+                managers.push(manager);
+            }
+            let flow = exec_block_flow(ctx, body);
+            for manager in managers.into_iter().rev() {
+                let _ = super::class::mb_context_exit(manager, MbValue::none());
+            }
+            flow
+        }
+        _ => ExecFlow::Normal,
+    }
+}
+
+fn exec_block_flow(
+    ctx: &mut ExecContext,
+    stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+) -> ExecFlow {
+    for stmt in stmts {
+        let flow = exec_stmt_flow(ctx, &stmt.node);
+        if exec_has_pending_exception() || !matches!(flow, ExecFlow::Normal) {
+            return flow;
+        }
+    }
+    ExecFlow::Normal
+}
+
+fn exec_stmt(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) {
+    let _ = exec_stmt_flow(ctx, stmt);
+}
+
+fn exec_stmts_with_context(
+    ctx: &mut ExecContext,
+    stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+) {
+    let _ = exec_block_flow(ctx, stmts);
+}
+
+fn exec_stmts(stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>]) {
+    let mut ctx = ExecContext::default();
+    exec_stmts_with_context(&mut ctx, stmts);
 }
 
 fn eval_binop(op: crate::parser::ast::BinOp, l: MbValue, r: MbValue) -> MbValue {
@@ -8907,7 +12675,7 @@ fn eval_binop(op: crate::parser::ast::BinOp, l: MbValue, r: MbValue) -> MbValue 
         B::FloorDiv => mb_floordiv(l, r),
         B::Mod => mb_mod(l, r),
         B::Pow => mb_pow(l, r),
-        B::MatMul => MbValue::none(),
+        B::MatMul => super::class::mb_matmul(l, r),
         B::Eq => mb_eq(l, r),
         B::NotEq => mb_ne(l, r),
         B::Lt => mb_lt(l, r),
@@ -8987,25 +12755,54 @@ fn eval_unaryop(op: crate::parser::ast::UnaryOp, v: MbValue) -> MbValue {
 
 /// exec(code) — execute a string of code (#1256, partial).
 ///
-/// Mamba does not yet expose a runtime scope hook, so this cannot mutate the
-/// caller's locals/globals. It still validates the input so common defensive
-/// patterns (`try: exec(src) except SyntaxError: ...`) behave like CPython:
+/// Mamba does not yet expose a full runtime scope hook, but `exec(src, globals)`
+/// does mutate the supplied globals dict for the supported interpreted subset.
+/// It still validates the input so common defensive patterns
+/// (`try: exec(src) except SyntaxError: ...`) behave like CPython:
 ///   * Non-string input → silent no-op returning None (matches the previous
 ///     stub; raising TypeError here would break benches that already pass
 ///     compiled code objects).
 ///   * String input → parse as a module; raise SyntaxError on failure.
-///   * Successful parse with no side-effecting statements → None.
-/// Statements with side effects are still dropped on the floor; see #1256.
+///   * A narrow runtime subset (assignments, imports, interpreted zero-arg
+///     functions, if/for, try/except/else/finally, expression statements,
+///     raise, and with cleanup) is executed so exceptions and control flow
+///     propagate through `exec`.
+/// Remaining side-effecting statements are still dropped on the floor; see #1256.
 pub fn mb_exec(code: MbValue) -> MbValue {
+    mb_exec_impl(code, None, None)
+}
+
+pub fn mb_exec_with_globals(code: MbValue, globals: MbValue) -> MbValue {
+    mb_exec_impl(code, Some(globals), None)
+}
+
+pub fn mb_exec_with_globals_locals(code: MbValue, globals: MbValue, locals: MbValue) -> MbValue {
+    mb_exec_impl(code, Some(globals), Some(locals))
+}
+
+fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>) -> MbValue {
     use crate::lexer;
     use crate::parser::Parser;
     use crate::source::SourceMap;
+
+    if let Some(ptr) = code.as_ptr() {
+        unsafe {
+            if let ObjData::CodeObject { ast, .. } = &(*ptr).data {
+                let mut ctx = ExecContext {
+                    globals,
+                    locals,
+                    ..ExecContext::default()
+                };
+                exec_stmts_with_context(&mut ctx, &ast.stmts);
+                return MbValue::none();
+            }
+        }
+    }
 
     let source = if let Some(ptr) = code.as_ptr() {
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(s) => s.clone(),
-                ObjData::CodeObject { .. } => return MbValue::none(),
                 _ => return MbValue::none(),
             }
         }
@@ -9018,12 +12815,30 @@ pub fn mb_exec(code: MbValue) -> MbValue {
     let tokens = lexer::lex(&source, file_id);
     let mut parser = Parser::new(tokens, &source, file_id);
     parser.skip_newlines();
-    if parser.parse_module().is_err() {
-        super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
-            MbValue::from_ptr(MbObject::new_str("exec(): invalid syntax".to_string())),
-        );
-    }
+    let module = match parser.parse_module() {
+        Ok(module) => module,
+        Err(err) => {
+            let message = match err {
+                crate::error::MambaError::Syntax { message, .. }
+                    if message.contains("invalid number") =>
+                {
+                    "invalid binary literal (<string>, line 1)".to_string()
+                }
+                _ => "invalid syntax (<string>, line 1)".to_string(),
+            };
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(message)),
+            );
+            return MbValue::none();
+        }
+    };
+    let mut ctx = ExecContext {
+        globals,
+        locals,
+        ..ExecContext::default()
+    };
+    exec_stmts_with_context(&mut ctx, &module.stmts);
     MbValue::none()
 }
 
@@ -9243,6 +13058,15 @@ fn mb_compile_impl(
         _ => unreachable!("mode already validated"),
     };
 
+    if let Some(err) = validate_compile_nonlocal_declarations(&ast) {
+        let msg = format_syntax_error(&err, &source_map, &filename_str);
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(msg)),
+        );
+        return MbValue::none();
+    }
+
     // ── Return CodeObject (R1) ──────────────────────────────────────────────
     MbValue::from_ptr(MbObject::new_code_object(
         source_str,
@@ -9250,6 +13074,146 @@ fn mb_compile_impl(
         mode_str,
         ast,
     ))
+}
+
+fn validate_compile_nonlocal_declarations(
+    module: &crate::parser::ast::Module,
+) -> Option<crate::error::MambaError> {
+    use crate::parser::ast::Stmt;
+    use std::collections::HashSet;
+
+    fn function_bindings(
+        params: &[crate::parser::ast::Param],
+        body: &[crate::source::Spanned<Stmt>],
+    ) -> HashSet<String> {
+        let mut assigned = Vec::new();
+        let mut declared = Vec::new();
+        crate::resolve::pass::collect_assignment_targets(body, &mut assigned, &mut declared);
+        crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut assigned);
+
+        let mut bindings: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
+        for name in assigned {
+            if !declared.iter().any(|decl| decl == &name) {
+                bindings.insert(name);
+            }
+        }
+        bindings
+    }
+
+    fn visit(
+        stmts: &[crate::source::Spanned<Stmt>],
+        function_scopes: &mut Vec<HashSet<String>>,
+    ) -> Option<crate::error::MambaError> {
+        for stmt in stmts {
+            match &stmt.node {
+                Stmt::Nonlocal(names) => {
+                    for name in names {
+                        if !function_scopes
+                            .iter()
+                            .rev()
+                            .any(|scope| scope.contains(name))
+                        {
+                            return Some(crate::error::MambaError::syntax(
+                                stmt.span,
+                                format!("no binding for nonlocal '{name}' found"),
+                            ));
+                        }
+                    }
+                }
+                Stmt::FnDef { params, body, .. } | Stmt::AsyncFnDef { params, body, .. } => {
+                    function_scopes.push(function_bindings(params, body));
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                    function_scopes.pop();
+                }
+                Stmt::ClassDef { body, .. } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                }
+                Stmt::If {
+                    body,
+                    elif_clauses,
+                    else_body,
+                    ..
+                } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                    for (_, elif_body) in elif_clauses {
+                        if let Some(err) = visit(elif_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                    if let Some(else_body) = else_body {
+                        if let Some(err) = visit(else_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                }
+                Stmt::While {
+                    body, else_body, ..
+                }
+                | Stmt::For {
+                    body, else_body, ..
+                }
+                | Stmt::AsyncFor {
+                    body, else_body, ..
+                } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                    if let Some(else_body) = else_body {
+                        if let Some(err) = visit(else_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                }
+                Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                }
+                Stmt::Try {
+                    body,
+                    handlers,
+                    else_body,
+                    finally_body,
+                } => {
+                    if let Some(err) = visit(body, function_scopes) {
+                        return Some(err);
+                    }
+                    for handler in handlers {
+                        if let Some(err) = visit(&handler.body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                    if let Some(else_body) = else_body {
+                        if let Some(err) = visit(else_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                    if let Some(finally_body) = finally_body {
+                        if let Some(err) = visit(finally_body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        if let Some(err) = visit(&arm.body, function_scopes) {
+                            return Some(err);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    visit(&module.stmts, &mut Vec::new())
 }
 
 /// Format a MambaError as a SyntaxError message with file/line/col (R4).
@@ -9307,6 +13271,51 @@ mod tests {
     use super::super::rc::mb_release;
     use super::*;
 
+    extern "C" fn kwonly_sum_test_fn(a: MbValue, b: MbValue) -> MbValue {
+        MbValue::from_int(a.as_int().unwrap() + b.as_int().unwrap())
+    }
+
+    fn param_sig(name: &str, kind: i64) -> MbValue {
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            MbValue::from_int(kind),
+            MbValue::from_int(0),
+            MbValue::none(),
+            MbValue::none(),
+        ]))
+    }
+
+    #[test]
+    fn test_call_spread_kwargs_binds_keyword_only_params() {
+        let addr = kwonly_sum_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let func = MbValue::from_func(addr);
+        let params = MbValue::from_ptr(MbObject::new_list(vec![
+            param_sig("a", 3),
+            param_sig("b", 3),
+        ]));
+        super::super::closure::mb_func_set_params(func, params);
+
+        let kwargs = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("a".to_string())),
+            MbValue::from_int(2),
+        );
+        super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("b".to_string())),
+            MbValue::from_int(3),
+        );
+
+        let result = mb_call_spread_kwargs(
+            func,
+            MbValue::from_ptr(MbObject::new_list(Vec::new())),
+            kwargs,
+        );
+        assert_eq!(result.as_int(), Some(5));
+    }
+
     #[test]
     fn test_arithmetic() {
         let a = MbValue::from_int(10);
@@ -9317,6 +13326,14 @@ mod tests {
         assert_eq!(mb_mul(a, b).as_int(), Some(30));
         assert_eq!(mb_mod(a, b).as_int(), Some(1));
         assert_eq!(mb_neg(a).as_int(), Some(-10));
+        assert_eq!(
+            mb_sub(MbValue::from_bool(true), MbValue::from_bool(false)).as_int(),
+            Some(1)
+        );
+        assert_eq!(
+            mb_sub(MbValue::from_bool(true), MbValue::from_float(0.5)).as_float(),
+            Some(0.5)
+        );
     }
 
     #[test]
@@ -9336,6 +13353,65 @@ mod tests {
         assert_eq!(mb_eq(a, b).as_bool(), Some(false));
         assert_eq!(mb_lt(a, b).as_bool(), Some(true));
         assert_eq!(mb_lt(b, a).as_bool(), Some(false));
+    }
+
+    fn generic_alias_instance(
+        class_name: &str,
+        origin_field: &str,
+        args_field: &str,
+        origin: MbValue,
+        args: Vec<MbValue>,
+    ) -> MbValue {
+        let ptr = MbObject::new_instance(class_name.to_string());
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut g = fields.write().unwrap();
+                g.insert(origin_field.to_string(), origin);
+                g.insert(
+                    args_field.to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(args)),
+                );
+            }
+        }
+        MbValue::from_ptr(ptr)
+    }
+
+    #[test]
+    fn test_generic_alias_equality_uses_origin_and_args() {
+        let origin = make_type_object("list");
+        let typevar = MbValue::from_ptr(MbObject::new_instance("TypeVar".to_string()));
+        let alias_a = generic_alias_instance(
+            "GenericAlias",
+            "__origin__",
+            "__args__",
+            origin,
+            vec![typevar],
+        );
+        let alias_b = generic_alias_instance(
+            "GenericAlias",
+            "__origin__",
+            "__args__",
+            origin,
+            vec![typevar],
+        );
+        let alias_c = generic_alias_instance(
+            "GenericAlias",
+            "__origin__",
+            "__args__",
+            origin,
+            vec![make_type_object("int")],
+        );
+        let types_alias = generic_alias_instance(
+            "types.GenericAlias",
+            "_origin",
+            "_args",
+            origin,
+            vec![typevar],
+        );
+
+        assert_eq!(mb_eq(alias_a, alias_b).as_bool(), Some(true));
+        assert_eq!(mb_eq(alias_a, alias_c).as_bool(), Some(false));
+        assert_eq!(mb_eq(alias_a, types_alias).as_bool(), Some(true));
     }
 
     #[test]
@@ -9558,7 +13634,12 @@ mod tests {
 
     #[test]
     fn test_len_non_collection() {
-        assert_eq!(mb_len(MbValue::from_int(42)).as_int(), Some(0));
+        assert!(mb_len(MbValue::from_int(42)).is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
@@ -9609,6 +13690,32 @@ mod tests {
                 assert_eq!(s, "hello");
             } else {
                 panic!("expected str object");
+            }
+        }
+    }
+
+    #[test]
+    fn test_str_construct_decodes_bytes_with_encoding_and_errors() {
+        let bytes = MbValue::from_ptr(MbObject::new_bytes(vec![0x63, 0x61, 0x66, 0xc3, 0xa9]));
+        let encoding = MbValue::from_ptr(MbObject::new_str("utf-8".to_string()));
+        let decoded = mb_str_construct(bytes, encoding, MbValue::none());
+        unsafe {
+            if let ObjData::Str(ref s) = (*decoded.as_ptr().unwrap()).data {
+                assert_eq!(s, "café");
+            } else {
+                panic!("expected decoded str object");
+            }
+        }
+
+        let invalid = MbValue::from_ptr(MbObject::new_bytes(vec![0x63, 0x61, 0x66, 0xff]));
+        let encoding = MbValue::from_ptr(MbObject::new_str("utf-8".to_string()));
+        let errors = MbValue::from_ptr(MbObject::new_str("ignore".to_string()));
+        let decoded = mb_str_construct(invalid, encoding, errors);
+        unsafe {
+            if let ObjData::Str(ref s) = (*decoded.as_ptr().unwrap()).data {
+                assert_eq!(s, "caf");
+            } else {
+                panic!("expected decoded str object");
             }
         }
     }
@@ -9889,6 +13996,22 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref s) = (*r.as_ptr().unwrap()).data {
                 assert_eq!(s, "'hi'");
+            }
+        }
+
+        let printable = MbValue::from_ptr(MbObject::new_str("café".to_string()));
+        let r = mb_repr(printable);
+        unsafe {
+            if let ObjData::Str(ref s) = (*r.as_ptr().unwrap()).data {
+                assert_eq!(s, "'café'");
+            }
+        }
+
+        let unassigned = MbValue::from_ptr(MbObject::new_str("\u{0378}".to_string()));
+        let r = mb_repr(unassigned);
+        unsafe {
+            if let ObjData::Str(ref s) = (*r.as_ptr().unwrap()).data {
+                assert_eq!(s, "'\\u0378'");
             }
         }
     }
@@ -10259,6 +14382,166 @@ mod tests {
     }
 
     #[test]
+    fn test_exec_with_globals_star_import_uses_all() {
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert("public_a".to_string(), MbValue::from_int(1));
+        attrs.insert("public_extra".to_string(), MbValue::from_int(2));
+        attrs.insert("_private_listed".to_string(), MbValue::from_int(3));
+        attrs.insert("_private_one".to_string(), MbValue::from_int(4));
+        attrs.insert(
+            "__all__".to_string(),
+            MbValue::from_ptr(MbObject::new_list(vec![
+                MbValue::from_ptr(MbObject::new_str("public_a".to_string())),
+                MbValue::from_ptr(MbObject::new_str("_private_listed".to_string())),
+            ])),
+        );
+        crate::runtime::module::mb_module_register("mamba_exec_star_test_mod", attrs);
+
+        let ns = crate::runtime::dict_ops::mb_dict_new();
+        let code = MbValue::from_ptr(MbObject::new_str(
+            "from mamba_exec_star_test_mod import *".to_string(),
+        ));
+        assert!(mb_exec_with_globals(code, ns).is_none());
+
+        let public_a = crate::runtime::dict_ops::mb_dict_get(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("public_a".to_string())),
+            MbValue::none(),
+        );
+        let private_listed = crate::runtime::dict_ops::mb_dict_get(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("_private_listed".to_string())),
+            MbValue::none(),
+        );
+        let public_extra = crate::runtime::dict_ops::mb_dict_get(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("public_extra".to_string())),
+            MbValue::none(),
+        );
+        let private_one = crate::runtime::dict_ops::mb_dict_get(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("_private_one".to_string())),
+            MbValue::none(),
+        );
+
+        assert_eq!(public_a.as_int(), Some(1));
+        assert_eq!(private_listed.as_int(), Some(3));
+        assert!(public_extra.is_none());
+        assert!(private_one.is_none());
+    }
+
+    #[test]
+    fn test_exec_with_globals_try_finally_flow() {
+        crate::runtime::exception::mb_clear_exception();
+        let ns = crate::runtime::dict_ops::mb_dict_new();
+        let trace = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+        crate::runtime::dict_ops::mb_dict_setitem(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("TRACE".to_string())),
+            trace,
+        );
+        let code = MbValue::from_ptr(MbObject::new_str(
+            r#"
+def inner():
+    try:
+        TRACE.append("try-before-return")
+        return "try-return"
+    finally:
+        TRACE.append("finally-overrides")
+        return "finally-return"
+result = inner()
+for i in range(3):
+    try:
+        TRACE.append(f"try:{i}")
+        if i == 1:
+            raise ValueError("trigger")
+    except ValueError:
+        TRACE.append(f"except:{i}")
+    finally:
+        TRACE.append(f"finally:{i}")
+        if i == 1:
+            break
+TRACE.append("after-loop")
+"#
+            .to_string(),
+        ));
+
+        assert!(mb_exec_with_globals(code, ns).is_none());
+        assert_eq!(
+            eval_str_value(crate::runtime::dict_ops::mb_dict_get(
+                ns,
+                MbValue::from_ptr(MbObject::new_str("result".to_string())),
+                MbValue::none(),
+            ))
+            .as_deref(),
+            Some("finally-return")
+        );
+        let got: Vec<String> = extract_items(trace)
+            .into_iter()
+            .map(|value| eval_str_value(value).unwrap_or_default())
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                "try-before-return",
+                "finally-overrides",
+                "try:0",
+                "finally:0",
+                "try:1",
+                "except:1",
+                "finally:1",
+                "after-loop",
+            ]
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_with_globals_decorator_errors_at_definition_time() {
+        fn assert_exec_exception(ns: MbValue, source: &str, expected: &str) {
+            crate::runtime::exception::mb_clear_exception();
+            let code = MbValue::from_ptr(MbObject::new_str(source.to_string()));
+
+            assert!(mb_exec_with_globals(code, ns).is_none());
+            assert_eq!(
+                crate::runtime::exception::current_exception_type().as_deref(),
+                Some(expected)
+            );
+
+            crate::runtime::exception::mb_clear_exception();
+        }
+
+        let ns = crate::runtime::dict_ops::mb_dict_new();
+        assert_exec_exception(ns, "@missing\ndef f():\n    return 1\n", "NameError");
+
+        crate::runtime::dict_ops::mb_dict_setitem(
+            ns,
+            MbValue::from_ptr(MbObject::new_str("nullval".to_string())),
+            MbValue::none(),
+        );
+        assert_exec_exception(ns, "@nullval\ndef f():\n    return 1\n", "TypeError");
+        assert_exec_exception(
+            ns,
+            "@nullval.attr\ndef f():\n    return 1\n",
+            "AttributeError",
+        );
+
+        assert_exec_exception(
+            ns,
+            r#"
+def needs_one(n):
+    def deco(func):
+        return func
+    return deco
+@needs_one()
+def f():
+    return 1
+"#,
+            "TypeError",
+        );
+    }
+
+    #[test]
     fn test_eval_expression_arith() {
         let s = MbValue::from_ptr(MbObject::new_str("1+2".to_string()));
         assert_eq!(mb_eval(s).as_int(), Some(3));
@@ -10325,6 +14608,41 @@ mod tests {
     }
 
     #[test]
+    fn test_eval_with_globals_resolves_names() {
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(globals, make_str("x"), MbValue::from_int(41));
+        let expr = make_str("x + 1");
+        assert_eq!(mb_eval_with_globals(expr, globals).as_int(), Some(42));
+    }
+
+    #[test]
+    fn test_eval_with_namespaces_prefers_locals() {
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        let locals = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(globals, make_str("x"), MbValue::from_int(1));
+        crate::runtime::dict_ops::mb_dict_setitem(locals, make_str("x"), MbValue::from_int(41));
+        let expr = make_str("x + 1");
+        assert_eq!(
+            mb_eval_with_namespaces(expr, globals, locals).as_int(),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn test_exec_with_globals_locals_stores_in_locals() {
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        let locals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals_locals(make_str("p = 10\nq = p * 2"), globals, locals);
+        let p = crate::runtime::dict_ops::mb_dict_get(locals, make_str("p"), MbValue::none());
+        let q = crate::runtime::dict_ops::mb_dict_get(locals, make_str("q"), MbValue::none());
+        assert_eq!(p.as_int(), Some(10));
+        assert_eq!(q.as_int(), Some(20));
+    }
+
+    #[test]
     fn test_eval_expression_unresolved_returns_none() {
         // Identifier resolution is out of scope -- preserves the prior
         // literal-only fallback's behavior for unsupported expressions.
@@ -10362,6 +14680,13 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_eval_runs_compile_eval_code_object() {
+        crate::runtime::exception::mb_clear_exception();
+        let code = mb_compile(make_str("40 + 2"), make_str("<test>"), make_str("eval"));
+        assert_eq!(mb_eval(code).as_int(), Some(42));
+    }
+
     /// AC2a: compile("x = 1\ny = 2", "<test>", "exec") succeeds.
     #[test]
     fn test_compile_exec_multi_stmt_ok() {
@@ -10376,6 +14701,22 @@ mod tests {
             "exec should succeed for multi-statement source"
         );
         assert!(result.is_ptr());
+    }
+
+    #[test]
+    fn test_exec_runs_compile_exec_code_object() {
+        crate::runtime::exception::mb_clear_exception();
+        let code = mb_compile(
+            make_str("x = 5\ny = x * 3"),
+            make_str("<test>"),
+            make_str("exec"),
+        );
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(code, globals);
+        let x = crate::runtime::dict_ops::mb_dict_get(globals, make_str("x"), MbValue::none());
+        let y = crate::runtime::dict_ops::mb_dict_get(globals, make_str("y"), MbValue::none());
+        assert_eq!(x.as_int(), Some(5));
+        assert_eq!(y.as_int(), Some(15));
     }
 
     /// AC2b: compile("x = 1", "<test>", "eval") raises SyntaxError.
@@ -10432,6 +14773,20 @@ mod tests {
             crate::runtime::exception::mb_has_exception().as_bool(),
             Some(true),
             "SyntaxError should be raised"
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_compile_invalid_nonlocal_raises_syntax_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let src = "def outer():\n    def inner():\n        nonlocal missing\n        missing = 1\n";
+        let result = mb_compile(make_str(src), make_str("<test>"), make_str("exec"));
+        assert!(result.is_none(), "invalid nonlocal should fail");
+        let exc = crate::runtime::exception::mb_catch_exception();
+        assert_eq!(
+            crate::runtime::exception::get_exception_type_pub(exc).as_deref(),
+            Some("SyntaxError")
         );
         crate::runtime::exception::mb_clear_exception();
     }
@@ -10875,6 +15230,33 @@ mod tests {
     }
 
     #[test]
+    fn test_sorted_kwargs_reverse_preserves_equal_key_order() {
+        let first = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(10),
+        ]));
+        let second = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(2),
+            MbValue::from_int(20),
+        ]));
+        let short = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(3)]));
+        let list = MbValue::from_ptr(MbObject::new_list(vec![first, second, short]));
+        let key = MbValue::from_ptr(MbObject::new_str("len".to_string()));
+        let result = mb_sorted_kwargs(list, key, MbValue::from_bool(true));
+        unsafe {
+            let ptr = result.as_ptr().unwrap();
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items[0].to_bits(), first.to_bits());
+                assert_eq!(items[1].to_bits(), second.to_bits());
+                assert_eq!(items[2].to_bits(), short.to_bits());
+            } else {
+                panic!("expected list");
+            }
+        }
+    }
+
+    #[test]
     fn test_sorted_kwargs_no_key_no_reverse() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
             MbValue::from_int(5),
@@ -11167,6 +15549,41 @@ mod tests {
     }
 
     #[test]
+    fn test_chr_lone_surrogate_roundtrip() {
+        let c = mb_chr(MbValue::from_int(0xD800));
+        assert_eq!(mb_len(c).as_int(), Some(1));
+        assert_eq!(mb_ord(c).as_int(), Some(0xD800));
+        assert!(mb_richcmp_eq(c, mb_chr(MbValue::from_int(0xD800))));
+        assert_eq!(
+            mb_hash(c).as_int(),
+            mb_hash(mb_chr(MbValue::from_int(0xD800))).as_int()
+        );
+
+        let r = mb_repr(c);
+        let a = mb_ascii(c);
+        unsafe {
+            if let ObjData::Str(ref s) = (*r.as_ptr().unwrap()).data {
+                assert_eq!(s, "'\\ud800'");
+            } else {
+                panic!("expected repr str");
+            }
+            if let ObjData::Str(ref s) = (*a.as_ptr().unwrap()).data {
+                assert_eq!(s, "'\\ud800'");
+            } else {
+                panic!("expected ascii str");
+            }
+        }
+
+        let dict = MbValue::from_ptr(MbObject::new_dict());
+        super::super::dict_ops::mb_dict_setitem(dict, c, MbValue::from_int(42));
+        assert_eq!(
+            super::super::dict_ops::mb_dict_getitem(dict, mb_chr(MbValue::from_int(0xD800)))
+                .as_int(),
+            Some(42)
+        );
+    }
+
+    #[test]
     fn test_ord_unicode_emoji() {
         let s = MbValue::from_ptr(MbObject::new_str("😊".to_string()));
         assert_eq!(mb_ord(s).as_int(), Some(128522));
@@ -11350,6 +15767,61 @@ mod tests {
         let obj_name = MbValue::from_ptr(MbObject::new_str("object".to_string()));
         let result = super::super::class::mb_isinstance(instance, obj_name);
         assert_eq!(result.as_bool(), Some(true), "should be instance of object");
+
+        super::super::class::cleanup_all_classes();
+    }
+
+    #[test]
+    fn test_type3_namespace_mappingproxy_preserves_order_and_metadata() {
+        super::super::class::cleanup_all_classes();
+
+        let name = MbValue::from_ptr(MbObject::new_str("TestType3Namespace".to_string()));
+        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![]));
+        let dict = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            dict,
+            MbValue::from_ptr(MbObject::new_str("b".to_string())),
+            MbValue::from_int(2),
+        );
+        super::super::dict_ops::mb_dict_setitem(
+            dict,
+            MbValue::from_ptr(MbObject::new_str("a".to_string())),
+            MbValue::from_int(1),
+        );
+        super::super::dict_ops::mb_dict_setitem(
+            dict,
+            MbValue::from_ptr(MbObject::new_str("__qualname__".to_string())),
+            MbValue::from_ptr(MbObject::new_str("Outer.TestType3Namespace".to_string())),
+        );
+
+        let type_obj = mb_type3(name, bases, dict);
+        let qualname = super::super::class::mb_getattr(
+            type_obj,
+            MbValue::from_ptr(MbObject::new_str("__qualname__".to_string())),
+        );
+        assert_eq!(
+            mb_str_value(qualname),
+            Some("Outer.TestType3Namespace".to_string())
+        );
+        let doc = super::super::class::mb_getattr(
+            type_obj,
+            MbValue::from_ptr(MbObject::new_str("__doc__".to_string())),
+        );
+        assert!(doc.is_none(), "__doc__ should default to None");
+
+        let proxy = super::super::class::mb_getattr(
+            type_obj,
+            MbValue::from_ptr(MbObject::new_str("__dict__".to_string())),
+        );
+        let namespace = super::super::dict_ops::mappingproxy_mapping(proxy)
+            .expect("type __dict__ should expose namespace mapping");
+        let entries = extract_items(super::super::dict_ops::mb_dict_items(namespace));
+        let first = extract_items(entries[0]);
+        let second = extract_items(entries[1]);
+        assert_eq!(mb_str_value(first[0]).as_deref(), Some("b"));
+        assert_eq!(first[1].as_int(), Some(2));
+        assert_eq!(mb_str_value(second[0]).as_deref(), Some("a"));
+        assert_eq!(second[1].as_int(), Some(1));
 
         super::super::class::cleanup_all_classes();
     }

@@ -103,6 +103,7 @@ unsafe extern "C" fn dispatch_gzip_ctor(args_ptr: *const MbValue, nargs: usize) 
     }
     let mut encoding = None;
     let mut errors = None;
+    let mut newline = None;
     if let Some(last) = args.last() {
         if let Some(p) = last.as_ptr() {
             unsafe {
@@ -128,6 +129,7 @@ unsafe extern "C" fn dispatch_gzip_ctor(args_ptr: *const MbValue, nargs: usize) 
                     }
                     encoding = get_str("encoding");
                     errors = get_str("errors");
+                    newline = get_str("newline");
                 }
             }
         }
@@ -139,6 +141,7 @@ unsafe extern "C" fn dispatch_gzip_ctor(args_ptr: *const MbValue, nargs: usize) 
         &mode,
         encoding,
         errors,
+        newline,
     )
 }
 

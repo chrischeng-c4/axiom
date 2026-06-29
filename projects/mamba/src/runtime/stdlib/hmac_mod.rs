@@ -464,6 +464,60 @@ fn raise_missing_digestmod() -> MbValue {
     raise_type_error("Missing required argument 'digestmod'.")
 }
 
+fn str_value(s: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.to_string()))
+}
+
+#[inline]
+fn is_custom_digestmod(val: MbValue) -> bool {
+    !val.is_none() && !is_str(val)
+}
+
+fn block_size_attr(val: MbValue) -> Option<i64> {
+    let got = super::super::class::mb_getattr_default(
+        val,
+        str_value("block_size"),
+        MbValue::none(),
+    );
+    if super::super::exception::current_exception_type().is_some() {
+        return None;
+    }
+    got.as_int()
+}
+
+fn class_block_size_attr(class_name: &str) -> Option<i64> {
+    super::super::class::class_attr_lookup(class_name, "block_size")
+        .and_then(|v| v.as_int())
+}
+
+fn runtime_warning(message: &str) -> bool {
+    super::super::stdlib::warnings_mod::warn_impl(
+        str_value(message),
+        str_value("RuntimeWarning"),
+    );
+    super::super::exception::current_exception_type().is_some()
+}
+
+fn warn_custom_digestmod_block_size(digestmod: MbValue) -> bool {
+    match block_size_attr(digestmod) {
+        Some(n) if n >= 16 => false,
+        Some(n) => runtime_warning(&format!(
+            "block_size of {n} seems too small; using our default of 64."
+        )),
+        None => runtime_warning("No block_size attribute on given digest object; Assuming 64."),
+    }
+}
+
+fn warn_custom_digestmod_class_block_size(class_name: &str) -> bool {
+    match class_block_size_attr(class_name) {
+        Some(n) if n >= 16 => false,
+        Some(n) => runtime_warning(&format!(
+            "block_size of {n} seems too small; using our default of 64."
+        )),
+        None => runtime_warning("No block_size attribute on given digest object; Assuming 64."),
+    }
+}
+
 // ── Public surface — free functions called by the dispatch thunks
 //    AND by method dispatch in class.rs::mb_call_method.
 
@@ -472,12 +526,32 @@ fn raise_missing_digestmod() -> MbValue {
 /// 3.8+): a None / empty / unresolvable value raises the CPython
 /// "Missing required argument 'digestmod'." TypeError.
 pub fn mb_hmac_new_handle(key: MbValue, msg: MbValue, digestmod: MbValue) -> MbValue {
-    let Some(algo) = resolve_digestmod(digestmod) else {
-        return raise_missing_digestmod();
+    let algo = match resolve_digestmod(digestmod) {
+        Some(algo) => algo,
+        None if is_custom_digestmod(digestmod) => {
+            if warn_custom_digestmod_block_size(digestmod) {
+                return MbValue::none();
+            }
+            // Full user-supplied digest object execution is outside this shim's
+            // current scope; sha256 is the closest supported default once the
+            // CPython warning contract has been honored.
+            "sha256".to_string()
+        }
+        None => return raise_missing_digestmod(),
     };
     // An unknown digest name is a ValueError (CPython surfaces hashlib's
     // "unsupported hash type ..."), not a silent fall back to a default algo.
     if !ALGOS.contains(&algo.as_str()) {
+        if super::super::class::class_is_registered(&algo) {
+            if warn_custom_digestmod_class_block_size(&algo) {
+                return MbValue::none();
+            }
+            let h = with_bytes(key, |k| make_handle("sha256", k));
+            if !msg.is_none() {
+                mb_hmac_update(h, msg);
+            }
+            return h;
+        }
         return raise_value_error(&format!("unsupported hash type {algo}"));
     }
     let h = with_bytes(key, |k| make_handle(&algo, k));

@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod expr;
+mod mangle;
 pub mod expr_compound;
 pub mod pattern;
 pub mod stmt;
@@ -22,6 +23,15 @@ pub struct Parser<'a> {
     /// multiple per-target `Stmt::Assign`s. Drained in LIFO order before
     /// the parser consumes any new tokens, so insertion order is preserved.
     pub(crate) pending_stmts: Vec<Spanned<Stmt>>,
+    /// True when the next `parse_expr` is the top of an expression statement,
+    /// where a bare walrus (`a := 5`) is a SyntaxError in CPython (it must be
+    /// parenthesized). Captured-and-cleared at `parse_expr` entry so only the
+    /// statement-top level — not parenthesized or nested sub-expressions — is
+    /// affected.
+    pub(crate) stmt_expr_toplevel: bool,
+    /// True while parsing statements that execute directly in a class body.
+    /// Function and lambda bodies nested inside a class temporarily clear this.
+    pub(crate) in_class_body: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -32,6 +42,8 @@ impl<'a> Parser<'a> {
             source,
             file_id,
             pending_stmts: Vec::new(),
+            stmt_expr_toplevel: false,
+            in_class_body: false,
         }
     }
 
@@ -223,7 +235,11 @@ impl<'a> Parser<'a> {
 pub fn parse(source: &str, file_id: FileId) -> crate::error::Result<Module> {
     let tokens = crate::lexer::lex(source, file_id);
     let mut parser = Parser::new(tokens, source, file_id);
-    parser.parse_module()
+    let mut module = parser.parse_module()?;
+    // PEP-classic private name mangling — rewrite `__name` inside class bodies
+    // before the type checker and lowering observe the AST.
+    mangle::mangle_module(&mut module);
+    Ok(module)
 }
 
 #[cfg(test)]

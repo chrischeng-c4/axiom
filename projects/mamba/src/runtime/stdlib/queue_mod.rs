@@ -16,11 +16,9 @@
 //!
 //! Carve-outs (documented gaps from CPython parity):
 //!
-//! - Threading lock/condvar is a single-threaded fast path — `put`
-//!   never blocks; `get` on empty queue returns `None`. CPython parity
-//!   for *blocking* semantics would require Condvar plumbing that
-//!   nothing in the bench layer exercises.
-//! - `task_done()` / `join()` are no-ops; bookkeeping not implemented.
+//! - Threading lock/condvar is a cooperative fast path — `put` never
+//!   blocks, and worker-thread blocking `get()` / `join()` poll the
+//!   process-global queue state instead of parking on a real Condvar.
 //! - `PriorityQueue` uses a sort-on-get strategy rather than a real
 //!   min-heap — keeps the put hot path O(1) at cost of O(N log N)
 //!   on get. For the bench shape (alternating put/get) total work is
@@ -70,8 +68,13 @@ static QUEUES: LazyLock<Mutex<HashMap<u64, QueueState>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static QUEUE_IDS: LazyLock<Mutex<HashSet<u64>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 static NEXT_QUEUE_ID: AtomicU64 = AtomicU64::new(QUEUE_HANDLE_BASE);
-/// Per-handle refcount (#2111). Drops the QUEUES entry — including the
-/// items VecDeque holding owned MbValues — when the count hits zero.
+/// Best-effort per-handle retain count (#2111).
+///
+/// Queue handles are raw int-tagged values that may be captured by worker
+/// threads without a perfectly paired retain on the main-thread reference.
+/// Keep the backing state process-lifetime rather than dropping it on the
+/// first apparent zero; otherwise a daemon worker can invalidate the main
+/// thread's still-live `q` before `q.join()`.
 static QUEUE_REFCOUNTS: LazyLock<Mutex<HashMap<u64, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -83,12 +86,6 @@ fn alloc_queue_id() -> u64 {
 /// into the queue protocol.
 pub fn is_queue_handle(id: u64) -> bool {
     QUEUE_IDS.lock().unwrap().contains(&id)
-}
-
-fn drop_queue_handle(id: u64) {
-    QUEUES.lock().unwrap().remove(&id);
-    QUEUE_IDS.lock().unwrap().remove(&id);
-    QUEUE_REFCOUNTS.lock().unwrap().remove(&id);
 }
 
 /// `mb_retain_value` integer-handle dispatch (#2111).
@@ -105,19 +102,10 @@ pub fn release_handle(id: u64) -> bool {
     if !is_queue_handle(id) {
         return false;
     }
-    let should_drop = {
-        let mut map = QUEUE_REFCOUNTS.lock().unwrap();
-        let rc = map.entry(id).or_insert(1);
-        if *rc <= 1 {
-            map.remove(&id);
-            true
-        } else {
-            *rc -= 1;
-            false
-        }
-    };
-    if should_drop {
-        drop_queue_handle(id);
+    let mut map = QUEUE_REFCOUNTS.lock().unwrap();
+    let rc = map.entry(id).or_insert(1);
+    if *rc > 1 {
+        *rc -= 1;
     }
     true
 }
@@ -141,6 +129,13 @@ fn handle_of(v: MbValue) -> Option<u64> {
     v.as_int()
         .map(|i| i as u64)
         .filter(|id| is_queue_handle(*id))
+}
+
+fn in_thread_target() -> bool {
+    super::threading_mod::mb_threading_get_ident()
+        .as_int()
+        .unwrap_or(1)
+        != 1
 }
 
 macro_rules! dispatch_unary {
@@ -375,10 +370,28 @@ pub fn mb_queue_task_done(q: MbValue) -> MbValue {
     MbValue::none()
 }
 
+pub fn mb_queue_join(q: MbValue) -> MbValue {
+    let Some(id) = handle_of(q) else {
+        return MbValue::none();
+    };
+    loop {
+        let done = QUEUES
+            .lock()
+            .unwrap()
+            .get(&id)
+            .map(|state| state.unfinished <= 0)
+            .unwrap_or(true);
+        if done {
+            return MbValue::none();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// get with CPython's block/timeout contract: an empty queue raises
-/// queue.Empty for get_nowait/block=False/timeout forms. The plain blocking
-/// get() keeps the legacy None answer (a synchronous runtime cannot wait for
-/// a producer, and existing fixtures rely on the non-raising shape).
+/// queue.Empty for get_nowait/block=False/timeout forms. Plain blocking get()
+/// waits when called from a worker thread, while the main-thread legacy path
+/// still returns None for compatibility with existing synchronous fixtures.
 pub fn mb_queue_get_checked(q: MbValue, blocking: bool, timeout: Option<f64>) -> MbValue {
     if let Some(t) = timeout {
         if t < 0.0 {
@@ -394,6 +407,14 @@ pub fn mb_queue_get_checked(q: MbValue, blocking: bool, timeout: Option<f64>) ->
                     std::thread::sleep(std::time::Duration::from_secs_f64(t.min(5.0)));
                 }
                 return raise_exc("queue.Empty", "");
+            }
+            if in_thread_target() {
+                loop {
+                    if let Some(v) = mb_queue_get_opt(q) {
+                        return v;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
             }
             MbValue::none()
         }
@@ -569,6 +590,15 @@ mod tests {
         assert_eq!(mb_queue_qsize(q).as_int(), Some(1));
         mb_queue_get(q);
         assert_eq!(mb_queue_empty(q).as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_queue_join_returns_after_task_done() {
+        let q = mb_queue_Queue(MbValue::from_int(0));
+        mb_queue_put(q, MbValue::from_int(42));
+        assert_eq!(mb_queue_get(q).as_int(), Some(42));
+        mb_queue_task_done(q);
+        assert!(mb_queue_join(q).is_none());
     }
 
     #[test]

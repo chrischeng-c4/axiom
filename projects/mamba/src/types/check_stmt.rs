@@ -4,6 +4,15 @@ use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
 use crate::source::span::Spanned;
 
+fn decorator_is_typing_overload(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(n) => n == "overload",
+        Expr::Attr { attr, .. } => attr == "overload",
+        Expr::Call { func, .. } => decorator_is_typing_overload(&func.node),
+        _ => false,
+    }
+}
+
 /// Statement type checking, function body checking, and helpers.
 impl TypeChecker {
     /// ① Type-wall PoC: is `cls` a from-imported name that names a stdlib *class*
@@ -164,6 +173,11 @@ impl TypeChecker {
                     define_unpack_targets(self, &target.node);
                     return;
                 }
+                if let Expr::Index { object, index } = &target.node {
+                    self.check_subscript_assignment(object, index, value);
+                    return;
+                }
+
                 let target_ty = self.check_expr(target);
                 let value_ty = self.check_expr(value);
                 if !self.types_compatible(target_ty, value_ty) {
@@ -195,6 +209,7 @@ impl TypeChecker {
                 params,
                 return_ty,
                 body,
+                decorators,
                 ..
             }
             | Stmt::AsyncFnDef {
@@ -203,11 +218,15 @@ impl TypeChecker {
                 params,
                 return_ty,
                 body,
+                decorators,
                 ..
             } => {
                 // Re-register type params for body checking scope
                 let _gp = self.register_type_params(type_params);
-                self.check_fn_body(name, params, return_ty.as_ref(), body);
+                let overload_decorated = decorators
+                    .iter()
+                    .any(|d| decorator_is_typing_overload(&d.node));
+                self.check_fn_body(name, params, return_ty.as_ref(), body, overload_decorated);
                 self.unregister_type_params(type_params);
             }
             Stmt::If {
@@ -365,13 +384,16 @@ impl TypeChecker {
                     let prev_subject_ty = self.current_match_subject_ty.replace(subject_ty);
                     self.check_pattern(&arm.pattern);
                     self.current_match_subject_ty = prev_subject_ty;
-                    // Type-check guard expression (#827)
-                    // Guard must be boolean (same semantics as if/while conditions)
+                    // Type-check guard expression (#827) for its side effects
+                    // (walrus bindings, name resolution, sub-expression
+                    // inference). A guard may be ANY expression — it is
+                    // truthy-tested at runtime, exactly like the `if`/`while`
+                    // conditions above, neither of which enforces `bool`.
+                    // Enforcing bool here spuriously rejected valid guards such
+                    // as `case n if (doubled := n * 2):` (the walrus value is
+                    // `int`, not `bool`).
                     if let Some(guard) = &arm.guard {
-                        let guard_ty = self.check_expr(guard);
-                        if !self.types_compatible(self.tcx.bool(), guard_ty) {
-                            self.error(guard.span, "match guard condition must be bool");
-                        }
+                        let _guard_ty = self.check_expr(guard);
                     }
                     for s in &arm.body {
                         self.check_stmt(s);
@@ -565,6 +587,7 @@ impl TypeChecker {
         params: &[Param],
         return_ty: Option<&Spanned<TypeExpr>>,
         body: &[Spanned<Stmt>],
+        overload_decorated: bool,
     ) {
         // A parameter default value must satisfy the parameter's annotation
         // (`def f(c: int = "3")` is a type error). Mirrors the var-decl
@@ -633,19 +656,24 @@ impl TypeChecker {
         self.symbols.pop_scope();
         if self.symbols.lookup(name).is_none() {
             // Detect *args variadic and only include pre-star positional params in type.
-            let star_pos = params
-                .iter()
-                .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
-            let is_variadic = star_pos.is_some()
-                || params
+            let (param_types, ret_ty, is_variadic) = if overload_decorated {
+                (Vec::new(), self.tcx.any(), true)
+            } else {
+                let star_pos = params
                     .iter()
-                    .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
-            let effective_params = star_pos.map_or(params, |pos| &params[..pos]);
-            let param_types: Vec<TypeId> = effective_params
-                .iter()
-                .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
-                .map(|p| self.resolve_type_expr(&p.ty))
-                .collect();
+                    .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
+                let is_variadic = star_pos.is_some()
+                    || params
+                        .iter()
+                        .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
+                let effective_params = star_pos.map_or(params, |pos| &params[..pos]);
+                let param_types: Vec<TypeId> = effective_params
+                    .iter()
+                    .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
+                    .map(|p| self.resolve_type_expr(&p.ty))
+                    .collect();
+                (param_types, ret_ty, is_variadic)
+            };
             let fn_ty = self.tcx.intern(Ty::Fn {
                 params: param_types,
                 ret: ret_ty,
@@ -938,6 +966,39 @@ impl TypeChecker {
             }
         }
         None // no explicit __match_args__
+    }
+
+    fn check_subscript_assignment(
+        &mut self,
+        object: &Spanned<Expr>,
+        index: &Spanned<Expr>,
+        value: &Spanned<Expr>,
+    ) {
+        let obj_ty = self.check_expr(object);
+        self.check_expr(index);
+        let value_ty = self.check_expr(value);
+        let is_slice = matches!(index.node, Expr::Slice { .. });
+        let expected = match self.tcx.get(obj_ty).clone() {
+            Ty::List(elem) if is_slice => Some(self.tcx.intern(Ty::List(elem))),
+            Ty::List(elem) => Some(elem),
+            Ty::Dict(_, value) => Some(value),
+            Ty::Any | Ty::Error => None,
+            _ => None,
+        };
+
+        let Some(expected_ty) = expected else {
+            return;
+        };
+        if !self.types_compatible(expected_ty, value_ty) {
+            self.error(
+                value.span,
+                format!(
+                    "type mismatch in assignment: expected `{}`, got `{}`",
+                    self.ty_name(expected_ty),
+                    self.ty_name(value_ty),
+                ),
+            );
+        }
     }
 
     /// Infer element type from an iterable expression (#248).

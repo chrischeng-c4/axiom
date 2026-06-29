@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 /// - Creating closure objects with captured environments
 /// - Accessing captured variables from within closures
 /// - Decorator application (wrapping functions)
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A closure object — a function paired with its captured environment.
 pub struct MbClosure {
@@ -16,6 +16,11 @@ pub struct MbClosure {
     pub name: String,
     /// Captured variables: name → MbValue
     pub captures: Vec<MbValue>,
+    /// Captured variable SymbolIds. These line up with `capture_cells`.
+    pub capture_ids: Vec<i64>,
+    /// Cell handles backing captured variables. Multiple closures created in
+    /// the same factory call can share these handles.
+    pub capture_cells: Vec<MbValue>,
     /// The function pointer (compiled code entry point).
     /// In practice, this is a MbValue pointing to a Function object.
     pub func: MbValue,
@@ -36,6 +41,8 @@ pub struct MbClosure {
 thread_local! {
     static CLOSURES: std::cell::RefCell<Vec<Option<MbClosure>>> =
         std::cell::RefCell::new(Vec::new());
+    static ACTIVE_CELLS: std::cell::RefCell<HashMap<i64, MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
 // ── Closure Creation ──
@@ -48,6 +55,8 @@ pub fn mb_closure_new(name: MbValue, func: MbValue, captures: MbValue) -> MbValu
     let closure = MbClosure {
         name: closure_name,
         captures: captured_vars,
+        capture_ids: Vec::new(),
+        capture_cells: Vec::new(),
         func,
         defaults: Vec::new(),
         arity: 0,
@@ -60,13 +69,47 @@ pub fn mb_closure_new(name: MbValue, func: MbValue, captures: MbValue) -> MbValu
     })
 }
 
+/// Create a closure whose captures are backed by active cell handles.
+///
+/// `capture_ids` is a list of boxed SymbolId integers. Each id resolves to the
+/// active cell for the current factory call, creating one from the current
+/// global value if needed.
+pub fn mb_closure_new_with_cells(name: MbValue, func: MbValue, capture_ids: MbValue) -> MbValue {
+    let closure_name = extract_str(name).unwrap_or_else(|| "<closure>".to_string());
+    let ids: Vec<i64> = extract_list(capture_ids)
+        .into_iter()
+        .filter_map(|v| v.as_int())
+        .collect();
+    let cells: Vec<MbValue> = ids.iter().map(|&id| active_cell_for_id(id)).collect();
+    let captures: Vec<MbValue> = cells.iter().map(|&cell| mb_cell_get(cell)).collect();
+
+    let closure = MbClosure {
+        name: closure_name,
+        captures,
+        capture_ids: ids,
+        capture_cells: cells,
+        func,
+        defaults: Vec::new(),
+        arity: 0,
+    };
+    CLOSURES.with(|closures| {
+        let mut vec = closures.borrow_mut();
+        let id = (vec.len() + 1) as u64;
+        vec.push(Some(closure));
+        MbValue::from_int(id as i64)
+    })
+}
+
 /// Set default argument values on an existing closure.
 /// Called at lambda creation time after `mb_closure_new` to freeze default-arg
 /// expressions into the closure. Takes a list MbValue whose elements are the
 /// evaluated default values, in parameter order (defaults fill trailing params).
 pub fn mb_closure_set_defaults(closure_handle: MbValue, defaults_list: MbValue) {
+    set_closure_defaults_values(closure_handle, extract_list(defaults_list));
+}
+
+fn set_closure_defaults_values(closure_handle: MbValue, vals: Vec<MbValue>) {
     if let Some(id) = closure_handle.as_int() {
-        let vals = extract_list(defaults_list);
         CLOSURES.with(|closures| {
             let mut vec = closures.borrow_mut();
             let idx = (id as u64).wrapping_sub(1) as usize;
@@ -75,6 +118,11 @@ pub fn mb_closure_set_defaults(closure_handle: MbValue, defaults_list: MbValue) 
                 for old_val in c.defaults.drain(..) {
                     unsafe {
                         super::rc::release_if_ptr(old_val);
+                    }
+                }
+                for &new_val in &vals {
+                    unsafe {
+                        super::rc::retain_if_ptr(new_val);
                     }
                 }
                 c.defaults = vals;
@@ -137,9 +185,11 @@ pub fn mb_closure_get_capture(closure_handle: MbValue, index: MbValue) -> MbValu
         CLOSURES.with(|closures| {
             let vec = closures.borrow();
             let slot_idx = (id as u64).wrapping_sub(1) as usize;
-            let val = vec
-                .get(slot_idx)
-                .and_then(|slot| slot.as_ref())
+            let closure = vec.get(slot_idx).and_then(|slot| slot.as_ref());
+            if let Some(cell) = closure.and_then(|c| c.capture_cells.get(idx as usize).copied()) {
+                return mb_cell_get(cell);
+            }
+            let val = closure
                 .and_then(|c| c.captures.get(idx as usize).copied())
                 .unwrap_or(MbValue::none());
             unsafe {
@@ -160,6 +210,9 @@ pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: Mb
             let slot_idx = (id as u64).wrapping_sub(1) as usize;
             if let Some(Some(c)) = vec.get_mut(slot_idx) {
                 let idx = idx as usize;
+                if let Some(cell) = c.capture_cells.get(idx).copied() {
+                    mb_cell_set(cell, value);
+                }
                 if idx >= c.captures.len() {
                     c.captures.resize(idx + 1, MbValue::none());
                 }
@@ -171,6 +224,67 @@ pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: Mb
             }
         });
     }
+}
+
+/// Cell handles captured by a closure handle.
+pub fn closure_capture_cells(closure_handle: MbValue) -> Vec<MbValue> {
+    if let Some(id) = closure_handle.as_int() {
+        CLOSURES.with(|closures| {
+            let vec = closures.borrow();
+            let idx = (id as u64).wrapping_sub(1) as usize;
+            vec.get(idx)
+                .and_then(|slot| slot.as_ref())
+                .map(|c| c.capture_cells.clone())
+                .unwrap_or_default()
+        })
+    } else {
+        Vec::new()
+    }
+}
+
+/// Run a closure body with its captured cells installed as the active cell map.
+pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) -> R {
+    let pairs: Vec<(i64, MbValue)> = if let Some(id) = closure_handle.as_int() {
+        CLOSURES.with(|closures| {
+            let vec = closures.borrow();
+            let idx = (id as u64).wrapping_sub(1) as usize;
+            vec.get(idx)
+                .and_then(|slot| slot.as_ref())
+                .map(|c| {
+                    c.capture_ids
+                        .iter()
+                        .copied()
+                        .zip(c.capture_cells.iter().copied())
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    } else {
+        Vec::new()
+    };
+    if pairs.is_empty() {
+        return call();
+    }
+
+    let saved = ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        pairs
+            .iter()
+            .map(|(id, cell)| (*id, cells.insert(*id, *cell)))
+            .collect::<Vec<_>>()
+    });
+    let result = call();
+    ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        for (id, old) in saved {
+            if let Some(old_cell) = old {
+                cells.insert(id, old_cell);
+            } else {
+                cells.remove(&id);
+            }
+        }
+    });
+    result
 }
 
 /// Get the underlying function of a closure.
@@ -328,11 +442,17 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     static FUNC_VARNAMES: std::cell::RefCell<HashMap<u64, Vec<String>>> =
         std::cell::RefCell::new(HashMap::new());
+    static FUNC_FLAGS: std::cell::RefCell<HashMap<u64, i64>> =
+        std::cell::RefCell::new(HashMap::new());
+    static FUNC_FREEVARS: std::cell::RefCell<HashMap<u64, Vec<(String, i64)>>> =
+        std::cell::RefCell::new(HashMap::new());
     // Declared-signature metadata for `inspect.signature` (FUNC_PARAMS) and
     // the textual return annotation (FUNC_RET_ANNOS). Populated at module
     // init via mb_func_set_params / mb_func_set_retanno emitted by lowering.
     static FUNC_PARAMS: std::cell::RefCell<HashMap<u64, Vec<MbParamInfo>>> =
         std::cell::RefCell::new(HashMap::new());
+    static FUNC_BOXED_PARAMS: std::cell::RefCell<HashSet<u64>> =
+        std::cell::RefCell::new(HashSet::new());
     static FUNC_RET_ANNOS: std::cell::RefCell<HashMap<u64, String>> =
         std::cell::RefCell::new(HashMap::new());
     // Source location metadata: first line number of the `def`/`lambda` and
@@ -405,6 +525,81 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
     });
 }
 
+fn extract_defaults_assignment(value: MbValue) -> Option<Vec<MbValue>> {
+    if value.is_none() {
+        return Some(Vec::new());
+    }
+    let ptr = value.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Tuple(items) => Some(items.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Rewrite a function's live positional defaults from `f.__defaults__`.
+/// Defaults are right-aligned to positional-only + positional-or-keyword
+/// parameters, matching CPython's call-time rule.
+pub fn mb_func_set_pos_defaults(func: MbValue, defaults_value: MbValue) -> bool {
+    let Some(defaults) = extract_defaults_assignment(defaults_value) else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "__defaults__ must be set to a tuple object".to_string(),
+            )),
+        );
+        return true;
+    };
+
+    let key = func.to_bits();
+    let updated = FUNC_PARAMS.with(|m| {
+        let mut map = m.borrow_mut();
+        let Some(params) = map.get_mut(&key) else {
+            return false;
+        };
+        let pos_indices: Vec<usize> = params
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.kind <= 1)
+            .map(|(i, _)| i)
+            .collect();
+        let first_default_ordinal = pos_indices.len().saturating_sub(defaults.len());
+        let default_offset = defaults.len().saturating_sub(pos_indices.len());
+        for (ordinal, param_idx) in pos_indices.into_iter().enumerate() {
+            let p = &mut params[param_idx];
+            let next_default = if ordinal >= first_default_ordinal {
+                Some(defaults[default_offset + ordinal - first_default_ordinal])
+            } else {
+                None
+            };
+            if let Some(v) = next_default {
+                unsafe {
+                    super::rc::retain_if_ptr(v);
+                }
+                let old = p.default;
+                p.default = v;
+                p.has_default = true;
+                unsafe {
+                    super::rc::release_if_ptr(old);
+                }
+            } else {
+                let old = p.default;
+                p.default = MbValue::none();
+                p.has_default = false;
+                unsafe {
+                    super::rc::release_if_ptr(old);
+                }
+            }
+        }
+        true
+    });
+    if updated {
+        set_closure_defaults_values(func, defaults);
+    }
+    updated
+}
+
 /// Register a function's textual return annotation.
 pub fn mb_func_set_retanno(func: MbValue, anno: MbValue) {
     if let Some(s) = extract_str(anno) {
@@ -419,10 +614,58 @@ pub fn func_params(func: MbValue) -> Option<Vec<MbParamInfo>> {
     FUNC_PARAMS.with(|m| m.borrow().get(&key).cloned())
 }
 
+pub fn mb_func_set_boxed_params(func: MbValue, flag: MbValue) {
+    let enabled = flag.as_bool().unwrap_or(false) || flag.as_int().unwrap_or(0) != 0;
+    let key = func.to_bits();
+    FUNC_BOXED_PARAMS.with(|m| {
+        let mut set = m.borrow_mut();
+        if enabled {
+            set.insert(key);
+        } else {
+            set.remove(&key);
+        }
+    });
+}
+
+pub fn func_has_boxed_params(func: MbValue) -> bool {
+    let key = func.to_bits();
+    FUNC_BOXED_PARAMS.with(|m| m.borrow().contains(&key))
+}
+
 /// Textual return annotation for a registered function, or None.
 pub fn func_ret_anno(func: MbValue) -> Option<String> {
     let key = func.to_bits();
     FUNC_RET_ANNOS.with(|m| m.borrow().get(&key).cloned())
+}
+
+/// Build a function's `__annotations__` dict from its registered parameter and
+/// return annotations (PEP 3107 / 526). Values are the textual annotations,
+/// matching mamba's module- and class-level `__annotations__`. Returns
+/// None-MbValue when the function is unregistered, an (possibly empty) dict
+/// otherwise — CPython exposes `__annotations__` on every function.
+pub fn mb_func_get_annotations(func: MbValue) -> MbValue {
+    let key = func.to_bits();
+    let known = FUNC_PARAMS.with(|m| m.borrow().contains_key(&key))
+        || FUNC_RET_ANNOS.with(|m| m.borrow().contains_key(&key));
+    if !known {
+        return MbValue::none();
+    }
+    let dict = MbValue::from_ptr(MbObject::new_dict());
+    if let Some(params) = func_params(func) {
+        for p in params {
+            if let Some(anno) = p.annotation {
+                let k = MbValue::from_ptr(MbObject::new_str(p.name.clone()));
+                let v = MbValue::from_ptr(MbObject::new_str(anno));
+                super::dict_ops::mb_dict_setitem(dict, k, v);
+            }
+        }
+    }
+    if let Some(ret) = func_ret_anno(func) {
+        let k = MbValue::from_ptr(MbObject::new_str("return".to_string()));
+        let v = MbValue::from_ptr(MbObject::new_str(ret));
+        super::dict_ops::mb_dict_setitem(dict, k, v);
+    }
+    dict
 }
 
 /// Register a function's name (called at definition time so `f.__name__` works).
@@ -551,6 +794,61 @@ pub fn mb_func_get_varnames(func: MbValue) -> MbValue {
     })
 }
 
+/// Register extra code-object flags for a function (`CO_COROUTINE`, etc.).
+pub fn mb_func_set_flags(func: MbValue, flags: MbValue) {
+    let n = flags.as_int().unwrap_or(0);
+    let key = func.to_bits();
+    FUNC_FLAGS.with(|m| m.borrow_mut().insert(key, n));
+}
+
+pub fn func_flags(func: MbValue) -> i64 {
+    let key = func.to_bits();
+    FUNC_FLAGS.with(|m| *m.borrow().get(&key).unwrap_or(&0))
+}
+
+/// Register a function's free variables for inspect.getclosurevars.
+///
+/// The list contains `(name, symbol_id)` pairs. Values still live in the
+/// runtime global-id namespace because nested functions share captured locals
+/// through StoreGlobal/LoadGlobal on the captured SymbolId.
+pub fn mb_func_set_freevars(func: MbValue, freevars: MbValue) {
+    let mut collected: Vec<(String, i64)> = Vec::new();
+    if let Some(ptr) = freevars.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                for item in lock.read().unwrap().iter() {
+                    let Some(pair_ptr) = item.as_ptr() else {
+                        continue;
+                    };
+                    let ObjData::Tuple(ref pair) = (*pair_ptr).data else {
+                        continue;
+                    };
+                    if pair.len() < 2 {
+                        continue;
+                    }
+                    let Some(name) = extract_str(pair[0]) else {
+                        continue;
+                    };
+                    let Some(sym_id) = pair[1].as_int() else {
+                        continue;
+                    };
+                    collected.push((name, sym_id));
+                }
+            }
+        }
+    }
+    let key = func.to_bits();
+    FUNC_FREEVARS.with(|m| {
+        m.borrow_mut().insert(key, collected);
+    });
+}
+
+/// Registered free variables for a function, if any metadata was primed.
+pub fn func_freevars(func: MbValue) -> Option<Vec<(String, i64)>> {
+    let key = func.to_bits();
+    FUNC_FREEVARS.with(|m| m.borrow().get(&key).cloned())
+}
+
 /// True if `func` is a registered user-defined function (present in any of the
 /// function metadata registries). Used to gate `__code__` synthesis so we don't
 /// fabricate a code object for arbitrary ints / pointers.
@@ -658,6 +956,50 @@ pub fn mb_cell_set(cell_handle: MbValue, value: MbValue) {
     }
 }
 
+fn active_cell_for_id(key: i64) -> MbValue {
+    ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        if let Some(cell) = cells.get(&key).copied() {
+            return cell;
+        }
+        let initial = GLOBAL_ID_NAMESPACE
+            .with(|ns| ns.borrow().get(&key).copied().unwrap_or_else(MbValue::none));
+        let cell = mb_cell_new(initial);
+        cells.insert(key, cell);
+        cell
+    })
+}
+
+pub fn mb_capture_cell_set_id(id: MbValue, value: MbValue) {
+    let key = id.to_bits() as i64;
+    let cell = active_cell_for_id(key);
+    mb_cell_set(cell, value);
+}
+
+pub fn mb_capture_cell_reset_id(id: MbValue, value: MbValue) {
+    let key = id.to_bits() as i64;
+    let cell = mb_cell_new(value);
+    ACTIVE_CELLS.with(|cells| {
+        cells.borrow_mut().insert(key, cell);
+    });
+}
+
+fn active_cell_get_id_raw(key: i64) -> Option<MbValue> {
+    ACTIVE_CELLS
+        .with(|cells| cells.borrow().get(&key).copied())
+        .map(mb_cell_get)
+}
+
+fn active_cell_set_id_raw(key: i64, value: MbValue) -> bool {
+    let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&key).copied());
+    if let Some(cell) = cell {
+        mb_cell_set(cell, value);
+        true
+    } else {
+        false
+    }
+}
+
 // ── nonlocal/global support ──
 
 // Thread-local global namespace for the current module.
@@ -666,17 +1008,38 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     static GLOBAL_ID_NAMESPACE: std::cell::RefCell<HashMap<i64, MbValue>> =
         std::cell::RefCell::new(HashMap::new());
+    static MISSING_GLOBAL_RAISES_NAME_ERROR: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn set_missing_global_name_error_enabled(enabled: bool) -> bool {
+    MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.replace(enabled))
+}
+
+pub(crate) fn restore_missing_global_name_error_enabled(previous: bool) {
+    MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.set(previous));
+}
+
+fn missing_global_should_raise_name_error() -> bool {
+    MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.get())
+}
+
+fn raise_missing_global_name_error(name: &str) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("NameError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!("name '{name}' is not defined"))),
+    );
 }
 
 /// Get a global variable by name.
 pub fn mb_global_get(name: MbValue) -> MbValue {
     let var_name = extract_str(name).unwrap_or_default();
     GLOBAL_NAMESPACE.with(|ns| {
-        let val = ns
-            .borrow()
-            .get(&var_name)
-            .copied()
-            .unwrap_or(MbValue::none());
+        let val = ns.borrow().get(&var_name).copied();
+        if val.is_none() && missing_global_should_raise_name_error() {
+            raise_missing_global_name_error(&var_name);
+        }
+        let val = val.unwrap_or_else(MbValue::none);
         unsafe {
             super::rc::retain_if_ptr(val);
         }
@@ -706,8 +1069,23 @@ pub fn mb_global_set(name: MbValue, value: MbValue) {
 /// The id is passed as raw i64 (not NaN-boxed).
 pub fn mb_global_get_id(id: MbValue) -> MbValue {
     let key = id.to_bits() as i64;
+    mb_global_get_id_raw(key)
+}
+
+/// Read a global-id namespace value by raw SymbolId.
+pub fn mb_global_get_id_raw(key: i64) -> MbValue {
+    if let Some(val) = active_cell_get_id_raw(key) {
+        return val;
+    }
     GLOBAL_ID_NAMESPACE.with(|ns| {
-        let val = ns.borrow().get(&key).copied().unwrap_or(MbValue::none());
+        let val = ns.borrow().get(&key).copied();
+        if val.is_none() && missing_global_should_raise_name_error() {
+            let name = MODULE_SYM_INFO
+                .with(|m| m.borrow().get(&key).map(|(name, _)| name.clone()))
+                .unwrap_or_else(|| format!("<symbol {key}>"));
+            raise_missing_global_name_error(&name);
+        }
+        let val = val.unwrap_or_else(MbValue::none);
         unsafe {
             super::rc::retain_if_ptr(val);
         }
@@ -719,6 +1097,9 @@ pub fn mb_global_get_id(id: MbValue) -> MbValue {
 /// The id is passed as raw i64 (not NaN-boxed).
 pub fn mb_global_set_id(id: MbValue, value: MbValue) {
     let key = id.to_bits() as i64;
+    if active_cell_set_id_raw(key, value) {
+        return;
+    }
     // Retain the value so it survives the JIT epilogue releasing the source VReg.
     unsafe {
         super::rc::retain_if_ptr(value);
@@ -726,6 +1107,20 @@ pub fn mb_global_set_id(id: MbValue, value: MbValue) {
     GLOBAL_ID_NAMESPACE.with(|ns| {
         let old = ns.borrow_mut().insert(key, value);
         // Release the previous value being overwritten.
+        if let Some(prev) = old {
+            unsafe {
+                super::rc::release_if_ptr(prev);
+            }
+        }
+    });
+}
+
+/// Delete a global variable by integer id (SymbolId).
+/// The id is passed as raw i64 (not NaN-boxed).
+pub fn mb_global_del_id(id: MbValue) {
+    let key = id.to_bits() as i64;
+    GLOBAL_ID_NAMESPACE.with(|ns| {
+        let old = ns.borrow_mut().remove(&key);
         if let Some(prev) = old {
             unsafe {
                 super::rc::release_if_ptr(prev);
@@ -775,6 +1170,16 @@ pub fn restore_global_id_namespace(saved: HashMap<i64, MbValue>) {
     GLOBAL_ID_NAMESPACE.with(|ns| {
         *ns.borrow_mut() = saved;
     });
+}
+
+/// Replace the current GLOBAL_ID_NAMESPACE and return the previous contents.
+///
+/// Worker OS threads have their own Rust thread-local runtime state. Thread
+/// targets still need to resolve the defining module's globals through the
+/// same SymbolId-keyed namespace used by JIT code, so threading installs a
+/// snapshot before invoking a target and restores the previous namespace after.
+pub fn replace_global_id_namespace(next: HashMap<i64, MbValue>) -> HashMap<i64, MbValue> {
+    GLOBAL_ID_NAMESPACE.with(|ns| std::mem::replace(&mut *ns.borrow_mut(), next))
 }
 
 /// Snapshot the current GLOBAL_ID_NAMESPACE (non-destructive).
@@ -937,12 +1342,16 @@ pub(crate) fn cleanup_all_closures() {
     let _ = CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_ID_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.set(false));
     let _ = FUNC_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_DOCS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_MODULES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_ARGCOUNTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_VARNAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_FLAGS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_FREEVARS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_BOXED_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_RET_ANNOS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_LINES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_FILES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
@@ -1298,6 +1707,64 @@ mod tests {
         // Func still readable
         assert_eq!(mb_closure_get_func(closure).as_int(), Some(7));
         mb_closure_release(closure);
+    }
+
+    #[test]
+    fn test_func_pos_defaults_assignment_updates_params_and_closure_defaults() {
+        cleanup_all_closures();
+        let name = MbValue::from_ptr(MbObject::new_str("pos_defaults".into()));
+        let func = MbValue::from_int(11);
+        let caps = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let closure = mb_closure_new(name, func, caps);
+
+        let params = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str("a".into())),
+                MbValue::from_int(0),
+                MbValue::from_int(0),
+                MbValue::none(),
+                MbValue::none(),
+            ])),
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str("b".into())),
+                MbValue::from_int(0),
+                MbValue::from_int(1),
+                MbValue::from_int(2),
+                MbValue::none(),
+            ])),
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str("c".into())),
+                MbValue::from_int(1),
+                MbValue::from_int(1),
+                MbValue::from_int(3),
+                MbValue::none(),
+            ])),
+        ]));
+        mb_func_set_params(closure, params);
+
+        let assigned = MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+        ]));
+        assert!(mb_func_set_pos_defaults(closure, assigned));
+
+        let defaults = closure_defaults(closure);
+        assert_eq!(
+            defaults
+                .iter()
+                .filter_map(|v| v.as_int())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        let params = func_params(closure).expect("params should remain registered");
+        let got: Vec<(bool, Option<i64>)> = params
+            .iter()
+            .map(|p| (p.has_default, p.default.as_int()))
+            .collect();
+        assert_eq!(got, vec![(true, Some(1)), (true, Some(2)), (true, Some(3))]);
+
+        cleanup_all_closures();
     }
 
     /// REQ: R3(b) — set_capture overwrite releases prior heap-allocated value.

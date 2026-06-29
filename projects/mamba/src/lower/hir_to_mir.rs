@@ -6,6 +6,7 @@
 use crate::hir::*;
 use crate::mir::*;
 use crate::resolve::{SymbolId, SymbolTable, VariableClass};
+use crate::source::span::Span;
 use crate::types::{Ty, TypeContext, TypeId};
 use std::collections::{HashMap, HashSet};
 
@@ -19,6 +20,60 @@ pub enum MethodDecorKind {
     ClassMethod,
     StaticMethod,
     CachedProperty,
+}
+
+type MethodEntry = (
+    String,
+    SymbolId,
+    MethodDecorKind,
+    Option<SymbolId>,
+    Option<SymbolId>,
+    Vec<&'static str>,
+    // Generic runtime decorator to apply to the (already-wrapped) method
+    // value, e.g. a cross-class `@Base.prop.setter`. None for plain or
+    // descriptor-folded methods. (#82)
+    Option<HirExpr>,
+    // True when the method's outer decorator is functools.singledispatchmethod.
+    // The regular MethodDecorKind still represents the inner descriptor shape
+    // (`@classmethod` / `@staticmethod`) that singledispatchmethod wraps.
+    bool,
+    // `@target.register(type_expr)` on a sibling singledispatchmethod.
+    Option<(SymbolId, HirExpr)>,
+    // Full decorator list in source order. Used when a class method has a
+    // generic runtime decorator in the stack and must apply CPython bottom-up
+    // composition instead of the builtin-only fast path.
+    Vec<HirExpr>,
+);
+
+type PendingClassRegistration = (
+    String,
+    SymbolId,
+    Vec<String>,
+    Option<NamedTupleBaseSpec>,
+    Vec<MethodEntry>,
+    Vec<String>,
+    Option<String>,
+    Option<Vec<String>>,
+    bool,
+    Vec<(String, HirExpr)>,
+);
+
+fn method_decorator_marker_attr_name(name: &str) -> Option<&'static str> {
+    match name {
+        "override" => Some("__override__"),
+        "final" => Some("__final__"),
+        _ => None,
+    }
+}
+
+fn method_descriptor_decorator_name(name: &str) -> Option<&'static str> {
+    match name {
+        "property" => Some("property"),
+        "classmethod" => Some("classmethod"),
+        "staticmethod" => Some("staticmethod"),
+        "cached_property" => Some("cached_property"),
+        _ => None,
+    }
 }
 
 /// Mapping from Python builtin name to mb_* runtime extern name.
@@ -320,6 +375,12 @@ fn collect_local_names(
                 body,
                 else_body,
                 ..
+            }
+            | HirStmt::AsyncFor {
+                var,
+                body,
+                else_body,
+                ..
             } => {
                 push(*var, resolve, out, seen);
                 collect_local_names(body, resolve, out, seen);
@@ -373,6 +434,7 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
     lowerer.sym_types = hir.sym_types.clone();
     lowerer.sym_names = hir.sym_names.clone();
     lowerer.module_annotations = hir.module_annotations.clone();
+    lowerer.boxed_param_funcs = hir.boxed_param_funcs.clone();
     // Populate user_func_param_types so MirInst::Call sites can selectively box
     // primitive args destined for Any/object-typed parameters (#827 R8).
     // Also populate user_func_return_tys for iter(callable, sentinel) thunk generation.
@@ -396,17 +458,33 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
         let (argcount, varnames) = func_code_metadata(func, |sym| hir.sym_names.get(&sym).cloned());
         lowerer.user_func_argcounts.insert(func.name.0, argcount);
         lowerer.user_func_varnames.insert(func.name.0, varnames);
+        if func.is_async {
+            lowerer.user_func_flags.insert(func.name.0, 0x0100);
+        }
+        let freevars: Vec<(SymbolId, String)> = func
+            .captures
+            .iter()
+            .filter_map(|sym| hir.sym_names.get(sym).cloned().map(|name| (*sym, name)))
+            .collect();
+        lowerer.user_func_freevars.insert(func.name.0, freevars);
     }
     lowerer.user_func_sigs = hir.func_sigs.clone();
     for func in &hir.functions {
         if !func.decorators.is_empty() {
-            lowerer
-                .pending_decorators
-                .push((func.name, func.decorators.clone()));
+            let dispatch_sym = func.bind_name.unwrap_or(func.name);
+            lowerer.pending_decorators.push((
+                func.name,
+                func.decorators.clone(),
+                func.func_sig.clone(),
+            ));
             lowerer.decorated_func_syms.insert(func.name.0);
+            lowerer.decorated_func_syms.insert(dispatch_sym.0);
             lowerer
                 .decorated_func_return_tys
                 .insert(func.name.0, func.return_ty);
+            lowerer
+                .decorated_func_return_tys
+                .insert(dispatch_sym.0, func.return_ty);
         }
         let body = lowerer.lower_function(func);
         lowerer.bodies.push(body);
@@ -442,7 +520,12 @@ pub fn lower_hir_to_mir_with_symbols_src(
     symbols: &SymbolTable,
     src: Option<(&str, &str)>,
 ) -> MirModule {
-    let user_funcs: HashSet<u32> = hir.functions.iter().map(|f| f.name.0).collect();
+    let mut user_funcs: HashSet<u32> = hir.functions.iter().map(|f| f.name.0).collect();
+    for cls in &hir.classes {
+        for method in &cls.methods {
+            user_funcs.insert(method.name.0);
+        }
+    }
     let extern_map = builtin_extern_map();
     let mut builtin_syms: HashMap<u32, String> = HashMap::new();
     for (&py_name, &mb_name) in &extern_map {
@@ -487,6 +570,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
         "UnicodeError",
         "UnicodeDecodeError",
         "UnicodeEncodeError",
+        "UnicodeTranslateError",
         "AssertionError",
         "BufferError",
         "EOFError",
@@ -540,6 +624,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
         "bytes",
         "bytearray",
         "frozenset",
+        "range",
         "type",
         "object",
         // Descriptor types: `isinstance(x, property)` etc. compare against
@@ -559,6 +644,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
     let mut lowerer = HirToMir::new_with_builtins(tcx, user_funcs, builtin_syms);
     lowerer.class_syms = class_syms;
     lowerer.symbol_table = Some(symbols);
+    lowerer.boxed_param_funcs = hir.boxed_param_funcs.clone();
     // Source-location metadata: line-start offsets for span→line conversion
     // plus per-def first lines (co_firstlineno / co_filename priming).
     if let Some((filename, source)) = src {
@@ -658,6 +744,40 @@ pub fn lower_hir_to_mir_with_symbols_src(
         let (argcount, varnames) = func_code_metadata(func, &sym_name_lookup);
         lowerer.user_func_argcounts.insert(func.name.0, argcount);
         lowerer.user_func_varnames.insert(func.name.0, varnames);
+        if func.is_async {
+            lowerer.user_func_flags.insert(func.name.0, 0x0100);
+        }
+        let freevars: Vec<(SymbolId, String)> = func
+            .captures
+            .iter()
+            .filter_map(|sym| sym_name_lookup(*sym).map(|name| (*sym, name)))
+            .collect();
+        lowerer.user_func_freevars.insert(func.name.0, freevars);
+    }
+    // Methods need the same __code__ introspection priming so
+    // `Cls.m.__code__.co_argcount` / `.co_varnames` resolve and
+    // mb_func_is_registered(Cls.m) is true. Keyed by FuncRef(method_sym) — the
+    // value the class table stores for an undecorated method — so it matches the
+    // value `getattr(Cls, "m")` returns. Introspection maps only; call lowering
+    // is unaffected.
+    for cls in &hir.classes {
+        for func in &cls.methods {
+            if let Some(name) = sym_name_lookup(func.name) {
+                lowerer.user_func_names.insert(func.name.0, name);
+            }
+            let (argcount, varnames) = func_code_metadata(func, &sym_name_lookup);
+            lowerer.user_func_argcounts.insert(func.name.0, argcount);
+            lowerer.user_func_varnames.insert(func.name.0, varnames);
+            if func.is_async {
+                lowerer.user_func_flags.insert(func.name.0, 0x0100);
+            }
+            let freevars: Vec<(SymbolId, String)> = func
+                .captures
+                .iter()
+                .filter_map(|sym| sym_name_lookup(*sym).map(|name| (*sym, name)))
+                .collect();
+            lowerer.user_func_freevars.insert(func.name.0, freevars);
+        }
     }
     lowerer.user_func_sigs = hir.func_sigs.clone();
 
@@ -701,27 +821,39 @@ pub fn lower_hir_to_mir_with_symbols_src(
         // should be combined with the existing property (not registered as a
         // separate entry). We collapse them here so the per-property entry has
         // an optional setter/deleter symbol.
-        let methods: Vec<(
-            String,
-            SymbolId,
-            MethodDecorKind,
-            Option<SymbolId>,
-            Option<SymbolId>,
-        )> = {
-            // Per-method: (name, sym, base_kind, is_setter_for, is_deleter_for)
+        let methods: Vec<MethodEntry> = {
+            // Per-method: (name, sym, base_kind, is_setter_for, is_deleter_for, marker_attrs)
             struct Raw {
                 sym: SymbolId,
                 kind: MethodDecorKind,
                 setter_target: Option<String>,
                 deleter_target: Option<String>,
+                marker_attrs: Vec<&'static str>,
+                // A `@<expr>.setter/.deleter/.getter` whose `<expr>` is NOT a
+                // bare sibling-property name (e.g. cross-class `@Base.x.setter`).
+                // This is a generic runtime decorator, applied to the method
+                // value rather than folded into an in-class property. (#82)
+                generic_decorator: Option<HirExpr>,
+                singledispatchmethod: bool,
+                sdm_register: Option<(SymbolId, HirExpr)>,
+                decorators: Vec<HirExpr>,
             }
             impl Raw {
-                fn new(sym: SymbolId) -> Self {
+                fn new(
+                    sym: SymbolId,
+                    marker_attrs: Vec<&'static str>,
+                    decorators: Vec<HirExpr>,
+                ) -> Self {
                     Self {
                         sym,
                         kind: MethodDecorKind::None,
                         setter_target: None,
                         deleter_target: None,
+                        marker_attrs,
+                        generic_decorator: None,
+                        singledispatchmethod: false,
+                        sdm_register: None,
+                        decorators,
                     }
                 }
             }
@@ -730,7 +862,17 @@ pub fn lower_hir_to_mir_with_symbols_src(
             for m in &cls.methods {
                 let name =
                     sym_name_lookup(m.name).unwrap_or_else(|| format!("method_{}", m.name.0));
-                let mut r = Raw::new(m.name);
+                let marker_attrs = m
+                    .decorators
+                    .iter()
+                    .filter_map(|dec| match dec {
+                        HirExpr::Var(dec_sym, _) => sym_name_lookup(*dec_sym)
+                            .and_then(|name| method_decorator_marker_attr_name(&name)),
+                        HirExpr::Attr { attr, .. } => method_decorator_marker_attr_name(attr),
+                        _ => None,
+                    })
+                    .collect();
+                let mut r = Raw::new(m.name, marker_attrs, m.decorators.clone());
                 for dec in &m.decorators {
                     match dec {
                         HirExpr::Var(dec_sym, _) => {
@@ -748,20 +890,58 @@ pub fn lower_hir_to_mir_with_symbols_src(
                                     "cached_property" => {
                                         r.kind = MethodDecorKind::CachedProperty;
                                     }
+                                    "singledispatchmethod" => {
+                                        r.singledispatchmethod = true;
+                                    }
                                     _ => {}
                                 }
                             }
                         }
+                        HirExpr::Call { func, args, .. } => {
+                            if let HirExpr::Attr { object, attr, .. } = func.as_ref() {
+                                if attr == "register" && args.len() == 1 {
+                                    if let HirExpr::Var(target_sym, _) = object.as_ref() {
+                                        r.sdm_register = Some((*target_sym, args[0].clone()));
+                                    }
+                                }
+                            }
+                        }
                         HirExpr::Attr { object, attr, .. } => {
-                            // `@<name>.setter` — combine with existing property of that name.
-                            if let HirExpr::Var(prop_sym, _) = object.as_ref() {
-                                if let Some(prop_name) = sym_name_lookup(*prop_sym) {
+                            if let HirExpr::Var(obj_sym, _) = object.as_ref() {
+                                let obj_name = sym_name_lookup(*obj_sym);
+                                // `@enum.property` — the enum module's property
+                                // descriptor behaves like the builtin property for
+                                // member attribute access. Treat it as Property.
+                                if attr == "property" && obj_name.as_deref() == Some("enum") {
+                                    r.kind = MethodDecorKind::Property;
+                                } else if attr == "cached_property"
+                                    && obj_name.as_deref() == Some("functools")
+                                {
+                                    // `@functools.cached_property` — same descriptor
+                                    // as the bare `cached_property` import.
+                                    r.kind = MethodDecorKind::CachedProperty;
+                                } else if attr == "singledispatchmethod"
+                                    && obj_name.as_deref() == Some("functools")
+                                {
+                                    r.singledispatchmethod = true;
+                                } else if let Some(prop_name) = obj_name {
+                                    // `@<name>.setter` / `.deleter` — combine with
+                                    // the existing property of that name.
                                     if attr == "setter" {
                                         r.setter_target = Some(prop_name);
                                     } else if attr == "deleter" {
                                         r.deleter_target = Some(prop_name);
                                     }
                                 }
+                            } else if matches!(attr.as_str(), "setter" | "deleter" | "getter") {
+                                // `@<expr>.setter/.deleter/.getter` where `<expr>`
+                                // is not a bare sibling-property Var — e.g. the
+                                // cross-class `@Base.x.setter` form. CPython
+                                // evaluates the bound descriptor method and calls
+                                // it on the function, yielding a NEW property
+                                // sharing the base's accessors. Apply it as a
+                                // generic runtime decorator. (#82)
+                                r.generic_decorator = Some(dec.clone());
                             }
                         }
                         _ => {}
@@ -770,21 +950,21 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 raw.push((name, r));
             }
             // Second pass: fold setters/deleters into their target property.
-            let mut out: Vec<(
-                String,
-                SymbolId,
-                MethodDecorKind,
-                Option<SymbolId>,
-                Option<SymbolId>,
-            )> = Vec::new();
+            let mut out: Vec<MethodEntry> = Vec::new();
             for (name, r) in &raw {
-                if r.setter_target.is_some() || r.deleter_target.is_some() {
+                if (r.setter_target.is_some() || r.deleter_target.is_some())
+                    && r.generic_decorator.is_none()
+                {
                     // Skip — the target property entry will reference this sym.
+                    // (A generic cross-class decorator is emitted on its own.)
                     continue;
                 }
                 let mut setter_sym = None;
                 let mut deleter_sym = None;
                 for (_, other) in &raw {
+                    if other.generic_decorator.is_some() {
+                        continue;
+                    }
                     if other.setter_target.as_deref() == Some(name.as_str()) {
                         setter_sym = Some(other.sym);
                     }
@@ -792,7 +972,18 @@ pub fn lower_hir_to_mir_with_symbols_src(
                         deleter_sym = Some(other.sym);
                     }
                 }
-                out.push((name.clone(), r.sym, r.kind, setter_sym, deleter_sym));
+                out.push((
+                    name.clone(),
+                    r.sym,
+                    r.kind,
+                    setter_sym,
+                    deleter_sym,
+                    r.marker_attrs.clone(),
+                    r.generic_decorator.clone(),
+                    r.singledispatchmethod,
+                    r.sdm_register.clone(),
+                    r.decorators.clone(),
+                ));
             }
             out
         };
@@ -814,23 +1005,65 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 })
                 .unwrap_or_default()
         };
+        // #82: a class with a cross-class chained property decorator
+        // (`@Base.x.setter`) must register at its textual ClassDefPlaceholder
+        // (not eagerly), so the base class's property is already set when the
+        // decorator reads it. Mark it so the eager `None` registration pass
+        // skips it and the placeholder's `Some(sym)` pass handles it.
+        if cls.force_textual_registration || methods.iter().any(|m| m.6.is_some()) {
+            lowerer
+                .classes_needing_textual_registration
+                .insert(cls.name.0);
+        }
         lowerer.pending_classes.push((
             class_name.clone(),
+            cls.name,
             all_base_names,
+            cls.namedtuple_base.clone(),
             methods,
             match_args,
             cls.metaclass.clone(),
             cls.slots.clone(),
+            cls.class_cell_required,
             cls.class_kwargs.clone(),
         ));
+        lowerer
+            .pending_class_finalizers
+            .push((class_name.clone(), cls.name));
+        if !cls.runtime_base_exprs.is_empty() {
+            lowerer.pending_runtime_class_bases.push((
+                class_name.clone(),
+                cls.name,
+                cls.runtime_base_exprs.clone(),
+            ));
+        }
+        if let Some(base_list_expr) = &cls.runtime_base_list_expr {
+            lowerer.pending_runtime_class_base_lists.push((
+                class_name.clone(),
+                cls.name,
+                base_list_expr.clone(),
+            ));
+        }
         // P2-R3: Store class-level attribute assignments for emission at the
         // class's ClassDefPlaceholder (its textual position in the module).
         for (attr_name, val_expr) in &cls.class_attr_assigns {
+            let attr_local = cls
+                .class_attr_locals
+                .iter()
+                .find_map(|(name, sym)| (name == attr_name).then_some(*sym));
             lowerer.pending_class_attrs.push((
                 class_name.clone(),
                 cls.name,
                 attr_name.clone(),
+                attr_local,
                 val_expr.clone(),
+            ));
+        }
+        if !cls.class_body_stmts.is_empty() {
+            lowerer.pending_class_body_stmts.push((
+                class_name.clone(),
+                cls.name,
+                cls.class_body_stmts.clone(),
             ));
         }
         // Store class decorators for application after registration.
@@ -906,13 +1139,20 @@ pub fn lower_hir_to_mir_with_symbols_src(
 
     for func in &hir.functions {
         if !func.decorators.is_empty() {
-            lowerer
-                .pending_decorators
-                .push((func.name, func.decorators.clone()));
+            let dispatch_sym = func.bind_name.unwrap_or(func.name);
+            lowerer.pending_decorators.push((
+                func.name,
+                func.decorators.clone(),
+                func.func_sig.clone(),
+            ));
             lowerer.decorated_func_syms.insert(func.name.0);
+            lowerer.decorated_func_syms.insert(dispatch_sym.0);
             lowerer
                 .decorated_func_return_tys
                 .insert(func.name.0, func.return_ty);
+            lowerer
+                .decorated_func_return_tys
+                .insert(dispatch_sym.0, func.return_ty);
         }
         let body = lowerer.lower_function(func);
         lowerer.bodies.push(body);
@@ -944,6 +1184,7 @@ pub fn lower_hir_to_mir_repl(
     // Populate sym_types for nested pattern capture unboxing (#827).
     lowerer.sym_types = hir.sym_types.clone();
     lowerer.sym_names = hir.sym_names.clone();
+    lowerer.boxed_param_funcs = hir.boxed_param_funcs.clone();
     // Populate user_funcs so call-site dispatch correctly routes accumulated and current
     // session functions through MirInst::Call rather than dynamic mb_call* dispatch.
     for func in extra_functions {
@@ -1010,6 +1251,9 @@ struct HirToMir<'a> {
     current_block_id: Option<BlockId>,
     /// VReg holding coroutine handle for async functions.
     async_coro_vreg: Option<VReg>,
+    /// Async coroutine resume state -> block for lowered await suspension points.
+    async_resume_dispatches: Vec<(u32, BlockId)>,
+    next_async_resume_state: u32,
     /// User-defined function SymbolIds (to distinguish from builtins).
     user_funcs: HashSet<u32>,
     /// SymbolId.0 → mb_* extern name for builtin calls.
@@ -1019,28 +1263,31 @@ struct HirToMir<'a> {
     /// VReg of the caught exception inside an except handler body (for implicit chaining).
     active_except_vreg: Option<VReg>,
     /// Classes to register at the start of top-level code.
-    /// (class_name, all_base_names, [(method_name, method_symbol_id, decor_kind, setter_sym, deleter_sym)], match_args, metaclass, slots, class_kwargs)
-    pending_classes: Vec<(
-        String,
-        Vec<String>,
-        Vec<(
-            String,
-            SymbolId,
-            MethodDecorKind,
-            Option<SymbolId>,
-            Option<SymbolId>,
-        )>,
-        Vec<String>,
-        Option<String>,
-        Option<Vec<String>>,
-        Vec<(String, HirExpr)>,
-    )>,
+    /// (class_name, class_symbol_id, all_base_names, namedtuple_base, methods, match_args, metaclass, slots, class_cell_required, class_kwargs)
+    pending_classes: Vec<PendingClassRegistration>,
+    /// SymbolId.0 of classes whose registration must be emitted at their
+    /// textual ClassDefPlaceholder rather than eagerly, because a method
+    /// carries a cross-class chained property decorator (`@Base.x.setter`)
+    /// that reads a base property only set at the base's textual position. (#82)
+    classes_needing_textual_registration: HashSet<u32>,
+    /// Class base expressions that must be evaluated at the class statement's
+    /// textual runtime position, e.g. `class Derived(base):` inside a loop.
+    pending_runtime_class_bases: Vec<(String, SymbolId, Vec<HirExpr>)>,
+    /// Materialized runtime base-list expressions for starred class bases,
+    /// e.g. `class Derived[T](*bases): ...`.
+    pending_runtime_class_base_lists: Vec<(String, SymbolId, HirExpr)>,
     /// P2-R3: Class-level attribute assignments to emit after class registration.
-    /// (class_name, class_symbol_id, attr_name, value_expr)
+    /// (class_name, class_symbol_id, attr_name, class_body_local_symbol, value_expr)
     /// Emitted at the class's ClassDefPlaceholder position (textual order) so
     /// initializer expressions like `X = enum.auto()` see imports/bindings
     /// established by preceding statements (#1686 motivation).
-    pending_class_attrs: Vec<(String, SymbolId, String, HirExpr)>,
+    pending_class_attrs: Vec<(String, SymbolId, String, Option<SymbolId>, HirExpr)>,
+    /// Narrow executable class-body statements emitted at the class placeholder
+    /// before attribute assignment/decorators.
+    pending_class_body_stmts: Vec<(String, SymbolId, Vec<HirStmt>)>,
+    /// Class-definition finalizers emitted after method table + class attrs are
+    /// populated, so metaclass hooks see the complete namespace.
+    pending_class_finalizers: Vec<(String, SymbolId)>,
     /// abc: per-class names of methods decorated `@abc.abstractmethod` (and the
     /// abstract{property,classmethod,staticmethod} variants). Emitted after
     /// `mb_class_define_multi` so the runtime can compute `__abstractmethods__`
@@ -1084,6 +1331,18 @@ struct HirToMir<'a> {
     /// Stack of finally bodies for active try blocks (parallel to try_handler_stack).
     /// Used to inline finally code before early exits (return/break/continue).
     finally_body_stack: Vec<Vec<crate::hir::HirStmt>>,
+    /// Stack of `mb_save_handled_exc` token vregs for try/except handler
+    /// regions whose handler body we are currently lowering. A `return` inside
+    /// an except handler bypasses the region's fall-through restore, so the
+    /// function epilogue must emit `mb_restore_handled_exc(token)` for every
+    /// token here (innermost first) to reinstate the caller's currently-handled
+    /// exception (CPython clears the handled exception when the handler frame
+    /// unwinds). See the `HirStmt::Try` handler-body lowering.
+    handler_region_tokens: Vec<VReg>,
+    /// Exception exit targets for handler bodies that still owe a finally block.
+    /// A `raise` inside an except handler is not allowed to return past the
+    /// try/finally; it must run the finally body first, then propagate.
+    handler_raise_exit_stack: Vec<BlockId>,
     /// Symbol table for variable classification (global/nonlocal/cell/free).
     /// None when created without symbols (basic lowering).
     symbol_table: Option<&'a SymbolTable>,
@@ -1103,9 +1362,9 @@ struct HirToMir<'a> {
     current_return_ty: TypeId,
     /// Counter for allocating synthetic lambda SymbolIds (starts at 4_000_000).
     next_lambda_id: u32,
-    /// Pending decorator applications: (func_sym, decorators_in_order).
+    /// Pending decorator applications: (impl_func_sym, decorators_in_order, per-def signature).
     /// Emitted at the start of top-level code, after class registrations.
-    pending_decorators: Vec<(SymbolId, Vec<HirExpr>)>,
+    pending_decorators: Vec<(SymbolId, Vec<HirExpr>, Option<crate::hir::HirFuncSig>)>,
     /// SymbolId.0 set for functions that have decorators.
     /// Call sites for these functions use dynamic dispatch via LoadGlobal.
     decorated_func_syms: HashSet<u32>,
@@ -1116,11 +1375,16 @@ struct HirToMir<'a> {
     /// These must use global storage (StoreGlobal/LoadGlobal) so outer and inner functions
     /// share the same variable slot regardless of stack frames.
     cell_override: HashSet<u32>,
+    /// Capture cells initialized in the current function lowering. First bind
+    /// gets a fresh cell for this call; later binds update the same cell.
+    initialized_capture_cells: HashSet<u32>,
     /// SymbolId.0 → ordered parameter TypeIds for each user-defined function.
     /// Used at MirInst::Call sites to selectively box primitive arguments when the
     /// callee declares the parameter as Any/object, so match-subject comparisons via
     /// mb_eq receive uniform NaN-boxed MbValues (#827 R8).
     user_func_param_types: HashMap<u32, Vec<TypeId>>,
+    /// SymbolId.0 set for user functions whose regular params use boxed MbValue ABI.
+    boxed_param_funcs: HashSet<u32>,
     /// SymbolId.0 → return TypeId for each user-defined function.
     /// Used by iter(callable, sentinel) lowering to detect primitive-returning callables
     /// that need a boxing thunk so mb_call0 receives properly NaN-boxed MbValues.
@@ -1147,6 +1411,11 @@ struct HirToMir<'a> {
     /// `mb_func_set_varnames` so `f.__code__.co_varnames` returns the params
     /// (CORE #3).
     user_func_varnames: HashMap<u32, Vec<String>>,
+    /// SymbolId.0 → extra CPython code-object flags (`CO_COROUTINE`, etc.).
+    user_func_flags: HashMap<u32, i64>,
+    /// SymbolId.0 → captured free-variable `(SymbolId, name)` pairs for
+    /// `inspect.getclosurevars`.
+    user_func_freevars: HashMap<u32, Vec<(SymbolId, String)>>,
     /// SymbolId.0 → declared signature metadata (names/kinds/defaults/
     /// annotations + return annotation) for each user-defined `def`. Primed
     /// at module-init via `mb_func_set_params` / `mb_func_set_retanno` so
@@ -1162,6 +1431,16 @@ struct HirToMir<'a> {
     src_line_starts: Option<Vec<u32>>,
     /// Module source filename (co_filename), when known.
     src_filename: Option<String>,
+    /// Source first line for the function body currently being lowered.
+    current_func_src_line: Option<u32>,
+    /// Python-visible name for the function body currently being lowered.
+    current_func_name: Option<String>,
+    /// True while lowering a normal Python function body with a pushed
+    /// traceback frame. Synthetic bodies such as lambdas opt out.
+    traceback_frame_active: bool,
+    /// True while lowering a normal Python function body that entered the
+    /// runtime recursion-depth guard.
+    recursion_frame_active: bool,
     /// (class_name, docstring) pairs primed at module-init via
     /// `mb_class_set_doc` so `inspect.getdoc(Cls)` works.
     pending_class_docs: Vec<(String, String)>,
@@ -1195,12 +1474,19 @@ impl<'a> HirToMir<'a> {
             loop_header: None,
             current_block_id: None,
             async_coro_vreg: None,
+            async_resume_dispatches: Vec::new(),
+            next_async_resume_state: 2,
             user_funcs: HashSet::new(),
             builtin_syms: HashMap::new(),
             class_syms: HashMap::new(),
             active_except_vreg: None,
             pending_classes: Vec::new(),
+            classes_needing_textual_registration: HashSet::new(),
+            pending_runtime_class_bases: Vec::new(),
+            pending_runtime_class_base_lists: Vec::new(),
             pending_class_attrs: Vec::new(),
+            pending_class_body_stmts: Vec::new(),
+            pending_class_finalizers: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
             pending_dataclass_fields: Vec::new(),
@@ -1211,6 +1497,8 @@ impl<'a> HirToMir<'a> {
             with_ctx_stack: Vec::new(),
             with_exit_stack: Vec::new(),
             finally_body_stack: Vec::new(),
+            handler_region_tokens: Vec::new(),
+            handler_raise_exit_stack: Vec::new(),
             symbol_table: None,
             sym_types: HashMap::new(),
             sym_names: HashMap::new(),
@@ -1220,22 +1508,208 @@ impl<'a> HirToMir<'a> {
             decorated_func_syms: HashSet::new(),
             decorated_func_return_tys: HashMap::new(),
             cell_override: HashSet::new(),
+            initialized_capture_cells: HashSet::new(),
             user_func_param_types: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
             user_func_return_tys: HashMap::new(),
             user_func_variadic_info: HashMap::new(),
             user_func_names: HashMap::new(),
             user_func_docs: HashMap::new(),
             user_func_argcounts: HashMap::new(),
             user_func_varnames: HashMap::new(),
+            user_func_flags: HashMap::new(),
+            user_func_freevars: HashMap::new(),
             user_func_sigs: HashMap::new(),
             user_func_lines: HashMap::new(),
             src_line_starts: None,
             src_filename: None,
+            current_func_src_line: None,
+            current_func_name: None,
+            traceback_frame_active: false,
+            recursion_frame_active: false,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
             is_class_method: false,
         }
+    }
+
+    fn emit_func_sig_metadata(&mut self, func_sym: SymbolId, sig: &crate::hir::HirFuncSig) {
+        let any_ty = self.tcx.any();
+        let fn_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: fn_vreg,
+            value: MirConst::FuncRef(func_sym),
+            ty: any_ty,
+        });
+        self.emit_func_sig_metadata_for_value(fn_vreg, sig);
+    }
+
+    fn emit_func_sig_metadata_for_value(&mut self, func_vreg: VReg, sig: &crate::hir::HirFuncSig) {
+        let any_ty = self.tcx.any();
+        let mut param_vregs: Vec<VReg> = Vec::new();
+        for p in &sig.params {
+            let name_vreg = self.emit_str_const(&p.name);
+            let kind_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: kind_raw,
+                value: MirConst::Int(p.kind as i64),
+                ty: self.tcx.int(),
+            });
+            let kind_vreg = self.box_operand(kind_raw, self.tcx.int());
+            let has_default = p.default.is_some() || p.default_opaque;
+            let hd_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: hd_raw,
+                value: MirConst::Int(if has_default { 1 } else { 0 }),
+                ty: self.tcx.int(),
+            });
+            let hd_vreg = self.box_operand(hd_raw, self.tcx.int());
+            let def_vreg = match &p.default {
+                Some(crate::hir::HirSigDefault::Int(v)) => {
+                    let raw = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: raw,
+                        value: MirConst::Int(*v),
+                        ty: self.tcx.int(),
+                    });
+                    self.box_operand(raw, self.tcx.int())
+                }
+                Some(crate::hir::HirSigDefault::Float(v)) => {
+                    let raw = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: raw,
+                        value: MirConst::Float(*v),
+                        ty: self.tcx.float(),
+                    });
+                    self.box_operand(raw, self.tcx.float())
+                }
+                Some(crate::hir::HirSigDefault::Str(s)) => self.emit_str_const(s),
+                Some(crate::hir::HirSigDefault::Bool(b)) => {
+                    let raw = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: raw,
+                        value: MirConst::Bool(*b),
+                        ty: self.tcx.bool(),
+                    });
+                    self.box_operand(raw, self.tcx.bool())
+                }
+                Some(crate::hir::HirSigDefault::None) | None => self.emit_none(),
+            };
+            let anno_vreg = match &p.annotation {
+                Some(s) => self.emit_str_const(s),
+                None => self.emit_none(),
+            };
+            let tup_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeTuple {
+                dest: tup_vreg,
+                elements: vec![name_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg],
+                ty: any_ty,
+            });
+            param_vregs.push(tup_vreg);
+        }
+        let params_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: params_vreg,
+            elements: param_vregs,
+            ty: any_ty,
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_func_set_params".to_string(),
+            args: vec![func_vreg, params_vreg],
+            ty: self.tcx.none(),
+        });
+        if let Some(ret_anno) = &sig.return_annotation {
+            let ra_vreg = self.emit_str_const(ret_anno);
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_func_set_retanno".to_string(),
+                args: vec![func_vreg, ra_vreg],
+                ty: self.tcx.none(),
+            });
+        }
+    }
+
+    fn emit_minimal_func_params_for_value(
+        &mut self,
+        func_vreg: VReg,
+        argcount: i64,
+        varnames: &[String],
+        has_star: bool,
+        has_kwargs: bool,
+    ) {
+        let any_ty = self.tcx.any();
+        let mut param_vregs = Vec::new();
+        for (idx, name) in varnames.iter().enumerate() {
+            let kind = if idx < argcount.max(0) as usize {
+                1
+            } else if has_star && idx == argcount.max(0) as usize {
+                2
+            } else if has_kwargs && idx + 1 == varnames.len() {
+                4
+            } else {
+                1
+            };
+            let name_vreg = self.emit_str_const(name);
+            let kind_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: kind_raw,
+                value: MirConst::Int(kind),
+                ty: self.tcx.int(),
+            });
+            let kind_vreg = self.box_operand(kind_raw, self.tcx.int());
+            let has_default_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: has_default_raw,
+                value: MirConst::Int(0),
+                ty: self.tcx.int(),
+            });
+            let has_default_vreg = self.box_operand(has_default_raw, self.tcx.int());
+            let default_vreg = self.emit_none();
+            let anno_vreg = self.emit_none();
+            let tuple_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeTuple {
+                dest: tuple_vreg,
+                elements: vec![
+                    name_vreg,
+                    kind_vreg,
+                    has_default_vreg,
+                    default_vreg,
+                    anno_vreg,
+                ],
+                ty: any_ty,
+            });
+            param_vregs.push(tuple_vreg);
+        }
+        let params_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: params_vreg,
+            elements: param_vregs,
+            ty: any_ty,
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_func_set_params".to_string(),
+            args: vec![func_vreg, params_vreg],
+            ty: self.tcx.none(),
+        });
+    }
+
+    fn lookup_bound_symbol(&self, name: &str) -> Option<SymbolId> {
+        self.sym_names
+            .iter()
+            .filter_map(|(sym, sym_name)| (sym_name == name).then_some(*sym))
+            .max_by_key(|sym| sym.0)
+            .or_else(|| self.symbol_table.and_then(|st| st.lookup(name)))
+            .or_else(|| {
+                self.symbol_table.and_then(|st| {
+                    st.all_symbols()
+                        .iter()
+                        .rev()
+                        .find_map(|info| (info.name == name).then_some(info.id))
+                })
+            })
     }
 
     fn new_with_builtins(
@@ -1256,12 +1730,19 @@ impl<'a> HirToMir<'a> {
             loop_header: None,
             current_block_id: None,
             async_coro_vreg: None,
+            async_resume_dispatches: Vec::new(),
+            next_async_resume_state: 2,
             user_funcs,
             builtin_syms,
             class_syms: HashMap::new(),
             active_except_vreg: None,
             pending_classes: Vec::new(),
+            classes_needing_textual_registration: HashSet::new(),
+            pending_runtime_class_bases: Vec::new(),
+            pending_runtime_class_base_lists: Vec::new(),
             pending_class_attrs: Vec::new(),
+            pending_class_body_stmts: Vec::new(),
+            pending_class_finalizers: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
             pending_dataclass_fields: Vec::new(),
@@ -1272,6 +1753,8 @@ impl<'a> HirToMir<'a> {
             with_ctx_stack: Vec::new(),
             with_exit_stack: Vec::new(),
             finally_body_stack: Vec::new(),
+            handler_region_tokens: Vec::new(),
+            handler_raise_exit_stack: Vec::new(),
             symbol_table: None,
             sym_types: HashMap::new(),
             sym_names: HashMap::new(),
@@ -1281,17 +1764,25 @@ impl<'a> HirToMir<'a> {
             decorated_func_syms: HashSet::new(),
             decorated_func_return_tys: HashMap::new(),
             cell_override: HashSet::new(),
+            initialized_capture_cells: HashSet::new(),
             user_func_param_types: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
             user_func_return_tys: HashMap::new(),
             user_func_variadic_info: HashMap::new(),
             user_func_names: HashMap::new(),
             user_func_docs: HashMap::new(),
             user_func_argcounts: HashMap::new(),
             user_func_varnames: HashMap::new(),
+            user_func_flags: HashMap::new(),
+            user_func_freevars: HashMap::new(),
             user_func_sigs: HashMap::new(),
             user_func_lines: HashMap::new(),
             src_line_starts: None,
             src_filename: None,
+            current_func_src_line: None,
+            current_func_name: None,
+            traceback_frame_active: false,
+            recursion_frame_active: false,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
@@ -1321,10 +1812,18 @@ impl<'a> HirToMir<'a> {
         self.loop_header = None;
         self.current_block_id = None;
         self.async_coro_vreg = None;
+        self.async_resume_dispatches.clear();
+        self.next_async_resume_state = 2;
         self.is_gen_body = false;
+        self.initialized_capture_cells.clear();
         self.try_handler_stack.clear();
         self.finally_body_stack.clear();
+        self.handler_region_tokens.clear();
         self.in_module_scope = false;
+        self.current_func_src_line = None;
+        self.current_func_name = None;
+        self.traceback_frame_active = false;
+        self.recursion_frame_active = false;
     }
 
     /// `*args` is a tuple in Python, but every call path packs the extra
@@ -1374,6 +1873,8 @@ impl<'a> HirToMir<'a> {
 
         // Track current function return type so Return lowering can unbox any→int (#827).
         self.current_return_ty = func.return_ty;
+        self.current_func_src_line = self.user_func_lines.get(&func.name.0).copied();
+        self.current_func_name = self.user_func_names.get(&func.name.0).cloned();
 
         // Populate cell_override from the function's captures (nonlocal-shared symbols).
         // These synthetic SymbolIds (1M+) must use global storage for consistency across
@@ -1428,6 +1929,29 @@ impl<'a> HirToMir<'a> {
             .collect();
 
         self.emit_star_args_to_tuple(func, any_ty);
+        let _recursion_ok = {
+            let dest = self.fresh_vreg();
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: Some(dest),
+                name: "mb_recursion_enter".to_string(),
+                args: Vec::new(),
+                ty: self.tcx.bool(),
+            });
+            dest
+        };
+        self.emit_exception_propagate();
+        self.recursion_frame_active = true;
+        let frame_filename = self
+            .src_filename
+            .clone()
+            .unwrap_or_else(|| "<string>".to_string());
+        let frame_line = self.current_func_src_line.unwrap_or(1) as i64;
+        let frame_name = self
+            .current_func_name
+            .clone()
+            .unwrap_or_else(|| "<function>".to_string());
+        self.emit_traceback_push_frame(&frame_filename, frame_line, &frame_name);
+        self.traceback_frame_active = true;
 
         // Store parameters to global storage if they are cell variables (captured by inner
         // functions via implicit or explicit nonlocal). This ensures that when an inner
@@ -1439,10 +1963,8 @@ impl<'a> HirToMir<'a> {
             if self.cell_override.contains(&sym.0) {
                 let vreg = *self.sym_to_vreg.get(sym).expect("param just inserted");
                 let boxed = self.box_operand(vreg, *ty);
-                self.current_stmts.push(MirInst::StoreGlobal {
-                    name: *sym,
-                    value: boxed,
-                });
+                self.initialized_capture_cells.insert(sym.0);
+                self.emit_capture_cell_reset(*sym, boxed);
             }
         }
 
@@ -1476,12 +1998,25 @@ impl<'a> HirToMir<'a> {
         let bool_ty = self.tcx.bool();
         let float_ty = self.tcx.float();
         let any_ty = self.tcx.any();
+        let generator_arg_names: Vec<String> = func
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, (sym, _))| {
+                self.sym_names
+                    .get(sym)
+                    .cloned()
+                    .unwrap_or_else(|| format!("arg{i}"))
+            })
+            .collect();
+        let generator_yield_local = self.first_yield_var_name(&func.body);
 
         // Synthetic SymbolId for the body function
         let body_sym = SymbolId(func.name.0.wrapping_add(3_000_000));
 
         // ── Phase 1: Generate body function ──
         self.reset();
+        self.cell_override = func.captures.iter().map(|s| s.0).collect();
         self.is_gen_body = true; // Enable return-value boxing for generator bodies
         let entry = self.fresh_block();
         self.current_block_id = Some(entry);
@@ -1565,7 +2100,7 @@ impl<'a> HirToMir<'a> {
             })
             .collect();
 
-        // Create generator: mb_generator_create(name, body_fn_addr)
+        // Create generator: mb_generator_create(name, body_fn_addr, origin_func)
         let name_vreg = self.fresh_vreg();
         self.current_stmts.push(MirInst::LoadConst {
             dest: name_vreg,
@@ -1578,12 +2113,40 @@ impl<'a> HirToMir<'a> {
             value: MirConst::FuncRef(body_sym),
             ty: int_ty,
         });
+        let origin_fn_ptr = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: origin_fn_ptr,
+            value: MirConst::FuncRef(func.name),
+            ty: any_ty,
+        });
         let gen_handle = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(gen_handle),
             name: "mb_generator_create".to_string(),
-            args: vec![name_vreg, body_fn_ptr],
+            args: vec![name_vreg, body_fn_ptr, origin_fn_ptr],
             ty: int_ty,
+        });
+
+        let mut local_name_vregs: Vec<VReg> = Vec::new();
+        for name in &generator_arg_names {
+            local_name_vregs.push(self.emit_str_const(name));
+        }
+        let yield_name_vreg = generator_yield_local
+            .as_ref()
+            .map(|name| self.emit_str_const(name))
+            .unwrap_or_else(|| self.emit_none());
+        local_name_vregs.push(yield_name_vreg);
+        let local_names_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: local_names_vreg,
+            elements: local_name_vregs,
+            ty: any_ty,
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_generator_set_local_names".to_string(),
+            args: vec![gen_handle, local_names_vreg],
+            ty: none_ty,
         });
 
         // Store function args for deferred thread spawn. NaN-box each primitive
@@ -1613,6 +2176,255 @@ impl<'a> HirToMir<'a> {
         }
     }
 
+    fn first_yield_var_name(&self, stmts: &[HirStmt]) -> Option<String> {
+        self.first_yield_var_in_stmts(stmts)
+            .and_then(|sym| self.sym_names.get(&sym).cloned())
+    }
+
+    fn first_yield_var_in_stmts(&self, stmts: &[HirStmt]) -> Option<SymbolId> {
+        for stmt in stmts {
+            if let Some(sym) = self.first_yield_var_in_stmt(stmt) {
+                return Some(sym);
+            }
+        }
+        None
+    }
+
+    fn first_yield_var_in_stmt(&self, stmt: &HirStmt) -> Option<SymbolId> {
+        match stmt {
+            HirStmt::Let { value, .. } => self.first_yield_var_in_expr(value),
+            HirStmt::Assign { value, .. } => self.first_yield_var_in_expr(value),
+            HirStmt::Return { value, .. } => value
+                .as_ref()
+                .and_then(|expr| self.first_yield_var_in_expr(expr)),
+            HirStmt::Expr { expr, .. } => self.first_yield_var_in_expr(expr),
+            HirStmt::If {
+                cond,
+                then_body,
+                else_body,
+                ..
+            } => self
+                .first_yield_var_in_expr(cond)
+                .or_else(|| self.first_yield_var_in_stmts(then_body))
+                .or_else(|| self.first_yield_var_in_stmts(else_body)),
+            HirStmt::While {
+                cond,
+                body,
+                else_body,
+                ..
+            } => self
+                .first_yield_var_in_expr(cond)
+                .or_else(|| self.first_yield_var_in_stmts(body))
+                .or_else(|| self.first_yield_var_in_stmts(else_body)),
+            HirStmt::For {
+                iter,
+                body,
+                else_body,
+                ..
+            }
+            | HirStmt::AsyncFor {
+                iter,
+                body,
+                else_body,
+                ..
+            } => self
+                .first_yield_var_in_expr(iter)
+                .or_else(|| self.first_yield_var_in_stmts(body))
+                .or_else(|| self.first_yield_var_in_stmts(else_body)),
+            HirStmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+                ..
+            } => self
+                .first_yield_var_in_stmts(body)
+                .or_else(|| {
+                    handlers
+                        .iter()
+                        .find_map(|handler| self.first_yield_var_in_stmts(&handler.body))
+                })
+                .or_else(|| self.first_yield_var_in_stmts(else_body))
+                .or_else(|| self.first_yield_var_in_stmts(finally_body)),
+            HirStmt::With { items, body, .. } => items
+                .iter()
+                .find_map(|(expr, _)| self.first_yield_var_in_expr(expr))
+                .or_else(|| self.first_yield_var_in_stmts(body)),
+            HirStmt::Assert { test, msg, .. } => self.first_yield_var_in_expr(test).or_else(|| {
+                msg.as_ref()
+                    .and_then(|expr| self.first_yield_var_in_expr(expr))
+            }),
+            HirStmt::Raise { value, from, .. } => value
+                .as_ref()
+                .and_then(|expr| self.first_yield_var_in_expr(expr))
+                .or_else(|| {
+                    from.as_ref()
+                        .and_then(|expr| self.first_yield_var_in_expr(expr))
+                }),
+            HirStmt::Del { target, .. } => self.first_yield_var_in_lvalue(target),
+            HirStmt::Match { subject, cases, .. } => {
+                self.first_yield_var_in_expr(subject).or_else(|| {
+                    cases
+                        .iter()
+                        .find_map(|case| self.first_yield_var_in_stmts(&case.body))
+                })
+            }
+            HirStmt::Break { .. }
+            | HirStmt::Continue { .. }
+            | HirStmt::Import { .. }
+            | HirStmt::Global { .. }
+            | HirStmt::Nonlocal { .. }
+            | HirStmt::FuncDefPlaceholder { .. }
+            | HirStmt::ClassDefPlaceholder { .. } => None,
+        }
+    }
+
+    fn first_yield_var_in_lvalue(&self, target: &crate::hir::HirLValue) -> Option<SymbolId> {
+        match target {
+            crate::hir::HirLValue::Attr { object, .. }
+            | crate::hir::HirLValue::Index { object, .. } => self.first_yield_var_in_expr(object),
+            crate::hir::HirLValue::Unpack { targets, .. } => targets
+                .iter()
+                .find_map(|target| self.first_yield_var_in_lvalue(target)),
+            crate::hir::HirLValue::Var(_) => None,
+        }
+    }
+
+    fn first_yield_var_in_expr(&self, expr: &HirExpr) -> Option<SymbolId> {
+        match expr {
+            HirExpr::Yield {
+                value: Some(value), ..
+            } => match &**value {
+                HirExpr::Var(sym, _) => Some(*sym),
+                other => self.first_yield_var_in_expr(other),
+            },
+            HirExpr::Yield { value: None, .. } => None,
+            HirExpr::YieldFrom { iter, .. } | HirExpr::Await { value: iter, .. } => {
+                self.first_yield_var_in_expr(iter)
+            }
+            HirExpr::BinOp { lhs, rhs, .. } => self
+                .first_yield_var_in_expr(lhs)
+                .or_else(|| self.first_yield_var_in_expr(rhs)),
+            HirExpr::UnaryOp { operand, .. } => self.first_yield_var_in_expr(operand),
+            HirExpr::Call { func, args, .. } => self.first_yield_var_in_expr(func).or_else(|| {
+                args.iter()
+                    .find_map(|arg| self.first_yield_var_in_expr(arg))
+            }),
+            HirExpr::Attr { object, .. } => self.first_yield_var_in_expr(object),
+            HirExpr::Index { object, index, .. } => self
+                .first_yield_var_in_expr(object)
+                .or_else(|| self.first_yield_var_in_expr(index)),
+            HirExpr::List { elements, .. }
+            | HirExpr::Set { elements, .. }
+            | HirExpr::Tuple { elements, .. } => elements
+                .iter()
+                .find_map(|element| self.first_yield_var_in_expr(element)),
+            HirExpr::Dict { entries, .. } => entries.iter().find_map(|(key, value)| {
+                self.first_yield_var_in_expr(key)
+                    .or_else(|| self.first_yield_var_in_expr(value))
+            }),
+            HirExpr::Slice {
+                start, stop, step, ..
+            } => start
+                .as_ref()
+                .and_then(|expr| self.first_yield_var_in_expr(expr))
+                .or_else(|| {
+                    stop.as_ref()
+                        .and_then(|expr| self.first_yield_var_in_expr(expr))
+                })
+                .or_else(|| {
+                    step.as_ref()
+                        .and_then(|expr| self.first_yield_var_in_expr(expr))
+                }),
+            HirExpr::IfExpr {
+                cond,
+                then_val,
+                else_val,
+                ..
+            } => self
+                .first_yield_var_in_expr(cond)
+                .or_else(|| self.first_yield_var_in_expr(then_val))
+                .or_else(|| self.first_yield_var_in_expr(else_val)),
+            HirExpr::Lambda { body, .. } => self.first_yield_var_in_expr(body),
+            HirExpr::ListComp {
+                element,
+                generators,
+                ..
+            }
+            | HirExpr::SetComp {
+                element,
+                generators,
+                ..
+            } => self
+                .first_yield_var_in_expr(element)
+                .or_else(|| self.first_yield_var_in_comprehensions(generators)),
+            HirExpr::DictComp {
+                key,
+                value,
+                generators,
+                ..
+            } => self
+                .first_yield_var_in_expr(key)
+                .or_else(|| self.first_yield_var_in_expr(value))
+                .or_else(|| self.first_yield_var_in_comprehensions(generators)),
+            HirExpr::AnyAllComp {
+                element,
+                generators,
+                ..
+            } => self
+                .first_yield_var_in_expr(element)
+                .or_else(|| self.first_yield_var_in_comprehensions(generators)),
+            HirExpr::FString { parts, .. } => parts.iter().find_map(|part| match part {
+                crate::hir::HirFStringPart::Expr(expr, spec) => {
+                    self.first_yield_var_in_expr(expr).or_else(|| {
+                        spec.as_ref()
+                            .and_then(|parts| self.first_yield_var_in_fstring_parts(parts))
+                    })
+                }
+                crate::hir::HirFStringPart::Literal(_) => None,
+            }),
+            HirExpr::Walrus {
+                target: _, value, ..
+            } => self.first_yield_var_in_expr(value),
+            HirExpr::IntLit(_, _)
+            | HirExpr::BigIntLit(_, _)
+            | HirExpr::FloatLit(_, _)
+            | HirExpr::StrLit(_, _)
+            | HirExpr::BytesLit(_, _)
+            | HirExpr::BoolLit(_, _)
+            | HirExpr::NoneLit(_)
+            | HirExpr::Var(_, _) => None,
+        }
+    }
+
+    fn first_yield_var_in_comprehensions(
+        &self,
+        generators: &[crate::hir::HirComprehension],
+    ) -> Option<SymbolId> {
+        generators.iter().find_map(|gen| {
+            self.first_yield_var_in_expr(&gen.iter).or_else(|| {
+                gen.conditions
+                    .iter()
+                    .find_map(|cond| self.first_yield_var_in_expr(cond))
+            })
+        })
+    }
+
+    fn first_yield_var_in_fstring_parts(
+        &self,
+        parts: &[crate::hir::HirFStringPart],
+    ) -> Option<SymbolId> {
+        parts.iter().find_map(|part| match part {
+            crate::hir::HirFStringPart::Expr(expr, spec) => {
+                self.first_yield_var_in_expr(expr).or_else(|| {
+                    spec.as_ref()
+                        .and_then(|parts| self.first_yield_var_in_fstring_parts(parts))
+                })
+            }
+            crate::hir::HirFStringPart::Literal(_) => None,
+        })
+    }
+
     /// Lower async function into wrapper + body (#313 R1).
     ///
     /// Generates TWO MirBodies:
@@ -1623,14 +2435,19 @@ impl<'a> HirToMir<'a> {
     fn lower_async_function(&mut self, func: &HirFunction) -> MirBody {
         let int_ty = self.tcx.int();
         let none_ty = self.tcx.none();
+        let close_raises_ignored_exit = self.async_body_catches_generator_exit(&func.body);
 
         // Synthetic SymbolId for the body function (step function)
         let body_sym = SymbolId(func.name.0.wrapping_add(2_000_000));
 
         // ── Phase 1: Generate body function ──
         self.reset();
+        self.cell_override = func.captures.iter().map(|s| s.0).collect();
+        let dispatch_block = self.fresh_block();
         let entry = self.fresh_block();
-        self.current_block_id = Some(entry);
+        self.current_block_id = Some(dispatch_block);
+        self.finish_block(Terminator::Goto(entry));
+        self.start_block(entry);
 
         // Body takes a single param: coroutine handle
         let handle_vreg = self.fresh_vreg();
@@ -1656,6 +2473,15 @@ impl<'a> HirToMir<'a> {
                 ty: int_ty,
             });
             self.sym_to_vreg.insert(*sym, arg_vreg);
+        }
+
+        for (sym, ty) in &func.params {
+            if self.cell_override.contains(&sym.0) {
+                let vreg = *self.sym_to_vreg.get(sym).expect("param just inserted");
+                let boxed = self.box_operand(vreg, *ty);
+                self.initialized_capture_cells.insert(sym.0);
+                self.emit_capture_cell_reset(*sym, boxed);
+            }
         }
 
         let any_ty = self.tcx.any();
@@ -1685,6 +2511,8 @@ impl<'a> HirToMir<'a> {
             });
             self.finish_block(Terminator::Return(Some(handle_vreg)));
         }
+
+        self.build_async_resume_dispatch(dispatch_block, entry, handle_vreg);
 
         let body_mir = MirBody {
             name: body_sym,
@@ -1760,6 +2588,20 @@ impl<'a> HirToMir<'a> {
             args: vec![coro_handle, body_fn_ptr],
             ty: none_ty,
         });
+        if close_raises_ignored_exit {
+            let flag_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: flag_vreg,
+                value: MirConst::Bool(true),
+                ty: self.tcx.bool(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_coroutine_set_close_raises".to_string(),
+                args: vec![coro_handle, flag_vreg],
+                ty: none_ty,
+            });
+        }
 
         // Return coroutine handle — body NOT called here, deferred to mb_coroutine_step
         self.finish_block(Terminator::Return(Some(coro_handle)));
@@ -1788,6 +2630,21 @@ impl<'a> HirToMir<'a> {
             args: vec![],
             ty: self.tcx.none(),
         });
+        self.emit_extern_call(None, "mb_traceback_reset_stack");
+
+        if let Some(filename) = self.src_filename.clone() {
+            if let Some(file_sym) = self.symbol_table.and_then(|st| st.lookup("__file__")) {
+                let file_vreg = self.emit_str_const(&filename);
+                self.current_stmts.push(MirInst::StoreGlobal {
+                    name: file_sym,
+                    value: file_vreg,
+                });
+                self.sym_to_vreg.insert(file_sym, file_vreg);
+            }
+            self.emit_traceback_push_frame(&filename, 1, "<module>");
+        } else {
+            self.emit_traceback_push_frame("<string>", 1, "<module>");
+        }
 
         // Prime the FUNC_NAMES registry for every user-defined function so
         // `f.__name__` works on top-level `def`s (which are hoisted into
@@ -1898,6 +2755,77 @@ impl<'a> HirToMir<'a> {
             });
         }
 
+        let func_flag_pairs: Vec<(SymbolId, i64)> = self
+            .user_func_flags
+            .iter()
+            .map(|(sid, flags)| (SymbolId(*sid), *flags))
+            .collect();
+        for (func_sym, flags) in &func_flag_pairs {
+            let fn_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: fn_vreg,
+                value: MirConst::FuncRef(*func_sym),
+                ty: any_ty,
+            });
+            let flags_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: flags_raw,
+                value: MirConst::Int(*flags),
+                ty: self.tcx.int(),
+            });
+            let flags_boxed = self.box_operand(flags_raw, self.tcx.int());
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_func_set_flags".to_string(),
+                args: vec![fn_vreg, flags_boxed],
+                ty: self.tcx.none(),
+            });
+        }
+
+        let func_freevar_pairs: Vec<(SymbolId, Vec<(SymbolId, String)>)> = self
+            .user_func_freevars
+            .iter()
+            .map(|(sid, vars)| (SymbolId(*sid), vars.clone()))
+            .collect();
+        for (func_sym, freevars) in &func_freevar_pairs {
+            let fn_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: fn_vreg,
+                value: MirConst::FuncRef(*func_sym),
+                ty: any_ty,
+            });
+            let mut pair_vregs: Vec<VReg> = Vec::new();
+            for (sym, name) in freevars {
+                let name_vreg = self.emit_str_const(name);
+                let id_raw = self.fresh_vreg();
+                self.current_stmts.push(MirInst::LoadConst {
+                    dest: id_raw,
+                    value: MirConst::Int(sym.0 as i64),
+                    ty: self.tcx.int(),
+                });
+                let id_vreg = self.box_operand(id_raw, self.tcx.int());
+                let pair_vreg = self.fresh_vreg();
+                self.current_stmts.push(MirInst::MakeTuple {
+                    dest: pair_vreg,
+                    elements: vec![name_vreg, id_vreg],
+                    ty: any_ty,
+                });
+                pair_vregs.push(pair_vreg);
+            }
+            let freevars_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: freevars_vreg,
+                elements: pair_vregs,
+                ty: any_ty,
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_func_set_freevars".to_string(),
+                args: vec![fn_vreg, freevars_vreg],
+                ty: self.tcx.none(),
+            });
+        }
+
         // Prime FUNC_PARAMS / FUNC_RET_ANNOS so `inspect.signature(f)` (and
         // getfullargspec) reflect the declared signature. Each parameter is
         // packed as a (name, kind, has_default, default, annotation) tuple;
@@ -1909,94 +2837,35 @@ impl<'a> HirToMir<'a> {
             .map(|(sid, sig)| (SymbolId(*sid), sig.clone()))
             .collect();
         for (func_sym, sig) in &func_sig_pairs {
+            self.emit_func_sig_metadata(*func_sym, sig);
+        }
+
+        let boxed_param_funcs: Vec<SymbolId> = self
+            .boxed_param_funcs
+            .iter()
+            .copied()
+            .map(SymbolId)
+            .collect();
+        for func_sym in boxed_param_funcs {
             let fn_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::LoadConst {
                 dest: fn_vreg,
-                value: MirConst::FuncRef(*func_sym),
+                value: MirConst::FuncRef(func_sym),
                 ty: any_ty,
             });
-            let mut param_vregs: Vec<VReg> = Vec::new();
-            for p in &sig.params {
-                let name_vreg = self.emit_str_const(&p.name);
-                let kind_raw = self.fresh_vreg();
-                self.current_stmts.push(MirInst::LoadConst {
-                    dest: kind_raw,
-                    value: MirConst::Int(p.kind as i64),
-                    ty: self.tcx.int(),
-                });
-                let kind_vreg = self.box_operand(kind_raw, self.tcx.int());
-                let has_default = p.default.is_some() || p.default_opaque;
-                let hd_raw = self.fresh_vreg();
-                self.current_stmts.push(MirInst::LoadConst {
-                    dest: hd_raw,
-                    value: MirConst::Int(if has_default { 1 } else { 0 }),
-                    ty: self.tcx.int(),
-                });
-                let hd_vreg = self.box_operand(hd_raw, self.tcx.int());
-                let def_vreg = match &p.default {
-                    Some(crate::hir::HirSigDefault::Int(v)) => {
-                        let raw = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::LoadConst {
-                            dest: raw,
-                            value: MirConst::Int(*v),
-                            ty: self.tcx.int(),
-                        });
-                        self.box_operand(raw, self.tcx.int())
-                    }
-                    Some(crate::hir::HirSigDefault::Float(v)) => {
-                        let raw = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::LoadConst {
-                            dest: raw,
-                            value: MirConst::Float(*v),
-                            ty: self.tcx.float(),
-                        });
-                        self.box_operand(raw, self.tcx.float())
-                    }
-                    Some(crate::hir::HirSigDefault::Str(s)) => self.emit_str_const(s),
-                    Some(crate::hir::HirSigDefault::Bool(b)) => {
-                        let raw = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::LoadConst {
-                            dest: raw,
-                            value: MirConst::Bool(*b),
-                            ty: self.tcx.bool(),
-                        });
-                        self.box_operand(raw, self.tcx.bool())
-                    }
-                    Some(crate::hir::HirSigDefault::None) | None => self.emit_none(),
-                };
-                let anno_vreg = match &p.annotation {
-                    Some(s) => self.emit_str_const(s),
-                    None => self.emit_none(),
-                };
-                let tup_vreg = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeTuple {
-                    dest: tup_vreg,
-                    elements: vec![name_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg],
-                    ty: any_ty,
-                });
-                param_vregs.push(tup_vreg);
-            }
-            let params_vreg = self.fresh_vreg();
-            self.current_stmts.push(MirInst::MakeList {
-                dest: params_vreg,
-                elements: param_vregs,
-                ty: any_ty,
+            let flag_raw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: flag_raw,
+                value: MirConst::Int(1),
+                ty: self.tcx.int(),
             });
+            let flag_boxed = self.box_operand(flag_raw, self.tcx.int());
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
-                name: "mb_func_set_params".to_string(),
-                args: vec![fn_vreg, params_vreg],
+                name: "mb_func_set_boxed_params".to_string(),
+                args: vec![fn_vreg, flag_boxed],
                 ty: self.tcx.none(),
             });
-            if let Some(ret_anno) = &sig.return_annotation {
-                let ra_vreg = self.emit_str_const(ret_anno);
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_func_set_retanno".to_string(),
-                    args: vec![fn_vreg, ra_vreg],
-                    ty: self.tcx.none(),
-                });
-            }
         }
 
         // Prime FUNC_LINES / FUNC_FILES (co_firstlineno / co_filename) for
@@ -2066,246 +2935,10 @@ impl<'a> HirToMir<'a> {
             self.sym_to_vreg.insert(ann_sym, dict_vreg);
         }
 
-        // Emit class registrations at the start of top-level code
-        let pending = std::mem::take(&mut self.pending_classes);
-        for (class_name, all_base_names, methods, match_args, metaclass, slots, class_kwargs) in
-            &pending
-        {
-            let name_vreg = self.emit_str_const(class_name);
-            // Build bases list for multiple inheritance (P1 OOP conformance).
-            // For single base, pass the base name directly for backward compat.
-            // For multiple bases, build a list of base name strings.
-            let bases_list_vreg = if all_base_names.is_empty() {
-                self.emit_none()
-            } else {
-                let mut base_vregs = Vec::new();
-                for base in all_base_names {
-                    base_vregs.push(self.emit_str_const(base));
-                }
-                let list_vreg = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: list_vreg,
-                    elements: base_vregs,
-                    ty: self.tcx.any(),
-                });
-                list_vreg
-            };
-            // Build method_names list and method_values list. For methods
-            // decorated with @property/@classmethod/@staticmethod, wrap the
-            // raw function pointer in the corresponding descriptor object so
-            // mb_getattr dispatches through the descriptor protocol.
-            let any_ty = self.tcx.any();
-            let mut name_vregs = Vec::new();
-            let mut value_vregs = Vec::new();
-            for (method_name, method_sym, decor_kind, setter_sym, deleter_sym) in methods {
-                let name_vreg = self.emit_str_const(method_name);
-                name_vregs.push(name_vreg);
-                let addr_vreg = self.fresh_vreg();
-                self.current_stmts.push(MirInst::LoadConst {
-                    dest: addr_vreg,
-                    value: MirConst::FuncRef(*method_sym),
-                    ty: self.tcx.int(),
-                });
-                let wrapped = match decor_kind {
-                    MethodDecorKind::None => addr_vreg,
-                    MethodDecorKind::Property => {
-                        let w = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(w),
-                            name: "mb_property_new".to_string(),
-                            args: vec![addr_vreg],
-                            ty: any_ty,
-                        });
-                        // Attach setter if present
-                        if let Some(ssym) = setter_sym {
-                            let setter_addr = self.fresh_vreg();
-                            self.current_stmts.push(MirInst::LoadConst {
-                                dest: setter_addr,
-                                value: MirConst::FuncRef(*ssym),
-                                ty: self.tcx.int(),
-                            });
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: None,
-                                name: "mb_property_setter".to_string(),
-                                args: vec![w, setter_addr],
-                                ty: any_ty,
-                            });
-                        }
-                        // Attach deleter if present
-                        if let Some(dsym) = deleter_sym {
-                            let del_addr = self.fresh_vreg();
-                            self.current_stmts.push(MirInst::LoadConst {
-                                dest: del_addr,
-                                value: MirConst::FuncRef(*dsym),
-                                ty: self.tcx.int(),
-                            });
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: None,
-                                name: "mb_property_deleter".to_string(),
-                                args: vec![w, del_addr],
-                                ty: any_ty,
-                            });
-                        }
-                        w
-                    }
-                    MethodDecorKind::ClassMethod => {
-                        let w = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(w),
-                            name: "mb_classmethod_new".to_string(),
-                            args: vec![addr_vreg],
-                            ty: any_ty,
-                        });
-                        w
-                    }
-                    MethodDecorKind::StaticMethod => {
-                        let w = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(w),
-                            name: "mb_staticmethod_new".to_string(),
-                            args: vec![addr_vreg],
-                            ty: any_ty,
-                        });
-                        w
-                    }
-                    MethodDecorKind::CachedProperty => {
-                        let name_str = self.emit_str_const(method_name);
-                        let w = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(w),
-                            name: "mb_cached_property_new".to_string(),
-                            args: vec![addr_vreg, name_str],
-                            ty: any_ty,
-                        });
-                        w
-                    }
-                };
-                value_vregs.push(wrapped);
-            }
-            let names_list = self.fresh_vreg();
-            self.current_stmts.push(MirInst::MakeList {
-                dest: names_list,
-                elements: name_vregs,
-                ty: self.tcx.any(),
-            });
-            let values_list = self.fresh_vreg();
-            self.current_stmts.push(MirInst::MakeList {
-                dest: values_list,
-                elements: value_vregs,
-                ty: self.tcx.any(),
-            });
-            // R10: Emit class keyword arguments BEFORE class registration
-            // so they are available in KWARGS_REGISTRY when __init_subclass__ is called.
-            if !class_kwargs.is_empty() {
-                let mut key_vregs = Vec::new();
-                let mut val_vregs_kw = Vec::new();
-                for (kwarg_name, kwarg_expr) in class_kwargs {
-                    key_vregs.push(self.emit_str_const(kwarg_name));
-                    let val_vreg = self.lower_expr(kwarg_expr);
-                    let boxed = self.box_operand(val_vreg, kwarg_expr.ty());
-                    val_vregs_kw.push(boxed);
-                }
-                let keys_list = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: keys_list,
-                    elements: key_vregs,
-                    ty: self.tcx.any(),
-                });
-                let vals_list_kw = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: vals_list_kw,
-                    elements: val_vregs_kw,
-                    ty: self.tcx.any(),
-                });
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_set_kwargs".to_string(),
-                    args: vec![name_vreg, keys_list, vals_list_kw],
-                    ty: self.tcx.none(),
-                });
-            }
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: None,
-                name: "mb_class_define_multi".to_string(),
-                args: vec![name_vreg, bases_list_vreg, names_list, values_list],
-                ty: self.tcx.none(),
-            });
-            // abc: register the names declared `@abc.abstractmethod` so the
-            // runtime can compute `__abstractmethods__` and reject instantiation
-            // of classes that still have un-overridden abstract methods.
-            let abs_names: Vec<String> = self
-                .pending_abstract_methods
-                .iter()
-                .find(|(cn, _)| cn == class_name)
-                .map(|(_, names)| names.clone())
-                .unwrap_or_default();
-            if !abs_names.is_empty() {
-                let mut abs_vregs = Vec::new();
-                for an in &abs_names {
-                    abs_vregs.push(self.emit_str_const(an));
-                }
-                let abs_list = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: abs_list,
-                    elements: abs_vregs,
-                    ty: self.tcx.any(),
-                });
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_set_abstractmethods".to_string(),
-                    args: vec![name_vreg, abs_list],
-                    ty: self.tcx.none(),
-                });
-            }
-            // P2-R2: Set metaclass if specified (e.g., class Foo(metaclass=Meta)).
-            if let Some(ref meta_name) = metaclass {
-                let meta_vreg = self.emit_str_const(meta_name);
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_set_metaclass".to_string(),
-                    args: vec![name_vreg, meta_vreg],
-                    ty: self.tcx.none(),
-                });
-            }
-            // Register __match_args__ for PEP 634 positional class patterns (#827)
-            if !match_args.is_empty() {
-                let mut arg_vregs = Vec::new();
-                for arg_name in match_args {
-                    arg_vregs.push(self.emit_str_const(arg_name));
-                }
-                let args_list = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: args_list,
-                    elements: arg_vregs,
-                    ty: self.tcx.any(),
-                });
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_set_match_args".to_string(),
-                    args: vec![name_vreg, args_list],
-                    ty: self.tcx.none(),
-                });
-            }
-            // R14: Emit mb_register_slots if __slots__ declared in class body.
-            if let Some(ref slot_names) = slots {
-                let mut slot_vregs = Vec::new();
-                for slot_name in slot_names {
-                    slot_vregs.push(self.emit_str_const(slot_name));
-                }
-                let slots_list = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeList {
-                    dest: slots_list,
-                    elements: slot_vregs,
-                    ty: self.tcx.any(),
-                });
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_register_slots".to_string(),
-                    args: vec![name_vreg, slots_list],
-                    ty: self.tcx.none(),
-                });
-            }
-        }
+        // Emit class registrations that do not need runtime class keyword
+        // evaluation. Classes with class kwargs are emitted at their
+        // ClassDefPlaceholder so preceding top-level bindings are visible.
+        self.emit_pending_class_registrations(None);
 
         // Prime CLASS_DOCS so `inspect.getdoc(Cls)` / `Cls.__doc__` see the
         // class-body docstring.
@@ -2370,7 +3003,9 @@ impl<'a> HirToMir<'a> {
         // P2-R3 fallback: drain any class-attr assignments whose class never
         // produced a ClassDefPlaceholder (defensive; top-level classes always
         // emit one when they carry attr assigns).
+        self.emit_class_body_stmts_for(None);
         self.emit_class_attrs_for(None);
+        self.emit_class_finalizers_for(None);
 
         // (#1690) Class decorators are no longer applied here. Each decorated
         // class emits a `HirStmt::ClassDefPlaceholder` at its textual
@@ -2552,6 +3187,52 @@ impl<'a> HirToMir<'a> {
         (body, new_globals, has_echo)
     }
 
+    fn lower_delete_lvalue(&mut self, target: &HirLValue) {
+        match target {
+            HirLValue::Attr { object, attr } => {
+                let obj = self.lower_expr(object);
+                let attr_vreg = self.emit_str_const(attr);
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_delattr".to_string(),
+                    args: vec![obj, attr_vreg],
+                    ty: self.tcx.none(),
+                });
+            }
+            HirLValue::Index { object, index } => {
+                let obj = self.lower_expr(object);
+                let idx_raw = self.lower_expr(index);
+                let idx = self.box_operand(idx_raw, index.ty());
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_obj_delitem".to_string(),
+                    args: vec![obj, idx],
+                    ty: self.tcx.none(),
+                });
+            }
+            HirLValue::Var(sym_id) => {
+                if let Some(&vreg) = self.sym_to_vreg.get(sym_id) {
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: None,
+                        name: "mb_del_var".to_string(),
+                        args: vec![vreg],
+                        ty: self.tcx.none(),
+                    });
+                }
+                if self.in_module_scope {
+                    self.current_stmts
+                        .push(MirInst::DeleteGlobal { name: *sym_id });
+                }
+                self.sym_to_vreg.remove(sym_id);
+            }
+            HirLValue::Unpack { targets, .. } => {
+                for target in targets {
+                    self.lower_delete_lvalue(target);
+                }
+            }
+        }
+    }
+
     fn lower_stmt(&mut self, stmt: &HirStmt) {
         match stmt {
             HirStmt::Let { target, value, .. } => {
@@ -2570,10 +3251,11 @@ impl<'a> HirToMir<'a> {
                     // MbValue. Matches the param cell-store path — keeps the storage
                     // convention uniform across param / Let / Assign entry points.
                     let boxed = self.box_operand(dest, val_ty);
-                    self.current_stmts.push(MirInst::StoreGlobal {
-                        name: *target,
-                        value: boxed,
-                    });
+                    if self.initialized_capture_cells.insert(target.0) {
+                        self.emit_capture_cell_reset(*target, boxed);
+                    } else {
+                        self.emit_capture_cell_set(*target, boxed);
+                    }
                 } else if self.in_module_scope {
                     // At module scope, mirror the Local assignment to global
                     // storage so functions reading via LoadGlobal get a
@@ -2600,10 +3282,7 @@ impl<'a> HirToMir<'a> {
                             // the storage convention is uniform regardless of whether the cell
                             // was first written by a param or an assignment.
                             let boxed = self.box_operand(val, val_ty);
-                            self.current_stmts.push(MirInst::StoreGlobal {
-                                name: *sym,
-                                value: boxed,
-                            });
+                            self.emit_capture_cell_set(*sym, boxed);
                         } else {
                             let var_class = self
                                 .symbol_table
@@ -2697,7 +3376,7 @@ impl<'a> HirToMir<'a> {
                         targets,
                         star_index,
                     } => {
-                        self.lower_unpack_assign(val, targets, *star_index);
+                        self.lower_unpack_assign(val, val_ty, targets, *star_index);
                     }
                 }
             }
@@ -2718,6 +3397,7 @@ impl<'a> HirToMir<'a> {
                         args: vec![coro_handle, ret_val],
                         ty: self.tcx.none(),
                     });
+                    self.emit_handler_region_restores();
                     self.finish_block(Terminator::Return(Some(coro_handle)));
                 } else if self.is_gen_body {
                     // Generator body: box the return value so it arrives as
@@ -2728,6 +3408,7 @@ impl<'a> HirToMir<'a> {
                     } else {
                         self.emit_none()
                     };
+                    self.emit_handler_region_restores();
                     self.finish_block(Terminator::Return(Some(ret_vreg)));
                 } else if self.is_class_method {
                     // R4 P1: Class method body — box the return value so
@@ -2739,6 +3420,69 @@ impl<'a> HirToMir<'a> {
                     } else {
                         self.emit_none()
                     };
+                    // `return <expr>` where <expr> raised must route through the
+                    // enclosing try handler (same as the plain-function path
+                    // below). Without this, a method's `return d[k]` inside a
+                    // nested try escaped the except clause. Also inline any
+                    // pending finally / with-exit before returning.
+                    if let Some(&(handler_block, _)) = self.try_handler_stack.last() {
+                        let has_exc = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(has_exc),
+                            name: "mb_has_exception".to_string(),
+                            args: vec![],
+                            ty: self.tcx.bool(),
+                        });
+                        let return_block = self.fresh_block();
+                        self.finish_block(Terminator::Branch {
+                            cond: has_exc,
+                            then_block: handler_block,
+                            else_block: return_block,
+                        });
+                        self.start_block(return_block);
+                    }
+                    if !self.finally_body_stack.is_empty() {
+                        let pending_finally: Vec<Vec<crate::hir::HirStmt>> = self
+                            .finally_body_stack
+                            .iter()
+                            .rev()
+                            .filter(|f| !f.is_empty())
+                            .cloned()
+                            .collect();
+                        if !pending_finally.is_empty() {
+                            let handler_count = self.try_handler_stack.len();
+                            for _ in 0..handler_count {
+                                self.emit_extern_call(None, "mb_pop_handler");
+                            }
+                            let saved_finally = std::mem::take(&mut self.finally_body_stack);
+                            let saved_try = std::mem::take(&mut self.try_handler_stack);
+                            for finally_stmts in &pending_finally {
+                                for s in finally_stmts {
+                                    self.lower_stmt(s);
+                                }
+                            }
+                            self.finally_body_stack = saved_finally;
+                            self.try_handler_stack = saved_try;
+                        }
+                    }
+                    if !self.with_ctx_stack.is_empty()
+                        && self.finally_body_stack.is_empty()
+                        && self.try_handler_stack.is_empty()
+                    {
+                        let none_vreg = self.emit_none();
+                        let ctxs: Vec<VReg> = self.with_ctx_stack.iter().rev().copied().collect();
+                        for ctx in ctxs {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: None,
+                                name: "mb_context_exit".to_string(),
+                                args: vec![ctx, none_vreg],
+                                ty: self.tcx.any(),
+                            });
+                        }
+                    }
+                    // Returning out of an except handler (class-method body):
+                    // restore the caller's handled-exception state.
+                    self.emit_handler_region_restores();
                     self.finish_block(Terminator::Return(Some(ret_vreg)));
                 } else {
                     let ret_vreg = value.as_ref().map(|v| {
@@ -2825,6 +3569,10 @@ impl<'a> HirToMir<'a> {
                             });
                         }
                     }
+                    // Returning out of an except handler: restore the caller's
+                    // handled-exception state (the fall-through restore at
+                    // finally_block is bypassed by this return).
+                    self.emit_handler_region_restores();
                     self.finish_block(Terminator::Return(ret_vreg));
                 }
                 // Start a dead block for any unreachable code after return
@@ -2858,6 +3606,15 @@ impl<'a> HirToMir<'a> {
                 ..
             } => {
                 self.lower_for(*var, iter, body, else_body);
+            }
+            HirStmt::AsyncFor {
+                var,
+                iter,
+                body,
+                else_body,
+                ..
+            } => {
+                self.lower_async_for(*var, iter, body, else_body);
             }
             HirStmt::Break { .. } => {
                 if let Some(exit) = self.loop_exit {
@@ -2948,6 +3705,22 @@ impl<'a> HirToMir<'a> {
                     args: vec![catch_all_vreg],
                     ty: self.tcx.none(),
                 });
+                // Snapshot the currently-handled-exception state at try-entry
+                // (BEFORE any except handler runs mb_catch_exception*). When the
+                // handler region exits — fall-through into finally_block, or a
+                // `return` inside a handler body — we restore this snapshot so
+                // sys.exception()/sys.exc_info()/traceback.format_exc() stop
+                // reporting the just-handled exception (CPython clears the
+                // handled exception once the handler frame unwinds). Mid-handler
+                // callees still see the handled exception because the restore
+                // only fires when LEAVING the region.
+                let handled_exc_token = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(handled_exc_token),
+                    name: "mb_save_handled_exc".to_string(),
+                    args: Vec::new(),
+                    ty: self.tcx.int(),
+                });
                 // Try body — after each statement, check for pending exceptions
                 // so that exceptions propagate at statement boundaries (matching Python).
                 self.try_handler_stack.push((handler_block, finally_block));
@@ -2994,6 +3767,12 @@ impl<'a> HirToMir<'a> {
                     args: Vec::new(),
                     ty: self.tcx.any(),
                 });
+                // While lowering handler bodies, expose this region's restore
+                // token so a `return` inside an except handler restores the
+                // caller's handled-exception state (the return bypasses the
+                // fall-through restore at finally_block). Popped just before we
+                // emit finally_block below.
+                self.handler_region_tokens.push(handled_exc_token);
 
                 if has_star {
                     // except* lowering (PEP 654):
@@ -3054,8 +3833,14 @@ impl<'a> HirToMir<'a> {
                             }
                             let prev_active = self.active_except_vreg;
                             self.active_except_vreg = Some(matched);
+                            if !finally_body.is_empty() {
+                                self.handler_raise_exit_stack.push(finally_block);
+                            }
                             for s in &h.body {
                                 self.lower_stmt(s);
+                            }
+                            if !finally_body.is_empty() {
+                                self.handler_raise_exit_stack.pop();
                             }
                             self.active_except_vreg = prev_active;
                             self.finish_block(Terminator::Goto(skip_block));
@@ -3103,6 +3888,7 @@ impl<'a> HirToMir<'a> {
                                 args: vec![caught_exc, type_vreg],
                                 ty: self.tcx.bool(),
                             });
+                            self.emit_exception_propagate();
                             let handler_body_block = self.fresh_block();
                             let next_check = if i + 1 < handlers.len() {
                                 let nb = self.fresh_block();
@@ -3136,8 +3922,14 @@ impl<'a> HirToMir<'a> {
                         }
                         let prev_active = self.active_except_vreg;
                         self.active_except_vreg = Some(caught_exc);
+                        if !finally_body.is_empty() {
+                            self.handler_raise_exit_stack.push(finally_block);
+                        }
                         for s in &h.body {
                             self.lower_stmt(s);
+                        }
+                        if !finally_body.is_empty() {
+                            self.handler_raise_exit_stack.pop();
                         }
                         self.active_except_vreg = prev_active;
                         self.finish_block(Terminator::Goto(finally_block));
@@ -3148,9 +3940,13 @@ impl<'a> HirToMir<'a> {
                         let reraise_finally = self.fresh_block();
                         self.finish_block(Terminator::Goto(reraise_finally));
                         self.start_block(reraise_finally);
+                        let prev_active = self.active_except_vreg;
+                        self.active_except_vreg = Some(caught_exc);
                         for s in finally_body.iter() {
                             self.lower_stmt(s);
+                            self.emit_exception_propagate();
                         }
+                        self.active_except_vreg = prev_active;
                         // Re-raise the caught exception
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: None,
@@ -3161,11 +3957,66 @@ impl<'a> HirToMir<'a> {
                         self.finish_block(Terminator::Goto(merge_block));
                     }
                 }
+                // Done lowering handler bodies — this region's token no longer
+                // applies to a `return` (the only remaining exits are the
+                // fall-through restore below, the no-exception path, and the
+                // else path, all of which reach finally_block).
+                self.handler_region_tokens.pop();
                 // Finally block (normal path — no exception)
                 self.start_block(finally_block);
+                // Restore the handled-exception snapshot taken at try-entry on
+                // every fall-through edge (handler body completed, or the
+                // no-exception/else path converged here). On the no-exception
+                // path the snapshot equals the live state, so this is a no-op;
+                // on the handled path it clears the just-handled exception so
+                // sys.exception()/sys.exc_info()/format_exc() report the
+                // enclosing frame's state (CPython semantics). Runs BEFORE the
+                // finally body so the finally executes with the restored state.
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_restore_handled_exc".to_string(),
+                    args: vec![handled_exc_token],
+                    ty: self.tcx.none(),
+                });
+                let finally_context = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(finally_context),
+                    name: "mb_get_exception".to_string(),
+                    args: Vec::new(),
+                    ty: self.tcx.any(),
+                });
+                self.emit_extern_call(None, "mb_clear_exception");
+                let prev_active = self.active_except_vreg;
+                self.active_except_vreg = Some(finally_context);
                 for s in finally_body {
                     self.lower_stmt(s);
+                    self.emit_exception_propagate();
                 }
+                self.active_except_vreg = prev_active;
+                let restore_pending = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(restore_pending),
+                    name: "mb_is_not_none".to_string(),
+                    args: vec![finally_context],
+                    ty: self.tcx.bool(),
+                });
+                let restore_block = self.fresh_block();
+                let after_restore_block = self.fresh_block();
+                self.finish_block(Terminator::Branch {
+                    cond: restore_pending,
+                    then_block: restore_block,
+                    else_block: after_restore_block,
+                });
+                self.start_block(restore_block);
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_reraise".to_string(),
+                    args: vec![finally_context],
+                    ty: self.tcx.none(),
+                });
+                self.finish_block(Terminator::Goto(after_restore_block));
+                self.start_block(after_restore_block);
+                self.emit_exception_propagate();
                 self.finish_block(Terminator::Goto(merge_block));
                 self.start_block(merge_block);
                 // except* can leave a reraised unmatched sub-group in CURRENT_EXCEPTION
@@ -3178,7 +4029,7 @@ impl<'a> HirToMir<'a> {
                     self.emit_exception_propagate();
                 }
             }
-            HirStmt::Raise { value, from, .. } => {
+            HirStmt::Raise { value, from, span } => {
                 let has_context = self.active_except_vreg.is_some();
                 let has_from = from.is_some();
                 // Emit the mb_raise* runtime call. After the call, control flow MUST
@@ -3258,33 +4109,80 @@ impl<'a> HirToMir<'a> {
                                         });
                                     }
                                     raise_emitted = true;
-                                } else if (class_name == "ExceptionGroup"
-                                    || class_name == "BaseExceptionGroup")
-                                    && args.len() >= 2
+                                } else if class_name == "ExceptionGroup"
+                                    || class_name == "BaseExceptionGroup"
                                 {
-                                    // ExceptionGroup / BaseExceptionGroup:
-                                    // raise ExceptionGroup(msg, excs)
-                                    let msg_vreg = {
-                                        let v = self.lower_expr(&args[0]);
-                                        self.box_operand(v, args[0].ty())
-                                    };
-                                    let excs_vreg = {
-                                        let v = self.lower_expr(&args[1]);
-                                        self.box_operand(v, args[1].ty())
-                                    };
-                                    let group = self.fresh_vreg();
-                                    self.current_stmts.push(MirInst::CallExtern {
-                                        dest: Some(group),
-                                        name: "mb_exception_group_new".to_string(),
-                                        args: vec![msg_vreg, excs_vreg],
+                                    // raise (Base)ExceptionGroup(...): pass ALL
+                                    // positional args so the constructor can
+                                    // validate the arity and argument types
+                                    // (CPython raises TypeError/ValueError on bad
+                                    // shape) before raising the group.
+                                    let boxed: Vec<VReg> = args
+                                        .iter()
+                                        .map(|a| {
+                                            let v = self.lower_expr(a);
+                                            self.box_operand(v, a.ty())
+                                        })
+                                        .collect();
+                                    let args_list = self.fresh_vreg();
+                                    self.current_stmts.push(MirInst::MakeList {
+                                        dest: args_list,
+                                        elements: boxed,
                                         ty: self.tcx.any(),
                                     });
-                                    self.current_stmts.push(MirInst::CallExtern {
-                                        dest: None,
-                                        name: "mb_raise_instance".to_string(),
-                                        args: vec![group],
-                                        ty: self.tcx.none(),
-                                    });
+                                    let cn_vreg = self.emit_str_const(&class_name);
+                                    if has_from && has_context {
+                                        let from_val = {
+                                            let v = self.lower_expr(from.as_ref().unwrap());
+                                            self.box_operand(v, from.as_ref().unwrap().ty())
+                                        };
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: None,
+                                            name:
+                                                "mb_exception_group_construct_and_raise_from_with_context"
+                                                    .to_string(),
+                                            args: vec![
+                                                args_list,
+                                                cn_vreg,
+                                                from_val,
+                                                self.active_except_vreg.unwrap(),
+                                            ],
+                                            ty: self.tcx.none(),
+                                        });
+                                    } else if has_from {
+                                        let from_val = {
+                                            let v = self.lower_expr(from.as_ref().unwrap());
+                                            self.box_operand(v, from.as_ref().unwrap().ty())
+                                        };
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: None,
+                                            name: "mb_exception_group_construct_and_raise_from"
+                                                .to_string(),
+                                            args: vec![args_list, cn_vreg, from_val],
+                                            ty: self.tcx.none(),
+                                        });
+                                    } else if has_context {
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: None,
+                                            name:
+                                                "mb_exception_group_construct_and_raise_with_context"
+                                                    .to_string(),
+                                            args: vec![
+                                                args_list,
+                                                cn_vreg,
+                                                self.active_except_vreg.unwrap(),
+                                            ],
+                                            ty: self.tcx.none(),
+                                        });
+                                    } else {
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: None,
+                                            name: "mb_exception_group_construct_and_raise"
+                                                .to_string(),
+                                            args: vec![args_list, cn_vreg],
+                                            ty: self.tcx.none(),
+                                        });
+                                    }
                                     raise_emitted = true;
                                 } else if args.len() > 1 && !has_from {
                                     // Built-in exception with multiple args: use
@@ -3370,22 +4268,53 @@ impl<'a> HirToMir<'a> {
                         // Pattern: raise ExcType (bare, no call)
                         if let HirExpr::Var(sym, _) = value_expr {
                             if let Some(class_name) = self.class_syms.get(&sym.0).cloned() {
-                                let type_vreg = self.emit_str_const(&class_name);
-                                let msg_vreg = self.emit_str_const("");
-                                let (raise_fn, mut raise_args) = if has_context {
-                                    ("mb_raise_with_context", vec![type_vreg, msg_vreg])
+                                if self.user_class_syms.contains(&sym.0) {
+                                    let type_vreg = self.emit_str_const(&class_name);
+                                    let args_list = self.fresh_vreg();
+                                    self.current_stmts.push(MirInst::MakeList {
+                                        dest: args_list,
+                                        elements: Vec::new(),
+                                        ty: self.tcx.any(),
+                                    });
+                                    let instance = self.fresh_vreg();
+                                    self.current_stmts.push(MirInst::CallExtern {
+                                        dest: Some(instance),
+                                        name: "mb_instance_new_with_init".to_string(),
+                                        args: vec![type_vreg, args_list],
+                                        ty: self.tcx.any(),
+                                    });
+                                    let (raise_fn, raise_args) = if has_context {
+                                        (
+                                            "mb_raise_instance_with_context",
+                                            vec![instance, self.active_except_vreg.unwrap()],
+                                        )
+                                    } else {
+                                        ("mb_raise_instance", vec![instance])
+                                    };
+                                    self.current_stmts.push(MirInst::CallExtern {
+                                        dest: None,
+                                        name: raise_fn.to_string(),
+                                        args: raise_args,
+                                        ty: self.tcx.none(),
+                                    });
                                 } else {
-                                    ("mb_raise", vec![type_vreg, msg_vreg])
-                                };
-                                if has_context {
-                                    raise_args.push(self.active_except_vreg.unwrap());
+                                    let type_vreg = self.emit_str_const(&class_name);
+                                    let msg_vreg = self.emit_str_const("");
+                                    let (raise_fn, mut raise_args) = if has_context {
+                                        ("mb_raise_with_context", vec![type_vreg, msg_vreg])
+                                    } else {
+                                        ("mb_raise", vec![type_vreg, msg_vreg])
+                                    };
+                                    if has_context {
+                                        raise_args.push(self.active_except_vreg.unwrap());
+                                    }
+                                    self.current_stmts.push(MirInst::CallExtern {
+                                        dest: None,
+                                        name: raise_fn.to_string(),
+                                        args: raise_args,
+                                        ty: self.tcx.none(),
+                                    });
                                 }
-                                self.current_stmts.push(MirInst::CallExtern {
-                                    dest: None,
-                                    name: raise_fn.to_string(),
-                                    args: raise_args,
-                                    ty: self.tcx.none(),
-                                });
                                 raise_emitted = true;
                             }
                         }
@@ -3436,6 +4365,10 @@ impl<'a> HirToMir<'a> {
                 // to that with's exit block so `__exit__` runs (suppression /
                 // re-raise) and the remaining body statements are skipped.
                 if raise_emitted {
+                    if value.is_some() {
+                        let line = self.source_line_for_span(span);
+                        self.emit_traceback_capture_raise(line);
+                    }
                     let inner_try_depth = self.try_handler_stack.len();
                     let with_exit = self.with_exit_stack.last().copied();
                     let with_is_inner = matches!(
@@ -3451,7 +4384,18 @@ impl<'a> HirToMir<'a> {
                         let dead_block = self.fresh_block();
                         // Bare function body — return with None so the exception
                         // propagates to the caller (which will see mb_has_exception
-                        // at its try check).
+                        // at its try check). If this `raise` is lexically inside
+                        // an except handler, restore the caller's handled-exc
+                        // state first (a new exception raised from a handler is
+                        // propagating, not "handled" — and CPython has already
+                        // unwound this handler frame). Also keeps the runtime
+                        // save stack balanced on the raise-out-of-handler path.
+                        self.emit_handler_region_restores();
+                        if let Some(target) = self.handler_raise_exit_stack.last().copied() {
+                            self.finish_block(Terminator::Goto(target));
+                            self.start_block(dead_block);
+                            return;
+                        }
                         let none_vreg = self.emit_none();
                         self.finish_block(Terminator::Return(Some(none_vreg)));
                         self.start_block(dead_block);
@@ -3460,16 +4404,26 @@ impl<'a> HirToMir<'a> {
                 }
             }
             HirStmt::Import { import, .. } => {
-                // Lower import as CallExtern to mb_import
-                let mod_name = import.module.join(".");
+                // Lower import as CallExtern to mb_import / mb_import_relative.
+                let (relative_level, mod_name) = Self::relative_import_parts(&import.module);
                 let name_vreg = self.emit_str_const(&mod_name);
                 let dest = self.fresh_vreg();
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: Some(dest),
-                    name: "mb_import".to_string(),
-                    args: vec![name_vreg],
-                    ty: self.tcx.any(),
-                });
+                if relative_level > 0 {
+                    let level_vreg = self.emit_int_const(relative_level as i64);
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(dest),
+                        name: "mb_import_relative".to_string(),
+                        args: vec![name_vreg, level_vreg],
+                        ty: self.tcx.any(),
+                    });
+                } else {
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(dest),
+                        name: "mb_import".to_string(),
+                        args: vec![name_vreg],
+                        ty: self.tcx.any(),
+                    });
+                }
 
                 if let Some(names) = &import.names {
                     // @spec .aw/changes/mamba-all-support/groups/all-support/specs/mamba-all-support-spec.md#R4
@@ -3478,12 +4432,22 @@ impl<'a> HirToMir<'a> {
                     let is_star = names.len() == 1 && names[0].0 == "*";
                     if is_star {
                         let star_name_vreg = self.emit_str_const(&mod_name);
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: None,
-                            name: "mb_import_star".to_string(),
-                            args: vec![star_name_vreg],
-                            ty: self.tcx.any(),
-                        });
+                        if relative_level > 0 {
+                            let level_vreg = self.emit_int_const(relative_level as i64);
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: None,
+                                name: "mb_import_relative_star".to_string(),
+                                args: vec![star_name_vreg, level_vreg],
+                                ty: self.tcx.any(),
+                            });
+                        } else {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: None,
+                                name: "mb_import_star".to_string(),
+                                args: vec![star_name_vreg],
+                                ty: self.tcx.any(),
+                            });
+                        }
                     } else {
                         // `from X import Y, Z as W` (#1132 R3)
                         // For each imported name, extract its value from the module
@@ -3492,16 +4456,25 @@ impl<'a> HirToMir<'a> {
                             let attr_vreg = self.emit_str_const(name);
                             let mod_name_vreg2 = self.emit_str_const(&mod_name);
                             let attr_dest = self.fresh_vreg();
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: Some(attr_dest),
-                                name: "mb_module_getattr".to_string(),
-                                args: vec![mod_name_vreg2, attr_vreg],
-                                ty: self.tcx.any(),
-                            });
+                            if relative_level > 0 {
+                                let level_vreg = self.emit_int_const(relative_level as i64);
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(attr_dest),
+                                    name: "mb_module_getattr_relative".to_string(),
+                                    args: vec![mod_name_vreg2, level_vreg, attr_vreg],
+                                    ty: self.tcx.any(),
+                                });
+                            } else {
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(attr_dest),
+                                    name: "mb_module_getattr".to_string(),
+                                    args: vec![mod_name_vreg2, attr_vreg],
+                                    ty: self.tcx.any(),
+                                });
+                            }
                             // The bound name is the alias if present, otherwise the original name.
                             let bound = alias.as_deref().unwrap_or(name.as_str());
-                            if let Some(sym_id) = self.symbol_table.and_then(|st| st.lookup(bound))
-                            {
+                            if let Some(sym_id) = self.lookup_bound_symbol(bound) {
                                 self.sym_to_vreg.insert(sym_id, attr_dest);
                                 // Also emit StoreGlobal so functions can read via LoadGlobal.
                                 self.current_stmts.push(MirInst::StoreGlobal {
@@ -3547,9 +4520,7 @@ impl<'a> HirToMir<'a> {
                         (import.module.first().cloned().unwrap_or_default(), dest)
                     };
                     if !bound_name.is_empty() {
-                        if let Some(sym_id) =
-                            self.symbol_table.and_then(|st| st.lookup(&bound_name))
-                        {
+                        if let Some(sym_id) = self.lookup_bound_symbol(&bound_name) {
                             self.sym_to_vreg.insert(sym_id, bound_vreg);
                             if self.in_module_scope {
                                 self.current_stmts.push(MirInst::StoreGlobal {
@@ -3579,7 +4550,9 @@ impl<'a> HirToMir<'a> {
                     ("mb_context_enter", "mb_context_exit")
                 };
                 let mut ctx_vregs = Vec::new();
+                let mut ctx_is_temporary = Vec::new();
                 for (ctx, alias) in items {
+                    let is_temporary_ctx = !matches!(ctx, HirExpr::Var(..));
                     let ctx_vreg = self.lower_expr(ctx);
                     // Call __enter__ (or __aenter__ for async with) and bind to alias
                     let enter_dest = self.fresh_vreg();
@@ -3590,35 +4563,15 @@ impl<'a> HirToMir<'a> {
                         ty: self.tcx.any(),
                     });
                     // Exception check after __enter__: if raised, skip body + exit
-                    // and propagate to outer try handler.
-                    if let Some(&(handler_block, _)) = self.try_handler_stack.last() {
-                        let exc_check = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(exc_check),
-                            name: "mb_has_exception".to_string(),
-                            args: Vec::new(),
-                            ty: self.tcx.bool(),
-                        });
-                        let continue_block = self.fresh_block();
-                        let exc_block = self.fresh_block();
-                        self.finish_block(Terminator::Branch {
-                            cond: exc_check,
-                            then_block: exc_block,
-                            else_block: continue_block,
-                        });
-                        self.start_block(exc_block);
-                        self.emit_extern_call(None, "mb_pop_handler");
-                        self.finish_block(Terminator::Goto(handler_block));
-                        self.start_block(continue_block);
-                    }
+                    // and propagate to the nearest handler or caller. This must run
+                    // even outside an explicit `try`; otherwise a failed `async with`
+                    // enter falls through into `__aexit__`.
+                    self.emit_exception_propagate();
                     if let Some(sym) = alias {
                         // Mirror the Assign handler's variable-class dispatch so that
                         // with...as bindings are visible at the correct scope.
                         if self.cell_override.contains(&sym.0) {
-                            self.current_stmts.push(MirInst::StoreGlobal {
-                                name: *sym,
-                                value: enter_dest,
-                            });
+                            self.emit_capture_cell_set(*sym, enter_dest);
                         } else {
                             let var_class = self
                                 .symbol_table
@@ -3676,6 +4629,7 @@ impl<'a> HirToMir<'a> {
                         }
                     }
                     ctx_vregs.push(ctx_vreg);
+                    ctx_is_temporary.push(is_temporary_ctx);
                 }
                 // Dedicated exit block: BOTH the normal end-of-body path and the
                 // exception-propagation path (a call inside the body that raised)
@@ -3715,13 +4669,27 @@ impl<'a> HirToMir<'a> {
                 // function, else continue past the `with`.
                 self.start_block(exit_block);
                 let none_vreg = self.emit_none();
-                for &ctx_vreg in ctx_vregs.iter().rev() {
+                for (&ctx_vreg, &is_temporary_ctx) in
+                    ctx_vregs.iter().zip(ctx_is_temporary.iter()).rev()
+                {
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: None,
                         name: exit_helper.to_string(),
                         args: vec![ctx_vreg, none_vreg],
                         ty: self.tcx.any(),
                     });
+                    if is_temporary_ctx {
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: None,
+                            name: "mb_release_value".to_string(),
+                            args: vec![ctx_vreg],
+                            ty: self.tcx.none(),
+                        });
+                        self.current_stmts.push(MirInst::Copy {
+                            dest: ctx_vreg,
+                            source: none_vreg,
+                        });
+                    }
                 }
                 let exc_after = self.fresh_vreg();
                 self.current_stmts.push(MirInst::CallExtern {
@@ -3825,48 +4793,18 @@ impl<'a> HirToMir<'a> {
                 }
                 self.start_block(pass_block);
             }
-            HirStmt::Del { target, .. } => {
-                match target {
-                    HirLValue::Attr { object, attr } => {
-                        let obj = self.lower_expr(object);
-                        let attr_vreg = self.emit_str_const(attr);
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: None,
-                            name: "mb_delattr".to_string(),
-                            args: vec![obj, attr_vreg],
-                            ty: self.tcx.none(),
-                        });
-                    }
-                    HirLValue::Index { object, index } => {
-                        let obj = self.lower_expr(object);
-                        let idx_raw = self.lower_expr(index);
-                        let idx = self.box_operand(idx_raw, index.ty());
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: None,
-                            name: "mb_obj_delitem".to_string(),
-                            args: vec![obj, idx],
-                            ty: self.tcx.none(),
-                        });
-                    }
-                    HirLValue::Var(sym_id) => {
-                        if let Some(&vreg) = self.sym_to_vreg.get(sym_id) {
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: None,
-                                name: "mb_del_var".to_string(),
-                                args: vec![vreg],
-                                ty: self.tcx.none(),
-                            });
-                        }
-                    }
-                    HirLValue::Unpack { .. } => {
-                        // del on unpacked targets — no direct MIR (scope-level only)
-                    }
-                }
-            }
+            HirStmt::Del { target, .. } => self.lower_delete_lvalue(target),
             HirStmt::Global { .. } | HirStmt::Nonlocal { .. } => {
                 // Scope declarations — no MIR instructions needed
             }
-            HirStmt::FuncDefPlaceholder { name: func_sym, .. } => {
+            HirStmt::FuncDefPlaceholder {
+                name: func_sym,
+                bind_name,
+                redef,
+                func_sig,
+                ..
+            } => {
+                let bind_sym = bind_name.unwrap_or(*func_sym);
                 // Register the function's __name__ so `f.__name__` works.
                 {
                     let any_ty = self.tcx.any();
@@ -3877,16 +4815,20 @@ impl<'a> HirToMir<'a> {
                         ty: any_ty,
                     });
                     // Look up the symbol's name via sym_name_lookup
-                    if let Some(fname) = self.symbol_table.and_then(|st| {
-                        if func_sym.0 < 1_000_000 {
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                st.get_symbol(*func_sym).name.clone()
-                            }))
-                            .ok()
-                        } else {
-                            None
-                        }
-                    }) {
+                    if let Some(fname) = self
+                        .symbol_table
+                        .and_then(|st| {
+                            if func_sym.0 < 1_000_000 {
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    st.get_symbol(*func_sym).name.clone()
+                                }))
+                                .ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| self.sym_names.get(func_sym).cloned())
+                    {
                         let name_vreg = self.emit_str_const(&fname);
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: None,
@@ -3896,6 +4838,9 @@ impl<'a> HirToMir<'a> {
                         });
                     }
                 }
+                let placeholder_sig = func_sig
+                    .clone()
+                    .or_else(|| self.user_func_sigs.get(&func_sym.0).cloned());
                 // Apply decorator(s) to the function at this point in execution order.
                 // Python semantics: `@dec def foo()` ≡ `def foo(); foo = dec(foo)`.
                 // Pull the decorators from pending_decorators (if any).
@@ -3903,21 +4848,80 @@ impl<'a> HirToMir<'a> {
                     let pos = self
                         .pending_decorators
                         .iter()
-                        .position(|(s, _)| s == func_sym);
+                        .position(|(s, _, _)| s == func_sym);
                     pos.map(|i| self.pending_decorators.remove(i))
-                        .map(|(_, d)| d)
+                        .map(|(_, d, sig)| (d, sig))
                 };
-                if let Some(decorators) = decorators {
+                let effective_sig = decorators
+                    .as_ref()
+                    .and_then(|(_, sig)| sig.clone())
+                    .or_else(|| placeholder_sig.clone());
+                if let Some(sig) = &effective_sig {
+                    self.emit_func_sig_metadata(*func_sym, sig);
+                }
+                let freevars = self
+                    .user_func_freevars
+                    .get(&func_sym.0)
+                    .cloned()
+                    .unwrap_or_default();
+                let closure_vreg = if freevars.is_empty() {
+                    None
+                } else {
+                    Some(self.emit_closure_for_func(*func_sym, &freevars))
+                };
+                if let Some((decorators, _)) = decorators {
                     let any_ty = self.tcx.any();
-                    let mut func_vreg = self.fresh_vreg();
-                    self.current_stmts.push(MirInst::LoadConst {
-                        dest: func_vreg,
-                        value: MirConst::FuncRef(*func_sym),
-                        ty: any_ty,
-                    });
-                    for dec_expr in decorators.iter().rev() {
+                    let first_annotation = effective_sig
+                        .as_ref()
+                        .and_then(|sig| sig.params.iter().find_map(|p| p.annotation.clone()));
+                    let mut func_vreg = if let Some(vreg) = closure_vreg {
+                        vreg
+                    } else {
+                        let vreg = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadConst {
+                            dest: vreg,
+                            value: MirConst::FuncRef(*func_sym),
+                            ty: any_ty,
+                        });
+                        vreg
+                    };
+                    let mut evaluated_decorators = Vec::with_capacity(decorators.len());
+                    for dec_expr in decorators.iter() {
+                        let dec_vreg = self.lower_expr(dec_expr);
+                        self.emit_exception_propagate();
+                        evaluated_decorators.push((dec_expr, dec_vreg));
+                    }
+                    for (dec_expr, dec_vreg) in evaluated_decorators.iter().rev() {
                         let result_vreg = self.fresh_vreg();
                         match dec_expr {
+                            HirExpr::Var(dec_sym, _)
+                                if !self.user_class_syms.contains(&dec_sym.0)
+                                    && self
+                                        .class_syms
+                                        .get(&dec_sym.0)
+                                        .map(|name| {
+                                            matches!(
+                                                name.as_str(),
+                                                "property" | "staticmethod" | "classmethod"
+                                            )
+                                        })
+                                        .unwrap_or(false) =>
+                            {
+                                let class_name =
+                                    self.class_syms.get(&dec_sym.0).cloned().unwrap_or_default();
+                                let extern_name = match class_name.as_str() {
+                                    "property" => "mb_property_new",
+                                    "staticmethod" => "mb_staticmethod_new",
+                                    "classmethod" => "mb_classmethod_new",
+                                    _ => unreachable!(),
+                                };
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(result_vreg),
+                                    name: extern_name.to_string(),
+                                    args: vec![func_vreg],
+                                    ty: any_ty,
+                                });
+                            }
                             HirExpr::Var(dec_sym, _) if self.user_funcs.contains(&dec_sym.0) => {
                                 self.current_stmts.push(MirInst::Call {
                                     dest: Some(result_vreg),
@@ -3947,34 +4951,80 @@ impl<'a> HirToMir<'a> {
                                     ty: any_ty,
                                 });
                             }
+                            HirExpr::Attr { object, attr, .. }
+                                if attr == "register" && first_annotation.is_some() =>
+                            {
+                                let dispatcher_vreg = self.lower_expr(object);
+                                let annotation_vreg =
+                                    self.emit_str_const(first_annotation.as_deref().unwrap_or(""));
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(result_vreg),
+                                    name: "mb_singledispatch_register_annotation".to_string(),
+                                    args: vec![dispatcher_vreg, func_vreg, annotation_vreg],
+                                    ty: any_ty,
+                                });
+                            }
                             _ => {
-                                let dec_vreg = self.lower_expr(dec_expr);
                                 self.current_stmts.push(MirInst::CallExtern {
                                     dest: Some(result_vreg),
                                     name: "mb_call1_val".to_string(),
-                                    args: vec![dec_vreg, func_vreg],
+                                    args: vec![*dec_vreg, func_vreg],
                                     ty: any_ty,
                                 });
                             }
                         }
                         func_vreg = result_vreg;
                     }
+                    if self.in_module_scope || *redef {
+                        self.current_stmts.push(MirInst::StoreGlobal {
+                            name: bind_sym,
+                            value: func_vreg,
+                        });
+                    } else {
+                        self.sym_to_vreg.insert(bind_sym, func_vreg);
+                    }
+                } else if *redef {
+                    // A non-decorated `def` that redefines a name previously
+                    // bound by a DECORATED `def`. The earlier decorated def
+                    // already ran its StoreGlobal (binding the name to the
+                    // decorator's wrapper/dummy); re-store the global to this
+                    // impl's FuncRef so the plain impl wins the name.
+                    let any_ty = self.tcx.any();
+                    let func_vreg = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: func_vreg,
+                        value: MirConst::FuncRef(*func_sym),
+                        ty: any_ty,
+                    });
                     self.current_stmts.push(MirInst::StoreGlobal {
-                        name: *func_sym,
+                        name: bind_sym,
                         value: func_vreg,
                     });
+                } else if let Some(func_vreg) = closure_vreg {
+                    if self.in_module_scope {
+                        self.current_stmts.push(MirInst::StoreGlobal {
+                            name: bind_sym,
+                            value: func_vreg,
+                        });
+                    } else {
+                        self.sym_to_vreg.insert(bind_sym, func_vreg);
+                    }
                 }
             }
             HirStmt::Match { subject, cases, .. } => {
                 self.lower_match(subject, cases);
             }
             HirStmt::ClassDefPlaceholder { name: cls_sym, .. } => {
+                self.emit_pending_class_registrations(Some(*cls_sym));
+                self.emit_runtime_class_bases_for(Some(*cls_sym));
+                self.emit_class_body_stmts_for(Some(*cls_sym));
                 // P2-R3: emit class-level attribute assignments at the class's
                 // textual position so initializer expressions resolve imports
                 // and bindings established by preceding statements (#1686
                 // motivation), and BEFORE decorators so the decorator sees the
                 // fully-initialized class body (CPython execution order).
                 self.emit_class_attrs_for(Some(*cls_sym));
+                self.emit_class_finalizers_for(Some(*cls_sym));
                 // PEP 557: record ordered dataclass field facts BEFORE the
                 // decorator call so the runtime `@dataclass` synthesizer sees
                 // them. Emitted here (not at registration time) so default
@@ -4029,7 +5079,13 @@ impl<'a> HirToMir<'a> {
                 if let Some((class_name, _cls_sym, decorators)) = decorators {
                     let any_ty = self.tcx.any();
                     let mut cls_vreg = self.emit_str_const(&class_name);
-                    for dec_expr in decorators.iter().rev() {
+                    let mut evaluated_decorators = Vec::with_capacity(decorators.len());
+                    for dec_expr in decorators.iter() {
+                        let dec_vreg = self.lower_expr(dec_expr);
+                        self.emit_exception_propagate();
+                        evaluated_decorators.push((dec_expr, dec_vreg));
+                    }
+                    for (dec_expr, dec_vreg) in evaluated_decorators.iter().rev() {
                         let result_vreg = self.fresh_vreg();
                         match dec_expr {
                             HirExpr::Var(dec_sym, _) if self.user_funcs.contains(&dec_sym.0) => {
@@ -4041,11 +5097,10 @@ impl<'a> HirToMir<'a> {
                                 });
                             }
                             _ => {
-                                let dec_vreg = self.lower_expr(dec_expr);
                                 self.current_stmts.push(MirInst::CallExtern {
                                     dest: Some(result_vreg),
                                     name: "mb_call1_val".to_string(),
-                                    args: vec![dec_vreg, cls_vreg],
+                                    args: vec![*dec_vreg, cls_vreg],
                                     ty: any_ty,
                                 });
                             }
@@ -4060,6 +5115,472 @@ impl<'a> HirToMir<'a> {
         }
     }
 
+    fn emit_pending_class_registrations(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_classes.len() {
+            let should_emit = match cls_sym {
+                Some(sym) => self.pending_classes[i].1 == sym,
+                // #82: skip classes that must register at their textual
+                // placeholder (cross-class chained property decorator).
+                None => {
+                    self.pending_classes[i].9.is_empty()
+                        && !self
+                            .classes_needing_textual_registration
+                            .contains(&self.pending_classes[i].1 .0)
+                }
+            };
+            if should_emit {
+                let registration = self.pending_classes.remove(i);
+                self.emit_class_registration(&registration);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn emit_class_registration(&mut self, registration: &PendingClassRegistration) {
+        let (
+            class_name,
+            class_sym,
+            all_base_names,
+            namedtuple_base,
+            methods,
+            match_args,
+            metaclass,
+            slots,
+            class_cell_required,
+            class_kwargs,
+        ) = registration;
+        let name_vreg = self.emit_str_const(class_name);
+        // Build bases list for multiple inheritance (P1 OOP conformance).
+        // For single base, pass the base name directly for backward compat.
+        // For multiple bases, build a list of base name strings.
+        let bases_list_vreg = if all_base_names.is_empty() {
+            self.emit_none()
+        } else {
+            let mut base_vregs = Vec::new();
+            for base in all_base_names {
+                base_vregs.push(self.emit_str_const(base));
+            }
+            let list_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: list_vreg,
+                elements: base_vregs,
+                ty: self.tcx.any(),
+            });
+            list_vreg
+        };
+        // Build method_names list and method_values list. For methods
+        // decorated with @property/@classmethod/@staticmethod, wrap the
+        // raw function pointer in the corresponding descriptor object so
+        // mb_getattr dispatches through the descriptor protocol.
+        let any_ty = self.tcx.any();
+        let mut name_vregs = Vec::new();
+        let mut value_vregs = Vec::new();
+        let mut method_value_vregs_by_sym: HashMap<SymbolId, VReg> = HashMap::new();
+        for (
+            method_name,
+            method_sym,
+            decor_kind,
+            setter_sym,
+            deleter_sym,
+            marker_attrs,
+            generic_decorator,
+            singledispatchmethod,
+            sdm_register,
+            all_decorators,
+        ) in methods
+        {
+            let name_vreg = self.emit_str_const(method_name);
+            name_vregs.push(name_vreg);
+            let addr_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: addr_vreg,
+                value: MirConst::FuncRef(*method_sym),
+                ty: self.tcx.int(),
+            });
+            for attr_name in marker_attrs {
+                let attr_vreg = self.emit_str_const(attr_name);
+                let true_vreg = self.fresh_vreg();
+                self.current_stmts.push(MirInst::LoadConst {
+                    dest: true_vreg,
+                    value: MirConst::Bool(true),
+                    ty: self.tcx.bool(),
+                });
+                let true_boxed = self.box_operand(true_vreg, self.tcx.bool());
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_setattr".to_string(),
+                    args: vec![addr_vreg, attr_vreg, true_boxed],
+                    ty: self.tcx.none(),
+                });
+            }
+            let has_runtime_generic_decorator = all_decorators.iter().any(|dec_expr| {
+                self.method_descriptor_decorator_expr_name(dec_expr)
+                    .is_none()
+                    && !matches!(
+                        dec_expr,
+                        HirExpr::Attr { attr, .. }
+                            if matches!(attr.as_str(), "setter" | "getter" | "deleter")
+                    )
+            });
+            let mut wrapped = if has_runtime_generic_decorator {
+                let mut current = addr_vreg;
+                for dec_expr in all_decorators.iter().rev() {
+                    let next = self.fresh_vreg();
+                    match dec_expr {
+                        _ if self
+                            .method_descriptor_decorator_expr_name(dec_expr)
+                            .is_some() =>
+                        {
+                            let dec_name = self
+                                .method_descriptor_decorator_expr_name(dec_expr)
+                                .expect("descriptor decorator checked");
+                            let extern_name = match dec_name {
+                                "property" => "mb_property_new",
+                                "classmethod" => "mb_classmethod_new",
+                                "staticmethod" => "mb_staticmethod_new",
+                                "cached_property" => "mb_cached_property_new",
+                                _ => unreachable!(),
+                            };
+                            let args = if dec_name == "cached_property" {
+                                vec![current, self.emit_str_const(method_name)]
+                            } else {
+                                vec![current]
+                            };
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: extern_name.to_string(),
+                                args,
+                                ty: any_ty,
+                            });
+                        }
+                        HirExpr::Var(dec_sym, _) if self.user_funcs.contains(&dec_sym.0) => {
+                            self.current_stmts.push(MirInst::Call {
+                                dest: Some(next),
+                                func: *dec_sym,
+                                args: vec![current],
+                                ty: any_ty,
+                            });
+                        }
+                        HirExpr::Var(dec_sym, _) if self.user_class_syms.contains(&dec_sym.0) => {
+                            let class_name =
+                                self.class_syms.get(&dec_sym.0).cloned().unwrap_or_default();
+                            let name_vreg = self.emit_str_const(&class_name);
+                            let args_list = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::MakeList {
+                                dest: args_list,
+                                elements: vec![current],
+                                ty: any_ty,
+                            });
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: "mb_instance_new_with_init".to_string(),
+                                args: vec![name_vreg, args_list],
+                                ty: any_ty,
+                            });
+                        }
+                        _ => {
+                            let dec_vreg = self.lower_expr(dec_expr);
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: "mb_call1_val".to_string(),
+                                args: vec![dec_vreg, current],
+                                ty: any_ty,
+                            });
+                        }
+                    }
+                    current = next;
+                }
+                current
+            } else {
+                match decor_kind {
+                    MethodDecorKind::None => addr_vreg,
+                    MethodDecorKind::Property => {
+                        let mut w = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(w),
+                            name: "mb_property_new".to_string(),
+                            args: vec![addr_vreg],
+                            ty: any_ty,
+                        });
+                        // Attach setter if present. mb_property_setter returns a NEW
+                        // property (sharing fget); capture it so the accessor is not
+                        // dropped (it no longer mutates in place). (#82)
+                        if let Some(ssym) = setter_sym {
+                            let setter_addr = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::LoadConst {
+                                dest: setter_addr,
+                                value: MirConst::FuncRef(*ssym),
+                                ty: self.tcx.int(),
+                            });
+                            let next = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: "mb_property_setter".to_string(),
+                                args: vec![w, setter_addr],
+                                ty: any_ty,
+                            });
+                            w = next;
+                        }
+                        // Attach deleter if present (same NEW-property semantics).
+                        if let Some(dsym) = deleter_sym {
+                            let del_addr = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::LoadConst {
+                                dest: del_addr,
+                                value: MirConst::FuncRef(*dsym),
+                                ty: self.tcx.int(),
+                            });
+                            let next = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(next),
+                                name: "mb_property_deleter".to_string(),
+                                args: vec![w, del_addr],
+                                ty: any_ty,
+                            });
+                            w = next;
+                        }
+                        w
+                    }
+                    MethodDecorKind::ClassMethod => {
+                        let w = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(w),
+                            name: "mb_classmethod_new".to_string(),
+                            args: vec![addr_vreg],
+                            ty: any_ty,
+                        });
+                        w
+                    }
+                    MethodDecorKind::StaticMethod => {
+                        let w = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(w),
+                            name: "mb_staticmethod_new".to_string(),
+                            args: vec![addr_vreg],
+                            ty: any_ty,
+                        });
+                        w
+                    }
+                    MethodDecorKind::CachedProperty => {
+                        let name_str = self.emit_str_const(method_name);
+                        let w = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(w),
+                            name: "mb_cached_property_new".to_string(),
+                            args: vec![addr_vreg, name_str],
+                            ty: any_ty,
+                        });
+                        w
+                    }
+                }
+            };
+            if *singledispatchmethod {
+                let w = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(w),
+                    name: "mb_functools_singledispatchmethod".to_string(),
+                    args: vec![wrapped],
+                    ty: any_ty,
+                });
+                wrapped = w;
+            }
+            // Apply a generic cross-class chained decorator (`@Base.x.setter`):
+            // evaluate the descriptor-bound method (`Base.x.setter`) and call it
+            // on the wrapped method value; the result (a NEW property sharing the
+            // base's accessors) becomes this class's attribute. Applied inline so
+            // execution order matches CPython (the decorator runs at class-def
+            // time, before later statements use the property). (#82)
+            let wrapped = if let Some(dec_expr) = generic_decorator {
+                let dec_vreg = self.lower_expr(dec_expr);
+                let result_vreg = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(result_vreg),
+                    name: "mb_call1_val".to_string(),
+                    args: vec![dec_vreg, wrapped],
+                    ty: any_ty,
+                });
+                result_vreg
+            } else {
+                wrapped
+            };
+            method_value_vregs_by_sym.insert(*method_sym, wrapped);
+            if let Some((target_sym, type_expr)) = sdm_register {
+                if let Some(target_vreg) = method_value_vregs_by_sym.get(&target_sym).copied() {
+                    let type_vreg = self.lower_expr(&type_expr);
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: None,
+                        name: "mb_singledispatchmethod_register_value".to_string(),
+                        args: vec![target_vreg, type_vreg, wrapped],
+                        ty: self.tcx.none(),
+                    });
+                }
+            }
+            value_vregs.push(wrapped);
+        }
+        let names_list = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: names_list,
+            elements: name_vregs,
+            ty: self.tcx.any(),
+        });
+        let values_list = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: values_list,
+            elements: value_vregs,
+            ty: self.tcx.any(),
+        });
+        // R10: Emit class keyword arguments BEFORE class registration
+        // so they are available in KWARGS_REGISTRY when __init_subclass__ is called.
+        if !class_kwargs.is_empty() {
+            let mut key_vregs = Vec::new();
+            let mut val_vregs_kw = Vec::new();
+            for (kwarg_name, kwarg_expr) in class_kwargs {
+                key_vregs.push(self.emit_str_const(kwarg_name));
+                let val_vreg = self.lower_expr(kwarg_expr);
+                let boxed = self.box_operand(val_vreg, kwarg_expr.ty());
+                val_vregs_kw.push(boxed);
+            }
+            let keys_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: keys_list,
+                elements: key_vregs,
+                ty: self.tcx.any(),
+            });
+            let vals_list_kw = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: vals_list_kw,
+                elements: val_vregs_kw,
+                ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_kwargs".to_string(),
+                args: vec![name_vreg, keys_list, vals_list_kw],
+                ty: self.tcx.none(),
+            });
+        }
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_class_define_multi".to_string(),
+            args: vec![name_vreg, bases_list_vreg, names_list, values_list],
+            ty: self.tcx.none(),
+        });
+        let class_obj_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(class_obj_vreg),
+            name: "mb_builtin_type_obj".to_string(),
+            args: vec![name_vreg],
+            ty: self.tcx.any(),
+        });
+        self.current_stmts.push(MirInst::StoreGlobal {
+            name: *class_sym,
+            value: class_obj_vreg,
+        });
+        if *class_cell_required {
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_mark_classcell_required".to_string(),
+                args: vec![name_vreg],
+                ty: self.tcx.none(),
+            });
+        }
+        if let Some(spec) = namedtuple_base {
+            let tuple_name_vreg = self.emit_str_const(&spec.tuple_name);
+            let mut field_vregs = Vec::new();
+            for field in &spec.fields {
+                field_vregs.push(self.emit_str_const(field));
+            }
+            let fields_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: fields_list,
+                elements: field_vregs,
+                ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_namedtuple_base".to_string(),
+                args: vec![name_vreg, tuple_name_vreg, fields_list],
+                ty: self.tcx.none(),
+            });
+        }
+        // abc: register the names declared `@abc.abstractmethod` so the
+        // runtime can compute `__abstractmethods__` and reject instantiation
+        // of classes that still have un-overridden abstract methods.
+        let abs_names: Vec<String> = self
+            .pending_abstract_methods
+            .iter()
+            .find(|(cn, _)| cn == class_name)
+            .map(|(_, names)| names.clone())
+            .unwrap_or_default();
+        if !abs_names.is_empty() {
+            let mut abs_vregs = Vec::new();
+            for an in &abs_names {
+                abs_vregs.push(self.emit_str_const(an));
+            }
+            let abs_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: abs_list,
+                elements: abs_vregs,
+                ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_abstractmethods".to_string(),
+                args: vec![name_vreg, abs_list],
+                ty: self.tcx.none(),
+            });
+        }
+        // P2-R2: Set metaclass if specified (e.g., class Foo(metaclass=Meta)).
+        if let Some(ref meta_name) = metaclass {
+            let meta_vreg = self.emit_str_const(meta_name);
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_metaclass".to_string(),
+                args: vec![name_vreg, meta_vreg],
+                ty: self.tcx.none(),
+            });
+        }
+        // Register __match_args__ for PEP 634 positional class patterns (#827)
+        if !match_args.is_empty() {
+            let mut arg_vregs = Vec::new();
+            for arg_name in match_args {
+                arg_vregs.push(self.emit_str_const(arg_name));
+            }
+            let args_tuple = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeTuple {
+                dest: args_tuple,
+                elements: arg_vregs,
+                ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_match_args".to_string(),
+                args: vec![name_vreg, args_tuple],
+                ty: self.tcx.none(),
+            });
+        }
+        // R14: Emit mb_register_slots if __slots__ declared in class body.
+        if let Some(ref slot_names) = slots {
+            let mut slot_vregs = Vec::new();
+            for slot_name in slot_names {
+                slot_vregs.push(self.emit_str_const(slot_name));
+            }
+            let slots_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: slots_list,
+                elements: slot_vregs,
+                ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_register_slots".to_string(),
+                args: vec![name_vreg, slots_list],
+                ty: self.tcx.none(),
+            });
+        }
+    }
+
     /// P2-R3: Emit `mb_class_set_class_attr` calls for pending class-level
     /// attribute assignments. `cls_sym = Some(sym)` drains only that class's
     /// entries (ClassDefPlaceholder path, textual order); `None` drains every
@@ -4068,7 +5589,8 @@ impl<'a> HirToMir<'a> {
         let mut i = 0;
         while i < self.pending_class_attrs.len() {
             if cls_sym.map_or(true, |s| self.pending_class_attrs[i].1 == s) {
-                let (class_name, _, attr_name, val_expr) = self.pending_class_attrs.remove(i);
+                let (class_name, _, attr_name, attr_local, val_expr) =
+                    self.pending_class_attrs.remove(i);
                 let cls_vreg = self.emit_str_const(&class_name);
                 let attr_vreg = self.emit_str_const(&attr_name);
                 let val_vreg = self.lower_expr(&val_expr);
@@ -4079,9 +5601,92 @@ impl<'a> HirToMir<'a> {
                     args: vec![cls_vreg, attr_vreg, boxed],
                     ty: self.tcx.none(),
                 });
+                if let Some(sym) = attr_local {
+                    self.sym_to_vreg.insert(sym, val_vreg);
+                }
             } else {
                 i += 1;
             }
+        }
+    }
+
+    fn emit_class_body_stmts_for(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_class_body_stmts.len() {
+            if cls_sym.map_or(true, |s| self.pending_class_body_stmts[i].1 == s) {
+                let (_, _, stmts) = self.pending_class_body_stmts.remove(i);
+                for stmt in &stmts {
+                    self.lower_stmt(stmt);
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn emit_class_finalizers_for(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_class_finalizers.len() {
+            if cls_sym.map_or(true, |s| self.pending_class_finalizers[i].1 == s) {
+                let (class_name, _) = self.pending_class_finalizers.remove(i);
+                let cls_vreg = self.emit_str_const(&class_name);
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_class_finalize_definition".to_string(),
+                    args: vec![cls_vreg],
+                    ty: self.tcx.none(),
+                });
+                self.emit_exception_propagate();
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn emit_runtime_class_bases_for(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_runtime_class_bases.len() {
+            if !cls_sym.map_or(true, |s| self.pending_runtime_class_bases[i].1 == s) {
+                i += 1;
+                continue;
+            }
+            let (class_name, _, base_exprs) = self.pending_runtime_class_bases.remove(i);
+            let cls_vreg = self.emit_str_const(&class_name);
+            let mut base_vregs = Vec::new();
+            for expr in &base_exprs {
+                let raw = self.lower_expr(expr);
+                base_vregs.push(self.box_operand(raw, expr.ty()));
+            }
+            let bases_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: bases_list,
+                elements: base_vregs,
+                ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_update_bases".to_string(),
+                args: vec![cls_vreg, bases_list],
+                ty: self.tcx.none(),
+            });
+        }
+
+        let mut i = 0;
+        while i < self.pending_runtime_class_base_lists.len() {
+            if !cls_sym.map_or(true, |s| self.pending_runtime_class_base_lists[i].1 == s) {
+                i += 1;
+                continue;
+            }
+            let (class_name, _, base_list_expr) = self.pending_runtime_class_base_lists.remove(i);
+            let cls_vreg = self.emit_str_const(&class_name);
+            let raw = self.lower_expr(&base_list_expr);
+            let bases_list = self.box_operand(raw, base_list_expr.ty());
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_update_bases".to_string(),
+                args: vec![cls_vreg, bases_list],
+                ty: self.tcx.none(),
+            });
         }
     }
 
@@ -4615,6 +6220,90 @@ impl<'a> HirToMir<'a> {
         });
     }
 
+    fn lower_async_for(
+        &mut self,
+        var: SymbolId,
+        iter: &HirExpr,
+        body: &[HirStmt],
+        else_body: &[HirStmt],
+    ) {
+        let iterable = self.lower_expr(iter);
+
+        let iter_obj = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(iter_obj),
+            name: "mb_async_iter".to_string(),
+            args: vec![iterable],
+            ty: self.tcx.any(),
+        });
+        self.emit_exception_propagate();
+
+        let header = self.fresh_block();
+        let body_block = self.fresh_block();
+        let cleanup_block = self.fresh_block();
+
+        let natural_exit = if !else_body.is_empty() {
+            self.fresh_block()
+        } else {
+            cleanup_block
+        };
+
+        self.finish_block(Terminator::Goto(header));
+
+        self.start_block(header);
+        let next_val = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(next_val),
+            name: "mb_async_next_or_stop".to_string(),
+            args: vec![iter_obj],
+            ty: self.tcx.any(),
+        });
+        self.emit_exception_propagate();
+        let is_stop = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(is_stop),
+            name: "mb_is_stop_iter".to_string(),
+            args: vec![next_val],
+            ty: self.tcx.bool(),
+        });
+        self.finish_block(Terminator::Branch {
+            cond: is_stop,
+            then_block: natural_exit,
+            else_block: body_block,
+        });
+
+        let old_exit = self.loop_exit.replace(cleanup_block);
+        let old_header = self.loop_header.replace(header);
+        let was_module_scope = self.in_module_scope;
+        self.in_module_scope = false;
+        self.start_block(body_block);
+        if let Some(&orig) = self.sym_to_vreg.get(&var) {
+            self.current_stmts.push(MirInst::Copy {
+                dest: orig,
+                source: next_val,
+            });
+        } else {
+            self.sym_to_vreg.insert(var, next_val);
+        }
+        for s in body {
+            self.lower_stmt(s);
+        }
+        self.in_module_scope = was_module_scope;
+        self.finish_block(Terminator::Goto(header));
+        self.loop_exit = old_exit;
+        self.loop_header = old_header;
+
+        if !else_body.is_empty() {
+            self.start_block(natural_exit);
+            for s in else_body {
+                self.lower_stmt(s);
+            }
+            self.finish_block(Terminator::Goto(cleanup_block));
+        }
+
+        self.start_block(cleanup_block);
+    }
+
     /// Desugar tuple/starred unpacking assignment into indexed access (#409).
     ///
     /// `a, b, c = rhs`  → `a = rhs[0]; b = rhs[1]; c = rhs[2]`
@@ -4622,6 +6311,7 @@ impl<'a> HirToMir<'a> {
     fn lower_unpack_assign(
         &mut self,
         rhs_in: VReg,
+        rhs_ty: TypeId,
         targets: &[HirLValue],
         star_index: Option<usize>,
     ) {
@@ -4642,89 +6332,41 @@ impl<'a> HirToMir<'a> {
         // legacy materializing path. Non-star unpack is the dominant case
         // and the hot loop the #2178 cohort actually exercises.
         let rhs = self.fresh_vreg();
+        let rhs_arg = self.box_operand(rhs_in, rhs_ty);
         let materialize_fn = if star_index.is_some() {
-            "mb_list_from_iterable"
+            "mb_list_for_unpack"
         } else {
             "mb_seq_for_unpack"
         };
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(rhs),
             name: materialize_fn.to_string(),
-            args: vec![rhs_in],
+            args: vec![rhs_arg],
             ty: self.tcx.any(),
         });
-        // Raise ValueError on length mismatch (CPython semantics).
-        // - Without star: exactly n values required.
-        // - With star: at least (n-1) values required.
-        // `mb_seq_len_boxed` mirrors `mb_list_len` for lists and adds tuple
-        // support so the zero-copy passthrough above works correctly when the
-        // RHS arrives as a tuple. Returns a NaN-boxed int; mb_ne compares by
-        // bits, so the expected literal must be boxed to match — otherwise the
-        // unpack always "fails" (tagged vs raw bits never equal), silently
-        // setting a ValueError that surfaces at module exit.
-        let actual_len_raw = self.fresh_vreg();
-        self.current_stmts.push(MirInst::CallExtern {
-            dest: Some(actual_len_raw),
-            name: "mb_seq_len_boxed".to_string(),
-            args: vec![rhs],
-            ty: int_ty,
-        });
-        let actual_len = actual_len_raw;
+        self.emit_exception_propagate();
+        // Runtime owns the precise CPython arity diagnostics. Keeping the
+        // check in one helper preserves source exceptions from materialization
+        // (`__iter__` / `__getitem__`) instead of overwriting them here.
         let expected = if star_index.is_some() {
             (n - 1) as i64
         } else {
             n as i64
         };
         let expected_raw = self.emit_int_const(expected);
-        let expected_vreg = self.box_operand(expected_raw, int_ty);
-        let cmp = self.fresh_vreg();
-        if star_index.is_some() {
-            // Need at least (n-1) — raise if actual < expected
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: Some(cmp),
-                name: "mb_lt".to_string(),
-                args: vec![actual_len, expected_vreg],
-                ty: self.tcx.bool(),
-            });
-        } else {
-            // Need exactly n — raise if actual != expected
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: Some(cmp),
-                name: "mb_ne".to_string(),
-                args: vec![actual_len, expected_vreg],
-                ty: self.tcx.bool(),
-            });
-        }
-        let raise_block = self.fresh_block();
-        let ok_block = self.fresh_block();
-        self.finish_block(Terminator::Branch {
-            cond: cmp,
-            then_block: raise_block,
-            else_block: ok_block,
+        let has_star = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: has_star,
+            value: MirConst::Bool(star_index.is_some()),
+            ty: self.tcx.bool(),
         });
-        self.start_block(raise_block);
-        let err_type = self.emit_str_const("ValueError");
-        let err_msg = if star_index.is_some() {
-            self.emit_str_const("not enough values to unpack")
-        } else {
-            // Either too few or too many — CPython distinguishes, but a generic
-            // message still satisfies `except ValueError` handlers.
-            self.emit_str_const("unpack count mismatch")
-        };
         self.current_stmts.push(MirInst::CallExtern {
             dest: None,
-            name: "mb_raise".to_string(),
-            args: vec![err_type, err_msg],
+            name: "mb_unpack_check_arity".to_string(),
+            args: vec![rhs, expected_raw, has_star],
             ty: self.tcx.none(),
         });
-        // If in a try, propagate to handler; otherwise continue (exception check elsewhere)
-        if let Some(&(handler_block, _)) = self.try_handler_stack.last() {
-            self.emit_extern_call(None, "mb_pop_handler");
-            self.finish_block(Terminator::Goto(handler_block));
-        } else {
-            self.finish_block(Terminator::Goto(ok_block));
-        }
-        self.start_block(ok_block);
+        self.emit_exception_propagate();
         match star_index {
             None => {
                 // Simple unpacking: each target gets rhs[i]
@@ -4819,10 +6461,7 @@ impl<'a> HirToMir<'a> {
                 let val_ty = self.tcx.any();
                 if self.cell_override.contains(&sym.0) {
                     let boxed = self.box_operand(val, val_ty);
-                    self.current_stmts.push(MirInst::StoreGlobal {
-                        name: *sym,
-                        value: boxed,
-                    });
+                    self.emit_capture_cell_set(*sym, boxed);
                     return;
                 }
                 let var_class = self
@@ -4910,7 +6549,7 @@ impl<'a> HirToMir<'a> {
                 targets,
                 star_index,
             } => {
-                self.lower_unpack_assign(val, targets, *star_index);
+                self.lower_unpack_assign(val, self.tcx.any(), targets, *star_index);
             }
         }
     }
@@ -4983,15 +6622,24 @@ impl<'a> HirToMir<'a> {
             }
             Literal(expr) => {
                 let lit_raw = self.lower_expr(expr);
-                // Box the literal so both operands are MbValue for mb_eq (#827 R1)
-                let lit = self.box_operand(lit_raw, expr.ty());
                 let eq = self.fresh_vreg();
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: Some(eq),
-                    name: "mb_eq".to_string(),
-                    args: vec![subj_vreg, lit],
-                    ty: self.tcx.bool(),
-                });
+                if matches!(expr, HirExpr::BoolLit(..)) {
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(eq),
+                        name: "mb_match_bool_literal".to_string(),
+                        args: vec![subj_vreg, lit_raw],
+                        ty: self.tcx.bool(),
+                    });
+                } else {
+                    // Box the literal so both operands are MbValue for mb_eq (#827 R1)
+                    let lit = self.box_operand(lit_raw, expr.ty());
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(eq),
+                        name: "mb_eq".to_string(),
+                        args: vec![subj_vreg, lit],
+                        ty: self.tcx.bool(),
+                    });
+                }
                 let ok_block = self.fresh_block();
                 self.finish_block(Terminator::Branch {
                     cond: eq,
@@ -5058,15 +6706,24 @@ impl<'a> HirToMir<'a> {
                     match alt {
                         Literal(expr) => {
                             let lit_raw = self.lower_expr(expr);
-                            // Box the literal so both operands are MbValue for mb_eq (#827 R1)
-                            let lit = self.box_operand(lit_raw, expr.ty());
                             let eq = self.fresh_vreg();
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: Some(eq),
-                                name: "mb_eq".to_string(),
-                                args: vec![subj_vreg, lit],
-                                ty: self.tcx.bool(),
-                            });
+                            if matches!(expr, HirExpr::BoolLit(..)) {
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(eq),
+                                    name: "mb_match_bool_literal".to_string(),
+                                    args: vec![subj_vreg, lit_raw],
+                                    ty: self.tcx.bool(),
+                                });
+                            } else {
+                                // Box the literal so both operands are MbValue for mb_eq (#827 R1)
+                                let lit = self.box_operand(lit_raw, expr.ty());
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(eq),
+                                    name: "mb_eq".to_string(),
+                                    args: vec![subj_vreg, lit],
+                                    ty: self.tcx.bool(),
+                                });
+                            }
                             self.finish_block(Terminator::Branch {
                                 cond: eq,
                                 then_block: success,
@@ -5464,17 +7121,53 @@ impl<'a> HirToMir<'a> {
                     else_block: fail_block,
                 });
                 self.start_block(map_ok);
-                // For each key: check presence + value pattern; then collect rest (#827, R3)
+                let mut matched_keys = Vec::new();
                 for (key_expr, val_pat) in pairs {
                     let key_raw = self.lower_expr(key_expr);
                     // Box primitive keys (int/bool) so dict functions receive MbValue (#827)
                     let key_vreg = self.box_operand(key_raw, key_expr.ty());
+                    matched_keys.push((key_vreg, val_pat));
+                }
+                // PEP 634: duplicate mapping pattern keys that compare equal at
+                // runtime raise ValueError before matching values.
+                for i in 0..matched_keys.len() {
+                    for j in (i + 1)..matched_keys.len() {
+                        let duplicate = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(duplicate),
+                            name: "mb_eq".to_string(),
+                            args: vec![matched_keys[i].0, matched_keys[j].0],
+                            ty: self.tcx.bool(),
+                        });
+                        let raise_dup = self.fresh_block();
+                        let next_cmp = self.fresh_block();
+                        self.finish_block(Terminator::Branch {
+                            cond: duplicate,
+                            then_block: raise_dup,
+                            else_block: next_cmp,
+                        });
+                        self.start_block(raise_dup);
+                        let err_type = self.emit_str_const("ValueError");
+                        let err_msg = self.emit_str_const("mapping pattern checks duplicate key");
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: None,
+                            name: "mb_raise".to_string(),
+                            args: vec![err_type, err_msg],
+                            ty: self.tcx.none(),
+                        });
+                        self.emit_exception_propagate();
+                        self.finish_block(Terminator::Goto(next_cmp));
+                        self.start_block(next_cmp);
+                    }
+                }
+                // For each key: check presence + value pattern; then collect rest (#827, R3)
+                for (key_vreg, val_pat) in &matched_keys {
                     // Check: key in subject dict
                     let has_key = self.fresh_vreg();
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: Some(has_key),
                         name: "mb_dict_contains".to_string(),
-                        args: vec![subj_vreg, key_vreg],
+                        args: vec![subj_vreg, *key_vreg],
                         ty: self.tcx.bool(),
                     });
                     let key_ok = self.fresh_block();
@@ -5489,7 +7182,7 @@ impl<'a> HirToMir<'a> {
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: Some(val_vreg),
                         name: "mb_dict_getitem".to_string(),
-                        args: vec![subj_vreg, key_vreg],
+                        args: vec![subj_vreg, *key_vreg],
                         ty: self.tcx.any(),
                     });
                     // val_vreg is MbValue from mb_dict_getitem; raw_is_boxed=true (#827).
@@ -5506,13 +7199,11 @@ impl<'a> HirToMir<'a> {
                         ty: self.tcx.any(),
                     });
                     // Delete each matched key from the copy
-                    for (key_expr, _) in pairs {
-                        let key_raw = self.lower_expr(key_expr);
-                        let key_v = self.box_operand(key_raw, key_expr.ty());
+                    for (key_v, _) in &matched_keys {
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: None,
                             name: "mb_dict_delitem".to_string(),
-                            args: vec![rest_dict, key_v],
+                            args: vec![rest_dict, *key_v],
                             ty: self.tcx.none(),
                         });
                     }
@@ -5670,14 +7361,168 @@ impl<'a> HirToMir<'a> {
             .map(|&sym| (sym, self.sym_to_vreg.get(&sym).copied()))
             .collect();
 
+        if generators.len() == 1
+            && self.is_range_call(&gen.iter)
+            && !self.is_gen_body
+            && !gen.is_async
+            && !gen.unpack_target
+            && extra_vars.is_empty()
+        {
+            let range_args: Vec<HirExpr> = if let HirExpr::Call { args, .. } = &gen.iter {
+                args.clone()
+            } else {
+                unreachable!()
+            };
+            let int_ty = self.tcx.int();
+            let unbox_range_arg = |this: &mut Self, e: &HirExpr| -> VReg {
+                let v = this.lower_expr(e);
+                let unboxed = this.fresh_vreg();
+                this.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(unboxed),
+                    name: "mb_unbox_int_if_boxed".to_string(),
+                    args: vec![v],
+                    ty: int_ty,
+                });
+                unboxed
+            };
+
+            let (start_raw, stop_raw, step_raw) = match range_args.as_slice() {
+                [stop] => {
+                    let stop = unbox_range_arg(self, stop);
+                    let start = self.emit_int_const(0);
+                    let step = self.emit_int_const(1);
+                    (start, stop, step)
+                }
+                [start, stop] => {
+                    let start = unbox_range_arg(self, start);
+                    let stop = unbox_range_arg(self, stop);
+                    let step = self.emit_int_const(1);
+                    (start, stop, step)
+                }
+                [start, stop, step] => {
+                    let start = unbox_range_arg(self, start);
+                    let stop = unbox_range_arg(self, stop);
+                    let step = unbox_range_arg(self, step);
+                    (start, stop, step)
+                }
+                _ => unreachable!(),
+            };
+
+            let counter_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::Copy {
+                dest: counter_vreg,
+                source: start_raw,
+            });
+            let var_vreg = self.fresh_vreg();
+            self.sym_to_vreg.insert(gen_var, var_vreg);
+            let expose_raw_int = self
+                .sym_types
+                .get(&gen_var)
+                .is_some_and(|ty| matches!(self.tcx.get(*ty), Ty::Int));
+
+            let header = self.fresh_block();
+            let body_block = self.fresh_block();
+            let latch_block = self.fresh_block();
+            let exit_block = self.fresh_block();
+
+            self.finish_block(Terminator::Goto(header));
+            let cmp_op = if range_args.len() == 3 {
+                match Self::hir_literal_int(&range_args[2]) {
+                    Some(s) if s > 0 => MirBinOp::Lt,
+                    Some(s) if s < 0 => MirBinOp::Gt,
+                    _ => unreachable!("is_range_call rejects non-literal/zero step"),
+                }
+            } else {
+                MirBinOp::Lt
+            };
+            self.start_block(header);
+            let cond = self.fresh_vreg();
+            self.current_stmts.push(MirInst::BinOp {
+                dest: cond,
+                op: cmp_op,
+                lhs: counter_vreg,
+                rhs: stop_raw,
+                ty: int_ty,
+            });
+            self.finish_block(Terminator::Branch {
+                cond,
+                then_block: body_block,
+                else_block: exit_block,
+            });
+
+            self.start_block(body_block);
+            if expose_raw_int {
+                self.current_stmts.push(MirInst::Copy {
+                    dest: var_vreg,
+                    source: counter_vreg,
+                });
+            } else {
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(var_vreg),
+                    name: "mb_box_int".to_string(),
+                    args: vec![counter_vreg],
+                    ty: self.tcx.any(),
+                });
+            }
+            for condition in &gen.conditions {
+                let cond_vreg = self.lower_cond_as_bool(condition);
+                let next_condition = self.fresh_block();
+                let skip_block = self.fresh_block();
+                self.finish_block(Terminator::Branch {
+                    cond: cond_vreg,
+                    then_block: next_condition,
+                    else_block: skip_block,
+                });
+                self.start_block(skip_block);
+                self.finish_block(Terminator::Goto(latch_block));
+                self.start_block(next_condition);
+            }
+            emit_body(self);
+            self.finish_block(Terminator::Goto(latch_block));
+
+            self.start_block(latch_block);
+            let next_val = self.fresh_vreg();
+            self.current_stmts.push(MirInst::BinOp {
+                dest: next_val,
+                op: MirBinOp::Add,
+                lhs: counter_vreg,
+                rhs: step_raw,
+                ty: int_ty,
+            });
+            self.current_stmts.push(MirInst::Copy {
+                dest: counter_vreg,
+                source: next_val,
+            });
+            self.finish_block(Terminator::Goto(header));
+
+            self.start_block(exit_block);
+            match saved_binding {
+                Some(vreg) => {
+                    self.sym_to_vreg.insert(gen_var, vreg);
+                }
+                None => {
+                    self.sym_to_vreg.remove(&gen_var);
+                }
+            }
+            return;
+        }
+
         let iterable = self.lower_expr(&gen.iter);
         let iter_obj = self.fresh_vreg();
+        let iter_fn = if gen.is_async {
+            "mb_async_iter"
+        } else {
+            "mb_iter"
+        };
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(iter_obj),
-            name: "mb_iter".to_string(),
+            name: iter_fn.to_string(),
             args: vec![iterable],
             ty: self.tcx.any(),
         });
+        if gen.is_async {
+            self.emit_exception_propagate();
+        }
 
         let header = self.fresh_block();
         let body_block = self.fresh_block();
@@ -5687,12 +7532,20 @@ impl<'a> HirToMir<'a> {
         self.start_block(header);
         // Lever A: single-call advance + sentinel check.
         let next_val = self.fresh_vreg();
+        let next_fn = if gen.is_async {
+            "mb_async_next_or_stop"
+        } else {
+            "mb_next_or_stop"
+        };
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(next_val),
-            name: "mb_next_or_stop".to_string(),
+            name: next_fn.to_string(),
             args: vec![iter_obj],
             ty: self.tcx.any(),
         });
+        if gen.is_async {
+            self.emit_exception_propagate();
+        }
         let is_stop = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(is_stop),
@@ -5707,9 +7560,23 @@ impl<'a> HirToMir<'a> {
         });
 
         self.start_block(body_block);
-        // Unpack tuple/sequence targets: `for k, v in pairs` — next_val is a
-        // (k, v) tuple; bind var=next_val[0], extra_vars[i]=next_val[i+1].
-        if extra_vars.is_empty() {
+        if let Some(name) = gen.target_reads_before_bind.first() {
+            let type_vreg = self.emit_str_const("UnboundLocalError");
+            let msg_vreg = self.emit_str_const(&format!(
+                "cannot access local variable '{name}' where it is not associated with a value"
+            ));
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_raise".to_string(),
+                args: vec![type_vreg, msg_vreg],
+                ty: self.tcx.none(),
+            });
+            self.finish_block(Terminator::Goto(exit_block));
+            let dead_block = self.fresh_block();
+            self.start_block(dead_block);
+        }
+        // Unpack tuple/sequence targets: `for k, v in pairs` or `for (v,) in pairs`.
+        if !gen.unpack_target {
             self.sym_to_vreg.insert(gen_var, next_val);
         } else {
             let any_ty = self.tcx.any();
@@ -5752,19 +7619,20 @@ impl<'a> HirToMir<'a> {
             // No conditions — recurse directly
             self.lower_comprehension_loops(rest, emit_body);
         } else {
-            // Evaluate conditions; skip if any is false
-            let cond_vreg = self.lower_expr(&gen.conditions[0]);
-            let inner_block = self.fresh_block();
-            let skip_block = self.fresh_block();
-            self.finish_block(Terminator::Branch {
-                cond: cond_vreg,
-                then_block: inner_block,
-                else_block: skip_block,
-            });
-            self.start_block(inner_block);
+            for condition in &gen.conditions {
+                let cond_vreg = self.lower_cond_as_bool(condition);
+                let next_condition = self.fresh_block();
+                let skip_block = self.fresh_block();
+                self.finish_block(Terminator::Branch {
+                    cond: cond_vreg,
+                    then_block: next_condition,
+                    else_block: skip_block,
+                });
+                self.start_block(skip_block);
+                self.finish_block(Terminator::Goto(header));
+                self.start_block(next_condition);
+            }
             self.lower_comprehension_loops(rest, emit_body);
-            self.finish_block(Terminator::Goto(header));
-            self.start_block(skip_block);
             self.finish_block(Terminator::Goto(header));
             // Exit block
             self.start_block(exit_block);
@@ -6041,6 +7909,15 @@ impl<'a> HirToMir<'a> {
                 });
                 dest
             }
+            HirExpr::BigIntLit(s, ty) => {
+                let dest = self.fresh_vreg();
+                self.current_stmts.push(MirInst::LoadConst {
+                    dest,
+                    value: MirConst::BigInt(s.clone()),
+                    ty: *ty,
+                });
+                dest
+            }
             HirExpr::FloatLit(f, ty) => {
                 let dest = self.fresh_vreg();
                 self.current_stmts.push(MirInst::LoadConst {
@@ -6087,6 +7964,21 @@ impl<'a> HirToMir<'a> {
                 dest
             }
             HirExpr::Var(sym, ty) => {
+                // Synthetic nonlocal/cell symbols must always read the shared
+                // storage, even if this function has a stale local vreg from
+                // an earlier assignment.
+                if self.cell_override.contains(&sym.0) {
+                    let dest = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadGlobal {
+                        dest,
+                        name: *sym,
+                        ty: *ty,
+                    });
+                    return dest;
+                }
+                if let Some(&vreg) = self.sym_to_vreg.get(sym) {
+                    return vreg;
+                }
                 // NotImplemented / Ellipsis builtin constants → emit as MirConst
                 if let Some(st) = self.symbol_table {
                     if (sym.0 as usize) < st.all_symbols().len() {
@@ -6109,9 +8001,11 @@ impl<'a> HirToMir<'a> {
                 }
                 // Exception type names (ValueError, TypeError, etc.) → emit as string constants
                 // so issubclass(ValueError, Exception) receives string MbValues.
-                // Builtin primitive type names (bool, int, list, …) → emit a call to
+                // Builtin primitive type names (bool, int, list, …) and user class
+                // names in value position → emit a call to
                 // mb_builtin_type_obj() so the result is the *same* singleton as
-                // returned by mb_type(), making `type(True) is bool` → True.
+                // returned by mb_type(), making `type(True) is bool` and
+                // `type(UserClass) is type` → True.
                 if let Some(class_name) = self.class_syms.get(&sym.0).cloned() {
                     const BUILTIN_TYPE_NAMES: &[&str] = &[
                         "int",
@@ -6125,10 +8019,13 @@ impl<'a> HirToMir<'a> {
                         "bytes",
                         "bytearray",
                         "frozenset",
+                        "range",
                         "type",
                         "object",
                     ];
-                    if BUILTIN_TYPE_NAMES.contains(&class_name.as_str()) {
+                    if BUILTIN_TYPE_NAMES.contains(&class_name.as_str())
+                        || self.user_class_syms.contains(&sym.0)
+                    {
                         // Emit: mb_builtin_type_obj(<string_const_name>)
                         let name_vreg = self.emit_str_const(&class_name);
                         let dest = self.fresh_vreg();
@@ -6193,17 +8090,6 @@ impl<'a> HirToMir<'a> {
                             ty: *ty,
                         });
                     }
-                    return dest;
-                }
-                // Check cell_override first: synthetic (1M+) nonlocal-shared symbols
-                // always load from global storage regardless of symbol_table classification.
-                if self.cell_override.contains(&sym.0) {
-                    let dest = self.fresh_vreg();
-                    self.current_stmts.push(MirInst::LoadGlobal {
-                        dest,
-                        name: *sym,
-                        ty: *ty,
-                    });
                     return dest;
                 }
                 // Check variable classification for global/cell/free access
@@ -6637,18 +8523,167 @@ impl<'a> HirToMir<'a> {
             }
             HirExpr::UnaryOp { op, operand, ty } => {
                 let inner = self.lower_expr(operand);
+                if matches!(*op, crate::hir::HirUnaryOp::Not) {
+                    let boxed = self.box_operand(inner, operand.ty());
+                    let dest = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(dest),
+                        name: "mb_not".to_string(),
+                        args: vec![boxed],
+                        ty: self.tcx.any(),
+                    });
+                    return dest;
+                }
                 let dest = self.fresh_vreg();
-                self.current_stmts.push(MirInst::UnaryOp {
-                    dest,
-                    op: lower_mir_unaryop(*op),
-                    operand: inner,
-                    ty: *ty,
-                });
+                // Negation must be BigInt-aware: a raw MirUnaryOp::Neg negates
+                // the NaN-boxed BigInt pointer bits (yielding garbage, e.g.
+                // `-(2**63)`). The checker already rejects `-x` on non-numeric
+                // operands, so here `operand` is always numeric.
+                //   - statically Int: lower `-x` as the checked subtraction
+                //     `0 - x` (the BigInt-aware path binary `-` already uses).
+                //   - Any/Complex/etc. (a boxed numeric that may be a BigInt or
+                //     complex): route through the runtime `mb_neg`.
+                //   - Float/Bool: a raw MirUnaryOp::Neg is correct and fast.
+                // #99
+                let neg_int = matches!(*op, crate::hir::HirUnaryOp::Neg)
+                    && matches!(self.tcx.get(operand.ty()), crate::types::Ty::Int);
+                let neg_boxed = matches!(*op, crate::hir::HirUnaryOp::Neg)
+                    && !matches!(
+                        self.tcx.get(operand.ty()),
+                        crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
+                    );
+                if neg_int {
+                    let zero = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: zero,
+                        value: MirConst::Int(0),
+                        ty: self.tcx.int(),
+                    });
+                    self.current_stmts.push(MirInst::CheckedSub {
+                        dest,
+                        lhs: zero,
+                        rhs: inner,
+                        ty: *ty,
+                    });
+                } else if neg_boxed {
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(dest),
+                        name: "mb_neg".to_string(),
+                        args: vec![inner],
+                        ty: *ty,
+                    });
+                } else {
+                    self.current_stmts.push(MirInst::UnaryOp {
+                        dest,
+                        op: lower_mir_unaryop(*op),
+                        operand: inner,
+                        ty: *ty,
+                    });
+                }
                 dest
             }
             HirExpr::Call { func, args, ty } => {
                 // Method call: x.method(args) → mb_call_method(receiver, name, args_list)
                 if let HirExpr::Attr { object, attr, .. } = func.as_ref() {
+                    if attr == "walk_stack"
+                        && args.len() == 1
+                        && matches!(args.first(), Some(HirExpr::NoneLit(_)))
+                        && self.expr_is_var_named(object, "traceback")
+                    {
+                        let frame_filename = self
+                            .src_filename
+                            .clone()
+                            .unwrap_or_else(|| "None".to_string());
+                        let filename = self.emit_str_const(&frame_filename);
+                        let line_number = self.current_func_src_line.unwrap_or(0) as i64 + 1;
+                        let line_raw = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadConst {
+                            dest: line_raw,
+                            value: MirConst::Int(line_number),
+                            ty: self.tcx.int(),
+                        });
+                        let line = self.box_operand(line_raw, self.tcx.int());
+                        let func_name = self
+                            .current_func_name
+                            .clone()
+                            .unwrap_or_else(|| "<module>".to_string());
+                        let name = self.emit_str_const(&func_name);
+                        let dest = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_traceback_walk_stack_frame".to_string(),
+                            args: vec![filename, line, name],
+                            ty: *ty,
+                        });
+                        self.emit_exception_propagate();
+                        return dest;
+                    }
+
+                    if attr == "_getframe"
+                        && args.is_empty()
+                        && self.expr_is_var_named(object, "sys")
+                    {
+                        let locals_ty = self.tcx.any();
+                        let locals = self.emit_current_locals_dict(locals_ty);
+                        let dest = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_sys_getframe_with_locals".to_string(),
+                            args: vec![locals],
+                            ty: *ty,
+                        });
+                        self.emit_exception_propagate();
+                        return dest;
+                    }
+
+                    if args.is_empty() {
+                        let direct_chr_method = match attr.as_str() {
+                            "upper" => Some("mb_str_upper"),
+                            "lower" => Some("mb_str_lower"),
+                            "title" => Some("mb_str_title"),
+                            _ => None,
+                        };
+                        if let Some(fn_name) = direct_chr_method {
+                            if let HirExpr::Call {
+                                func: chr_func,
+                                args: chr_args,
+                                ..
+                            } = object.as_ref()
+                            {
+                                if chr_args.len() == 1 {
+                                    if let HirExpr::Var(chr_sym, _) = chr_func.as_ref() {
+                                        if self
+                                            .builtin_syms
+                                            .get(&chr_sym.0)
+                                            .is_some_and(|name| name == "mb_chr")
+                                        {
+                                            let arg_raw = self.lower_expr(&chr_args[0]);
+                                            let arg_boxed =
+                                                self.box_operand(arg_raw, chr_args[0].ty());
+                                            let chr_value = self.fresh_vreg();
+                                            self.current_stmts.push(MirInst::CallExtern {
+                                                dest: Some(chr_value),
+                                                name: "mb_chr".to_string(),
+                                                args: vec![arg_boxed],
+                                                ty: self.tcx.str(),
+                                            });
+                                            self.emit_exception_propagate();
+                                            let dest = self.fresh_vreg();
+                                            self.current_stmts.push(MirInst::CallExtern {
+                                                dest: Some(dest),
+                                                name: fn_name.to_string(),
+                                                args: vec![chr_value],
+                                                ty: self.tcx.str(),
+                                            });
+                                            self.emit_exception_propagate();
+                                            return dest;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Fast path: when the receiver type is statically Str and
                     // the method has a known direct runtime entry point with
                     // the same arity, bypass mb_call_method dispatch (which
@@ -6689,9 +8724,9 @@ impl<'a> HirToMir<'a> {
                         Ty::Dict(..) => match (attr.as_str(), args.len()) {
                             ("clear", 0) => Some("mb_dict_clear"),
                             ("copy", 0) => Some("mb_dict_copy"),
-                            ("keys", 0) => Some("mb_dict_keys"),
-                            ("values", 0) => Some("mb_dict_values"),
-                            ("items", 0) => Some("mb_dict_items"),
+                            ("keys", 0) => Some("mb_dict_keys_view"),
+                            ("values", 0) => Some("mb_dict_values_view"),
+                            ("items", 0) => Some("mb_dict_items_view"),
                             ("update", 1) => Some("mb_dict_update"),
                             _ => None,
                         },
@@ -6720,6 +8755,14 @@ impl<'a> HirToMir<'a> {
                     let recv_ty = object.ty();
                     let receiver = self.box_operand(recv_raw, recv_ty);
                     let method_name = self.emit_str_const(attr);
+                    let method_vreg = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(method_vreg),
+                        name: "mb_getattr".to_string(),
+                        args: vec![receiver, method_name],
+                        ty: self.tcx.any(),
+                    });
+                    self.emit_exception_propagate();
                     let arg_vregs: Vec<VReg> = args
                         .iter()
                         .map(|a| {
@@ -6736,8 +8779,8 @@ impl<'a> HirToMir<'a> {
                     let dest = self.fresh_vreg();
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: Some(dest),
-                        name: "mb_call_method".to_string(),
-                        args: vec![receiver, method_name, args_list],
+                        name: "mb_call_spread".to_string(),
+                        args: vec![method_vreg, args_list],
                         ty: *ty,
                     });
                     // If the method set a pending exception, short-circuit
@@ -6763,9 +8806,27 @@ impl<'a> HirToMir<'a> {
                         args: boxed_args,
                         ty: *ty,
                     });
+                    if matches!(
+                        extern_name.as_str(),
+                        "mb_exception_new_with_args"
+                            | "mb_exception_new_with_args_and_kwargs"
+                            | "mb_exception_group_construct"
+                            | "mb_arg_bind_error"
+                            | "mb_unbound_local_error_value"
+                    ) {
+                        self.emit_exception_propagate();
+                    }
                     return dest;
                 }
                 // Regular function call
+                let indirect_func_vreg = match func.as_ref() {
+                    HirExpr::Var(_, _) => None,
+                    _ => {
+                        let vreg = self.lower_expr(func);
+                        self.emit_exception_propagate();
+                        Some(vreg)
+                    }
+                };
                 let arg_vregs: Vec<VReg> = args.iter().map(|a| self.lower_expr(a)).collect();
                 // If evaluating an argument raised, short-circuit before the
                 // outer call runs — otherwise `print(int("bad"))` would print
@@ -6777,6 +8838,12 @@ impl<'a> HirToMir<'a> {
                     HirExpr::Var(sym, _) => *sym,
                     _ => SymbolId(u32::MAX), // indirect call placeholder
                 };
+                let is_local_closure_func = self.sym_to_vreg.contains_key(&func_sym)
+                    && self
+                        .user_func_freevars
+                        .get(&func_sym.0)
+                        .map(|vars| !vars.is_empty())
+                        .unwrap_or(false);
                 // Class instantiation: ClassName(args) → mb_instance_new_with_init
                 if self.user_class_syms.contains(&func_sym.0) {
                     if let Some(class_name) = self.class_syms.get(&func_sym.0).cloned() {
@@ -6801,25 +8868,90 @@ impl<'a> HirToMir<'a> {
                         return dest;
                     }
                 }
+                // Descriptor type constructors called as values:
+                // property(...) / staticmethod(f) / classmethod(f). These names
+                // live in class_syms (so `isinstance(x, property)` works) but are
+                // not user classes and have no builtin extern, so without this
+                // branch they would fall into the exception-class fallback below
+                // and build a bogus exception object. Route the CALL form to the
+                // real descriptor constructors. (The @decorator form is handled
+                // separately at class-registration time.)
+                if !self.user_class_syms.contains(&func_sym.0) {
+                    if let Some(class_name) = self.class_syms.get(&func_sym.0).cloned() {
+                        match class_name.as_str() {
+                            "property" => {
+                                let boxed_args: Vec<VReg> = args
+                                    .iter()
+                                    .zip(arg_vregs.iter())
+                                    .map(|(a, &v)| self.box_operand(v, a.ty()))
+                                    .collect();
+                                let args_list = self.fresh_vreg();
+                                self.current_stmts.push(MirInst::MakeList {
+                                    dest: args_list,
+                                    elements: boxed_args,
+                                    ty: self.tcx.any(),
+                                });
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(dest),
+                                    name: "mb_property_from_args".to_string(),
+                                    args: vec![args_list],
+                                    ty: *ty,
+                                });
+                                return dest;
+                            }
+                            "staticmethod" | "classmethod" => {
+                                let arg0 = if args.is_empty() {
+                                    self.emit_none()
+                                } else {
+                                    self.box_operand(arg_vregs[0], args[0].ty())
+                                };
+                                let extern_name = if class_name == "staticmethod" {
+                                    "mb_staticmethod_new"
+                                } else {
+                                    "mb_classmethod_new"
+                                };
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(dest),
+                                    name: extern_name.to_string(),
+                                    args: vec![arg0],
+                                    ty: *ty,
+                                });
+                                return dest;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 // Built-in exception class call: ExcType(msg) → mb_exception_new.
                 // Skip if the symbol also has a builtin extern (type constructors like int, str).
                 if !self.user_class_syms.contains(&func_sym.0)
                     && !self.builtin_syms.contains_key(&func_sym.0)
                 {
                     if let Some(class_name) = self.class_syms.get(&func_sym.0).cloned() {
-                        // Special case: ExceptionGroup(msg, excs) /
-                        // BaseExceptionGroup(msg, excs)
-                        if (class_name == "ExceptionGroup" || class_name == "BaseExceptionGroup")
-                            && args.len() >= 2
-                        {
-                            let msg_vreg = self.box_operand(arg_vregs[0], args[0].ty());
-                            let excs_vreg = self.box_operand(arg_vregs[1], args[1].ty());
+                        // ExceptionGroup(...) / BaseExceptionGroup(...) as an
+                        // expression: pass ALL positional args so the constructor
+                        // validates arity + argument types (CPython raises
+                        // TypeError/ValueError on a bad shape).
+                        if class_name == "ExceptionGroup" || class_name == "BaseExceptionGroup" {
+                            let boxed: Vec<VReg> = args
+                                .iter()
+                                .zip(arg_vregs.iter())
+                                .map(|(a, &v)| self.box_operand(v, a.ty()))
+                                .collect();
+                            let args_list = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::MakeList {
+                                dest: args_list,
+                                elements: boxed,
+                                ty: self.tcx.any(),
+                            });
+                            let cn_vreg = self.emit_str_const(&class_name);
                             self.current_stmts.push(MirInst::CallExtern {
                                 dest: Some(dest),
-                                name: "mb_exception_group_new".to_string(),
-                                args: vec![msg_vreg, excs_vreg],
+                                name: "mb_exception_group_construct".to_string(),
+                                args: vec![args_list, cn_vreg],
                                 ty: *ty,
                             });
+                            self.emit_exception_propagate();
                             return dest;
                         }
                         // Regular exception: ExcType(args...) → mb_exception_new_with_args(type_str, args_list)
@@ -6842,6 +8974,7 @@ impl<'a> HirToMir<'a> {
                             args: vec![type_vreg, exc_args_list],
                             ty: *ty,
                         });
+                        self.emit_exception_propagate();
                         return dest;
                     }
                 }
@@ -6970,24 +9103,25 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
-                    // Special case: range(start, stop) → mb_range_iter(start, stop, step=1).
-                    // range(start, stop, step) → mb_range_iter(start, stop, step).
-                    if extern_name == "mb_range" && boxed_args.len() == 2 {
-                        let one_raw = self.emit_int_const(1);
-                        let one_boxed = self.box_operand(one_raw, self.tcx.int());
+                    // Direct range(...) calls must route through the runtime
+                    // constructor wrappers so CPython arity, zero-step, and
+                    // SupportsIndex validation happen uniformly.
+                    if extern_name == "mb_range" {
+                        let (name, args) = match boxed_args.len() {
+                            0 => ("mb_range_no_args".to_string(), vec![]),
+                            1 => ("mb_range".to_string(), boxed_args),
+                            2 => ("mb_range_2".to_string(), boxed_args),
+                            3 => ("mb_range_3".to_string(), boxed_args),
+                            n => {
+                                let n_raw = self.emit_int_const(n as i64);
+                                let n_boxed = self.box_operand(n_raw, self.tcx.int());
+                                ("mb_range_too_many_args".to_string(), vec![n_boxed])
+                            }
+                        };
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: Some(dest),
-                            name: "mb_range_iter".to_string(),
-                            args: vec![boxed_args[0], boxed_args[1], one_boxed],
-                            ty: *ty,
-                        });
-                        return dest;
-                    }
-                    if extern_name == "mb_range" && boxed_args.len() == 3 {
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: Some(dest),
-                            name: "mb_range_iter".to_string(),
-                            args: boxed_args,
+                            name,
+                            args,
                             ty: *ty,
                         });
                         return dest;
@@ -7007,6 +9141,23 @@ impl<'a> HirToMir<'a> {
                                 dest: Some(dest),
                                 name: "mb_slice_no_args".to_string(),
                                 args: vec![],
+                                ty: *ty,
+                            });
+                            return dest;
+                        }
+                        // >3 args: CPython raises
+                        // `TypeError: slice expected at most 3 arguments, got N`.
+                        // Without this the extra args were silently dropped at
+                        // the 3-arg `mb_slice` boundary (no_raise).
+                        if boxed_args.len() > 3 {
+                            let msg = self.emit_str_const(&format!(
+                                "slice expected at most 3 arguments, got {}",
+                                boxed_args.len()
+                            ));
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_arg_bind_error".to_string(),
+                                args: vec![msg],
                                 ty: *ty,
                             });
                             return dest;
@@ -7039,13 +9190,94 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
-                    // Special case: breakpoint(*args, **kwargs) — drop all
-                    // args. mb_breakpoint takes zero args and returns None.
+                    // eval(expr, globals[, locals]) needs namespace dicts at
+                    // runtime. The historical mb_eval intrinsic is single-arg,
+                    // so route wider forms through dedicated runtime entries.
+                    if extern_name == "mb_eval" {
+                        let expr_arg = boxed_args
+                            .first()
+                            .copied()
+                            .unwrap_or_else(|| self.emit_none());
+                        if boxed_args.len() >= 3 {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_eval_with_namespaces".to_string(),
+                                args: vec![expr_arg, boxed_args[1], boxed_args[2]],
+                                ty: *ty,
+                            });
+                        } else if boxed_args.len() >= 2 {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_eval_with_globals".to_string(),
+                                args: vec![expr_arg, boxed_args[1]],
+                                ty: *ty,
+                            });
+                        } else {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: extern_name,
+                                args: vec![expr_arg],
+                                ty: *ty,
+                            });
+                        }
+                        return dest;
+                    }
+                    // exec(code, globals[, locals]) needs namespace dicts at runtime.
+                    // The historical mb_exec intrinsic is single-arg, so route
+                    // wider forms through dedicated runtime entries.
+                    if extern_name == "mb_exec" {
+                        let code_arg = boxed_args
+                            .first()
+                            .copied()
+                            .unwrap_or_else(|| self.emit_none());
+                        if boxed_args.len() >= 3 {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_exec_with_globals_locals".to_string(),
+                                args: vec![code_arg, boxed_args[1], boxed_args[2]],
+                                ty: *ty,
+                            });
+                        } else if boxed_args.len() >= 2 {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_exec_with_globals".to_string(),
+                                args: vec![code_arg, boxed_args[1]],
+                                ty: *ty,
+                            });
+                        } else {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: extern_name,
+                                args: vec![code_arg],
+                                ty: *ty,
+                            });
+                        }
+                        return dest;
+                    }
+                    // Special case: breakpoint(*args) with no keyword args —
+                    // PEP 553 still forwards the positionals to the current
+                    // `sys.breakpointhook`. Pack them into a list, pair with an
+                    // empty kwargs dict, and route to mb_breakpoint_call (the
+                    // keyword-bearing form is handled earlier in ast_to_hir).
+                    // (#242)
                     if extern_name == "mb_breakpoint" {
+                        let pos_list = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::MakeList {
+                            dest: pos_list,
+                            elements: boxed_args.clone(),
+                            ty: self.tcx.any(),
+                        });
+                        let kwargs_dict = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::MakeDict {
+                            dest: kwargs_dict,
+                            keys: vec![],
+                            values: vec![],
+                            ty: self.tcx.any(),
+                        });
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: Some(dest),
-                            name: extern_name,
-                            args: vec![],
+                            name: "mb_breakpoint_call".to_string(),
+                            args: vec![pos_list, kwargs_dict],
                             ty: *ty,
                         });
                         return dest;
@@ -7054,6 +9286,21 @@ impl<'a> HirToMir<'a> {
                     // The runtime always takes (real, imag); fill in defaults
                     // so any arity from the call site lowers cleanly.
                     if extern_name == "mb_complex" {
+                        // >2 args: CPython raises
+                        // `TypeError: complex() takes at most 2 arguments (N given)`.
+                        if boxed_args.len() > 2 {
+                            let msg = self.emit_str_const(&format!(
+                                "complex() takes at most 2 arguments ({} given)",
+                                boxed_args.len()
+                            ));
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_arg_bind_error".to_string(),
+                                args: vec![msg],
+                                ty: *ty,
+                            });
+                            return dest;
+                        }
                         let none_vreg = self.emit_none();
                         let args = match boxed_args.len() {
                             0 => {
@@ -7156,6 +9403,15 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
+                    if extern_name == "mb_type" && boxed_args.len() == 4 {
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_type3_kwargs".to_string(),
+                            args: boxed_args,
+                            ty: *ty,
+                        });
+                        return dest;
+                    }
                     // Special case: pow(base, exp, mod) → mb_pow_mod(base, exp, mod).
                     if extern_name == "mb_pow" && boxed_args.len() == 3 {
                         self.current_stmts.push(MirInst::CallExtern {
@@ -7172,6 +9428,20 @@ impl<'a> HirToMir<'a> {
                             dest: Some(dest),
                             name: "mb_int_base".to_string(),
                             args: boxed_args,
+                            ty: *ty,
+                        });
+                        return dest;
+                    }
+                    // Special case: str(object, encoding[, errors]) decodes bytes-like objects.
+                    if extern_name == "mb_str" && (2..=3).contains(&boxed_args.len()) {
+                        let mut call_args = boxed_args;
+                        if call_args.len() == 2 {
+                            call_args.push(self.emit_none());
+                        }
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_str_construct".to_string(),
+                            args: call_args,
                             ty: *ty,
                         });
                         return dest;
@@ -7194,8 +9464,12 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
-                    // Special case: zip with 3+ args → pack into list, call mb_zip_n.
-                    if extern_name == "mb_zip" && boxed_args.len() >= 3 {
+                    // Special case: zip with any arg count other than 2 → pack
+                    // into a list and call mb_zip_n. mb_zip takes exactly two
+                    // iterables, so zip() (empty → []) and zip(x) (single →
+                    // 1-tuples) would otherwise read garbage operands and raise
+                    // a spurious "'float' object is not iterable".
+                    if extern_name == "mb_zip" && boxed_args.len() != 2 {
                         let list_vreg = self.fresh_vreg();
                         self.current_stmts.push(MirInst::MakeList {
                             dest: list_vreg,
@@ -7265,6 +9539,25 @@ impl<'a> HirToMir<'a> {
                             args: boxed_args,
                             ty: *ty,
                         });
+                        return dest;
+                    }
+                    // Special case: next(it) — explicit 1-arg next() raises
+                    // StopIteration on exhaustion. mb_next_raise SETS the
+                    // StopIteration exception but also returns a dummy None; without
+                    // an immediate propagate, `v = next(it)` inside a loop body lets
+                    // that None leak into the following statements before the pending
+                    // exception is observed at the next checkpoint (e.g. a manual
+                    // `while True: out.append(next(it))` would append a trailing
+                    // None). Emit the call then propagate so the dummy value is
+                    // never consumed when exhausted, matching CPython.
+                    if extern_name == "mb_next_raise" && boxed_args.len() == 1 {
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_next_raise".to_string(),
+                            args: boxed_args,
+                            ty: *ty,
+                        });
+                        self.emit_exception_propagate();
                         return dest;
                     }
                     // Special case: iter(callable, sentinel) → mb_iter_sentinel.
@@ -7451,7 +9744,7 @@ impl<'a> HirToMir<'a> {
                             ty: *ty,
                         });
                     }
-                } else if self.decorated_func_syms.contains(&func_sym.0) {
+                } else if self.decorated_func_syms.contains(&func_sym.0) && !is_local_closure_func {
                     // Decorated function: load from global (may be replaced by decorator)
                     // then dispatch dynamically based on arg count.
                     let func_val = self.fresh_vreg();
@@ -7515,13 +9808,16 @@ impl<'a> HirToMir<'a> {
                         dest,
                         source: boxed,
                     });
-                } else if func_sym.0 == u32::MAX || !self.user_funcs.contains(&func_sym.0) {
+                } else if func_sym.0 == u32::MAX
+                    || !self.user_funcs.contains(&func_sym.0)
+                    || is_local_closure_func
+                {
                     // Dynamic dispatch: the callee is a local variable (or a non-Var expression)
                     // holding a TAG_FUNC NaN-boxed function pointer, e.g. `f = outer(42); f()`.
                     // We cannot use MirInst::Call (requires a statically-known function ID) so
                     // we lower the callee expression to a vreg, box the arguments, and dispatch
                     // through mb_call0 / mb_call1_val / mb_call_spread.
-                    let func_val = self.lower_expr(func);
+                    let func_val = indirect_func_vreg.unwrap_or_else(|| self.lower_expr(func));
                     let boxed_args: Vec<VReg> = args
                         .iter()
                         .zip(arg_vregs.iter())
@@ -7699,7 +9995,11 @@ impl<'a> HirToMir<'a> {
                 dest
             }
             HirExpr::Attr { object, attr, ty } => {
-                let obj = self.lower_expr(object);
+                let obj_raw = self.lower_expr(object);
+                // Box a primitive receiver (int/float/bool) so the runtime
+                // getattr sees a proper NaN-boxed MbValue. Without this, a raw
+                // i64 receiver (e.g. `(5).__class__`) is misread as a float.
+                let obj = self.box_operand(obj_raw, object.ty());
                 let dest = self.fresh_vreg();
                 let attr_vreg = self.emit_str_const(attr);
                 self.current_stmts.push(MirInst::GetAttr {
@@ -7877,9 +10177,18 @@ impl<'a> HirToMir<'a> {
                     })
                     .unwrap_or_else(|| self.emit_none());
                 let dest = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeTuple {
-                    dest,
-                    elements: vec![s, e, st],
+                // Emit a real `slice` object rather than a (start, stop, step)
+                // tuple: a tuple is indistinguishable from `obj[1, 2, 3]` (a
+                // genuine tuple key), so a user `__getitem__` could not tell a
+                // slice subscript apart from a tuple subscript. mb_obj_getitem
+                // normalizes the slice object back to the tuple form for
+                // built-in containers and native-stub sequences (struct-seq,
+                // etc.), so their fast slice handling is unchanged; only user
+                // (non-native) dunders now receive a real slice.
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(dest),
+                    name: "mb_slice".to_string(),
+                    args: vec![s, e, st],
                     ty: *ty,
                 });
                 dest
@@ -7928,6 +10237,7 @@ impl<'a> HirToMir<'a> {
             }
             HirExpr::Lambda {
                 params,
+                param_kinds,
                 defaults,
                 body,
                 ty,
@@ -7951,14 +10261,17 @@ impl<'a> HirToMir<'a> {
                 // args at call time.
                 let any_default = defaults.iter().any(|d| d.is_some());
                 let default_vregs: Vec<VReg> = if any_default {
-                    defaults
+                    let saved_default_cell_override = std::mem::take(&mut self.cell_override);
+                    let vals = defaults
                         .iter()
                         .filter_map(|d| d.as_ref())
                         .map(|expr| {
                             let raw = self.lower_expr(expr);
                             self.box_operand(raw, expr.ty())
                         })
-                        .collect()
+                        .collect();
+                    self.cell_override = saved_default_cell_override;
+                    vals
                 } else {
                     Vec::new()
                 };
@@ -7969,18 +10282,46 @@ impl<'a> HirToMir<'a> {
                 // Box and store all live local variables so the lambda can read them.
                 let param_syms: std::collections::HashSet<u32> =
                     params.iter().map(|(s, _)| s.0).collect();
+                let param_names: std::collections::HashSet<String> = params
+                    .iter()
+                    .filter_map(|(s, _)| self.symbol_name(*s))
+                    .collect();
                 let outer_syms: Vec<(SymbolId, VReg)> = self
                     .sym_to_vreg
                     .iter()
-                    .filter(|(sym, _)| !param_syms.contains(&sym.0))
+                    .filter(|(sym, _)| {
+                        !param_syms.contains(&sym.0)
+                            && self
+                                .symbol_name(**sym)
+                                .map(|name| !param_names.contains(&name))
+                                .unwrap_or(true)
+                    })
                     .map(|(sym, vreg)| (*sym, *vreg))
                     .collect();
+                let mut capture_syms: Vec<SymbolId> =
+                    outer_syms.iter().map(|(sym, _)| *sym).collect();
+                let mut seen_capture_syms: std::collections::HashSet<u32> =
+                    capture_syms.iter().map(|sym| sym.0).collect();
+                // Lambdas nested inside closures must also capture cells that
+                // the current function inherited from its own outer scope.
+                let inherited_cell_syms: Vec<SymbolId> = self
+                    .cell_override
+                    .iter()
+                    .copied()
+                    .filter(|sym_id| {
+                        !param_syms.contains(sym_id) && seen_capture_syms.insert(*sym_id)
+                    })
+                    .map(SymbolId)
+                    .collect();
+                capture_syms.extend(inherited_cell_syms);
                 for &(sym, vreg) in &outer_syms {
-                    let boxed = self.box_operand(vreg, any_ty);
-                    self.current_stmts.push(MirInst::StoreGlobal {
-                        name: sym,
-                        value: boxed,
-                    });
+                    let sym_ty = self.sym_types.get(&sym).copied().unwrap_or(any_ty);
+                    let boxed = self.box_operand(vreg, sym_ty);
+                    self.emit_capture_cell_set(sym, boxed);
+                    if !self.in_module_scope {
+                        self.cell_override.insert(sym.0);
+                        self.initialized_capture_cells.insert(sym.0);
+                    }
                 }
 
                 // ── Save outer function compilation state ──
@@ -8003,7 +10344,11 @@ impl<'a> HirToMir<'a> {
                 let saved_with_exit = std::mem::take(&mut self.with_exit_stack);
                 let saved_with_ctx = std::mem::take(&mut self.with_ctx_stack);
                 let saved_return_ty = self.current_return_ty;
+                let saved_traceback_frame_active = self.traceback_frame_active;
+                let saved_recursion_frame_active = self.recursion_frame_active;
                 let saved_cell_override = std::mem::take(&mut self.cell_override);
+                let saved_initialized_capture_cells =
+                    std::mem::take(&mut self.initialized_capture_cells);
 
                 // ── Compile lambda body ──
                 self.next_vreg = 0;
@@ -8014,10 +10359,12 @@ impl<'a> HirToMir<'a> {
                 self.async_coro_vreg = None;
                 self.is_gen_body = false;
                 self.current_return_ty = any_ty;
+                self.traceback_frame_active = false;
+                self.recursion_frame_active = false;
 
                 // Mark outer variables for cell_override so lambda body reads
                 // them via LoadGlobal instead of looking them up in sym_to_vreg.
-                self.cell_override = outer_syms.iter().map(|(sym, _)| sym.0).collect();
+                self.cell_override = capture_syms.iter().map(|sym| sym.0).collect();
 
                 let entry = self.fresh_block();
                 self.current_block_id = Some(entry);
@@ -8063,7 +10410,10 @@ impl<'a> HirToMir<'a> {
                 self.with_exit_stack = saved_with_exit;
                 self.with_ctx_stack = saved_with_ctx;
                 self.current_return_ty = saved_return_ty;
+                self.traceback_frame_active = saved_traceback_frame_active;
+                self.recursion_frame_active = saved_recursion_frame_active;
                 self.cell_override = saved_cell_override;
+                self.initialized_capture_cells = saved_initialized_capture_cells;
 
                 // ── Create closure wrapping the lambda's entry point ──
                 let name_vreg = self.emit_str_const("<lambda>");
@@ -8073,14 +10423,33 @@ impl<'a> HirToMir<'a> {
                     value: MirConst::FuncRef(lambda_sym),
                     ty: any_ty,
                 });
-                let none_captures = self.emit_none();
                 let closure_vreg = self.fresh_vreg();
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: Some(closure_vreg),
-                    name: "mb_closure_new".to_string(),
-                    args: vec![name_vreg, fn_addr_vreg, none_captures],
-                    ty: *ty,
-                });
+                if capture_syms.is_empty() {
+                    let none_captures = self.emit_none();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(closure_vreg),
+                        name: "mb_closure_new".to_string(),
+                        args: vec![name_vreg, fn_addr_vreg, none_captures],
+                        ty: *ty,
+                    });
+                } else {
+                    let mut id_vregs: Vec<VReg> = Vec::with_capacity(capture_syms.len());
+                    for sym in &capture_syms {
+                        id_vregs.push(self.emit_boxed_int_const(sym.0 as i64));
+                    }
+                    let ids_vreg = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::MakeList {
+                        dest: ids_vreg,
+                        elements: id_vregs,
+                        ty: self.tcx.any(),
+                    });
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(closure_vreg),
+                        name: "mb_closure_new_with_cells".to_string(),
+                        args: vec![name_vreg, fn_addr_vreg, ids_vreg],
+                        ty: *ty,
+                    });
+                }
                 // Freeze the evaluated default values onto the closure so
                 // `mb_call0` can dispatch with them when the caller supplies
                 // no explicit args.
@@ -8173,9 +10542,13 @@ impl<'a> HirToMir<'a> {
                     for (i, pname) in param_names.iter().enumerate() {
                         let pn_vreg = self.emit_str_const(pname);
                         let kind_raw = self.fresh_vreg();
+                        // Per-param CPython kind ordinal threaded from the AST
+                        // (`/` → posonly, `*`/`**` → var, `*`-after → kwonly);
+                        // fall back to POSITIONAL_OR_KEYWORD if unavailable.
+                        let kind_ord = param_kinds.get(i).copied().unwrap_or(1) as i64;
                         self.current_stmts.push(MirInst::LoadConst {
                             dest: kind_raw,
-                            value: MirConst::Int(1),
+                            value: MirConst::Int(kind_ord),
                             ty: self.tcx.int(),
                         });
                         let kind_vreg = self.box_operand(kind_raw, self.tcx.int());
@@ -8274,7 +10647,8 @@ impl<'a> HirToMir<'a> {
                 dest
             }
             HirExpr::Await { value, ty } => {
-                let val = self.lower_expr(value);
+                let raw_val = self.lower_expr(value);
+                let val = self.box_operand(raw_val, value.ty());
                 // GIL release before await (#313 R3)
                 self.current_stmts.push(MirInst::CallExtern {
                     dest: None,
@@ -8296,6 +10670,13 @@ impl<'a> HirToMir<'a> {
                     args: vec![],
                     ty: self.tcx.none(),
                 });
+                self.emit_exception_propagate();
+                let resume_state = self.next_async_resume_state;
+                self.next_async_resume_state += 1;
+                let resume_block = self.fresh_block();
+                self.async_resume_dispatches
+                    .push((resume_state, resume_block));
+                self.emit_async_suspend_check(dest, resume_state, resume_block);
                 dest
             }
             HirExpr::ListComp {
@@ -8303,6 +10684,15 @@ impl<'a> HirToMir<'a> {
                 generators,
                 ty,
             } => {
+                // Snapshot the local vreg map so a comp-walrus target bound to an
+                // enclosing/global symbol can be dropped afterwards (PEP 572:
+                // `[(j := i) for ...]` leaves `j` in the enclosing scope). The comp
+                // walrus also StoreGlobals such a target; the stale comp-internal
+                // vreg must NOT shadow that global on the post-comp read, while
+                // within-comp reads (accumulators `(acc := acc + i)`) still use the
+                // live vreg. Loop vars are restored by lower_comprehension_loops, so
+                // the only changed <1M/cell entries left are such walrus targets.
+                let pre_vregs = self.sym_to_vreg.clone();
                 let list = self.fresh_vreg();
                 self.current_stmts.push(MirInst::MakeList {
                     dest: list,
@@ -8330,6 +10720,17 @@ impl<'a> HirToMir<'a> {
                         ty: none_ty,
                     });
                 });
+                let changed: Vec<SymbolId> = self
+                    .sym_to_vreg
+                    .iter()
+                    .filter(|(s, v)| pre_vregs.get(*s).copied() != Some(**v))
+                    .map(|(s, _)| *s)
+                    .collect();
+                for s in changed {
+                    if s.0 < 1_000_000 || self.cell_override.contains(&s.0) {
+                        self.sym_to_vreg.remove(&s);
+                    }
+                }
                 list
             }
             HirExpr::AnyAllComp {
@@ -8531,17 +10932,71 @@ impl<'a> HirToMir<'a> {
                 } else {
                     self.sym_to_vreg.insert(*target, val_vreg);
                 }
-                // Also store to global so it persists outside comprehension scope
-                self.current_stmts.push(MirInst::StoreGlobal {
-                    name: *target,
-                    value: val_vreg,
-                });
+                // A walrus target binds in the *enclosing* scope (PEP 572). It
+                // needs a global store to cross a scope boundary when: we're at
+                // module scope (the enclosing scope IS global); the resolver
+                // bound it to a real (non-synthetic, < 1_000_000) module/
+                // enclosing symbol; or it is a nonlocal-shared cell variable
+                // (in cell_override) — e.g. `nonlocal v; [(v := x) for ...]`
+                // must propagate to the outer frame, mirroring the cell store a
+                // regular assignment emits. A walrus inside a regular function
+                // body binds a function-LOCAL (a synthetic sym >= 1_000_000
+                // that is NOT a cell): it must NOT leak to module globals
+                // (function_local_does_not_escape).
+                if self.cell_override.contains(&target.0) {
+                    let boxed = self.box_operand(val_vreg, value.ty());
+                    self.emit_capture_cell_set(*target, boxed);
+                } else if self.in_module_scope || target.0 < 1_000_000 {
+                    let boxed = self.box_operand(val_vreg, value.ty());
+                    self.current_stmts.push(MirInst::StoreGlobal {
+                        name: *target,
+                        value: boxed,
+                    });
+                }
                 val_vreg
             }
         }
     }
 
+    fn source_line_for_span(&self, span: &Span) -> i64 {
+        self.src_line_starts
+            .as_ref()
+            .and_then(|starts| {
+                (span.end > 0).then(|| starts.partition_point(|&s| s <= span.start) as i64)
+            })
+            .filter(|line| *line > 0)
+            .unwrap_or_else(|| self.current_func_src_line.unwrap_or(1) as i64)
+    }
+
+    fn emit_traceback_push_frame(&mut self, filename: &str, line: i64, name: &str) {
+        let filename_vreg = self.emit_str_const(filename);
+        let line_vreg = self.emit_boxed_int_const(line.max(1));
+        let name_vreg = self.emit_str_const(name);
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_traceback_push_frame".to_string(),
+            args: vec![filename_vreg, line_vreg, name_vreg],
+            ty: self.tcx.none(),
+        });
+    }
+
+    fn emit_traceback_capture_raise(&mut self, line: i64) {
+        let line_vreg = self.emit_boxed_int_const(line.max(1));
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_traceback_capture_raise".to_string(),
+            args: vec![line_vreg],
+            ty: self.tcx.none(),
+        });
+    }
+
     fn finish_block(&mut self, terminator: Terminator) {
+        if matches!(terminator, Terminator::Return(_)) && self.recursion_frame_active {
+            self.emit_extern_call(None, "mb_recursion_leave");
+        }
+        if matches!(terminator, Terminator::Return(_)) && self.traceback_frame_active {
+            self.emit_extern_call(None, "mb_traceback_pop_frame");
+        }
         let stmts = std::mem::take(&mut self.current_stmts);
         let id = self
             .current_block_id
@@ -8552,6 +11007,78 @@ impl<'a> HirToMir<'a> {
             stmts,
             terminator,
         });
+    }
+
+    fn replace_or_push_block(&mut self, block: BasicBlock) {
+        if let Some(pos) = self
+            .blocks
+            .iter()
+            .position(|existing| existing.id == block.id)
+        {
+            self.blocks[pos] = block;
+        } else {
+            self.blocks.push(block);
+        }
+    }
+
+    fn build_async_resume_dispatch(
+        &mut self,
+        dispatch_block: BlockId,
+        initial_block: BlockId,
+        coro_handle: VReg,
+    ) {
+        let dispatches = self.async_resume_dispatches.clone();
+        if dispatches.is_empty() {
+            self.replace_or_push_block(BasicBlock {
+                id: dispatch_block,
+                stmts: Vec::new(),
+                terminator: Terminator::Goto(initial_block),
+            });
+            return;
+        }
+
+        let int_ty = self.tcx.int();
+        let mut current = dispatch_block;
+        for (idx, (state_id, resume_block)) in dispatches.iter().enumerate() {
+            let next = if idx + 1 == dispatches.len() {
+                initial_block
+            } else {
+                self.fresh_block()
+            };
+            let state_vreg = self.fresh_vreg();
+            let expected = self.fresh_vreg();
+            let is_match = self.fresh_vreg();
+            let stmts = vec![
+                MirInst::CallExtern {
+                    dest: Some(state_vreg),
+                    name: "mb_coroutine_get_state_i64".to_string(),
+                    args: vec![coro_handle],
+                    ty: int_ty,
+                },
+                MirInst::LoadConst {
+                    dest: expected,
+                    value: MirConst::Int(*state_id as i64),
+                    ty: int_ty,
+                },
+                MirInst::BinOp {
+                    dest: is_match,
+                    op: MirBinOp::Eq,
+                    lhs: state_vreg,
+                    rhs: expected,
+                    ty: self.tcx.bool(),
+                },
+            ];
+            self.replace_or_push_block(BasicBlock {
+                id: current,
+                stmts,
+                terminator: Terminator::Branch {
+                    cond: is_match,
+                    then_block: *resume_block,
+                    else_block: next,
+                },
+            });
+            current = next;
+        }
     }
 
     fn start_block(&mut self, id: BlockId) {
@@ -8566,6 +11093,25 @@ impl<'a> HirToMir<'a> {
             args: Vec::new(),
             ty: self.tcx.none(),
         });
+    }
+
+    /// A `return` lexically inside one or more `except` handler bodies must
+    /// restore each enclosing handler region's handled-exception snapshot (the
+    /// return bypasses the fall-through restore at finally_block). Emit
+    /// `mb_restore_handled_exc(token)` for every active handler-region token,
+    /// innermost first, so the caller observes the handled-exception state that
+    /// CPython reinstates once the handler frame unwinds. No-op outside any
+    /// handler body. Idempotent at runtime (restore truncates the save stack).
+    fn emit_handler_region_restores(&mut self) {
+        let tokens: Vec<VReg> = self.handler_region_tokens.iter().rev().copied().collect();
+        for token in tokens {
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_restore_handled_exc".to_string(),
+                args: vec![token],
+                ty: self.tcx.none(),
+            });
+        }
     }
 
     /// Inside a try block, emit `mb_has_exception()` check after a call.
@@ -8636,6 +11182,343 @@ impl<'a> HirToMir<'a> {
         self.start_block(continue_block);
     }
 
+    fn emit_async_suspend_check(
+        &mut self,
+        suspend_value: VReg,
+        resume_state: u32,
+        resume_block: BlockId,
+    ) {
+        let Some(coro_handle) = self.async_coro_vreg else {
+            return;
+        };
+        let suspended = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(suspended),
+            name: "mb_coroutine_should_suspend".to_string(),
+            args: vec![coro_handle],
+            ty: self.tcx.bool(),
+        });
+        let return_block = self.fresh_block();
+        let continue_block = self.fresh_block();
+        self.finish_block(Terminator::Branch {
+            cond: suspended,
+            then_block: return_block,
+            else_block: continue_block,
+        });
+        self.start_block(return_block);
+        let state_raw = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: state_raw,
+            value: MirConst::Int(resume_state as i64),
+            ty: self.tcx.int(),
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_coroutine_set_state_i64".to_string(),
+            args: vec![coro_handle, state_raw],
+            ty: self.tcx.none(),
+        });
+        self.finish_block(Terminator::Return(Some(suspend_value)));
+        self.start_block(resume_block);
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(suspend_value),
+            name: "mb_coroutine_take_resume_value".to_string(),
+            args: vec![coro_handle],
+            ty: self.tcx.any(),
+        });
+        self.emit_exception_propagate();
+        self.finish_block(Terminator::Goto(continue_block));
+        self.start_block(continue_block);
+    }
+
+    fn async_body_catches_generator_exit(&self, body: &[HirStmt]) -> bool {
+        body.iter().any(|stmt| match stmt {
+            HirStmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+                ..
+            } => {
+                let try_body_awaits = self.async_body_contains_await(body);
+                let async_handler = handlers
+                    .iter()
+                    .any(|handler| self.async_body_contains_await(&handler.body));
+                handlers.iter().any(|handler| {
+                    handler
+                        .exc_type
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_is_var_named(expr, "GeneratorExit"))
+                }) || (try_body_awaits && async_handler)
+                    || self.async_body_catches_generator_exit(body)
+                    || self.async_body_catches_generator_exit(else_body)
+                    || self.async_body_catches_generator_exit(finally_body)
+                    || handlers
+                        .iter()
+                        .any(|handler| self.async_body_catches_generator_exit(&handler.body))
+            }
+            HirStmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.async_body_catches_generator_exit(then_body)
+                    || self.async_body_catches_generator_exit(else_body)
+            }
+            HirStmt::While {
+                body, else_body, ..
+            }
+            | HirStmt::For {
+                body, else_body, ..
+            }
+            | HirStmt::AsyncFor {
+                body, else_body, ..
+            } => {
+                self.async_body_catches_generator_exit(body)
+                    || self.async_body_catches_generator_exit(else_body)
+            }
+            HirStmt::With { body, .. } => self.async_body_catches_generator_exit(body),
+            _ => false,
+        })
+    }
+
+    fn async_body_contains_await(&self, body: &[HirStmt]) -> bool {
+        body.iter().any(|stmt| match stmt {
+            HirStmt::Let { value, .. } | HirStmt::Assign { value, .. } => {
+                self.expr_contains_await(value)
+            }
+            HirStmt::Return { value, .. } => value
+                .as_ref()
+                .is_some_and(|expr| self.expr_contains_await(expr)),
+            HirStmt::Expr { expr, .. } => self.expr_contains_await(expr),
+            HirStmt::If {
+                cond,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.expr_contains_await(cond)
+                    || self.async_body_contains_await(then_body)
+                    || self.async_body_contains_await(else_body)
+            }
+            HirStmt::While {
+                cond,
+                body,
+                else_body,
+                ..
+            } => {
+                self.expr_contains_await(cond)
+                    || self.async_body_contains_await(body)
+                    || self.async_body_contains_await(else_body)
+            }
+            HirStmt::For {
+                iter,
+                body,
+                else_body,
+                ..
+            }
+            | HirStmt::AsyncFor {
+                iter,
+                body,
+                else_body,
+                ..
+            } => {
+                self.expr_contains_await(iter)
+                    || self.async_body_contains_await(body)
+                    || self.async_body_contains_await(else_body)
+            }
+            HirStmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+                ..
+            } => {
+                self.async_body_contains_await(body)
+                    || handlers
+                        .iter()
+                        .any(|handler| self.async_body_contains_await(&handler.body))
+                    || self.async_body_contains_await(else_body)
+                    || self.async_body_contains_await(finally_body)
+            }
+            HirStmt::Raise { value, from, .. } => {
+                value
+                    .as_ref()
+                    .is_some_and(|expr| self.expr_contains_await(expr))
+                    || from
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+            }
+            HirStmt::With { items, body, .. } => {
+                items.iter().any(|(expr, _)| self.expr_contains_await(expr))
+                    || self.async_body_contains_await(body)
+            }
+            HirStmt::Assert { test, msg, .. } => {
+                self.expr_contains_await(test)
+                    || msg
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+            }
+            HirStmt::Del { target, .. } => self.lvalue_contains_await(target),
+            HirStmt::Match { subject, cases, .. } => {
+                self.expr_contains_await(subject)
+                    || cases.iter().any(|case| {
+                        case.guard
+                            .as_ref()
+                            .is_some_and(|guard| self.expr_contains_await(guard))
+                            || self.async_body_contains_await(&case.body)
+                    })
+            }
+            HirStmt::Break { .. }
+            | HirStmt::Continue { .. }
+            | HirStmt::Import { .. }
+            | HirStmt::Global { .. }
+            | HirStmt::Nonlocal { .. }
+            | HirStmt::FuncDefPlaceholder { .. }
+            | HirStmt::ClassDefPlaceholder { .. } => false,
+        })
+    }
+
+    fn lvalue_contains_await(&self, target: &crate::hir::HirLValue) -> bool {
+        match target {
+            crate::hir::HirLValue::Var(_) => false,
+            crate::hir::HirLValue::Attr { object, .. } => self.expr_contains_await(object),
+            crate::hir::HirLValue::Index { object, index } => {
+                self.expr_contains_await(object) || self.expr_contains_await(index)
+            }
+            crate::hir::HirLValue::Unpack { targets, .. } => targets
+                .iter()
+                .any(|target| self.lvalue_contains_await(target)),
+        }
+    }
+
+    fn expr_contains_await(&self, expr: &HirExpr) -> bool {
+        match expr {
+            HirExpr::Await { .. } => true,
+            HirExpr::BinOp { lhs, rhs, .. } => {
+                self.expr_contains_await(lhs) || self.expr_contains_await(rhs)
+            }
+            HirExpr::UnaryOp { operand, .. } => self.expr_contains_await(operand),
+            HirExpr::Call { func, args, .. } => {
+                self.expr_contains_await(func)
+                    || args.iter().any(|arg| self.expr_contains_await(arg))
+            }
+            HirExpr::Attr { object, .. } => self.expr_contains_await(object),
+            HirExpr::Index { object, index, .. } => {
+                self.expr_contains_await(object) || self.expr_contains_await(index)
+            }
+            HirExpr::List { elements, .. }
+            | HirExpr::Set { elements, .. }
+            | HirExpr::Tuple { elements, .. } => elements
+                .iter()
+                .any(|element| self.expr_contains_await(element)),
+            HirExpr::Dict { entries, .. } => entries.iter().any(|(key, value)| {
+                self.expr_contains_await(key) || self.expr_contains_await(value)
+            }),
+            HirExpr::Slice {
+                start, stop, step, ..
+            } => {
+                start
+                    .as_ref()
+                    .is_some_and(|expr| self.expr_contains_await(expr))
+                    || stop
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+                    || step
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+            }
+            HirExpr::IfExpr {
+                cond,
+                then_val,
+                else_val,
+                ..
+            } => {
+                self.expr_contains_await(cond)
+                    || self.expr_contains_await(then_val)
+                    || self.expr_contains_await(else_val)
+            }
+            HirExpr::Lambda { defaults, body, .. } => {
+                defaults.iter().any(|default| {
+                    default
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_contains_await(expr))
+                }) || self.expr_contains_await(body)
+            }
+            HirExpr::Yield { value, .. } => value
+                .as_ref()
+                .is_some_and(|expr| self.expr_contains_await(expr)),
+            HirExpr::YieldFrom { iter, .. } => self.expr_contains_await(iter),
+            HirExpr::ListComp {
+                element,
+                generators,
+                ..
+            }
+            | HirExpr::SetComp {
+                element,
+                generators,
+                ..
+            }
+            | HirExpr::AnyAllComp {
+                element,
+                generators,
+                ..
+            } => self.expr_contains_await(element) || self.comprehensions_contain_await(generators),
+            HirExpr::DictComp {
+                key,
+                value,
+                generators,
+                ..
+            } => {
+                self.expr_contains_await(key)
+                    || self.expr_contains_await(value)
+                    || self.comprehensions_contain_await(generators)
+            }
+            HirExpr::FString { parts, .. } => self.fstring_parts_contain_await(parts),
+            HirExpr::Walrus { value, .. } => self.expr_contains_await(value),
+            HirExpr::IntLit(_, _)
+            | HirExpr::BigIntLit(_, _)
+            | HirExpr::FloatLit(_, _)
+            | HirExpr::StrLit(_, _)
+            | HirExpr::BytesLit(_, _)
+            | HirExpr::BoolLit(_, _)
+            | HirExpr::NoneLit(_)
+            | HirExpr::Var(_, _) => false,
+        }
+    }
+
+    fn comprehensions_contain_await(&self, generators: &[crate::hir::HirComprehension]) -> bool {
+        generators.iter().any(|generator| {
+            generator.is_async
+                || self.expr_contains_await(&generator.iter)
+                || generator
+                    .conditions
+                    .iter()
+                    .any(|cond| self.expr_contains_await(cond))
+        })
+    }
+
+    fn fstring_parts_contain_await(&self, parts: &[crate::hir::HirFStringPart]) -> bool {
+        parts.iter().any(|part| match part {
+            crate::hir::HirFStringPart::Literal(_) => false,
+            crate::hir::HirFStringPart::Expr(expr, spec) => {
+                self.expr_contains_await(expr)
+                    || spec
+                        .as_ref()
+                        .is_some_and(|parts| self.fstring_parts_contain_await(parts))
+            }
+        })
+    }
+
+    fn relative_import_parts(module: &[String]) -> (usize, String) {
+        let level = module
+            .iter()
+            .take_while(|part| part.as_str() == ".")
+            .count();
+        let tail = module[level..].join(".");
+        (level, tail)
+    }
+
     /// Helper: emit an integer constant and return its vreg.
     fn emit_int_const(&mut self, n: i64) -> VReg {
         let dest = self.fresh_vreg();
@@ -8645,6 +11528,110 @@ impl<'a> HirToMir<'a> {
             ty: self.tcx.int(),
         });
         dest
+    }
+
+    fn emit_boxed_int_const(&mut self, n: i64) -> VReg {
+        let raw = self.emit_int_const(n);
+        self.box_operand(raw, self.tcx.int())
+    }
+
+    fn symbol_name(&self, sym: SymbolId) -> Option<String> {
+        self.sym_names.get(&sym).cloned().or_else(|| {
+            if sym.0 >= 1_000_000 {
+                return None;
+            }
+            self.symbol_table.and_then(|st| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    st.get_symbol(sym).name.clone()
+                }))
+                .ok()
+            })
+        })
+    }
+
+    fn emit_capture_cell_set(&mut self, sym: SymbolId, value: VReg) {
+        let id = self.emit_int_const(sym.0 as i64);
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_capture_cell_set_id".to_string(),
+            args: vec![id, value],
+            ty: self.tcx.none(),
+        });
+    }
+
+    fn emit_capture_cell_reset(&mut self, sym: SymbolId, value: VReg) {
+        let id = self.emit_int_const(sym.0 as i64);
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_capture_cell_reset_id".to_string(),
+            args: vec![id, value],
+            ty: self.tcx.none(),
+        });
+    }
+
+    fn emit_closure_for_func(
+        &mut self,
+        func_sym: SymbolId,
+        freevars: &[(SymbolId, String)],
+    ) -> VReg {
+        let func_name = self
+            .symbol_name(func_sym)
+            .or_else(|| self.user_func_names.get(&func_sym.0).cloned())
+            .unwrap_or_else(|| "<closure>".to_string());
+        let name_vreg = self.emit_str_const(&func_name);
+        let fn_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: fn_vreg,
+            value: MirConst::FuncRef(func_sym),
+            ty: self.tcx.any(),
+        });
+        let id_vregs: Vec<VReg> = freevars
+            .iter()
+            .map(|(sym, _)| self.emit_boxed_int_const(sym.0 as i64))
+            .collect();
+        let ids_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: ids_vreg,
+            elements: id_vregs,
+            ty: self.tcx.any(),
+        });
+        let closure_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(closure_vreg),
+            name: "mb_closure_new_with_cells".to_string(),
+            args: vec![name_vreg, fn_vreg, ids_vreg],
+            ty: self.tcx.any(),
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_func_set_name".to_string(),
+            args: vec![closure_vreg, name_vreg],
+            ty: self.tcx.none(),
+        });
+        if let Some(sig) = self.user_func_sigs.get(&func_sym.0).cloned() {
+            self.emit_func_sig_metadata_for_value(closure_vreg, &sig);
+        } else if let Some(varnames) = self.user_func_varnames.get(&func_sym.0).cloned() {
+            let argcount = self
+                .user_func_argcounts
+                .get(&func_sym.0)
+                .copied()
+                .unwrap_or(0);
+            let (has_star, has_kwargs) = self
+                .user_func_variadic_info
+                .get(&func_sym.0)
+                .copied()
+                .unwrap_or((false, false));
+            if has_star || has_kwargs {
+                self.emit_minimal_func_params_for_value(
+                    closure_vreg,
+                    argcount,
+                    &varnames,
+                    has_star,
+                    has_kwargs,
+                );
+            }
+        }
+        closure_vreg
     }
 
     /// Helper: emit a string constant and return its vreg.
@@ -8678,6 +11665,85 @@ impl<'a> HirToMir<'a> {
     /// Used by `locals()` and `vars()` (no-arg) inside function bodies.
     /// At module / class scope the runtime helper `mb_locals` is called instead
     /// (returns the module globals dict).
+    /// @spec .aw/tech-design/cclab-mamba/logic/introspection-builtins.md#locals_impl
+    fn method_descriptor_decorator_expr_name(&self, expr: &HirExpr) -> Option<&'static str> {
+        match expr {
+            HirExpr::Var(sym_id, _) => {
+                if let Some(name) = self.sym_names.get(sym_id) {
+                    if let Some(kind) = method_descriptor_decorator_name(name) {
+                        return Some(kind);
+                    }
+                }
+                if let Some(name) = self.class_syms.get(&sym_id.0) {
+                    if let Some(kind) = method_descriptor_decorator_name(name) {
+                        return Some(kind);
+                    }
+                }
+                if let Some(symbol_table) = self.symbol_table {
+                    let symbols = symbol_table.all_symbols();
+                    if let Some(symbol) = symbols.get(sym_id.0 as usize) {
+                        return method_descriptor_decorator_name(&symbol.name);
+                    }
+                }
+                None
+            }
+            HirExpr::Attr { object, attr, .. } => {
+                if attr == "property" && self.expr_is_var_named(object, "enum") {
+                    Some("property")
+                } else if attr == "cached_property" && self.expr_is_var_named(object, "functools") {
+                    Some("cached_property")
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn expr_is_var_named(&self, expr: &HirExpr, expected: &str) -> bool {
+        if let HirExpr::StrLit(name, _) = expr {
+            return name == expected;
+        }
+        let HirExpr::Var(sym_id, _) = expr else {
+            return false;
+        };
+        if self
+            .sym_names
+            .get(sym_id)
+            .is_some_and(|name| name == expected)
+        {
+            return true;
+        }
+        if self
+            .class_syms
+            .get(&sym_id.0)
+            .is_some_and(|name| name == expected)
+        {
+            return true;
+        }
+        if let Some(symbol_table) = self.symbol_table {
+            let symbols = symbol_table.all_symbols();
+            if let Some(symbol) = symbols.get(sym_id.0 as usize) {
+                return symbol.name == expected;
+            }
+        }
+        false
+    }
+
+    fn emit_current_locals_dict(&mut self, ty: TypeId) -> VReg {
+        let locals = self.fresh_vreg();
+        if !self.in_module_scope {
+            return self.emit_locals_snapshot_dict(locals, ty);
+        }
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(locals),
+            name: "mb_locals".to_string(),
+            args: vec![],
+            ty,
+        });
+        locals
+    }
+
     /// @spec .aw/tech-design/cclab-mamba/logic/introspection-builtins.md#locals_impl
     fn emit_locals_snapshot_dict(&mut self, dest: VReg, ty: TypeId) -> VReg {
         // dest = mb_dict_new()
@@ -8929,6 +11995,8 @@ mod tests {
                 name: SymbolId(0),
                 params: vec![(SymbolId(1), int_ty)],
                 return_ty: int_ty,
+                func_sig: None,
+                bind_name: None,
                 body: vec![HirStmt::Return {
                     value: Some(HirExpr::Var(SymbolId(1), int_ty)),
                     span: Span::dummy(),
@@ -8949,6 +12017,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         let mir = lower_hir_to_mir(&hir, &tcx);
@@ -8969,6 +12038,8 @@ mod tests {
                 name: SymbolId(0),
                 params: vec![(SymbolId(1), int_ty)],
                 return_ty: int_ty,
+                func_sig: None,
+                bind_name: None,
                 body: vec![HirStmt::If {
                     cond: HirExpr::BoolLit(true, bool_ty),
                     then_body: vec![HirStmt::Return {
@@ -8997,6 +12068,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         let mir = lower_hir_to_mir(&hir, &tcx);
@@ -9015,6 +12087,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         }
     }
 
@@ -9439,6 +12512,323 @@ mod tests {
         )));
     }
 
+    #[test]
+    fn test_generator_body_walrus_stores_captured_target() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let target = SymbolId(99);
+        let hir = HirModule {
+            functions: vec![HirFunction {
+                name: SymbolId(10),
+                params: Vec::new(),
+                return_ty: int_ty,
+                func_sig: None,
+                bind_name: None,
+                body: vec![HirStmt::Expr {
+                    expr: HirExpr::Yield {
+                        value: Some(Box::new(HirExpr::Walrus {
+                            target,
+                            value: Box::new(HirExpr::IntLit(5, int_ty)),
+                            ty: int_ty,
+                        })),
+                        ty: int_ty,
+                    },
+                    span: Span::dummy(),
+                }],
+                span: Span::dummy(),
+                captures: vec![target],
+                is_async: false,
+                is_generator: true,
+                decorators: Vec::new(),
+                has_star_args: false,
+                star_param_pos: None,
+                has_kwargs: false,
+            }],
+            classes: Vec::new(),
+            top_level: Vec::new(),
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        let body = mir
+            .bodies
+            .iter()
+            .find(|body| body.name == SymbolId(3_000_010))
+            .expect("synthetic generator body should be lowered");
+        let all_stmts: Vec<_> = body.blocks.iter().flat_map(|b| b.stmts.iter()).collect();
+        assert!(all_stmts
+            .iter()
+            .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == target)));
+    }
+
+    #[test]
+    fn test_module_scope_walrus_stores_boxed_int() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let target = SymbolId(99);
+        let hir = make_top_level_hir(vec![HirStmt::Expr {
+            expr: HirExpr::Walrus {
+                target,
+                value: Box::new(HirExpr::IntLit(5, int_ty)),
+                ty: int_ty,
+            },
+            span: Span::dummy(),
+        }]);
+
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        let all_stmts: Vec<_> = mir.bodies[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .collect();
+        let boxed_dest = all_stmts
+            .iter()
+            .find_map(|s| match s {
+                MirInst::CallExtern {
+                    dest: Some(dest),
+                    name,
+                    ..
+                } if name == "mb_box_int" => Some(*dest),
+                _ => None,
+            })
+            .expect("int walrus target should be boxed before global store");
+
+        assert!(all_stmts.iter().any(|s| matches!(
+            s,
+            MirInst::StoreGlobal { name, value } if *name == target && *value == boxed_dest
+        )));
+    }
+
+    #[test]
+    fn test_assigned_builtin_name_shadows_builtin_value() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let str_ty = tcx.str();
+        let any_ty = tcx.any();
+
+        let mut symbols = SymbolTable::new();
+        let input_sym = symbols.define("input".to_string(), SymbolKind::Function);
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: Vec::new(),
+            top_level: vec![
+                HirStmt::Assign {
+                    target: HirLValue::Var(input_sym),
+                    value: HirExpr::StrLit("shadow".to_string(), str_ty),
+                    span: Span::dummy(),
+                },
+                HirStmt::Expr {
+                    expr: HirExpr::Var(input_sym, any_ty),
+                    span: Span::dummy(),
+                },
+            ],
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let all_stmts: Vec<_> = mir.bodies[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .collect();
+
+        assert!(all_stmts
+            .iter()
+            .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == input_sym)));
+        assert!(
+            !all_stmts
+                .iter()
+                .any(|s| matches!(s, MirInst::CallExtern { name, .. } if name == "mb_builtin_get")),
+            "assigned builtin name must read the assigned value, not the builtin object"
+        );
+    }
+
+    #[test]
+    fn test_class_attr_method_reference_lowers_as_func_ref() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let mut symbols = SymbolTable::new();
+        let class_sym = symbols.define("Adder".to_string(), SymbolKind::Class);
+        let method_sym = SymbolId(1_000_100);
+        let self_sym = SymbolId(1_000_101);
+
+        let mut sym_names = HashMap::new();
+        sym_names.insert(class_sym, "Adder".to_string());
+        sym_names.insert(method_sym, "add".to_string());
+        sym_names.insert(self_sym, "self".to_string());
+
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: vec![HirClass {
+                name: class_sym,
+                base: None,
+                all_bases: Vec::new(),
+                runtime_base_exprs: Vec::new(),
+                runtime_base_list_expr: None,
+                force_textual_registration: false,
+                class_cell_required: false,
+                namedtuple_base: None,
+                fields: Vec::new(),
+                methods: vec![HirFunction {
+                    name: method_sym,
+                    params: vec![(self_sym, any_ty)],
+                    return_ty: any_ty,
+                    func_sig: None,
+                    bind_name: None,
+                    body: vec![HirStmt::Return {
+                        value: Some(HirExpr::NoneLit(tcx.none())),
+                        span: Span::dummy(),
+                    }],
+                    span: Span::dummy(),
+                    captures: Vec::new(),
+                    is_async: false,
+                    is_generator: false,
+                    decorators: Vec::new(),
+                    has_star_args: false,
+                    star_param_pos: None,
+                    has_kwargs: false,
+                }],
+                span: Span::dummy(),
+                decorators: Vec::new(),
+                explicit_match_args: None,
+                metaclass: None,
+                class_attr_assigns: vec![(
+                    "add_one".to_string(),
+                    HirExpr::Call {
+                        func: Box::new(HirExpr::StrLit(
+                            "mb_partialmethod_probe".to_string(),
+                            any_ty,
+                        )),
+                        args: vec![HirExpr::Var(method_sym, any_ty)],
+                        ty: any_ty,
+                    },
+                )],
+                class_attr_locals: Vec::new(),
+                class_body_stmts: Vec::new(),
+                slots: None,
+                class_kwargs: Vec::new(),
+                dataclass_fields: Vec::new(),
+                doc: None,
+            }],
+            top_level: vec![HirStmt::ClassDefPlaceholder {
+                name: class_sym,
+                span: Span::dummy(),
+            }],
+            imports: Vec::new(),
+            sym_names,
+            sym_types: HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let all_stmts: Vec<_> = mir
+            .bodies
+            .iter()
+            .flat_map(|body| body.blocks.iter())
+            .flat_map(|block| block.stmts.iter())
+            .collect();
+        assert!(all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::LoadConst {
+                value: MirConst::FuncRef(sym),
+                ..
+            } if *sym == method_sym
+        )));
+        assert!(!all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::LoadGlobal { name, .. } if *name == method_sym
+        )));
+    }
+
+    #[test]
+    fn test_class_registration_stores_class_object_global() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let mut symbols = SymbolTable::new();
+        let class_sym = symbols.define("WithClassRef".to_string(), SymbolKind::Class);
+
+        let mut sym_names = HashMap::new();
+        sym_names.insert(class_sym, "WithClassRef".to_string());
+
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: vec![HirClass {
+                name: class_sym,
+                base: None,
+                all_bases: Vec::new(),
+                runtime_base_exprs: Vec::new(),
+                runtime_base_list_expr: None,
+                force_textual_registration: false,
+                class_cell_required: true,
+                namedtuple_base: None,
+                fields: Vec::new(),
+                methods: Vec::new(),
+                span: Span::dummy(),
+                decorators: Vec::new(),
+                explicit_match_args: None,
+                metaclass: None,
+                class_attr_assigns: Vec::new(),
+                class_attr_locals: Vec::new(),
+                class_body_stmts: Vec::new(),
+                slots: None,
+                class_kwargs: Vec::new(),
+                dataclass_fields: Vec::new(),
+                doc: None,
+            }],
+            top_level: Vec::new(),
+            imports: Vec::new(),
+            sym_names,
+            sym_types: HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let all_stmts: Vec<_> = mir
+            .bodies
+            .iter()
+            .flat_map(|body| body.blocks.iter())
+            .flat_map(|block| block.stmts.iter())
+            .collect();
+        let class_obj_vreg = all_stmts
+            .iter()
+            .find_map(|stmt| match stmt {
+                MirInst::CallExtern {
+                    dest: Some(dest),
+                    name,
+                    ..
+                } if name == "mb_builtin_type_obj" => Some(*dest),
+                _ => None,
+            })
+            .expect("class registration should fetch the runtime type object");
+
+        assert!(all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::StoreGlobal { name, value } if *name == class_sym && *value == class_obj_vreg
+        )));
+        assert!(all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::CallExtern { name, .. } if name == "mb_class_mark_classcell_required"
+        )));
+    }
+
     // ── P0-R4: CallExtern return propagation tests ──────────────────────
 
     #[test]
@@ -9469,6 +12859,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
         let mir = lower_hir_to_mir(&hir, &tcx);
         assert_eq!(mir.bodies.len(), 1);
@@ -9551,6 +12942,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
 
         lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols)
@@ -9567,6 +12959,70 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn collect_str_consts(mir: &MirModule) -> Vec<String> {
+        mir.bodies
+            .iter()
+            .flat_map(|b| b.blocks.iter())
+            .flat_map(|blk| blk.stmts.iter())
+            .filter_map(|s| match s {
+                MirInst::LoadConst {
+                    value: MirConst::Str(value),
+                    ..
+                } => Some(value.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_relative_from_import_lowers_without_dot_joined_module_name() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let mut symbols = SymbolTable::new();
+        let alias_sym = symbols.define("LEAF_FROM_PARENT_NAME".to_string(), SymbolKind::Variable);
+        let hir = make_top_level_hir(vec![HirStmt::Import {
+            import: HirImport {
+                module: vec![".".to_string(), ".".to_string(), "sibling_a".to_string()],
+                names: Some(vec![(
+                    "SENTINEL_A".to_string(),
+                    Some("LEAF_FROM_PARENT_NAME".to_string()),
+                )]),
+                module_alias: None,
+                span: Span::dummy(),
+            },
+            span: Span::dummy(),
+        }]);
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let externs = collect_extern_names(&mir);
+        assert!(
+            externs.contains(&"mb_import_relative".to_string()),
+            "relative import must call mb_import_relative: {externs:?}"
+        );
+        assert!(
+            externs.contains(&"mb_module_getattr_relative".to_string()),
+            "relative from-import attrs must call mb_module_getattr_relative: {externs:?}"
+        );
+
+        let strings = collect_str_consts(&mir);
+        assert!(
+            strings.contains(&"sibling_a".to_string()),
+            "relative module tail should remain sibling_a: {strings:?}"
+        );
+        assert!(
+            !strings.contains(&"....sibling_a".to_string()),
+            "relative dots must not be joined into the module name: {strings:?}"
+        );
+        let has_store = mir
+            .bodies
+            .iter()
+            .flat_map(|b| b.blocks.iter())
+            .flat_map(|blk| blk.stmts.iter())
+            .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == alias_sym));
+        assert!(has_store, "alias should still bind as a global");
     }
 
     #[test]
@@ -9673,6 +13129,135 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_two_arg_str_constructor_emits_decode_helper() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let mir = lower_builtin_call(
+            "str",
+            vec![
+                HirExpr::Var(SymbolId(999), any_ty),
+                HirExpr::StrLit("utf-8".to_string(), tcx.str()),
+            ],
+        );
+        let names = collect_extern_names(&mir);
+        assert!(
+            names.contains(&"mb_str_construct".to_string()),
+            "str(x, encoding) should emit mb_str_construct, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_list_comprehension_range_uses_native_counter() {
+        use crate::resolve::SymbolKind;
+
+        let mut tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let list_int_ty = tcx.intern(Ty::List(int_ty));
+        let mut symbols = SymbolTable::new();
+        let range_sym = symbols.define("range".to_string(), SymbolKind::Variable);
+        let c_sym = symbols.define("c".to_string(), SymbolKind::Variable);
+
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: Vec::new(),
+            top_level: vec![HirStmt::Expr {
+                expr: HirExpr::ListComp {
+                    element: Box::new(HirExpr::Var(c_sym, int_ty)),
+                    generators: vec![HirComprehension {
+                        var: c_sym,
+                        extra_vars: Vec::new(),
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
+                        iter: HirExpr::Call {
+                            func: Box::new(HirExpr::Var(range_sym, tcx.any())),
+                            args: vec![HirExpr::IntLit(10, int_ty)],
+                            ty: tcx.any(),
+                        },
+                        conditions: Vec::new(),
+                        is_async: false,
+                    }],
+                    ty: list_int_ty,
+                },
+                span: Span::dummy(),
+            }],
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let names = collect_extern_names(&mir);
+        assert!(
+            !names.contains(&"mb_iter".to_string()),
+            "range comprehensions should not allocate a generic iterator: {names:?}"
+        );
+        assert!(
+            !names.contains(&"mb_next_or_stop".to_string()),
+            "range comprehensions should not dispatch through mb_next_or_stop: {names:?}"
+        );
+        assert!(
+            names.contains(&"mb_list_append_unchecked".to_string()),
+            "list comprehension must still append each generated element: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_chr_case_method_lowers_to_direct_string_runtime() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let mut symbols = SymbolTable::new();
+        let chr_sym = symbols.define("chr".to_string(), SymbolKind::Variable);
+        let c_sym = symbols.define("c".to_string(), SymbolKind::Variable);
+
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: Vec::new(),
+            top_level: vec![HirStmt::Expr {
+                expr: HirExpr::Call {
+                    func: Box::new(HirExpr::Attr {
+                        object: Box::new(HirExpr::Call {
+                            func: Box::new(HirExpr::Var(chr_sym, any_ty)),
+                            args: vec![HirExpr::Var(c_sym, any_ty)],
+                            ty: any_ty,
+                        }),
+                        attr: "lower".to_string(),
+                        ty: any_ty,
+                    }),
+                    args: Vec::new(),
+                    ty: any_ty,
+                },
+                span: Span::dummy(),
+            }],
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let names = collect_extern_names(&mir);
+        assert!(
+            names.contains(&"mb_chr".to_string()),
+            "chr(...) should still use the chr runtime entry point: {names:?}"
+        );
+        assert!(
+            names.contains(&"mb_str_lower".to_string()),
+            "chr(...).lower() should bypass generic method dispatch: {names:?}"
+        );
+        assert!(
+            !names.contains(&"mb_call_method".to_string()),
+            "chr(...).lower() should not dispatch through mb_call_method: {names:?}"
+        );
+    }
+
     // REQ: tick-241 test-coverage — __name__ dunder init (#1133) emits StoreGlobal
     // when symbol_table contains "__name__" and top-level code references it.
     #[test]
@@ -9694,6 +13279,7 @@ mod tests {
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
             func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
         };
         let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
         let has_store = mir

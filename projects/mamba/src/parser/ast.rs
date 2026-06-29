@@ -316,6 +316,8 @@ pub enum Pattern {
 pub enum Expr {
     /// Integer literal
     IntLit(i64),
+    /// Integer literal larger than the compiler's i64 literal path.
+    BigIntLit(String),
     /// Float literal
     FloatLit(f64),
     /// Complex literal (imaginary part, e.g. 2j)
@@ -448,6 +450,8 @@ pub enum CallArg {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Comprehension {
     pub targets: Vec<Name>,
+    pub unpack_target: bool,
+    pub target_reads_before_bind: Vec<Name>,
     pub iter: Spanned<Expr>,
     pub conditions: Vec<Spanned<Expr>>,
     pub is_async: bool,
@@ -529,4 +533,14 @@ pub enum TypeExpr {
     },
     /// Tuple type: `tuple[int, str]`
     Tuple(Vec<Spanned<TypeExpr>>),
+}
+
+pub const FORWARD_REF_PREFIX: &str = "__mamba_forward_ref__:";
+
+pub fn forward_ref_name(name: &str) -> String {
+    format!("{FORWARD_REF_PREFIX}{name}")
+}
+
+pub fn strip_forward_ref_name(name: &str) -> Option<&str> {
+    name.strip_prefix(FORWARD_REF_PREFIX)
 }

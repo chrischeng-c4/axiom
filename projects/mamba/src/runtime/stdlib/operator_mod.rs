@@ -180,25 +180,16 @@ fn subscript(obj: MbValue, key: MbValue) -> MbValue {
         None => {
             // range objects are bare iterator handles (ints), not heap ptrs.
             // Support integer indexing into them (CPython: range[i]).
-            if let Some((current, stop, step)) = super::super::iter::mb_iter_range_params(obj) {
-                let len = super::super::iter::mb_iter_range_len(obj).unwrap_or(0);
+            if super::super::iter::is_range_handle(obj) {
                 // Reject non-integer keys (None, str, float) with TypeError.
                 if key.is_float() || is_str(key) || key.is_none() {
                     raise("TypeError", "range indices must be integers or slices");
                     return MbValue::none();
                 }
-                match key.as_int() {
-                    Some(i) => {
-                        let r = if i < 0 { i + len } else { i };
-                        if r >= 0 && r < len {
-                            let _ = stop;
-                            return MbValue::from_int(current + r * step);
-                        }
-                        raise("IndexError", "range object index out of range");
-                        return MbValue::none();
-                    }
+                match super::super::iter::range_iter_getitem_value(obj, key) {
+                    Some(v) => return v,
                     None => {
-                        raise("TypeError", "range indices must be integers or slices");
+                        raise("IndexError", "range object index out of range");
                         return MbValue::none();
                     }
                 }
@@ -582,7 +573,20 @@ unsafe extern "C" fn dispatch_call(args_ptr: *const MbValue, nargs: usize) -> Mb
             return MbValue::none();
         }
     };
-    let rest: Vec<MbValue> = a[1..].to_vec();
+    // The call-lowering appends keyword args as a trailing dict. Forward them
+    // as real kwargs (mb_call_spread would bind the dict positionally, so
+    // `operator.call(f, a=2)` wrongly produced `(({'a':2},), {})`).
+    let mut rest: Vec<MbValue> = a[1..].to_vec();
+    let trailing_kwargs = rest.last().copied().filter(|v| {
+        v.as_ptr().is_some_and(|p| unsafe {
+            matches!((*p).data, super::super::rc::ObjData::Dict(_))
+        })
+    });
+    if let Some(kw) = trailing_kwargs {
+        rest.pop();
+        let pos_list = MbValue::from_ptr(MbObject::new_list(rest));
+        return builtins::mb_call_spread_kwargs(func, pos_list, kw);
+    }
     let args_list = MbValue::from_ptr(MbObject::new_list(rest));
     builtins::mb_call_spread(func, args_list)
 }
@@ -774,13 +778,14 @@ extern "C" fn op_methodcaller_call(self_inst: MbValue, args_list: MbValue) -> Mb
     }
     let target = items[0];
     let name = field(self_inst, "_name");
-    let mut call_args = seq_items(field(self_inst, "_args")).unwrap_or_default();
+    let call_args = seq_items(field(self_inst, "_args")).unwrap_or_default();
     let kwargs = field(self_inst, "_kwargs");
-    if !kwargs.is_none() {
-        call_args.push(kwargs);
-    }
     let args_val = MbValue::from_ptr(MbObject::new_list(call_args));
-    class::mb_call_method(target, name, args_val)
+    if kwargs.is_none() {
+        class::mb_call_method(target, name, args_val)
+    } else {
+        class::mb_call_method_kwargs(target, name, args_val, kwargs)
+    }
 }
 
 /// Register the operator module.
@@ -1014,28 +1019,7 @@ pub fn mb_operator_pow(a: MbValue, b: MbValue) -> MbValue {
     binop_result(builtins::mb_pow(a, b), "** or pow()", a, b)
 }
 pub fn mb_operator_matmul(a: MbValue, b: MbValue) -> MbValue {
-    // No native matmul on numbers — `a @ b` dispatches to __matmul__ when the
-    // left operand defines it, else raises TypeError (matching CPython, where
-    // `int @ int` is unsupported).
-    if let Some(cls) = instance_class_name(a) {
-        if !class::lookup_method(&cls, "__matmul__").is_none() {
-            let args = MbValue::from_ptr(MbObject::new_list(vec![b]));
-            return class::mb_call_method(
-                a,
-                MbValue::from_ptr(MbObject::new_str("__matmul__".to_string())),
-                args,
-            );
-        }
-    }
-    raise(
-        "TypeError",
-        &format!(
-            "unsupported operand type(s) for @: '{}' and '{}'",
-            type_name(a),
-            type_name(b)
-        ),
-    );
-    MbValue::none()
+    binop_result(class::mb_matmul(a, b), "@", a, b)
 }
 
 // ── Bitwise ──
@@ -1253,6 +1237,12 @@ pub fn mb_operator_index(a: MbValue) -> MbValue {
     // operator.index(x) == x.__index__(). True ints (incl. bool) pass through;
     // floats and other non-integers raise TypeError; instances dispatch to
     // their __index__ dunder.
+    if let Some(target) = super::weakref_mod::proxy_target_or_raise(a) {
+        if target.is_none() {
+            return MbValue::none();
+        }
+        return mb_operator_index(target);
+    }
     if a.is_bool() {
         return MbValue::from_int(if a.as_bool() == Some(true) { 1 } else { 0 });
     }

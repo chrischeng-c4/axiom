@@ -171,6 +171,14 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                 MirConst::Int(i) => {
                     ir.push_str(&format!("  %v{} = add i64 0, {i}\n", dest.0));
                 }
+                MirConst::BigInt(s) => {
+                    ir.push_str(&format!(
+                        "  ; bigint const: {}\n  %v{} = add i64 0, {}\n",
+                        s.escape_debug(),
+                        dest.0,
+                        crate::runtime::bigint_ops::bigint_immortal_from_literal(s).to_bits()
+                    ));
+                }
                 MirConst::Float(f) => {
                     let bits = f.to_bits();
                     ir.push_str(&format!(
@@ -456,7 +464,7 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
             value,
         } => {
             ir.push_str(&format!(
-                "  call void @mb_list_setitem(i64 %v{}, i64 %v{}, i64 %v{})\n",
+                "  call void @mb_obj_setitem(i64 %v{}, i64 %v{}, i64 %v{})\n",
                 object.0, index.0, value.0
             ));
         }
@@ -471,6 +479,9 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                 "  call void @mb_global_set_id(i64 {}, i64 %v{})\n",
                 name.0, value.0
             ));
+        }
+        MirInst::DeleteGlobal { name } => {
+            ir.push_str(&format!("  call void @mb_global_del_id(i64 {})\n", name.0));
         }
         MirInst::LoadCell { dest, cell_idx, .. } => {
             ir.push_str(&format!(

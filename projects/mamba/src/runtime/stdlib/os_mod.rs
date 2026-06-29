@@ -338,8 +338,21 @@ pub fn register() {
         MbValue::from_ptr(MbObject::new_str("..".to_string())),
     );
 
-    // os.environ (stub dict)
+    // os.environ — populated from the real process environment (CPython
+    // semantics) so a child reads the variables a parent set via
+    // subprocess(env=...), and `os.environ.get(...)` reflects the actual env.
     let environ = MbObject::new_dict();
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*environ).data {
+            let mut map = lock.write().unwrap();
+            for (k, v) in std::env::vars() {
+                map.insert(
+                    super::super::dict_ops::DictKey::Str(k),
+                    MbValue::from_ptr(MbObject::new_str(v)),
+                );
+            }
+        }
+    }
     attrs.insert("environ".to_string(), MbValue::from_ptr(environ));
 
     // os.pathsep / os.extsep / os.altsep / os.devnull (#1261).
@@ -2032,12 +2045,25 @@ fn mb_os_fspath_v(args: &[MbValue]) -> MbValue {
 /// os.kill(pid, sig) — bad pid raises ProcessLookupError (OSError subclass).
 fn mb_os_kill(args: &[MbValue]) -> MbValue {
     let pid = args.first().and_then(|v| v.as_int());
-    let sig = args.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+    let sig_value = args.get(1).copied().unwrap_or_else(MbValue::none);
+    let sig = sig_value
+        .as_int_pyint()
+        .or_else(|| {
+            super::signal_mod::signal_enum_int_value(sig_value).and_then(|v| v.as_int_pyint())
+        })
+        .unwrap_or(0);
     let Some(pid) = pid else {
         return raise("TypeError", "an integer is required".to_string());
     };
     #[cfg(unix)]
     {
+        if pid == std::process::id() as i64 {
+            if let Some(result) =
+                super::signal_mod::mb_signal_deliver_if_registered(MbValue::from_int(sig))
+            {
+                return result;
+            }
+        }
         extern "C" {
             fn kill(pid: i32, sig: i32) -> i32;
         }
@@ -2063,24 +2089,94 @@ fn mb_os_kill(args: &[MbValue]) -> MbValue {
     }
 }
 
-/// os.execv(path, args) — empty args sequence raises ValueError (CPython).
+/// os.exec*(path, args[, env]) — the exec family validates its arguments before
+/// it would replace the process. CPython rejects: an empty argv (ValueError), an
+/// empty argv[0] (ValueError), env keys/values with embedded NUL or '=' in a key
+/// (ValueError), and a program that cannot be found (FileNotFoundError/OSError).
 fn mb_os_execv(args: &[MbValue]) -> MbValue {
     let argv = args.get(1).copied().unwrap_or_else(MbValue::none);
-    let empty = argv
-        .as_ptr()
-        .map(|ptr| unsafe {
-            match &(*ptr).data {
-                ObjData::List(lock) => lock.read().unwrap().is_empty(),
-                ObjData::Tuple(items) => items.is_empty(),
-                _ => false,
+    let items: Option<Vec<MbValue>> = argv.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::List(lock) => Some(lock.read().unwrap().to_vec()),
+            ObjData::Tuple(items) => Some(items.to_vec()),
+            _ => None,
+        }
+    });
+    if let Some(items) = &items {
+        if items.is_empty() {
+            return raise("ValueError", "execv() arg 2 must not be empty".to_string());
+        }
+        // CPython: the first argv element must be a non-empty string.
+        let first_empty = items[0]
+            .as_ptr()
+            .map(|p| unsafe { matches!(&(*p).data, ObjData::Str(s) if s.is_empty()) })
+            .unwrap_or(false);
+        if first_empty {
+            return raise(
+                "ValueError",
+                "execv() arg 2 first element cannot be empty".to_string(),
+            );
+        }
+    }
+    // execve / execvpe: validate the environment mapping (arg 3) before exec.
+    // Keys may not contain NUL or '='; values may not contain NUL.
+    if let Some(env) = args.get(2).copied() {
+        if let Some(ptr) = env.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let map = lock.read().unwrap();
+                    for (k, v) in map.iter() {
+                        if let super::super::dict_ops::DictKey::Str(ks) = k {
+                            if ks.contains('\0') || ks.contains('=') {
+                                return raise(
+                                    "ValueError",
+                                    "illegal environment variable name".to_string(),
+                                );
+                            }
+                        }
+                        let val_has_nul = v
+                            .as_ptr()
+                            .map(|vp| matches!(&(*vp).data, ObjData::Str(vs) if vs.contains('\0')))
+                            .unwrap_or(false);
+                        if val_has_nul {
+                            return raise("ValueError", "embedded null byte".to_string());
+                        }
+                    }
+                }
             }
-        })
-        .unwrap_or(false);
-    if empty {
-        return raise("ValueError", "execv() arg 2 must not be empty".to_string());
+        }
+    }
+    // The program must resolve to an existing file (directly or on PATH) before
+    // exec is attempted; otherwise CPython raises FileNotFoundError (an OSError).
+    if let Some(path) = args.first().copied().and_then(extract_str) {
+        if !path.is_empty() && !exec_program_exists(&path) {
+            return raise(
+                "FileNotFoundError",
+                format!("[Errno 2] No such file or directory: '{path}'"),
+            );
+        }
     }
     // Presence-only otherwise: a real exec would not return.
     MbValue::none()
+}
+
+/// True if `prog` names an existing file directly, or (when it has no path
+/// separator) is found in one of the PATH directories.
+fn exec_program_exists(prog: &str) -> bool {
+    if std::path::Path::new(prog).exists() {
+        return true;
+    }
+    if prog.contains('/') {
+        return false;
+    }
+    if let Ok(pathvar) = std::env::var("PATH") {
+        for dir in pathvar.split(':') {
+            if !dir.is_empty() && std::path::Path::new(dir).join(prog).exists() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// os.umask(mask) — non-int mask raises TypeError; otherwise return prev (0).
@@ -2381,9 +2477,18 @@ fn mb_os_removedirs_v(args: &[MbValue]) -> MbValue {
 // ── Real file-descriptor table for os.open / write / read / lseek / close ──
 
 thread_local! {
-    static FD_TABLE: std::cell::RefCell<HashMap<i64, std::fs::File>> =
+    static FD_TABLE: std::cell::RefCell<HashMap<i64, OsFdFile>> =
         std::cell::RefCell::new(HashMap::new());
     static NEXT_FD: std::cell::Cell<i64> = std::cell::Cell::new(100);
+}
+
+struct OsFdFile {
+    file: std::fs::File,
+    path: String,
+}
+
+pub fn mb_os_fd_path(fd: i64) -> Option<String> {
+    FD_TABLE.with(|t| t.borrow().get(&fd).map(|entry| entry.path.clone()))
 }
 
 /// os.open(path, flags, mode=0o777) → int fd. Honors O_CREAT/O_WRONLY/O_RDWR/
@@ -2435,7 +2540,7 @@ fn mb_os_open_fd(args: &[MbValue]) -> MbValue {
                 c.set(v + 1);
                 v
             });
-            FD_TABLE.with(|t| t.borrow_mut().insert(fd, file));
+            FD_TABLE.with(|t| t.borrow_mut().insert(fd, OsFdFile { file, path: p }));
             MbValue::from_int(fd)
         }
         Err(e) => map_io_error(&e, &p),
@@ -2463,9 +2568,9 @@ fn mb_os_write_fd(args: &[MbValue]) -> MbValue {
     };
     let n = FD_TABLE.with(|t| {
         let mut tb = t.borrow_mut();
-        if let Some(file) = tb.get_mut(&fd) {
+        if let Some(entry) = tb.get_mut(&fd) {
             use std::io::Write;
-            file.write(&bytes).ok().map(|w| w as i64)
+            entry.file.write(&bytes).ok().map(|w| w as i64)
         } else {
             None
         }
@@ -2487,10 +2592,10 @@ fn mb_os_read_fd(args: &[MbValue]) -> MbValue {
     };
     let out = FD_TABLE.with(|t| {
         let mut tb = t.borrow_mut();
-        tb.get_mut(&fd).map(|file| {
+        tb.get_mut(&fd).map(|entry| {
             use std::io::Read;
             let mut buf = vec![0u8; n];
-            let read = file.read(&mut buf).unwrap_or(0);
+            let read = entry.file.read(&mut buf).unwrap_or(0);
             buf.truncate(read);
             buf
         })
@@ -2511,14 +2616,14 @@ fn mb_os_lseek_fd(args: &[MbValue]) -> MbValue {
     };
     let new_pos = FD_TABLE.with(|t| {
         let mut tb = t.borrow_mut();
-        tb.get_mut(&fd).and_then(|file| {
+        tb.get_mut(&fd).and_then(|entry| {
             use std::io::Seek;
             let whence = match how {
                 1 => std::io::SeekFrom::Current(pos),
                 2 => std::io::SeekFrom::End(pos),
                 _ => std::io::SeekFrom::Start(pos.max(0) as u64),
             };
-            file.seek(whence).ok().map(|p| p as i64)
+            entry.file.seek(whence).ok().map(|p| p as i64)
         })
     });
     MbValue::from_int(new_pos.unwrap_or(0))

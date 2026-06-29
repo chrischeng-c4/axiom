@@ -25,6 +25,12 @@ pub struct MbModule {
 thread_local! {
     pub(crate) static MODULES: std::cell::RefCell<HashMap<String, MbModule>> =
         std::cell::RefCell::new(HashMap::new());
+    /// Heap pointers of dict objects that represent imported modules. A module
+    /// is modeled as a dict of its attributes, so without this marker
+    /// `isinstance(mod, types.ModuleType)` and `type(mod)` cannot tell a module
+    /// dict from an ordinary dict. Populated in module_to_value.
+    pub(crate) static MODULE_VALUE_PTRS: std::cell::RefCell<HashSet<u64>> =
+        std::cell::RefCell::new(HashSet::new());
     pub(crate) static SEARCH_PATHS: std::cell::RefCell<Vec<PathBuf>> =
         std::cell::RefCell::new(vec![PathBuf::from(".")]);
     /// Set of function pointer addresses registered as native extern functions.
@@ -100,6 +106,23 @@ thread_local! {
 /// import machinery does this automatically when the submodule loads; here
 /// we mirror it because the stdlib stubs register the dotted names eagerly.
 pub fn mb_module_register(name: &str, attrs: HashMap<String, MbValue>) {
+    // Register native module functions' __name__ / __module__ so introspection
+    // works: time.time.__name__ == "time", time.time.__module__ == "time".
+    // (For a top-level module function __qualname__ == __name__, handled by the
+    // shared __name__/__qualname__ getattr path.) Each native function is a
+    // distinct extern pointer, so keying FUNC_NAMES by its bits is stable.
+    for (attr_name, val) in &attrs {
+        if val.as_func().is_some() {
+            super::closure::mb_func_set_name(
+                *val,
+                MbValue::from_ptr(MbObject::new_str(attr_name.clone())),
+            );
+            super::closure::mb_func_set_module(
+                *val,
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+        }
+    }
     MODULES.with(|mods| {
         mods.borrow_mut().insert(
             name.to_string(),
@@ -165,18 +188,34 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
     // the same pointer thereafter.
     let in_cache = MODULES.with(|mods| mods.borrow().contains_key(&name));
     if in_cache {
-        let val = MODULES.with(|mods| {
-            let mut map = mods.borrow_mut();
-            if let Some(module) = map.get_mut(&name) {
-                module_to_value_and_cache(module)
-            } else {
-                MbValue::none()
-            }
+        let file_backed = MODULES.with(|mods| {
+            mods.borrow()
+                .get(&name)
+                .and_then(|module| module.file.as_ref())
+                .is_some()
         });
-        if !val.is_none() {
-            update_sys_modules(&name, val);
+        if file_backed && lookup_sys_modules(&name).is_none() {
+            MODULES.with(|mods| {
+                mods.borrow_mut().remove(&name);
+            });
+        } else {
+            let val = MODULES.with(|mods| {
+                let mut map = mods.borrow_mut();
+                if let Some(module) = map.get_mut(&name) {
+                    module_to_value_and_cache(module)
+                } else {
+                    MbValue::none()
+                }
+            });
+            if !val.is_none() {
+                update_sys_modules(&name, val);
+            }
+            return val;
         }
-        return val;
+    }
+
+    if !ensure_parent_packages(&name) {
+        return MbValue::none();
     }
 
     // Pre-cache a sentinel module to prevent circular import recursion.
@@ -248,6 +287,27 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
         update_sys_modules(&name, val);
     }
     val
+}
+
+fn ensure_parent_packages(name: &str) -> bool {
+    let parts: Vec<&str> = name.split('.').collect();
+    if parts.len() <= 1 {
+        return true;
+    }
+
+    for idx in 1..parts.len() {
+        let parent = parts[..idx].join(".");
+        let already_loaded = MODULES.with(|mods| mods.borrow().contains_key(&parent));
+        if already_loaded {
+            continue;
+        }
+
+        let value = mb_import(str_value(&parent));
+        if value.is_none() || super::exception::mb_has_exception().as_bool() == Some(true) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Insert `name → val` into `sys.modules` (the dict stored as sys.modules attr).
@@ -434,13 +494,88 @@ pub fn mb_import_star(module_name: MbValue) -> MbValue {
 /// Resolution anchors to the CURRENT_MODULE_PACKAGE thread-local, walking up
 /// `level` directories from the package path to find the target module.
 /// Returns `MbValue::none()` if the level exceeds the package hierarchy.
-pub fn mb_import_relative(module_name: MbValue, level: MbValue) -> MbValue {
+pub fn mb_import_relative(module_name: MbValue, level: i64) -> MbValue {
     let target = extract_str(module_name).unwrap_or_default();
-    let level_n = level.as_int().unwrap_or(0) as usize;
+    let level_n = level.max(0) as usize;
 
     if level_n == 0 {
         // Not actually relative — delegate to regular import.
         return mb_import(module_name);
+    }
+
+    let Some(full_name) = resolve_relative_module_name(&target, level_n) else {
+        return MbValue::none();
+    };
+
+    // Delegate to the standard import mechanism with the resolved name.
+    mb_import(str_value(&full_name))
+}
+
+/// Get an attribute from a module resolved by a relative import.
+pub fn mb_module_getattr_relative(module_name: MbValue, level: i64, attr: MbValue) -> MbValue {
+    let target = extract_str(module_name).unwrap_or_default();
+    let level_n = level.max(0) as usize;
+
+    if level_n == 0 {
+        return mb_module_getattr(module_name, attr);
+    }
+
+    let Some(full_name) = resolve_relative_module_name(&target, level_n) else {
+        return MbValue::none();
+    };
+    let attr_name = extract_str(attr).unwrap_or_default();
+    let full_name_val = str_value(&full_name);
+    let imported = mb_import(full_name_val);
+    if imported.is_none() {
+        return MbValue::none();
+    }
+    let value = mb_module_getattr(str_value(&full_name), str_value(&attr_name));
+    if !value.is_none() || !target.is_empty() || attr_name.is_empty() {
+        return value;
+    }
+
+    // `from . import sibling` means "read sibling from the current package",
+    // and CPython also attempts to load package.sibling as a submodule when the
+    // attribute is absent.
+    super::exception::mb_clear_exception();
+    let child_name = if full_name.is_empty() {
+        attr_name.clone()
+    } else {
+        format!("{}.{}", full_name, attr_name)
+    };
+    let child = mb_import(str_value(&child_name));
+    if !child.is_none() {
+        propagate_submodule_to_parents(&child_name);
+        return child;
+    }
+
+    super::exception::mb_clear_exception();
+    let exc_type = MbValue::from_ptr(MbObject::new_str("ImportError".to_string()));
+    let msg = MbValue::from_ptr(MbObject::new_str(format!(
+        "cannot import name '{attr_name}' from '{full_name}'"
+    )));
+    super::exception::mb_raise(exc_type, msg);
+    MbValue::none()
+}
+
+/// Star import from a module resolved by a relative import.
+pub fn mb_import_relative_star(module_name: MbValue, level: i64) -> MbValue {
+    let target = extract_str(module_name).unwrap_or_default();
+    let level_n = level.max(0) as usize;
+
+    if level_n == 0 {
+        return mb_import_star(module_name);
+    }
+
+    let Some(full_name) = resolve_relative_module_name(&target, level_n) else {
+        return MbValue::none();
+    };
+    mb_import_star(str_value(&full_name))
+}
+
+fn resolve_relative_module_name(target: &str, level_n: usize) -> Option<String> {
+    if level_n == 0 {
+        return Some(target.to_string());
     }
 
     // Get the current module's package to anchor the relative import.
@@ -452,7 +587,7 @@ pub fn mb_import_relative(module_name: MbValue, level: MbValue) -> MbValue {
             let parts: Vec<&str> = pkg.split('.').collect();
             if level_n > parts.len() {
                 // Level exceeds package hierarchy — import error.
-                return MbValue::none();
+                return None;
             }
             // Walk up `level` levels (level=1 stays in current package,
             // level=2 goes to parent, etc.)
@@ -465,22 +600,18 @@ pub fn mb_import_relative(module_name: MbValue, level: MbValue) -> MbValue {
         }
         _ => {
             // No package context (top-level script) — relative import not allowed.
-            return MbValue::none();
+            return None;
         }
     };
 
-    // Build the full module name: anchor + target
-    let full_name = if target.is_empty() {
-        anchor.clone()
+    // Build the full module name: anchor + target.
+    Some(if target.is_empty() {
+        anchor
     } else if anchor.is_empty() {
-        target.clone()
+        target.to_string()
     } else {
         format!("{}.{}", anchor, target)
-    };
-
-    // Delegate to the standard import mechanism with the resolved name.
-    let name_val = MbValue::from_ptr(MbObject::new_str(full_name));
-    mb_import(name_val)
+    })
 }
 
 /// Get an attribute from a module.
@@ -600,6 +731,9 @@ pub fn mb_module_getattr(module_name: MbValue, attr: MbValue) -> MbValue {
 /// Return an attribute from the canonical `builtins` module.
 pub fn mb_builtin_get(attr: MbValue) -> MbValue {
     let attr_name = extract_str(attr).unwrap_or_default();
+    if let Some(val) = mb_module_value_getattr("builtins", &attr_name) {
+        return val;
+    }
     let existing = MODULES.with(|mods| {
         let mods = mods.borrow();
         mods.get("builtins")
@@ -1092,6 +1226,18 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
 
     // 6. Save caller's globals and clear for module execution
     let saved_globals = save_and_clear_global_id_namespace();
+    if let Some(package_sym) = checker.symbols.lookup("__package__") {
+        super::closure::mb_global_set_id(
+            MbValue::from_bits(package_sym.0 as u64),
+            str_value(&package_attr),
+        );
+    }
+    if let Some(name_sym) = checker.symbols.lookup("__name__") {
+        super::closure::mb_global_set_id(
+            MbValue::from_bits(name_sym.0 as u64),
+            str_value(module_name),
+        );
+    }
 
     // 6b. Set CURRENT_MODULE_PACKAGE for relative import resolution — R3.
     let saved_package = CURRENT_MODULE_PACKAGE.with(|cp| cp.borrow().clone());
@@ -1363,6 +1509,12 @@ fn find_module(name: &str) -> Option<PathBuf> {
         return script_dir_result;
     }
 
+    for base in live_sys_path_paths() {
+        if let Some(found) = probe_module_path(&base, &parts) {
+            return Some(found);
+        }
+    }
+
     SEARCH_PATHS.with(|paths| {
         for base in paths.borrow().iter() {
             if let Some(found) = probe_module_path(base, &parts) {
@@ -1371,6 +1523,37 @@ fn find_module(name: &str) -> Option<PathBuf> {
         }
         None
     })
+}
+
+fn live_sys_path_paths() -> Vec<PathBuf> {
+    let sys_path = MODULES.with(|mods| {
+        mods.borrow()
+            .get("sys")
+            .and_then(|m| m.attrs.get("path").copied())
+    });
+    let Some(path_val) = sys_path else {
+        return Vec::new();
+    };
+    let Some(ptr) = path_val.as_ptr() else {
+        return Vec::new();
+    };
+    unsafe {
+        let ObjData::List(ref lock) = (*ptr).data else {
+            return Vec::new();
+        };
+        lock.read()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| extract_str(*entry))
+            .map(|entry| {
+                if entry.is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    PathBuf::from(entry)
+                }
+            })
+            .collect()
+    }
 }
 
 /// Try to find a module file at `base/parts.py` or `base/parts/__init__.py`.
@@ -1433,7 +1616,62 @@ pub(crate) fn module_to_value(module: &MbModule) -> MbValue {
             }
         }
     }
+    // Mark this dict as a module value so isinstance(_, types.ModuleType) and
+    // type(_) can distinguish it from an ordinary dict.
+    MODULE_VALUE_PTRS.with(|s| {
+        s.borrow_mut().insert(dict as u64);
+    });
     MbValue::from_ptr(dict)
+}
+
+/// True iff `v` is a dict that represents an imported module (see
+/// MODULE_VALUE_PTRS) — backs isinstance(v, types.ModuleType) and type(v).
+pub fn is_module_value(v: MbValue) -> bool {
+    match v.as_ptr() {
+        Some(p) => MODULE_VALUE_PTRS.with(|s| s.borrow().contains(&(p as u64))),
+        None => false,
+    }
+}
+
+/// Read an attribute from a module's user-visible namespace dict — the cached
+/// module value that user code mutates via `mod.attr = x` (lands in the dict's
+/// `__name__`-tagged stub path, see `class::mb_setattr`). This reflects user
+/// overrides that the registry-backed [`mb_module_getattr`] does not see,
+/// because user assignment writes the cached dict, not `MbModule::attrs`.
+///
+/// Returns `None` when the module is not loaded, has no cached value, or the
+/// attribute is absent. The returned value carries a fresh +1 reference.
+pub fn mb_module_value_getattr(module_name: &str, attr: &str) -> Option<MbValue> {
+    let cached = MODULES.with(|mods| mods.borrow().get(module_name).and_then(|m| m.cached_value))?;
+    let ptr = cached.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let key = super::dict_ops::DictKey::Str(attr.to_string());
+            if let Some(v) = map.get(&key).copied() {
+                super::rc::retain_if_ptr(v);
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+/// Look up a module attribute directly from the registry's `attrs` map,
+/// returning the live value with a +1 retain. Unlike `mb_module_value_getattr`
+/// (which reads the cached module-object dict), this reflects in-place
+/// `sys.<attr> = ...` reassignments routed through `mb_module_setattr`, which
+/// only update `attrs`. Used by `breakpoint()` to read the current
+/// `sys.breakpointhook`. (#242)
+pub fn mb_module_attr_lookup(module_name: &str, attr: &str) -> Option<MbValue> {
+    let val = MODULES.with(|mods| {
+        let mods = mods.borrow();
+        mods.get(module_name).and_then(|m| m.attrs.get(attr).copied())
+    })?;
+    unsafe {
+        super::rc::retain_if_ptr(val);
+    }
+    Some(val)
 }
 
 /// Like `module_to_value` but writes the result back into `module.cached_value`.
@@ -2234,7 +2472,7 @@ mod tests {
         CURRENT_MODULE_PACKAGE.with(|cp| {
             *cp.borrow_mut() = None;
         });
-        let result = mb_import_relative(s("foo"), MbValue::from_int(1));
+        let result = mb_import_relative(s("foo"), 1);
         assert!(
             result.is_none(),
             "relative import without package context should return None"
@@ -2249,7 +2487,7 @@ mod tests {
         CURRENT_MODULE_PACKAGE.with(|cp| {
             *cp.borrow_mut() = Some("mypkg".to_string());
         });
-        let result = mb_import_relative(s("foo"), MbValue::from_int(3));
+        let result = mb_import_relative(s("foo"), 3);
         assert!(
             result.is_none(),
             "relative import exceeding hierarchy should return None"
@@ -2265,8 +2503,27 @@ mod tests {
         attrs.insert("val".into(), MbValue::from_int(10));
         mb_module_register("abs_test_mod", attrs);
 
-        let result = mb_import_relative(s("abs_test_mod"), MbValue::from_int(0));
+        let result = mb_import_relative(s("abs_test_mod"), 0);
         assert!(result.is_ptr(), "level=0 should delegate to mb_import");
+        cleanup_all_modules();
+    }
+
+    #[test]
+    fn test_relative_module_getattr_resolves_parent_sibling() {
+        cleanup_all_modules();
+        let mut attrs = HashMap::new();
+        attrs.insert("SENTINEL_A".into(), s("a-value"));
+        mb_module_register("mamba_rel_pkg.sibling_a", attrs);
+        CURRENT_MODULE_PACKAGE.with(|cp| {
+            *cp.borrow_mut() = Some("mamba_rel_pkg.sub".to_string());
+        });
+
+        let value = mb_module_getattr_relative(
+            s("sibling_a"),
+            2,
+            s("SENTINEL_A"),
+        );
+        assert_eq!(extract_str(value).as_deref(), Some("a-value"));
         cleanup_all_modules();
     }
 
@@ -2348,6 +2605,62 @@ mod tests {
                 "simple .py file should not be a package"
             );
         });
+        cleanup_all_modules();
+    }
+
+    #[test]
+    fn test_dotted_import_loads_parent_packages() {
+        cleanup_all_modules();
+
+        let dir = tempfile::tempdir().unwrap();
+        let pkg_dir = dir.path().join("pkg_parent_test");
+        let sub_dir = pkg_dir.join("sub");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(pkg_dir.join("__init__.py"), "PACKAGE_SENTINEL = 'root'\n").unwrap();
+        std::fs::write(sub_dir.join("__init__.py"), "SUB_SENTINEL = 'sub-init'\n").unwrap();
+        std::fs::write(sub_dir.join("leaf.py"), "LEAF_SENTINEL = 'leaf'\n").unwrap();
+
+        mb_set_script_dir(dir.path().to_path_buf());
+        let result = mb_import(s("pkg_parent_test.sub.leaf"));
+        assert!(result.is_ptr(), "leaf import should succeed");
+
+        MODULES.with(|mods| {
+            let mods = mods.borrow();
+            assert!(mods.contains_key("pkg_parent_test"));
+            assert!(mods.contains_key("pkg_parent_test.sub"));
+            assert!(mods.contains_key("pkg_parent_test.sub.leaf"));
+            assert!(
+                mods.get("pkg_parent_test.sub").unwrap().is_package,
+                "parent subpackage should execute __init__.py"
+            );
+        });
+        assert!(
+            lookup_sys_modules("pkg_parent_test.sub").is_some(),
+            "parent subpackage should be visible through sys.modules"
+        );
+        let sentinel = mb_module_getattr(s("pkg_parent_test.sub"), s("SUB_SENTINEL"));
+        assert_eq!(extract_str(sentinel).as_deref(), Some("sub-init"));
+        cleanup_all_modules();
+    }
+
+    #[test]
+    fn test_imported_module_body_reads_package_dunder() {
+        cleanup_all_modules();
+
+        let dir = tempfile::tempdir().unwrap();
+        let pkg_dir = dir.path().join("pkg_dunder_test");
+        let sub_dir = pkg_dir.join("sub");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(pkg_dir.join("__init__.py"), "").unwrap();
+        std::fs::write(sub_dir.join("__init__.py"), "").unwrap();
+        std::fs::write(sub_dir.join("leaf.py"), "LEAF_PACKAGE = __package__\n").unwrap();
+
+        mb_set_script_dir(dir.path().to_path_buf());
+        let result = mb_import(s("pkg_dunder_test.sub.leaf"));
+        assert!(result.is_ptr(), "leaf import should succeed");
+
+        let value = mb_module_getattr(s("pkg_dunder_test.sub.leaf"), s("LEAF_PACKAGE"));
+        assert_eq!(extract_str(value).as_deref(), Some("pkg_dunder_test.sub"));
         cleanup_all_modules();
     }
 

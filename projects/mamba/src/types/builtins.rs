@@ -52,7 +52,7 @@ impl TypeChecker {
 
         // Sequences / iterables
         self.def_builtin("len", &[any], int);
-        self.def_builtin_variadic("range", &[int], any);
+        self.def_builtin_variadic("range", &[any], any);
         // slice(stop), slice(start, stop[, step]) — same variadic form as range
         self.def_builtin_variadic("slice", &[], any);
         self.def_builtin_variadic("enumerate", &[any], any);
@@ -228,6 +228,7 @@ impl TypeChecker {
             "UnicodeError",
             "UnicodeDecodeError",
             "UnicodeEncodeError",
+            "UnicodeTranslateError",
             "AssertionError",
             "BufferError",
             "EOFError",

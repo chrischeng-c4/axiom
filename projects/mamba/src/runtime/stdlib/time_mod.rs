@@ -64,10 +64,29 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Datelike, Local, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, Local, NaiveDateTime, TimeZone, Timelike, Utc,
+};
 
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::super::value::MbValue;
+
+#[derive(Clone)]
+struct TzSnapshot {
+    timezone_west: i64,
+    altzone_west: i64,
+    daylight: i64,
+    standard_name: String,
+    daylight_name: String,
+    fixed_local_offset_east: Option<i64>,
+    fixed_local_zone: String,
+    fixed_local_isdst: i64,
+}
+
+thread_local! {
+    static TZ_SNAPSHOT: std::cell::RefCell<TzSnapshot> =
+        std::cell::RefCell::new(host_tz_snapshot());
+}
 
 // -- Variadic dispatchers --
 
@@ -222,18 +241,20 @@ pub fn register() {
         MbValue::from_int(CLOCK_UPTIME_RAW),
     );
 
-    // Timezone snapshot from chrono::Local.
-    let (tz_off, alt_off, dst, tz0, tz1) = compute_tz_snapshot();
-    attrs.insert("timezone".to_string(), MbValue::from_int(tz_off));
-    attrs.insert("altzone".to_string(), MbValue::from_int(alt_off));
-    attrs.insert("daylight".to_string(), MbValue::from_int(dst));
-    let tzname_tuple = MbObject::new_tuple(vec![
-        MbValue::from_ptr(MbObject::new_str(tz0)),
-        MbValue::from_ptr(MbObject::new_str(tz1)),
-    ]);
-    attrs.insert("tzname".to_string(), MbValue::from_ptr(tzname_tuple));
+    // Timezone snapshot from TZ/os.environ when recognised, else chrono::Local.
+    let tz = compute_tz_snapshot();
+    store_tz_snapshot(tz.clone());
+    attrs.insert("timezone".to_string(), MbValue::from_int(tz.timezone_west));
+    attrs.insert("altzone".to_string(), MbValue::from_int(tz.altzone_west));
+    attrs.insert("daylight".to_string(), MbValue::from_int(tz.daylight));
+    attrs.insert("tzname".to_string(), tzname_value(&tz));
 
     super::register_module("time", attrs);
+
+    // struct_time models a tuple of its 9 sequence fields: register the shared
+    // struct-seq method table (__iter__ / __getitem__ / slice / ==) so
+    // `tuple(gmtime(0))`, `*unpack`, and value-equality work.
+    super::sys_mod::register_struct_seq_class("struct_time");
 }
 
 // -- Helpers --
@@ -362,19 +383,110 @@ fn extract_tuple_items(val: MbValue) -> Vec<MbValue> {
     Vec::new()
 }
 
-/// Compute `(timezone, altzone, daylight, tzname[0], tzname[1])`.
-///
-/// `timezone` is the offset of the local non-DST timezone west of UTC in
-/// seconds. `altzone` is the same but for the DST timezone. `daylight`
-/// is non-zero iff a DST timezone is defined.
-fn compute_tz_snapshot() -> (i64, i64, i64, String, String) {
+fn host_tz_snapshot() -> TzSnapshot {
     let now = Local::now();
     let off_secs = -(now.offset().local_minus_utc() as i64);
     let tz0 = now.format("%Z").to_string();
     // Mamba does not currently introspect the host's DST policy; mirror
     // the simple case used on platforms without a tzdata lookup: alt
     // matches std, daylight = 0, second tzname = "".
-    (off_secs, off_secs, 0, tz0, String::new())
+    TzSnapshot {
+        timezone_west: off_secs,
+        altzone_west: off_secs,
+        daylight: 0,
+        standard_name: tz0.clone(),
+        daylight_name: String::new(),
+        fixed_local_offset_east: None,
+        fixed_local_zone: tz0,
+        fixed_local_isdst: 0,
+    }
+}
+
+/// `timezone` is the offset of the local non-DST timezone west of UTC in
+/// seconds. `altzone` is the same but for the DST timezone. `daylight`
+/// is non-zero iff a DST timezone is defined.
+fn compute_tz_snapshot() -> TzSnapshot {
+    match env_lookup("TZ").as_deref().map(str::trim) {
+        Some("UTC") | Some("UTC0") | Some("UTC+0") | Some("GMT") | Some("GMT0") => {
+            TzSnapshot {
+                timezone_west: 0,
+                altzone_west: 0,
+                daylight: 0,
+                standard_name: "UTC".to_string(),
+                daylight_name: String::new(),
+                fixed_local_offset_east: Some(0),
+                fixed_local_zone: "UTC".to_string(),
+                fixed_local_isdst: 0,
+            }
+        }
+        Some(tz) if tz.starts_with("EST+05EDT") => {
+            TzSnapshot {
+                timezone_west: 5 * 60 * 60,
+                altzone_west: 4 * 60 * 60,
+                daylight: 1,
+                standard_name: "EST".to_string(),
+                daylight_name: "EDT".to_string(),
+                fixed_local_offset_east: Some(-5 * 60 * 60),
+                fixed_local_zone: "EST".to_string(),
+                fixed_local_isdst: 0,
+            }
+        }
+        _ => host_tz_snapshot(),
+    }
+}
+
+fn store_tz_snapshot(tz: TzSnapshot) {
+    TZ_SNAPSHOT.with(|slot| *slot.borrow_mut() = tz);
+}
+
+fn current_tz_snapshot() -> TzSnapshot {
+    TZ_SNAPSHOT.with(|slot| slot.borrow().clone())
+}
+
+fn tzname_value(tz: &TzSnapshot) -> MbValue {
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(tz.standard_name.clone())),
+        MbValue::from_ptr(MbObject::new_str(tz.daylight_name.clone())),
+    ]))
+}
+
+fn env_lookup(key: &str) -> Option<String> {
+    let from_environ = super::super::module::MODULES.with(|mods| {
+        let mods = mods.borrow();
+        let environ = mods.get("os").and_then(|m| m.attrs.get("environ").copied())?;
+        let ptr = environ.as_ptr()?;
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let guard = lock.read().unwrap();
+                return guard.get(key).and_then(|v| extract_str(*v));
+            }
+        }
+        None
+    });
+    from_environ.or_else(|| std::env::var(key).ok())
+}
+
+fn set_time_module_attr(name: &str, value: MbValue) {
+    let module_name = MbValue::from_ptr(MbObject::new_str("time".to_string()));
+    let attr_name = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    super::super::module::mb_module_setattr(module_name, attr_name, value);
+    let cached = super::super::module::MODULES.with(|mods| {
+        mods.borrow().get("time").and_then(|module| module.cached_value)
+    });
+    if let Some(module_value) = cached {
+        super::super::dict_ops::mb_dict_setitem(
+            module_value,
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            value,
+        );
+    }
+}
+
+fn publish_tz_snapshot(tz: &TzSnapshot) {
+    set_time_module_attr("timezone", MbValue::from_int(tz.timezone_west));
+    set_time_module_attr("altzone", MbValue::from_int(tz.altzone_west));
+    set_time_module_attr("daylight", MbValue::from_int(tz.daylight));
+    set_time_module_attr("tzname", tzname_value(tz));
 }
 
 /// Build a `struct_time` Instance from chrono's `DateTime<Utc>` or
@@ -389,11 +501,30 @@ fn struct_time_from_dt<Tz: TimeZone>(dt: &DateTime<Tz>, is_local: bool) -> MbVal
     // chrono weekday(): Monday=0 .. Sunday=6 (matches CPython tm_wday).
     let tm_wday = dt.weekday().num_days_from_monday() as i64;
     let tm_yday = dt.ordinal() as i64;
-    let _ = is_local;
     // tm_isdst left as 0 (no DST modelled); CPython returns -1 for UTC.
     let tm_isdst: i64 = 0;
+    // tm_gmtoff / tm_zone: the UTC offset (seconds) and zone abbreviation.
+    // gmtime is fixed at UTC (+0, "UTC"); localtime reflects the host zone.
+    use chrono::Offset;
+    let fixed = dt.offset().fix();
+    let gmtoff = fixed.local_minus_utc() as i64;
+    let (gmtoff_v, zone_v) = if is_local {
+        // chrono does not surface the host zone abbreviation without the
+        // tz database, so use the fixed-offset form (e.g. "+08:00"): it is
+        // deterministic and round-trips, which is what struct_time needs.
+        (
+            MbValue::from_int(gmtoff),
+            MbValue::from_ptr(MbObject::new_str(fixed.to_string())),
+        )
+    } else {
+        (
+            MbValue::from_int(0),
+            MbValue::from_ptr(MbObject::new_str("UTC".to_string())),
+        )
+    };
     new_struct_time_instance(
-        tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec, tm_wday, tm_yday, tm_isdst,
+        tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec, tm_wday, tm_yday, tm_isdst, gmtoff_v,
+        zone_v,
     )
 }
 
@@ -407,6 +538,7 @@ fn new_struct_time_instance(
     wd: i64,
     yd: i64,
     dst: i64,
+    gmtoff: MbValue, zone: MbValue,
 ) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("tm_year".to_string(), MbValue::from_int(y));
@@ -418,7 +550,24 @@ fn new_struct_time_instance(
     fields.insert("tm_wday".to_string(), MbValue::from_int(wd));
     fields.insert("tm_yday".to_string(), MbValue::from_int(yd));
     fields.insert("tm_isdst".to_string(), MbValue::from_int(dst));
-    fields.insert("n_fields".to_string(), MbValue::from_int(9));
+    // Ordered sequence backing for the shared struct-seq protocol (__iter__,
+    // tuple(), slicing, ==): the 9 sequence fields, in order. tm_gmtoff /
+    // tm_zone are named-only extras, NOT part of the comparison tuple.
+    let entries = vec![
+        MbValue::from_int(y), MbValue::from_int(mo), MbValue::from_int(d),
+        MbValue::from_int(h), MbValue::from_int(mi), MbValue::from_int(s),
+        MbValue::from_int(wd), MbValue::from_int(yd), MbValue::from_int(dst),
+    ];
+    fields.insert("_entries".to_string(), MbValue::from_ptr(MbObject::new_list(entries)));
+    // gmtoff/zone may be borrowed tuple elements (struct_time factory path);
+    // retain before storing so they outlive the source.
+    unsafe {
+        super::super::rc::retain_if_ptr(gmtoff);
+        super::super::rc::retain_if_ptr(zone);
+    }
+    fields.insert("tm_gmtoff".to_string(), gmtoff);
+    fields.insert("tm_zone".to_string(), zone);
+    fields.insert("n_fields".to_string(), MbValue::from_int(11));
     fields.insert("n_sequence_fields".to_string(), MbValue::from_int(9));
     fields.insert("n_unnamed_fields".to_string(), MbValue::from_int(0));
     let obj = Box::new(MbObject {
@@ -458,17 +607,14 @@ pub fn mb_time_time() -> MbValue {
     MbValue::from_float(duration.as_secs_f64())
 }
 
-/// time.time_ns() -> float (nanoseconds since epoch as f64)
-///
-/// Carve-out: mamba's tagged int is 48-bit; wallclock-ns (~1.8e18) does
-/// not fit. We return f64 instead. Sub-microsecond precision is lost at
-/// current epoch magnitudes — callers needing integer ns should compose
-/// from `time()` and a sub-second monotonic delta.
+/// time.time_ns() -> int
 pub fn mb_time_time_ns() -> MbValue {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    MbValue::from_float(duration.as_nanos() as f64)
+    // CPython returns an int; nanosecond epoch exceeds mamba's 48-bit inline
+    // int, so route through int_from_i64 (promotes to BigInt as needed).
+    super::super::bigint_ops::int_from_i64(duration.as_nanos() as i64)
 }
 
 thread_local! {
@@ -480,9 +626,9 @@ pub fn mb_time_monotonic() -> MbValue {
     MONO_EPOCH.with(|e| MbValue::from_float(e.elapsed().as_secs_f64()))
 }
 
-/// time.monotonic_ns() -> float (see time_ns carve-out re: 48-bit tagged int)
+/// time.monotonic_ns() -> int
 pub fn mb_time_monotonic_ns() -> MbValue {
-    MONO_EPOCH.with(|e| MbValue::from_float(e.elapsed().as_nanos() as f64))
+    MONO_EPOCH.with(|e| super::super::bigint_ops::int_from_i64(e.elapsed().as_nanos() as i64))
 }
 
 /// time.perf_counter() -> float
@@ -526,9 +672,9 @@ pub fn mb_time_process_time() -> MbValue {
     MbValue::from_float(cpu_time_ns(false) as f64 / 1e9)
 }
 
-/// time.process_time_ns() -> float (see time_ns carve-out re: 48-bit tagged int)
+/// time.process_time_ns() -> int
 pub fn mb_time_process_time_ns() -> MbValue {
-    MbValue::from_float(cpu_time_ns(false) as f64)
+    super::super::bigint_ops::int_from_i64(cpu_time_ns(false))
 }
 
 /// time.thread_time() -> float (CPU time for this thread)
@@ -536,18 +682,19 @@ pub fn mb_time_thread_time() -> MbValue {
     MbValue::from_float(cpu_time_ns(true) as f64 / 1e9)
 }
 
-/// time.thread_time_ns() -> float (see time_ns carve-out re: 48-bit tagged int)
+/// time.thread_time_ns() -> int
 pub fn mb_time_thread_time_ns() -> MbValue {
-    MbValue::from_float(cpu_time_ns(true) as f64)
+    super::super::bigint_ops::int_from_i64(cpu_time_ns(true))
 }
 
 /// time.tzset() -> None
 ///
-/// Carve-out: chrono caches the system tz at startup, so this currently
-/// re-snapshots from `chrono::Local` rather than honouring a freshly
-/// exported `TZ` env var. Returns `None`.
+/// Re-read the Python-level `os.environ["TZ"]` mapping when present, falling
+/// back to the real process environment and then the host timezone.
 pub fn mb_time_tzset() -> MbValue {
-    let _ = compute_tz_snapshot();
+    let tz = compute_tz_snapshot();
+    store_tz_snapshot(tz.clone());
+    publish_tz_snapshot(&tz);
     MbValue::none()
 }
 
@@ -600,6 +747,38 @@ pub fn mb_time_gmtime(secs: MbValue) -> MbValue {
 
 /// time.localtime(secs=None) -> struct_time (local)
 pub fn mb_time_localtime(secs: MbValue) -> MbValue {
+    let tz = current_tz_snapshot();
+    if let Some(offset_east) = tz.fixed_local_offset_east {
+        let secs_f = if secs.is_none() || extract_float(secs).is_none() {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0)
+        } else {
+            let secs_f = extract_float(secs).unwrap_or(0.0);
+            if !timestamp_in_range(secs_f) {
+                return raise_overflow_error("timestamp out of range for platform time_t");
+            }
+            secs_f
+        };
+        let whole = secs_f.trunc() as i64;
+        let frac_ns = ((secs_f - whole as f64) * 1e9) as u32;
+        let utc = Utc.timestamp_opt(whole, frac_ns).single().unwrap_or_else(Utc::now);
+        let local = utc.naive_utc() + Duration::seconds(offset_east);
+        return new_struct_time_instance(
+            local.year() as i64,
+            local.month() as i64,
+            local.day() as i64,
+            local.hour() as i64,
+            local.minute() as i64,
+            local.second() as i64,
+            local.weekday().num_days_from_monday() as i64,
+            local.ordinal() as i64,
+            tz.fixed_local_isdst,
+            MbValue::from_int(offset_east),
+            MbValue::from_ptr(MbObject::new_str(tz.fixed_local_zone)),
+        );
+    }
     let dt = if secs.is_none() || extract_float(secs).is_none() {
         Local::now()
     } else {
@@ -727,7 +906,13 @@ pub fn mb_time_clock_settime_ns(_clk_id: MbValue, _value: MbValue) -> MbValue {
 /// object itself is not yet a real type for `isinstance` checks.
 pub fn mb_time_struct_time(seq: MbValue) -> MbValue {
     let items = extract_tuple_items(seq);
-    let get = |i: usize| -> i64 { items.get(i).copied().and_then(extract_int).unwrap_or(0) };
+    let get = |i: usize| -> i64 {
+        items.get(i).copied().and_then(extract_int).unwrap_or(0)
+    };
+    // Constructed from a bare 9-tuple, tm_gmtoff/tm_zone are None (CPython);
+    // an extended 11-tuple supplies them at positions 9 and 10.
+    let gmtoff = items.get(9).copied().unwrap_or_else(MbValue::none);
+    let zone = items.get(10).copied().unwrap_or_else(MbValue::none);
     new_struct_time_instance(
         get(0),
         get(1),
@@ -738,6 +923,8 @@ pub fn mb_time_struct_time(seq: MbValue) -> MbValue {
         get(6),
         get(7),
         get(8),
+        gmtoff,
+        zone,
     )
 }
 
@@ -773,23 +960,84 @@ pub fn mb_time_get_clock_info(name: MbValue) -> MbValue {
 }
 
 /// time.strftime(format, struct_time=None) -> str
+/// Replace `%w` in a strftime format with the value derived from the
+/// struct_time tm_wday field (Python Mon=0..Sun=6 → strftime Sun=0..Sat=6).
+/// CPython's strftime reads %w from the supplied tm_wday rather than the
+/// recomputed date, so an inconsistent/zero-filled tuple formats correctly.
+/// For a consistent struct_time this equals chrono's date-derived %w, so
+/// normal calls are unaffected. `%%` and all other directives pass through.
+fn substitute_wday_directive(fmt: &str, tm_wday: i64) -> String {
+    let w = (((tm_wday % 7) + 7) % 7 + 1) % 7;
+    let mut out = String::with_capacity(fmt.len());
+    let mut chars = fmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            match chars.peek() {
+                Some('%') => { chars.next(); out.push_str("%%"); }
+                Some('w') => { chars.next(); out.push_str(&w.to_string()); }
+                _ => out.push('%'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 pub fn mb_time_strftime(fmt: MbValue, st: MbValue) -> MbValue {
     if is_bytes_value(fmt) {
         return raise_type_error("strftime() argument 1 must be str, not bytes");
     }
     let format_str = extract_str(fmt).unwrap_or_default();
-    let naive = if st.is_none() {
-        Local::now().naive_local()
-    } else {
-        match struct_time_to_naive(st) {
-            Some(n) => n,
-            None => return MbValue::from_ptr(MbObject::new_str(String::new())),
-        }
+    if st.is_none() {
+        // chrono uses the same %-directive vocabulary as strftime(3) for the
+        // common cases CPython exposes (%Y %m %d %H %M %S %A %a %B %b %p %j %%).
+        let out = Local::now().naive_local().format(&format_str).to_string();
+        return MbValue::from_ptr(MbObject::new_str(out));
+    }
+    // CPython substitutes the documented minimums for zero-valued month/day
+    // fields and takes %w from the struct_time's tm_wday, so zero-filled /
+    // inconsistent tuples like `(2000,)+(0,)*8` still format. Build the date
+    // here (not via the shared struct_time_to_naive, which mktime/asctime use
+    // with CPython's different out-of-range normalization).
+    let items = extract_tuple_items(st);
+    if items.len() < 6 {
+        return MbValue::from_ptr(MbObject::new_str(String::new()));
+    }
+    let geti = |i: usize| items.get(i).and_then(|v| extract_int(*v)).unwrap_or(0);
+    let y = geti(0) as i32;
+    let mo = { let m = geti(1); if m == 0 { 1 } else { m } } as u32;
+    let d = { let dd = geti(2); if dd == 0 { 1 } else { dd } } as u32;
+    let (h, mi, s) = (geti(3) as u32, geti(4) as u32, geti(5) as u32);
+    let naive = match chrono::NaiveDate::from_ymd_opt(y, mo, d).and_then(|nd| nd.and_hms_opt(h, mi, s)) {
+        Some(n) => n,
+        None => return MbValue::from_ptr(MbObject::new_str(String::new())),
     };
-    // chrono uses the same %-directive vocabulary as strftime(3) for the
-    // common cases CPython exposes (%Y %m %d %H %M %S %A %a %B %b %p %j %%).
-    let out = naive.format(&format_str).to_string();
+    let resolved = substitute_wday_directive(&format_str, geti(6));
+    let out = naive.format(&resolved).to_string();
     MbValue::from_ptr(MbObject::new_str(out))
+}
+
+/// Parse a `%z`-style UTC offset (`+0500`, `-08:00`, `+05`) into seconds.
+fn parse_utc_offset(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let mut chars = s.chars();
+    let sign = match chars.next()? {
+        '+' => 1,
+        '-' => -1,
+        _ => return None,
+    };
+    let digits: Vec<u32> = chars.filter_map(|c| c.to_digit(10)).collect();
+    if digits.len() < 2 {
+        return None;
+    }
+    let hh = (digits[0] * 10 + digits[1]) as i64;
+    let mm = if digits.len() >= 4 {
+        (digits[2] * 10 + digits[3]) as i64
+    } else {
+        0
+    };
+    Some(sign * (hh * 3600 + mm * 60))
 }
 
 /// time.strptime(string, format=None) -> struct_time
@@ -799,6 +1047,25 @@ pub fn mb_time_strptime(s: MbValue, fmt: MbValue) -> MbValue {
     }
     let input = extract_str(s).unwrap_or_default();
     let format_str = extract_str(fmt).unwrap_or_else(|| "%a %b %e %H:%M:%S %Y".to_string());
+    // A lone `%Z` (zone name) or `%z` (offset) directive: chrono's
+    // NaiveDateTime parse can't carry a zone name or bare offset, so handle the
+    // single-directive forms directly. CPython fills the rest with its defaults
+    // (1900-01-01, a Monday → tm_wday 0, tm_yday 1).
+    match format_str.trim() {
+        "%Z" => {
+            let zone = MbValue::from_ptr(MbObject::new_str(input.trim().to_string()));
+            return new_struct_time_instance(1900, 1, 1, 0, 0, 0, 0, 1, 0, MbValue::none(), zone);
+        }
+        "%z" => {
+            if let Some(off) = parse_utc_offset(&input) {
+                return new_struct_time_instance(
+                    1900, 1, 1, 0, 0, 0, 0, 1, 0,
+                    MbValue::from_int(off), MbValue::none(),
+                );
+            }
+        }
+        _ => {}
+    }
     match NaiveDateTime::parse_from_str(&input, &format_str) {
         Ok(n) => {
             let utc = Utc.from_utc_datetime(&n);
@@ -844,6 +1111,10 @@ mod tests {
         })
     }
 
+    fn int_like_as_f64(val: MbValue) -> f64 {
+        unsafe { crate::runtime::bigint_ops::int_as_f64(val).expect("expected int-like value") }
+    }
+
     // -- time / time_ns --
 
     #[test]
@@ -854,18 +1125,15 @@ mod tests {
     }
 
     #[test]
-    fn test_time_ns_returns_float() {
-        // Carve-out: mamba's 48-bit tagged int can't hold wallclock-ns;
-        // time_ns returns f64 instead. Sub-microsecond precision lost.
+    fn test_time_ns_returns_int() {
         let t = mb_time_time_ns();
-        assert!(t.as_float().is_some());
-        assert!(t.as_float().unwrap() > 1.7e18);
+        assert!(int_like_as_f64(t) > 1.7e18);
     }
 
     #[test]
     fn test_time_ns_consistent_with_time() {
         let f = mb_time_time().as_float().unwrap();
-        let n = mb_time_time_ns().as_float().unwrap();
+        let n = int_like_as_f64(mb_time_time_ns());
         let from_ns = n / 1e9;
         assert!((from_ns - f).abs() < 1.0);
     }
@@ -880,10 +1148,9 @@ mod tests {
     }
 
     #[test]
-    fn test_monotonic_ns_returns_float() {
+    fn test_monotonic_ns_returns_int() {
         let t = mb_time_monotonic_ns();
-        assert!(t.as_float().is_some());
-        assert!(t.as_float().unwrap() >= 0.0);
+        assert!(int_like_as_f64(t) >= 0.0);
     }
 
     #[test]
@@ -901,8 +1168,8 @@ mod tests {
     }
 
     #[test]
-    fn test_perf_counter_ns_returns_float() {
-        assert!(mb_time_perf_counter_ns().as_float().is_some());
+    fn test_perf_counter_ns_returns_int() {
+        assert!(int_like_as_f64(mb_time_perf_counter_ns()) >= 0.0);
     }
 
     // -- process_time / thread_time --
@@ -915,8 +1182,8 @@ mod tests {
     }
 
     #[test]
-    fn test_process_time_ns_returns_float() {
-        assert!(mb_time_process_time_ns().as_float().is_some());
+    fn test_process_time_ns_returns_int() {
+        assert!(int_like_as_f64(mb_time_process_time_ns()) >= 0.0);
     }
 
     #[test]
@@ -927,8 +1194,8 @@ mod tests {
     }
 
     #[test]
-    fn test_thread_time_ns_returns_float() {
-        assert!(mb_time_thread_time_ns().as_float().is_some());
+    fn test_thread_time_ns_returns_int() {
+        assert!(int_like_as_f64(mb_time_thread_time_ns()) >= 0.0);
     }
 
     // -- sleep --
@@ -1055,8 +1322,7 @@ mod tests {
     #[test]
     fn test_clock_gettime_ns_realtime() {
         let r = mb_time_clock_gettime_ns(MbValue::from_int(CLOCK_REALTIME));
-        // ns clocks return f64 (see time_ns carve-out).
-        assert!(r.as_float().unwrap() > 0.0);
+        assert!(int_like_as_f64(r) > 0.0);
     }
 
     #[test]
@@ -1201,11 +1467,11 @@ mod tests {
 
     #[test]
     fn test_compute_tz_snapshot_shape() {
-        let (tz, alt, dst, n0, _n1) = compute_tz_snapshot();
-        assert_eq!(tz, alt);
-        assert_eq!(dst, 0);
-        assert!(tz >= -50_400 && tz <= 50_400);
-        let _ = n0;
+        let snap = compute_tz_snapshot();
+        assert_eq!(snap.timezone_west, snap.altzone_west);
+        assert_eq!(snap.daylight, 0);
+        assert!(snap.timezone_west >= -50_400 && snap.timezone_west <= 50_400);
+        let _ = snap.standard_name;
     }
 
     // -- register() surface coverage --

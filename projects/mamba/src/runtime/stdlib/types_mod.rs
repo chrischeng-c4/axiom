@@ -36,12 +36,12 @@
 //!     rather than a wrapped dict.
 //!   - `DynamicClassAttribute`: descriptor stub. Decoration semantics
 //!     (the actual __get__ protocol) are not yet implemented.
-//!   - `new_class(name, bases=(), kwds=None, exec_body=None)`: returns a
-//!     type stub bearing `name`. The bases tuple is accepted positionally
-//!     but ignored; `kwds` / `exec_body` are not threaded into the
-//!     resulting class body.
-//!   - `prepare_class(name, bases, kwds)`: returns `(None, {}, {})`
-//!     unconditionally — the metaclass-resolution path is not modeled.
+//!   - `new_class(name, bases=(), kwds=None, exec_body=None)`: routes simple
+//!     class construction through `type(name, bases, ns)`, while explicit
+//!     metaclasses are handled by the runtime metaclass call path.
+//!   - `prepare_class(name, bases, kwds)`: models the common metaclass
+//!     selection path and calls `__prepare__` when the chosen metaclass
+//!     defines it; conflict diagnostics remain simplified.
 //!   - `resolve_bases(bases)`: identity function (real implementation
 //!     unwraps `__mro_entries__`).
 //!   - `get_original_bases(cls)`: returns an empty tuple — the
@@ -54,8 +54,56 @@ use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::super::value::MbValue;
 use crate::runtime::rc::MbRwLock as RwLock;
 use rustc_hash::FxHashMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU32;
+
+const CO_ITERABLE_COROUTINE: i64 = 0x0200;
+
+thread_local! {
+    static COROUTINE_FUNCTIONS: std::cell::RefCell<HashSet<u64>> =
+        std::cell::RefCell::new(HashSet::new());
+    static COROUTINE_GENERATOR_ORIGINS: std::cell::RefCell<HashMap<u64, MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+pub fn mark_coroutine_result(func: MbValue, result: MbValue) -> MbValue {
+    if !is_coroutine_function(func) || !super::super::generator::is_known_generator(result) {
+        return result;
+    }
+    if let Some(id) = result.as_int() {
+        COROUTINE_GENERATOR_ORIGINS.with(|origins| {
+            origins.borrow_mut().insert(id as u64, func);
+        });
+    }
+    result
+}
+
+pub fn is_coroutine_generator(gen: MbValue) -> bool {
+    gen.as_int().is_some_and(|id| {
+        COROUTINE_GENERATOR_ORIGINS.with(|origins| origins.borrow().contains_key(&(id as u64)))
+    })
+}
+
+pub fn coroutine_generator_origin(gen: MbValue) -> Option<MbValue> {
+    gen.as_int().and_then(|id| {
+        COROUTINE_GENERATOR_ORIGINS.with(|origins| origins.borrow().get(&(id as u64)).copied())
+    })
+}
+
+pub(crate) fn cleanup_all_types_state() {
+    let _ = COROUTINE_FUNCTIONS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
+    let _ = COROUTINE_GENERATOR_ORIGINS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+}
+
+fn mark_coroutine_function(func: MbValue) {
+    COROUTINE_FUNCTIONS.with(|funcs| {
+        funcs.borrow_mut().insert(func.to_bits());
+    });
+}
+
+fn is_coroutine_function(func: MbValue) -> bool {
+    COROUTINE_FUNCTIONS.with(|funcs| funcs.borrow().contains(&func.to_bits()))
+}
 
 // Each generated dispatcher loads `stringify!($name)` through `black_box`
 // so LLVM's `mergefunc` pass keeps the bodies distinct. Without that, any
@@ -71,8 +119,81 @@ macro_rules! dispatch_unary {
     };
 }
 
-dispatch_unary!(dispatch_new_class, mb_types_new_class);
-dispatch_unary!(dispatch_prepare_class, mb_types_prepare_class);
+// types.new_class(name, bases=(), kwds=None, exec_body=None) — variadic so the
+// bases/exec_body are honored, routing to the real type(name, bases, ns) class
+// creator after running exec_body to populate the namespace.
+unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let name = a.first().copied().unwrap_or_else(MbValue::none);
+    let bases = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let kwds = a.get(2).copied().unwrap_or_else(MbValue::none);
+    let exec_body = a.get(3).copied().unwrap_or_else(MbValue::none);
+    // CPython: prepare_class pops `metaclass` from kwds and forwards the rest to
+    // `metaclass(name, bases, ns, **kwds)`. An explicit metaclass (any callable,
+    // not necessarily a real type) takes over class creation.
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let meta = super::super::dict_ops::mb_dict_get(
+        kwds,
+        MbValue::from_ptr(MbObject::new_str("metaclass".to_string())),
+        sentinel,
+    );
+    if !kwds.is_none() && meta.to_bits() != sentinel.to_bits() {
+        let bases_t = if bases.is_none() {
+            MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
+        } else {
+            bases
+        };
+        // CPython calls metaclass(name, bases, ns, **kwds); a non-callable
+        // metaclass (e.g. a bare string) is a TypeError, not a silent build.
+        if super::super::builtins::mb_callable(meta).as_bool() != Some(true) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "metaclass is not callable".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+        if let Some(meta_name) = super::super::class::resolve_class_name(meta) {
+            if meta_name == "type" || super::super::class::class_is_registered(&meta_name) {
+                let ns = prepare_namespace(&meta_name, name, bases_t);
+                if !exec_body.is_none() {
+                    let _ = super::super::class::mb_call1_val(exec_body, ns);
+                }
+                let type_obj = super::super::builtins::mb_type3_kwargs(name, bases_t, ns, kwds);
+                if let Some(class_name) = name.as_ptr().and_then(|p| unsafe {
+                    if let ObjData::Str(ref s) = (*p).data {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                }) {
+                    return MbValue::from_ptr(MbObject::new_str(class_name));
+                }
+                return type_obj;
+            }
+        }
+        let ns = MbValue::from_ptr(MbObject::new_dict());
+        if !exec_body.is_none() {
+            let _ = super::super::class::mb_call1_val(exec_body, ns);
+        }
+        let remaining = super::super::dict_ops::mb_dict_copy(kwds);
+        super::super::dict_ops::mb_dict_delitem(
+            remaining,
+            MbValue::from_ptr(MbObject::new_str("metaclass".to_string())),
+        );
+        let pos = MbValue::from_ptr(MbObject::new_list(vec![name, bases_t, ns]));
+        return super::super::builtins::mb_call_spread_kwargs(meta, pos, remaining);
+    }
+    mb_types_new_class_impl(name, bases, exec_body)
+}
+unsafe extern "C" fn dispatch_prepare_class(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let name = a.first().copied().unwrap_or_else(MbValue::none);
+    let bases = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let kwds = a.get(2).copied().unwrap_or_else(MbValue::none);
+    mb_types_prepare_class_impl(name, bases, kwds)
+}
 dispatch_unary!(dispatch_resolve_bases, mb_types_resolve_bases);
 dispatch_unary!(dispatch_coroutine, mb_types_coroutine);
 dispatch_unary!(dispatch_get_original_bases, mb_types_get_original_bases);
@@ -196,6 +317,11 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
+        if name == "SimpleNamespace" {
+            super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+                m.borrow_mut().insert(addr as u64, "SimpleNamespace".to_string());
+            });
+        }
     }
 
     super::register_module("types", attrs);
@@ -361,45 +487,223 @@ pub fn mb_types_SimpleNamespace() -> MbValue {
 
 // -- Callable helpers --
 
+/// types.new_class(name, bases=(), kwds=None, exec_body=None) -> type.
+/// Builds a namespace dict, runs exec_body(ns) to populate it, then creates the
+/// class via the real `type(name, bases, ns)` machinery (registers it so
+/// __bases__/isinstance/attributes work).
+pub fn mb_types_new_class_impl(name: MbValue, bases: MbValue, exec_body: MbValue) -> MbValue {
+    let ns = MbValue::from_ptr(MbObject::new_dict());
+    if !exec_body.is_none() {
+        // exec_body(ns) mutates ns in place to add methods/attributes.
+        let _ = super::super::class::mb_call1_val(exec_body, ns);
+    }
+    // A None / missing bases means the empty tuple (→ object base in mb_type3).
+    let bases = if bases.is_none() {
+        MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
+    } else {
+        bases
+    };
+    // mb_type3 registers the class (and returns a `type` object). Normal user
+    // classes are represented as the class-name string — the form whose
+    // __name__/__bases__/isinstance resolve through the registry — so return
+    // that for consistency.
+    let _ = super::super::builtins::mb_type3(name, bases, ns);
+    if let Some(s) = name.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+    }) {
+        return MbValue::from_ptr(MbObject::new_str(s));
+    }
+    name
+}
+
 /// types.new_class(name, bases=(), kwds=None, exec_body=None) -> type
 pub fn mb_types_new_class(name: MbValue) -> MbValue {
-    let class_name = name
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
+    mb_types_new_class_impl(name, MbValue::none(), MbValue::none())
+}
+
+fn dict_get_str(dict: MbValue, key: &str) -> Option<MbValue> {
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let found = super::super::dict_ops::mb_dict_get(
+        dict,
+        MbValue::from_ptr(MbObject::new_str(key.to_string())),
+        sentinel,
+    );
+    if found.to_bits() == sentinel.to_bits() {
+        None
+    } else {
+        Some(found)
+    }
+}
+
+fn dict_without_metaclass(kwds: MbValue, had_metaclass: bool) -> MbValue {
+    let remaining = if kwds.as_ptr().map_or(false, |p| unsafe {
+        matches!(&(*p).data, ObjData::Dict(_))
+    }) {
+        super::super::dict_ops::mb_dict_copy(kwds)
+    } else {
+        MbValue::from_ptr(MbObject::new_dict())
+    };
+    if had_metaclass {
+        super::super::dict_ops::mb_dict_delitem(
+            remaining,
+            MbValue::from_ptr(MbObject::new_str("metaclass".to_string())),
+        );
+    }
+    remaining
+}
+
+fn normalized_bases_tuple(bases: MbValue) -> MbValue {
+    if bases.is_none() {
+        MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
+    } else {
+        bases
+    }
+}
+
+fn base_metaclass_name(base: MbValue) -> Option<String> {
+    if let Some(class_name) = super::super::class::resolve_class_name(base) {
+        return super::super::class::class_metaclass_name(&class_name)
+            .or_else(|| Some("type".to_string()));
+    }
+    base.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { class_name, .. } = &(*ptr).data {
+            if super::super::class::class_is_registered(class_name) {
+                Some(class_name.clone())
             } else {
                 None
             }
-        })
-        .unwrap_or_else(|| "NewClass".to_string());
-    make_type_obj(&class_name)
+        } else {
+            None
+        }
+    })
 }
 
-/// types.prepare_class(name, bases, kwds) -> (meta, ns, kwds)
-///
-/// Returns `(None, {}, {})` — metaclass resolution is not modeled.
-pub fn mb_types_prepare_class(_name: MbValue) -> MbValue {
+fn most_derived_base_metaclass(bases: MbValue) -> Option<String> {
+    bases.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Tuple(items) = &(*ptr).data {
+            items.iter().find_map(|base| {
+                let meta = base_metaclass_name(*base)?;
+                if meta == "type" { None } else { Some(meta) }
+            })
+        } else {
+            None
+        }
+    })
+}
+
+fn metaclass_value(name: &str) -> MbValue {
+    if name == "type" {
+        super::super::builtins::make_type_object("type")
+    } else {
+        MbValue::from_ptr(MbObject::new_str(name.to_string()))
+    }
+}
+
+fn prepare_namespace(meta_name: &str, name: MbValue, bases: MbValue) -> MbValue {
+    if super::super::class::lookup_method(meta_name, "__prepare__").is_none() {
+        return MbValue::from_ptr(MbObject::new_dict());
+    }
+    let ns = super::super::class::mb_call_metaclass_prepare(meta_name, name, bases);
+    if ns.is_none() {
+        MbValue::from_ptr(MbObject::new_dict())
+    } else {
+        ns
+    }
+}
+
+fn mb_types_prepare_class_impl(name: MbValue, bases: MbValue, kwds: MbValue) -> MbValue {
+    let bases = normalized_bases_tuple(bases);
+    let explicit_meta = dict_get_str(kwds, "metaclass");
+    let explicit_meta_name = explicit_meta
+        .and_then(super::super::class::resolve_class_name);
+    let base_meta_name = most_derived_base_metaclass(bases);
+    let meta_name = match (explicit_meta_name, base_meta_name) {
+        (Some(explicit), Some(base)) if explicit == "type" => base,
+        (Some(explicit), _) => explicit,
+        (None, Some(base)) => base,
+        (None, None) => "type".to_string(),
+    };
+    let ns = prepare_namespace(&meta_name, name, bases);
+    let remaining = dict_without_metaclass(kwds, explicit_meta.is_some());
     MbValue::from_ptr(MbObject::new_tuple(vec![
-        MbValue::none(),
-        MbValue::from_ptr(MbObject::new_dict()),
-        MbValue::from_ptr(MbObject::new_dict()),
+        metaclass_value(&meta_name),
+        ns,
+        remaining,
     ]))
 }
 
-/// types.resolve_bases(bases) -> tuple
-///
-/// Identity passthrough — CPython unwraps `__mro_entries__` but mamba
-/// has no such protocol yet.
+/// types.prepare_class(name, bases, kwds) -> (meta, ns, kwds)
+pub fn mb_types_prepare_class(_name: MbValue) -> MbValue {
+    mb_types_prepare_class_impl(_name, MbValue::none(), MbValue::none())
+}
+
+/// True if `v` is a class (a registered class-name string or a `type` object),
+/// as opposed to an instance that may carry __mro_entries__.
+fn rb_is_class(v: MbValue) -> bool {
+    v.as_ptr()
+        .map(|p| unsafe {
+            match &(*p).data {
+                ObjData::Str(s) => super::super::class::class_is_registered(s),
+                ObjData::Instance { class_name, .. } => class_name == "type",
+                _ => false,
+            }
+        })
+        .unwrap_or(false)
+}
+
+/// types.resolve_bases(bases) — PEP 560: replace any non-class base that defines
+/// __mro_entries__ with the tuple it returns. Returns the original tuple
+/// unchanged (same object) when nothing is resolved.
 pub fn mb_types_resolve_bases(bases: MbValue) -> MbValue {
-    bases
+    let items: Vec<MbValue> = bases
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Tuple(ref it) = (*p).data {
+                it.to_vec()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
+    let mut new_bases: Vec<MbValue> = Vec::new();
+    let mut updated = false;
+    for &base in &items {
+        if rb_is_class(base) {
+            new_bases.push(base);
+            continue;
+        }
+        let attr = MbValue::from_ptr(MbObject::new_str("__mro_entries__".to_string()));
+        if super::super::class::mb_hasattr(base, attr).as_bool() == Some(true) {
+            let mname = MbValue::from_ptr(MbObject::new_str("__mro_entries__".to_string()));
+            let args = MbValue::from_ptr(MbObject::new_list(vec![bases]));
+            let result = super::super::class::mb_call_method(base, mname, args);
+            updated = true;
+            let spliced = result.as_ptr().map(|rp| unsafe {
+                if let ObjData::Tuple(ref it) = (*rp).data {
+                    Some(it.to_vec())
+                } else {
+                    None
+                }
+            });
+            match spliced.flatten() {
+                Some(entries) => new_bases.extend(entries),
+                None => new_bases.push(result),
+            }
+        } else {
+            new_bases.push(base);
+        }
+    }
+    if !updated {
+        return bases;
+    }
+    MbValue::from_ptr(MbObject::new_tuple_borrowed(new_bases))
 }
 
 /// types.coroutine(func) -> func
 ///
-/// Identity decorator. CPython promotes generator-based functions to
-/// real coroutine objects; mamba returns the input unchanged. Like
-/// CPython, a non-callable argument raises TypeError with the message
+/// Mamba keeps the callable identity stable, but records the decorator effect
+/// so a returned generator exposes the generator-wrapper protocol and code flag.
+/// Like CPython, a non-callable argument raises TypeError with the message
 /// `types.coroutine() expects a callable`.
 pub fn mb_types_coroutine(func: MbValue) -> MbValue {
     if super::super::builtins::mb_callable(func).as_bool() != Some(true) {
@@ -411,14 +715,68 @@ pub fn mb_types_coroutine(func: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
+    mark_coroutine_function(func);
+    let flags = super::super::closure::func_flags(func) | CO_ITERABLE_COROUTINE;
+    super::super::closure::mb_func_set_flags(func, MbValue::from_int(flags));
     func
 }
 
 /// types.get_original_bases(cls) -> tuple
 ///
-/// Returns the empty tuple — `__orig_bases__` is not tracked.
-pub fn mb_types_get_original_bases(_cls: MbValue) -> MbValue {
+/// Mamba does not track arbitrary `__orig_bases__` yet, but PEP 695 implicit
+/// generics have enough runtime metadata to reconstruct `Generic[T, ...]`.
+pub fn mb_types_get_original_bases(cls: MbValue) -> MbValue {
+    let bases = super::super::class::mb_getattr(
+        cls,
+        MbValue::from_ptr(MbObject::new_str("__bases__".to_string())),
+    );
+    let params = super::super::class::mb_getattr(
+        cls,
+        MbValue::from_ptr(MbObject::new_str("__parameters__".to_string())),
+    );
+    let base_items = super::super::builtins::extract_items(bases);
+    let param_items = super::super::builtins::extract_items(params);
+    if base_items.len() == 1 && !param_items.is_empty() {
+        let base_name = base_items[0]
+            .as_ptr()
+            .and_then(|ptr| unsafe {
+                if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                    if class_name == "type" {
+                        fields
+                            .read()
+                            .unwrap()
+                            .get("__name__")
+                            .copied()
+                            .and_then(mb_str_value)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+        if base_name.as_deref() == Some("typing.Generic") {
+            let origin = super::super::builtins::make_type_object("typing.Generic");
+            let args = if param_items.len() == 1 {
+                param_items[0]
+            } else {
+                MbValue::from_ptr(MbObject::new_tuple(param_items))
+            };
+            let alias = super::typing_mod::generic_subscript(origin, args);
+            return MbValue::from_ptr(MbObject::new_tuple(vec![alias]));
+        }
+    }
     MbValue::from_ptr(MbObject::new_tuple(vec![]))
+}
+
+fn mb_str_value(value: MbValue) -> Option<String> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]
@@ -557,18 +915,20 @@ mod tests {
         let name = MbValue::from_ptr(MbObject::new_str("MyClass".to_string()));
         let cls = mb_types_new_class(name);
         assert_eq!(
-            get_str(get_field(cls, "__name__")).as_deref(),
+            crate::runtime::class::resolve_class_name(cls).as_deref(),
             Some("MyClass")
         );
     }
 
     #[test]
-    fn test_new_class_defaults_when_name_missing() {
+    fn test_new_class_rejects_missing_name() {
         let cls = mb_types_new_class(MbValue::none());
+        assert!(cls.is_none());
         assert_eq!(
-            get_str(get_field(cls, "__name__")).as_deref(),
-            Some("NewClass")
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
         );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]

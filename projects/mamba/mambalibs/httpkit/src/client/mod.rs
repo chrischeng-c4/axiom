@@ -15,7 +15,7 @@ pub mod request;
 pub mod response;
 
 pub use client::HttpClient;
-pub use config::HttpClientConfig;
+pub use config::{HttpClientConfig, HttpProtocolPolicy};
 pub use error::{HttpError, HttpResult};
 pub use middleware::{
     AuthMiddleware, LoggingMiddleware, Middleware, MiddlewareChain, MiddlewareFuture,

@@ -1,4 +1,4 @@
-// `mamba pkgmgr-validate` — drive the 8 release-blocking
+// `mamba pkgmgr-validate` — drive the release-blocking
 // package-manager workflow families and emit a JSON summary that
 // matches validation/profiles/package_manager.toml [runner_contract]
 // + [summary].
@@ -18,9 +18,13 @@
 use anyhow::{Context, Result};
 use clap::ArgMatches;
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -51,8 +55,199 @@ impl Drop for ScratchDir {
     }
 }
 
+fn spawn_publish_upload_server(expected_auth: String) -> Result<(String, JoinHandle<Vec<u8>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").context("bind publish upload probe")?;
+    listener
+        .set_nonblocking(true)
+        .context("set publish upload listener nonblocking")?;
+    let addr = listener.local_addr().context("read upload listener addr")?;
+    let handle = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(pair) => break pair,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return b"timeout waiting for publish upload".to_vec();
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => return format!("accept publish upload: {e}").into_bytes(),
+            }
+        };
+        if let Err(e) = stream.set_nonblocking(false) {
+            return format!("set publish upload stream blocking: {e}").into_bytes();
+        }
+        let request = read_http_request(&mut stream).unwrap_or_else(|e| e.into_bytes());
+        let text = String::from_utf8_lossy(&request);
+        let lower = text.to_ascii_lowercase();
+        let ok = text.starts_with("POST /legacy/ HTTP/1.1")
+            && lower.contains(&format!(
+                "authorization: {}",
+                expected_auth.to_ascii_lowercase()
+            ))
+            && lower.contains("content-type: multipart/form-data;");
+        let response = if ok {
+            "HTTP/1.1 200 ok\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"
+        } else {
+            "HTTP/1.1 400 bad\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad"
+        };
+        let _ = stream.write_all(response.as_bytes());
+        request
+    });
+    Ok((format!("http://{addr}/legacy/"), handle))
+}
+
+fn read_http_request(stream: &mut TcpStream) -> std::result::Result<Vec<u8>, String> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| format!("set upload read timeout: {e}"))?;
+    let mut out = Vec::new();
+    let mut buf = [0u8; 4096];
+    let mut content_len = None;
+    loop {
+        let n = stream
+            .read(&mut buf)
+            .map_err(|e| format!("read upload request: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+        if content_len.is_none() {
+            if let Some(header_end) = find_http_header_end(&out) {
+                let headers = String::from_utf8_lossy(&out[..header_end]);
+                content_len = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                });
+            }
+        }
+        if let (Some(header_end), Some(len)) = (find_http_header_end(&out), content_len) {
+            if out.len() >= header_end + 4 + len {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn find_http_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(4).position(|w| w == b"\r\n\r\n")
+}
+
+fn fake_standalone_python_archive(version: &str) -> Result<Vec<u8>> {
+    let mut tar_bytes = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut tar_bytes);
+        let body = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"-I\" ]; then\n  echo \"{}\"\n  exit 0\nfi\necho \"downloaded-python $@\"\n",
+            version.replace('.', " ")
+        );
+        let mut header = tar::Header::new_gnu();
+        header
+            .set_path("python/install/bin/python3")
+            .context("set fake standalone Python path")?;
+        header.set_size(body.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder
+            .append(&header, body.as_bytes())
+            .context("append fake standalone Python")?;
+        builder.finish().context("finish fake standalone archive")?;
+    }
+    zstd::stream::encode_all(tar_bytes.as_slice(), 0).context("encode fake standalone archive")
+}
+
+fn spawn_python_archive_server(bytes: Vec<u8>) -> Result<(String, JoinHandle<Vec<u8>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").context("bind Python archive probe")?;
+    listener
+        .set_nonblocking(true)
+        .context("set Python archive listener nonblocking")?;
+    let addr = listener.local_addr().context("read Python archive addr")?;
+    let handle = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(pair) => break pair,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return b"timeout waiting for Python archive download".to_vec();
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => return format!("accept Python archive download: {e}").into_bytes(),
+            }
+        };
+        if let Err(e) = stream.set_nonblocking(false) {
+            return format!("set Python archive stream blocking: {e}").into_bytes();
+        }
+        let request = read_http_headers(&mut stream).unwrap_or_else(|e| e.into_bytes());
+        let text = String::from_utf8_lossy(&request);
+        let ok = text.starts_with("GET /cpython.tar.zst HTTP/1.1");
+        let response = if ok {
+            format!(
+                "HTTP/1.1 200 ok\r\ncontent-type: application/zstd\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                bytes.len()
+            )
+        } else {
+            "HTTP/1.1 404 missing\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_string()
+        };
+        let _ = stream.write_all(response.as_bytes());
+        if ok {
+            let _ = stream.write_all(&bytes);
+        }
+        request
+    });
+    Ok((format!("http://{addr}/cpython.tar.zst"), handle))
+}
+
+fn read_http_headers(stream: &mut TcpStream) -> std::result::Result<Vec<u8>, String> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| format!("set header read timeout: {e}"))?;
+    let mut out = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = stream
+            .read(&mut buf)
+            .map_err(|e| format!("read HTTP headers: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+        if find_http_header_end(&out).is_some() {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 const REQUIRED_FAMILIES: &[&str] = &[
-    "init", "add", "lock", "sync", "run", "install", "hash", "cache",
+    "init",
+    "auth",
+    "index",
+    "add",
+    "lock",
+    "audit",
+    "export",
+    "tree",
+    "version",
+    "package",
+    "pip",
+    "venv",
+    "python",
+    "workspace",
+    "shell",
+    "sync",
+    "run",
+    "install",
+    "tool",
+    "hash",
+    "cache",
 ];
 
 pub fn cmd_validate(sub: &ArgMatches) -> Result<()> {
@@ -143,11 +338,24 @@ impl FamilyResult {
 fn run_family(family: &str, bin: &Path) -> FamilyResult {
     match family {
         "init" => probe_init(bin),
+        "auth" => probe_auth(bin),
+        "index" => probe_index(bin),
         "add" => probe_add(bin),
         "lock" => probe_lock(bin),
+        "audit" => probe_audit(bin),
+        "export" => probe_export(bin),
+        "tree" => probe_tree(bin),
+        "version" => probe_version(bin),
+        "package" => probe_package(bin),
+        "pip" => probe_pip(bin),
+        "venv" => probe_venv(bin),
+        "python" => probe_python(bin),
+        "workspace" => probe_workspace(bin),
+        "shell" => probe_shell(bin),
         "sync" => probe_sync(bin),
         "run" => probe_run(bin),
         "install" => probe_install(bin),
+        "tool" => probe_tool(bin),
         "hash" => probe_hash(bin),
         "cache" => probe_cache(bin),
         other => FamilyResult {
@@ -178,6 +386,38 @@ fn build_frozen_index() -> ScratchDir {
     );
     stake_pkg(dir.path(), "frozen-demo-transitive", "0.2.0", &[]);
     dir
+}
+
+fn setup_locked_project(bin: &Path, project: &Path, index: &Path) -> Option<FamilyResult> {
+    if !invoke(bin, project, &["init"]).status.success() {
+        return Some(FamilyResult::fail(
+            "init failed before locked-project setup",
+        ));
+    }
+    let add = invoke(
+        bin,
+        project,
+        &[
+            "add",
+            "frozen-demo-pkg==0.1.0",
+            "--index",
+            index.to_str().unwrap(),
+        ],
+    );
+    if !add.status.success() {
+        return Some(FamilyResult::fail(format!(
+            "add failed before locked-project setup: {}",
+            String::from_utf8_lossy(&add.stderr)
+        )));
+    }
+    let lock = invoke(bin, project, &["lock", "--index", index.to_str().unwrap()]);
+    if !lock.status.success() {
+        return Some(FamilyResult::fail(format!(
+            "lock failed before locked-project setup: {}",
+            String::from_utf8_lossy(&lock.stderr)
+        )));
+    }
+    None
 }
 
 fn stake_pkg(index: &Path, normalized_name: &str, version: &str, requires: &[&str]) {
@@ -211,6 +451,223 @@ fn probe_init(bin: &Path) -> FamilyResult {
         return FamilyResult::fail("init did not create mamba.toml");
     }
     FamilyResult::pass("init created mamba.toml + scaffolding").with_paths(Some(proj), None, None)
+}
+
+fn probe_auth(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let creds = tmp.path().join("credentials");
+    let dir = Command::new(bin)
+        .args(["auth", "dir"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !dir.status.success()
+        || String::from_utf8_lossy(&dir.stdout).trim_end() != creds.display().to_string()
+    {
+        return FamilyResult::fail(format!(
+            "auth dir mismatch: {}",
+            String::from_utf8_lossy(&dir.stdout)
+        ));
+    }
+
+    let login = Command::new(bin)
+        .args([
+            "auth",
+            "login",
+            "https://Repo.EXAMPLE/simple",
+            "--username",
+            "alice",
+            "--token",
+            "secret-token",
+        ])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !login.status.success() {
+        return FamilyResult::fail(format!(
+            "auth login failed: {}",
+            String::from_utf8_lossy(&login.stderr)
+        ));
+    }
+
+    let token = Command::new(bin)
+        .args(["auth", "token", "repo.example", "--username", "alice"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !token.status.success() || String::from_utf8_lossy(&token.stdout).trim() != "secret-token" {
+        return FamilyResult::fail(format!(
+            "auth token mismatch: {}",
+            String::from_utf8_lossy(&token.stdout)
+        ));
+    }
+
+    let logout = Command::new(bin)
+        .args(["auth", "logout", "repo.example", "--username", "alice"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !logout.status.success() {
+        return FamilyResult::fail("auth logout failed");
+    }
+
+    let expected_auth =
+        match crate::pkgmanage::pkgmgr::auth_header::basic_auth("__token__", "index-token") {
+            Ok(header) => header,
+            Err(e) => return FamilyResult::fail(format!("build auth header failed: {e}")),
+        };
+    let index_url = match spawn_auth_index(expected_auth) {
+        Ok(url) => url,
+        Err(e) => return FamilyResult::fail(format!("spawn auth index failed: {e}")),
+    };
+    let index_login = Command::new(bin)
+        .args(["auth", "login", &index_url, "--token", "index-token"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .output()
+        .expect("spawn mamba");
+    if !index_login.status.success() {
+        return FamilyResult::fail(format!(
+            "auth login for local index failed: {}",
+            String::from_utf8_lossy(&index_login.stderr)
+        ));
+    }
+    let project = tmp.path().join("auth-index-project");
+    std::fs::create_dir(&project).unwrap();
+    if !invoke(bin, &project, &["init"]).status.success() {
+        return FamilyResult::fail("init failed before authenticated add probe");
+    }
+    let auth_add = Command::new(bin)
+        .args(["add", "auth_demo", "--index-url", &index_url])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .env("MAMBA_CACHE_DIR", tmp.path().join("auth-index-cache"))
+        .current_dir(&project)
+        .output()
+        .expect("spawn mamba");
+    if !auth_add.status.success() {
+        return FamilyResult::fail(format!(
+            "authenticated add failed: {}",
+            String::from_utf8_lossy(&auth_add.stderr)
+        ));
+    }
+    let lock = std::fs::read_to_string(project.join("mamba.lock")).unwrap_or_default();
+    if !lock.contains("name = \"auth_demo\"") || !lock.contains("version = \"1.0.0\"") {
+        return FamilyResult::fail(format!("authenticated add did not lock auth_demo: {lock}"));
+    }
+
+    FamilyResult::pass(
+        "auth dir/login/token/logout manage credentials; index requests use stored auth",
+    )
+    .with_paths(Some(project), None, Some(creds))
+}
+
+fn spawn_auth_index(expected_auth: String) -> Result<String> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").context("bind auth index")?;
+    let addr = listener.local_addr().context("read auth index addr")?;
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap_or(0);
+        let request = String::from_utf8_lossy(&buf[..n]);
+        let authorized = request.lines().any(|line| {
+            let Some((name, value)) = line.split_once(':') else {
+                return false;
+            };
+            name.eq_ignore_ascii_case("authorization") && value.trim() == expected_auth
+        });
+        let on_path = request.starts_with("GET /pypi/auth-demo/json ");
+        let (status, body) = if authorized && on_path {
+            (
+                "200 OK",
+                serde_json::json!({
+                    "info": { "name": "auth_demo", "version": "1.0.0" },
+                    "releases": {
+                        "1.0.0": [{
+                            "filename": "auth_demo-1.0.0-py3-none-any.whl",
+                            "url": "https://example.invalid/auth_demo-1.0.0-py3-none-any.whl",
+                            "digests": { "sha256": "6666666666666666666666666666666666666666666666666666666666666666" },
+                            "yanked": false
+                        }]
+                    }
+                })
+                .to_string(),
+            )
+        } else {
+            (
+                "401 Unauthorized",
+                "{\"error\":\"missing auth\"}".to_string(),
+            )
+        };
+        let response = format!(
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+    });
+    Ok(format!("http://{addr}"))
+}
+
+fn probe_index(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let wheels = tmp.path().join("wheels");
+    std::fs::create_dir(&wheels).unwrap();
+    let filename = "frozen_demo_pkg-0.1.0-py3-none-any.whl";
+    let wheel = wheels.join(filename);
+    std::fs::write(&wheel, b"fake-wheel-bytes-for-index-build").unwrap();
+    let index = tmp.path().join("index");
+
+    let out = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "index",
+            "build",
+            "--out",
+            index.to_str().unwrap(),
+            wheels.to_str().unwrap(),
+        ],
+    );
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "index build exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    let indexed = index.join("frozen-demo-pkg").join("0.1.0").join(filename);
+    if !indexed.exists() {
+        return FamilyResult::fail("index build did not materialize normalized package layout");
+    }
+    let first = std::fs::read(&indexed).unwrap();
+    let replay = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "index",
+            "build",
+            "--out",
+            index.to_str().unwrap(),
+            wheels.to_str().unwrap(),
+        ],
+    );
+    if !replay.status.success() {
+        return FamilyResult::fail("index build replay failed");
+    }
+    let second = std::fs::read(&indexed).unwrap();
+    if first != second {
+        return FamilyResult::fail("indexed wheel not byte-identical on replay");
+    }
+
+    FamilyResult::pass("index build materialized wheel layout; replay byte-identical").with_paths(
+        Some(index),
+        None,
+        None,
+    )
 }
 
 fn probe_add(bin: &Path) -> FamilyResult {
@@ -293,11 +750,1065 @@ fn probe_lock(bin: &Path) -> FamilyResult {
     if !lock.contains("name = \"frozen-demo-transitive\"") {
         return FamilyResult::fail("lockfile missing transitive dep");
     }
-    FamilyResult::pass("lock byte-identical on replay; records transitive").with_paths(
+    let check = invoke(
+        bin,
+        &proj,
+        &["lock", "--check", "--index", index.path().to_str().unwrap()],
+    );
+    if !check.status.success() {
+        return FamilyResult::fail(format!(
+            "lock --check failed: {}",
+            String::from_utf8_lossy(&check.stderr)
+        ));
+    }
+    FamilyResult::pass("lock byte-identical on replay; records transitive; check mode clean")
+        .with_paths(Some(proj), Some(lock_path), None)
+}
+
+fn probe_audit(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    let lock_path = proj.join("mamba.lock");
+    std::fs::write(
+        &lock_path,
+        "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"safe-pkg\"\nversion = \"1.0.0\"\nsha256 = \"\"\nurl = \"\"\nsource = \"pypi://safe-pkg/1.0.0\"\ndirect = true\ndependencies = []\n",
+    )
+    .unwrap();
+    let db_path = tmp.path().join("advisories.json");
+    std::fs::write(
+        &db_path,
+        r#"{"advisories":[{"id":"GHSA-demo","package":"demo-pkg","affected":["<2.0"],"severity":"high","summary":"demo advisory"}]}"#,
+    )
+    .unwrap();
+
+    let clean = Command::new(bin)
+        .args(["audit", "--advisory-db"])
+        .arg(&db_path)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba");
+    if !clean.status.success() {
+        return FamilyResult::fail(format!(
+            "clean audit failed: {}",
+            String::from_utf8_lossy(&clean.stderr)
+        ));
+    }
+
+    std::fs::write(
+        &lock_path,
+        "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"demo_pkg\"\nversion = \"1.2.0\"\nsha256 = \"\"\nurl = \"\"\nsource = \"pypi://demo_pkg/1.2.0\"\ndirect = true\ndependencies = []\n",
+    )
+    .unwrap();
+    let vulnerable = Command::new(bin)
+        .args(["audit", "--json", "--advisory-db"])
+        .arg(&db_path)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba");
+    if vulnerable.status.success() {
+        return FamilyResult::fail("vulnerable audit unexpectedly passed");
+    }
+    let stdout = String::from_utf8_lossy(&vulnerable.stdout);
+    if !stdout.contains("GHSA-demo") || !stdout.contains("demo_pkg") {
+        return FamilyResult::fail(format!("vulnerable audit JSON mismatch: {stdout}"));
+    }
+
+    FamilyResult::pass("audit checks mamba.lock against offline advisory DB").with_paths(
         Some(proj),
         Some(lock_path),
+        Some(db_path),
+    )
+}
+
+fn probe_export(bin: &Path) -> FamilyResult {
+    let index = build_frozen_index();
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    if let Some(failure) = setup_locked_project(bin, &proj, index.path()) {
+        return failure;
+    }
+    let out = invoke(
+        bin,
+        &proj,
+        &["export", "--no-header", "--no-hashes", "--annotate"],
+    );
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "export exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !stdout.contains("frozen-demo-pkg==0.1.0")
+        || !stdout.contains("frozen-demo-transitive==0.2.0")
+        || !stdout.contains("# via frozen-demo-pkg")
+    {
+        return FamilyResult::fail(format!(
+            "requirements export missing pinned graph: {stdout}"
+        ));
+    }
+    FamilyResult::pass("export emits requirements pins + reverse-dep annotations").with_paths(
+        Some(proj.clone()),
+        Some(proj.join("mamba.lock")),
         None,
     )
+}
+
+fn probe_tree(bin: &Path) -> FamilyResult {
+    let index = build_frozen_index();
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    if let Some(failure) = setup_locked_project(bin, &proj, index.path()) {
+        return failure;
+    }
+    let out = invoke(bin, &proj, &["tree"]);
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "tree exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !stdout.contains("frozen-demo-pkg v0.1.0")
+        || !stdout.contains("frozen-demo-transitive v0.2.0")
+    {
+        return FamilyResult::fail(format!("tree missing locked graph: {stdout}"));
+    }
+    FamilyResult::pass("tree renders locked dependency graph").with_paths(
+        Some(proj.clone()),
+        Some(proj.join("mamba.lock")),
+        None,
+    )
+}
+
+fn probe_version(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    let pyproject = proj.join("pyproject.toml");
+    std::fs::write(
+        &pyproject,
+        "[project]\nname = \"demo\"\nversion = \"1.2.3\"\n",
+    )
+    .unwrap();
+    let out = invoke(bin, &proj, &["version", "--bump", "patch"]);
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "version exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let body = std::fs::read_to_string(&pyproject).unwrap_or_default();
+    if stdout.trim() != "1.2.4" || !body.contains("version = \"1.2.4\"") {
+        return FamilyResult::fail(format!("version did not bump pyproject: {stdout} / {body}"));
+    }
+    FamilyResult::pass("version bumps PEP 621 project version").with_paths(Some(proj), None, None)
+}
+
+fn probe_package(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let proj = tmp.path().join("demo");
+    let pkg = proj.join("src").join("demo_pkg");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        proj.join("pyproject.toml"),
+        "[project]\nname = \"demo-pkg\"\nversion = \"0.1.0\"\ndescription = \"Demo package\"\ndependencies = [\"requests>=2\"]\n",
+    )
+    .unwrap();
+    std::fs::write(pkg.join("__init__.py"), "__version__ = '0.1.0'\n").unwrap();
+    let dist = proj.join("dist");
+
+    let build = invoke(
+        bin,
+        &proj,
+        &["package", "build", "--out-dir", dist.to_str().unwrap()],
+    );
+    if !build.status.success() {
+        return FamilyResult::fail(format!(
+            "package build failed: {}",
+            String::from_utf8_lossy(&build.stderr)
+        ));
+    }
+    let wheel = dist.join("demo_pkg-0.1.0-py3-none-any.whl");
+    let sdist = dist.join("demo-pkg-0.1.0.tar.gz");
+    if !wheel.exists() || !sdist.exists() {
+        return FamilyResult::fail("package build did not emit wheel and sdist");
+    }
+
+    let pypirc = proj.join(".pypirc");
+    std::fs::write(
+        &pypirc,
+        "[testpypi]\nusername = __token__\npassword = secret-token\n",
+    )
+    .unwrap();
+    let publish = Command::new(bin)
+        .args([
+            "publish",
+            "--dry-run",
+            "--repository",
+            "testpypi",
+            "--pypirc",
+        ])
+        .arg(&pypirc)
+        .arg("--json")
+        .arg(&wheel)
+        .arg(&sdist)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba publish");
+    if !publish.status.success() {
+        return FamilyResult::fail(format!(
+            "publish dry-run failed: {}",
+            String::from_utf8_lossy(&publish.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&publish.stdout);
+    if !stdout.contains("https://test.pypi.org/legacy/")
+        || !stdout.contains("demo_pkg-0.1.0-py3-none-any.whl")
+        || !stdout.contains("demo-pkg-0.1.0.tar.gz")
+        || stdout.contains("secret-token")
+    {
+        return FamilyResult::fail(format!("publish dry-run summary mismatch: {stdout}"));
+    }
+
+    let expected_auth =
+        match crate::pkgmanage::pkgmgr::auth_header::basic_auth("__token__", "secret-token") {
+            Ok(header) => header,
+            Err(e) => return FamilyResult::fail(format!("publish auth header failed: {e}")),
+        };
+    let (upload_url, handle) = match spawn_publish_upload_server(expected_auth) {
+        Ok(server) => server,
+        Err(e) => return FamilyResult::fail(format!("publish upload server failed: {e}")),
+    };
+    let upload = Command::new(bin)
+        .args([
+            "publish",
+            "--publish-url",
+            upload_url.as_str(),
+            "--username",
+            "__token__",
+            "--password",
+            "secret-token",
+            "--json",
+        ])
+        .arg(&wheel)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba publish upload");
+    if !upload.status.success() {
+        let _ = handle.join();
+        return FamilyResult::fail(format!(
+            "publish upload failed: {}",
+            String::from_utf8_lossy(&upload.stderr)
+        ));
+    }
+    let upload_stdout = String::from_utf8_lossy(&upload.stdout);
+    if !upload_stdout.contains("\"mode\": \"upload\"")
+        || !upload_stdout.contains("\"response_status\": 200")
+        || !upload_stdout.contains("demo_pkg-0.1.0-py3-none-any.whl")
+        || upload_stdout.contains("secret-token")
+    {
+        let _ = handle.join();
+        return FamilyResult::fail(format!("publish upload summary mismatch: {upload_stdout}"));
+    }
+    let request = match handle.join() {
+        Ok(request) => request,
+        Err(_) => return FamilyResult::fail("publish upload probe thread panicked"),
+    };
+    let request_text = String::from_utf8_lossy(&request);
+    if !request_text.starts_with("POST /legacy/ HTTP/1.1")
+        || !request_text.contains("name=\":action\"")
+        || !request_text.contains("file_upload")
+        || !request_text.contains("demo_pkg-0.1.0-py3-none-any.whl")
+    {
+        return FamilyResult::fail(format!("publish upload request mismatch: {request_text}"));
+    }
+
+    FamilyResult::pass(
+        "package build emits wheel/sdist; publish dry-run and upload validate payloads",
+    )
+    .with_paths(Some(proj), None, Some(dist))
+}
+
+fn probe_pip(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let site = tmp.path().join("site-packages");
+    std::fs::create_dir_all(&site).unwrap();
+    write_dist(
+        &site,
+        "Requests-2.31.0.dist-info",
+        "Name: Requests\nVersion: 2.31.0\nRequires-Dist: urllib3>=2\n",
+    );
+    write_dist(
+        &site,
+        "urllib3-2.1.0.dist-info",
+        "Name: urllib3\nVersion: 2.1.0\n",
+    );
+
+    let check = invoke(
+        bin,
+        tmp.path(),
+        &["pip", "check", "--site-packages", site.to_str().unwrap()],
+    );
+    if !check.status.success() {
+        return FamilyResult::fail(format!(
+            "pip check exit {:?}: {}",
+            check.status.code(),
+            String::from_utf8_lossy(&check.stdout)
+        ));
+    }
+    let freeze = invoke(
+        bin,
+        tmp.path(),
+        &["pip", "freeze", "--site-packages", site.to_str().unwrap()],
+    );
+    if !freeze.status.success() {
+        return FamilyResult::fail("pip freeze failed");
+    }
+    let stdout = String::from_utf8_lossy(&freeze.stdout);
+    if !stdout.contains("Requests==2.31.0") || !stdout.contains("urllib3==2.1.0") {
+        return FamilyResult::fail(format!("pip freeze missing inventory: {stdout}"));
+    }
+    let tree = invoke(
+        bin,
+        tmp.path(),
+        &["pip", "tree", "--site-packages", site.to_str().unwrap()],
+    );
+    if !tree.status.success() {
+        return FamilyResult::fail("pip tree failed");
+    }
+    let tree_stdout = String::from_utf8_lossy(&tree.stdout);
+    if !tree_stdout.contains("Requests v2.31.0") || !tree_stdout.contains("urllib3 v2.1.0") {
+        return FamilyResult::fail(format!("pip tree missing dependency graph: {tree_stdout}"));
+    }
+
+    let wheels = tmp.path().join("wheels");
+    let app = build_probe_wheel(&wheels, "pip-demo", "1.0.0", &["pip-demo-dep==0.2.0"]);
+    let dep = build_probe_wheel(&wheels, "pip-demo-dep", "0.2.0", &[]);
+    let index = tmp.path().join("index");
+    let index_out = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "index",
+            "build",
+            "--out",
+            index.to_str().unwrap(),
+            app.to_str().unwrap(),
+            dep.to_str().unwrap(),
+        ],
+    );
+    if !index_out.status.success() {
+        return FamilyResult::fail("pip probe index build failed");
+    }
+
+    let req = tmp.path().join("requirements.txt");
+    std::fs::write(&req, "pip-demo==1.0.0\n").unwrap();
+    let compile = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "compile",
+            req.to_str().unwrap(),
+            "--index",
+            index.to_str().unwrap(),
+            "--no-header",
+        ],
+    );
+    if !compile.status.success() {
+        return FamilyResult::fail(format!(
+            "pip compile failed: {}",
+            String::from_utf8_lossy(&compile.stderr)
+        ));
+    }
+    let compile_stdout = String::from_utf8_lossy(&compile.stdout);
+    if !compile_stdout.contains("pip-demo==1.0.0")
+        || !compile_stdout.contains("pip-demo-dep==0.2.0")
+    {
+        return FamilyResult::fail(format!(
+            "pip compile did not emit requirement graph: {compile_stdout}"
+        ));
+    }
+    let install_site = tmp.path().join("install-site");
+    let sync = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "sync",
+            req.to_str().unwrap(),
+            "--index",
+            index.to_str().unwrap(),
+            "--site-packages",
+            install_site.to_str().unwrap(),
+            "--python",
+            "python3",
+        ],
+    );
+    if !sync.status.success() {
+        return FamilyResult::fail(format!(
+            "pip sync failed: {}",
+            String::from_utf8_lossy(&sync.stderr)
+        ));
+    }
+    let freeze_after_sync = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "freeze",
+            "--site-packages",
+            install_site.to_str().unwrap(),
+        ],
+    );
+    let freeze_after_sync_stdout = String::from_utf8_lossy(&freeze_after_sync.stdout);
+    if !freeze_after_sync_stdout.contains("pip-demo==1.0.0")
+        || !freeze_after_sync_stdout.contains("pip-demo-dep==0.2.0")
+    {
+        return FamilyResult::fail(format!(
+            "pip sync did not install requirement graph: {freeze_after_sync_stdout}"
+        ));
+    }
+
+    let live_app = build_probe_wheel(&wheels, "pip-live", "1.0.0", &["pip-live-dep==0.2.0"]);
+    let live_dep = build_probe_wheel(&wheels, "pip-live-dep", "0.2.0", &[]);
+    let live_index = match spawn_pip_registry(&live_app, &live_dep) {
+        Ok(url) => url,
+        Err(e) => return FamilyResult::fail(format!("spawn pip registry failed: {e}")),
+    };
+    let live_req = tmp.path().join("live-requirements.txt");
+    std::fs::write(&live_req, "pip-live==1.0.0\n").unwrap();
+    let live_compile = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "compile",
+            live_req.to_str().unwrap(),
+            "--index-url",
+            &live_index,
+            "--no-header",
+            "--generate-hashes",
+        ],
+    );
+    if !live_compile.status.success() {
+        return FamilyResult::fail(format!(
+            "pip live-index compile failed: {}",
+            String::from_utf8_lossy(&live_compile.stderr)
+        ));
+    }
+    let live_compile_stdout = String::from_utf8_lossy(&live_compile.stdout);
+    if !live_compile_stdout.contains("pip-live==1.0.0")
+        || !live_compile_stdout.contains("pip-live-dep==0.2.0")
+        || !live_compile_stdout.contains("--hash=sha256:")
+    {
+        return FamilyResult::fail(format!(
+            "pip live-index compile did not emit requirement graph: {live_compile_stdout}"
+        ));
+    }
+    let live_site = tmp.path().join("live-site");
+    let live_sync = Command::new(bin)
+        .args([
+            "pip",
+            "sync",
+            live_req.to_str().unwrap(),
+            "--index-url",
+            &live_index,
+            "--site-packages",
+            live_site.to_str().unwrap(),
+            "--python",
+            "python3",
+        ])
+        .env("MAMBA_CACHE_DIR", tmp.path().join("live-cache"))
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba");
+    if !live_sync.status.success() {
+        return FamilyResult::fail(format!(
+            "pip live-index sync failed: {}",
+            String::from_utf8_lossy(&live_sync.stderr)
+        ));
+    }
+    let live_freeze = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "freeze",
+            "--site-packages",
+            live_site.to_str().unwrap(),
+        ],
+    );
+    let live_freeze_stdout = String::from_utf8_lossy(&live_freeze.stdout);
+    if !live_freeze_stdout.contains("pip-live==1.0.0")
+        || !live_freeze_stdout.contains("pip-live-dep==0.2.0")
+    {
+        return FamilyResult::fail(format!(
+            "pip live-index sync did not install requirement graph: {live_freeze_stdout}"
+        ));
+    }
+
+    let uninstall = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "pip",
+            "uninstall",
+            "pip-demo",
+            "--site-packages",
+            install_site.to_str().unwrap(),
+        ],
+    );
+    if !uninstall.status.success() {
+        return FamilyResult::fail("pip uninstall failed");
+    }
+
+    FamilyResult::pass(
+        "pip compile/install/sync support frozen and explicit-index workflows; inventory commands inspect site-packages",
+    )
+    .with_paths(Some(tmp.path().to_path_buf()), None, Some(install_site))
+}
+
+fn spawn_pip_registry(app: &Path, dep: &Path) -> Result<String> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let app_bytes = std::fs::read(app).with_context(|| format!("read {}", app.display()))?;
+    let dep_bytes = std::fs::read(dep).with_context(|| format!("read {}", dep.display()))?;
+    let app_sha = sha256_bytes(&app_bytes);
+    let dep_sha = sha256_bytes(&dep_bytes);
+    let app_file = app
+        .file_name()
+        .and_then(|s| s.to_str())
+        .context("pip-live app filename")?
+        .to_string();
+    let dep_file = dep
+        .file_name()
+        .and_then(|s| s.to_str())
+        .context("pip-live dep filename")?
+        .to_string();
+    let listener = TcpListener::bind("127.0.0.1:0").context("bind pip registry")?;
+    let addr = listener.local_addr().context("read pip registry addr")?;
+    let base = format!("http://{addr}");
+    let thread_base = base.clone();
+    std::thread::spawn(move || {
+        for _ in 0..32 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("/");
+            let (status, content_type, body) = match path {
+                "/pypi/pip-live/json" => (
+                    "200 OK",
+                    "application/json",
+                    serde_json::json!({
+                        "info": { "name": "pip-live", "version": "1.0.0" },
+                        "releases": {
+                            "1.0.0": [{
+                                "filename": app_file,
+                                "url": format!("{thread_base}/files/{app_file}"),
+                                "digests": { "sha256": app_sha },
+                                "yanked": false
+                            }]
+                        }
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+                "/pypi/pip-live/1.0.0/json" => (
+                    "200 OK",
+                    "application/json",
+                    serde_json::json!({
+                        "info": {
+                            "name": "pip-live",
+                            "version": "1.0.0",
+                            "requires_dist": ["pip-live-dep==0.2.0"]
+                        }
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+                "/pypi/pip-live-dep/json" => (
+                    "200 OK",
+                    "application/json",
+                    serde_json::json!({
+                        "info": { "name": "pip-live-dep", "version": "0.2.0" },
+                        "releases": {
+                            "0.2.0": [{
+                                "filename": dep_file,
+                                "url": format!("{thread_base}/files/{dep_file}"),
+                                "digests": { "sha256": dep_sha },
+                                "yanked": false
+                            }]
+                        }
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+                "/pypi/pip-live-dep/0.2.0/json" => (
+                    "200 OK",
+                    "application/json",
+                    serde_json::json!({
+                        "info": {
+                            "name": "pip-live-dep",
+                            "version": "0.2.0",
+                            "requires_dist": []
+                        }
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+                p if p == format!("/files/{app_file}") => {
+                    ("200 OK", "application/octet-stream", app_bytes.clone())
+                }
+                p if p == format!("/files/{dep_file}") => {
+                    ("200 OK", "application/octet-stream", dep_bytes.clone())
+                }
+                _ => (
+                    "404 Not Found",
+                    "application/json",
+                    b"{\"error\":\"not found\"}".to_vec(),
+                ),
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&body);
+        }
+    });
+    Ok(base)
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn write_dist(site: &Path, dir_name: &str, metadata: &str) {
+    let dist = site.join(dir_name);
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("METADATA"), metadata).unwrap();
+}
+
+fn build_probe_wheel(out_dir: &Path, name: &str, version: &str, requires: &[&str]) -> PathBuf {
+    use crate::pkgmanage::pkgmgr::wheel_build::{
+        CoreMetadata, WheelBuilder, WheelMetadata, compose_filename,
+    };
+
+    let filename = compose_filename(name, version, "py3", "none", "any");
+    let mut wheel_meta = WheelMetadata::new("mamba-pkgmgr-validate");
+    wheel_meta.tags.push("py3-none-any".into());
+    let mut core_meta = CoreMetadata::new(name, version);
+    core_meta.requires_dist = requires.iter().map(|r| r.to_string()).collect();
+    let mut builder = WheelBuilder::new(filename, wheel_meta, core_meta);
+    let module = name.replace(['-', '.'], "_").to_ascii_lowercase();
+    builder.add_file(
+        format!("{module}/__init__.py"),
+        format!("__version__ = {version:?}\n"),
+    );
+    builder.build_to_dir(out_dir).unwrap()
+}
+
+fn probe_venv(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let root = tmp.path().join("v");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("pyvenv.cfg"),
+        "home = /tmp\ninclude-system-site-packages = false\nversion = 3.12.0\n",
+    )
+    .unwrap();
+
+    let refuse = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "venv",
+            "create",
+            root.to_str().unwrap(),
+            "--python",
+            "/definitely/missing/python",
+        ],
+    );
+    if refuse.status.success() {
+        return FamilyResult::fail("venv create overwrote existing pyvenv.cfg");
+    }
+    let stderr = String::from_utf8_lossy(&refuse.stderr);
+    if !stderr.contains("refused_existing_pyvenv_cfg") {
+        return FamilyResult::fail(format!("venv create refusal missing reason: {stderr}"));
+    }
+
+    let remove = invoke(bin, tmp.path(), &["venv", "remove", root.to_str().unwrap()]);
+    if !remove.status.success() {
+        return FamilyResult::fail(format!(
+            "venv remove exit {:?}: {}",
+            remove.status.code(),
+            String::from_utf8_lossy(&remove.stderr)
+        ));
+    }
+    if root.exists() {
+        return FamilyResult::fail("venv remove left target tree behind");
+    }
+    FamilyResult::pass("venv create refuses overwrite and remove requires pyvenv.cfg").with_paths(
+        Some(root),
+        None,
+        None,
+    )
+}
+
+fn probe_python(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let project = tmp.path().join("project");
+    let data = tmp.path().join("uv-data");
+    let fake_python_dir = tmp.path().join("fake-python");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(tmp.path().join("empty-path")).unwrap();
+    std::fs::create_dir_all(&fake_python_dir).unwrap();
+    let fake_python = fake_python_dir.join("python");
+    std::fs::write(
+        &fake_python,
+        "#!/bin/sh\nif [ \"$1\" = \"-I\" ]; then\n  echo \"3 12 7\"\n  exit 0\nfi\necho \"fake-python $@\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&fake_python).unwrap().permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&fake_python, perm).unwrap();
+    }
+
+    let pin = invoke(bin, &project, &["python", "pin", "3.12"]);
+    if !pin.status.success() {
+        return FamilyResult::fail(format!(
+            "python pin exit {:?}: {}",
+            pin.status.code(),
+            String::from_utf8_lossy(&pin.stderr)
+        ));
+    }
+    let pin_body = std::fs::read_to_string(project.join(".python-version")).unwrap_or_default();
+    if pin_body != "3.12\n" {
+        return FamilyResult::fail(format!("python pin body mismatch: {pin_body:?}"));
+    }
+
+    let dir = Command::new(bin)
+        .args(["python", "dir"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !dir.status.success() {
+        return FamilyResult::fail("python dir failed");
+    }
+    let printed = String::from_utf8_lossy(&dir.stdout).trim_end().to_string();
+    if printed != data.join("python").to_string_lossy() {
+        return FamilyResult::fail(format!("python dir mismatch: {printed}"));
+    }
+
+    let install = Command::new(bin)
+        .args(["python", "install", "3.12.7", "--source"])
+        .arg(&fake_python)
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !install.status.success() {
+        return FamilyResult::fail(format!(
+            "python install failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        ));
+    }
+    let managed_root = data.join("python");
+    if !managed_root.join("3.12.7/bin/python").exists()
+        || !managed_root.join("bin/python3.12.7").exists()
+    {
+        return FamilyResult::fail("python install did not create managed launchers");
+    }
+
+    let bin_dir = Command::new(bin)
+        .args(["python", "dir", "--bin"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !bin_dir.status.success() {
+        return FamilyResult::fail("python dir --bin failed");
+    }
+    let printed_bin = String::from_utf8_lossy(&bin_dir.stdout)
+        .trim_end()
+        .to_string();
+    if printed_bin != managed_root.join("bin").to_string_lossy() {
+        return FamilyResult::fail(format!("python dir --bin mismatch: {printed_bin}"));
+    }
+
+    let shell = Command::new(bin)
+        .args(["python", "update-shell", "--shell", "bash"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !shell.status.success() {
+        return FamilyResult::fail("python update-shell failed");
+    }
+    let shell_stdout = String::from_utf8_lossy(&shell.stdout);
+    if !shell_stdout.contains(&format!(
+        "export PATH=\"{}:$PATH\"",
+        managed_root.join("bin").display()
+    )) {
+        return FamilyResult::fail(format!("python update-shell mismatch: {shell_stdout}"));
+    }
+
+    let download = Command::new(bin)
+        .args(["python", "download", "3.12.7", "--source"])
+        .arg(&fake_python)
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !download.status.success() {
+        return FamilyResult::fail(format!(
+            "python download failed: {}",
+            String::from_utf8_lossy(&download.stderr)
+        ));
+    }
+
+    let uninstall = Command::new(bin)
+        .args(["python", "uninstall", "3.12.7"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !uninstall.status.success() {
+        return FamilyResult::fail(format!(
+            "python uninstall failed: {}",
+            String::from_utf8_lossy(&uninstall.stderr)
+        ));
+    }
+    if managed_root.join("3.12.7").exists() || managed_root.join("bin/python3.12.7").exists() {
+        return FamilyResult::fail("python uninstall left managed files behind");
+    }
+
+    let archive = match fake_standalone_python_archive("3.12.8") {
+        Ok(bytes) => bytes,
+        Err(e) => return FamilyResult::fail(format!("fake standalone archive failed: {e}")),
+    };
+    let archive_sha = sha256_bytes(&archive);
+    let (archive_url, archive_handle) = match spawn_python_archive_server(archive) {
+        Ok(server) => server,
+        Err(e) => return FamilyResult::fail(format!("python archive server failed: {e}")),
+    };
+    let remote_download = Command::new(bin)
+        .args([
+            "python",
+            "download",
+            "3.12.8",
+            "--url",
+            archive_url.as_str(),
+            "--sha256",
+            archive_sha.as_str(),
+        ])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !remote_download.status.success() {
+        let _ = archive_handle.join();
+        return FamilyResult::fail(format!(
+            "python standalone download failed: {}",
+            String::from_utf8_lossy(&remote_download.stderr)
+        ));
+    }
+    let archive_request = match archive_handle.join() {
+        Ok(request) => request,
+        Err(_) => return FamilyResult::fail("python archive probe thread panicked"),
+    };
+    let archive_request_text = String::from_utf8_lossy(&archive_request);
+    if !archive_request_text.starts_with("GET /cpython.tar.zst HTTP/1.1") {
+        return FamilyResult::fail(format!(
+            "python archive request mismatch: {archive_request_text}"
+        ));
+    }
+    if !managed_root.join("3.12.8/bin/python").exists()
+        || !managed_root
+            .join("3.12.8/python/install/bin/python3")
+            .exists()
+        || !managed_root.join("bin/python3.12.8").exists()
+    {
+        return FamilyResult::fail("python standalone download did not create managed launchers");
+    }
+
+    let remote_uninstall = Command::new(bin)
+        .args(["python", "uninstall", "3.12.8"])
+        .env("UV_DATA_DIR", &data)
+        .output()
+        .expect("spawn mamba");
+    if !remote_uninstall.status.success() {
+        return FamilyResult::fail(format!(
+            "python standalone uninstall failed: {}",
+            String::from_utf8_lossy(&remote_uninstall.stderr)
+        ));
+    }
+
+    let list = Command::new(bin)
+        .args(["python", "list"])
+        .env("PATH", tmp.path().join("empty-path"))
+        .output()
+        .expect("spawn mamba");
+    if !list.status.success() {
+        return FamilyResult::fail("python list failed with empty PATH");
+    }
+    FamilyResult::pass(
+        "python install/download/uninstall/list/find/pin/dir/update-shell expose local and standalone interpreter management",
+    )
+    .with_paths(Some(project), None, Some(data))
+}
+
+fn probe_workspace(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let root = tmp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        r#"
+[tool.uv.workspace]
+members = ["packages/*"]
+exclude = ["packages/skip"]
+"#,
+    )
+    .unwrap();
+    write_workspace_member(root, "packages/alpha", "Alpha_Pkg", "0.1.0");
+    write_workspace_member(root, "packages/skip", "skip", "9.9.9");
+
+    let out = invoke(bin, root, &["workspace", "list"]);
+    if !out.status.success() {
+        return FamilyResult::fail(format!(
+            "workspace list exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if stdout.trim() != "alpha-pkg" || stdout.contains("skip") {
+        return FamilyResult::fail(format!("workspace list output mismatch: {stdout}"));
+    }
+
+    let paths = invoke(bin, root, &["workspace", "list", "--paths"]);
+    if !paths.status.success()
+        || !String::from_utf8_lossy(&paths.stdout)
+            .trim_end()
+            .ends_with("packages/alpha")
+    {
+        return FamilyResult::fail(format!(
+            "workspace list --paths mismatch: {} / {}",
+            paths.status,
+            String::from_utf8_lossy(&paths.stdout)
+        ));
+    }
+
+    let dir = invoke(bin, root, &["workspace", "dir", "--package", "alpha_pkg"]);
+    if !dir.status.success()
+        || !String::from_utf8_lossy(&dir.stdout)
+            .trim_end()
+            .ends_with("packages/alpha")
+    {
+        return FamilyResult::fail(format!(
+            "workspace dir --package mismatch: {} / {}",
+            dir.status,
+            String::from_utf8_lossy(&dir.stdout)
+        ));
+    }
+
+    let metadata = invoke(bin, root, &["workspace", "metadata"]);
+    let metadata_stdout = String::from_utf8_lossy(&metadata.stdout);
+    if !metadata.status.success()
+        || !metadata_stdout.contains("\"workspace\"")
+        || !metadata_stdout.contains("\"members\"")
+        || !metadata_stdout.contains("\"exclude\"")
+        || metadata_stdout.contains("\"name\":\"skip\"")
+    {
+        return FamilyResult::fail(format!("workspace metadata mismatch: {metadata_stdout}"));
+    }
+
+    FamilyResult::pass("workspace list/dir/metadata inspect uv workspace members").with_paths(
+        Some(root.to_path_buf()),
+        None,
+        None,
+    )
+}
+
+fn write_workspace_member(root: &Path, rel: &str, name: &str, version: &str) {
+    let dir = root.join(rel);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("pyproject.toml"),
+        format!("[project]\nname = {name:?}\nversion = {version:?}\n"),
+    )
+    .unwrap();
+}
+
+fn probe_shell(bin: &Path) -> FamilyResult {
+    let tmp = ScratchDir::new("probe");
+    let path = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "shell",
+            "path",
+            "--shell",
+            "bash",
+            "--bin-dir",
+            "/opt/mamba/bin",
+        ],
+    );
+    let path_stdout = String::from_utf8_lossy(&path.stdout);
+    if !path.status.success() || path_stdout.trim() != r#"export PATH="/opt/mamba/bin:$PATH""# {
+        return FamilyResult::fail(format!("shell path mismatch: {path_stdout}"));
+    }
+
+    let init = invoke(
+        bin,
+        tmp.path(),
+        &[
+            "shell",
+            "init",
+            "--shell",
+            "nushell",
+            "--bin-dir",
+            "/opt/mamba/bin",
+        ],
+    );
+    let init_stdout = String::from_utf8_lossy(&init.stdout);
+    if !init.status.success()
+        || !init_stdout.contains("# >>> mamba initialize >>>")
+        || !init_stdout.contains("$env.PATH = ($env.PATH | prepend \"/opt/mamba/bin\")")
+        || !init_stdout.contains("# <<< mamba initialize <<<")
+    {
+        return FamilyResult::fail(format!("shell init mismatch: {init_stdout}"));
+    }
+
+    let completion = invoke(bin, tmp.path(), &["generate-shell-completion", "bash"]);
+    let completion_stdout = String::from_utf8_lossy(&completion.stdout);
+    if !completion.status.success()
+        || !completion_stdout.contains("workspace")
+        || !completion_stdout.contains("pkgmgr-validate")
+        || !completion_stdout.contains("generate-shell-completion")
+    {
+        return FamilyResult::fail("shell completion missing expected command tree");
+    }
+
+    FamilyResult::pass("shell path/init and completion generation are wired")
 }
 
 fn probe_sync(bin: &Path) -> FamilyResult {
@@ -321,9 +1832,20 @@ fn probe_sync(bin: &Path) -> FamilyResult {
         &proj,
         &["lock", "--index", index.path().to_str().unwrap()],
     );
+    let precheck = invoke(bin, &proj, &["sync", "--check"]);
+    if precheck.status.success() {
+        return FamilyResult::fail("sync --check passed before environment existed");
+    }
     let first = invoke(bin, &proj, &["sync"]);
     if !first.status.success() {
         return FamilyResult::fail("first sync failed");
+    }
+    let check = invoke(bin, &proj, &["sync", "--check"]);
+    if !check.status.success() {
+        return FamilyResult::fail(format!(
+            "sync --check failed after sync: {}",
+            String::from_utf8_lossy(&check.stderr)
+        ));
     }
     let second = invoke(bin, &proj, &["sync"]);
     if !second.status.success() {
@@ -333,7 +1855,7 @@ fn probe_sync(bin: &Path) -> FamilyResult {
     if !stderr.contains("no_op") {
         return FamilyResult::fail("second sync did not signal no_op");
     }
-    FamilyResult::pass("sync first-run installs; second-run no_op").with_paths(
+    FamilyResult::pass("sync check gates drift; first-run installs; second-run no_op").with_paths(
         Some(proj.clone()),
         Some(proj.join("mamba.lock")),
         Some(proj.join(".venv")),
@@ -412,6 +1934,117 @@ fn probe_install(bin: &Path) -> FamilyResult {
     )
 }
 
+fn probe_tool(bin: &Path) -> FamilyResult {
+    let index = build_frozen_index();
+    stake_pkg(index.path(), "frozen-demo-pkg", "0.2.0", &[]);
+    let tmp = ScratchDir::new("probe");
+    let tools = tmp.path().join("mamba-tools");
+
+    let dir = Command::new(bin)
+        .args(["tool", "dir"])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !dir.status.success()
+        || String::from_utf8_lossy(&dir.stdout).trim_end() != tools.display().to_string()
+    {
+        return FamilyResult::fail("tool dir did not print tools root");
+    }
+
+    let install = Command::new(bin)
+        .args([
+            "tool",
+            "install",
+            "frozen-demo-pkg",
+            "--version",
+            "0.1.0",
+            "--index",
+            index.path().to_str().unwrap(),
+        ])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !install.status.success() {
+        return FamilyResult::fail(format!(
+            "tool install failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        ));
+    }
+
+    let upgrade = Command::new(bin)
+        .args([
+            "tool",
+            "upgrade",
+            "frozen-demo-pkg",
+            "--index",
+            index.path().to_str().unwrap(),
+        ])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !upgrade.status.success() {
+        return FamilyResult::fail("tool upgrade failed");
+    }
+    let manifest =
+        std::fs::read_to_string(tools.join("frozen-demo-pkg/manifest.toml")).unwrap_or_default();
+    if !manifest.contains("version = \"0.2.0\"") {
+        return FamilyResult::fail(format!("tool upgrade did not install latest: {manifest}"));
+    }
+
+    let run = Command::new(bin)
+        .args(["tool", "run", "frozen-demo-pkg"])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !run.status.success() {
+        return FamilyResult::fail(format!(
+            "tool run failed: {}",
+            String::from_utf8_lossy(&run.stderr)
+        ));
+    }
+
+    let list = Command::new(bin)
+        .args(["tool", "list"])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !list.status.success()
+        || !String::from_utf8_lossy(&list.stdout).contains("frozen-demo-pkg==0.2.0")
+    {
+        return FamilyResult::fail("tool list did not show upgraded tool");
+    }
+
+    let shell = Command::new(bin)
+        .args([
+            "tool",
+            "update-shell",
+            "--shell",
+            "bash",
+            "--bin-dir",
+            "/opt/mamba/bin",
+        ])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !shell.status.success()
+        || !String::from_utf8_lossy(&shell.stdout).contains("export PATH=\"/opt/mamba/bin:$PATH\"")
+    {
+        return FamilyResult::fail("tool update-shell did not emit PATH snippet");
+    }
+
+    let uninstall = Command::new(bin)
+        .args(["tool", "uninstall", "frozen-demo-pkg"])
+        .env("MAMBA_TOOLS_DIR", &tools)
+        .output()
+        .expect("spawn mamba");
+    if !uninstall.status.success() || tools.join("frozen-demo-pkg").exists() {
+        return FamilyResult::fail("tool uninstall failed");
+    }
+
+    FamilyResult::pass("tool run/install/upgrade/list/dir/update-shell/uninstall are wired")
+        .with_paths(None, None, Some(tools))
+}
+
 fn probe_hash(bin: &Path) -> FamilyResult {
     let tmp = ScratchDir::new("probe");
     let blob = tmp.path().join("hello.txt");
@@ -433,7 +2066,8 @@ fn probe_cache(bin: &Path) -> FamilyResult {
     let tmp = ScratchDir::new("probe");
     let cache_root = tmp.path().join("mamba-cache");
     std::fs::create_dir_all(&cache_root).unwrap();
-    std::fs::write(cache_root.join("blob.bin"), b"x").unwrap();
+    std::fs::create_dir_all(cache_root.join("artifacts/demo")).unwrap();
+    std::fs::write(cache_root.join("artifacts/demo/blob.whl"), b"xyz").unwrap();
 
     let dir_out = Command::new(bin)
         .args(["cache", "dir"])
@@ -455,6 +2089,19 @@ fn probe_cache(bin: &Path) -> FamilyResult {
         ));
     }
 
+    let size_out = Command::new(bin)
+        .args(["cache", "size"])
+        .env("MAMBA_CACHE_DIR", &cache_root)
+        .output()
+        .expect("spawn mamba");
+    if !size_out.status.success() {
+        return FamilyResult::fail("cache size failed");
+    }
+    let size_stdout = String::from_utf8_lossy(&size_out.stdout);
+    if !size_stdout.contains("3 bytes") {
+        return FamilyResult::fail(format!("cache size output mismatch: {size_stdout}"));
+    }
+
     let clean_out = Command::new(bin)
         .args(["cache", "clean"])
         .env("MAMBA_CACHE_DIR", &cache_root)
@@ -463,10 +2110,10 @@ fn probe_cache(bin: &Path) -> FamilyResult {
     if !clean_out.status.success() {
         return FamilyResult::fail("cache clean failed");
     }
-    if cache_root.join("blob.bin").exists() {
+    if cache_root.join("artifacts/demo/blob.whl").exists() {
         return FamilyResult::fail("cache clean did not remove blob");
     }
-    FamilyResult::pass("cache dir + clean honor MAMBA_CACHE_DIR").with_paths(
+    FamilyResult::pass("cache dir/size/clean honor MAMBA_CACHE_DIR").with_paths(
         None,
         None,
         Some(cache_root),

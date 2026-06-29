@@ -338,6 +338,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: false,
     },
+    // keyword.iskeyword/issoftkeyword are force-typed as `s: str` for
+    // strict-type fixtures. Runtime behavior stays CPython-compatible:
+    // non-str values compare unequal to every keyword and return False.
+    StdlibSig {
+        module: "keyword",
+        qualifier: "",
+        name: "iskeyword",
+        kind: SigKind::ModuleFn,
+        params: &[p("s", CoreTy::Str)],
+        enforceable: false,
+    },
+    StdlibSig {
+        module: "keyword",
+        qualifier: "",
+        name: "issoftkeyword",
+        kind: SigKind::ModuleFn,
+        params: &[p("s", CoreTy::Str)],
+        enforceable: false,
+    },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for

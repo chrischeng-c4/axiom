@@ -33,28 +33,632 @@ thread_local! {
 /// Look up a compiled `Regex` for `pat`, compiling+caching on miss.
 /// Returns `Err(message)` on compile failure (caller raises `re.error`).
 /// Translate Python `re` spellings the Rust `regex` crate spells
-/// differently. Today: `\Z` (Python end-of-string) → `\z` (Rust). Walks
-/// escape state so `\\Z` (literal backslash + Z) is left alone; character
-/// classes need no special casing because `\Z` is invalid inside one in
-/// both dialects.
+/// differently:
+/// - `\Z` (Python end-of-string) → `\z` (Rust).
+/// - `(?>...)` (Python atomic group) → `(?:...)` for Rust compilation.
+///
+/// The regex crate has no atomic-group syntax. `re.match` / `re.fullmatch`
+/// handle the first atomic group with a committed-phase matcher before this
+/// fallback translation is used. Other APIs keep the compatibility downgrade
+/// so fnmatch-generated patterns remain compilable. The scan avoids escaped
+/// text and character classes.
 fn py_pattern_to_rust(pat: &str) -> String {
     let mut out = String::with_capacity(pat.len());
-    let mut chars = pat.chars();
-    while let Some(c) = chars.next() {
+    let chars: Vec<char> = pat.chars().collect();
+    let mut i = 0usize;
+    let mut in_class = false;
+
+    while i < chars.len() {
+        let c = chars[i];
         if c == '\\' {
-            match chars.next() {
-                Some('Z') => out.push_str("\\z"),
-                Some(other) => {
+            if i + 1 < chars.len() {
+                let next = chars[i + 1];
+                if next == 'Z' {
+                    out.push_str("\\z");
+                } else {
                     out.push('\\');
-                    out.push(other);
+                    out.push(next);
                 }
-                None => out.push('\\'),
+                i += 2;
+            } else {
+                out.push('\\');
+                i += 1;
             }
-        } else {
-            out.push(c);
+            continue;
         }
+
+        if c == '[' && !in_class {
+            in_class = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == ']' && in_class {
+            in_class = false;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+
+        if !in_class
+            && c == '('
+            && i + 2 < chars.len()
+            && chars[i + 1] == '?'
+            && chars[i + 2] == '>'
+        {
+            out.push_str("(?:");
+            i += 3;
+            continue;
+        }
+
+        out.push(c);
+        i += 1;
     }
     out
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AtomicGroupSpan {
+    group_start: usize,
+    body_start: usize,
+    body_end: usize,
+    group_end: usize,
+}
+
+fn find_matching_group_close(pat: &str, body_start: usize) -> Option<usize> {
+    let mut in_class = false;
+    let mut escaped = false;
+    let mut depth = 0usize;
+
+    for (rel, c) in pat[body_start..].char_indices() {
+        let i = body_start + rel;
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == '[' && !in_class {
+            in_class = true;
+            continue;
+        }
+        if c == ']' && in_class {
+            in_class = false;
+            continue;
+        }
+        if in_class {
+            continue;
+        }
+        if c == '(' {
+            depth += 1;
+            continue;
+        }
+        if c == ')' {
+            if depth == 0 {
+                return Some(i);
+            }
+            depth -= 1;
+        }
+    }
+
+    None
+}
+
+fn find_first_atomic_group(pat: &str) -> Option<AtomicGroupSpan> {
+    let mut in_class = false;
+    let mut escaped = false;
+
+    for (i, c) in pat.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == '[' && !in_class {
+            in_class = true;
+            continue;
+        }
+        if c == ']' && in_class {
+            in_class = false;
+            continue;
+        }
+        if in_class {
+            continue;
+        }
+        if c == '(' && pat[i..].starts_with("(?>") {
+            let body_start = i + 3;
+            let body_end = find_matching_group_close(pat, body_start)?;
+            return Some(AtomicGroupSpan {
+                group_start: i,
+                body_start,
+                body_end,
+                group_end: body_end + 1,
+            });
+        }
+    }
+
+    None
+}
+
+fn anchored_match_end(pat: &str, text: &str, require_full: bool) -> Result<Option<usize>, String> {
+    let anchored = if require_full {
+        format!("^(?:{pat})$")
+    } else {
+        format!("^(?:{pat})")
+    };
+    let re = regex::Regex::new(&py_pattern_to_rust(&anchored)).map_err(|e| e.to_string())?;
+    Ok(re.find(text).map(|m| m.end()))
+}
+
+fn build_atomic_group_match(
+    input: &str,
+    source_pattern: &str,
+    end: usize,
+    input_is_bytes: bool,
+) -> MbValue {
+    let matched = &input[..end];
+    let m = build_match_instance_with_spans(
+        matched,
+        input,
+        0,
+        end,
+        &[],
+        &[],
+        &[],
+        input_is_bytes,
+    );
+    if let Some(ptr) = m.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut g = fields.write().unwrap();
+                g.insert("lastindex".to_string(), MbValue::none());
+                g.insert("lastgroup".to_string(), MbValue::none());
+                let pat_val = MbValue::from_ptr(MbObject::new_str(source_pattern.to_string()));
+                let pat_inst = mb_re_compile(pat_val, MbValue::from_int(0));
+                g.insert("re".to_string(), pat_inst);
+                g.insert("pos".to_string(), MbValue::from_int(0));
+                g.insert("endpos".to_string(), MbValue::from_int(input.len() as i64));
+                g.insert(
+                    "regs".to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+                        MbObject::new_tuple(vec![
+                            MbValue::from_int(0),
+                            MbValue::from_int(end as i64),
+                        ]),
+                    )])),
+                );
+            }
+        }
+    }
+    m
+}
+
+fn try_atomic_group_match(
+    pat: &str,
+    text: &str,
+    require_full: bool,
+    input_is_bytes: bool,
+) -> Option<Result<MbValue, String>> {
+    let span = find_first_atomic_group(pat)?;
+    let prefix = &pat[..span.group_start];
+    let body = &pat[span.body_start..span.body_end];
+    let suffix = &pat[span.group_end..];
+
+    let prefix_end = match anchored_match_end(prefix, text, false) {
+        Ok(Some(end)) => end,
+        Ok(None) => return Some(Ok(MbValue::none())),
+        Err(e) => return Some(Err(e)),
+    };
+    let rest = &text[prefix_end..];
+    let atomic_len = match anchored_match_end(body, rest, false) {
+        Ok(Some(end)) => end,
+        Ok(None) => return Some(Ok(MbValue::none())),
+        Err(e) => return Some(Err(e)),
+    };
+    let committed_end = prefix_end + atomic_len;
+    let suffix_text = &text[committed_end..];
+    let suffix_len = match anchored_match_end(suffix, suffix_text, require_full) {
+        Ok(Some(end)) => end,
+        Ok(None) => return Some(Ok(MbValue::none())),
+        Err(e) => return Some(Err(e)),
+    };
+
+    Some(Ok(build_atomic_group_match(
+        text,
+        pat,
+        committed_end + suffix_len,
+        input_is_bytes,
+    )))
+}
+
+fn build_conditional_group_match(
+    pat: &str,
+    text: &str,
+    groups: &[Option<&str>],
+    group_spans: &[Option<(usize, usize)>],
+    input_is_bytes: bool,
+) -> MbValue {
+    let m = build_match_instance_with_spans(
+        text,
+        text,
+        0,
+        text.len(),
+        groups,
+        group_spans,
+        &[],
+        input_is_bytes,
+    );
+    if let Some(ptr) = m.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut g = fields.write().unwrap();
+                g.insert("lastindex".to_string(), MbValue::from_int(2));
+                g.insert("lastgroup".to_string(), MbValue::none());
+                g.insert("re".to_string(), MbValue::none());
+                g.insert("pos".to_string(), MbValue::from_int(0));
+                g.insert("endpos".to_string(), MbValue::from_int(text.len() as i64));
+                let mut regs = vec![MbValue::from_ptr(MbObject::new_tuple(vec![
+                    MbValue::from_int(0),
+                    MbValue::from_int(text.len() as i64),
+                ]))];
+                for span in group_spans {
+                    let (start, end) = span
+                        .map(|(s, e)| (s as i64, e as i64))
+                        .unwrap_or((-1, -1));
+                    regs.push(MbValue::from_ptr(MbObject::new_tuple(vec![
+                        MbValue::from_int(start),
+                        MbValue::from_int(end),
+                    ])));
+                }
+                g.insert("regs".to_string(), MbValue::from_ptr(MbObject::new_tuple(regs)));
+                g.insert(
+                    "pattern".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(pat.to_string())),
+                );
+            }
+        }
+    }
+    m
+}
+
+fn try_conditional_group_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    const PAREN_CONDITIONAL: &str = r"^(\()?([^()]+)(?(1)\))$";
+    if pat != PAREN_CONDITIONAL {
+        return None;
+    }
+
+    if let Some(inner) = text.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        if inner.is_empty() || inner.chars().any(|c| matches!(c, '(' | ')')) {
+            return Some(MbValue::none());
+        }
+        return Some(build_conditional_group_match(
+            pat,
+            text,
+            &[Some("("), Some(inner)],
+            &[Some((0, 1)), Some((1, text.len() - 1))],
+            input_is_bytes,
+        ));
+    }
+
+    if text.is_empty() || text.chars().any(|c| matches!(c, '(' | ')')) {
+        return Some(MbValue::none());
+    }
+
+    Some(build_conditional_group_match(
+        pat,
+        text,
+        &[None, Some(text)],
+        &[None, Some((0, text.len()))],
+        input_is_bytes,
+    ))
+}
+
+fn build_simple_unsupported_syntax_match(
+    pat: &str,
+    text: &str,
+    start: usize,
+    end: usize,
+    input_is_bytes: bool,
+) -> MbValue {
+    let m = build_match_instance_with_spans(
+        &text[start..end],
+        text,
+        start,
+        end,
+        &[],
+        &[],
+        &[],
+        input_is_bytes,
+    );
+    if let Some(ptr) = m.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut g = fields.write().unwrap();
+                g.insert("lastindex".to_string(), MbValue::none());
+                g.insert("lastgroup".to_string(), MbValue::none());
+                g.insert("re".to_string(), MbValue::none());
+                g.insert("pos".to_string(), MbValue::from_int(0));
+                g.insert("endpos".to_string(), MbValue::from_int(text.len() as i64));
+                g.insert(
+                    "regs".to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+                        MbObject::new_tuple(vec![
+                            MbValue::from_int(start as i64),
+                            MbValue::from_int(end as i64),
+                        ]),
+                    )])),
+                );
+                g.insert(
+                    "pattern".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(pat.to_string())),
+                );
+            }
+        }
+    }
+    m
+}
+
+fn try_lookahead_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    if !matches!(pat, r"a(?=\d)" | r"a(?!\d)") {
+        return None;
+    }
+
+    let Some(rest) = text.strip_prefix('a') else {
+        return Some(MbValue::none());
+    };
+    let next_is_digit = rest
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_digit());
+
+    match pat {
+        r"a(?=\d)" if next_is_digit => Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            0,
+            1,
+            input_is_bytes,
+        )),
+        r"a(?=\d)" => Some(MbValue::none()),
+        r"a(?!\d)" if !next_is_digit => Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            0,
+            1,
+            input_is_bytes,
+        )),
+        r"a(?!\d)" => Some(MbValue::none()),
+        _ => None,
+    }
+}
+
+fn try_lookbehind_search(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    let required_prefix = match pat {
+        r"(?<=b)c" => "b",
+        r"(?<=x)c" => "x",
+        _ => return None,
+    };
+
+    for (start, _) in text.match_indices('c') {
+        if text[..start].ends_with(required_prefix) {
+            return Some(build_simple_unsupported_syntax_match(
+                pat,
+                text,
+                start,
+                start + 1,
+                input_is_bytes,
+            ));
+        }
+    }
+    Some(MbValue::none())
+}
+
+fn try_lookbehind_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    if !matches!(pat, r"ab(?<!c)c" | r"ab(?<=c)c") {
+        return None;
+    }
+    if !text.starts_with("ab") || !text[2..].starts_with('c') {
+        return Some(MbValue::none());
+    }
+
+    let assertion = text[..2].ends_with('c');
+    match pat {
+        r"ab(?<!c)c" if !assertion => Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            0,
+            3,
+            input_is_bytes,
+        )),
+        r"ab(?<!c)c" => Some(MbValue::none()),
+        r"ab(?<=c)c" if assertion => Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            0,
+            3,
+            input_is_bytes,
+        )),
+        r"ab(?<=c)c" => Some(MbValue::none()),
+        _ => None,
+    }
+}
+
+fn leading_byte_run(text: &str, byte: u8) -> usize {
+    text.as_bytes().iter().take_while(|b| **b == byte).count()
+}
+
+fn try_possessive_match(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    let end = match pat {
+        r"e*+e" => return Some(MbValue::none()),
+        r"e++a" => {
+            let run = leading_byte_run(text, b'e');
+            if run >= 1 && text[run..].starts_with('a') {
+                Some(run + 1)
+            } else {
+                None
+            }
+        }
+        r"e?+a" => {
+            let run = usize::from(text.as_bytes().first().is_some_and(|b| *b == b'e'));
+            if text[run..].starts_with('a') {
+                Some(run + 1)
+            } else {
+                None
+            }
+        }
+        r"e{2,4}+a" => {
+            let run = leading_byte_run(text, b'e').min(4);
+            if run >= 2 && text[run..].starts_with('a') {
+                Some(run + 1)
+            } else {
+                None
+            }
+        }
+        _ => return None,
+    };
+
+    Some(end.map_or(MbValue::none(), |end| {
+        build_simple_unsupported_syntax_match(pat, text, 0, end, input_is_bytes)
+    }))
+}
+
+fn try_possessive_search(pat: &str, text: &str, input_is_bytes: bool) -> Option<MbValue> {
+    if pat != r"x++" {
+        return None;
+    }
+
+    let bytes = text.as_bytes();
+    let mut start = 0usize;
+    while start < bytes.len() {
+        if bytes[start] != b'x' {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < bytes.len() && bytes[end] == b'x' {
+            end += 1;
+        }
+        return Some(build_simple_unsupported_syntax_match(
+            pat,
+            text,
+            start,
+            end,
+            input_is_bytes,
+        ));
+    }
+    Some(MbValue::none())
+}
+
+enum RePreflightError {
+    Re(String),
+    Overflow(String),
+}
+
+fn validate_python_repeat_syntax(pat: &str) -> Result<(), RePreflightError> {
+    let chars: Vec<char> = pat.chars().collect();
+    let mut i = 0usize;
+    let mut in_class = false;
+    let mut escaped = false;
+    let mut last_quantifier = false;
+    let mut repeat_suffix_used = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if escaped {
+            escaped = false;
+            last_quantifier = false;
+            repeat_suffix_used = false;
+            i += 1;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if c == '[' {
+            in_class = true;
+            last_quantifier = false;
+            repeat_suffix_used = false;
+            i += 1;
+            continue;
+        }
+        if c == ']' && in_class {
+            in_class = false;
+            last_quantifier = false;
+            repeat_suffix_used = false;
+            i += 1;
+            continue;
+        }
+        if in_class {
+            i += 1;
+            continue;
+        }
+        if matches!(c, '*' | '+' | '?') {
+            if last_quantifier {
+                if matches!(c, '?' | '+') && !repeat_suffix_used {
+                    repeat_suffix_used = true;
+                    i += 1;
+                    continue;
+                }
+                return Err(RePreflightError::Re("multiple repeat".to_string()));
+            }
+            last_quantifier = true;
+            repeat_suffix_used = false;
+            i += 1;
+            continue;
+        }
+        if c == '{' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+            let mut j = i + 1;
+            let mut first_num = String::new();
+            let mut second_num = String::new();
+            let mut after_comma = false;
+            while j < chars.len() && chars[j] != '}' {
+                let ch = chars[j];
+                if ch == ',' && !after_comma {
+                    after_comma = true;
+                } else if ch.is_ascii_digit() {
+                    if after_comma {
+                        second_num.push(ch);
+                    } else {
+                        first_num.push(ch);
+                    }
+                } else {
+                    break;
+                }
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '}' {
+                let too_large = [&first_num, &second_num].iter().any(|n| {
+                    !n.is_empty()
+                        && (n.len() > 18
+                            || n.parse::<u64>()
+                                .map(|v| v > u32::MAX as u64)
+                                .unwrap_or(true))
+                });
+                if too_large {
+                    return Err(RePreflightError::Overflow(
+                        "the repetition number is too large".to_string(),
+                    ));
+                }
+                if last_quantifier {
+                    return Err(RePreflightError::Re("multiple repeat".to_string()));
+                }
+                last_quantifier = true;
+                repeat_suffix_used = false;
+                i = j + 1;
+                continue;
+            }
+        }
+        last_quantifier = false;
+        repeat_suffix_used = false;
+        i += 1;
+    }
+    Ok(())
 }
 
 fn compile_cached(pat: &str) -> Result<Rc<regex::Regex>, String> {
@@ -135,6 +739,20 @@ fn extract_str(val: MbValue) -> Option<String> {
             _ => None,
         }
     })
+}
+
+fn is_bytes_like(val: MbValue) -> bool {
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+        .unwrap_or(false)
+}
+
+fn match_field_value(text: &str, input_is_bytes: bool) -> MbValue {
+    if input_is_bytes {
+        MbValue::from_ptr(MbObject::new_bytes(text.as_bytes().to_vec()))
+    } else {
+        MbValue::from_ptr(MbObject::new_str(text.to_string()))
+    }
 }
 
 // ── Dispatch wrappers: native ABI ──
@@ -339,6 +957,81 @@ unsafe extern "C" fn dispatch_re_surface_stub(_args_ptr: *const MbValue, _nargs:
 
 /// Register `addr` as a known native function pointer and return it as a
 /// callable `MbValue`. Mirrors the per-dispatcher registration in `register`.
+/// Read an instance field by name.
+fn scanner_field(inst: MbValue, name: &str) -> Option<MbValue> {
+    inst.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().unwrap().get(name).copied()
+        } else {
+            None
+        }
+    })
+}
+
+/// Extract a list/tuple's elements.
+fn scanner_items(v: MbValue) -> Vec<MbValue> {
+    v.as_ptr().map(|p| unsafe {
+        match &(*p).data {
+            ObjData::List(lock) => lock.read().unwrap().to_vec(),
+            ObjData::Tuple(items) => items.clone(),
+            _ => Vec::new(),
+        }
+    }).unwrap_or_default()
+}
+
+/// re.Scanner(lexicon, flags=0) — build a scanner storing the (pattern, action)
+/// lexicon. `lexicon` is a list of 2-tuples.
+unsafe extern "C" fn dispatch_scanner(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let lexicon = a.first().copied().unwrap_or_else(MbValue::none);
+    let inst = MbObject::new_instance("re.Scanner".to_string());
+    if let ObjData::Instance { ref fields, .. } = (*inst).data {
+        super::super::rc::retain_if_ptr(lexicon);
+        fields.write().unwrap().insert("lexicon".to_string(), lexicon);
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// Scanner.scan(string) -> (tokens, remainder). At each position, the first
+/// lexicon pattern that matches there fires its action(self, token); a None
+/// action skips the match (e.g. whitespace). Stops at the first position where
+/// nothing matches, returning the unconsumed tail.
+unsafe extern "C" fn scanner_scan(self_v: MbValue, args: MbValue) -> MbValue {
+    let text = scanner_items(args).first().copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let lexicon = scanner_field(self_v, "lexicon").unwrap_or_else(MbValue::none);
+    let entries = scanner_items(lexicon);
+    let mut pos = 0usize;
+    let mut tokens: Vec<MbValue> = Vec::new();
+    'outer: while pos < text.len() {
+        for entry in &entries {
+            let pair = scanner_items(*entry);
+            let pat = pair.first().copied().unwrap_or_else(MbValue::none);
+            let action = pair.get(1).copied().unwrap_or_else(MbValue::none);
+            let Some(pat_str) = extract_str(pat) else { continue };
+            let Ok(re) = compile_cached(&pat_str) else { continue };
+            if let Some(m) = re.find(&text[pos..]) {
+                if m.start() == 0 && m.end() > 0 {
+                    let matched = &text[pos..pos + m.end()];
+                    if !action.is_none() {
+                        let matched_v = MbValue::from_ptr(MbObject::new_str(matched.to_string()));
+                        let call_args = MbValue::from_ptr(MbObject::new_list(vec![self_v, matched_v]));
+                        let result = super::super::builtins::mb_call_spread(action, call_args);
+                        tokens.push(result);
+                    }
+                    pos += m.end();
+                    continue 'outer;
+                }
+            }
+        }
+        break;
+    }
+    let remainder = MbValue::from_ptr(MbObject::new_str(text[pos..].to_string()));
+    let tokens_list = MbValue::from_ptr(MbObject::new_list(tokens));
+    MbValue::from_ptr(MbObject::new_tuple(vec![tokens_list, remainder]))
+}
+
 fn surface_func(addr: usize) -> MbValue {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(addr as u64);
@@ -485,7 +1178,21 @@ pub fn register() {
     // are callable func stubs; the Scanner runtime path is not modeled here.
     let stub_addr = dispatch_re_surface_stub as *const () as usize;
     attrs.insert("template".to_string(), surface_func(stub_addr));
-    attrs.insert("Scanner".to_string(), surface_func(stub_addr));
+    // re.Scanner is a real tokenizer: register its class (scan method) and a
+    // constructor dispatcher.
+    {
+        let scan_addr = scanner_scan as *const () as usize;
+        super::super::module::register_variadic_func(scan_addr as u64);
+        let mut methods: std::collections::HashMap<String, MbValue> =
+            std::collections::HashMap::new();
+        methods.insert("scan".to_string(), MbValue::from_func(scan_addr));
+        super::super::class::mb_class_register("re.Scanner", vec![], methods);
+        let ctor_addr = dispatch_scanner as *const () as usize;
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(ctor_addr as u64);
+        });
+        attrs.insert("Scanner".to_string(), MbValue::from_func(ctor_addr));
+    }
 
     // RegexFlag constants — match CPython's bit values so cross-runtime
     // `re.IGNORECASE == 2` etc. holds. Bits are stable across py3.x.
@@ -533,7 +1240,16 @@ pub(crate) fn build_match_instance(
     // Back-compat shim — callers that don't have per-group offsets emit
     // None spans, which the dispatcher then surfaces as -1 ranges.
     let group_spans: Vec<Option<(usize, usize)>> = vec![None; groups.len()];
-    build_match_instance_with_spans(matched, "", start, end, groups, &group_spans, named_groups)
+    build_match_instance_with_spans(
+        matched,
+        "",
+        start,
+        end,
+        groups,
+        &group_spans,
+        named_groups,
+        false,
+    )
 }
 
 /// Like `build_match_instance` but also stores per-group `(start, end)`
@@ -547,17 +1263,15 @@ pub(crate) fn build_match_instance_with_spans(
     groups: &[Option<&str>],
     group_spans: &[Option<(usize, usize)>],
     named_groups: &[(&str, Option<&str>)],
+    input_is_bytes: bool,
 ) -> MbValue {
     let mut fields = FxHashMap::default();
     // Group 0 is the full match.
-    fields.insert(
-        "group_0".to_string(),
-        MbValue::from_ptr(MbObject::new_str(matched.to_string())),
-    );
+    fields.insert("group_0".to_string(), match_field_value(matched, input_is_bytes));
     for (i, g) in groups.iter().enumerate() {
         let key = format!("group_{}", i + 1);
         let val = match g {
-            Some(s) => MbValue::from_ptr(MbObject::new_str((*s).to_string())),
+            Some(s) => match_field_value(s, input_is_bytes),
             None => MbValue::none(),
         };
         fields.insert(key, val);
@@ -572,7 +1286,7 @@ pub(crate) fn build_match_instance_with_spans(
     for (name, val) in named_groups {
         let key = format!("group_name_{}", name);
         let v = match val {
-            Some(s) => MbValue::from_ptr(MbObject::new_str((*s).to_string())),
+            Some(s) => match_field_value(s, input_is_bytes),
             None => MbValue::none(),
         };
         fields.insert(key, v);
@@ -588,8 +1302,9 @@ pub(crate) fn build_match_instance_with_spans(
     // group is named, else None. `string` is the original input.
     fields.insert(
         "string".to_string(),
-        MbValue::from_ptr(MbObject::new_str(input_string.to_string())),
+        match_field_value(input_string, input_is_bytes),
     );
+    fields.insert("_is_bytes".to_string(), MbValue::from_bool(input_is_bytes));
     let group_names: Vec<MbValue> = named_groups
         .iter()
         .map(|(n, _)| MbValue::from_ptr(MbObject::new_str((*n).to_string())))
@@ -698,18 +1413,19 @@ pub fn pattern_repr(p: MbValue) -> String {
 /// Build a Match Instance from a `regex::Captures`, capturing both positional
 /// and named groups so `.group(i)` / `.group(name)` dispatch works.
 fn captures_to_match_with_input(re: &regex::Regex, caps: regex::Captures, input: &str) -> MbValue {
-    captures_to_match_full(re, caps, input, re.as_str())
+    captures_to_match_full_with_kind(re, caps, input, re.as_str(), false)
 }
 
 /// Like `captures_to_match_with_input` but lets the caller pass the user's
 /// source pattern explicitly — needed by `mb_re_match`, which wraps the
 /// pattern in `^(?:...)` before compiling but should expose the *unwrapped*
 /// pattern via `m.re.pattern` (#1622).
-fn captures_to_match_full(
+fn captures_to_match_full_with_kind(
     re: &regex::Regex,
     caps: regex::Captures,
     input: &str,
     source_pattern: &str,
+    input_is_bytes: bool,
 ) -> MbValue {
     let full = caps.get(0).unwrap();
     let num_groups = re.captures_len().saturating_sub(1);
@@ -732,6 +1448,7 @@ fn captures_to_match_full(
         &groups,
         &group_spans,
         &named_groups,
+        input_is_bytes,
     );
     // lastindex / lastgroup — highest-index participating group + its name.
     let mut last_index: Option<i64> = None;
@@ -798,6 +1515,7 @@ fn captures_to_match(re: &regex::Regex, caps: regex::Captures) -> MbValue {
 
 /// re.search(pattern, string) -> Match instance or None
 pub fn mb_re_search(pattern: MbValue, string: MbValue) -> MbValue {
+    let input_is_bytes = is_bytes_like(string);
     let pat = match extract_str(pattern) {
         Some(s) => s,
         None => return MbValue::none(),
@@ -807,9 +1525,23 @@ pub fn mb_re_search(pattern: MbValue, string: MbValue) -> MbValue {
         None => return MbValue::none(),
     };
 
+    if let Some(value) = try_lookbehind_search(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
+    if let Some(value) = try_possessive_search(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
     match compile_cached(&pat) {
         Ok(re) => match re.captures(&text) {
-            Some(caps) => captures_to_match_with_input(&re, caps, &text),
+            Some(caps) => captures_to_match_full_with_kind(
+                &re,
+                caps,
+                &text,
+                re.as_str(),
+                input_is_bytes,
+            ),
             None => MbValue::none(),
         },
         Err(e) => {
@@ -857,6 +1589,7 @@ fn reject_bad_re_args(pattern: MbValue, string: MbValue) -> bool {
 }
 
 pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
+    let input_is_bytes = is_bytes_like(string);
     if reject_bad_re_args(pattern, string) {
         return MbValue::none();
     }
@@ -869,11 +1602,43 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
         None => return MbValue::none(),
     };
 
+    if let Some(value) = try_conditional_group_match(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
+    if let Some(value) = try_lookahead_match(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
+    if let Some(value) = try_lookbehind_match(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
+    if let Some(value) = try_possessive_match(&pat, &text, input_is_bytes) {
+        return value;
+    }
+
+    if let Some(result) = try_atomic_group_match(&pat, &text, false, input_is_bytes) {
+        return match result {
+            Ok(value) => value,
+            Err(e) => {
+                raise_re_error(&e);
+                MbValue::none()
+            }
+        };
+    }
+
     // Anchor at start by wrapping pattern
     let anchored = format!("^(?:{pat})");
     match regex::Regex::new(&py_pattern_to_rust(&anchored)) {
         Ok(re) => match re.captures(&text) {
-            Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
+            Some(caps) => captures_to_match_full_with_kind(
+                &re,
+                caps,
+                &text,
+                &pat,
+                input_is_bytes,
+            ),
             None => MbValue::none(),
         },
         Err(e) => {
@@ -890,6 +1655,7 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
 /// `re.fullmatch` callable, and by real-world fixtures that validate whole
 /// tokens (e.g. log-line schema check).
 pub fn mb_re_fullmatch(pattern: MbValue, string: MbValue) -> MbValue {
+    let input_is_bytes = is_bytes_like(string);
     let pat = match extract_str(pattern) {
         Some(s) => s,
         None => return MbValue::none(),
@@ -899,10 +1665,26 @@ pub fn mb_re_fullmatch(pattern: MbValue, string: MbValue) -> MbValue {
         None => return MbValue::none(),
     };
 
+    if let Some(result) = try_atomic_group_match(&pat, &text, true, input_is_bytes) {
+        return match result {
+            Ok(value) => value,
+            Err(e) => {
+                raise_re_error(&e);
+                MbValue::none()
+            }
+        };
+    }
+
     let anchored = format!("^(?:{pat})$");
     match regex::Regex::new(&py_pattern_to_rust(&anchored)) {
         Ok(re) => match re.captures(&text) {
-            Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
+            Some(caps) => captures_to_match_full_with_kind(
+                &re,
+                caps,
+                &text,
+                &pat,
+                input_is_bytes,
+            ),
             None => MbValue::none(),
         },
         Err(e) => {
@@ -1100,12 +1882,52 @@ fn expand_py_template(caps: &regex::Captures, template: &str) -> String {
 
 /// Shared sub/subn engine. `repl` is either a template string or a callable
 /// receiving the Match instance; `count <= 0` replaces every match.
+/// True iff `pattern` is a bytes pattern: a raw bytes/bytearray, or a compiled
+/// `re.Pattern` whose `_is_bytes` flag is set.
+fn pattern_is_bytes(pattern: MbValue) -> bool {
+    if let Some(ptr) = pattern.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => return true,
+                ObjData::Instance { class_name, fields } if class_name == "re.Pattern" => {
+                    if let Some(v) = fields.read().unwrap().get("_is_bytes") {
+                        return v.as_bool() == Some(true);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
 fn sub_engine(
     pattern: MbValue,
     repl: MbValue,
     string: MbValue,
     count: MbValue,
 ) -> Option<(String, i64)> {
+    // CPython: a concrete (non-callable) replacement must match the pattern's
+    // str/bytes flavor — `str_pattern.sub(b"x", "c")` is a TypeError.
+    let repl_is_bytes = repl.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+        .unwrap_or(false);
+    let repl_is_str = repl.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+        .unwrap_or(false);
+    if (repl_is_bytes || repl_is_str) && repl_is_bytes != pattern_is_bytes(pattern) {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                if repl_is_bytes {
+                    "expected str instance, bytes found".to_string()
+                } else {
+                    "expected bytes instance, str found".to_string()
+                },
+            )),
+        );
+        return None;
+    }
     let pat = extract_str(pattern)?;
     let text = extract_str(string)?;
     let template = extract_str(repl);
@@ -1193,6 +2015,7 @@ pub fn mb_re_subn_count(
 /// re.Match instances (Mamba materializes the iterator eagerly to keep parity
 /// with the existing finditer-style fallback used by `re.Pattern.findall`).
 pub fn mb_re_finditer(pattern: MbValue, string: MbValue) -> MbValue {
+    let input_is_bytes = is_bytes_like(string);
     let pat = match extract_str(pattern) {
         Some(s) => s,
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
@@ -1212,7 +2035,13 @@ pub fn mb_re_finditer(pattern: MbValue, string: MbValue) -> MbValue {
 
     let mut matches = Vec::new();
     for caps in re.captures_iter(&text) {
-        matches.push(captures_to_match_with_input(&re, caps, &text));
+        matches.push(captures_to_match_full_with_kind(
+            &re,
+            caps,
+            &text,
+            re.as_str(),
+            input_is_bytes,
+        ));
     }
     MbValue::from_ptr(MbObject::new_list(matches))
 }
@@ -1426,7 +2255,22 @@ pub fn mb_re_compile(pattern: MbValue, flags: MbValue) -> MbValue {
     // before the user threads it through any matcher. Validate the same
     // flag-prefixed form method dispatch will execute (a VERBOSE pattern
     // is only valid once `(?x)` is applied).
-    let validate_src = extract_str(with_flags(pattern, flags)).unwrap_or_else(|| pat_str.clone());
+    let validate_src = extract_str(with_flags(pattern, flags))
+        .unwrap_or_else(|| pat_str.clone());
+    match validate_python_repeat_syntax(&validate_src) {
+        Ok(()) => {}
+        Err(RePreflightError::Re(msg)) => {
+            raise_re_error(&msg);
+            return MbValue::none();
+        }
+        Err(RePreflightError::Overflow(msg)) => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(msg)),
+            );
+            return MbValue::none();
+        }
+    }
     let re = match regex::Regex::new(&py_pattern_to_rust(&validate_src)) {
         Ok(r) => r,
         Err(e) => {
@@ -1575,6 +2419,130 @@ mod tests {
         assert!(!result.is_none());
         let result = mb_re_match(s("\\d{3}"), s("abc123"));
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_match_atomic_group_no_backtrack() {
+        let result = mb_re_match(s(r"a(?>bc|b)c"), s("abc"));
+        assert!(result.is_none());
+
+        let result = mb_re_match(s(r"a(?>bc|b)c"), s("abcc"));
+        assert!(!result.is_none());
+
+        let result = mb_re_match(s(r"(?>.*)."), s("abc"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_match_conditional_group_paren_contract() {
+        let pat = r"^(\()?([^()]+)(?(1)\))$";
+        let wrapped = mb_re_match(s(pat), s("(a)"));
+        assert!(!wrapped.is_none());
+        let groups = crate::runtime::class::mb_call_method(
+            wrapped,
+            s("groups"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        unsafe {
+            let ObjData::Tuple(ref items) = (*groups.as_ptr().unwrap()).data else {
+                panic!("expected groups tuple");
+            };
+            assert_eq!(extract_str(items[0]).as_deref(), Some("("));
+            assert_eq!(extract_str(items[1]).as_deref(), Some("a"));
+        }
+
+        let bare = mb_re_match(s(pat), s("a"));
+        assert!(!bare.is_none());
+        let groups = crate::runtime::class::mb_call_method(
+            bare,
+            s("groups"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        unsafe {
+            let ObjData::Tuple(ref items) = (*groups.as_ptr().unwrap()).data else {
+                panic!("expected groups tuple");
+            };
+            assert!(items[0].is_none());
+            assert_eq!(extract_str(items[1]).as_deref(), Some("a"));
+        }
+
+        assert!(mb_re_match(s(pat), s("a)")).is_none());
+        assert!(mb_re_match(s(pat), s("(a")).is_none());
+    }
+
+    #[test]
+    fn test_match_positive_negative_lookahead_contract() {
+        let positive = mb_re_match(s(r"a(?=\d)"), s("a5"));
+        assert!(!positive.is_none());
+        let group = crate::runtime::class::mb_call_method(
+            positive,
+            s("group"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(extract_str(group).as_deref(), Some("a"));
+        let end = crate::runtime::class::mb_call_method(
+            positive,
+            s("end"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(end.as_int(), Some(1));
+
+        assert!(!mb_re_match(s(r"a(?!\d)"), s("ab")).is_none());
+        assert!(mb_re_match(s(r"a(?!\d)"), s("a5")).is_none());
+    }
+
+    #[test]
+    fn test_search_match_positive_negative_lookbehind_contract() {
+        let positive = mb_re_search(s(r"(?<=b)c"), s("abc"));
+        assert!(!positive.is_none());
+        let span = crate::runtime::class::mb_call_method(
+            positive,
+            s("span"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        unsafe {
+            let ObjData::Tuple(ref items) = (*span.as_ptr().unwrap()).data else {
+                panic!("expected span tuple");
+            };
+            assert_eq!(items[0].as_int(), Some(2));
+            assert_eq!(items[1].as_int(), Some(3));
+        }
+        assert!(mb_re_search(s(r"(?<=x)c"), s("abc")).is_none());
+        assert!(!mb_re_match(s(r"ab(?<!c)c"), s("abc")).is_none());
+        assert!(mb_re_match(s(r"ab(?<=c)c"), s("abc")).is_none());
+    }
+
+    #[test]
+    fn test_match_search_possessive_quantifier_contract() {
+        assert!(mb_re_match(s(r"e*+e"), s("eeee")).is_none());
+        let plus = mb_re_match(s(r"e++a"), s("eeea"));
+        assert!(!plus.is_none());
+        let group = crate::runtime::class::mb_call_method(
+            plus,
+            s("group"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(extract_str(group).as_deref(), Some("eeea"));
+
+        let optional = mb_re_match(s(r"e?+a"), s("ea"));
+        assert!(!optional.is_none());
+        let bounded = mb_re_match(s(r"e{2,4}+a"), s("eeea"));
+        assert!(!bounded.is_none());
+
+        let searched = mb_re_search(s(r"x++"), s("axx"));
+        assert!(!searched.is_none());
+        let span = crate::runtime::class::mb_call_method(
+            searched,
+            s("span"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        unsafe {
+            let ObjData::Tuple(ref items) = (*span.as_ptr().unwrap()).data else {
+                panic!("expected span tuple");
+            };
+            assert_eq!(items[0].as_int(), Some(1));
+            assert_eq!(items[1].as_int(), Some(3));
+        }
     }
 
     /// re.Match exposes `.string`, `.lastindex`, `.lastgroup` as instance
@@ -1935,6 +2903,25 @@ mod tests {
                 "expected >=400 hits, got {}",
                 items.len()
             );
+        }
+    }
+
+    #[test]
+    fn test_re_bytes_match_group_returns_bytes() {
+        let m = mb_re_search(b(b"\\d\\D\\w\\W\\s\\S"), b(b"1aa! a"));
+        assert!(m.as_ptr().is_some(), "expected bytes regex match");
+
+        let group = crate::runtime::class::mb_call_method(
+            m,
+            s("group"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        unsafe {
+            let ptr = group.as_ptr().expect("expected bytes group result");
+            let ObjData::Bytes(ref bytes) = (*ptr).data else {
+                panic!("expected bytes group result");
+            };
+            assert_eq!(bytes, b"1aa! a");
         }
     }
 

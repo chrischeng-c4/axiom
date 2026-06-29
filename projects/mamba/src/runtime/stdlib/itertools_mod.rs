@@ -144,17 +144,7 @@ unsafe extern "C" fn dispatch_chain_from_iterable(
         ));
         return MbValue::none();
     }
-    let mut items: Vec<MbValue> = Vec::new();
-    for sub in extract_list(source) {
-        if real_exception_pending() {
-            return MbValue::none();
-        }
-        items.extend(extract_list(sub));
-        if real_exception_pending() {
-            return MbValue::none();
-        }
-    }
-    MbValue::from_ptr(MbObject::new_list(items))
+    super::super::iter::mb_chain_from_iterable_iter(source)
 }
 
 unsafe extern "C" fn dispatch_islice(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -521,20 +511,7 @@ fn extract_list(val: MbValue) -> Vec<MbValue> {
     // `product(*[range(n)] * 2)` (which shares one object) or `chain(r, r)`.
     // The generic mb_iter/mb_next fallback below would drain it on the first
     // extract and yield an empty list on the second.
-    if let Some((cur, stop, step)) = super::super::iter::mb_iter_range_params(val) {
-        let mut out = Vec::new();
-        let mut c = cur;
-        if step > 0 {
-            while c < stop {
-                out.push(MbValue::from_int(c));
-                c += step;
-            }
-        } else if step < 0 {
-            while c > stop {
-                out.push(MbValue::from_int(c));
-                c += step;
-            }
-        }
+    if let Some(out) = super::super::iter::range_iter_to_vec(val) {
         return out;
     }
     // Fall back to iterator protocol (generators, iterator handles, custom iter).
@@ -1200,16 +1177,16 @@ pub fn mb_itertools_batched(iterable: MbValue, n: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(result))
 }
 
-/// itertools.groupby(iterable, key=None) -> list of `(key, group)` tuples.
+/// itertools.groupby(iterable, key=None) -> lazy `(key, group_iterator)` pairs.
 ///
 /// Consecutive elements that share the same `key(elem)` value (or the
-/// element itself when `key` is None) are bundled into a sub-list. Mamba
-/// materializes each group eagerly so the shape is
-/// `[(k, [v, v, ...]), ...]`.
+/// element itself when `key` is None) are represented as group boundaries.
+/// The outer/group iterator pair share state so advancing the outer invalidates
+/// the previously active group like CPython's `_grouper`.
 pub fn mb_itertools_groupby(iterable: MbValue, key: MbValue) -> MbValue {
     let items = extract_list(iterable);
     if items.is_empty() {
-        return MbValue::from_ptr(MbObject::new_list(Vec::new()));
+        return super::super::iter::mb_groupby_iter(Vec::new(), Vec::new());
     }
     let has_key = !key.is_none();
     let key_of = |v: MbValue| -> MbValue {
@@ -1221,28 +1198,26 @@ pub fn mb_itertools_groupby(iterable: MbValue, key: MbValue) -> MbValue {
         }
     };
 
-    let mut result: Vec<MbValue> = Vec::new();
+    let mut groups: Vec<super::super::iter::GroupByGroupSpec> = Vec::new();
     let mut cur_key = key_of(items[0]);
-    let mut cur_group: Vec<MbValue> = vec![items[0]];
-    for item in items.iter().skip(1) {
+    let mut start = 0usize;
+    for (idx, item) in items.iter().enumerate().skip(1) {
         let k = key_of(*item);
         let same = super::super::builtins::mb_eq(cur_key, k).as_bool() == Some(true);
         if same {
-            cur_group.push(*item);
+            continue;
         } else {
-            result.push(MbValue::from_ptr(MbObject::new_tuple(vec![
-                cur_key,
-                MbValue::from_ptr(MbObject::new_list(cur_group)),
-            ])));
+            groups.push(super::super::iter::GroupByGroupSpec { key: cur_key, start, end: idx });
             cur_key = k;
-            cur_group = vec![*item];
+            start = idx;
         }
     }
-    result.push(MbValue::from_ptr(MbObject::new_tuple(vec![
-        cur_key,
-        MbValue::from_ptr(MbObject::new_list(cur_group)),
-    ])));
-    MbValue::from_ptr(MbObject::new_list(result))
+    groups.push(super::super::iter::GroupByGroupSpec {
+        key: cur_key,
+        start,
+        end: items.len(),
+    });
+    super::super::iter::mb_groupby_iter(items, groups)
 }
 
 /// itertools.tee(iterable, n=2) -> tuple of `n` independent iterators.

@@ -1,4 +1,4 @@
-use super::rc::ObjData;
+use super::rc::{MbObject, ObjData};
 use super::value::MbValue;
 /// Async/await runtime with tokio for Mamba (#293).
 ///
@@ -18,9 +18,10 @@ use std::sync::RwLock;
 // Re-export task/bridge/GIL functions so `symbols.rs` can reference
 // them via `async_rt::*` without changing import paths.
 pub use super::async_task::{
-    mb_async_wait, mb_await, mb_await_external, mb_cancel_task, mb_create_task, mb_gather,
-    mb_gil_acquire, mb_gil_held, mb_gil_release, mb_orbit_register_waker, mb_orbit_schedule,
-    mb_run_until_complete, mb_sleep, mb_task_cancelled, mb_task_done, mb_task_result,
+    mb_async_iter, mb_async_next_or_stop, mb_async_wait, mb_await, mb_await_external,
+    mb_cancel_task, mb_create_task, mb_gather, mb_gil_acquire, mb_gil_held, mb_gil_release,
+    mb_orbit_register_waker, mb_orbit_schedule, mb_run_until_complete, mb_sleep, mb_task_cancelled,
+    mb_task_done, mb_task_result,
 };
 
 /// Coroutine state — similar to generator but for async functions.
@@ -30,6 +31,12 @@ pub struct MbCoroutine {
     pub locals: Vec<MbValue>,
     pub result: Option<MbValue>,
     pub exhausted: bool,
+    pub running: bool,
+    pub awaiting: bool,
+    pub suspend_requested: bool,
+    pub pending_await: Option<MbValue>,
+    pub resume_value: Option<MbValue>,
+    pub close_raises_ignored_exit: bool,
     /// Body function pointer for deferred execution (#313 R1).
     /// Set by compiled wrapper via `mb_coroutine_set_body`.
     /// Called by `mb_coroutine_step` to execute the body on first step.
@@ -47,6 +54,7 @@ pub struct MbTask {
     pub name: String,
     pub coroutine_id: u64,
     pub done: bool,
+    pub cancelled: bool,
     pub result: MbValue,
 }
 
@@ -65,8 +73,14 @@ pub(crate) static COROUTINES: std::sync::LazyLock<RwLock<HashMap<u64, MbCoroutin
 pub static TASKS: std::sync::LazyLock<RwLock<HashMap<u64, MbTask>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
+const CORO_ID_BASE: u64 = 1 << 40;
+
 /// Atomic counter for globally unique coroutine IDs (R7).
-static NEXT_CORO_ID: AtomicU64 = AtomicU64::new(1);
+///
+/// Coroutines are represented as int-tagged handles, like generators and a
+/// handful of stdlib handles. Keep them in their own high range so a generator
+/// created inside `await` cannot alias the currently running coroutine handle.
+static NEXT_CORO_ID: AtomicU64 = AtomicU64::new(CORO_ID_BASE);
 
 /// Atomic counter for globally unique task IDs (R7).
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
@@ -85,7 +99,7 @@ pub(crate) fn alloc_task_id() -> u64 {
 pub(crate) fn cleanup_all_async() {
     COROUTINES.write().unwrap().clear();
     TASKS.write().unwrap().clear();
-    NEXT_CORO_ID.store(1, Ordering::Relaxed);
+    NEXT_CORO_ID.store(CORO_ID_BASE, Ordering::Relaxed);
     NEXT_TASK_ID.store(1, Ordering::Relaxed);
 }
 
@@ -102,6 +116,12 @@ pub fn mb_coroutine_new(name: MbValue, locals: MbValue) -> MbValue {
         locals: local_vars,
         result: None,
         exhausted: false,
+        running: false,
+        awaiting: false,
+        suspend_requested: false,
+        pending_await: None,
+        resume_value: None,
+        close_raises_ignored_exit: false,
         body_fn: None,
     };
     let id = alloc_coro_id();
@@ -127,6 +147,14 @@ pub fn mb_coroutine_set_body(coro_handle: MbValue, fn_ptr: MbValue) {
             }
         }
     }
+}
+
+thread_local! {
+    static CURRENT_COROUTINE_ID: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+pub(crate) fn has_current_coroutine() -> bool {
+    CURRENT_COROUTINE_ID.with(|cell| cell.get().is_some())
 }
 
 /// Advance a coroutine to its next suspension point.
@@ -156,13 +184,26 @@ pub fn mb_coroutine_step(coro_handle: MbValue) -> MbValue {
         let step_result = {
             let mut coros = COROUTINES.write().unwrap();
             if let Some(coro) = coros.get_mut(&(id as u64)) {
-                if coro.state == 0 {
-                    coro.state = 1; // Mark as started
+                if coro.running {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "coroutine already executing".to_string(),
+                        )),
+                    );
+                    return MbValue::none();
+                }
+                if coro.state == 0 || coro.state > 1 {
+                    if coro.state == 0 {
+                        coro.state = 1; // Mark as started
+                    }
+                    coro.running = true;
                     if let Some(body) = coro.body_fn {
                         Ok(Some(body))
                     } else {
                         // Fail fast: no body function registered (#313 R1)
                         coro.exhausted = true;
+                        coro.running = false;
                         coro.result = Some(MbValue::none());
                         Err(())
                     }
@@ -174,24 +215,41 @@ pub fn mb_coroutine_step(coro_handle: MbValue) -> MbValue {
             }
         };
 
+        let mut body_return = None;
         match step_result {
             Ok(Some(body)) => {
                 // Call the compiled body function with coroutine handle
-                unsafe {
-                    body(coro_handle.to_bits() as i64);
+                let previous = CURRENT_COROUTINE_ID.with(|cell| {
+                    let previous = cell.get();
+                    cell.set(Some(id as u64));
+                    previous
+                });
+                let raw_return = unsafe { body(coro_handle.to_bits() as i64) };
+                body_return = Some(MbValue::from_bits(raw_return as u64));
+                CURRENT_COROUTINE_ID.with(|cell| cell.set(previous));
+                if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
+                    coro.running = false;
+                }
+                if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+                    super::exception::mb_clear_exception();
+                    raise_runtime_error("coroutine raised StopIteration");
                 }
             }
             Err(()) => { /* fail-fast: coroutine marked exhausted above */ }
             Ok(None) => { /* already started, nothing to do */ }
         }
 
-        // Return result if now exhausted
-        COROUTINES
+        let (exhausted, result) = COROUTINES
             .read()
             .unwrap()
             .get(&(id as u64))
-            .and_then(|c| c.result)
-            .unwrap_or(MbValue::none())
+            .map(|c| (c.exhausted, c.result))
+            .unwrap_or((true, None));
+        if exhausted {
+            result.unwrap_or_else(MbValue::none)
+        } else {
+            body_return.unwrap_or_else(MbValue::none)
+        }
     } else {
         MbValue::none()
     }
@@ -207,7 +265,21 @@ pub fn mb_coroutine_step(coro_handle: MbValue) -> MbValue {
 pub fn mb_coroutine_complete(coro_handle: MbValue, result: MbValue) {
     if let Some(id) = coro_handle.as_int() {
         if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
+            if coro.suspend_requested {
+                return;
+            }
             coro.exhausted = true;
+            coro.awaiting = false;
+            if let Some(pending) = coro.pending_await.take() {
+                unsafe {
+                    super::rc::release_if_ptr(pending);
+                }
+            }
+            if let Some(resume_value) = coro.resume_value.take() {
+                unsafe {
+                    super::rc::release_if_ptr(resume_value);
+                }
+            }
             // Retain so c.result holds a fresh ref independent of caller's rc.
             unsafe {
                 super::rc::retain_if_ptr(result);
@@ -215,6 +287,354 @@ pub fn mb_coroutine_complete(coro_handle: MbValue, result: MbValue) {
             coro.result = Some(result);
         }
     }
+}
+
+pub fn mb_coroutine_set_close_raises(coro_handle: MbValue, value: MbValue) {
+    if let Some(id) = coro_handle.as_int() {
+        let flag = value
+            .as_bool()
+            .or_else(|| value.as_int().map(|i| i != 0))
+            .or_else(|| match value.to_bits() {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
+            })
+            .unwrap_or(false);
+        if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
+            coro.close_raises_ignored_exit = flag;
+        }
+    }
+}
+
+fn new_str(value: impl Into<String>) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(value.into()))
+}
+
+fn raise_type_error(message: impl Into<String>) -> MbValue {
+    super::exception::mb_raise(new_str("TypeError"), new_str(message.into()));
+    MbValue::none()
+}
+
+fn raise_runtime_error(message: impl Into<String>) -> MbValue {
+    super::exception::mb_raise(new_str("RuntimeError"), new_str(message.into()));
+    MbValue::none()
+}
+
+fn raise_stop_iteration_value(value: MbValue) -> MbValue {
+    let args = if value.is_none() {
+        Vec::new()
+    } else {
+        vec![value]
+    };
+    let instance = super::exception::mb_exception_new_with_args(
+        new_str("StopIteration"),
+        MbValue::from_ptr(MbObject::new_list(args)),
+    );
+    super::class::mb_raise_instance(instance);
+    MbValue::none()
+}
+
+pub fn is_known_coroutine(coro_handle: MbValue) -> bool {
+    let Some(id) = coro_handle.as_int() else {
+        return false;
+    };
+    COROUTINES.read().unwrap().contains_key(&(id as u64))
+}
+
+pub fn mb_coroutine_is_exhausted(coro_handle: MbValue) -> MbValue {
+    let exhausted = coro_handle
+        .as_int()
+        .and_then(|id| {
+            COROUTINES
+                .read()
+                .unwrap()
+                .get(&(id as u64))
+                .map(|c| c.exhausted)
+        })
+        .unwrap_or(true);
+    MbValue::from_bool(exhausted)
+}
+
+pub fn mb_coroutine_frame(coro_handle: MbValue) -> MbValue {
+    let live = coro_handle
+        .as_int()
+        .and_then(|id| {
+            COROUTINES
+                .read()
+                .unwrap()
+                .get(&(id as u64))
+                .map(|c| !c.exhausted)
+        })
+        .unwrap_or(false);
+    if live {
+        coro_handle
+    } else {
+        MbValue::none()
+    }
+}
+
+pub fn mb_coroutine_running(coro_handle: MbValue) -> MbValue {
+    let running = coro_handle
+        .as_int()
+        .and_then(|id| {
+            COROUTINES
+                .read()
+                .unwrap()
+                .get(&(id as u64))
+                .map(|c| c.running)
+        })
+        .unwrap_or(false);
+    MbValue::from_bool(running)
+}
+
+pub fn mb_coroutine_awaited(coro_handle: MbValue) -> MbValue {
+    let awaited = coro_handle
+        .as_int()
+        .and_then(|id| {
+            COROUTINES
+                .read()
+                .unwrap()
+                .get(&(id as u64))
+                .map(|c| c.awaiting)
+        })
+        .unwrap_or(false);
+    MbValue::from_bool(awaited)
+}
+
+pub fn mb_coroutine_await_wrapper(coro_handle: MbValue) -> MbValue {
+    let wrapper = MbObject::new_instance("coroutine_wrapper".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*wrapper).data {
+            fields
+                .write()
+                .unwrap()
+                .insert("__coro__".to_string(), coro_handle);
+        }
+    }
+    MbValue::from_ptr(wrapper)
+}
+
+pub fn coroutine_wrapper_target(wrapper: MbValue) -> Option<MbValue> {
+    let ptr = wrapper.as_ptr()?;
+    unsafe {
+        let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        else {
+            return None;
+        };
+        if class_name != "coroutine_wrapper" {
+            return None;
+        }
+        fields.read().unwrap().get("__coro__").copied()
+    }
+}
+
+pub fn is_coroutine_wrapper(wrapper: MbValue) -> bool {
+    coroutine_wrapper_target(wrapper).is_some()
+}
+
+pub(crate) fn mb_coroutine_suspend_current(awaitable: MbValue) {
+    CURRENT_COROUTINE_ID.with(|cell| {
+        let Some(id) = cell.get() else {
+            return;
+        };
+        if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
+            coro.suspend_requested = true;
+            coro.awaiting = true;
+            unsafe {
+                super::rc::retain_if_ptr(awaitable);
+            }
+            if let Some(previous) = coro.pending_await.replace(awaitable) {
+                unsafe {
+                    super::rc::release_if_ptr(previous);
+                }
+            }
+        }
+    });
+}
+
+pub fn mb_coroutine_should_suspend(coro_handle: MbValue) -> MbValue {
+    let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
+        return MbValue::from_bool(false);
+    };
+    let suspend = COROUTINES
+        .write()
+        .unwrap()
+        .get_mut(&id)
+        .map(|c| {
+            let suspend = c.suspend_requested;
+            c.suspend_requested = false;
+            suspend
+        })
+        .unwrap_or(false);
+    MbValue::from_bool(suspend)
+}
+
+pub fn mb_coroutine_send(coro_handle: MbValue, value: MbValue) -> MbValue {
+    let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
+        return MbValue::none();
+    };
+    let Some((state, exhausted, running)) = COROUTINES
+        .read()
+        .unwrap()
+        .get(&id)
+        .map(|c| (c.state, c.exhausted, c.running))
+    else {
+        return MbValue::none();
+    };
+    if exhausted {
+        return raise_runtime_error("cannot reuse already awaited coroutine");
+    }
+    if running {
+        super::exception::mb_raise(
+            new_str("ValueError"),
+            new_str("coroutine already executing"),
+        );
+        return MbValue::none();
+    }
+    if state == 0 && !value.is_none() {
+        return raise_type_error("can't send non-None value to a just-started coroutine");
+    }
+
+    if let Some(resumed) = super::async_task::mb_coroutine_resume_pending_await(coro_handle, value)
+    {
+        match resumed {
+            super::async_task::AwaitResume::Yield(yielded) => {
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
+                }
+                return yielded;
+            }
+            super::async_task::AwaitResume::Complete(result) => {
+                mb_coroutine_store_resume_value(coro_handle, result);
+                let step_value = mb_coroutine_step(coro_handle);
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
+                }
+                let (exhausted, result) = COROUTINES
+                    .read()
+                    .unwrap()
+                    .get(&id)
+                    .map(|c| (c.exhausted, c.result))
+                    .unwrap_or((true, None));
+                if exhausted {
+                    return raise_stop_iteration_value(result.unwrap_or_else(MbValue::none));
+                }
+                return step_value;
+            }
+        }
+    }
+
+    let step_value = mb_coroutine_step(coro_handle);
+    if super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+
+    let (exhausted, result) = COROUTINES
+        .read()
+        .unwrap()
+        .get(&id)
+        .map(|c| (c.exhausted, c.result))
+        .unwrap_or((true, None));
+    if exhausted {
+        return raise_stop_iteration_value(result.unwrap_or_else(MbValue::none));
+    }
+
+    if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
+        coro.awaiting = true;
+    }
+    step_value
+}
+
+pub fn mb_coroutine_throw(coro_handle: MbValue, exc_type: MbValue, exc_msg: MbValue) -> MbValue {
+    let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
+        return MbValue::none();
+    };
+    let exhausted = COROUTINES
+        .read()
+        .unwrap()
+        .get(&id)
+        .map(|c| c.exhausted)
+        .unwrap_or(true);
+    if exhausted {
+        return raise_runtime_error("cannot reuse already awaited coroutine");
+    }
+
+    if let Some(resumed) =
+        super::async_task::mb_coroutine_throw_pending_await(coro_handle, exc_type, exc_msg)
+    {
+        match resumed {
+            super::async_task::AwaitResume::Yield(yielded) => {
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
+                }
+                return yielded;
+            }
+            super::async_task::AwaitResume::Complete(result) => {
+                mb_coroutine_store_resume_value(coro_handle, result);
+                let step_value = mb_coroutine_step(coro_handle);
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
+                }
+                let (exhausted, result) = COROUTINES
+                    .read()
+                    .unwrap()
+                    .get(&id)
+                    .map(|c| (c.exhausted, c.result))
+                    .unwrap_or((true, None));
+                if exhausted {
+                    return raise_stop_iteration_value(result.unwrap_or_else(MbValue::none));
+                }
+                return step_value;
+            }
+        }
+    }
+
+    let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
+    let message = extract_str(exc_msg).unwrap_or_default();
+    super::exception::mb_raise(new_str(type_name), new_str(message));
+    MbValue::none()
+}
+
+pub fn mb_coroutine_close(coro_handle: MbValue) -> MbValue {
+    let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
+        return MbValue::none();
+    };
+    let Some((state, exhausted, running, close_raises_ignored_exit)) = COROUTINES
+        .read()
+        .unwrap()
+        .get(&id)
+        .map(|c| (c.state, c.exhausted, c.running, c.close_raises_ignored_exit))
+    else {
+        return MbValue::none();
+    };
+    if exhausted {
+        return MbValue::none();
+    }
+    if running {
+        return raise_runtime_error("cannot close a coroutine while it is running");
+    }
+    if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
+        coro.exhausted = true;
+        coro.awaiting = false;
+        if let Some(pending) = coro.pending_await.take() {
+            unsafe {
+                super::rc::release_if_ptr(pending);
+            }
+        }
+        if let Some(resume_value) = coro.resume_value.take() {
+            unsafe {
+                super::rc::release_if_ptr(resume_value);
+            }
+        }
+        coro.result = Some(MbValue::none());
+    }
+    if close_raises_ignored_exit && state != 0 {
+        return raise_runtime_error("coroutine ignored GeneratorExit");
+    }
+    MbValue::none()
 }
 
 // ── Coroutine State Helpers (for compiled code) ──
@@ -232,6 +652,14 @@ pub fn mb_coroutine_get_state(coro_handle: MbValue) -> u32 {
     }
 }
 
+pub fn mb_coroutine_get_state_value(coro_handle: MbValue) -> MbValue {
+    MbValue::from_int(mb_coroutine_get_state(coro_handle) as i64)
+}
+
+pub fn mb_coroutine_get_state_i64(coro_handle: MbValue) -> i64 {
+    mb_coroutine_get_state(coro_handle) as i64
+}
+
 pub fn mb_coroutine_set_state(coro_handle: MbValue, state: u32) {
     if let Some(id) = coro_handle.as_int() {
         if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
@@ -241,6 +669,39 @@ pub fn mb_coroutine_set_state(coro_handle: MbValue, state: u32) {
             }
         }
     }
+}
+
+pub fn mb_coroutine_set_state_value(coro_handle: MbValue, state: MbValue) {
+    let state = state.as_int().unwrap_or(0).max(0) as u32;
+    mb_coroutine_set_state(coro_handle, state);
+}
+
+pub fn mb_coroutine_set_state_i64(coro_handle: MbValue, state: i64) {
+    mb_coroutine_set_state(coro_handle, state.max(0) as u32);
+}
+
+pub(crate) fn mb_coroutine_store_resume_value(coro_handle: MbValue, value: MbValue) {
+    if let Some(id) = coro_handle.as_int() {
+        if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
+            unsafe {
+                super::rc::retain_if_ptr(value);
+            }
+            if let Some(previous) = coro.resume_value.replace(value) {
+                unsafe {
+                    super::rc::release_if_ptr(previous);
+                }
+            }
+        }
+    }
+}
+
+pub fn mb_coroutine_take_resume_value(coro_handle: MbValue) -> MbValue {
+    if let Some(id) = coro_handle.as_int() {
+        if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
+            return coro.resume_value.take().unwrap_or_else(MbValue::none);
+        }
+    }
+    MbValue::none()
 }
 
 pub fn mb_coroutine_get_local(coro_handle: MbValue, index: MbValue) -> MbValue {
@@ -275,7 +736,18 @@ pub fn mb_coroutine_set_local(coro_handle: MbValue, index: MbValue, value: MbVal
 
 pub fn mb_coroutine_release(coro_handle: MbValue) {
     if let Some(id) = coro_handle.as_int() {
-        COROUTINES.write().unwrap().remove(&(id as u64));
+        if let Some(mut coro) = COROUTINES.write().unwrap().remove(&(id as u64)) {
+            if let Some(pending) = coro.pending_await.take() {
+                unsafe {
+                    super::rc::release_if_ptr(pending);
+                }
+            }
+            if let Some(resume_value) = coro.resume_value.take() {
+                unsafe {
+                    super::rc::release_if_ptr(resume_value);
+                }
+            }
+        }
     }
 }
 
@@ -319,7 +791,12 @@ mod tests {
 
         mb_coroutine_complete(coro, MbValue::from_int(42));
         let result = mb_await(coro);
-        assert_eq!(result.as_int(), Some(42));
+        assert!(result.is_none());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("RuntimeError")
+        );
+        super::super::exception::mb_clear_exception();
 
         mb_coroutine_release(coro);
     }

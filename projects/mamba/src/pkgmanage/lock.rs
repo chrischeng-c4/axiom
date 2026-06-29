@@ -19,20 +19,22 @@
 //   <INDEX>/<normalized_name>/<version>/metadata.toml   # optional;
 //     requires = ["other_pkg==X.Y.Z", ...]              # transitive edges
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::pkgmanage::add::{atomic_write, ManifestState};
+use crate::pkgmanage::add::{
+    ManifestState, SourceMeta, append_lock_source_fields, atomic_write, dep_name,
+    source_meta_from_manifest,
+};
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
 const FROZEN_INDEX_ENV: &str = "MAMBA_FROZEN_INDEX";
 const INDEX_URL_ENV: &str = "MAMBA_INDEX_URL";
-const DEFAULT_INDEX_URL: &str = "https://pypi.org";
 
 pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
     let project_dir = std::env::current_dir().context("read current directory")?;
@@ -49,45 +51,65 @@ pub fn cmd_lock(sub: &ArgMatches) -> Result<()> {
     let state = ManifestState::parse(&manifest_src)?;
 
     let offline = sub.get_flag("offline");
-    let resolved = match resolve_index_dir(sub) {
-        Some(idx) => {
-            let direct: Vec<Pin> = state
-                .dependencies
-                .iter()
-                .map(|d| Pin::parse(d))
-                .collect::<Result<Vec<_>>>()?;
-            resolve_transitive(&direct, &idx)?
-        }
-        None => {
-            if offline {
-                bail!(
-                    "no frozen index configured and --offline set (pass --index DIR \
-                     or drop --offline to use PyPI)"
-                );
+    let provider_resolved = resolve_manifest_provider_deps(&state)?;
+    let registry_deps = registry_dependency_strings(&state);
+    let mut resolved = if registry_deps.is_empty() {
+        Vec::new()
+    } else {
+        match resolve_index_dir(sub) {
+            Some(idx) => {
+                let direct: Vec<Pin> = registry_deps
+                    .iter()
+                    .map(|d| Pin::parse(d))
+                    .collect::<Result<Vec<_>>>()?;
+                resolve_transitive(&direct, &idx)?
             }
-            let index_url = resolve_index_url(sub);
-            resolve_via_pypi(&state.dependencies, &index_url)?
+            None => {
+                if offline {
+                    bail!(
+                        "no frozen index configured and --offline set (pass --index DIR \
+                         or set {FROZEN_INDEX_ENV})"
+                    );
+                }
+                match resolve_index_url(sub) {
+                    Some(index_url) => resolve_via_pypi(&registry_deps, &index_url)?,
+                    None => bail!(
+                        "no package source configured for `mamba lock`; pass --index DIR, \
+                         set {FROZEN_INDEX_ENV}, pass --index-url URL, or set {INDEX_URL_ENV}"
+                    ),
+                }
+            }
         }
     };
+    resolved.extend(provider_resolved);
+    resolved.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
 
-    let body = render_lockfile(&state.dependencies, &resolved);
     let lock_path = project_dir.join(LOCKFILE_FILE);
+    let body = render_lockfile(&state.dependencies, &resolved);
+    if sub.get_flag("check") {
+        let existing = fs::read_to_string(&lock_path)
+            .with_context(|| format!("read {}", lock_path.display()))?;
+        if existing != body {
+            bail!("{LOCKFILE_FILE} is out of date; run `mamba lock`");
+        }
+        println!("{LOCKFILE_FILE} is up to date");
+        return Ok(());
+    }
     atomic_write(&lock_path, body.as_bytes())?;
     Ok(())
 }
 
-fn resolve_index_url(sub: &ArgMatches) -> String {
+fn resolve_index_url(sub: &ArgMatches) -> Option<String> {
     sub.get_one::<String>("index-url")
         .cloned()
         .or_else(|| std::env::var(INDEX_URL_ENV).ok())
-        .unwrap_or_else(|| DEFAULT_INDEX_URL.to_string())
 }
 
 fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
-    use crate::pkgmanage::pkgmgr::markers::{evaluate as eval_marker, MarkerEnv};
-    use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
-    use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Resolver};
     use crate::pkgmanage::pkgmgr::IndexClient;
+    use crate::pkgmanage::pkgmgr::markers::{MarkerEnv, evaluate as eval_marker};
+    use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
+    use crate::pkgmanage::pkgmgr::resolver::{Resolver, parse_requirement};
 
     let roots: Vec<crate::pkgmanage::pkgmgr::resolver::Requirement> = deps
         .iter()
@@ -103,6 +125,7 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
         max_concurrent: 8,
         timeout_secs: 30,
         retry_max: 3,
+        auth_header: crate::pkgmanage::auth::authorization_for_url(index_url)?,
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -179,6 +202,7 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
                 .collect(),
             sha256: sha,
             url,
+            source: SourceMeta::Default,
         });
     }
     out.sort_by(|a, b| a.pin.name.cmp(&b.pin.name));
@@ -304,6 +328,36 @@ pub(crate) struct Resolved {
     /// live-PyPI path so `mamba sync` can fetch + sha-verify. Empty for
     /// frozen-local-index resolves where the URL is not known.
     pub(crate) url: Option<String>,
+    pub(crate) source: SourceMeta,
+}
+
+fn registry_dependency_strings(state: &ManifestState) -> Vec<String> {
+    state
+        .dependencies
+        .iter()
+        .filter(|dep| !state.source_overrides.contains_key(dep_name(dep)))
+        .cloned()
+        .collect()
+}
+
+fn resolve_manifest_provider_deps(state: &ManifestState) -> Result<Vec<Resolved>> {
+    let mut out = Vec::new();
+    for dep in &state.dependencies {
+        let name = dep_name(dep);
+        let Some(source) = state.source_overrides.get(name) else {
+            continue;
+        };
+        let pin = Pin::parse(dep)?;
+        out.push(Resolved {
+            source: source_meta_from_manifest(&pin.name, &pin.version, source)?,
+            pin,
+            direct: true,
+            requires: Vec::new(),
+            sha256: None,
+            url: None,
+        });
+    }
+    Ok(out)
 }
 
 fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
@@ -329,6 +383,7 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
                 requires: requires.clone(),
                 sha256: None,
                 url: None,
+                source: SourceMeta::Default,
             },
         );
         for r in meta {
@@ -392,11 +447,13 @@ fn render_lockfile(direct_deps: &[String], resolved: &[Resolved]) -> String {
             "sha256 = \"{}\"\n",
             r.sha256.as_deref().unwrap_or("")
         ));
-        out.push_str(&format!("url = \"{}\"\n", r.url.as_deref().unwrap_or("")));
-        out.push_str(&format!(
-            "source = \"pypi://{}/{}\"\n",
-            r.pin.name, r.pin.version
-        ));
+        append_lock_source_fields(
+            &mut out,
+            &r.pin.name,
+            &r.pin.version,
+            r.url.as_deref().unwrap_or(""),
+            &r.source,
+        );
         out.push_str(&format!("direct = {}\n", r.direct));
         out.push_str(&format!(
             "dependencies = {}\n",
@@ -469,6 +526,7 @@ mod tests {
                 requires: vec!["b==2.0".into()],
                 sha256: None,
                 url: None,
+                source: SourceMeta::Default,
             },
             Resolved {
                 pin: Pin {
@@ -479,6 +537,7 @@ mod tests {
                 requires: vec![],
                 sha256: None,
                 url: None,
+                source: SourceMeta::Default,
             },
         ];
         let a = render_lockfile(&["a==1.0".to_string()], &resolved);

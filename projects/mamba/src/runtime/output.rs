@@ -9,6 +9,7 @@
 use std::cell::RefCell;
 use std::io::Write;
 
+use super::rc::MbObject;
 use super::value::MbValue;
 
 thread_local! {
@@ -42,8 +43,7 @@ pub fn try_write_stderr_redirect(s: &str) -> bool {
     let target_bits = STDERR_REDIRECT.with(|stk| stk.borrow().last().copied());
     if let Some(bits) = target_bits {
         let target = MbValue::from_bits(bits);
-        let data = MbValue::from_ptr(super::rc::MbObject::new_str(s.to_string()));
-        let _ = super::stdlib::io_mod::mb_stringio_write(target, data);
+        write_redirect_target(target, s);
         return true;
     }
     false
@@ -67,11 +67,17 @@ fn try_write_redirect(s: &str) -> bool {
     let target_bits = STDOUT_REDIRECT.with(|stk| stk.borrow().last().copied());
     if let Some(bits) = target_bits {
         let target = MbValue::from_bits(bits);
-        let data = MbValue::from_ptr(super::rc::MbObject::new_str(s.to_string()));
-        let _ = super::stdlib::io_mod::mb_stringio_write(target, data);
+        write_redirect_target(target, s);
         return true;
     }
     false
+}
+
+fn write_redirect_target(target: MbValue, s: &str) {
+    let method = MbValue::from_ptr(MbObject::new_str("write".to_string()));
+    let arg = MbValue::from_ptr(MbObject::new_str(s.to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![arg]));
+    let _ = super::class::mb_call_method(target, method, args);
 }
 
 /// Begin capturing stdout output to an internal buffer.

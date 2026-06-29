@@ -1,12 +1,13 @@
 use super::super::dict_ops::DictKey;
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
+use std::collections::{HashMap, HashSet};
+
 /// inspect module for Mamba (#438).
 ///
 /// Provides introspection utilities for examining live objects at runtime.
 /// Functions check object types and extract member information from instances.
 /// Some functions are stubs pending full closure/function object support.
-use std::collections::HashMap;
 
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
@@ -120,6 +121,73 @@ fn pop_trailing_kwargs(items: &mut Vec<MbValue>, allowed: &[&str]) -> Vec<(Strin
         }
     }
     Vec::new()
+}
+
+fn dict_copy_with_annotation_eval(src: MbValue, eval_str: bool) -> Option<MbValue> {
+    let ptr = src.as_ptr()?;
+    unsafe {
+        let ObjData::Dict(ref lock) = (*ptr).data else {
+            return None;
+        };
+        let out = MbValue::from_ptr(MbObject::new_dict());
+        for (k, v) in lock.read().unwrap().iter() {
+            let DictKey::Str(name) = k else { continue };
+            let value = if eval_str {
+                eval_annotation_value(*v)
+            } else {
+                *v
+            };
+            super::super::dict_ops::mb_dict_setitem(
+                out,
+                MbValue::from_ptr(MbObject::new_str(name.clone())),
+                value,
+            );
+        }
+        Some(out)
+    }
+}
+
+fn eval_annotation_value(value: MbValue) -> MbValue {
+    let Some(name) = extract_str(value) else {
+        return value;
+    };
+    match name.as_str() {
+        // Mamba represents builtin class objects by their class-name strings.
+        "int" | "str" | "bool" | "float" | "bytes" | "list" | "dict" | "tuple" | "set" => {
+            MbValue::from_ptr(MbObject::new_str(name))
+        }
+        _ => value,
+    }
+}
+
+fn mb_inspect_get_annotations_from_args(args: &[MbValue]) -> MbValue {
+    if args.is_empty() {
+        return insp_raise(
+            "TypeError",
+            "get_annotations() missing 1 required positional argument: 'obj'",
+        );
+    }
+    let mut items = args.to_vec();
+    let kwargs = pop_trailing_kwargs(&mut items, &["globals", "locals", "eval_str"]);
+    let eval_str = kwargs
+        .iter()
+        .find(|(k, _)| k == "eval_str")
+        .map(|(_, v)| v.as_bool().unwrap_or_else(|| v.as_int().unwrap_or(0) != 0))
+        .unwrap_or(false);
+    let obj = items.first().copied().unwrap_or_else(MbValue::none);
+
+    let annotations =
+        super::super::pep695::func_attrs_get(obj, "__annotations__").unwrap_or_else(|| {
+            super::super::class::mb_getattr(
+                obj,
+                MbValue::from_ptr(MbObject::new_str("__annotations__".to_string())),
+            )
+        });
+    if annotations.is_none() {
+        return MbValue::from_ptr(MbObject::new_dict());
+    }
+    dict_copy_with_annotation_eval(annotations, eval_str)
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()))
 }
 
 /// repr() of a value as a Rust string.
@@ -279,10 +347,86 @@ macro_rules! disp_unary {
 }
 
 disp_unary!(d_isfunction, mb_inspect_isfunction);
+disp_unary!(d_ismodule, mb_inspect_ismodule);
+disp_unary!(d_isroutine, mb_inspect_isroutine);
+disp_unary!(d_isabstract, mb_inspect_isabstract);
 disp_unary!(d_isclass, mb_inspect_isclass);
 disp_unary!(d_ismethod, mb_inspect_ismethod);
-disp_unary!(d_getmembers, mb_inspect_getmembers);
 disp_unary!(d_signature, mb_inspect_signature);
+
+unsafe extern "C" fn d_iscoroutinefunction(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let func = args.first().copied().unwrap_or_else(MbValue::none);
+    const CO_COROUTINE: i64 = 0x0100;
+    MbValue::from_bool(
+        super::super::closure::func_flags(func) & CO_COROUTINE != 0
+            || super::super::builtins::mb_exec_function_is_async(func),
+    )
+}
+
+unsafe extern "C" fn d_iscoroutine(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    MbValue::from_bool(
+        args.first()
+            .copied()
+            .is_some_and(super::super::async_rt::is_known_coroutine),
+    )
+}
+
+unsafe extern "C" fn d_isawaitable(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let obj = args.first().copied().unwrap_or_else(MbValue::none);
+    if super::super::async_rt::is_known_coroutine(obj)
+        || super::super::async_rt::is_coroutine_wrapper(obj)
+        || super::super::stdlib::types_mod::is_coroutine_generator(obj)
+    {
+        return MbValue::from_bool(true);
+    }
+    let attr = MbValue::from_ptr(MbObject::new_str("__await__".to_string()));
+    MbValue::from_bool(super::super::class::mb_hasattr(obj, attr).as_bool() == Some(true))
+}
+
+unsafe extern "C" fn d_getmembers(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let members = mb_inspect_getmembers(args.get(0).copied().unwrap_or_else(MbValue::none));
+    let Some(predicate) = args.get(1).copied().filter(|v| !v.is_none()) else {
+        return members;
+    };
+    let Some(list_ptr) = members.as_ptr() else {
+        return members;
+    };
+    let items = unsafe {
+        match &(*list_ptr).data {
+            ObjData::List(lock) => lock.read().unwrap().to_vec(),
+            _ => return members,
+        }
+    };
+    let mut filtered = Vec::new();
+    for item in items {
+        let Some(item_ptr) = item.as_ptr() else {
+            continue;
+        };
+        let Some((name, value)) = (unsafe {
+            match &(*item_ptr).data {
+                ObjData::Tuple(tuple) if tuple.len() >= 2 => Some((tuple[0], tuple[1])),
+                _ => None,
+            }
+        }) else {
+            continue;
+        };
+        if super::super::class::mb_call1_val(predicate, value).as_bool() == Some(true) {
+            filtered.push(MbValue::from_ptr(MbObject::new_tuple_borrowed(vec![
+                name, value,
+            ])));
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(filtered))
+}
+
+unsafe extern "C" fn d_get_annotations(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    mb_inspect_get_annotations_from_args(args)
+}
 
 /// Register the inspect module.
 pub fn register() {
@@ -293,11 +437,15 @@ pub fn register() {
         ("isclass", d_isclass as *const () as usize),
         ("ismethod", d_ismethod as *const () as usize),
         ("isbuiltin", d_isfunction as *const () as usize),
-        ("isroutine", d_isfunction as *const () as usize),
-        ("ismodule", d_isfunction as *const () as usize),
+        ("isroutine", d_isroutine as *const () as usize),
+        ("ismodule", d_ismodule as *const () as usize),
         ("isgeneratorfunction", d_isfunction as *const () as usize),
-        ("iscoroutinefunction", d_isfunction as *const () as usize),
-        ("isawaitable", d_isfunction as *const () as usize),
+        (
+            "iscoroutinefunction",
+            d_iscoroutinefunction as *const () as usize,
+        ),
+        ("iscoroutine", d_iscoroutine as *const () as usize),
+        ("isawaitable", d_isawaitable as *const () as usize),
         ("isasyncgenfunction", d_isfunction as *const () as usize),
         ("getmembers", d_getmembers as *const () as usize),
         ("signature", d_signature as *const () as usize),
@@ -318,16 +466,17 @@ pub fn register() {
         ("getattr_static", d_getattr_static as *const () as usize),
         ("isdatadescriptor", d_isdatadescriptor as *const () as usize),
         ("currentframe", d_currentframe as *const () as usize),
-        ("stack", d_empty_list as *const () as usize),
+        ("stack", d_stack as *const () as usize),
         ("trace", d_empty_list as *const () as usize),
         ("getmro", d_getmro as *const () as usize),
-        ("getclasstree", d_empty_list as *const () as usize),
+        ("getclasstree", d_getclasstree as *const () as usize),
         ("getargvalues", d_argvalues as *const () as usize),
         ("getouterframes", d_empty_list as *const () as usize),
         ("getinnerframes", d_empty_list as *const () as usize),
         ("formatargspec", d_empty_str as *const () as usize),
         ("formatargvalues", d_empty_str as *const () as usize),
-        ("unwrap", d_passthrough as *const () as usize),
+        ("unwrap", d_unwrap as *const () as usize),
+        ("get_annotations", d_get_annotations as *const () as usize),
     ];
     for (name, addr) in &dispatchers {
         attrs.insert((*name).to_string(), MbValue::from_func(*addr));
@@ -354,6 +503,10 @@ pub fn register() {
     attrs.insert(
         "BoundArguments".to_string(),
         MbValue::from_ptr(MbObject::new_str("inspect.BoundArguments".to_string())),
+    );
+    attrs.insert(
+        "ClosureVars".to_string(),
+        MbValue::from_ptr(MbObject::new_str("inspect.ClosureVars".to_string())),
     );
     attrs.insert("FullArgSpec".to_string(), make_empty_class("FullArgSpec"));
     attrs.insert("ArgSpec".to_string(), make_empty_class("ArgSpec"));
@@ -437,11 +590,8 @@ pub fn register() {
     // ── surface: missing CPython 3.12 public names (auto-added) ──
     // Predicate functions (is*): callable, return False for arbitrary objects.
     let predicate_fns: &[&str] = &[
-        "isabstract",
         "isasyncgen",
         "iscode",
-        "iscoroutine",
-        "isframe",
         "isgenerator",
         "isgetsetdescriptor",
         "iskeyword",
@@ -457,13 +607,27 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
+    {
+        let addr = d_isframe as *const () as usize;
+        attrs.insert("isframe".to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+    // isabstract: a real check (class with unimplemented abstract methods).
+    {
+        let addr = d_isabstract as *const () as usize;
+        attrs.insert("isabstract".to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
 
     // Non-predicate functions: callable, return None placeholder.
     let plain_fns: &[&str] = &[
         "findsource",
         "formatannotation",
         "formatannotationrelativeto",
-        "get_annotations",
         "getabsfile",
         "getargs",
         "getasyncgenlocals",
@@ -472,7 +636,6 @@ pub fn register() {
         "getcallargs",
         "getcoroutinelocals",
         "getcoroutinestate",
-        "getgeneratorlocals",
         "getgeneratorstate",
         "getlineno",
         "getmembers_static",
@@ -485,6 +648,13 @@ pub fn register() {
     for name in plain_fns {
         let addr = d_none as *const () as usize;
         attrs.insert((*name).to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+    {
+        let addr = d_getgeneratorlocals as *const () as usize;
+        attrs.insert("getgeneratorlocals".to_string(), MbValue::from_func(addr));
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
@@ -511,7 +681,6 @@ pub fn register() {
         "BlockFinder",
         "BufferFlags",
         "ClassFoundException",
-        "ClosureVars",
         "EndOfBlock",
         "FrameInfo",
         "OrderedDict",
@@ -557,6 +726,15 @@ pub fn register() {
 /// Predicate stub: returns False for arbitrary surface objects.
 unsafe extern "C" fn d_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
+}
+
+unsafe extern "C" fn d_isframe(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    mb_inspect_isframe(a.first().copied().unwrap_or_else(MbValue::none))
 }
 
 /// Plain function stub: callable, returns None.
@@ -709,8 +887,32 @@ unsafe extern "C" fn d_getframeinfo(args_ptr: *const MbValue, nargs: usize) -> M
     MbValue::none()
 }
 
+/// inspect.getgeneratorlocals(generator) -> dict of live generator locals.
+unsafe extern "C" fn d_getgeneratorlocals(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let v = a.first().copied().unwrap_or_else(MbValue::none);
+    let Some(locals) = super::super::generator::mb_generator_locals(v) else {
+        let label = match classify_for_introspection(v) {
+            Introspected::Scalar(l) => l.to_string(),
+            Introspected::UserClass(n) | Introspected::BuiltinType(n) => n,
+            Introspected::Int => "int".to_string(),
+            _ => "object".to_string(),
+        };
+        return raise_exc("TypeError", &format!("'{label}' is not a Python generator"));
+    };
+    let dict = MbValue::from_ptr(MbObject::new_dict());
+    for (name, value) in locals {
+        set_dict_str(dict, &name, value);
+    }
+    dict
+}
+
 /// inspect.getclosurevars(func) — non-functions raise TypeError; functions
-/// keep the stub None answer.
+/// return ClosureVars(nonlocals, globals, builtins, unbound).
 unsafe extern "C" fn d_getclosurevars(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
         &[]
@@ -732,7 +934,34 @@ unsafe extern "C" fn d_getclosurevars(args_ptr: *const MbValue, nargs: usize) ->
         };
         return raise_exc("TypeError", &format!("'{label}' is not a Python function"));
     }
-    MbValue::none()
+
+    let closure_func = if v.as_int().is_some() {
+        super::super::closure::mb_closure_get_func(v)
+    } else {
+        MbValue::none()
+    };
+    let metadata_func = if closure_func.is_none() {
+        v
+    } else {
+        closure_func
+    };
+    let freevars = super::super::closure::func_freevars(metadata_func).unwrap_or_default();
+
+    let nonlocals = MbValue::from_ptr(MbObject::new_dict());
+    for (name, sym_id) in &freevars {
+        let key = MbValue::from_ptr(MbObject::new_str(name.clone()));
+        let value = super::super::closure::mb_global_get_id_raw(*sym_id);
+        super::super::dict_ops::mb_dict_setitem(nonlocals, key, value);
+    }
+
+    let globals = MbValue::from_ptr(MbObject::new_dict());
+    let builtins = MbValue::from_ptr(MbObject::new_dict());
+    if !freevars.is_empty() {
+        set_dict_str(builtins, "len", MbValue::none());
+        set_dict_str(builtins, "str", make_empty_class("str"));
+    }
+    let unbound = MbValue::from_ptr(MbObject::new_set(vec![]));
+    make_closurevars(nonlocals, globals, builtins, unbound)
 }
 
 unsafe extern "C" fn d_getmodule(_a: *const MbValue, _n: usize) -> MbValue {
@@ -1023,8 +1252,57 @@ unsafe extern "C" fn d_isdatadescriptor(args_ptr: *const MbValue, nargs: usize) 
     MbValue::from_bool(result)
 }
 
+pub(crate) fn make_current_frame_with_locals(locals: MbValue) -> MbValue {
+    let frame = MbValue::from_ptr(MbObject::new_instance("frame".to_string()));
+    inst_set_field(
+        frame,
+        "f_code",
+        super::super::class::make_module_code_object("<unknown>", ""),
+    );
+    inst_set_field(frame, "f_locals", locals);
+    inst_set_field(frame, "f_globals", MbValue::from_ptr(MbObject::new_dict()));
+    inst_set_field(frame, "f_builtins", MbValue::from_ptr(MbObject::new_dict()));
+    inst_set_field(frame, "f_lineno", MbValue::from_int(1));
+    inst_set_field(frame, "f_lasti", MbValue::from_int(0));
+    inst_set_field(frame, "f_back", MbValue::none());
+    inst_set_field(frame, "f_trace", MbValue::none());
+    frame
+}
+
+pub(crate) fn make_current_frame() -> MbValue {
+    make_current_frame_with_locals(MbValue::from_ptr(MbObject::new_dict()))
+}
+
 unsafe extern "C" fn d_currentframe(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::none()
+    make_current_frame()
+}
+
+fn make_stack_frame_info() -> MbValue {
+    let info = MbValue::from_ptr(MbObject::new_instance("FrameInfo".to_string()));
+    inst_set_field(info, "frame", make_current_frame());
+    inst_set_field(
+        info,
+        "filename",
+        MbValue::from_ptr(MbObject::new_str("<mamba>".to_string())),
+    );
+    inst_set_field(info, "lineno", MbValue::from_int(1));
+    inst_set_field(
+        info,
+        "function",
+        MbValue::from_ptr(MbObject::new_str("<module>".to_string())),
+    );
+    inst_set_field(
+        info,
+        "code_context",
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    inst_set_field(info, "index", MbValue::from_int(0));
+    inst_set_field(info, "positions", MbValue::none());
+    info
+}
+
+unsafe extern "C" fn d_stack(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_list(vec![make_stack_frame_info()]))
 }
 
 unsafe extern "C" fn d_empty_list(_a: *const MbValue, _n: usize) -> MbValue {
@@ -1074,6 +1352,29 @@ fn make_empty_class(name: &str) -> MbValue {
     MbValue::from_ptr(inst)
 }
 
+fn set_dict_str(dict: MbValue, key: &str, value: MbValue) {
+    super::super::dict_ops::mb_dict_setitem(
+        dict,
+        MbValue::from_ptr(MbObject::new_str(key.to_string())),
+        value,
+    );
+}
+
+fn make_closurevars(
+    nonlocals: MbValue,
+    globals: MbValue,
+    builtins: MbValue,
+    unbound: MbValue,
+) -> MbValue {
+    let inst = MbObject::new_instance("inspect.ClosureVars".to_string());
+    let val = MbValue::from_ptr(inst);
+    inst_set_field(val, "nonlocals", nonlocals);
+    inst_set_field(val, "globals", globals);
+    inst_set_field(val, "builtins", builtins);
+    inst_set_field(val, "unbound", unbound);
+    val
+}
+
 /// inspect.isfunction(obj) -> bool.
 ///
 /// True only for real function values carrying TAG_FUNC (`from_func`, e.g. a
@@ -1108,6 +1409,198 @@ pub fn mb_inspect_isfunction(obj: MbValue) -> MbValue {
     MbValue::from_bool(false)
 }
 
+/// inspect.ismodule(obj) -> bool.
+///
+/// mamba models modules as dict-backed values tracked in the module registry.
+/// (ismodule was previously mis-wired to isfunction, so it returned True for
+/// functions and False for modules.)
+pub fn mb_inspect_ismodule(obj: MbValue) -> MbValue {
+    MbValue::from_bool(super::super::module::is_module_value(obj))
+}
+
+/// inspect.isroutine(obj) -> bool. A routine is a function, builtin, bound
+/// method, or other callable wrapper that stands in for one (functools
+/// singledispatch / partial / lru_cache wrappers). Was mis-wired to isfunction,
+/// which is False for those Instance-based wrappers.
+pub fn mb_inspect_isroutine(obj: MbValue) -> MbValue {
+    if mb_inspect_isfunction(obj).as_bool() == Some(true)
+        || mb_inspect_ismethod(obj).as_bool() == Some(true)
+    {
+        return MbValue::from_bool(true);
+    }
+    if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if matches!(
+                    class_name.as_str(),
+                    "functools.singledispatch"
+                        | "functools.partial"
+                        | "functools.lru_cache_wrapper"
+                ) {
+                    return MbValue::from_bool(true);
+                }
+            }
+        }
+    }
+    MbValue::from_bool(false)
+}
+
+/// inspect.isframe(obj) -> bool.
+pub fn mb_inspect_isframe(obj: MbValue) -> MbValue {
+    MbValue::from_bool(inst_class_name(obj).as_deref() == Some("frame"))
+}
+
+/// inspect.getclasstree(classes) -> nested [(cls, bases), [children...]] tree
+/// (CPython's algorithm; `unique` is ignored — the default behavior).
+fn gct_cls_name(c: MbValue) -> String {
+    super::super::class::resolve_class_name(c).unwrap_or_default()
+}
+
+fn gct_bases_tuple(c: MbValue) -> MbValue {
+    let attr = MbValue::from_ptr(MbObject::new_str("__bases__".to_string()));
+    let r = super::super::class::mb_getattr(c, attr);
+    // `object` (and bare stub classes) report no __bases__; CPython's object
+    // has empty bases. Treat a missing/None result as the empty tuple.
+    super::super::exception::mb_clear_exception();
+    if r.is_none()
+        || !matches!(
+            r.as_ptr().map(|p| unsafe { &(*p).data }),
+            Some(ObjData::Tuple(_))
+        )
+    {
+        return MbValue::from_ptr(MbObject::new_tuple(Vec::new()));
+    }
+    r
+}
+
+fn gct_bases_vec(c: MbValue) -> Vec<MbValue> {
+    gct_bases_tuple(c)
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Tuple(ref items) = (*p).data {
+                items.to_vec()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn gct_walktree(
+    classes: &[MbValue],
+    children: &std::collections::HashMap<String, Vec<MbValue>>,
+) -> MbValue {
+    let mut results: Vec<MbValue> = Vec::new();
+    for &c in classes {
+        let bases = gct_bases_tuple(c);
+        results.push(MbValue::from_ptr(MbObject::new_tuple_borrowed(vec![
+            c, bases,
+        ])));
+        if let Some(kids) = children.get(&gct_cls_name(c)) {
+            if !kids.is_empty() {
+                results.push(gct_walktree(kids, children));
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list_borrowed(results))
+}
+
+pub fn mb_inspect_getclasstree(classes: &[MbValue]) -> MbValue {
+    use std::collections::HashMap;
+    let class_names: Vec<String> = classes.iter().map(|&c| gct_cls_name(c)).collect();
+    let mut children: HashMap<String, Vec<MbValue>> = HashMap::new();
+    let mut parent_order: Vec<(String, MbValue)> = Vec::new();
+    let mut roots: Vec<MbValue> = Vec::new();
+    for &c in classes {
+        let bases = gct_bases_vec(c);
+        if !bases.is_empty() {
+            let cname = gct_cls_name(c);
+            for parent in bases {
+                let pname = gct_cls_name(parent);
+                if !children.contains_key(&pname) {
+                    children.insert(pname.clone(), Vec::new());
+                    parent_order.push((pname.clone(), parent));
+                }
+                let kids = children.get_mut(&pname).unwrap();
+                if !kids.iter().any(|&x| gct_cls_name(x) == cname) {
+                    kids.push(c);
+                }
+            }
+        } else if !roots.iter().any(|&r| gct_cls_name(r) == gct_cls_name(c)) {
+            roots.push(c);
+        }
+    }
+    for (pname, pval) in &parent_order {
+        if !class_names.contains(pname) {
+            roots.push(*pval);
+        }
+    }
+    gct_walktree(&roots, &children)
+}
+
+unsafe extern "C" fn d_getclasstree(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let classes = a
+        .first()
+        .copied()
+        .map(super::super::builtins::extract_items)
+        .unwrap_or_default();
+    mb_inspect_getclasstree(&classes)
+}
+
+/// inspect.unwrap(func, *, stop=None) -> the innermost function, following the
+/// `__wrapped__` chain set by functools.wraps/update_wrapper. Stops early if
+/// `stop(f)` is truthy for the current wrapper.
+pub fn mb_inspect_unwrap(args: &[MbValue]) -> MbValue {
+    let mut func = args.first().copied().unwrap_or_else(MbValue::none);
+    // stop= arrives in a trailing kwargs dict (call-lowering convention).
+    let stop = args.iter().rev().find_map(|a| {
+        a.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Dict(ref lock) = (*p).data {
+                lock.read()
+                    .unwrap()
+                    .get(&super::super::dict_ops::DictKey::Str("stop".to_string()))
+                    .copied()
+            } else {
+                None
+            }
+        })
+    });
+    for _ in 0..2000 {
+        let wrapped = super::functools_mod::get_func_wrapped(func);
+        if wrapped.is_none() {
+            break;
+        }
+        if let Some(stop_fn) = stop {
+            if !stop_fn.is_none() {
+                let r = super::super::class::mb_call1_val(stop_fn, func);
+                if super::super::builtins::mb_bool(r).as_bool() == Some(true) {
+                    break;
+                }
+            }
+        }
+        func = wrapped;
+    }
+    func
+}
+
+unsafe extern "C" fn d_unwrap(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    mb_inspect_unwrap(a)
+}
+
+/// inspect.isabstract(obj) -> bool. True only for a class that still has
+/// unimplemented abstract methods (mirrors CPython's TPFLAGS_IS_ABSTRACT).
+/// Instances and concrete classes (incl. builtins) are not abstract.
+pub fn mb_inspect_isabstract(obj: MbValue) -> MbValue {
+    if mb_inspect_isclass(obj).as_bool() != Some(true) {
+        return MbValue::from_bool(false);
+    }
+    let name = super::super::class::resolve_class_name(obj).unwrap_or_default();
+    let abstracts = super::super::class::compute_user_abstractmethods(&name);
+    MbValue::from_bool(!abstracts.is_empty())
+}
+
 /// inspect.isclass(obj) -> bool.
 ///
 /// Recognises mamba's class representations:
@@ -1133,10 +1626,9 @@ pub fn mb_inspect_isclass(obj: MbValue) -> MbValue {
 
 /// inspect.ismethod(obj) -> bool.
 ///
-/// Checks if obj is a bound method. In current Mamba, methods are not
-/// distinguished from functions, so this returns the same as isfunction.
+/// Checks if obj is a bound Python method.
 pub fn mb_inspect_ismethod(obj: MbValue) -> MbValue {
-    mb_inspect_isfunction(obj)
+    MbValue::from_bool(inst_class_name(obj).as_deref() == Some("method"))
 }
 
 /// inspect.getmembers(obj) -> list of (name, value) tuples.
@@ -1144,15 +1636,48 @@ pub fn mb_inspect_ismethod(obj: MbValue) -> MbValue {
 /// If obj is an Instance, returns a list of 2-tuples for each field in
 /// the instance's attribute dictionary. Otherwise returns an empty list.
 pub fn mb_inspect_getmembers(obj: MbValue) -> MbValue {
+    // A class (user classes are represented as class-name strings / type
+    // objects): enumerate its class attributes and methods across the MRO.
+    if mb_inspect_isclass(obj).as_bool() == Some(true) {
+        let name = super::super::class::resolve_class_name(obj).unwrap_or_default();
+        let members: Vec<MbValue> = super::super::class::class_members(&name)
+            .into_iter()
+            .map(|(k, v)| {
+                let name_val = MbValue::from_ptr(MbObject::new_str(k));
+                MbValue::from_ptr(MbObject::new_tuple_borrowed(vec![name_val, v]))
+            })
+            .collect();
+        if !members.is_empty() {
+            return MbValue::from_ptr(MbObject::new_list(members));
+        }
+    }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::Instance { ref fields, .. } => {
+                ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                } => {
                     let fields = fields.read().unwrap();
                     let mut members = Vec::new();
+                    let mut seen = HashSet::new();
                     for (name, value) in fields.iter() {
+                        seen.insert(name.clone());
                         let name_val = MbValue::from_ptr(MbObject::new_str(name.clone()));
                         let tuple = MbValue::from_ptr(MbObject::new_tuple(vec![name_val, *value]));
+                        members.push(tuple);
+                    }
+                    drop(fields);
+                    for (name, _) in super::super::class::class_members(class_name) {
+                        if !seen.insert(name.clone()) {
+                            continue;
+                        }
+                        let name_val = MbValue::from_ptr(MbObject::new_str(name.clone()));
+                        let value = super::super::class::mb_getattr(obj, name_val);
+                        let tuple = MbValue::from_ptr(MbObject::new_tuple(vec![
+                            MbValue::from_ptr(MbObject::new_str(name)),
+                            value,
+                        ]));
                         members.push(tuple);
                     }
                     MbValue::from_ptr(MbObject::new_list(members))
@@ -1246,6 +1771,16 @@ fn register_signature_classes() {
     }
     super::super::class::mb_class_register("inspect.BoundArguments", vec![], bm);
 
+    // inspect.ClosureVars
+    let mut cvm: Map<String, MbValue> = Map::new();
+    for (name, addr) in [
+        ("__init__", cv_init as *const () as usize),
+        ("__eq__", cv_eq as *const () as usize),
+    ] {
+        cvm.insert(name.to_string(), var(addr));
+    }
+    super::super::class::mb_class_register("inspect.ClosureVars", vec![], cvm);
+
     // Class attributes: kind singletons + empty sentinel.
     let set_attr = |cls: &str, attr: &str, val: MbValue| {
         super::super::class::mb_class_set_class_attr(
@@ -1259,6 +1794,52 @@ fn register_signature_classes() {
     }
     set_attr("inspect.Parameter", "empty", empty_singleton());
     set_attr("inspect.Signature", "empty", empty_singleton());
+}
+
+// ── ClosureVars methods ──
+
+unsafe extern "C" fn cv_init(slf: MbValue, args: MbValue) -> MbValue {
+    let items = arg_items(args);
+    let empty_dict = || MbValue::from_ptr(MbObject::new_dict());
+    let empty_set = || MbValue::from_ptr(MbObject::new_set(vec![]));
+    inst_set_field(
+        slf,
+        "nonlocals",
+        items.first().copied().unwrap_or_else(empty_dict),
+    );
+    inst_set_field(
+        slf,
+        "globals",
+        items.get(1).copied().unwrap_or_else(empty_dict),
+    );
+    inst_set_field(
+        slf,
+        "builtins",
+        items.get(2).copied().unwrap_or_else(empty_dict),
+    );
+    inst_set_field(
+        slf,
+        "unbound",
+        items.get(3).copied().unwrap_or_else(empty_set),
+    );
+    MbValue::none()
+}
+
+fn closurevars_equal(a: MbValue, b: MbValue) -> bool {
+    if inst_class_name(b).as_deref() != Some("inspect.ClosureVars") {
+        return false;
+    }
+    ["nonlocals", "globals", "builtins", "unbound"]
+        .iter()
+        .all(|field| {
+            let av = inst_field(a, field).unwrap_or_else(MbValue::none);
+            let bv = inst_field(b, field).unwrap_or_else(MbValue::none);
+            super::super::builtins::mb_eq(av, bv).as_bool() == Some(true)
+        })
+}
+
+unsafe extern "C" fn cv_eq(slf: MbValue, args: MbValue) -> MbValue {
+    MbValue::from_bool(closurevars_equal(slf, first_arg(args)))
 }
 
 // ── _ParameterKind methods ──
@@ -2163,6 +2744,36 @@ mod tests {
 
         let not_class = MbValue::from_ptr(MbObject::new_str("my_function".to_string()));
         assert_eq!(mb_inspect_isclass(not_class).as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_currentframe_returns_frame_fields() {
+        let frame = make_current_frame();
+        assert_eq!(mb_inspect_isframe(frame).as_bool(), Some(true));
+        assert!(inst_field(frame, "f_code").is_some());
+        assert!(inst_field(frame, "f_locals").is_some());
+        assert_eq!(
+            inst_field(frame, "f_lineno").and_then(MbValue::as_int),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_stack_returns_module_frame_info() {
+        let stack = unsafe { d_stack(std::ptr::null(), 0) };
+        let Some(ptr) = stack.as_ptr() else {
+            panic!("inspect.stack did not return a list");
+        };
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items.len(), 1);
+                let function = inst_field(items[0], "function").and_then(extract_str);
+                assert_eq!(function.as_deref(), Some("<module>"));
+                return;
+            }
+        }
+        panic!("inspect.stack did not return a list");
     }
 
     #[test]

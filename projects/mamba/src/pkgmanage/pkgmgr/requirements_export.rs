@@ -114,7 +114,7 @@ fn build_reverse_deps(lockfile: &Lockfile) -> BTreeMap<String, Vec<String>> {
     let mut adj: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for parent in &lockfile.packages {
         for dep in &parent.dependencies {
-            let dep_key = pep503_normalize(dep);
+            let dep_key = pep503_normalize(dependency_name(dep));
             adj.entry(dep_key).or_default().push(parent.name.clone());
         }
     }
@@ -222,6 +222,26 @@ fn strip_sha256_prefix(s: &str) -> &str {
 
 fn build_exclusion_set(names: &[String]) -> std::collections::BTreeSet<String> {
     names.iter().map(|n| pep503_normalize(n)).collect()
+}
+
+fn dependency_name(spec: &str) -> &str {
+    let trimmed = spec.trim();
+    let head = trimmed
+        .split_once(';')
+        .map(|(name, _)| name)
+        .unwrap_or(trimmed)
+        .trim();
+    let end = head
+        .char_indices()
+        .find_map(|(idx, ch)| {
+            if matches!(ch, '<' | '>' | '=' | '!' | '~') || ch.is_whitespace() || ch == '[' {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(head.len());
+    head[..end].trim()
 }
 
 #[cfg(test)]
@@ -637,6 +657,22 @@ mod tests {
         };
         let body = export_requirements_txt(&l, &opts);
         assert!(body.contains("my-pkg-x==1\n    # via consumer\n"));
+    }
+
+    #[test]
+    fn annotate_matches_version_pinned_dependency_specs() {
+        let l = lock(vec![
+            pkg_with_deps("consumer", "1", &["child==2.0"]),
+            pkg_with_deps("child", "2.0", &[]),
+        ]);
+        let opts = ExportOptions {
+            include_hashes: false,
+            include_header: false,
+            annotate: true,
+            ..Default::default()
+        };
+        let body = export_requirements_txt(&l, &opts);
+        assert!(body.contains("child==2.0\n    # via consumer\n"));
     }
 
     #[test]

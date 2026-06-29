@@ -9,7 +9,7 @@
 # case = "nonruntime_protocol_isinstance_raises"
 # subject = "typing.Protocol"
 # kind = "mechanical"
-# xfail = "mamba does not raise on isinstance against a non-runtime-checkable Protocol (project_mamba_class_machinery_silent_divergences)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

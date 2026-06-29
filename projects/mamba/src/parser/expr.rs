@@ -1,7 +1,7 @@
 use super::ast::*;
 use super::Parser;
 use crate::error::MambaError;
-use crate::lexer::token::TokenKind;
+use crate::lexer::token::{TokenKind, BIG_INT_LITERAL_SENTINEL};
 use crate::source::span::{Span, Spanned};
 
 /// Binding power for Pratt parsing.
@@ -83,6 +83,13 @@ impl<'a> Parser<'a> {
 
     /// Parse an expression (top-level with yield/lambda/await/ternary/walrus).
     pub fn parse_expr(&mut self) -> crate::error::Result<Spanned<Expr>> {
+        // A walrus at the top of an *expression statement* is illegal in
+        // CPython (`a := 5` must be parenthesized). Capture-and-clear the flag
+        // so only this level — not parenthesized/nested sub-expressions, which
+        // recurse through parse_expr with the flag already false — is treated
+        // as statement-top.
+        let stmt_top = self.stmt_expr_toplevel;
+        self.stmt_expr_toplevel = false;
         if self.peek_kind() == Some(TokenKind::Yield) {
             return self.parse_yield_expr();
         }
@@ -109,6 +116,17 @@ impl<'a> Parser<'a> {
         // Walrus: `name := expr`
         if self.peek_kind() == Some(TokenKind::ColonEq) {
             if let Expr::Ident(ref name) = expr.node {
+                // A bare walrus as an expression statement (`a := 5`) is a
+                // SyntaxError; it must be parenthesized (`(a := 5)`). Reaching
+                // this branch with `stmt_top` set means the `:=` is at the
+                // statement's top level (a parenthesized walrus is consumed by
+                // a deeper parse_expr call, with the flag already cleared).
+                if stmt_top {
+                    return Err(crate::error::MambaError::syntax(
+                        expr.span,
+                        "invalid syntax",
+                    ));
+                }
                 let name = name.clone();
                 let start = expr.span.start;
                 self.advance();
@@ -219,8 +237,16 @@ impl<'a> Parser<'a> {
         match &token.kind {
             TokenKind::Int(v) => {
                 let v = *v;
-                self.advance();
-                Ok(Spanned::new(Expr::IntLit(v), self.span_from(start)))
+                let (_tok_start, tok_end) = self.advance();
+                let span = self.span_from(start);
+                if v == BIG_INT_LITERAL_SENTINEL {
+                    Ok(Spanned::new(
+                        Expr::BigIntLit(self.text_at(start, tok_end).to_string()),
+                        span,
+                    ))
+                } else {
+                    Ok(Spanned::new(Expr::IntLit(v), span))
+                }
             }
             TokenKind::Float(v) => {
                 let v = *v;
@@ -409,6 +435,17 @@ impl<'a> Parser<'a> {
                     span,
                 ))
             }
+            // `await` in operand position (e.g. `-await f()`, `await f() * 10`).
+            // It binds at the unary level — tighter than binary operators — so
+            // those parse as `-(await f())` and `(await f()) * 10`. (Top-level
+            // `await …` at the start of an expression is handled in parse_expr.)
+            TokenKind::Await => {
+                self.advance();
+                let bp = prefix_bp(&UnaryOp::Neg);
+                let operand = self.parse_expr_bp(bp)?;
+                let span = Span::new(self.file_id, start, operand.span.end);
+                Ok(Spanned::new(Expr::Await(Box::new(operand)), span))
+            }
             // Type keywords usable as expressions: int(x), bool(x), etc.
             TokenKind::IntType
             | TokenKind::FloatType
@@ -452,7 +489,7 @@ impl<'a> Parser<'a> {
             } else {
                 let expr = self.parse_expr()?;
                 // Generator expression as sole argument: `f(x for x in ...)`
-                if self.peek_kind() == Some(TokenKind::For) {
+                if self.at_comprehension_clause_start() {
                     let generators = self.parse_comprehension_clauses()?;
                     let span = expr.span;
                     let gen = Spanned::new(
@@ -846,9 +883,11 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Result<Vec<FStringPart>, 
             };
             if let Some(conv) = effective_conv {
                 if conv == 'r' || conv == 'a' {
+                    // `!r` -> repr(); `!a` -> ascii() (backslash-escapes non-ASCII).
+                    let fname = if conv == 'a' { "ascii" } else { "repr" };
                     let inner = Spanned::new(expr_node, span);
                     expr_node = Expr::Call {
-                        func: Box::new(Spanned::new(Expr::Ident("repr".to_string()), span)),
+                        func: Box::new(Spanned::new(Expr::Ident(fname.to_string()), span)),
                         args: vec![CallArg::Positional(inner)],
                     };
                 }
@@ -1051,6 +1090,14 @@ mod tests {
     #[test]
     fn test_int_literal() {
         assert!(matches!(parse_expr_str("42"), Expr::IntLit(42)));
+    }
+
+    #[test]
+    fn test_big_int_literal() {
+        assert!(matches!(
+            parse_expr_str("123456789012345678901234567890"),
+            Expr::BigIntLit(s) if s == "123456789012345678901234567890"
+        ));
     }
 
     #[test]

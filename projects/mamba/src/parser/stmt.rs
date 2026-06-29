@@ -309,9 +309,37 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn validate_assign_target(target: &Spanned<Expr>, message: &str) -> crate::error::Result<()> {
+        match &target.node {
+            Expr::Ident(_) | Expr::Attr { .. } | Expr::Index { .. } => Ok(()),
+            Expr::TupleLit(elems) | Expr::ListLit(elems) | Expr::UnpackTarget(elems) => {
+                for elem in elems {
+                    Self::validate_assign_target(elem, message)?;
+                }
+                Ok(())
+            }
+            Expr::Starred(inner) => Self::validate_assign_target(inner, message),
+            _ => Err(MambaError::syntax(target.span, message.to_string())),
+        }
+    }
+
+    fn validate_assign_targets(
+        targets: &[Spanned<Expr>],
+        message: &str,
+    ) -> crate::error::Result<()> {
+        for target in targets {
+            Self::validate_assign_target(target, message)?;
+        }
+        Ok(())
+    }
+
     /// Parse `ident: type = expr` / `ident = expr` / `ident += expr` / expr stmt.
     fn parse_ident_stmt(&mut self) -> crate::error::Result<Spanned<Stmt>> {
         let start = self.peek().unwrap().start;
+        // This expression is at the top of a statement: a bare walrus here is a
+        // SyntaxError. parse_expr captures-and-clears the flag, so nested and
+        // parenthesized sub-expressions are unaffected.
+        self.stmt_expr_toplevel = true;
         let expr = self.parse_expr()?;
 
         // Variable declaration `name: type = expr`
@@ -392,6 +420,7 @@ impl<'a> Parser<'a> {
                     targets.push(Self::normalize_assign_target(value));
                     value = self.parse_tuple_or_expr()?;
                 }
+                Self::validate_assign_targets(&targets, "cannot assign to expression")?;
                 self.skip_newlines();
                 if targets.len() == 1 {
                     return Ok(Spanned::new(
@@ -435,6 +464,7 @@ impl<'a> Parser<'a> {
 
         // Augmented assignment: `target op= expr`
         if let Some(aug_op) = self.peek_aug_op() {
+            Self::validate_assign_target(&expr, "illegal expression for augmented assignment")?;
             self.advance();
             let value = self.parse_tuple_or_expr()?;
             self.skip_newlines();
@@ -466,6 +496,7 @@ impl<'a> Parser<'a> {
                 .into_iter()
                 .map(Self::normalize_assign_target)
                 .collect();
+            Self::validate_assign_targets(&targets, "cannot assign to expression")?;
             self.skip_newlines();
             let span = self.span_from(start);
             if targets.len() == 1 {
@@ -583,13 +614,25 @@ impl<'a> Parser<'a> {
             // Handle `self` parameter
             if self.peek_kind() == Some(TokenKind::Self_) {
                 self.advance();
+                let ty = if self.peek_kind() == Some(TokenKind::Colon) {
+                    self.advance();
+                    self.parse_type_expr()?
+                } else {
+                    Spanned::new(TypeExpr::Named("Self".to_string()), self.span_from(p_start))
+                };
+                let default = if self.peek_kind() == Some(TokenKind::Eq) {
+                    self.advance();
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
                 params.push(Param {
                     name: "self".to_string(),
-                    ty: Spanned::new(TypeExpr::Named("Self".to_string()), self.span_from(p_start)),
-                    default: None,
+                    ty,
+                    default,
                     kind: ParamKind::Regular,
                     pos_only: false,
-                    kw_only: false,
+                    kw_only: seen_star,
                     span: self.span_from(p_start),
                 });
             } else if self.peek_kind() == Some(TokenKind::DoubleStar) {
@@ -615,6 +658,15 @@ impl<'a> Parser<'a> {
             } else if self.peek_kind() == Some(TokenKind::Slash) {
                 // `/` positional-only separator — everything before it is
                 // positional-only (introspection metadata; binding unchanged).
+                // CPython requires at least one parameter to precede `/`, so a
+                // solo slash (`def h(/)`) or one after only `*`/`**` is a
+                // SyntaxError.
+                if !params.iter().any(|p| p.kind == ParamKind::Regular) {
+                    return Err(crate::error::MambaError::syntax(
+                        self.span_from(p_start),
+                        "at least one argument must precede /",
+                    ));
+                }
                 self.advance();
                 for p in params.iter_mut() {
                     if p.kind == ParamKind::Regular {
@@ -1216,6 +1268,20 @@ mod tests {
     }
 
     #[test]
+    fn test_list_comp_assignment_target_rejected_during_parse() {
+        let err = parser::parse("[y for y in (1, 2)] = 10\n", fid())
+            .expect_err("list comprehension cannot be an assignment target");
+        assert!(err.to_string().contains("cannot assign"), "{err}");
+    }
+
+    #[test]
+    fn test_list_comp_augassign_target_rejected_during_parse() {
+        let err = parser::parse("[y for y in (1, 2)] += 10\n", fid())
+            .expect_err("list comprehension cannot be an augassign target");
+        assert!(err.to_string().contains("illegal expression"), "{err}");
+    }
+
+    #[test]
     fn test_rhs_list_literal_not_treated_as_target() {
         // The list literal on the RHS must stay a ListLit (not normalized).
         match parse_stmt("v = [1, 2]\n") {
@@ -1259,6 +1325,21 @@ mod tests {
                 assert_eq!(params.len(), 1);
                 assert_eq!(params[0].name, "self");
                 assert_eq!(params[0].kind, ParamKind::Regular);
+            }
+            other => panic!("expected FnDef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_function_self_forward_ref_annotation() {
+        match parse_stmt("def foo(self: 'ForRefExample'):\n    pass\n") {
+            Stmt::FnDef { params, .. } => {
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].name, "self");
+                assert!(matches!(
+                    &params[0].ty.node,
+                    TypeExpr::Named(n) if strip_forward_ref_name(n) == Some("ForRefExample")
+                ));
             }
             other => panic!("expected FnDef, got {other:?}"),
         }

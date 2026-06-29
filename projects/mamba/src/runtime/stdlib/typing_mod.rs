@@ -106,6 +106,72 @@ disp_unary!(d_get_origin, mb_typing_get_origin);
 disp_unary!(d_get_args, mb_typing_get_args);
 disp_unary!(d_get_type_hints, mb_typing_get_type_hints);
 disp_nullary!(d_sentinel, mb_typing_sentinel);
+
+/// typing.NamedTuple(name, fields=None, **kwargs). Providing BOTH a positional
+/// fields list and keyword fields is a TypeError; otherwise return the
+/// type-erased sentinel (the functional form is not yet materialized).
+unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let is_seq = |v: MbValue| -> bool {
+        v.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, super::super::rc::ObjData::List(_) | super::super::rc::ObjData::Tuple(_)) })
+            .unwrap_or(false)
+    };
+    let nonempty_dict = |v: MbValue| -> bool {
+        v.as_ptr()
+            .map(|p| unsafe {
+                if let super::super::rc::ObjData::Dict(ref lock) = (*p).data {
+                    !lock.read().unwrap().is_empty()
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
+    };
+    if a.len() >= 3 {
+        let fields = a.get(1).copied().unwrap_or_else(MbValue::none);
+        let last = a.last().copied().unwrap_or_else(MbValue::none);
+        if is_seq(fields) && nonempty_dict(last) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "Either list of fields or keywords can be provided to \
+                     NamedTuple, not both".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
+    // Functional form `NamedTuple("P", [("x", int), ("y", int)])`: delegate to
+    // collections.namedtuple, which already builds a working tuple subclass.
+    // typing's fields are (name, type) pairs — extract just the names.
+    use super::super::rc::ObjData;
+    let name = a.first().copied().unwrap_or_else(MbValue::none);
+    let fields_v = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if !name.is_none() && is_seq(fields_v) {
+        let items: Vec<MbValue> = fields_v.as_ptr().map(|p| unsafe {
+            match &(*p).data {
+                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
+                ObjData::Tuple(ref t) => t.to_vec(),
+                _ => Vec::new(),
+            }
+        }).unwrap_or_default();
+        let names: Vec<MbValue> = items.iter().map(|item| {
+            item.as_ptr().and_then(|p| unsafe {
+                match &(*p).data {
+                    // (name, type) pair → name; plain string → itself.
+                    ObjData::Tuple(ref t) => t.first().copied(),
+                    ObjData::List(ref l) => l.read().unwrap().first().copied(),
+                    ObjData::Str(_) => Some(*item),
+                    _ => None,
+                }
+            }).unwrap_or(*item)
+        }).collect();
+        let names_list = MbValue::from_ptr(MbObject::new_list(names));
+        return super::collections_mod::mb_namedtuple(name, names_list, MbValue::none());
+    }
+    MbValue::none()
+}
 disp_unary!(d_identity, mb_typing_identity);
 disp_unary!(d_override, mb_typing_override);
 disp_unary!(d_final, mb_typing_final);
@@ -113,6 +179,77 @@ disp_binary!(d_newtype, mb_typing_newtype_meta);
 disp_unary!(d_runtime_checkable, mb_typing_runtime_checkable);
 disp_binary!(d_assert_type, mb_typing_assert_type);
 disp_unary!(d_is_typeddict, mb_typing_is_typeddict);
+
+thread_local! {
+    /// Ordered registry of `@overload` stub functions, keyed by
+    /// `(module, qualname)`. CPython stores stubs under the decorated function's
+    /// `(__module__, __qualname__)` so `get_overloads(impl)` can recover them.
+    /// All stubs sharing a name lower to one FuncRef, so the key — not the
+    /// function value — distinguishes overload sets, and each `@overload`
+    /// occurrence appends.
+    static OVERLOAD_REGISTRY: std::cell::RefCell<
+        HashMap<(String, String), Vec<MbValue>>
+    > = std::cell::RefCell::new(HashMap::new());
+}
+
+/// `(module, qualname)` key for the decorated function. For a top-level `def`,
+/// `__qualname__ == __name__`, so the registered name suffices.
+fn overload_key(func: MbValue) -> (String, String) {
+    let module = extract_str(super::super::closure::mb_func_get_module(func))
+        .unwrap_or_default();
+    let name = extract_str(super::super::closure::mb_func_get_name(func))
+        .unwrap_or_default();
+    (module, name)
+}
+
+unsafe extern "C" fn d_overload(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    // Record the stub under its (module, name) so get_overloads can recover it,
+    // then return the shared dummy (calling an overload-only function raises
+    // NotImplementedError until a concrete impl rebinds the name).
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(&stub) = a.first() {
+        let key = overload_key(stub);
+        if !key.1.is_empty() {
+            OVERLOAD_REGISTRY.with(|r| {
+                r.borrow_mut().entry(key).or_default().push(stub);
+            });
+        }
+    }
+    MbValue::from_func(d_overload_dummy as *const () as usize)
+}
+
+/// `typing.get_overloads(func)` — list of registered `@overload` stubs for the
+/// function, keyed by its `(__module__, __qualname__)`. Empty list if none.
+unsafe extern "C" fn d_get_overloads(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let stubs = a
+        .first()
+        .map(|&func| {
+            let key = overload_key(func);
+            OVERLOAD_REGISTRY.with(|r| r.borrow().get(&key).cloned().unwrap_or_default())
+        })
+        .unwrap_or_default();
+    MbValue::from_ptr(MbObject::new_list(stubs))
+}
+
+/// `typing.clear_overloads()` — drop the entire overload registry.
+unsafe extern "C" fn d_clear_overloads(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    OVERLOAD_REGISTRY.with(|r| r.borrow_mut().clear());
+    MbValue::none()
+}
+
+unsafe extern "C" fn d_overload_dummy(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("NotImplementedError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "You should not call an overloaded function. A series of @overload-decorated \
+             functions outside a stub module should always be followed by an implementation \
+             that is not @overload-ed."
+                .to_string(),
+        )),
+    );
+    MbValue::none()
+}
 
 /// Register the typing module.
 pub fn register() {
@@ -131,11 +268,17 @@ pub fn register() {
         "AsyncGenerator",
         "AsyncIterator",
         "Awaitable",
-        "NamedTuple",
         "TypedDict",
     ] {
         attrs.insert(name.to_string(), MbValue::from_func(sentinel_addr));
     }
+    // NamedTuple validates the call shape (mixing the list form with keyword
+    // fields is a TypeError) but otherwise behaves like the sentinel.
+    let namedtuple_addr = d_namedtuple as *const () as usize;
+    attrs.insert("NamedTuple".to_string(), MbValue::from_func(namedtuple_addr));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(namedtuple_addr as u64);
+    });
     // Algebra special forms: identity-stable singletons that subscript into
     // normalized alias objects (Union[int, str], Optional[int], Literal[1]).
     for name in &[
@@ -151,6 +294,7 @@ pub fn register() {
         "Type",
         "Literal",
         "Callable",
+        "Sequence",
         "Annotated",
         "NoReturn",
         "Never",
@@ -190,10 +334,7 @@ pub fn register() {
     // through `mb_getattr`'s instance-field path and reports presence. Used in
     // a type annotation, these names lower via `TypeExpr::Generic` at HIR time
     // (not runtime subscription), so the value shape is irrelevant there.
-    attrs.insert(
-        "Generic".to_string(),
-        make_typing_special_form("typing.Generic", &["__class_getitem__"]),
-    );
+    attrs.insert("Generic".to_string(), make_typing_generic_type());
     attrs.insert("ClassVar".to_string(), special_form("ClassVar"));
     attrs.insert("Final".to_string(), special_form("Final"));
 
@@ -218,6 +359,14 @@ pub fn register() {
     });
     attrs.insert("override".to_string(), MbValue::from_func(override_addr));
     attrs.insert("final".to_string(), MbValue::from_func(final_addr));
+    let overload_addr = d_overload as *const () as usize;
+    let overload_dummy_addr = d_overload_dummy as *const () as usize;
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        let mut set = s.borrow_mut();
+        set.insert(overload_addr as u64);
+        set.insert(overload_dummy_addr as u64);
+    });
+    attrs.insert("overload".to_string(), MbValue::from_func(overload_addr));
     // runtime_checkable marks its Protocol class so isinstance() does
     // structural matching against it (then returns the class unchanged).
     let rc_addr = d_runtime_checkable as *const () as usize;
@@ -244,7 +393,6 @@ pub fn register() {
         "Reversible",
         "Mapping",
         "MutableMapping",
-        "Sequence",
         "MutableSequence",
         "AbstractSet",
         "MutableSet",
@@ -273,6 +421,12 @@ pub fn register() {
         ("assert_type", d_assert_type as *const () as usize),
         // is_typeddict(cls) -> bool, structural helper.
         ("is_typeddict", d_is_typeddict as *const () as usize),
+        // overload(func) -> shared dummy callable; records func for get_overloads.
+        ("overload", d_overload as *const () as usize),
+        // get_overloads(func) -> list of registered @overload stubs.
+        ("get_overloads", d_get_overloads as *const () as usize),
+        // clear_overloads() -> None, drops the overload registry.
+        ("clear_overloads", d_clear_overloads as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -280,6 +434,10 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
+    let overload_dummy_addr = d_overload_dummy as *const () as usize;
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(overload_dummy_addr as u64);
+    });
     attrs.insert("TYPE_CHECKING".to_string(), MbValue::from_bool(false));
 
     // Remaining CPython 3.12 `typing` public names not covered above. Surface
@@ -288,8 +446,8 @@ pub fn register() {
     // type-erased sentinel (returns None at runtime). This spans special
     // generic aliases (Iterable, IO, Pattern, …), helper classes/metaclasses
     // (ForwardRef, ParamSpecArgs, TypeVarTuple, ABCMeta, defaultdict, …),
-    // TypeVars (T, KT, VT, T_co, …), utility functions (get_args, get_origin,
-    // overload, abstractmethod, reveal_type, …), the re-exported submodules
+    // TypeVars (T, KT, VT, T_co, …), utility functions (abstractmethod,
+    // reveal_type, …), the re-exported submodules
     // (sys, re, types, collections, functools, …), and EXCLUDED_ATTRIBUTES
     // (a frozenset in CPython — registered as a stub since it is not a plain
     // int/str literal).
@@ -328,18 +486,15 @@ pub fn register() {
         "WrapperDescriptorType",
         "abstractmethod",
         "assert_never",
-        "clear_overloads",
         "collections",
         "contextlib",
         "copyreg",
         "dataclass_transform",
         "defaultdict",
         "functools",
-        "get_overloads",
         "io",
         "no_type_check_decorator",
         "operator",
-        "overload",
         "re",
         "reveal_type",
         "stdlib_re",
@@ -353,36 +508,25 @@ pub fn register() {
     super::register_module("typing", attrs);
 }
 
-/// Build a surface shell for a typing construct that, as a *value*, exposes
-/// subscription dunders (`typing.Generic.__class_getitem__`,
-/// `typing.ClassVar.__getitem__`, `typing.Final.__getitem__`). Modeled as an
-/// `ObjData::Instance` (mirrors queue_mod::make_exception_class) whose fields
-/// carry each requested dunder as an inert non-None sentinel. `mb_hasattr`
-/// reports presence via value-non-None, and the non-"type" class_name keeps the
-/// probe on `mb_getattr`'s instance-field path rather than the type-object
-/// dunder fast path. The surface dimension only asserts attribute presence.
-fn make_typing_special_form(class_name: &str, dunders: &[&str]) -> MbValue {
-    use super::super::rc::{MbObjectHeader, ObjData, ObjKind};
-    use rustc_hash::FxHashMap;
-    let mut fields = FxHashMap::default();
-    for d in dunders {
-        // An empty string stands in for the (value-irrelevant) descriptor slot.
-        fields.insert(
-            (*d).to_string(),
-            MbValue::from_ptr(MbObject::new_str(String::new())),
-        );
+fn make_typing_generic_type() -> MbValue {
+    use super::super::rc::ObjData;
+    let value = super::super::builtins::make_type_object("typing.Generic");
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut fields = fields.write().unwrap();
+                fields.insert(
+                    "__module__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str("typing".to_string())),
+                );
+                fields.insert(
+                    "__class_getitem__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(String::new())),
+                );
+            }
+        }
     }
-    let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: std::sync::atomic::AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
-        data: ObjData::Instance {
-            class_name: class_name.to_string(),
-            fields: crate::runtime::rc::MbRwLock::new(fields),
-        },
-    });
-    MbValue::from_ptr(Box::into_raw(obj))
+    value
 }
 
 // ── typing algebra: special forms + parameterized aliases (#22) ──────────
@@ -517,6 +661,16 @@ fn alias_key(v: MbValue) -> String {
                     .unwrap_or_default();
                 return format!("A:{kind}:{origin}[{args}]{{{meta}}}");
             }
+            "UnionType" => {
+                // Same key shape as a typing.Union alias (kind "union", no
+                // origin/metadata) so the two representations dedup/hash alike.
+                let args = alias_args_vec(v)
+                    .into_iter()
+                    .map(alias_key)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                return format!("A:union:[{args}]{{}}");
+            }
             _ => {}
         }
     }
@@ -558,10 +712,12 @@ fn alias_args_vec(alias: MbValue) -> Vec<MbValue> {
 }
 
 fn alias_kind(v: MbValue) -> Option<String> {
-    if instance_class_of(v).as_deref() == Some("typing.Alias") {
-        instance_field_of(v, "_kind").and_then(|x| extract_str(x))
-    } else {
-        None
+    match instance_class_of(v).as_deref() {
+        Some("typing.Alias") => instance_field_of(v, "_kind").and_then(|x| extract_str(x)),
+        // A PEP 604 `X | Y` UnionType is the same union as a typing.Union alias
+        // for equality/hashing (cross-representation), so it reports "union".
+        Some("UnionType") => Some("union".to_string()),
+        _ => None,
     }
 }
 
@@ -584,6 +740,10 @@ fn make_alias(
             super::super::rc::retain_if_ptr(*a);
         }
     }
+    // __parameters__: the free TypeVars in the args (PEP 585/484/695), so a
+    // parameterized alias can be re-subscripted and introspected. Computed
+    // before `args` is moved into the __args__ tuple.
+    fields.insert("__parameters__".to_string(), typevar_params_tuple(&args));
     fields.insert(
         "__args__".to_string(),
         MbValue::from_ptr(MbObject::new_tuple(args)),
@@ -603,6 +763,101 @@ fn make_alias(
         fields.insert("_repr_name".to_string(), new_str_v(rn));
     }
     instance_with("typing.Alias", fields)
+}
+
+fn is_typevar(v: MbValue) -> bool {
+    instance_class_of(v).as_deref() == Some("TypeVar")
+}
+
+fn collect_params_into(v: MbValue, out: &mut Vec<MbValue>) {
+    if is_typevar(v) {
+        if !out.iter().any(|p| p.to_bits() == v.to_bits()) {
+            out.push(v);
+        }
+        return;
+    }
+    if matches!(instance_class_of(v).as_deref(), Some("typing.Alias") | Some("UnionType")) {
+        for a in alias_args_vec(v) {
+            collect_params_into(a, out);
+        }
+    }
+}
+
+/// The `__parameters__` tuple for `args` — the free TypeVars appearing
+/// (recursively) in them, order-preserving and deduplicated.
+pub(crate) fn typevar_params_tuple(args: &[MbValue]) -> MbValue {
+    let mut params = Vec::new();
+    for a in args {
+        collect_params_into(*a, &mut params);
+    }
+    for p in &params {
+        unsafe { super::super::rc::retain_if_ptr(*p); }
+    }
+    MbValue::from_ptr(MbObject::new_tuple(params))
+}
+
+/// Substitute TypeVars in `v` (recursively into nested aliases/unions) using
+/// `sub` (typevar identity bits → replacement value).
+fn substitute_typevars(v: MbValue, sub: &rustc_hash::FxHashMap<u64, MbValue>) -> MbValue {
+    if is_typevar(v) {
+        return sub.get(&v.to_bits()).copied().unwrap_or(v);
+    }
+    match instance_class_of(v).as_deref() {
+        Some("typing.Alias") => {
+            let kind = alias_kind(v).unwrap_or_default();
+            let origin = instance_field_of(v, "__origin__").unwrap_or_else(MbValue::none);
+            let repr_name = instance_field_of(v, "_repr_name").and_then(extract_str);
+            let new_args: Vec<MbValue> = alias_args_vec(v)
+                .into_iter()
+                .map(|a| substitute_typevars(a, sub))
+                .collect();
+            make_alias(&kind, origin, new_args, repr_name.as_deref(), None)
+        }
+        Some("UnionType") => {
+            let new_args: Vec<MbValue> = alias_args_vec(v)
+                .into_iter()
+                .map(|a| substitute_typevars(a, sub))
+                .collect();
+            super::super::builtins::make_union_type_value(new_args)
+        }
+        _ => v,
+    }
+}
+
+/// Subscript a parameterized typing.Alias / UnionType: `alias[args]` substitutes
+/// its __parameters__ with the provided args (arity-checked, TypeError on a
+/// wrong count), mirroring CPython's `__getitem__` on a generic/union alias.
+pub(crate) fn alias_subscript(self_v: MbValue, key: MbValue) -> MbValue {
+    let params = instance_field_of(self_v, "__parameters__")
+        .map(tuple_items)
+        .unwrap_or_default();
+    let provided = key
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                super::super::rc::ObjData::Tuple(t) => Some(t.to_vec()),
+                _ => None,
+            }
+        })
+        .unwrap_or_else(|| vec![key]);
+    if params.is_empty() || provided.len() != params.len() {
+        super::super::exception::mb_raise(
+            new_str_v("TypeError"),
+            new_str_v(&format!(
+                "Too {} arguments for {}; actual {}, expected {}",
+                if provided.len() >= params.len() { "many" } else { "few" },
+                alias_repr(self_v),
+                provided.len(),
+                params.len(),
+            )),
+        );
+        return MbValue::none();
+    }
+    let mut sub = rustc_hash::FxHashMap::default();
+    for (p, val) in params.iter().zip(provided.iter()) {
+        sub.insert(p.to_bits(), *val);
+    }
+    substitute_typevars(self_v, &sub)
 }
 
 /// Human repr of an alias argument (class reprs use the bare name).
@@ -705,6 +960,20 @@ unsafe extern "C" fn typing_alias_eq_m(self_v: MbValue, args: MbValue) -> MbValu
     MbValue::from_bool(aliases_equal(self_v, other))
 }
 
+/// Cross-representation union equality: when at least one side is a PEP 604
+/// `X | Y` UnionType and both resolve to a union, compare member sets (so
+/// `int | str == typing.Union[int, str]` and `== str | int`). Returns None for
+/// the non-union or pure-typing.Alias cases (those keep their existing paths).
+pub(crate) fn union_values_equal(a: MbValue, b: MbValue) -> Option<bool> {
+    let is_union = |v: MbValue| alias_kind(v).as_deref() == Some("union");
+    let either_runtime = instance_class_of(a).as_deref() == Some("UnionType")
+        || instance_class_of(b).as_deref() == Some("UnionType");
+    if either_runtime && is_union(a) && is_union(b) {
+        return Some(aliases_equal(a, b));
+    }
+    None
+}
+
 fn aliases_equal(a: MbValue, b: MbValue) -> bool {
     let (Some(ka), Some(kb)) = (alias_kind(a), alias_kind(b)) else {
         return false;
@@ -725,18 +994,27 @@ fn aliases_equal(a: MbValue, b: MbValue) -> bool {
 }
 
 unsafe extern "C" fn typing_alias_hash_m(self_v: MbValue, _args: MbValue) -> MbValue {
+    alias_hash_value(self_v)
+}
+
+/// Hash of a typing alias OR a PEP 604 UnionType — a polynomial over a blob of
+/// (kind | origin | member keys | metadata), member keys sorted for
+/// union/literal so it is order-insensitive. A UnionType reports kind "union"
+/// (alias_kind) and the origin is dropped for unions, so `int | str` and
+/// `typing.Union[int, str]` (which differ only by __origin__) hash identically.
+pub(crate) fn alias_hash_value(self_v: MbValue) -> MbValue {
     use super::super::rc::ObjData;
     // Annotated metadata participates in the hash; unhashable members
     // (list/dict/set) raise like CPython.
     if let Some(meta) = instance_field_of(self_v, "__metadata__") {
         for m in tuple_items(meta) {
             if let Some(ptr) = m.as_ptr() {
-                let bad = match &(*ptr).data {
+                let bad = unsafe { match &(*ptr).data {
                     ObjData::List(_) => Some("list"),
                     ObjData::Dict(_) => Some("dict"),
                     ObjData::Set(_) => Some("set"),
                     _ => None,
-                };
+                } };
                 if let Some(tn) = bad {
                     super::super::exception::mb_raise(
                         new_str_v("TypeError"),
@@ -752,9 +1030,16 @@ unsafe extern "C" fn typing_alias_hash_m(self_v: MbValue, _args: MbValue) -> MbV
     if kind == "union" || kind == "literal" {
         keys.sort();
     }
-    let origin_key = instance_field_of(self_v, "__origin__")
-        .map(alias_key)
-        .unwrap_or_default();
+    let origin_key = if kind == "union" {
+        // A union's origin is always typing.Union (implied); excluding it lets a
+        // `X | Y` UnionType and the typing.Union[X, Y] alias — which differ only
+        // by their __origin__ — hash identically.
+        String::new()
+    } else {
+        instance_field_of(self_v, "__origin__")
+            .map(alias_key)
+            .unwrap_or_default()
+    };
     let meta_key = instance_field_of(self_v, "__metadata__")
         .map(|m| {
             tuple_items(m)
@@ -796,6 +1081,11 @@ fn ensure_typing_classes_registered() {
         var(typing_alias_repr_m as *const () as usize),
     );
     super::super::class::mb_class_register("typing.Alias", vec![], ma);
+    super::super::class::mb_class_register(
+        "typing.Generic",
+        vec!["object".to_string()],
+        Map::new(),
+    );
     let mut ms: Map<String, MbValue> = Map::new();
     ms.insert(
         "__repr__".to_string(),
@@ -938,8 +1228,28 @@ pub fn special_form_subscript(name: &str, key: MbValue) -> MbValue {
             )
         }
         "Callable" => {
-            let origin = special_form("Callable");
+            let origin = super::super::module::mb_module_getattr(
+                new_str_v("collections.abc"),
+                new_str_v("Callable"),
+            );
+            let origin = if origin.is_none() {
+                super::super::builtins::make_type_object("Callable")
+            } else {
+                origin
+            };
             make_alias("generic", origin, items, Some("typing.Callable"), None)
+        }
+        "Sequence" => {
+            let origin = super::super::module::mb_module_getattr(
+                new_str_v("collections.abc"),
+                new_str_v("Sequence"),
+            );
+            let origin = if origin.is_none() {
+                super::super::builtins::make_type_object("Sequence")
+            } else {
+                origin
+            };
+            make_alias("generic", origin, items, Some("typing.Sequence"), None)
         }
         _ => {
             // ClassVar / Final / Required / TypeGuard / Unpack / unknown:
@@ -954,6 +1264,38 @@ pub fn special_form_subscript(name: &str, key: MbValue) -> MbValue {
             )
         }
     }
+}
+
+/// `typing.Generic[T]` returns a generic alias whose origin is the Generic
+/// class object itself. User classes inherit through this alias before they can
+/// later be parameterized as `Box[int]`.
+pub fn generic_subscript(origin: MbValue, key: MbValue) -> MbValue {
+    use super::super::rc::ObjData;
+    let items = key
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(t) => Some(t.to_vec()),
+                _ => None,
+            }
+        })
+        .unwrap_or_else(|| vec![key]);
+    make_alias("generic", origin, items, Some("typing.Generic"), None)
+}
+
+/// Parameterize a user class that inherits from `typing.Generic`.
+pub fn user_generic_subscript(origin: MbValue, key: MbValue, repr_name: &str) -> MbValue {
+    use super::super::rc::ObjData;
+    let items = key
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(t) => Some(t.to_vec()),
+                _ => None,
+            }
+        })
+        .unwrap_or_else(|| vec![key]);
+    make_alias("generic", origin, items, Some(repr_name), None)
 }
 
 /// PEP 585 builtin-generic subscription: list[int], dict[str, int], ...
@@ -977,6 +1319,9 @@ pub fn pep585_subscript(type_obj: MbValue, key: MbValue) -> MbValue {
 
 /// typing.get_origin(tp)
 pub fn mb_typing_get_origin(tp: MbValue) -> MbValue {
+    if instance_class_of(tp).as_deref() == Some("UnionType") {
+        return super::super::builtins::make_type_object("UnionType");
+    }
     match alias_kind(tp).as_deref() {
         Some("union") => special_form("Union"),
         Some("annotated") => special_form("Annotated"),
@@ -1094,23 +1439,151 @@ pub fn mb_typing_get_type_hints(obj: MbValue) -> MbValue {
                 return MbValue::none();
             }
         }
+        return dict;
+    }
+    // Class / module annotations: read the `__annotations__` mapping (PEP 526)
+    // and resolve textual annotations to runtime types. Class annotations may
+    // already carry runtime objects after class registration normalizes them.
+    let ann = super::super::class::mb_getattr(obj, new_str_v("__annotations__"));
+    let pairs: Vec<(String, MbValue)> = ann.as_ptr().map(|ptr| unsafe {
+        if let super::super::rc::ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().iter().filter_map(|(k, v)| {
+                if let super::super::dict_ops::DictKey::Str(s) = k {
+                    Some((s.clone(), *v))
+                } else {
+                    None
+                }
+            }).collect()
+        } else {
+            Vec::new()
+        }
+    }).unwrap_or_default();
+    unsafe { super::super::rc::release_if_ptr(ann); }
+    for (name, val) in pairs {
+        if let Some(anno) = extract_str(val) {
+            if let Some(t) = resolve_annotation(&anno) {
+                set(&name, t);
+            } else {
+                super::super::exception::mb_raise(
+                    new_str_v("NameError"),
+                    new_str_v(&format!("name '{anno}' is not defined")),
+                );
+                return MbValue::none();
+            }
+        } else {
+            set(&name, val);
+        }
     }
     dict
+}
+
+/// Parse subscript arguments from an annotation string like "int" or "str, int".
+/// Recursively resolves each argument.
+fn parse_subscript_args(s: &str) -> Option<Vec<MbValue>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+    
+    for ch in s.chars() {
+        match ch {
+            '[' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ']' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                let arg_str = current.trim();
+                if let Some(arg) = resolve_annotation(arg_str) {
+                    args.push(arg);
+                    current.clear();
+                } else {
+                    return None;
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    
+    if !current.is_empty() {
+        let arg_str = current.trim();
+        if let Some(arg) = resolve_annotation(arg_str) {
+            args.push(arg);
+        } else {
+            return None;
+        }
+    }
+    
+    if args.is_empty() {
+        return None;
+    }
+    
+    Some(args)
+}
+
+/// Parse generic alias patterns like "typing.List[int]" or "List[int]".
+fn parse_generic_alias(s: &str) -> Option<MbValue> {
+    if let Some(bracket_pos) = s.find('[') {
+        if !s.ends_with(']') {
+            return None;
+        }
+        
+        let base = s[..bracket_pos].trim();
+        let subscript = &s[bracket_pos + 1..s.len() - 1];
+        
+        let name = if let Some(dot_pos) = base.rfind('.') {
+            &base[dot_pos + 1..]
+        } else {
+            base
+        };
+        
+        if let Some(args) = parse_subscript_args(subscript) {
+            let key = if args.len() == 1 {
+                args[0]
+            } else {
+                MbValue::from_ptr(MbObject::new_tuple(args))
+            };
+            return Some(special_form_subscript(name, key));
+        }
+    }
+    None
 }
 
 /// Resolve a textual annotation to a runtime type object. Known builtin
 /// scalar/container names resolve to the cached type singletons; unknown
 /// names return None (the caller raises NameError, matching CPython's
 /// forward-reference resolution failure).
-fn resolve_annotation(anno: &str) -> Option<MbValue> {
+pub(crate) fn resolve_annotation(anno: &str) -> Option<MbValue> {
     let name = anno.trim();
     let name = name.trim_matches(|c| c == '"' || c == '\'');
+    
+    // Try parsing as a generic alias first (e.g., "typing.List[int]")
+    if name.contains('[') {
+        if let Some(result) = parse_generic_alias(name) {
+            return Some(result);
+        }
+    }
+    
     match name {
         "int" | "float" | "str" | "bool" | "bytes" | "bytearray" | "list" | "dict" | "set"
         | "frozenset" | "tuple" | "type" | "object" | "complex" | "range" | "memoryview"
         | "slice" => Some(super::super::builtins::make_type_object(name)),
         "None" | "NoneType" => Some(super::super::builtins::make_type_object("NoneType")),
         "Any" | "typing.Any" => Some(special_form("Any")),
+        // Generic aliases with parsing failed, unions, and bare typing special-form names.
+        // unions (`int | str`) are not yet supported; bare typing names return Any sentinel.
+        s if s.contains('|')
+            || matches!(
+                s,
+                "Optional" | "List" | "Dict" | "Set" | "Tuple" | "FrozenSet"
+                    | "Union" | "Callable" | "Sequence" | "Mapping" | "Iterable"
+                    | "Iterator" | "ClassVar" | "Final"
+            ) =>
+        {
+            Some(special_form("Any"))
+        }
         _ => None,
     }
 }
@@ -1149,15 +1622,29 @@ pub fn mb_typing_assert_type(val: MbValue, _typ: MbValue) -> MbValue {
 }
 
 /// `typing.is_typeddict(tp)` — True only for a class created via `TypedDict`.
-/// Mamba represents a user class as its name string; a `class M(TypedDict)`
-/// records `TypedDict` in M's MRO, so we test for it there. A plain `dict`,
-/// an `int`, or a `NamedTuple` class are all False.
+/// Mamba can pass a user class as its name string or as a runtime `type`
+/// object; a `class M(TypedDict)` records `TypedDict` in M's MRO, so we test
+/// for it there. A plain `dict`, an `int`, or a `NamedTuple` class are all
+/// False.
 pub fn mb_typing_is_typeddict(tp: MbValue) -> MbValue {
     if let Some(ptr) = tp.as_ptr() {
         unsafe {
-            if let super::super::rc::ObjData::Str(ref name) = (*ptr).data {
+            let name = match &(*ptr).data {
+                super::super::rc::ObjData::Str(name) => Some(name.clone()),
+                super::super::rc::ObjData::Instance {
+                    class_name,
+                    fields,
+                } if class_name == "type" => {
+                    fields
+                        .read()
+                        .ok()
+                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                }
+                _ => None,
+            };
+            if let Some(name) = name {
                 let is_td = name == "TypedDict"
-                    || super::super::class::class_mro_any(name, |c| c == "TypedDict");
+                    || super::super::class::class_mro_any(&name, |c| c == "TypedDict");
                 return MbValue::from_bool(is_td);
             }
         }
@@ -1165,17 +1652,48 @@ pub fn mb_typing_is_typeddict(tp: MbValue) -> MbValue {
     MbValue::from_bool(false)
 }
 
-/// `@runtime_checkable` — mark the Protocol class (a class is represented as
-/// its name string) so isinstance() does structural matching, then return it
-/// unchanged.
+/// `@runtime_checkable` — mark the Protocol class so isinstance()/issubclass()
+/// can use Protocol-specific runtime checks, then return it unchanged.
 pub fn mb_typing_runtime_checkable(cls: MbValue) -> MbValue {
-    if let Some(ptr) = cls.as_ptr() {
+    let class_name = if let Some(ptr) = cls.as_ptr() {
         unsafe {
-            if let super::super::rc::ObjData::Str(ref name) = (*ptr).data {
-                super::super::class::mark_runtime_checkable(name);
+            match &(*ptr).data {
+                super::super::rc::ObjData::Str(name) => Some(name.clone()),
+                super::super::rc::ObjData::Instance {
+                    class_name,
+                    fields,
+                } if class_name == "type" => {
+                    fields
+                        .read()
+                        .ok()
+                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                }
+                _ => None,
             }
         }
+    } else {
+        None
+    };
+    let Some(name) = class_name else {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "@runtime_checkable can be only applied to protocol classes".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    // CPython: @runtime_checkable applies only to Protocol classes.
+    if !super::super::class::is_protocol_class(&name) {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "@runtime_checkable can be only applied to protocol classes, got {name}"
+            ))),
+        );
+        return MbValue::none();
     }
+    super::super::class::mark_runtime_checkable(&name);
     unsafe {
         super::super::rc::retain_if_ptr(cls);
     }

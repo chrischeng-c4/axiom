@@ -81,6 +81,23 @@ fn mk_tuple2(a: String, b: String) -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(vec![mk_str(a), mk_str(b)]))
 }
 
+fn mk_tuple3(a: String, b: String, c: String) -> MbValue {
+    MbValue::from_ptr(MbObject::new_tuple(vec![mk_str(a), mk_str(b), mk_str(c)]))
+}
+
+/// POSIX `splitroot(p)` -> (drive, root, tail). drive is always empty; root is
+/// "" (relative), "/" (absolute), or "//" (the special POSIX double-slash).
+fn posix_splitroot(p: &str) -> (String, String, String) {
+    let b = p.as_bytes();
+    if b.first() != Some(&b'/') {
+        (String::new(), String::new(), p.to_string())
+    } else if b.get(1) != Some(&b'/') || b.get(2) == Some(&b'/') {
+        (String::new(), "/".to_string(), p[1..].to_string())
+    } else {
+        (String::new(), "//".to_string(), p[2..].to_string())
+    }
+}
+
 // ── Pure-string POSIX ops ──
 
 fn posix_join_strs(parts: &[String]) -> String {
@@ -472,6 +489,13 @@ unsafe extern "C" fn dispatch_splitdrive(args_ptr: *const MbValue, nargs: usize)
     mk_tuple2(a, b)
 }
 
+unsafe extern "C" fn dispatch_splitroot(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = args_slice(args_ptr, nargs);
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let (a, b, c) = posix_splitroot(&s);
+    mk_tuple3(a, b, c)
+}
+
 unsafe extern "C" fn dispatch_isabs(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let s = args
@@ -807,6 +831,7 @@ fn build_attrs() -> HashMap<String, MbValue> {
     let dispatchers: &[(&str, usize)] = &[
         ("join", dispatch_join as *const () as usize),
         ("split", dispatch_split as *const () as usize),
+        ("splitroot", dispatch_splitroot as *const () as usize),
         ("splitext", dispatch_splitext as *const () as usize),
         ("splitdrive", dispatch_splitdrive as *const () as usize),
         ("basename", dispatch_basename as *const () as usize),

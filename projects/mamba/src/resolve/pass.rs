@@ -75,6 +75,14 @@ impl Resolver {
                     let id = self.symbols.define(name.clone(), SymbolKind::Enum);
                     self.name_map.push((stmt.span, id));
                 }
+                Stmt::ExprStmt(_) => {
+                    if let Some(fn_def) =
+                        crate::exec_literal::global_literal_exec_fn_def(&stmt.node)
+                    {
+                        let id = self.symbols.define(fn_def.name, SymbolKind::Function);
+                        self.name_map.push((stmt.span, id));
+                    }
+                }
                 Stmt::Try {
                     body,
                     handlers,
@@ -341,12 +349,21 @@ impl Resolver {
                 }
             }
             Stmt::Nonlocal(names) => {
-                // Walk enclosing scopes to find the binding
+                // Walk enclosing function scopes to find the binding. Python
+                // `nonlocal` cannot bind module globals, and class scopes do
+                // not count as enclosing function scopes.
                 for name in names {
                     let current = self.symbols.current_scope_idx();
                     let mut found = false;
                     let mut scope_idx = self.symbols.parent_scope(current);
                     while let Some(si) = scope_idx {
+                        if si == 0 {
+                            break;
+                        }
+                        if !self.function_scope_stack.contains(&si) {
+                            scope_idx = self.symbols.parent_scope(si);
+                            continue;
+                        }
                         if let Some(outer_id) = self.symbols.lookup_in_scope(si, name) {
                             // Mark the outer variable as Cell (captured by inner)
                             self.symbols.set_var_class(outer_id, VariableClass::Cell);
@@ -597,6 +614,7 @@ impl Resolver {
                 }
             }
             Expr::IntLit(_)
+            | Expr::BigIntLit(_)
             | Expr::FloatLit(_)
             | Expr::ComplexLit(_)
             | Expr::StrLit(_)
@@ -1724,9 +1742,6 @@ mod tests {
     #[test]
     fn test_nonlocal_does_not_resolve_to_global() {
         // module-level x = 1; def f(): nonlocal x
-        // The resolver walks all parent scopes (including module scope 0), so it finds x
-        // and marks the inner binding as Free — no error is produced.
-        // This documents the current implementation behaviour.
         let module = Module {
             stmts: vec![
                 sp(Stmt::Assign {
@@ -1744,14 +1759,17 @@ mod tests {
             ],
         };
         let result = resolve_module(&module);
-        // The resolver resolves nonlocal against the module-level x — no error.
-        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        // The inner x should be classified as Free (captured from enclosing scope).
-        let free_x = result.name_map.iter().map(|(_, id)| *id).find(|id| {
-            result.symbols.get_symbol(*id).name == "x"
-                && result.symbols.get_var_class(*id) == VariableClass::Free
-        });
-        assert!(free_x.is_some(), "nonlocal x should be classified as Free");
+        assert_eq!(
+            result.errors.len(),
+            1,
+            "module globals must not satisfy nonlocal: {:?}",
+            result.errors
+        );
+        assert!(
+            result.errors[0].to_string().contains("nonlocal"),
+            "error should mention nonlocal: {:?}",
+            result.errors[0]
+        );
     }
 
     // ── Group 5: Class scope ───────────────────────────────────────────────
@@ -2056,6 +2074,8 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("x".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2333,6 +2353,8 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("x".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2365,6 +2387,8 @@ mod tests {
                     value: Box::new(sp(Expr::Ident("k".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["k".into()],
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2395,6 +2419,8 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("v".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["v".into()],
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2425,6 +2451,8 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("n".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["n".into()],
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2452,6 +2480,8 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("fresh_var".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["fresh_var".into()],
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2507,6 +2537,8 @@ mod tests {
                     })),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2541,6 +2573,8 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("x".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![sp(Expr::BinOp {
                             op: BinOp::Gt,
@@ -2586,6 +2620,8 @@ mod tests {
                     })),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
+                        target_reads_before_bind: Vec::new(),
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,

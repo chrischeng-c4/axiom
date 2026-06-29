@@ -50,6 +50,10 @@ pub enum EnumKind {
     /// isinstance, but `str(member)` stays the qualified "Class.NAME"
     /// (CPython 3.12 distinction).
     StrMixin,
+    /// `enum.IntEnum` / `class C(int, enum.Enum)`: members ARE their int value
+    /// (equal to it, `isinstance(_, int)`, orderable, support int arithmetic)
+    /// but remain member Instances so repr/name/value work. No Flag composites.
+    IntMixin,
 }
 
 impl EnumKind {
@@ -82,6 +86,10 @@ struct EnumClassInfo {
     /// Flag composite cache: composite int value → cached member Instance,
     /// so `Color.RED | Color.BLUE` returns the same singleton each time.
     composites: FxHashMap<i64, MbValue>,
+    /// `enum.global_enum` module name (e.g. "calendar" for calendar.Day): when
+    /// set, members repr as `module.NAME` (calendar.THURSDAY) instead of
+    /// `<Class.NAME: value>`.
+    global_module: Option<String>,
 }
 
 thread_local! {
@@ -134,9 +142,15 @@ fn enum_kind_for(class_name: &str) -> Option<EnumKind> {
     let mut rejected = false;
     for ancestor in mro.iter().skip(1) {
         match ancestor.as_str() {
-            // Data-type mixins / metaclass bases whose members stay raw
-            // values (member-IS-its-data-type, e.g. IntEnum arithmetic).
-            "IntEnum" | "ReprEnum" | "EnumType" | "EnumMeta" | "EnumCheck" | "FlagBoundary" => {
+            // IntEnum / ReprEnum mark the int data-type mixin (handled as
+            // EnumKind::IntMixin below, so members stay Instances with
+            // repr/name/value while still behaving as their int value).
+            "IntEnum" | "ReprEnum" => {
+                saw_int = true;
+                saw_enum = true;
+            }
+            // Metaclass bases never become enum-member classes.
+            "EnumType" | "EnumMeta" | "EnumCheck" | "FlagBoundary" => {
                 rejected = true;
             }
             "IntFlag" => saw_int_flag = true,
@@ -156,9 +170,13 @@ fn enum_kind_for(class_name: &str) -> Option<EnumKind> {
         Some(EnumKind::StrEnum)
     } else if saw_str && saw_enum && !saw_flag {
         Some(EnumKind::StrMixin)
+    } else if saw_int && saw_enum && !saw_flag {
+        // IntEnum / class C(int, Enum): int data-type mixin (member Instances
+        // that behave as their int value).
+        Some(EnumKind::IntMixin)
     } else if saw_int || saw_str {
-        // Other data-type mixins (IntEnum-like int+Enum, str+Flag): members
-        // keep the pre-existing raw-value behavior.
+        // Leftover data-type mixins without Enum (e.g. str+Flag): keep the
+        // pre-existing raw-value behavior.
         None
     } else if saw_flag {
         Some(EnumKind::Flag)
@@ -258,6 +276,25 @@ fn class_kind(class_name: &str) -> Option<EnumKind> {
     ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.kind))
 }
 
+/// True when `class_name` is an enum that already has at least one member.
+/// A populated enum is final; subclassing it to add members raises TypeError.
+fn is_populated_enum(class_name: &str) -> bool {
+    ENUM_CLASSES.with(|m| {
+        m.borrow().get(class_name).map_or(false, |i| !i.by_name.is_empty())
+    })
+}
+
+/// `EnumClass._member_type_`: the data type the enum mixes in — "int" for
+/// IntEnum/IntFlag, "str" for StrEnum / (str, Enum), "object" for a plain
+/// Enum/Flag. None for a non-enum class.
+pub fn member_type_name(class_name: &str) -> Option<&'static str> {
+    class_kind(class_name).map(|k| match k {
+        EnumKind::IntFlag | EnumKind::IntMixin => "int",
+        EnumKind::StrEnum | EnumKind::StrMixin => "str",
+        EnumKind::Plain | EnumKind::Flag => "object",
+    })
+}
+
 /// Build a fresh member Instance (rc=1, fields populated directly so the
 /// `__slots__` gate never applies).
 fn new_member(class_name: &str, member_name: &str, value: MbValue) -> MbValue {
@@ -296,7 +333,41 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
         return None;
     }
 
-    ENUM_CLASSES.with(|m| {
+    // A populated enum is final: defining a member on a class that subclasses
+    // an enum which already has members is a TypeError (CPython). Class
+    // registrations run before member assignments, so by the time this member
+    // is set the base enum's members are present — check the MRO bases. A
+    // memberless enum base (used as a mixin) stays subclassable.
+    let mro = super::super::class::class_mro_list(class_name);
+    for ancestor in mro.iter().skip(1) {
+        if is_populated_enum(ancestor) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "{ancestor}: cannot extend enumeration '{ancestor}'"
+                ))),
+            );
+            return None;
+        }
+    }
+
+    // StrEnum requires str member values — a non-str (non-auto) value is a
+    // TypeError at class creation (CPython). auto() resolves to the member
+    // name (a str), so only explicit non-str values are rejected.
+    if kind == EnumKind::StrEnum
+        && value.as_int() != Some(super::enum_mod::AUTO_SENTINEL)
+        && extract_str(value).is_none()
+    {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                format!("{} is not a string", repr_string(value)),
+            )),
+        );
+        return None;
+    }
+
+    let (result, new_member_val) = ENUM_CLASSES.with(|m| {
         let mut map = m.borrow_mut();
         let info = map.entry(class_name.to_string()).or_insert_with(|| {
             HAVE_ENUM_CLASSES.with(|c| c.set(true));
@@ -306,6 +377,7 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
                 canonical: Vec::new(),
                 by_name: Vec::new(),
                 composites: FxHashMap::default(),
+                global_module: None,
             }
         });
 
@@ -351,7 +423,7 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
             unsafe { super::super::rc::retain_if_ptr(m) }; // by_name slot
             info.by_name.push((attr.to_string(), m));
             unsafe { super::super::rc::retain_if_ptr(m) }; // returned reference
-            return Some(m);
+            return (Some(m), None);
         }
 
         let member = new_member(class_name, attr, resolved);
@@ -372,13 +444,51 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
         }
         unsafe { super::super::rc::retain_if_ptr(member) };
         info.by_name.push((attr.to_string(), member));
-        Some(member)
-    })
+        (Some(member), Some(member))
+    });
+
+    // A newly-created member whose enum class defines a custom `__init__` is
+    // initialised CPython-style: `member.__init__(*value)` when the value is a
+    // tuple (`EARTH = (mass, radius)` → `__init__(self, mass, radius)`), else
+    // `member.__init__(value)`. The ENUM_CLASSES borrow is released before this
+    // call so `__init__` may re-enter enum machinery freely. Aliases reuse an
+    // already-initialised member and are skipped.
+    if let Some(member) = new_member_val {
+        let init = super::super::class::lookup_method(class_name, "__init__");
+        if !init.is_none() {
+            // Build `*value` (tuple → unpacked, else the single value). The temp
+            // args list holds borrowed element refs and is GC-tracked, matching
+            // the runtime's dunder-dispatch convention (no manual retain/release).
+            let mut call_args: Vec<MbValue> = Vec::new();
+            if let Some(p) = value.as_ptr() {
+                unsafe {
+                    if let ObjData::Tuple(ref items) = (*p).data {
+                        call_args.extend(items.iter().copied());
+                    } else {
+                        call_args.push(value);
+                    }
+                }
+            } else {
+                call_args.push(value);
+            }
+            let args_list = MbValue::from_ptr(MbObject::new_list(call_args));
+            let name_val =
+                MbValue::from_ptr(MbObject::new_str("__init__".to_string()));
+            super::super::class::mb_call_method(member, name_val, args_list);
+        }
+    }
+
+    result
 }
 
 /// True when `name` is a converted class-body enum class.
 pub fn is_enum_class(name: &str) -> bool {
     have_enum_classes() && ENUM_CLASSES.with(|m| m.borrow().contains_key(name))
+}
+
+fn enum_class_name_for_value(value: MbValue) -> Option<String> {
+    let class_name = super::super::class::resolve_class_name(value)?;
+    is_enum_class(&class_name).then_some(class_name)
 }
 
 /// Kind of `v`'s enum class when `v` is a converted member.
@@ -418,7 +528,7 @@ pub fn members_eq_override(a: MbValue, b: MbValue) -> Option<bool> {
     };
     match kind {
         EnumKind::Plain | EnumKind::Flag => Some(false),
-        EnumKind::IntFlag => {
+        EnumKind::IntFlag | EnumKind::IntMixin => {
             let mv = member_value(member);
             Some(super::super::builtins::mb_eq(mv, raw).as_bool() == Some(true))
         }
@@ -448,9 +558,27 @@ pub fn str_mixin_member_value(v: MbValue) -> Option<MbValue> {
 /// mixin members (IntFlag → int, StrEnum/(str, Enum) → str).
 pub fn member_isinstance_builtin(v: MbValue, target: &str) -> bool {
     match member_kind(v) {
-        Some(EnumKind::IntFlag) => target == "int",
+        Some(EnumKind::IntFlag) | Some(EnumKind::IntMixin) => target == "int",
         Some(EnumKind::StrEnum) | Some(EnumKind::StrMixin) => target == "str",
         _ => false,
+    }
+}
+
+/// If `v` is an int data-type-mixin enum member (IntEnum / IntFlag), return its
+/// underlying int value, for unwrapping in arithmetic / comparison / hash so
+/// `Color.RED + 1`, `Day.MON < Day.TUE`, `hash(Color.RED) == hash(1)` work.
+/// Plain Enum / Flag / str-mixin members return None.
+pub fn int_member_value(v: MbValue) -> Option<MbValue> {
+    match member_kind(v) {
+        Some(EnumKind::IntFlag) | Some(EnumKind::IntMixin) => {
+            let mv = member_value(v);
+            if mv.as_int().is_some() {
+                Some(mv)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -487,12 +615,22 @@ pub fn class_canonical_members(class_name: &str) -> Option<Vec<MbValue>> {
     ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.canonical.clone()))
 }
 
+pub fn class_canonical_members_for_value(value: MbValue) -> Option<Vec<MbValue>> {
+    let class_name = enum_class_name_for_value(value)?;
+    class_canonical_members(&class_name)
+}
+
 /// `len(Color)` — canonical member count.
 pub fn class_member_count(class_name: &str) -> Option<i64> {
     if !have_enum_classes() {
         return None;
     }
     ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.canonical.len() as i64))
+}
+
+pub fn class_member_count_for_value(value: MbValue) -> Option<i64> {
+    let class_name = enum_class_name_for_value(value)?;
+    class_member_count(&class_name)
 }
 
 /// `Color.__members__` — name→member mapping including aliases, in
@@ -510,6 +648,11 @@ pub fn members_map_dict(class_name: &str) -> Option<MbValue> {
         super::super::dict_ops::mb_dict_setitem(dict, key, member);
     }
     Some(dict)
+}
+
+pub fn members_map_dict_for_value(value: MbValue) -> Option<MbValue> {
+    let class_name = enum_class_name_for_value(value)?;
+    members_map_dict(&class_name)
 }
 
 /// Value→member lookup over named members (canonical first by construction)
@@ -592,12 +735,20 @@ pub fn enum_class_call(class_name: &str, args_list: MbValue) -> Option<MbValue> 
                 if is_enum_member(result) {
                     return Some(result);
                 }
-                super::super::exception::mb_raise(
-                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(format!(
-                        "error in {class_name}._missing_: returned a non-member"
-                    ))),
+                // CPython: a _missing_ that returns a non-member raises
+                // TypeError chained (via __context__) from the ValueError the
+                // failed value lookup would otherwise raise.
+                let value_repr = repr_string(arg);
+                let cause = super::super::exception::MbException::new(
+                    "ValueError",
+                    &format!("{value_repr} is not a valid {class_name}"),
                 );
+                let err = super::super::exception::MbException::new(
+                    "TypeError",
+                    &format!("error in {class_name}._missing_: returned a non-member"),
+                )
+                .with_context(cause);
+                super::super::exception::set_current_exception(err);
                 return Some(MbValue::none());
             }
         }
@@ -631,6 +782,11 @@ pub fn enum_class_getitem(class_name: &str, key: MbValue) -> Option<MbValue> {
     Some(MbValue::none())
 }
 
+pub fn enum_class_getitem_for_value(value: MbValue, key: MbValue) -> Option<MbValue> {
+    let class_name = enum_class_name_for_value(value)?;
+    enum_class_getitem(&class_name, key)
+}
+
 /// `member in Color` / `value in Color` (CPython 3.12 value-contains).
 pub fn class_contains(class_name: &str, item: MbValue) -> Option<bool> {
     if !is_enum_class(class_name) {
@@ -650,6 +806,11 @@ pub fn class_contains(class_name: &str, item: MbValue) -> Option<bool> {
         }
     }
     Some(lookup_by_value(class_name, item).is_some())
+}
+
+pub fn class_contains_for_value(value: MbValue, item: MbValue) -> Option<bool> {
+    let class_name = enum_class_name_for_value(value)?;
+    class_contains(&class_name, item)
 }
 
 /// Flag containment: `Color.RED in (Color.RED | Color.BLUE)` — bit test on
@@ -780,8 +941,11 @@ pub fn member_str(v: MbValue) -> Option<String> {
     if !super::super::class::lookup_method(&cls, "__str__").is_none() {
         return None;
     }
-    // StrEnum: str(member) IS the member's value ("1", not "Label.ONE");
+    // IntEnum/ReprEnum and StrEnum stringify through their raw data value;
     // a plain (str, Enum) mixin keeps the qualified form (CPython 3.12).
+    if matches!(class_kind(&cls), Some(EnumKind::IntFlag | EnumKind::IntMixin)) {
+        return Some(repr_string(member_value(v)));
+    }
     if class_kind(&cls) == Some(EnumKind::StrEnum) {
         if let Some(s) = extract_str(member_value(v)) {
             return Some(s);
@@ -797,8 +961,102 @@ pub fn member_repr(v: MbValue) -> Option<String> {
     if !super::super::class::lookup_method(&cls, "__repr__").is_none() {
         return None;
     }
+    // global_enum members (e.g. calendar.Day) repr as `module.NAME`.
+    if let Some(module) = ENUM_CLASSES.with(|m| {
+        m.borrow().get(&cls).and_then(|i| i.global_module.clone())
+    }) {
+        return Some(format!("{module}.{name}"));
+    }
     let vr = repr_string(member_value(v));
     Some(format!("<{cls}.{name}: {vr}>"))
+}
+
+/// Register a `global_enum` data-type enum class (e.g. calendar.Day) with its
+/// members and return them in definition order. The class is an IntMixin (its
+/// members are int-valued Instances with repr/name/value and int behavior);
+/// members repr as `module.NAME`. Used by stdlib modules that expose
+/// `enum.global_enum`-decorated IntEnums whose members are also module globals.
+pub fn register_global_enum(
+    class_name: &str,
+    module: &str,
+    members: &[(&str, i64)],
+) -> Vec<MbValue> {
+    HAVE_ENUM_CLASSES.with(|c| c.set(true));
+    let mut out = Vec::new();
+    ENUM_CLASSES.with(|m| {
+        let mut map = m.borrow_mut();
+        let info = map.entry(class_name.to_string()).or_insert_with(|| EnumClassInfo {
+            kind: EnumKind::IntMixin,
+            next_auto: 1,
+            canonical: Vec::new(),
+            by_name: Vec::new(),
+            composites: FxHashMap::default(),
+            global_module: Some(module.to_string()),
+        });
+        info.global_module = Some(module.to_string());
+        for (name, value) in members {
+            let member = new_member(class_name, name, MbValue::from_int(*value));
+            unsafe {
+                super::super::rc::retain_if_ptr(member);
+                super::super::rc::retain_if_ptr(member);
+            }
+            info.canonical.push(member);
+            info.by_name.push((name.to_string(), member));
+            out.push(member);
+        }
+    });
+    // Make enum_kind_for agree (these classes are not in CLASS_REGISTRY).
+    ENUM_KIND_MEMO.with(|m| {
+        m.borrow_mut().insert(class_name.to_string(), Some(EnumKind::IntMixin));
+    });
+    out
+}
+
+/// Register a stdlib-owned IntEnum class whose members should repr as
+/// `<Class.NAME: value>` instead of a global module alias. Duplicate values
+/// share the first canonical member, matching CPython enum alias identity.
+pub fn register_int_enum(class_name: &str, members: &[(&str, i64)]) -> Vec<MbValue> {
+    HAVE_ENUM_CLASSES.with(|c| c.set(true));
+    let mut out = Vec::new();
+    ENUM_CLASSES.with(|m| {
+        let mut map = m.borrow_mut();
+        let info = map
+            .entry(class_name.to_string())
+            .or_insert_with(|| EnumClassInfo {
+                kind: EnumKind::IntMixin,
+                next_auto: 1,
+                canonical: Vec::new(),
+                by_name: Vec::new(),
+                composites: FxHashMap::default(),
+                global_module: None,
+            });
+        info.global_module = None;
+        let mut by_value: FxHashMap<i64, MbValue> = FxHashMap::default();
+        for (name, value) in members {
+            let member = if let Some(existing) = by_value.get(value) {
+                *existing
+            } else {
+                let member = new_member(class_name, name, MbValue::from_int(*value));
+                unsafe {
+                    super::super::rc::retain_if_ptr(member);
+                }
+                info.canonical.push(member);
+                by_value.insert(*value, member);
+                member
+            };
+            unsafe {
+                super::super::rc::retain_if_ptr(member);
+                super::super::rc::retain_if_ptr(member);
+            }
+            info.by_name.push((name.to_string(), member));
+            out.push(member);
+        }
+    });
+    ENUM_KIND_MEMO.with(|m| {
+        m.borrow_mut()
+            .insert(class_name.to_string(), Some(EnumKind::IntMixin));
+    });
+    out
 }
 
 /// First alias found: (alias_name, canonical_name) — `@enum.unique` support.
@@ -851,6 +1109,29 @@ pub fn class_member_int_values(class_name: &str) -> Option<Vec<(String, i64)>> {
         Some(out)
     })
 }
+
+/// Every bound name's int value (canonical members AND non-canonical multi-bit
+/// Flag members / aliases), in definition order. NAMED_FLAGS verification needs
+/// the multi-bit members `class_member_int_values` filters out, since the whole
+/// check is "does every bit of a composite member have a single-bit name".
+pub fn class_all_member_int_values(class_name: &str) -> Option<Vec<(String, i64)>> {
+    if !have_enum_classes() {
+        return None;
+    }
+    ENUM_CLASSES.with(|m| {
+        let map = m.borrow();
+        let info = map.get(class_name)?;
+        let mut out = Vec::new();
+        for (name, member) in &info.by_name {
+            let v = member_value(*member);
+            if let Some(i) = v.as_int() {
+                out.push((name.clone(), i));
+            }
+        }
+        Some(out)
+    })
+}
+
 
 /// class_first_alias fallback for data-mixin enums (IntEnum et al.) that
 /// keep raw values as class attrs instead of ENUM_CLASSES members.

@@ -10,25 +10,26 @@
 //!   stack_size.
 //!
 //! Carve-outs:
-//!   - No real concurrency yet — single-threaded stubs only. All sync
-//!     primitives (Lock, RLock, Condition, Event, Semaphore,
+//!   - `Thread.start` runs target callables on a background OS thread and
+//!     `join` waits for that worker, which is enough for CPython-shaped
+//!     client/server handshakes. Most sync primitives are still simplified:
+//!     Lock, RLock, Condition, Event, Semaphore,
 //!     BoundedSemaphore, Barrier) return passive Instance dicts whose
 //!     methods (acquire/release/wait/notify/set/clear) are no-ops
 //!     surfaced through the dispatcher table. `Barrier.wait` cannot truly
 //!     rendezvous (no peer is ever blocked); it returns a rotating
-//!     CPython-shaped arrival index 0..parties-1 instead of raising.
-//!     `Thread.start` runs the target synchronously on the calling thread
-//!     (delivering `target(*args, **kwargs)`) and flips `started` / `alive`,
-//!     but does not spawn an OS thread.
+//!     CPython-shaped arrival index 0..parties-1 instead of raising. Worker
+//!     targets get their own thread-local `current_thread()` / `get_ident()`
+//!     view and restore registered `threading.local` fields on exit to
+//!     preserve the common per-thread isolation contracts.
 //!   - `Timer` returns a Thread-shaped Instance with `interval` /
 //!     `function` fields; it never fires.
 //!   - `local` returns a fresh dict — thread-local semantics collapse
 //!     to plain dict semantics in the single-thread runtime.
-//!   - `active_count` / `enumerate` / `current_thread` / `main_thread`:
-//!     always observe a single fake MainThread.
+//!   - `active_count` remains simplified; `enumerate` tracks started workers
+//!     until `join()` removes them.
 //!   - `get_ident` / `get_native_id`: 1 on the main thread; while a
-//!     `Thread.start()` target runs synchronously they reflect that thread's
-//!     distinct ident, restored on return (nested starts nest).
+//!     `Thread.start()` target runs they reflect that thread's distinct ident.
 //!   - `setprofile` / `settrace` / `setprofile_all_threads` /
 //!     `settrace_all_threads` / `stack_size`: accept and discard the
 //!     argument, return None / 0.
@@ -50,6 +51,8 @@ use rustc_hash::FxHashMap;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::thread::JoinHandle;
 
 // -- Variadic dispatchers --
 
@@ -388,16 +391,33 @@ static NEXT_THREAD_IDENT: AtomicI64 = AtomicI64::new(2);
 /// Allocate the next distinct Thread ident (>= 2).
 thread_local! {
     /// Threads between start() and join() — what enumerate() reports beyond
-    /// the main thread (synchronous stub model).
+    /// the main thread.
     static LIVE_THREADS: std::cell::RefCell<Vec<u64>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
 thread_local! {
-    /// The Thread instance whose target is currently running (sync model);
+    /// The Thread instance whose target is currently running;
     /// what current_thread() reports inside a worker.
     static CURRENT_THREAD_OBJ: std::cell::Cell<u64> =
         std::cell::Cell::new(MbValue::none().to_bits());
+    static WORKER_STDLIB_READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+static THREAD_HANDLES: OnceLock<Mutex<HashMap<u64, JoinHandle<HashMap<i64, MbValue>>>>> =
+    OnceLock::new();
+
+fn thread_handles() -> &'static Mutex<HashMap<u64, JoinHandle<HashMap<i64, MbValue>>>> {
+    THREAD_HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ensure_worker_stdlib_registered() {
+    WORKER_STDLIB_READY.with(|ready| {
+        if !ready.get() {
+            super::register_stdlib();
+            ready.set(true);
+        }
+    });
 }
 
 fn live_threads_add(t: MbValue) {
@@ -455,23 +475,7 @@ fn deliver_to_excepthook(thread: MbValue) {
         }
         MbValue::from_ptr(inst)
     };
-    // The hook is whatever threading.excepthook currently is (assignable).
-    let hook = {
-        let module = super::super::module::mb_import(MbValue::from_ptr(MbObject::new_str(
-            "threading".to_string(),
-        )));
-        let sentinel = MbValue::from_bits(u64::MAX);
-        let h = super::super::dict_ops::mb_dict_get(
-            module,
-            MbValue::from_ptr(MbObject::new_str("excepthook".to_string())),
-            sentinel,
-        );
-        if h.to_bits() == u64::MAX {
-            MbValue::none()
-        } else {
-            h
-        }
-    };
+    let hook = thread_excepthook(thread);
     if !hook.is_none() {
         let call_args = MbValue::from_ptr(MbObject::new_list(vec![args_inst]));
         let _ = super::super::builtins::mb_call_spread(hook, call_args);
@@ -484,6 +488,54 @@ fn deliver_to_excepthook(thread: MbValue) {
         let _ = msg;
         eprintln!("Exception in thread: {type_name}");
     }
+}
+
+fn current_excepthook() -> MbValue {
+    let module = super::super::module::mb_import(MbValue::from_ptr(MbObject::new_str(
+        "threading".to_string(),
+    )));
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let hook = super::super::dict_ops::mb_dict_get(
+        module,
+        MbValue::from_ptr(MbObject::new_str("excepthook".to_string())),
+        sentinel,
+    );
+    if hook.to_bits() == u64::MAX {
+        MbValue::none()
+    } else {
+        hook
+    }
+}
+
+fn snapshot_excepthook_for_thread(thread: MbValue) {
+    let hook = current_excepthook();
+    if let Some(ptr) = thread.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::super::rc::retain_if_ptr(hook);
+                let old = fields
+                    .write()
+                    .unwrap()
+                    .insert("__mamba_excepthook__".to_string(), hook);
+                if let Some(prev) = old {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+}
+
+fn thread_excepthook(thread: MbValue) -> MbValue {
+    if let Some(ptr) = thread.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(hook) = fields.read().unwrap().get("__mamba_excepthook__").copied() {
+                    return hook;
+                }
+            }
+        }
+    }
+    current_excepthook()
 }
 
 /// CPython-style Thread repr with lifecycle marker.
@@ -610,11 +662,10 @@ fn build_call_args(args: MbValue, kwargs: MbValue) -> MbValue {
 }
 
 pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
-    // Synchronously invoke the target callable (single-threaded stub model)
-    // so that the side-effect observed by the seed (e.g. `_results.append(42)`)
-    // is visible after `start()` / `join()`. Snapshot+restore registered
-    // threading.local() instances so per-thread attribute isolation holds
-    // even though execution is serial.
+    // Run target callables on a background OS thread. Earlier Mamba builds ran
+    // targets synchronously, which preserved simple side-effect fixtures but
+    // deadlocked CPython-shaped server-thread/client-thread handshakes where
+    // the target blocks in accept()/recv() before the starter can continue.
     if let Some(ptr) = thread.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
@@ -653,36 +704,46 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                         .insert("ident".into(), MbValue::from_int(id));
                     id
                 });
-                let snapshot = snapshot_locals();
-                // Make `threading.get_ident()` inside the target observe THIS
-                // thread's distinct ident, then restore the caller's ident so
-                // nested/sequential starts each see their own (sync model).
-                let prev_ident = CURRENT_IDENT.with(|c| c.get());
-                CURRENT_IDENT.with(|c| c.set(ident));
-                let prev_obj = CURRENT_THREAD_OBJ.with(|c| c.get());
-                CURRENT_THREAD_OBJ.with(|c| c.set(thread.to_bits()));
-                if !target.is_none() {
-                    // Deliver target(*args, **kwargs) — NOT mb_call0, which left
-                    // declared parameters reading uninitialized arg slots.
-                    let _ = super::super::builtins::mb_call_spread(
-                        target,
-                        build_call_args(args, kwargs),
-                    );
-                }
-                CURRENT_THREAD_OBJ.with(|c| c.set(prev_obj));
-                CURRENT_IDENT.with(|c| c.set(prev_ident));
-                restore_locals(snapshot);
-                // An exception escaping run() is delivered to
-                // threading.excepthook, NOT re-raised in the starter/joiner.
-                deliver_to_excepthook(thread);
                 {
                     let mut f = fields.write().unwrap();
                     f.insert("started".into(), MbValue::from_bool(true));
                     // Alive from start() until join() (CPython Thread.is_alive()
-                    // lifecycle); the synchronous stub still flips it false in join().
+                    // lifecycle in Mamba's current simplified model); join()
+                    // flips it false and removes the live-thread entry.
                     f.insert("alive".into(), MbValue::from_bool(true));
                 }
                 live_threads_add(thread);
+                let call_run_override = target.is_none() && thread_run_override_needed(thread);
+                if !target.is_none() || call_run_override {
+                    snapshot_excepthook_for_thread(thread);
+                    let locals_snapshot = snapshot_locals();
+                    let globals_snapshot = super::super::closure::snapshot_global_id_namespace();
+                    let class_snapshot = super::super::class::snapshot_thread_class_state();
+                    super::super::rc::retain_if_ptr(thread);
+                    super::super::rc::retain_if_ptr(target);
+                    super::super::rc::retain_if_ptr(args);
+                    super::super::rc::retain_if_ptr(kwargs);
+                    let handle = std::thread::spawn(move || {
+                        clear_locals(&locals_snapshot);
+                        let worker_globals = run_thread_target(
+                            thread,
+                            ident,
+                            target,
+                            args,
+                            kwargs,
+                            call_run_override,
+                            globals_snapshot,
+                            class_snapshot,
+                        );
+                        restore_locals(locals_snapshot);
+                        release_thread_target_values(thread, target, args, kwargs);
+                        worker_globals
+                    });
+                    thread_handles()
+                        .lock()
+                        .unwrap()
+                        .insert(thread.to_bits(), handle);
+                }
             } else if let ObjData::Dict(ref lock) = (*ptr).data {
                 let (target, args, kwargs, ident) = {
                     let g = lock.read().unwrap();
@@ -694,10 +755,13 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                     )
                 };
                 let snapshot = snapshot_locals();
+                let context_snapshot =
+                    super::contextvars_mod::replace_current_context(FxHashMap::default());
                 let prev_ident = CURRENT_IDENT.with(|c| c.get());
                 if let Some(id) = ident {
                     CURRENT_IDENT.with(|c| c.set(id));
                 }
+                clear_locals(&snapshot);
                 if !target.is_none() {
                     let _ = super::super::builtins::mb_call_spread(
                         target,
@@ -705,6 +769,8 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                     );
                 }
                 CURRENT_IDENT.with(|c| c.set(prev_ident));
+                let _worker_context =
+                    super::contextvars_mod::replace_current_context(context_snapshot);
                 restore_locals(snapshot);
                 let mut map = lock.write().unwrap();
                 map.insert("started".into(), MbValue::from_bool(true));
@@ -733,6 +799,16 @@ pub fn mb_threading_thread_join(thread: MbValue) -> MbValue {
                     .unwrap_or(false);
                 if !started {
                     return raise_runtime_error("cannot join thread before it is started");
+                }
+                let current = CURRENT_THREAD_OBJ.with(|c| c.get());
+                if current == thread.to_bits() {
+                    return raise_runtime_error("cannot join current thread");
+                }
+                let handle = thread_handles().lock().unwrap().remove(&thread.to_bits());
+                if let Some(handle) = handle {
+                    if let Ok(worker_globals) = handle.join() {
+                        super::super::closure::merge_global_id_namespace(&worker_globals);
+                    }
                 }
                 let mut f = fields.write().unwrap();
                 f.insert("alive".into(), MbValue::from_bool(false));
@@ -1010,8 +1086,9 @@ pub fn mb_threading_local() -> MbValue {
     val
 }
 
-/// Snapshot every registered threading.local() instance's field map. Used
-/// by Thread.start() to restore state after running a target synchronously.
+/// Snapshot every registered threading.local() instance's main-thread field
+/// map. Thread.start() clears those fields while the worker target runs, then
+/// restores this snapshot when the worker exits.
 fn snapshot_locals() -> Vec<(MbValue, FxHashMap<String, MbValue>)> {
     LOCAL_INSTANCES.with(|v| {
         v.borrow()
@@ -1029,6 +1106,18 @@ fn snapshot_locals() -> Vec<(MbValue, FxHashMap<String, MbValue>)> {
     })
 }
 
+fn clear_locals(snapshot: &[(MbValue, FxHashMap<String, MbValue>)]) {
+    for (val, _) in snapshot {
+        if let Some(ptr) = val.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    fields.write().unwrap().clear();
+                }
+            }
+        }
+    }
+}
+
 fn restore_locals(snapshot: Vec<(MbValue, FxHashMap<String, MbValue>)>) {
     for (val, fields_snap) in snapshot {
         if let Some(ptr) = val.as_ptr() {
@@ -1038,6 +1127,64 @@ fn restore_locals(snapshot: Vec<(MbValue, FxHashMap<String, MbValue>)>) {
                 }
             }
         }
+    }
+}
+
+fn run_thread_target(
+    thread: MbValue,
+    ident: i64,
+    target: MbValue,
+    args: MbValue,
+    kwargs: MbValue,
+    call_run_override: bool,
+    globals_snapshot: HashMap<i64, MbValue>,
+    class_snapshot: super::super::class::ThreadClassState,
+) -> HashMap<i64, MbValue> {
+    ensure_worker_stdlib_registered();
+    let previous_globals = super::super::closure::replace_global_id_namespace(globals_snapshot);
+    let previous_classes = super::super::class::replace_thread_class_state(class_snapshot);
+    let prev_ident = CURRENT_IDENT.with(|c| c.get());
+    let prev_obj = CURRENT_THREAD_OBJ.with(|c| c.get());
+    CURRENT_IDENT.with(|c| c.set(ident));
+    CURRENT_THREAD_OBJ.with(|c| c.set(thread.to_bits()));
+    if !target.is_none() {
+        let _ = super::super::builtins::mb_call_spread(target, build_call_args(args, kwargs));
+    } else if call_run_override {
+        let method = MbValue::from_ptr(MbObject::new_str("run".to_string()));
+        let empty = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let _ = super::super::class::mb_call_method(thread, method, empty);
+    }
+    // An exception escaping the target/run override is delivered while the
+    // worker still has the target's globals/classes installed. Running the
+    // hook after restoring that context loses access to user-defined hooks.
+    deliver_to_excepthook(thread);
+    CURRENT_THREAD_OBJ.with(|c| c.set(prev_obj));
+    CURRENT_IDENT.with(|c| c.set(prev_ident));
+    super::super::class::replace_thread_class_state(previous_classes);
+    super::super::closure::replace_global_id_namespace(previous_globals)
+}
+
+fn thread_run_override_needed(thread: MbValue) -> bool {
+    let Some(ptr) = thread.as_ptr() else {
+        return false;
+    };
+    let class_name = unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, .. } => class_name.clone(),
+            _ => return false,
+        }
+    };
+    class_name != "Thread"
+        && super::super::class::class_mro_any(&class_name, |name| name == "Thread")
+        && !super::super::class::lookup_method(&class_name, "run").is_none()
+}
+
+fn release_thread_target_values(thread: MbValue, target: MbValue, args: MbValue, kwargs: MbValue) {
+    unsafe {
+        super::super::rc::release_if_ptr(kwargs);
+        super::super::rc::release_if_ptr(args);
+        super::super::rc::release_if_ptr(target);
+        super::super::rc::release_if_ptr(thread);
     }
 }
 
@@ -1084,9 +1231,8 @@ fn main_thread_singleton() -> MbValue {
 
 /// threading.current_thread() -> the Thread object for the running thread.
 ///
-/// Inside a `Thread.start()` target (synchronous stub model), THREAD_NAME holds
-/// the running thread's name, so current_thread() reflects THAT thread; outside
-/// any worker it is the MainThread singleton.
+/// Inside a `Thread.start()` target, CURRENT_THREAD_OBJ holds the running
+/// Thread instance; outside any worker it is the MainThread singleton.
 pub fn mb_threading_current_thread() -> MbValue {
     // Inside a worker target the running Thread instance itself is current.
     let cur = CURRENT_THREAD_OBJ.with(|c| MbValue::from_bits(c.get()));
@@ -1136,8 +1282,8 @@ pub fn mb_threading_enumerate() -> MbValue {
 /// threading.get_ident() -> int.
 ///
 /// Returns the ident of the code currently executing: 1 on the main thread;
-/// while a `Thread.start()` target runs synchronously it reflects that thread's
-/// distinct ident (see `mb_threading_thread_start`).
+/// while a `Thread.start()` target runs it reflects that thread's distinct
+/// ident (see `mb_threading_thread_start`).
 pub fn mb_threading_get_ident() -> MbValue {
     MbValue::from_int(CURRENT_IDENT.with(|c| c.get()))
 }

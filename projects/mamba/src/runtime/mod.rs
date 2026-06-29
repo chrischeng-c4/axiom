@@ -52,12 +52,14 @@ pub fn cleanup_all_runtime_state() {
     // Order matters: iterators may reference closures/classes, so clear them first.
     iter::cleanup_all_iterators();
     generator::cleanup_generator_state_for_runtime_reset();
+    stdlib::types_mod::cleanup_all_types_state();
     closure::cleanup_all_closures();
     class::cleanup_all_classes();
     stdlib::dataclasses_mod::cleanup_all_dataclasses();
     exception::cleanup_all_exceptions();
     file_io::cleanup_all_files();
     module::cleanup_all_modules();
+    string_ops::cleanup_all_surrogate_strings();
     async_rt::cleanup_all_async();
     // Phase 2: Clear GC tracking (objects may already be freed by phase 1 releases).
     gc::gc_clear_all_state();
@@ -126,7 +128,7 @@ mod cleanup_tests {
     #[test]
     fn test_cleanup_all_runtime_state_discards_generator_handles() {
         let name = MbValue::from_ptr(rc::MbObject::new_str("cleanup_gen".into()));
-        let gen = generator::mb_generator_create(name, MbValue::none());
+        let gen = generator::mb_generator_create(name, MbValue::none(), MbValue::none());
         assert!(
             generator::is_known_generator(gen),
             "generator should be registered"

@@ -15,7 +15,7 @@ For implementation map, see [llms.txt](llms.txt).
 | C1. Py3.12 functional parity — Axis 1 | #3331 | partial | planned | conformance | not_ready | confirmed README promise; CPython oracle gate remains open |
 | C2. Less CPU time AND less memory than CPython — Axis 2 | #3880 | planned | planned | conformance | not_ready | confirmed README promise; CPU/RSS ratio gates remain open |
 | C3. mambalibs end-to-end — Axis 3 | #3457 | partial | planned | conformance | not_ready | confirmed README promise; native module coverage remains open |
-| C4. Package manager — uv-like | #3881 | partial | planned | conformance | not_ready | confirmed README promise; uv-like workflow coverage remains open |
+| C4. Package manager — uv-like | #459 | implemented | verified | conformance | ready | uv-like offline workflow coverage is green across init/auth/index/add/remove/lock/export/tree/version/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache |
 
 ### C1. Py3.12 functional parity — Axis 1
 
@@ -67,23 +67,76 @@ Gate Inventory: `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Native mambalibs import/callable surface | epic | #3457 | partial | planned | conformance | `cargo test -p mamba --test mambalibs`; projects/mamba/mambalibs; projects/mamba/src/pkgmanage/builder/force_link.rs |
+| httpkit HTTP/2 client contract | change | #526 | implemented | verified | conformance | `cargo test -p mambalibs-http --test client_http2_test`; projects/mamba/mambalibs/httpkit/src/client |
 
 ### C4. Package manager — uv-like
 
 ID: c4-package-manager-uv-like
 Type: DeveloperTool
-Surfaces: CLI: `mamba init` + `mamba add` + `mamba remove` + `mamba lock` + `mamba sync` + `mamba install` + `mamba cache` + `mamba hash` + `mamba pkgmgr-validate` - project scaffold, dependency, lockfile, install, cache, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
+Surfaces: CLI: `mamba init` + `mamba auth` + `mamba index` + `mamba add` + `mamba remove` + `mamba lock` + `mamba audit` + `mamba export` + `mamba tree` + `mamba version` + `mamba package` + `mamba publish` + `mamba pip` + `mamba venv` + `mamba python` + `mamba workspace` + `mamba shell` + `mamba sync` + `mamba install` + `mamba tool` + `mamba cache` + `mamba hash` + `mamba generate-shell-completion` + `mamba pkgmgr-validate` - project scaffold, credentials, frozen index, dependency, lockfile, audit, export, tree, version, package artifact build/publish upload, pip inventory, venv, local and standalone Python discovery/pinning/install management, workspace inspection, shell integration, install, uv-style tool administration, cache, completion, and validation workflows; Config: `mamba.toml` + `mamba.lock` - manifest and resolved lockfile artifacts
 EC Dimensions: behavior: `cargo test -p mamba --test pkgmgr` - uv-like workflow fixtures; stability: `cargo test -p mamba --test schema_gates pkgmgr` - schema, pin, and idempotence contracts
-Root WI: #3881
-Status: confirmed
-Required Verification: conformance, negative
+Root WI: #519
+Status: implemented
+Required Verification: conformance, negative, uv-parity
 Promise:
 A built-in package manager surface for project scaffold, dependency add/remove, lockfile generation, sync/install, cache, and validation workflows. The product promise is `uv`-style ergonomics over the mamba runtime with `mamba.toml` and `mamba.lock` as the agent-readable project contract.
 Gate Inventory: `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Uv-like package manager workflow | epic | #3881 | partial | planned | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
+| Local-first package manager baseline | epic | #459 | implemented | verified | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
+| Full uv package-manager parity and beyond | epic | #519 | implemented | verified | uv-parity | `cargo test -p mamba --test pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/src/pkgmanage/pkgmgr; projects/mamba/tests/pkgmgr |
+| `mamba run` command mode | change | #525 | implemented | verified | uv-parity | `cargo test -p mamba --test pkgmgr run_preflight::run_command_mode`; projects/mamba/src/main.rs; projects/mamba/src/pkgmanage/run.rs |
+
+Current state: `mamba init/auth/index/add/remove/lock/export/tree/version/package/publish/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache`
+plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
+local wheel paths, explicit registry URL tests, lockfile export to
+requirements.txt / pylock.toml, dependency-tree rendering, PEP 621 version
+bumping, and pip-compatible requirements compile plus installed-environment
+install/sync/uninstall/list/freeze/show/tree/check inspection and
+dependency-tree rendering against frozen indexes and explicit registry URLs.
+`mamba audit` checks `mamba.lock` against an offline
+advisory database, and `mamba lock --check` / `mamba sync --check` provide
+CI-friendly drift gates without mutating lockfiles or environments. `mamba package build`
+now emits deterministic pure-Python wheel and sdist artifacts from PEP 621
+`pyproject.toml` projects, and `mamba publish` / `mamba package publish`
+upload PyPI legacy multipart payloads with `.pypirc`/CLI credential precedence,
+CA-bundle support, JSON summaries, and `--dry-run` validation without leaking
+tokens. `mamba venv` exposes create/remove safety around PEP 405
+environments, and `mamba cache` now reports exact size/category info plus
+dry-run, age, size, and package-targeted pruning. `mamba python` exposes local
+interpreter list/find, `.python-version` pinning, managed Python directory
+resolution, local-source registration, standalone archive download/install via
+explicit URL or python-build-standalone release-tag composition, sha256
+verification, uninstall, and shell PATH setup for managed Python launchers. `mamba workspace list/dir/metadata` inspects uv-compatible
+`[tool.uv.workspace]` membership, member paths, root paths, and exclusion
+patterns. `mamba index build` can
+materialize a frozen local index from wheel files or directories for
+`mamba add --index` / `mamba lock --index`. `mamba shell path/init` emits
+managed PATH snippets for mamba tool bin directories, and
+`mamba generate-shell-completion` emits clap-derived bash/zsh/fish/powershell/elvish
+completion scripts from the live command tree. `mamba auth dir/login/token/logout`
+manages plaintext package-index credentials under an overrideable credentials
+directory, and stored credentials now feed explicit-index metadata requests,
+resolver requests, and locked artifact downloads. `mamba tool run/install/upgrade/list/uninstall/dir/update-shell` wraps the
+tool-install workflow behind a uv-style `tool` command family. The package-manager validation
+profile requires twenty-one offline workflow families and keeps live network
+coverage opt-in/report-only. `mamba add` / `mamba lock` do not treat public
+PyPI as an implicit default source; callers must provide a frozen local index,
+direct local wheel file, or explicit registry URL when resolving dependencies.
+First-party pure-Python replacement packages use an explicit provider path:
+`mamba add --provider mamba mamba-httpx-compat` records the mamba-owned
+distribution name, preserves `provides` / compatibility metadata in
+`mamba.lock`, and `mamba sync` installs real pure-Python files into `.venv`
+so the provided import alias (for example `import httpx`) resolves without
+confusing the package with the upstream PyPI distribution. This provider path
+is separate from C3 `mambalibs`, which are Rust/native runtime modules.
+`mamba run <file.py|file.tp>` remains the mamba runtime/compiler path, while
+`mamba run -- <cmd> [args...]` runs arbitrary commands inside the synced project
+environment with `.venv` executables and site-packages preferred before host
+fallbacks.
+No known release-blocking command-family gaps remain under #519; follow-up
+parity work should be tracked as focused hardening or live-network fixtures.
 
 ## Test Completeness — what we tested, against what authority
 
@@ -847,7 +900,7 @@ Measured numbers per axis are in **[Capability status — the four axes](#capabi
 | Capability      | C1 Py3.12 parity            | No — ① type **74.1%** enforced (auto-measured) + **100%** sound · ② ~18% run-correct |
 | Capability      | C2 Perf > CPython           | No — compute median ~13× faster, but object/float slower **and** memory regresses; the boxed value model is the keystone |
 | Capability      | C3 mambalibs end-to-end     | No — most kits stub-only |
-| Capability      | C4 Package manager (uv-like)| No — skeleton only |
+| Capability      | C4 Package manager (uv-like)| Yes — offline uv-like workflow gates cover init/auth/index/add/remove/lock/export/tree/version/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache |
 | Runtime         | core substrate stability    | **99.1%** — sound; only edge crashes (deep recursion, gen-nesting cap, MRO, async-gen hang) |
 | Ceiling         | match Golang (`mamba/go`)   | ~4× behind Go on compute today (Go ~50× vs CPython, mamba ~13×); gap = value model + codegen, not JIT-vs-AOT |
 | Standardization | managed                     | No — 5.1%; epic [#3882](https://github.com/chrischeng-c4/cclab/issues/3882) |

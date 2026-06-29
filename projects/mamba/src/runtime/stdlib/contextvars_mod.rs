@@ -24,15 +24,16 @@
 //!   (or the `Token.MISSING` sentinel) and a `_used` flag; `reset`
 //!   validates ownership / reuse like CPython (ValueError / RuntimeError).
 //! - `copy_context()` snapshots the current map into a `Context` Instance
-//!   (parallel `_ids` / `_vars` / `_vals` lists). `Context.run(fn, *args)`
-//!   installs the snapshot, invokes the callable, captures writes back into
-//!   the Context, and restores the caller's context (writes do not leak).
+//!   carrying parallel `_ids` / `_vars` / `_vals` lists (var ids, the actual
+//!   `ContextVar` objects, and their values) plus a real `_data` dict mapping
+//!   each captured `ContextVar` → value. The `_data` dict makes the Context a
+//!   mapping for `dict(ctx)` / membership / `ctx[var]` (recognised by
+//!   `unwrap_dictlike_data`). `Context.run(fn, *args)` installs the snapshot,
+//!   invokes the callable, captures writes back into the Context, and restores
+//!   the caller's context (writes do not leak).
 //!
 //! Carve-outs (documented gaps from CPython parity):
 //!
-//! - `Context` does not implement the full Mapping protocol (`dict(ctx)`,
-//!   `len(ctx)`, membership) — iteration support is gated on the generic
-//!   Instance iterator plumbing.
 //! - Async-task context propagation (each task owning a context copy) is
 //!   wired in `tokio_exec` only insofar as tasks run on pool threads with
 //!   their own thread-local context.
@@ -45,12 +46,25 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 thread_local! {
-    /// The thread's current context: var_id → value.
-    static CURRENT: RefCell<FxHashMap<u64, MbValue>> = RefCell::new(FxHashMap::default());
+    /// The thread's current context: var_id → (ContextVar object, value).
+    /// Retaining the `ContextVar` object (not just its id) lets
+    /// `copy_context()` recover the real keys so a `Context` can expose the
+    /// var → value mapping (`dict(ctx)`, membership, `ctx[var]`).
+    static CURRENT: RefCell<FxHashMap<u64, (MbValue, MbValue)>> = RefCell::new(FxHashMap::default());
     /// Lazily-created per-process `Token.MISSING` sentinel (one identity per
     /// process is enough for `is` checks because the sentinel never crosses
     /// the API except through this module).
     static MISSING: RefCell<Option<MbValue>> = const { RefCell::new(None) };
+}
+
+pub(crate) type ContextMap = FxHashMap<u64, (MbValue, MbValue)>;
+
+/// Replace the current thread's ContextVar map, returning the previous map.
+///
+/// `threading.Thread.start()` uses this to emulate CPython's per-thread empty
+/// context while it synchronously runs a target in mamba's stub threading model.
+pub(crate) fn replace_current_context(next: ContextMap) -> ContextMap {
+    CURRENT.with(|c| std::mem::replace(&mut *c.borrow_mut(), next))
 }
 
 static NEXT_VAR_ID: AtomicU64 = AtomicU64::new(1);
@@ -177,7 +191,7 @@ fn var_id(var: MbValue) -> u64 {
 /// `var.get()` / `var.get(default)`.
 pub fn mb_contextvar_get(var: MbValue, default: Option<MbValue>) -> MbValue {
     let id = var_id(var);
-    if let Some(v) = CURRENT.with(|c| c.borrow().get(&id).copied()) {
+    if let Some(v) = CURRENT.with(|c| c.borrow().get(&id).map(|(_, val)| *val)) {
         return v;
     }
     if let Some(d) = default {
@@ -201,8 +215,11 @@ pub fn mb_contextvar_set(var: MbValue, value: MbValue) -> MbValue {
     let id = var_id(var);
     let old = CURRENT.with(|c| {
         let mut map = c.borrow_mut();
-        unsafe { super::super::rc::retain_if_ptr(value) };
-        map.insert(id, value)
+        unsafe {
+            super::super::rc::retain_if_ptr(value);
+            super::super::rc::retain_if_ptr(var);
+        }
+        map.insert(id, (var, value)).map(|(_, v)| v)
     });
     let mut fields = InstanceFields::default();
     unsafe { super::super::rc::retain_if_ptr(var) };
@@ -252,7 +269,11 @@ pub fn mb_contextvar_reset(var: MbValue, token: MbValue) -> MbValue {
         if old == missing_sentinel() {
             map.remove(&id);
         } else {
-            map.insert(id, old);
+            unsafe {
+                super::super::rc::retain_if_ptr(var);
+                super::super::rc::retain_if_ptr(old);
+            }
+            map.insert(id, (var, old));
         }
     });
     inst_set_field(token, "_used", MbValue::from_bool(true));
@@ -261,31 +282,59 @@ pub fn mb_contextvar_reset(var: MbValue, token: MbValue) -> MbValue {
 
 // ── Context ───────────────────────────────────────────────────────
 
-/// Snapshot of the current thread context as a `Context` Instance. The
-/// snapshot keeps the var ids and values in parallel `_ids` / `_vals`
-/// list fields (MbValue lists keep the GC aware of the held values).
-pub fn mb_contextvars_copy_context() -> MbValue {
-    let (ids, vals): (Vec<MbValue>, Vec<MbValue>) = CURRENT.with(|c| {
-        let map = c.borrow();
-        let mut ids = Vec::with_capacity(map.len());
-        let mut vals = Vec::with_capacity(map.len());
-        for (id, v) in map.iter() {
-            ids.push(MbValue::from_int(*id as i64));
-            unsafe { super::super::rc::retain_if_ptr(*v) };
-            vals.push(*v);
+/// Build a `Context` Instance from `(var_id, ContextVar, value)` triples.
+///
+/// Stores parallel `_ids` / `_vars` / `_vals` lists (var ids, the real
+/// `ContextVar` objects, and their values — the lists keep the GC aware of
+/// the held objects) **and** a real `_data` dict mapping each `ContextVar`
+/// → value. The `_data` dict makes the Context a mapping that
+/// `unwrap_dictlike_data` recognises, so `dict(ctx)`, membership, and
+/// `ctx[var]` all reflect the captured snapshot. Each held object is
+/// retained once per field it lands in.
+fn make_context(triples: &[(u64, MbValue, MbValue)]) -> MbValue {
+    let mut ids = Vec::with_capacity(triples.len());
+    let mut vars = Vec::with_capacity(triples.len());
+    let mut vals = Vec::with_capacity(triples.len());
+    let data = MbValue::from_ptr(MbObject::new_dict());
+    for (id, var, val) in triples {
+        ids.push(MbValue::from_int(*id as i64));
+        unsafe {
+            // Each object lands in the `_vars`/`_vals` list (one explicit
+            // retain here) plus the `_data` dict (mb_dict_setitem retains the
+            // key and value itself), so one explicit retain each is correct.
+            super::super::rc::retain_if_ptr(*var);
+            super::super::rc::retain_if_ptr(*val);
         }
-        (ids, vals)
-    });
+        vars.push(*var);
+        vals.push(*val);
+        super::super::dict_ops::mb_dict_setitem(data, *var, *val);
+    }
     let mut fields = InstanceFields::default();
     fields.insert(
         "_ids".to_string(),
         MbValue::from_ptr(MbObject::new_list(ids)),
     );
     fields.insert(
+        "_vars".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vars)),
+    );
+    fields.insert(
         "_vals".to_string(),
         MbValue::from_ptr(MbObject::new_list(vals)),
     );
+    fields.insert("_data".to_string(), data);
     new_instance("Context", fields)
+}
+
+/// Snapshot of the current thread context as a `Context` Instance.
+pub fn mb_contextvars_copy_context() -> MbValue {
+    let triples: Vec<(u64, MbValue, MbValue)> = CURRENT.with(|c| {
+        c.borrow()
+            .iter()
+            .map(|(id, (var, val))| (*id, *var, *val))
+            .collect()
+    });
+    make_context(&triples)
 }
 
 fn list_items(v: MbValue) -> Vec<MbValue> {
@@ -300,18 +349,28 @@ fn list_items(v: MbValue) -> Vec<MbValue> {
         .unwrap_or_default()
 }
 
+/// Reconstruct the `var_id → (ContextVar, value)` map captured in a Context's
+/// parallel `_ids` / `_vars` / `_vals` lists.
+fn context_snapshot_map(ctx: MbValue) -> ContextMap {
+    let ids = list_items(inst_field(ctx, "_ids").unwrap_or(MbValue::none()));
+    let vars = list_items(inst_field(ctx, "_vars").unwrap_or(MbValue::none()));
+    let vals = list_items(inst_field(ctx, "_vals").unwrap_or(MbValue::none()));
+    ids.iter()
+        .enumerate()
+        .filter_map(|(i, id)| {
+            let id = id.as_int()? as u64;
+            let var = vars.get(i).copied().unwrap_or_else(MbValue::none);
+            let val = vals.get(i).copied().unwrap_or_else(MbValue::none);
+            Some((id, (var, val)))
+        })
+        .collect()
+}
+
 /// `ctx.run(callable, *args)` — execute under the snapshot, capture writes
 /// back into the Context, restore the caller's context.
 pub fn mb_context_run(ctx: MbValue, func: MbValue, args: Vec<MbValue>) -> MbValue {
     // Install the snapshot.
-    let snapshot: FxHashMap<u64, MbValue> = {
-        let ids = list_items(inst_field(ctx, "_ids").unwrap_or(MbValue::none()));
-        let vals = list_items(inst_field(ctx, "_vals").unwrap_or(MbValue::none()));
-        ids.iter()
-            .zip(vals.iter())
-            .filter_map(|(id, v)| id.as_int().map(|i| (i as u64, *v)))
-            .collect()
-    };
+    let snapshot = context_snapshot_map(ctx);
     let saved = CURRENT.with(|c| std::mem::replace(&mut *c.borrow_mut(), snapshot));
 
     let args_list = MbValue::from_ptr(MbObject::new_list(args));
@@ -319,34 +378,27 @@ pub fn mb_context_run(ctx: MbValue, func: MbValue, args: Vec<MbValue>) -> MbValu
 
     // Capture writes back into the Context, then restore the caller's map.
     let finished = CURRENT.with(|c| std::mem::replace(&mut *c.borrow_mut(), saved));
-    let mut ids = Vec::with_capacity(finished.len());
-    let mut vals = Vec::with_capacity(finished.len());
-    for (id, v) in finished.iter() {
-        ids.push(MbValue::from_int(*id as i64));
-        vals.push(*v);
+    let triples: Vec<(u64, MbValue, MbValue)> = finished
+        .iter()
+        .map(|(id, (var, val))| (*id, *var, *val))
+        .collect();
+    let rebuilt = make_context(&triples);
+    // Move the rebuilt fields onto `ctx` so its identity is preserved.
+    for key in ["_ids", "_vars", "_vals", "_data"] {
+        if let Some(v) = inst_field(rebuilt, key) {
+            inst_set_field(ctx, key, v);
+        }
     }
-    inst_set_field(ctx, "_ids", MbValue::from_ptr(MbObject::new_list(ids)));
-    inst_set_field(ctx, "_vals", MbValue::from_ptr(MbObject::new_list(vals)));
     result
 }
 
 /// `ctx.copy()` — a new Context with the same snapshot.
 pub fn mb_context_copy(ctx: MbValue) -> MbValue {
-    let ids = list_items(inst_field(ctx, "_ids").unwrap_or(MbValue::none()));
-    let vals = list_items(inst_field(ctx, "_vals").unwrap_or(MbValue::none()));
-    for v in &vals {
-        unsafe { super::super::rc::retain_if_ptr(*v) };
-    }
-    let mut fields = InstanceFields::default();
-    fields.insert(
-        "_ids".to_string(),
-        MbValue::from_ptr(MbObject::new_list(ids)),
-    );
-    fields.insert(
-        "_vals".to_string(),
-        MbValue::from_ptr(MbObject::new_list(vals)),
-    );
-    new_instance("Context", fields)
+    let triples: Vec<(u64, MbValue, MbValue)> = context_snapshot_map(ctx)
+        .iter()
+        .map(|(id, (var, val))| (*id, *var, *val))
+        .collect();
+    make_context(&triples)
 }
 
 // ── Module registration ───────────────────────────────────────────

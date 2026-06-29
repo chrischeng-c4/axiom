@@ -2,15 +2,15 @@
 # Parent: #2775 (MVP release blocking CI profiles).
 #
 # Release-blocking gate for uv-like package-manager workflows. Covers
-# the eight CLI verbs the MVP must keep green — init, add, lock,
-# sync, run, install, hash, cache — and pins every required fixture
+# the nine CLI verbs the MVP must keep green — init, index, add,
+# lock, sync, run, install, hash, cache — and pins every required fixture
 # to local frozen indexes so the gate stays deterministic and offline.
 # Live PyPI exercises stay opt-in and never block.
 #
 # Acceptance (issue #2816):
 #
 #   - Profile fails on any required offline workflow failure. The
-#     eight workflow families below all live in the `required` bucket
+#     nine workflow families below all live in the `required` bucket
 #     and `[policy].network = "offline"` + `[policy].index_source =
 #     "frozen_local"` ban any required entry that reaches the network.
 #   - Live network tests are reported as opt-in, not blocking
@@ -27,7 +27,7 @@
 #   buckets                : canonical four.
 #   [policy]               : offline + frozen-index defaults + release
 #                            gating buckets.
-#   [families.<id>]        : one entry per workflow verb (8 total).
+#   [families.<id>]        : one entry per workflow verb (9 total).
 #   [live_network]         : opt-in network workflows; never blocking.
 #   [summary]              : naming/rendering contract.
 #   [runner_contract]      : JSON keys per family.
@@ -50,7 +50,7 @@ report_only_buckets = ["optional", "xfail", "blocker"]
 # blocking even if they fail.
 forbid_required_network = true
 
-# Eight workflow verbs the MVP gates against. Each must point at a
+# Nine workflow verbs the MVP gates against. Each must point at a
 # fixture directory under tests/governance/gates/pkgmgr/<verb>/. Sources are
 # forward references until per-fixture issues land; the manifest
 # fixes the shape today.
@@ -59,6 +59,12 @@ kind = "pkgmgr_init"
 source = "tests/governance/gates/pkgmgr/init"
 outcome_rule = "must_succeed"
 description = "mamba init / scaffolding workflow."
+
+[families.index]
+kind = "pkgmgr_index"
+source = "tests/governance/gates/pkgmgr/index"
+outcome_rule = "must_succeed"
+description = "mamba index build — frozen local index generation from wheels."
 
 [families.add]
 kind = "pkgmgr_add"
@@ -129,6 +135,7 @@ sort = ["status_priority", "family", "fixture_id"]
 
 [runner_contract]
 init = ["passed", "failed", "missing", "fixtures"]
+index = ["passed", "failed", "missing", "fixtures"]
 add = ["passed", "failed", "missing", "fixtures"]
 lock = ["passed", "failed", "missing", "fixtures"]
 sync = ["passed", "failed", "missing", "fixtures"]

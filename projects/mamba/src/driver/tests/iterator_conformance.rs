@@ -199,6 +199,26 @@ except StopIteration:
     assert_output(&output, "0\n1\nStopIteration raised\n");
 }
 
+/// T7.3b: builtins.next() must not leak None before StopIteration is handled.
+#[test]
+fn test_t7_3_builtins_next_stopiteration_in_try_expression() {
+    let output = jit_capture(
+        r#"import builtins
+
+it = iter([1, 2])
+ys = []
+try:
+    while True:
+        ys.append(builtins.next(it))
+except StopIteration:
+    pass
+
+print(ys)
+"#,
+    );
+    assert_output(&output, "[1, 2]\n");
+}
+
 /// T7.4: `in` operator on custom iterator.
 #[test]
 fn test_t7_4_custom_iterator_in_operator() {

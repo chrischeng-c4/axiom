@@ -6,7 +6,7 @@ use super::super::value::MbValue;
 ///           sys.maxsize, sys.exit(), sys.getrecursionlimit(),
 ///           sys.setrecursionlimit(), sys.getdefaultencoding(),
 ///           sys.float_info, sys.int_info, sys.stdin, sys.stdout,
-///           sys.stderr, sys.modules
+///           sys.stderr, sys.modules, sys._getframe()
 use std::collections::HashMap;
 
 // ── Dispatch wrappers ──
@@ -83,6 +83,10 @@ unsafe extern "C" fn dispatch_exc_info(_args_ptr: *const MbValue, _nargs: usize)
     mb_sys_exc_info()
 }
 
+unsafe extern "C" fn dispatch_getframe(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    super::inspect_mod::make_current_frame()
+}
+
 unsafe extern "C" fn dispatch_getfilesystemencoding(
     _args_ptr: *const MbValue,
     _nargs: usize,
@@ -141,6 +145,7 @@ unsafe extern "C" fn dispatch_sys_stub_none(_args_ptr: *const MbValue, _nargs: u
 
 thread_local! {
     static RECURSION_LIMIT: std::cell::Cell<i64> = const { std::cell::Cell::new(1000) };
+    static RECURSION_DEPTH: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
     static SWITCH_INTERVAL: std::cell::Cell<f64> = const { std::cell::Cell::new(0.005) };
     static INTERN_TABLE: std::cell::RefCell<std::collections::HashMap<String, u64>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
@@ -220,6 +225,12 @@ unsafe extern "C" fn structseq_len(self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_int(struct_seq_entries(self_v).len() as i64)
 }
 
+/// __iter__: iterate the ordered fields, so a struct sequence unpacks like the
+/// tuple it models (`first, *rest = vi`, `f(*sys.get_asyncgen_hooks())`).
+unsafe extern "C" fn structseq_iter(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::iter::mb_iter(struct_seq_tuple(self_v))
+}
+
 unsafe extern "C" fn structseq_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let key = ss_args_first(args);
     let entries = struct_seq_entries(self_v);
@@ -280,6 +291,7 @@ pub(crate) fn register_struct_seq_class_with(
     for addr in [
         structseq_len as *const () as usize,
         structseq_getitem as *const () as usize,
+        structseq_iter as *const () as usize,
         structseq_lt as *const () as usize,
         structseq_gt as *const () as usize,
     ] {
@@ -293,6 +305,10 @@ pub(crate) fn register_struct_seq_class_with(
     m.insert(
         "__getitem__".into(),
         MbValue::from_func(structseq_getitem as *const () as usize),
+    );
+    m.insert(
+        "__iter__".into(),
+        MbValue::from_func(structseq_iter as *const () as usize),
     );
     m.insert(
         "__eq__".into(),
@@ -467,7 +483,7 @@ unsafe extern "C" fn dispatch_displayhook_flat(args_ptr: *const MbValue, nargs: 
         })
         .unwrap_or_default();
     let line = format!("{text}\n");
-    if !super::super::output::write_captured(&line) {
+    if !write_current_sys_stdout(&line) && !super::super::output::write_captured(&line) {
         print!("{line}");
     }
     // Bind builtins._ to the displayed value — both in the registry attrs
@@ -491,6 +507,21 @@ unsafe extern "C" fn dispatch_displayhook_flat(args_ptr: *const MbValue, nargs: 
         }
     });
     MbValue::none()
+}
+
+fn write_current_sys_stdout(text: &str) -> bool {
+    let Some(stdout) = super::super::module::mb_module_value_getattr("sys", "stdout") else {
+        return false;
+    };
+    if stdout.is_none() {
+        return false;
+    }
+    let method = MbValue::from_ptr(MbObject::new_str("write".to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str(text.to_string()),
+    )]));
+    let _ = super::super::class::mb_call_method(stdout, method, args);
+    super::super::exception::mb_has_exception().as_bool() != Some(true)
 }
 
 unsafe extern "C" fn dispatch_excepthook_flat(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -757,17 +788,48 @@ unsafe extern "C" fn stream_readline(_self_v: MbValue, _args: MbValue) -> MbValu
     MbValue::from_ptr(MbObject::new_str(line))
 }
 
+fn stream_name(self_v: MbValue) -> Option<String> {
+    self_v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().unwrap().get("name").and_then(|v| {
+                v.as_ptr().and_then(|sp| {
+                    if let ObjData::Str(ref s) = (*sp).data {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+        } else {
+            None
+        }
+    })
+}
+
+fn first_list_arg(args: MbValue) -> Option<MbValue> {
+    args.as_ptr().and_then(|p| unsafe {
+        if let ObjData::List(ref lock) = (*p).data {
+            lock.read().unwrap().first().copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn extract_bytes_payload(val: MbValue) -> Option<Vec<u8>> {
+    val.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::Bytes(bytes) => Some(bytes.clone()),
+            ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
+            ObjData::Str(s) => Some(s.as_bytes().to_vec()),
+            _ => None,
+        }
+    })
+}
+
 unsafe extern "C" fn stream_write(self_v: MbValue, args: MbValue) -> MbValue {
     use std::io::Write as _;
-    let text = args
-        .as_ptr()
-        .and_then(|p| unsafe {
-            if let ObjData::List(ref lock) = (*p).data {
-                lock.read().unwrap().first().copied()
-            } else {
-                None
-            }
-        })
+    let text = first_list_arg(args)
         .and_then(|v| {
             v.as_ptr().and_then(|p| unsafe {
                 if let ObjData::Str(ref s) = (*p).data {
@@ -778,26 +840,7 @@ unsafe extern "C" fn stream_write(self_v: MbValue, args: MbValue) -> MbValue {
             })
         })
         .unwrap_or_default();
-    let is_stderr = self_v.as_ptr().is_some_and(|p| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*p).data {
-            fields
-                .read()
-                .unwrap()
-                .get("name")
-                .and_then(|v| {
-                    v.as_ptr().and_then(|sp| {
-                        if let ObjData::Str(ref s) = (*sp).data {
-                            Some(s == "<stderr>")
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .unwrap_or(false)
-        } else {
-            false
-        }
-    });
+    let is_stderr = stream_name(self_v).as_deref() == Some("<stderr>");
     let n = text.chars().count() as i64;
     if is_stderr {
         if !super::super::output::try_write_stderr_redirect(&text) {
@@ -809,6 +852,21 @@ unsafe extern "C" fn stream_write(self_v: MbValue, args: MbValue) -> MbValue {
     MbValue::from_int(n)
 }
 
+unsafe extern "C" fn stream_buffer_write(self_v: MbValue, args: MbValue) -> MbValue {
+    use std::io::Write as _;
+    let bytes = first_list_arg(args)
+        .and_then(extract_bytes_payload)
+        .unwrap_or_default();
+    let is_stderr = stream_name(self_v).as_deref() == Some("<stderr>");
+    let n = bytes.len() as i64;
+    if is_stderr {
+        let _ = std::io::stderr().write_all(&bytes);
+    } else {
+        let _ = std::io::stdout().write_all(&bytes);
+    }
+    MbValue::from_int(n)
+}
+
 unsafe extern "C" fn stream_flush(_self_v: MbValue, _args: MbValue) -> MbValue {
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
@@ -816,22 +874,56 @@ unsafe extern "C" fn stream_flush(_self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// Register the shared `sys._Stream` method table.
-fn register_stream_class() {
+fn register_variadic_method_table(class_name: &str, entries: &[(&str, usize)]) {
     let mut methods: HashMap<String, MbValue> = HashMap::new();
-    for (name, addr) in [
-        ("read", stream_read as *const () as usize),
-        ("readline", stream_readline as *const () as usize),
-        ("write", stream_write as *const () as usize),
-        ("flush", stream_flush as *const () as usize),
-    ] {
-        super::super::module::register_variadic_func(addr as u64);
+    for (name, addr) in entries {
+        super::super::module::register_variadic_func(*addr as u64);
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-            s.borrow_mut().insert(addr as u64);
+            s.borrow_mut().insert(*addr as u64);
         });
-        methods.insert(name.to_string(), MbValue::from_func(addr));
+        methods.insert((*name).to_string(), MbValue::from_func(*addr));
     }
-    super::super::class::mb_class_register("sys._Stream", Vec::new(), methods);
+    super::super::class::mb_class_register(class_name, Vec::new(), methods);
+}
+
+/// Register the shared `sys._Stream` and `sys._StreamBuffer` method tables.
+fn register_stream_class() {
+    register_variadic_method_table(
+        "sys._Stream",
+        &[
+            ("read", stream_read as *const () as usize),
+            ("readline", stream_readline as *const () as usize),
+            ("write", stream_write as *const () as usize),
+            ("flush", stream_flush as *const () as usize),
+        ],
+    );
+    register_variadic_method_table(
+        "sys._StreamBuffer",
+        &[
+            ("write", stream_buffer_write as *const () as usize),
+            ("flush", stream_flush as *const () as usize),
+        ],
+    );
+}
+
+fn build_stream_buffer_stub(name: &str) -> MbValue {
+    use super::super::rc::{InstanceFields, MbObjectHeader, MbRwLock, ObjKind};
+    let mut fields = InstanceFields::default();
+    fields.insert(
+        "name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(format!("<{}>", name))),
+    );
+    let obj = Box::new(MbObject {
+        header: MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "sys._StreamBuffer".to_string(),
+            fields: MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
 }
 
 /// Build a std-stream object (an Instance carrying its display name).
@@ -842,6 +934,7 @@ fn build_stream_stub(name: &str) -> MbValue {
         "name".to_string(),
         MbValue::from_ptr(MbObject::new_str(format!("<{}>", name))),
     );
+    fields.insert("buffer".to_string(), build_stream_buffer_stub(name));
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -1061,6 +1154,7 @@ pub fn register() {
             dispatch_is_finalizing as *const () as usize,
         ),
         ("exc_info", dispatch_exc_info as *const () as usize),
+        ("_getframe", dispatch_getframe as *const () as usize),
         (
             "getfilesystemencoding",
             dispatch_getfilesystemencoding as *const () as usize,
@@ -1094,6 +1188,9 @@ pub fn register() {
         "platlibdir".into(),
         MbValue::from_ptr(MbObject::new_str("lib".to_string())),
     );
+    // sys._stdlib_dir is the on-disk stdlib path (dirname of os.__file__); the
+    // native os module has no real __file__, so this is None to match.
+    attrs.insert("_stdlib_dir".into(), MbValue::none());
 
     // surface: missing CPython sys data/constants (auto-added, batch 2)
     // copyright — CPython license banner string.
@@ -1264,19 +1361,23 @@ pub fn register() {
 /// which an enclosing `try/except SystemExit` can intercept. The message is the
 /// stringified exit code (CPython stores the code in `SystemExit.code`).
 pub fn mb_sys_exit(code: MbValue) -> MbValue {
-    let msg = match code.as_int() {
-        Some(i) => i.to_string(),
-        None if code.is_none() => String::new(),
-        None => match code.as_ptr() {
-            Some(ptr) => unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    s.clone()
-                } else {
-                    String::new()
-                }
+    let msg = if let Some(b) = code.as_bool() {
+        if b { "1" } else { "0" }.to_string()
+    } else {
+        match code.as_int() {
+            Some(i) => i.to_string(),
+            None if code.is_none() => String::new(),
+            None => match code.as_ptr() {
+                Some(ptr) => unsafe {
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        s.clone()
+                    } else {
+                        String::new()
+                    }
+                },
+                None => String::new(),
             },
-            None => String::new(),
-        },
+        }
     };
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("SystemExit".to_string())),
@@ -1287,7 +1388,7 @@ pub fn mb_sys_exit(code: MbValue) -> MbValue {
 
 /// sys.getrecursionlimit() → int
 pub fn mb_sys_getrecursionlimit() -> MbValue {
-    MbValue::from_int(1000) // Default Python recursion limit
+    MbValue::from_int(RECURSION_LIMIT.with(|c| c.get()))
 }
 
 /// sys.setrecursionlimit(limit) → None
@@ -1313,6 +1414,35 @@ pub fn mb_sys_setrecursionlimit(limit: MbValue) -> MbValue {
         RECURSION_LIMIT.with(|c| c.set(n));
     }
     MbValue::none()
+}
+
+pub fn mb_recursion_enter() -> MbValue {
+    let ok = RECURSION_DEPTH.with(|depth| {
+        let current = depth.get();
+        let limit = RECURSION_LIMIT.with(|limit| limit.get());
+        let next = current.saturating_add(1);
+        if next > limit {
+            false
+        } else {
+            depth.set(next);
+            true
+        }
+    });
+    if !ok {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("RecursionError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "maximum recursion depth exceeded".to_string(),
+            )),
+        );
+    }
+    MbValue::from_bool(ok)
+}
+
+pub fn mb_recursion_leave() {
+    RECURSION_DEPTH.with(|depth| {
+        depth.set(depth.get().saturating_sub(1));
+    });
 }
 
 /// sys.setswitchinterval(interval) → None
@@ -1390,24 +1520,59 @@ pub fn mb_sys_is_finalizing() -> MbValue {
     MbValue::from_bool(false)
 }
 
-/// sys.exc_info() → (type, value, traceback). Returns (None, None, None)
-/// when no exception is being handled — Mamba's exception machinery doesn't
-/// thread the active triple through here yet.
-pub fn mb_sys_exc_info() -> MbValue {
-    match super::super::exception::last_handled_exception() {
-        Some((etype, msg)) => {
-            let type_val = MbValue::from_ptr(MbObject::new_str(etype.clone()));
-            let value_val = MbValue::from_ptr(MbObject::new_str(msg));
-            // Minimal synthetic traceback object (tb_frame/tb_lineno/tb_next)
-            // so extract_tb / walk_tb consumers see a non-None third slot.
-            let tb_val = super::traceback_mod::make_tb_instance();
-            MbValue::from_ptr(MbObject::new_tuple(vec![type_val, value_val, tb_val]))
+fn exception_value_type_name(value: MbValue) -> Option<String> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, .. } => Some(class_name.clone()),
+            ObjData::Str(s) => Some(s.clone()),
+            _ => None,
         }
-        None => {
-            let triple = vec![MbValue::none(), MbValue::none(), MbValue::none()];
-            MbValue::from_ptr(MbObject::new_tuple(triple))
+    })
+}
+
+fn exception_traceback_value(value: MbValue) -> MbValue {
+    let Some(ptr) = value.as_ptr() else {
+        return MbValue::none();
+    };
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let existing = fields.read().unwrap().get("__traceback__").copied();
+            if let Some(tb) = existing {
+                super::super::rc::retain_if_ptr(tb);
+                return tb;
+            }
+            let tb = super::traceback_mod::make_tb_instance();
+            super::super::rc::retain_if_ptr(tb);
+            fields
+                .write()
+                .unwrap()
+                .insert("__traceback__".to_string(), tb);
+            return tb;
         }
     }
+    MbValue::none()
+}
+
+/// sys.exc_info() → (type, value, traceback). Returns (None, None, None)
+/// when no exception is being handled.
+pub fn mb_sys_exc_info() -> MbValue {
+    let value_val = super::super::class::last_caught_exception_value();
+    if value_val.is_none() {
+        let triple = vec![MbValue::none(), MbValue::none(), MbValue::none()];
+        return MbValue::from_ptr(MbObject::new_tuple(triple));
+    }
+
+    let etype = super::super::exception::last_handled_exception()
+        .map(|(etype, _)| etype)
+        .or_else(|| exception_value_type_name(value_val))
+        .unwrap_or_else(|| "Exception".to_string());
+    let type_val = MbValue::from_ptr(MbObject::new_str(etype));
+    let tb_val = exception_traceback_value(value_val);
+    MbValue::from_ptr(MbObject::new_tuple(vec![type_val, value_val, tb_val]))
+}
+
+pub fn mb_sys_getframe_with_locals(locals: MbValue) -> MbValue {
+    super::inspect_mod::make_current_frame_with_locals(locals)
 }
 
 /// sys.getfilesystemencoding() → 'utf-8'.

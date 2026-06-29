@@ -205,6 +205,8 @@ thread_local! {
     /// repeated `getnode()` calls return the same 48-bit value (CPython
     /// caches the discovered node for the process lifetime).
     static STABLE_NODE: Cell<Option<u64>> = const { Cell::new(None) };
+    /// Cached `uuid.SafeUUID.unknown` member returned by `UUID.is_safe`.
+    static SAFE_UUID_UNKNOWN_MEMBER: RefCell<Option<MbValue>> = RefCell::new(None);
 }
 
 fn alloc_uuid_id() -> u64 {
@@ -883,11 +885,16 @@ pub fn mb_uuid_variant_attr(handle: MbValue) -> MbValue {
 }
 
 /// `.is_safe` — CPython returns a `SafeUUID` enum member; for UUIDs not
-/// constructed with a safety hint this is `SafeUUID.unknown`. We surface
-/// the same "unknown" sentinel string `uuid.SafeUUID.unknown` resolves to
-/// (full enum membership is the documented carve-out).
+/// constructed with a safety hint this is `SafeUUID.unknown`.
 pub fn mb_uuid_is_safe(_handle: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str("unknown".to_string()))
+    SAFE_UUID_UNKNOWN_MEMBER.with(|cell| {
+        if let Some(member) = *cell.borrow() {
+            unsafe { super::super::rc::retain_if_ptr(member) };
+            member
+        } else {
+            MbValue::none()
+        }
+    })
 }
 
 /// `.bytes` — raw big-endian 16-byte buffer (#2096 subset A: per-call
@@ -1145,32 +1152,42 @@ pub fn register() {
     );
 
     // SafeUUID emulation — CPython exposes an `enum.Enum` subclass with
-    // three members (`safe = 0`, `unsafe = -1`, `unknown = None`). The
-    // surface dimension only asserts member *presence*
-    // (`hasattr(uuid.SafeUUID, "safe")`), so we model `SafeUUID` as an
-    // enum-shaped Instance carrying `safe` / `unsafe` / `unknown` member
-    // fields. `mb_getattr`'s generic Instance field-lookup branch returns
-    // a present field, which makes `hasattr(uuid.SafeUUID, <member>)`
-    // report True. The CPython member *values* (0 / -1 / None) are placed
-    // on the fields so a member read is at least value-faithful; full enum
-    // semantics (`issubclass(SafeUUID, enum.Enum)`, `SafeUUID(0) is
-    // SafeUUID.safe`, `.value`) remain the documented carve-out (no shared
-    // enum type-object machinery for native stdlib shims yet).
-    let safe_uuid = MbObject::new_instance("SafeUUID".to_string());
-    unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*safe_uuid).data {
-            let mut f = fields.write().unwrap();
-            f.insert("safe".to_string(), MbValue::from_int(0));
-            f.insert("unsafe".to_string(), MbValue::from_int(-1));
-            f.insert("unknown".to_string(), MbValue::none());
-            // `__name__` so `uuid.SafeUUID.__name__` reads back as the enum
-            // class name rather than falling through to the empty default.
-            f.insert(
-                "__name__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("SafeUUID".to_string())),
-            );
+    // three members (`safe = 0`, `unsafe = -1`, `unknown = None`). Reuse the
+    // functional enum object model so member `.value`, identity, and
+    // value-to-member lookup all share the existing enum machinery.
+    let safe_uuid_members = MbValue::from_ptr(MbObject::new_dict());
+    super::super::dict_ops::mb_dict_setitem(
+        safe_uuid_members,
+        MbValue::from_ptr(MbObject::new_str("safe".to_string())),
+        MbValue::from_int(0),
+    );
+    super::super::dict_ops::mb_dict_setitem(
+        safe_uuid_members,
+        MbValue::from_ptr(MbObject::new_str("unsafe".to_string())),
+        MbValue::from_int(-1),
+    );
+    super::super::dict_ops::mb_dict_setitem(
+        safe_uuid_members,
+        MbValue::from_ptr(MbObject::new_str("unknown".to_string())),
+        MbValue::none(),
+    );
+    let safe_uuid = super::enum_mod::mb_enum_create(
+        MbValue::from_ptr(MbObject::new_str("SafeUUID".to_string())),
+        safe_uuid_members,
+    );
+    let unknown_member = safe_uuid.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().ok().and_then(|f| f.get("unknown").copied())
+        } else {
+            None
         }
-    }
+    });
+    SAFE_UUID_UNKNOWN_MEMBER.with(|cell| {
+        if let Some(member) = unknown_member {
+            unsafe { super::super::rc::retain_if_ptr(member) };
+            *cell.borrow_mut() = Some(member);
+        }
+    });
     attrs.insert(
         "SAFE_SAFE".into(),
         MbValue::from_ptr(MbObject::new_str("safe".into())),
@@ -1183,7 +1200,7 @@ pub fn register() {
         "SAFE_UNKNOWN".into(),
         MbValue::from_ptr(MbObject::new_str("unknown".into())),
     );
-    attrs.insert("SafeUUID".into(), MbValue::from_ptr(safe_uuid));
+    attrs.insert("SafeUUID".into(), safe_uuid);
 
     super::register_module("uuid", attrs);
 

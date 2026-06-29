@@ -218,8 +218,16 @@ struct GenEntry {
     state: GenState,
     /// Body function address (NaN-boxed pointer bits).
     body_fn_addr: u64,
+    /// Original generator function value used for `gi_code` metadata.
+    origin_func: MbValue,
     /// Captured arguments.
     args: Vec<MbValue>,
+    /// Argument names in declaration order for inspect.getgeneratorlocals.
+    arg_names: Vec<String>,
+    /// Name of a yielded local value when lowering can identify `yield <var>`.
+    yield_local_name: Option<String>,
+    /// Snapshot of generator locals visible to inspect.getgeneratorlocals.
+    locals: HashMap<String, MbValue>,
     /// Name for debugging.
     #[allow(dead_code)]
     name: String,
@@ -321,7 +329,7 @@ struct GenActive {
     /// Resume-cache id: bench hot path resumes the same generator
     /// repeatedly, so this cache lets the second-and-subsequent calls
     /// skip the GENERATORS HashMap lookup entirely. `u64::MAX` is the
-    /// empty sentinel (NEXT_GEN_ID starts at 1, never reaches MAX).
+    /// empty sentinel (GEN_ID_BASE is far below MAX).
     /// Invalidated on completion, throw, close, or runtime reset.
     last_resumed_id: std::cell::Cell<u64>,
     /// Resume-cache coro_ctx ptr — paired with last_resumed_id.
@@ -361,15 +369,48 @@ thread_local! {
     /// Max nesting depth: 16 (yield from chains deeper than this will panic).
     static CALLER_CTX_STACK: CallerCtxStack = CallerCtxStack::new();
 
+    /// IDs currently executing on nested coroutine stacks. `active_id` only
+    /// names the leaf generator; this stack keeps parent `yield from` frames
+    /// visible so re-entering an ancestor raises CPython's ValueError instead
+    /// of corrupting the coroutine context.
+    static RUNNING_GEN_STACK: std::cell::RefCell<Vec<u64>> =
+        std::cell::RefCell::new(Vec::new());
+
     /// StopIteration return value.
     static LAST_STOP_VALUE: std::cell::Cell<u64> = std::cell::Cell::new(MbValue::none().to_bits());
 }
 
+/// Generator handles share the integer tag space with Python ints. Keep them
+/// far above ordinary user integers and below coroutine IDs (`1 << 40`) so a
+/// live generator does not make values like `1` look like generator handles.
+const GEN_ID_BASE: u64 = 1 << 39;
+
 /// Atomic generator ID counter (global, for uniqueness across threads).
-static NEXT_GEN_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_GEN_ID: AtomicU64 = AtomicU64::new(GEN_ID_BASE);
 
 fn alloc_gen_id() -> u64 {
     NEXT_GEN_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn clear_throw_xfer() {
+    let stale = GEN_XFER.with(|x| x.throw.replace(0));
+    if stale > 1 {
+        unsafe {
+            drop(Box::from_raw(stale as *mut (String, String)));
+        }
+    }
+}
+
+fn generator_is_running(id: u64) -> bool {
+    RUNNING_GEN_STACK.with(|stack| stack.borrow().contains(&id))
+}
+
+fn raise_generator_already_executing() -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str("generator already executing".to_string())),
+    );
+    MbValue::none()
 }
 
 // ── Shared output capture (kept for compatibility with test infrastructure) ──
@@ -426,7 +467,7 @@ pub fn flush_shared_capture() {
 // ── Generator Creation ──────────────────────────────────────────────────────
 
 /// Create a new generator. Called from compiled constructor wrapper.
-pub fn mb_generator_create(name: MbValue, body_fn_addr: MbValue) -> MbValue {
+pub fn mb_generator_create(name: MbValue, body_fn_addr: MbValue, origin_func: MbValue) -> MbValue {
     let gen_name = extract_str(name).unwrap_or_else(|| "<generator>".to_string());
     let fn_addr = body_fn_addr.to_bits();
     let id = alloc_gen_id();
@@ -436,7 +477,11 @@ pub fn mb_generator_create(name: MbValue, body_fn_addr: MbValue) -> MbValue {
         coro_stack: CoroStack::new(CORO_STACK_SIZE),
         state: GenState::Created,
         body_fn_addr: fn_addr,
+        origin_func,
         args: Vec::new(),
+        arg_names: Vec::new(),
+        yield_local_name: None,
+        locals: HashMap::new(),
         name: gen_name,
         yielded_value: MbValue::none(),
         sent_value: MbValue::none(),
@@ -459,10 +504,81 @@ pub fn mb_generator_store_arg(gen_handle: MbValue, arg: MbValue) {
     if let Some(id) = gen_handle.as_int() {
         GENERATORS.with(|gens| {
             if let Some(entry) = gens.borrow_mut().get_mut(&(id as u64)) {
+                let idx = entry.args.len();
                 entry.args.push(arg);
+                if let Some(name) = entry.arg_names.get(idx).cloned() {
+                    entry.locals.insert(name, arg);
+                }
             }
         });
     }
+}
+
+/// Register a generator's parameter names and an optional yielded-local name.
+///
+/// The metadata list is `[arg_name..., yielded_local_or_None]`.
+pub fn mb_generator_set_local_names(gen_handle: MbValue, names: MbValue) {
+    let Some(id) = gen_handle.as_int() else {
+        return;
+    };
+    let mut items: Vec<MbValue> = Vec::new();
+    if let Some(ptr) = names.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                items = lock.read().unwrap().to_vec();
+            }
+        }
+    }
+    let mut arg_names = Vec::new();
+    let mut yield_local_name = None;
+    for (idx, item) in items.iter().copied().enumerate() {
+        if idx + 1 == items.len() {
+            yield_local_name = extract_str(item);
+        } else if let Some(name) = extract_str(item) {
+            arg_names.push(name);
+        }
+    }
+    GENERATORS.with(|gens| {
+        if let Some(entry) = gens.borrow_mut().get_mut(&(id as u64)) {
+            entry.arg_names = arg_names;
+            entry.yield_local_name = yield_local_name;
+            let pairs: Vec<(String, MbValue)> = entry
+                .arg_names
+                .iter()
+                .cloned()
+                .zip(entry.args.iter().copied())
+                .collect();
+            for (name, value) in pairs {
+                entry.locals.insert(name, value);
+            }
+        }
+    });
+}
+
+/// Snapshot live locals for inspect.getgeneratorlocals.
+pub fn mb_generator_locals(gen_handle: MbValue) -> Option<Vec<(String, MbValue)>> {
+    let id = gen_handle.as_int()? as u64;
+    GENERATORS.with(|gens| {
+        let gens = gens.borrow();
+        let entry = gens.get(&id)?;
+        if matches!(entry.state, GenState::Completed) {
+            return Some(Vec::new());
+        }
+        let mut out = Vec::new();
+        for name in &entry.arg_names {
+            if let Some(value) = entry.locals.get(name).copied() {
+                out.push((name.clone(), value));
+            }
+        }
+        if let Some(name) = &entry.yield_local_name {
+            if !entry.arg_names.iter().any(|arg| arg == name) {
+                if let Some(value) = entry.locals.get(name).copied() {
+                    out.push((name.clone(), value));
+                }
+            }
+        }
+        Some(out)
+    })
 }
 
 // ── Coroutine entry trampoline ──────────────────────────────────────────────
@@ -547,10 +663,14 @@ fn init_coro_context(ctx: &mut CoroContext, stack_top: *mut u8) {
 /// Optimized hot path: single GENERATORS borrow for check+prepare+get-ptr,
 /// then swap, then single borrow for read-result.
 fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
+    if generator_is_running(id) {
+        return raise_generator_already_executing();
+    }
+
     // Fast path: cache hit means this id was previously prepped and hasn't
     // completed (completion / throw / close all bust the cache). State is
-    // therefore Suspended and throw_request is None — skip the HashMap
-    // lookup entirely. Single TLS hit reads both id + ctx.
+    // therefore Suspended and no control transfer is pending — skip the
+    // HashMap lookup entirely. Single TLS hit reads both id + ctx.
     let cached_ctx = GEN_ACTIVE.with(|a| {
         if a.last_resumed_id.get() == id {
             Some(a.last_resumed_ctx.get())
@@ -559,7 +679,7 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
         }
     });
 
-    let (gen_ctx_ptr, has_throw) = if let Some(ctx_ptr) = cached_ctx {
+    let (gen_ctx_ptr, has_signal) = if let Some(ctx_ptr) = cached_ctx {
         (ctx_ptr, false)
     } else {
         // Slow path: full borrow, check state, init if Created.
@@ -578,15 +698,15 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
                 }
                 GenState::Suspended => {}
             }
-            let has_throw = entry.throw_request.is_some();
+            let has_signal = entry.throw_request.is_some() || entry.close_request;
             let ctx_ptr = &*entry.coro_ctx as *const CoroContext as *mut CoroContext;
-            Some((ctx_ptr, has_throw))
+            Some((ctx_ptr, has_signal))
         });
 
         match prep {
             Some(p) => {
-                // Populate cache only when no throw is pending — throw paths
-                // need to re-read entry.throw_request on the next resume.
+                // Populate cache only when no throw/close signal is pending —
+                // control paths need to re-read entry state on the next resume.
                 if !p.1 {
                     GEN_ACTIVE.with(|a| {
                         a.last_resumed_id.set(id);
@@ -602,9 +722,10 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
         }
     };
 
-    // Clear stale exceptions (unless a throw is pending)
-    if !has_throw {
+    // Clear stale exceptions/control transfers unless a throw/close is pending.
+    if !has_signal {
         super::exception::clear_current_exception();
+        clear_throw_xfer();
     }
 
     // Set up fast-path value transfer + clear completion (one TLS hit).
@@ -623,6 +744,7 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
 
     // Push caller context and swap
     let caller_ctx_ptr = CALLER_CTX_STACK.with(|stack| stack.push());
+    RUNNING_GEN_STACK.with(|stack| stack.borrow_mut().push(id));
 
     // === SWAP: caller → generator ===
     unsafe {
@@ -630,6 +752,10 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
     }
     // === SWAP BACK: generator yielded or completed ===
 
+    RUNNING_GEN_STACK.with(|stack| {
+        let popped = stack.borrow_mut().pop();
+        debug_assert_eq!(popped, Some(id));
+    });
     CALLER_CTX_STACK.with(|stack| stack.pop());
     GEN_ACTIVE.with(|a| {
         a.active_id.set(prev_active);
@@ -802,6 +928,7 @@ pub fn mb_generator_throw(gen_handle: MbValue, exc_type: MbValue, exc_msg: MbVal
 
         // Resume generator — yield_value will see THROW_XFER
         let result = resume_generator(id, MbValue::none());
+        clear_throw_xfer();
 
         // Clear the throw_request from entry (may have been consumed by yield_value
         // or may still be there if generator completed without yielding)
@@ -890,6 +1017,7 @@ pub fn mb_generator_close(gen_handle: MbValue) {
 
         // Resume — yield_value will see THROW_XFER=1 (close) and raise GeneratorExit
         let result = resume_generator(id, MbValue::none());
+        clear_throw_xfer();
 
         // Check if generator yielded despite GeneratorExit (illegal)
         let completed = GENERATORS.with(|gens| {
@@ -917,6 +1045,7 @@ pub fn mb_generator_close(gen_handle: MbValue) {
         GENERATORS.with(|gens| {
             if let Some(entry) = gens.borrow_mut().get_mut(&id) {
                 entry.state = GenState::Completed;
+                entry.close_request = false;
             }
         });
 
@@ -926,21 +1055,11 @@ pub fn mb_generator_close(gen_handle: MbValue) {
         // resume_generator if the body let it unwind). Both must surface
         // as `None` — drop either if pending so the caller does not see
         // a phantom uncaught exception.
-        let pending = super::exception::mb_get_exception();
-        if !pending.is_none() {
-            if let Some(ptr) = pending.as_ptr() {
-                let is_termination = unsafe {
-                    matches!(
-                        &(*ptr).data,
-                        super::rc::ObjData::Instance { class_name, .. }
-                            if class_name == "StopIteration"
-                                || class_name == "GeneratorExit"
-                    )
-                };
-                if is_termination {
-                    super::exception::mb_clear_exception();
-                }
-            }
+        if matches!(
+            super::exception::current_exception_type().as_deref(),
+            Some("StopIteration" | "GeneratorExit")
+        ) {
+            super::exception::mb_clear_exception();
         }
     }
 }
@@ -966,6 +1085,19 @@ pub fn is_known_generator(gen_handle: MbValue) -> bool {
     } else {
         false
     }
+}
+
+pub fn mb_generator_origin_func(gen_handle: MbValue) -> Option<MbValue> {
+    gen_handle.as_int().and_then(|id| {
+        GENERATORS.with(|gens| {
+            let origin = gens.borrow().get(&(id as u64))?.origin_func;
+            if origin.is_none() {
+                None
+            } else {
+                Some(origin)
+            }
+        })
+    })
 }
 
 /// Delete a variable: close if it's a generator, then release heap memory.
@@ -1050,13 +1182,15 @@ pub(crate) fn cleanup_generator_state_for_runtime_reset() {
         a.last_resumed_id.set(u64::MAX);
         a.last_resumed_ctx.set(std::ptr::null_mut());
     });
+    NEXT_GEN_ID.store(GEN_ID_BASE, Ordering::Relaxed);
     GEN_XFER.with(|x| {
         x.yield_v.set(0);
         x.send.set(0);
-        x.throw.set(0);
         x.completion.set(0);
     });
+    clear_throw_xfer();
     CALLER_CTX_STACK.with(|stack| stack.reset());
+    RUNNING_GEN_STACK.with(|stack| stack.borrow_mut().clear());
     LAST_STOP_VALUE.with(|cell| cell.set(MbValue::none().to_bits()));
 }
 
@@ -1072,6 +1206,16 @@ pub fn shutdown_pool() {
 /// Saves generator context and switches back to caller.
 /// Returns the value passed by send() (or None for plain next()).
 pub fn mb_generator_yield_value(value: MbValue) -> MbValue {
+    if let Some(id) = GEN_ACTIVE.with(|a| a.active_id.get()) {
+        GENERATORS.with(|gens| {
+            if let Some(entry) = gens.borrow_mut().get_mut(&id) {
+                if let Some(name) = entry.yield_local_name.clone() {
+                    entry.locals.insert(name, value);
+                }
+            }
+        });
+    }
+
     // Hot path: transfer value via thread-local cell + use cached ctx pointer.
     // No HashMap lookup, no RefCell borrow.
     GEN_XFER.with(|x| x.yield_v.set(value.to_bits()));
@@ -1125,6 +1269,13 @@ pub fn mb_generator_yield_value(value: MbValue) -> MbValue {
 
 /// Yield from a sub-iterator/generator. Called from compiled code.
 pub fn mb_generator_yield_from(sub_iter: MbValue) -> MbValue {
+    if super::async_rt::is_known_coroutine(sub_iter) {
+        if !active_generator_is_coroutine() {
+            return raise_yield_from_coroutine_in_plain_generator();
+        }
+        return yield_from_coroutine(sub_iter);
+    }
+
     // If sub_iter is a generator handle, delegate yield
     if sub_iter.is_int() && is_known_generator(sub_iter) {
         return yield_from_generator(sub_iter);
@@ -1148,42 +1299,62 @@ pub fn mb_generator_yield_from(sub_iter: MbValue) -> MbValue {
                 break;
             }
         }
-        let _sent = mb_generator_yield_value(val);
+        let sent = mb_generator_yield_value(val);
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            super::iter::mb_iter_release(iter_handle);
+            return MbValue::none();
+        }
+        if !sent.is_none() {
+            super::iter::mb_iter_release(iter_handle);
+            raise_yield_from_missing_send();
+            return MbValue::none();
+        }
     }
     super::iter::mb_iter_release(iter_handle);
     MbValue::none()
 }
 
-/// Yield from a sub-generator, properly forwarding send/throw/close.
-fn yield_from_generator(sub_gen: MbValue) -> MbValue {
-    let mut val = mb_generator_next(sub_gen);
+fn active_generator_is_coroutine() -> bool {
+    GEN_ACTIVE.with(|active| {
+        active.active_id.get().is_some_and(|id| {
+            super::stdlib::types_mod::is_coroutine_generator(MbValue::from_int(id as i64))
+        })
+    })
+}
+
+fn raise_yield_from_coroutine_in_plain_generator() -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "cannot 'yield from' a coroutine object in a non-coroutine generator".to_string(),
+        )),
+    );
+    MbValue::none()
+}
+
+fn raise_yield_from_missing_send() {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "'iterator' object has no attribute 'send'".to_string(),
+        )),
+    );
+}
+
+fn finish_yield_from_coroutine() -> MbValue {
+    let ret_val = super::async_task::stop_iteration_exception_value();
+    super::exception::mb_clear_exception();
+    ret_val
+}
+
+fn yield_from_coroutine(sub_coro: MbValue) -> MbValue {
+    let mut val = super::async_rt::mb_coroutine_send(sub_coro, MbValue::none());
 
     loop {
-        let exhausted = if let Some(id) = sub_gen.as_int() {
-            GENERATORS.with(|gens| {
-                gens.borrow()
-                    .get(&(id as u64))
-                    .map(|e| matches!(e.state, GenState::Completed))
-                    .unwrap_or(true)
-            })
-        } else {
-            true
-        };
-
-        if exhausted {
-            let ret_val = if let Some(id) = sub_gen.as_int() {
-                GENERATORS.with(|gens| {
-                    gens.borrow()
-                        .get(&(id as u64))
-                        .map(|e| e.return_value)
-                        .unwrap_or(MbValue::none())
-                })
-            } else {
-                MbValue::none()
-            };
-            super::iter::check_and_clear_stop();
-            super::exception::clear_current_exception();
-            return ret_val;
+        match super::exception::current_exception_type().as_deref() {
+            Some("StopIteration") => return finish_yield_from_coroutine(),
+            Some(_) => return MbValue::none(),
+            None => {}
         }
 
         let sent = mb_generator_yield_value(val);
@@ -1196,7 +1367,74 @@ fn yield_from_generator(sub_gen: MbValue) -> MbValue {
                 super::exception::get_exception_message_pub(exc_val).unwrap_or_default();
             let type_vreg = MbValue::from_ptr(MbObject::new_str(exc_type_str));
             let msg_vreg = MbValue::from_ptr(MbObject::new_str(exc_msg_str));
+            val = super::async_rt::mb_coroutine_throw(sub_coro, type_vreg, msg_vreg);
+            continue;
+        }
+
+        val = super::async_rt::mb_coroutine_send(sub_coro, sent);
+    }
+}
+
+/// Yield from a sub-generator, properly forwarding send/throw/close.
+fn yield_from_generator(sub_gen: MbValue) -> MbValue {
+    if let Some(id) = sub_gen.as_int() {
+        if generator_is_running(id as u64) {
+            return raise_generator_already_executing();
+        }
+    }
+
+    let mut val = mb_generator_next(sub_gen);
+
+    loop {
+        if generator_completed(sub_gen) {
+            if let Some(exc_type) = super::exception::current_exception_type() {
+                if exc_type != "StopIteration" {
+                    return MbValue::none();
+                }
+            }
+            return finish_yield_from(sub_gen);
+        }
+
+        let sent = mb_generator_yield_value(val);
+
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            let exc_val = super::exception::mb_catch_exception();
+            let exc_type_str = super::exception::get_exception_type_pub(exc_val)
+                .unwrap_or_else(|| "Exception".to_string());
+            let exc_msg_str =
+                super::exception::get_exception_message_pub(exc_val).unwrap_or_default();
+            let type_vreg = MbValue::from_ptr(MbObject::new_str(exc_type_str.clone()));
+            let msg_vreg = MbValue::from_ptr(MbObject::new_str(exc_msg_str.clone()));
             val = mb_generator_throw(sub_gen, type_vreg, msg_vreg);
+
+            if generator_completed(sub_gen)
+                && super::exception::current_exception_type().as_deref() == Some("StopIteration")
+            {
+                let ret_val = finish_yield_from(sub_gen);
+                if exc_type_str == "GeneratorExit" {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str(exc_type_str)),
+                        MbValue::from_ptr(MbObject::new_str(exc_msg_str)),
+                    );
+                    return MbValue::none();
+                }
+                return ret_val;
+            }
+
+            if exc_type_str == "GeneratorExit"
+                && !generator_completed(sub_gen)
+                && super::exception::mb_has_exception().as_bool() != Some(true)
+            {
+                force_generator_completed(sub_gen);
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "generator ignored GeneratorExit".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+
             if super::exception::mb_has_exception().as_bool() == Some(true) {
                 return MbValue::none();
             }
@@ -1208,6 +1446,49 @@ fn yield_from_generator(sub_gen: MbValue) -> MbValue {
         } else {
             val = mb_generator_send(sub_gen, sent);
         }
+    }
+}
+
+fn generator_completed(gen_handle: MbValue) -> bool {
+    if let Some(id) = gen_handle.as_int() {
+        GENERATORS.with(|gens| {
+            gens.borrow()
+                .get(&(id as u64))
+                .map(|e| matches!(e.state, GenState::Completed))
+                .unwrap_or(true)
+        })
+    } else {
+        true
+    }
+}
+
+fn generator_return_value(gen_handle: MbValue) -> MbValue {
+    if let Some(id) = gen_handle.as_int() {
+        GENERATORS.with(|gens| {
+            gens.borrow()
+                .get(&(id as u64))
+                .map(|e| e.return_value)
+                .unwrap_or(MbValue::none())
+        })
+    } else {
+        MbValue::none()
+    }
+}
+
+fn finish_yield_from(sub_gen: MbValue) -> MbValue {
+    let ret_val = generator_return_value(sub_gen);
+    super::iter::check_and_clear_stop();
+    super::exception::clear_current_exception();
+    ret_val
+}
+
+fn force_generator_completed(gen_handle: MbValue) {
+    if let Some(id) = gen_handle.as_int() {
+        GENERATORS.with(|gens| {
+            if let Some(entry) = gens.borrow_mut().get_mut(&(id as u64)) {
+                entry.state = GenState::Completed;
+            }
+        });
     }
 }
 
@@ -1262,9 +1543,16 @@ fn call_body_fn(fn_addr: u64, args: &[MbValue]) -> MbValue {
 fn raise_stop_iteration(return_value: MbValue) {
     super::iter::signal_stop_iteration();
     LAST_STOP_VALUE.with(|v| v.set(return_value.to_bits()));
-    let exc_type = MbValue::from_ptr(MbObject::new_str("StopIteration".to_string()));
-    let exc_msg = MbValue::from_ptr(MbObject::new_str(String::new()));
-    super::exception::mb_raise(exc_type, exc_msg);
+    if return_value.is_none() {
+        let exc_type = MbValue::from_ptr(MbObject::new_str("StopIteration".to_string()));
+        let exc_msg = MbValue::from_ptr(MbObject::new_str(String::new()));
+        super::exception::mb_raise(exc_type, exc_msg);
+    } else {
+        let exc_type = MbValue::from_ptr(MbObject::new_str("StopIteration".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![return_value]));
+        let instance = super::exception::mb_exception_new_with_args(exc_type, args);
+        super::class::mb_raise_instance(instance);
+    }
     LAST_STOP_VALUE.with(|v| v.set(return_value.to_bits()));
 }
 
@@ -1287,7 +1575,7 @@ mod tests {
     fn test_generator_create_and_is_exhausted() {
         let name = MbValue::from_ptr(MbObject::new_str("test_gen".to_string()));
         let body_fn = MbValue::none();
-        let gen = mb_generator_create(name, body_fn);
+        let gen = mb_generator_create(name, body_fn, MbValue::none());
         assert_eq!(mb_generator_is_exhausted(gen).as_bool(), Some(false));
         mb_generator_release(gen);
     }
@@ -1296,7 +1584,7 @@ mod tests {
     fn test_generator_release_cleans_up() {
         let name = MbValue::from_ptr(MbObject::new_str("release".into()));
         let body_fn = MbValue::none();
-        let gen = mb_generator_create(name, body_fn);
+        let gen = mb_generator_create(name, body_fn, MbValue::none());
         mb_generator_release(gen);
         assert_eq!(mb_generator_is_exhausted(gen).as_bool(), Some(true));
     }
@@ -1342,7 +1630,7 @@ mod tests {
         for i in 0..5 {
             let name = MbValue::from_ptr(MbObject::new_str(format!("cleanup_gen_{i}")));
             let body_fn = MbValue::none();
-            let gen = mb_generator_create(name, body_fn);
+            let gen = mb_generator_create(name, body_fn, MbValue::none());
             gen_ids.push(gen);
         }
 
@@ -1396,7 +1684,7 @@ mod tests {
     #[test]
     fn test_store_arg_appends_to_generator_args() {
         let name = MbValue::from_ptr(MbObject::new_str("arg_test".into()));
-        let gen = mb_generator_create(name, MbValue::none());
+        let gen = mb_generator_create(name, MbValue::none(), MbValue::none());
         let gen_id = gen.as_int().unwrap() as u64;
         mb_generator_store_arg(gen, MbValue::from_int(42));
         mb_generator_store_arg(gen, MbValue::from_int(99));

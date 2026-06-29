@@ -146,7 +146,9 @@ fn parse_member_specs(members: MbValue, start: i64) -> Vec<(String, MbValue)> {
 fn enum_create_with_opts(name: MbValue, members: MbValue, mixin: MixinKind, start: i64) -> MbValue {
     let enum_name = extract_str(name).unwrap_or_else(|| "Enum".to_string());
     let mut enum_fields = FxHashMap::default();
-    let mut member_list = Vec::new();
+    let mut members_list = Vec::new();
+    let mut canonical_members = Vec::new();
+    let mut canonical_by_value: Vec<(MbValue, MbValue)> = Vec::new();
 
     for (member_name, actual_val) in parse_member_specs(members, start) {
         if member_name.is_empty() {
@@ -158,50 +160,76 @@ fn enum_create_with_opts(name: MbValue, members: MbValue, mixin: MixinKind, star
             );
             return MbValue::none();
         }
-        let member_val = match mixin {
-            MixinKind::Int | MixinKind::Str => {
-                // Data-type mixin: the member IS its raw value. Retain once
-                // per heap slot (fields + __members__); no-op for ints.
-                unsafe {
-                    super::super::rc::retain_if_ptr(actual_val);
-                    super::super::rc::retain_if_ptr(actual_val);
+        let existing = canonical_by_value.iter().find_map(|(value, member)| {
+            if enum_values_equal(*value, actual_val) {
+                Some(*member)
+            } else {
+                None
+            }
+        });
+        let member_val = if let Some(member) = existing {
+            unsafe {
+                super::super::rc::retain_if_ptr(member);
+                super::super::rc::retain_if_ptr(member);
+            }
+            members_list.push(member);
+            member
+        } else {
+            let member = match mixin {
+                MixinKind::Int | MixinKind::Str => {
+                    // Data-type mixin: the member IS its raw value.
+                    unsafe {
+                        super::super::rc::retain_if_ptr(actual_val);
+                    }
+                    actual_val
                 }
-                actual_val
-            }
-            MixinKind::None => {
-                // Create enum member instance
-                let mut fields = FxHashMap::default();
-                fields.insert(
-                    "name".to_string(),
-                    MbValue::from_ptr(MbObject::new_str(member_name.clone())),
-                );
-                fields.insert("value".to_string(), actual_val);
-                fields.insert(
-                    "__class__".to_string(),
-                    MbValue::from_ptr(MbObject::new_str(enum_name.clone())),
-                );
+                MixinKind::None => {
+                    // Create enum member instance.
+                    let mut fields = FxHashMap::default();
+                    fields.insert(
+                        "name".to_string(),
+                        MbValue::from_ptr(MbObject::new_str(member_name.clone())),
+                    );
+                    fields.insert("value".to_string(), actual_val);
+                    fields.insert(
+                        "__class__".to_string(),
+                        MbValue::from_ptr(MbObject::new_str(enum_name.clone())),
+                    );
 
-                let member_obj = Box::new(MbObject {
-                    header: MbObjectHeader {
-                        rc: AtomicU32::new(1),
-                        kind: ObjKind::Instance,
-                    },
-                    data: ObjData::Instance {
-                        class_name: "EnumMember".to_string(),
-                        fields: RwLock::new(fields),
-                    },
-                });
-                MbValue::from_ptr(Box::into_raw(member_obj))
+                    let member_obj = Box::new(MbObject {
+                        header: MbObjectHeader {
+                            rc: AtomicU32::new(1),
+                            kind: ObjKind::Instance,
+                        },
+                        data: ObjData::Instance {
+                            class_name: "EnumMember".to_string(),
+                            fields: RwLock::new(fields),
+                        },
+                    });
+                    MbValue::from_ptr(Box::into_raw(member_obj))
+                }
+            };
+            unsafe {
+                super::super::rc::retain_if_ptr(member);
+                super::super::rc::retain_if_ptr(member);
             }
+            members_list.push(member);
+            canonical_members.push(member);
+            canonical_by_value.push((actual_val, member));
+            member
         };
         enum_fields.insert(member_name, member_val);
-        member_list.push(member_val);
     }
 
-    // Store __members__ as a list of member values (insertion order)
+    // Store all bound member names in __members__ and keep canonical members
+    // separately for iter/len/value lookup, matching Enum alias semantics.
     enum_fields.insert(
         "__members__".to_string(),
-        MbValue::from_ptr(MbObject::new_list(member_list)),
+        MbValue::from_ptr(MbObject::new_list(members_list)),
+    );
+    enum_fields.insert(
+        "__canonical_members__".to_string(),
+        MbValue::from_ptr(MbObject::new_list(canonical_members)),
     );
     enum_fields.insert(
         "__name__".to_string(),
@@ -223,6 +251,13 @@ fn enum_create_with_opts(name: MbValue, members: MbValue, mixin: MixinKind, star
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
+}
+
+fn enum_values_equal(a: MbValue, b: MbValue) -> bool {
+    a.to_bits() == b.to_bits()
+        || super::super::builtins::mb_eq(a, b)
+            .as_bool()
+            .unwrap_or(false)
 }
 
 /// Create an enum class from name and members (dict/str/list/tuple forms).
@@ -333,6 +368,161 @@ unsafe extern "C" fn dispatch_intenum_create(args: *const MbValue, n: usize) -> 
     enum_create_from_args(a, MixinKind::Int)
 }
 
+pub fn is_intenum_constructor(value: MbValue) -> bool {
+    value.as_func() == Some(dispatch_intenum_create as *const () as usize)
+}
+
+pub fn is_enum_constructor(value: MbValue) -> bool {
+    value.as_func() == Some(dispatch_enum_create as *const () as usize)
+}
+
+pub fn enum_convert_callable() -> MbValue {
+    callable_func(dispatch_enum_convert as *const () as usize)
+}
+
+pub fn intenum_convert_callable() -> MbValue {
+    callable_func(dispatch_intenum_convert as *const () as usize)
+}
+
+pub fn strenum_convert_callable() -> MbValue {
+    callable_func(dispatch_strenum_convert as *const () as usize)
+}
+
+pub fn mb_intenum_convert(args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    enum_convert_from_args(&items, MixinKind::Int)
+}
+
+pub fn mb_enum_convert(args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    enum_convert_from_args(&items, MixinKind::None)
+}
+
+pub fn mb_strenum_convert(args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    enum_convert_from_args(&items, MixinKind::Str)
+}
+
+unsafe extern "C" fn dispatch_enum_convert(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    enum_convert_from_args(a, MixinKind::None)
+}
+
+unsafe extern "C" fn dispatch_intenum_convert(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    enum_convert_from_args(a, MixinKind::Int)
+}
+
+unsafe extern "C" fn dispatch_strenum_convert(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    enum_convert_from_args(a, MixinKind::Str)
+}
+
+fn enum_convert_from_args(a: &[MbValue], mixin: MixinKind) -> MbValue {
+    let class_name = a.first().copied().unwrap_or_else(MbValue::none);
+    let filter = enum_convert_filter_arg(a);
+    let globals = super::super::closure::build_globals_dict();
+    let mut members = Vec::new();
+
+    if let Some(ptr) = globals.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let map = lock.read().unwrap();
+                for (key, value) in map.iter() {
+                    let super::super::dict_ops::DictKey::Str(name) = key else {
+                        continue;
+                    };
+                    if !enum_convert_accepts(filter, name) {
+                        continue;
+                    }
+                    members.push((name.clone(), *value));
+                }
+            }
+        }
+    }
+    members.sort_by(|(name_a, value_a), (name_b, value_b)| {
+        enum_convert_order(mixin, name_a, *value_a, name_b, *value_b)
+    });
+
+    let member_pairs: Vec<MbValue> = members
+        .into_iter()
+        .map(|(name, value)| {
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str(name)),
+                value,
+            ]))
+        })
+        .collect();
+    enum_create_with_opts(
+        class_name,
+        MbValue::from_ptr(MbObject::new_list(member_pairs)),
+        mixin,
+        1,
+    )
+}
+
+fn enum_convert_order(
+    mixin: MixinKind,
+    name_a: &str,
+    value_a: MbValue,
+    name_b: &str,
+    value_b: MbValue,
+) -> std::cmp::Ordering {
+    match mixin {
+        MixinKind::Int => match (value_a.as_int(), value_b.as_int()) {
+            (Some(a), Some(b)) => a.cmp(&b).then_with(|| name_a.cmp(name_b)),
+            _ => name_a.cmp(name_b),
+        },
+        MixinKind::Str => match (extract_str(value_a), extract_str(value_b)) {
+            (Some(a), Some(b)) => a.cmp(&b).then_with(|| name_a.cmp(name_b)),
+            _ => name_a.cmp(name_b),
+        },
+        MixinKind::None => name_a.cmp(name_b),
+    }
+}
+
+fn enum_convert_filter_arg(a: &[MbValue]) -> MbValue {
+    if let Some(candidate) = a.get(2).copied() {
+        if !is_kwargs_dict(candidate) {
+            return candidate;
+        }
+    }
+    a.last()
+        .copied()
+        .and_then(|kw| kwargs_get(kw, "filter"))
+        .unwrap_or_else(MbValue::none)
+}
+
+fn enum_convert_accepts(filter: MbValue, name: &str) -> bool {
+    if filter.is_none() {
+        return true;
+    }
+    let result = super::super::class::mb_call1_val(
+        filter,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    result.as_bool().unwrap_or(false)
+}
+
+fn kwargs_get(kwargs: MbValue, key: &str) -> Option<MbValue> {
+    let ptr = kwargs.as_ptr()?;
+    unsafe {
+        let ObjData::Dict(ref lock) = (*ptr).data else {
+            return None;
+        };
+        lock.read()
+            .ok()?
+            .get(&super::super::dict_ops::DictKey::Str(key.to_string()))
+            .copied()
+    }
+}
+
+fn is_kwargs_dict(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(&(*ptr).data, ObjData::Dict(_))
+    })
+}
+
 /// `enum.auto()` — auto-assignment sentinel.
 unsafe extern "C" fn dispatch_enum_auto(_args: *const MbValue, _n: usize) -> MbValue {
     mb_enum_auto()
@@ -350,6 +540,15 @@ unsafe extern "C" fn dispatch_enum_unique(args: *const MbValue, n: usize) -> MbV
 unsafe extern "C" fn dispatch_enum_identity(args: *const MbValue, n: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args, n) };
     a.first().copied().unwrap_or_else(MbValue::none)
+}
+
+/// `@enum.property` — a property defined on an enum class (so it doesn't shadow
+/// a member). Wrap the getter in a real property descriptor so `Member.attr`
+/// invokes it through the descriptor protocol.
+unsafe extern "C" fn dispatch_enum_property(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    let getter = a.first().copied().unwrap_or_else(MbValue::none);
+    super::super::class::mb_property_new(getter)
 }
 
 /// `enum.verify(*checks)` — records the requested checks and returns the
@@ -439,7 +638,7 @@ unsafe extern "C" fn dispatch_enum_verify_apply(args: *const MbValue, n: usize) 
                 }
             }
             "NAMED_FLAGS" => {
-                let vals = super::enum_class::class_member_int_values(&name)
+                let vals = super::enum_class::class_all_member_int_values(&name)
                     .filter(|v| !v.is_empty())
                     .unwrap_or_else(|| super::enum_class::attrs_member_int_values(&name));
                 {
@@ -451,9 +650,12 @@ unsafe extern "C" fn dispatch_enum_verify_apply(args: *const MbValue, n: usize) 
                         .filter(|i| *i > 0 && (i & (i - 1)) == 0)
                         .fold(0, |acc, i| acc | i);
                     for (mname, v) in &vals {
-                        if v & !named_bits != 0 {
+                        let missing = v & !named_bits;
+                        if missing != 0 {
                             return verify_raise(format!(
-                                "invalid Flag '{name}': alias {mname} is missing a named flag"
+                                "invalid Flag '{name}': alias {mname} is missing combined \
+                                 values of 0x{missing:x} [use enum.show_flag_values(value) \
+                                 for details]"
                             ));
                         }
                     }
@@ -478,8 +680,9 @@ unsafe extern "C" fn dispatch_enum_none(_args: *const MbValue, _n: usize) -> MbV
 // ── Runtime hooks for functional enum class objects ──────────────────────
 
 /// If `obj` is a functional-API enum *class* object, return its ordered
-/// member values (the `__members__` list contents). Used by mb_iter /
-/// mb_len / mb_obj_contains to give the class object container semantics.
+/// canonical member values. Used by mb_iter / mb_len / mb_obj_contains to give
+/// the class object container semantics while keeping `__members__`
+/// alias-inclusive.
 pub fn functional_enum_members(obj: MbValue) -> Option<Vec<MbValue>> {
     let ptr = obj.as_ptr()?;
     unsafe {
@@ -491,7 +694,11 @@ pub fn functional_enum_members(obj: MbValue) -> Option<Vec<MbValue>> {
             if class_name != ENUM_CLASS_OBJ {
                 return None;
             }
-            let members = fields.read().ok()?.get("__members__").copied()?;
+            let fields = fields.read().ok()?;
+            let members = fields
+                .get("__canonical_members__")
+                .or_else(|| fields.get("__members__"))
+                .copied()?;
             let mp = members.as_ptr()?;
             if let ObjData::List(ref lock) = (*mp).data {
                 return Some(lock.read().unwrap().to_vec());
@@ -795,7 +1002,7 @@ pub fn register() {
     );
     attrs.insert(
         "property".to_string(),
-        callable_func(dispatch_enum_identity as *const () as usize),
+        callable_func(dispatch_enum_property as *const () as usize),
     );
     attrs.insert(
         "global_enum".to_string(),

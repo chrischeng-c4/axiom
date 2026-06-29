@@ -6,7 +6,7 @@
 //!   1. Profile fails on any required offline workflow failure.
 //!      `[policy].network == "offline"`, `[policy].index_source ==
 //!      "frozen_local"`, `[policy].forbid_required_network == true`,
-//!      and all eight workflow families are declared.
+//!      and all nine workflow families are declared.
 //!   2. Live network tests are reported as opt-in, not blocking
 //!      defaults. `[live_network]` block sets `bucket = "optional"`
 //!      and pins an `enabled_by` opt-in flag; live-network workflows
@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 const EXPECTED_BUCKETS: &[&str] = &["required", "optional", "xfail", "blocker"];
 
 const REQUIRED_FAMILIES: &[&str] = &[
-    "init", "add", "lock", "sync", "run", "install", "hash", "cache",
+    "init", "index", "add", "lock", "sync", "run", "install", "hash", "cache",
 ];
 
 fn manifest_path() -> PathBuf {

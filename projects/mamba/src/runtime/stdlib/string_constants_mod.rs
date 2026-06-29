@@ -49,6 +49,20 @@ fn raise(kind: &str, msg: impl Into<String>) -> MbValue {
     MbValue::none()
 }
 
+pub fn static_no_self_error(type_name: &str, method_name: &str) -> Option<MbValue> {
+    match (type_name, method_name) {
+        ("Formatter", "format") => Some(raise(
+            "TypeError",
+            "Formatter.format() missing 2 required positional arguments: 'self' and 'format_string'",
+        )),
+        ("Template", "substitute") => Some(raise(
+            "TypeError",
+            "Template.substitute() missing 1 required positional argument: 'self'",
+        )),
+        _ => None,
+    }
+}
+
 fn raise_value_error(msg: &str) {
     raise("ValueError", msg.to_string());
 }
@@ -410,6 +424,16 @@ fn field_name_split(field_name: &str) -> (String, Vec<(bool, String)>) {
 // Formatter.format(self, format_string, /, *args, **kwargs)
 //   variadic+kwargs → (self, args_list, kwargs_dict)
 extern "C" fn m_formatter_format(this: MbValue, args_list: MbValue, kwargs: MbValue) -> MbValue {
+    // string.Formatter and logging.Formatter both register a class named
+    // "Formatter" in CLASS_REGISTRY, so a logging.Formatter's `.format(record)`
+    // resolves to this string-engine method. A logging formatter carries a
+    // `_style` field — route it to the logging engine instead of treating the
+    // record as a template string.
+    if super::logging_mod::value_is_logging_formatter(this) {
+        let items = super::super::builtins::extract_items(args_list);
+        let record = items.first().copied().unwrap_or_else(MbValue::none);
+        return super::logging_mod::logging_formatter_format(this, record);
+    }
     let items = super::super::builtins::extract_items(args_list);
     let format_string = items.first().copied().unwrap_or_else(MbValue::none);
     if format_string.is_none() && items.is_empty() {
@@ -418,7 +442,19 @@ extern "C" fn m_formatter_format(this: MbValue, args_list: MbValue, kwargs: MbVa
             "descriptor 'format' of 'string.Formatter' object needs an argument",
         );
     }
-    let args: Vec<MbValue> = items.iter().skip(1).copied().collect();
+    let mut args: Vec<MbValue> = items.iter().skip(1).copied().collect();
+    let mut kwargs = kwargs;
+    // The generic kwargs-method bridge strips a trailing dict into `kwargs`.
+    // Recover the common CPython shape `Formatter().format("{0[...]}",
+    // mapping)` when that positional dict is empty or cannot be a real
+    // Python kwargs dict because it contains non-string keys.
+    if args.is_empty()
+        && formatter_needs_positional_zero_path(format_string)
+        && dict_empty_or_has_non_string_key(kwargs)
+    {
+        args.push(kwargs);
+        kwargs = MbValue::from_ptr(MbObject::new_dict());
+    }
     formatter_vformat_entry(this, format_string, args, kwargs)
 }
 
@@ -735,6 +771,29 @@ extern "C" fn m_formatter_get_field(
 fn is_dict_value(v: MbValue) -> bool {
     v.as_ptr()
         .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+}
+
+fn dict_empty_or_has_non_string_key(v: MbValue) -> bool {
+    v.as_ptr().is_some_and(|p| unsafe {
+        if let ObjData::Dict(ref lock) = (*p).data {
+            let map = lock.read().unwrap();
+            map.is_empty() || map.keys().any(|k| {
+                !matches!(k, super::super::dict_ops::DictKey::Str(_))
+            })
+        } else {
+            false
+        }
+    })
+}
+
+fn formatter_needs_positional_zero_path(format_string: MbValue) -> bool {
+    let Some(fmt) = str_of(format_string) else { return false };
+    let Ok(fields) = formatter_parse(&fmt) else { return false };
+    fields.iter().any(|field| {
+        let Some(name) = field.field_name.as_deref() else { return false };
+        let (first, rest) = field_name_split(name);
+        first == "0" && !rest.is_empty()
+    })
 }
 
 /// Built-in container type name for `obj` (None for user Instances, which keep

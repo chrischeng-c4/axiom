@@ -306,8 +306,11 @@ pub fn register() {
     attrs.insert("day_abbr".to_string(), mb_calendar_day_abbr());
     attrs.insert("mdays".to_string(), mb_calendar_mdays());
 
-    // Weekday integer constants (0..6).
-    for (i, name) in [
+    // Register calendar.Day global_enum members so monthrange/weekday can
+    // return them (repr "calendar.THURSDAY"). The MONDAY..SUNDAY module
+    // constants stay raw ints — calendar's own native code uses them as ints,
+    // and an IntMixin member is not a raw i64 (`weekday.as_int()` would fail).
+    let weekdays: Vec<(&str, i64)> = [
         "MONDAY",
         "TUESDAY",
         "WEDNESDAY",
@@ -318,8 +321,11 @@ pub fn register() {
     ]
     .iter()
     .enumerate()
-    {
-        attrs.insert(name.to_string(), MbValue::from_int(i as i64));
+    .map(|(i, n)| (*n, i as i64))
+    .collect();
+    let _ = super::enum_class::register_global_enum("Day", "calendar", &weekdays);
+    for (name, value) in &weekdays {
+        attrs.insert(name.to_string(), MbValue::from_int(*value));
     }
 
     // Month integer constants (1..12).
@@ -567,7 +573,11 @@ fn zeller_weekday(y: i64, m: i64, d: i64) -> i64 {
     let (ay, am) = if m < 3 { (y - 1, m + 12) } else { (y, m) };
     let k = ay.rem_euclid(100);
     let j = ay.div_euclid(100);
-    let h = (d + (13 * (am + 1)) / 5 + k + k / 4 + j / 4 + 5 * j).rem_euclid(7);
+    // Zeller's congruence assumes floor division; for a negative century `j`
+    // (proleptic years, e.g. monthrange(-1, …)) truncating `j / 4` is wrong, so
+    // use div_euclid. (For non-negative k/j it equals plain integer division.)
+    let h = (d + (13 * (am + 1)) / 5 + k + k.div_euclid(4) + j.div_euclid(4) + 5 * j)
+        .rem_euclid(7);
     (h + 5).rem_euclid(7)
 }
 
@@ -605,8 +615,17 @@ pub fn mb_calendar_monthrange(year: MbValue, month: MbValue) -> MbValue {
     }
     let days = days_in_month(y, m);
     let wd = zeller_weekday(y, m, 1);
+    // CPython 3.12: monthrange's first element is the calendar.Day member for
+    // the weekday (repr "calendar.THURSDAY"), not a bare int.
+    let wd_member = super::enum_class::class_canonical_members("Day")
+        .and_then(|members| members.get(wd as usize).copied())
+        .map(|m| {
+            unsafe { super::super::rc::retain_if_ptr(m) };
+            m
+        })
+        .unwrap_or_else(|| MbValue::from_int(wd));
     MbValue::from_ptr(MbObject::new_tuple(vec![
-        MbValue::from_int(wd),
+        wd_member,
         MbValue::from_int(days),
     ]))
 }

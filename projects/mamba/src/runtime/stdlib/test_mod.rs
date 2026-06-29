@@ -53,6 +53,271 @@ unsafe extern "C" fn dispatch_identity(args_ptr: *const MbValue, nargs: usize) -
     a.get(0).copied().unwrap_or_else(MbValue::none)
 }
 
+/// test.support.os_helper.FakePath(path) — a minimal os.PathLike wrapper whose
+/// __fspath__ returns the stored path (or raises it, if it is an exception).
+unsafe extern "C" fn dispatch_fakepath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let path = a.first().copied().unwrap_or_else(MbValue::none);
+    let inst = MbObject::new_instance("FakePath".to_string());
+    if let ObjData::Instance { ref fields, .. } = (*inst).data {
+        super::super::rc::retain_if_ptr(path);
+        fields.write().unwrap().insert("path".to_string(), path);
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// FakePath.__fspath__(self) -> the stored path.
+unsafe extern "C" fn fakepath_fspath(self_v: MbValue, _args: MbValue) -> MbValue {
+    let path = self_v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().ok().and_then(|f| f.get("path").copied())
+        } else {
+            None
+        }
+    }).unwrap_or_else(MbValue::none);
+    super::super::rc::retain_if_ptr(path);
+    path
+}
+
+// ── test.support.swap_attr / EnvironmentVarGuard native context managers ──
+//
+// CPython's test.support exposes `swap_attr(obj, name, new)` and
+// `EnvironmentVarGuard()` as real context managers used pervasively by ported
+// fixtures for setup/teardown. Modeling them as Instance objects whose class
+// carries real `__enter__`/`__exit__` (and, for the env guard,
+// `set`/`unset`/`__setitem__`/`__delitem__`/`__getitem__`) methods makes
+// `value_supports_context_manager` accept them (it resolves dunders via the
+// class method table) and routes `with`/`enter_context` through the generic
+// runtime CM machinery.
+
+/// Read an Instance field (None if absent / not an Instance).
+fn inst_field(self_v: MbValue, key: &str) -> MbValue {
+    self_v
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields.read().ok().and_then(|f| f.get(key).copied())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none)
+}
+
+/// Set an Instance field, retaining the value and releasing any prior one.
+fn inst_set_field(self_v: MbValue, key: &str, value: MbValue) {
+    if let Some(p) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                super::super::rc::retain_if_ptr(value);
+                if let Some(prev) = fields.write().unwrap().insert(key.to_string(), value) {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+}
+
+/// `test.support.swap_attr(obj, name, new_value)` → a context-manager Instance.
+/// On `__enter__` it saves the old attribute (and whether it existed) and
+/// installs `new_value`, returning the old value; on `__exit__` it restores
+/// (or deletes the attribute if it was originally absent). CPython fidelity.
+unsafe extern "C" fn dispatch_swap_attr(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let obj = a.first().copied().unwrap_or_else(MbValue::none);
+    let name = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let new_value = a.get(2).copied().unwrap_or_else(MbValue::none);
+    let inst = MbObject::new_instance("_test_SwapAttr".to_string());
+    let inst_v = MbValue::from_ptr(inst);
+    inst_set_field(inst_v, "_obj", obj);
+    inst_set_field(inst_v, "_name", name);
+    inst_set_field(inst_v, "_new", new_value);
+    inst_v
+}
+
+/// _test_SwapAttr.__enter__(self) — save old attr + install new, return old.
+unsafe extern "C" fn swap_attr_enter(self_v: MbValue) -> MbValue {
+    let obj = inst_field(self_v, "_obj");
+    let name = inst_field(self_v, "_name");
+    let new_value = inst_field(self_v, "_new");
+    let had = super::super::class::mb_hasattr(obj, name).as_bool() == Some(true);
+    let old = if had {
+        super::super::class::mb_getattr(obj, name)
+    } else {
+        MbValue::none()
+    };
+    inst_set_field(self_v, "_had", MbValue::from_bool(had));
+    inst_set_field(self_v, "_old", old);
+    super::super::class::mb_setattr(obj, name, new_value);
+    super::super::rc::retain_if_ptr(old);
+    old
+}
+
+/// _test_SwapAttr.__exit__(self, *exc) — restore the saved attribute.
+unsafe extern "C" fn swap_attr_exit(
+    self_v: MbValue,
+    _t: MbValue,
+    _v: MbValue,
+    _tb: MbValue,
+) -> MbValue {
+    let obj = inst_field(self_v, "_obj");
+    let name = inst_field(self_v, "_name");
+    let had = inst_field(self_v, "_had").as_bool() == Some(true);
+    if had {
+        let old = inst_field(self_v, "_old");
+        super::super::class::mb_setattr(obj, name, old);
+    } else {
+        super::super::class::mb_delattr(obj, name);
+    }
+    MbValue::from_bool(false)
+}
+
+/// `os.environ` dict, or None if `os` has not been imported.
+fn os_environ() -> MbValue {
+    super::super::module::mb_module_attr_lookup("os", "environ").unwrap_or_else(MbValue::none)
+}
+
+/// `test.support.os_helper.EnvironmentVarGuard()` → a context-manager Instance
+/// that mutates `os.environ` and restores every touched key on `__exit__`.
+unsafe extern "C" fn dispatch_env_guard(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    let inst = MbObject::new_instance("_test_EnvironmentVarGuard".to_string());
+    let inst_v = MbValue::from_ptr(inst);
+    // `_changed`: key → original value (or None if the key was absent). A key is
+    // recorded only on its first mutation, so the original is preserved.
+    let changed = MbValue::from_ptr(MbObject::new_dict());
+    inst_set_field(inst_v, "_changed", changed);
+    // inst_set_field retained `changed`; drop our construction reference so the
+    // field owns the sole remaining ref.
+    super::super::rc::release_if_ptr(changed);
+    inst_v
+}
+
+/// Record the pre-mutation value of `key` (once) so __exit__ can restore it.
+fn env_guard_record(self_v: MbValue, key: MbValue) {
+    let changed = inst_field(self_v, "_changed");
+    if super::super::dict_ops::mb_dict_contains(changed, key).as_bool() == Some(true) {
+        return; // already recorded
+    }
+    let environ = os_environ();
+    let sentinel = MbValue::none();
+    let orig = if super::super::dict_ops::mb_dict_contains(environ, key).as_bool() == Some(true) {
+        super::super::dict_ops::mb_dict_get(environ, key, sentinel)
+    } else {
+        sentinel
+    };
+    super::super::dict_ops::mb_dict_setitem(changed, key, orig);
+}
+
+/// EnvironmentVarGuard.__enter__(self) → self.
+unsafe extern "C" fn env_guard_enter(self_v: MbValue) -> MbValue {
+    super::super::rc::retain_if_ptr(self_v);
+    self_v
+}
+
+/// EnvironmentVarGuard.set(self, key, value) / __setitem__ — set os.environ[key].
+unsafe extern "C" fn env_guard_set(self_v: MbValue, key: MbValue, value: MbValue) -> MbValue {
+    env_guard_record(self_v, key);
+    super::super::dict_ops::mb_dict_setitem(os_environ(), key, value);
+    MbValue::none()
+}
+
+/// EnvironmentVarGuard.unset(self, key) / __delitem__ — delete os.environ[key].
+unsafe extern "C" fn env_guard_unset(self_v: MbValue, key: MbValue) -> MbValue {
+    env_guard_record(self_v, key);
+    let environ = os_environ();
+    if super::super::dict_ops::mb_dict_contains(environ, key).as_bool() == Some(true) {
+        super::super::dict_ops::mb_dict_delitem(environ, key);
+    }
+    MbValue::none()
+}
+
+/// EnvironmentVarGuard.__getitem__(self, key) → os.environ[key].
+unsafe extern "C" fn env_guard_getitem(self_v: MbValue, key: MbValue) -> MbValue {
+    let _ = self_v;
+    super::super::class::mb_obj_getitem(os_environ(), key)
+}
+
+/// EnvironmentVarGuard.__exit__(self, *exc) — restore every recorded key.
+unsafe extern "C" fn env_guard_exit(
+    self_v: MbValue,
+    _t: MbValue,
+    _v: MbValue,
+    _tb: MbValue,
+) -> MbValue {
+    let changed = inst_field(self_v, "_changed");
+    let environ = os_environ();
+    // Collect (key_str, orig) pairs without holding the dict lock across mutation.
+    let pairs: Vec<(MbValue, MbValue)> = changed
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Dict(ref lock) = (*p).data {
+                let map = lock.read().ok()?;
+                Some(
+                    map.iter()
+                        .map(|(k, v)| (super::super::dict_ops::dict_key_to_mbvalue(k), *v))
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    for (key, orig) in pairs {
+        if orig.is_none() {
+            // Key was originally absent → delete it.
+            if super::super::dict_ops::mb_dict_contains(environ, key).as_bool() == Some(true) {
+                super::super::dict_ops::mb_dict_delitem(environ, key);
+            }
+        } else {
+            super::super::dict_ops::mb_dict_setitem(environ, key, orig);
+        }
+    }
+    MbValue::from_bool(false)
+}
+
+/// Register a native context-manager class. Methods are FIXED-arity SystemV
+/// `extern "C"` functions; `mb_class_register` adds their addresses to
+/// CALLABLE_REGISTRY so both the CM machinery (mb_context_enter/exit) and the
+/// generic instance method dispatch invoke them by exact arity (self prepended).
+/// They are deliberately NOT marked variadic — that would force the dispatcher
+/// to pack args into a list and break the fixed signatures.
+fn register_native_cm_class(name: &str, methods: &[(&str, usize)]) {
+    let mut m: HashMap<String, MbValue> = HashMap::new();
+    for (mname, addr) in methods {
+        m.insert((*mname).to_string(), MbValue::from_func(*addr));
+    }
+    super::super::class::mb_class_register(name, vec![], m);
+}
+
+/// Wire `swap_attr` / `EnvironmentVarGuard` constructors so they are real
+/// callables returning CM instances, and register their backing classes.
+fn register_cm_helpers() {
+    register_native_cm_class(
+        "_test_SwapAttr",
+        &[
+            ("__enter__", swap_attr_enter as *const () as usize),
+            ("__exit__", swap_attr_exit as *const () as usize),
+        ],
+    );
+    register_native_cm_class(
+        "_test_EnvironmentVarGuard",
+        &[
+            ("__enter__", env_guard_enter as *const () as usize),
+            ("__exit__", env_guard_exit as *const () as usize),
+            ("set", env_guard_set as *const () as usize),
+            ("__setitem__", env_guard_set as *const () as usize),
+            ("unset", env_guard_unset as *const () as usize),
+            ("__delitem__", env_guard_unset as *const () as usize),
+            ("__getitem__", env_guard_getitem as *const () as usize),
+        ],
+    );
+    // The constructor dispatchers are variadic native callables.
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(dispatch_swap_attr as usize as u64);
+        s.borrow_mut().insert(dispatch_env_guard as usize as u64);
+    });
+}
+
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
@@ -116,6 +381,26 @@ pub fn register() {
 fn register_support_submodules() {
     let noop = dispatch_noop_variadic as usize;
     let identity = dispatch_identity as usize;
+    let fakepath = dispatch_fakepath as usize;
+    let swap_attr = dispatch_swap_attr as usize;
+    let env_guard = dispatch_env_guard as usize;
+    // Register the backing context-manager classes (swap_attr / EnvironmentVarGuard).
+    register_cm_helpers();
+    // FakePath is a real os.PathLike: register the class (with __fspath__) and
+    // wire its constructor addr so isinstance(FakePath(x), os.PathLike) holds.
+    {
+        let mut m: HashMap<String, MbValue> = HashMap::new();
+        let fsp = fakepath_fspath as *const () as usize;
+        super::super::module::register_variadic_func(fsp as u64);
+        m.insert("__fspath__".to_string(), MbValue::from_func(fsp));
+        super::super::class::mb_class_register("FakePath", vec![], m);
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(fakepath as u64);
+        });
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(fakepath as u64, "FakePath".to_string());
+        });
+    }
 
     fn make_attrs(entries: &[(&str, usize)]) -> HashMap<String, MbValue> {
         let mut attrs = HashMap::new();
@@ -134,7 +419,7 @@ fn register_support_submodules() {
         ("requires_IEEE_754", identity),
         ("ExtraAssertions", noop),
         ("INVALID_UNDERSCORE_LITERALS", noop),
-        ("FakePath", noop),
+        ("FakePath", fakepath),
         ("C_RECURSION_LIMIT", noop),
         ("BrokenIter", noop),
         ("check_warnings", noop),
@@ -202,7 +487,7 @@ fn register_support_submodules() {
         ("HAVE_DOCSTRINGS", noop),
         ("TEST_HTTP_URL", noop),
         ("bigaddrspacetest", identity),
-        ("swap_attr", noop),
+        ("swap_attr", swap_attr),
         ("swap_item", noop),
         ("run_code", noop),
         ("no_tracing", identity),
@@ -219,7 +504,7 @@ fn register_support_submodules() {
         ("requires_limited_api", identity),
         ("requires_legacy_locale", identity),
         ("reset_logging", noop),
-        ("EnvironmentVarGuard", noop),
+        ("EnvironmentVarGuard", env_guard),
         ("swap_method", noop),
         ("check_impl_detail", identity),
         ("set_memlimit", noop),
@@ -304,7 +589,7 @@ fn register_support_submodules() {
     );
 
     let os_helper_entries: &[(&str, usize)] = &[
-        ("FakePath", noop),
+        ("FakePath", fakepath),
         ("temp_cwd", noop),
         ("temp_dir", noop),
         ("change_cwd", noop),
@@ -313,7 +598,7 @@ fn register_support_submodules() {
         ("create_empty_file", noop),
         ("can_symlink", noop),
         ("can_xattr", noop),
-        ("EnvironmentVarGuard", noop),
+        ("EnvironmentVarGuard", env_guard),
         ("TESTFN", noop),
         ("FS_NONASCII", noop),
     ];

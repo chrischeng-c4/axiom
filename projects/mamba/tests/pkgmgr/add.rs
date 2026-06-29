@@ -29,9 +29,22 @@ fn run_add(workdir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(mamba_bin())
         .arg("add")
         .args(args)
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
         .current_dir(workdir)
         .output()
         .expect("spawn mamba add")
+}
+
+fn run_sync(workdir: &Path) -> std::process::Output {
+    Command::new(mamba_bin())
+        .arg("sync")
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
+        .env_remove("MAMBA_CACHE_DIR")
+        .current_dir(workdir)
+        .output()
+        .expect("spawn mamba sync")
 }
 
 /// PEP 503 normalize used by `mamba add` when keying the index dir.
@@ -189,12 +202,16 @@ fn add_upserts_existing_dep_in_place() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
 
-    assert!(run_add(tmp.path(), &["foo==1.0.0", "--offline"])
-        .status
-        .success());
-    assert!(run_add(tmp.path(), &["foo==1.1.0", "--offline"])
-        .status
-        .success());
+    assert!(
+        run_add(tmp.path(), &["foo==1.0.0", "--offline"])
+            .status
+            .success()
+    );
+    assert!(
+        run_add(tmp.path(), &["foo==1.1.0", "--offline"])
+            .status
+            .success()
+    );
 
     let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
     assert!(
@@ -234,6 +251,151 @@ fn add_offline_requires_explicit_version() {
     assert!(
         stderr.contains("--offline") || stderr.contains("offline"),
         "stderr must point at --offline mode: {stderr:?}"
+    );
+}
+
+#[test]
+fn add_no_source_requires_explicit_registry() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
+
+    let out = run_add(tmp.path(), &["bare_name"]);
+    assert!(
+        !out.status.success(),
+        "no-source add must fail; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no package source configured") && stderr.contains("--index-url"),
+        "stderr must name explicit source options: {stderr:?}"
+    );
+    assert_eq!(
+        manifest_before,
+        std::fs::read_to_string(&manifest_path).unwrap(),
+        "failed no-source add must not mutate mamba.toml"
+    );
+    assert!(
+        !tmp.path().join("mamba.lock").exists(),
+        "failed no-source add must not create mamba.lock"
+    );
+}
+
+#[test]
+fn add_direct_local_wheel_records_source_and_syncs_offline() {
+    use sha2::{Digest, Sha256};
+
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let wheels_dir = tmp.path().join("wheels");
+    std::fs::create_dir(&wheels_dir).unwrap();
+    let wheel_rel = "wheels/frozen_local_wheel-0.1.0-py3-none-any.whl";
+    let wheel_path = tmp.path().join(wheel_rel);
+    let wheel_bytes = b"fake-wheel-bytes-for-direct-local-wheel";
+    std::fs::write(&wheel_path, wheel_bytes).unwrap();
+    let expected_sha = {
+        let mut hasher = Sha256::new();
+        hasher.update(wheel_bytes);
+        format!("{:x}", hasher.finalize())
+    };
+
+    let out = run_add(
+        tmp.path(),
+        &["./wheels/frozen_local_wheel-0.1.0-py3-none-any.whl"],
+    );
+    assert!(
+        out.status.success(),
+        "direct local wheel add must succeed; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest_a = std::fs::read(tmp.path().join("mamba.toml")).unwrap();
+    let lock_a = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
+    assert!(
+        String::from_utf8_lossy(&manifest_a).contains("\"frozen_local_wheel==0.1.0\""),
+        "manifest must pin wheel dependency"
+    );
+    assert!(
+        lock_a.contains("source_kind = \"direct_file\"")
+            && lock_a.contains("path = \"wheels/frozen_local_wheel-0.1.0-py3-none-any.whl\"")
+            && lock_a.contains(&format!("sha256 = \"{expected_sha}\""))
+            && lock_a.contains("url = \"\""),
+        "lock must record direct file metadata: {lock_a}"
+    );
+
+    let replay = run_add(
+        tmp.path(),
+        &["./wheels/frozen_local_wheel-0.1.0-py3-none-any.whl"],
+    );
+    assert!(
+        replay.status.success(),
+        "replay add must succeed; stderr: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    assert_eq!(
+        manifest_a,
+        std::fs::read(tmp.path().join("mamba.toml")).unwrap(),
+        "direct local wheel manifest must be byte-identical on replay"
+    );
+    assert_eq!(
+        lock_a,
+        std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap(),
+        "direct local wheel lockfile must be byte-identical on replay"
+    );
+
+    let synced = run_sync(tmp.path());
+    assert!(
+        synced.status.success(),
+        "sync must consume direct-file lock offline; stderr: {}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let init = std::fs::read_to_string(
+        tmp.path()
+            .join(".venv/site-packages/frozen_local_wheel/__init__.py"),
+    )
+    .unwrap();
+    assert!(
+        init.contains("__mamba_source_kind__ = \"direct_file\"")
+            && init.contains(
+                "__mamba_source_path__ = \"wheels/frozen_local_wheel-0.1.0-py3-none-any.whl\""
+            ),
+        "sync stub must preserve direct source metadata: {init}"
+    );
+}
+
+#[test]
+fn add_missing_direct_local_wheel_fails_without_mutation() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
+
+    let out = run_add(
+        tmp.path(),
+        &["./wheels/does_not_exist-0.0.0-py3-none-any.whl"],
+    );
+    assert!(
+        !out.status.success(),
+        "missing local wheel add must fail; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("does_not_exist"),
+        "diagnostic must name missing path: {stderr:?}"
+    );
+    assert_eq!(
+        manifest_before,
+        std::fs::read_to_string(&manifest_path).unwrap(),
+        "failed missing-wheel add must not mutate mamba.toml"
+    );
+    assert!(
+        !tmp.path().join("mamba.lock").exists(),
+        "failed missing-wheel add must not create mamba.lock"
     );
 }
 
@@ -391,5 +553,245 @@ fn add_prefers_native_wheel_over_purepy_via_tags() {
     assert!(
         lock.contains(&format!("sha256 = \"{}\"", native_sha)),
         "lock must carry the NATIVE wheel sha (tag-aware selection), got: {lock}"
+    );
+}
+
+#[test]
+fn add_index_url_uses_stored_auth_credentials() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (server_url, expected_sha) = rt.block_on(async {
+        use mamba::pkgmanage::pkgmgr::auth_header::basic_auth;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let sha = "c".repeat(64);
+        let body = serde_json::json!({
+            "info": { "name": "auth_pkg", "version": "1.0.0" },
+            "releases": {
+                "1.0.0": [{
+                    "filename": "auth_pkg-1.0.0-py3-none-any.whl",
+                    "url": "https://example.invalid/auth_pkg-1.0.0-py3-none-any.whl",
+                    "digests": { "sha256": &sha },
+                    "yanked": false
+                }]
+            }
+        });
+        let expected_auth = basic_auth("__token__", "secret-token").unwrap();
+        Mock::given(method("GET"))
+            .and(path("/pypi/auth-pkg/json"))
+            .and(header("authorization", expected_auth.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        std::mem::forget(server);
+        (url, sha)
+    });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let creds = tmp.path().join("credentials");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let login = Command::new(mamba_bin())
+        .args(["auth", "login", &server_url, "--token", "secret-token"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba auth login");
+    assert!(
+        login.status.success(),
+        "auth login must succeed: {}",
+        String::from_utf8_lossy(&login.stderr)
+    );
+
+    let out = Command::new(mamba_bin())
+        .args(["add", "auth_pkg", "--index-url", &server_url])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .env("MAMBA_CACHE_DIR", &cache)
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba add");
+    assert!(
+        out.status.success(),
+        "authenticated add must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let lock = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
+    assert!(
+        lock.contains(&format!("sha256 = \"{}\"", expected_sha)),
+        "lock must carry sha from authenticated index: {lock}"
+    );
+}
+
+#[test]
+fn add_mamba_provider_records_manifest_and_lock_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+
+    let out = run_add(tmp.path(), &["mamba-httpx-compat", "--provider", "mamba"]);
+    assert!(
+        out.status.success(),
+        "provider add must succeed; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
+    assert!(
+        manifest.contains("\"mamba-httpx-compat==0.1.0\""),
+        "manifest must pin mamba-owned distribution: {manifest}"
+    );
+    assert!(
+        manifest.contains("[tool.mamba.sources]")
+            && manifest.contains("\"mamba-httpx-compat\" = { provider = \"mamba\" }"),
+        "manifest must persist explicit provider selection: {manifest}"
+    );
+
+    let lock = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
+    assert!(lock.contains("name = \"mamba-httpx-compat\""), "{lock}");
+    assert!(!lock.contains("name = \"httpx\""), "{lock}");
+    assert!(lock.contains("source_kind = \"mamba_provider\""), "{lock}");
+    assert!(lock.contains("provider = \"mamba\""), "{lock}");
+    assert!(lock.contains("provides = [\"httpx\"]"), "{lock}");
+    assert!(lock.contains("compatibility = \"httpx\""), "{lock}");
+    assert!(lock.contains("maturity = \"experimental\""), "{lock}");
+    assert!(
+        lock.contains("source = \"mamba-provider://mamba/mamba-httpx-compat/0.1.0\""),
+        "{lock}"
+    );
+}
+
+#[test]
+fn add_mamba_provider_rejects_upstream_import_alias_without_mutation() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    let manifest_path = tmp.path().join("mamba.toml");
+    let manifest_before = std::fs::read_to_string(&manifest_path).unwrap();
+
+    let out = run_add(tmp.path(), &["httpx", "--provider", "mamba"]);
+    assert!(
+        !out.status.success(),
+        "upstream alias must not be accepted as a mamba distribution"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("mamba-httpx-compat") && stderr.contains("upstream import"),
+        "diagnostic should name the mamba-owned package: {stderr:?}"
+    );
+    assert_eq!(
+        manifest_before,
+        std::fs::read_to_string(&manifest_path).unwrap(),
+        "failed provider add must not mutate mamba.toml"
+    );
+    assert!(
+        !tmp.path().join("mamba.lock").exists(),
+        "failed provider add must not create lockfile"
+    );
+}
+
+#[test]
+fn add_mamba_provider_relocks_offline_and_sync_installs_import_alias() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    assert!(
+        run_add(tmp.path(), &["mamba-httpx-compat", "--provider", "mamba"])
+            .status
+            .success()
+    );
+
+    let relock = Command::new(mamba_bin())
+        .args(["lock", "--offline"])
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn mamba lock");
+    assert!(
+        relock.status.success(),
+        "provider-only lock must not need index; stderr: {}",
+        String::from_utf8_lossy(&relock.stderr)
+    );
+    let lock = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
+    assert!(
+        lock.contains("source_kind = \"mamba_provider\"")
+            && lock.contains("provides = [\"httpx\"]"),
+        "relock must preserve provider metadata: {lock}"
+    );
+
+    let synced = run_sync(tmp.path());
+    assert!(
+        synced.status.success(),
+        "provider sync must succeed; stderr: {}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let site = tmp.path().join(".venv/site-packages");
+    let httpx_init = site.join("httpx/__init__.py");
+    let body = std::fs::read_to_string(&httpx_init).unwrap();
+    assert!(
+        body.contains("__mamba_provider_distribution__ = \"mamba-httpx-compat\"")
+            && body.contains("class Response"),
+        "httpx import alias must be a pure-Python provider file: {body}"
+    );
+    assert!(
+        site.join("mamba_httpx_compat-0.1.0.dist-info/METADATA")
+            .exists(),
+        "provider install must include distribution metadata"
+    );
+
+    let probe = Command::new("python3")
+        .arg("-c")
+        .arg("import httpx; print(httpx.__mamba_provider_distribution__)")
+        .env("PYTHONPATH", &site)
+        .env_remove("PYTHONHOME")
+        .current_dir(tmp.path())
+        .output()
+        .expect("spawn python3 import probe");
+    assert!(
+        probe.status.success(),
+        "python import probe must resolve provider alias; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&probe.stdout),
+        String::from_utf8_lossy(&probe.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&probe.stdout).trim(),
+        "mamba-httpx-compat"
+    );
+}
+
+#[test]
+fn add_mamba_provider_sync_refuses_existing_import_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(run_init(tmp.path()).status.success());
+    assert!(
+        run_add(tmp.path(), &["mamba-httpx-compat", "--provider", "mamba"])
+            .status
+            .success()
+    );
+
+    let existing_httpx = tmp.path().join(".venv/site-packages/httpx");
+    std::fs::create_dir_all(&existing_httpx).unwrap();
+    std::fs::write(
+        existing_httpx.join("__init__.py"),
+        "# upstream placeholder\n",
+    )
+    .unwrap();
+
+    let out = run_sync(tmp.path());
+    assert!(
+        !out.status.success(),
+        "sync must refuse to overwrite an existing non-provider import package"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("overwrite existing import package") && stderr.contains("httpx"),
+        "diagnostic must name import-alias collision: {stderr:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(existing_httpx.join("__init__.py")).unwrap(),
+        "# upstream placeholder\n",
+        "failed provider sync must preserve existing import package"
     );
 }

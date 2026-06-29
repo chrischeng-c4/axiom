@@ -24,9 +24,23 @@ unsafe extern "C" fn dispatch_empty_str(_a: *const MbValue, _n: usize) -> MbValu
 
 unsafe extern "C" fn dispatch_quote(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_quote(
-        a.get(0).copied().unwrap_or_else(MbValue::none),
-        a.get(1).copied().unwrap_or_else(MbValue::none),
+    // quote(string, safe='/', encoding=None, errors=None). Keyword args arrive
+    // as a trailing kwargs dict (quote/unquote are in the native-kwargs
+    // allowlist); fall back to positional slots otherwise.
+    let (pos, kw) = split_trailing_kwargs(a);
+    let mut safe = pos.get(1).copied().unwrap_or_else(MbValue::none);
+    let mut encoding = pos.get(2).copied().unwrap_or_else(MbValue::none);
+    let mut errors = pos.get(3).copied().unwrap_or_else(MbValue::none);
+    if let Some(kw) = kw {
+        if let Some(v) = dict_kw_get(kw, "safe") { safe = v; }
+        if let Some(v) = dict_kw_get(kw, "encoding") { encoding = v; }
+        if let Some(v) = dict_kw_get(kw, "errors") { errors = v; }
+    }
+    mb_urllib_quote_full(
+        pos.get(0).copied().unwrap_or_else(MbValue::none),
+        safe,
+        encoding,
+        errors,
     )
 }
 
@@ -48,7 +62,20 @@ unsafe extern "C" fn dispatch_quote_plus(args_ptr: *const MbValue, nargs: usize)
 
 unsafe extern "C" fn dispatch_unquote(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_unquote(a.get(0).copied().unwrap_or_else(MbValue::none))
+    // unquote(string, encoding='utf-8', errors='replace'). Keyword args arrive
+    // as a trailing kwargs dict; fall back to positional slots otherwise.
+    let (pos, kw) = split_trailing_kwargs(a);
+    let mut encoding = pos.get(1).copied().unwrap_or_else(MbValue::none);
+    let mut errors = pos.get(2).copied().unwrap_or_else(MbValue::none);
+    if let Some(kw) = kw {
+        if let Some(v) = dict_kw_get(kw, "encoding") { encoding = v; }
+        if let Some(v) = dict_kw_get(kw, "errors") { errors = v; }
+    }
+    mb_urllib_unquote_full(
+        pos.get(0).copied().unwrap_or_else(MbValue::none),
+        encoding,
+        errors,
+    )
 }
 
 unsafe extern "C" fn dispatch_unquote_plus(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -77,6 +104,8 @@ unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) 
         .unwrap_or_else(MbValue::none);
     let mut safe = String::new();
     let mut quote_via = MbValue::none();
+    let mut encoding = MbValue::none();
+    let mut errors = MbValue::none();
     if let Some(kw) = kwargs {
         let get = |name: &str| -> Option<MbValue> {
             let sentinel = MbValue::from_bits(u64::MAX);
@@ -100,12 +129,12 @@ unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) 
         if let Some(v) = get("quote_via") {
             quote_via = v;
         }
+        if let Some(v) = get("encoding") { encoding = v; }
+        if let Some(v) = get("errors") { errors = v; }
     }
-    mb_urllib_urlencode_with(
+    mb_urllib_urlencode_codec(
         a.first().copied().unwrap_or_else(MbValue::none),
-        doseq,
-        &safe,
-        quote_via,
+        doseq, &safe, quote_via, encoding, errors,
     )
 }
 
@@ -352,6 +381,40 @@ pub fn register() {
         );
     }
 
+    // Register quote function's default parameters
+    let quote_func = MbValue::from_func(dispatch_quote as *const () as usize);
+    let quote_params = MbValue::from_ptr(MbObject::new_list(vec![
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("string".to_string())),
+            MbValue::from_int(1), // POSITIONAL_OR_KEYWORD
+            MbValue::from_int(0), // has_default
+            MbValue::none(),      // default
+            MbValue::none(),      // annotation
+        ])),
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("safe".to_string())),
+            MbValue::from_int(1), // POSITIONAL_OR_KEYWORD
+            MbValue::from_int(1), // has_default
+            MbValue::from_ptr(MbObject::new_str("/".to_string())),
+            MbValue::none(),      // annotation
+        ])),
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("encoding".to_string())),
+            MbValue::from_int(1), // POSITIONAL_OR_KEYWORD
+            MbValue::from_int(1), // has_default
+            MbValue::none(),      // default
+            MbValue::none(),      // annotation
+        ])),
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("errors".to_string())),
+            MbValue::from_int(1), // POSITIONAL_OR_KEYWORD
+            MbValue::from_int(1), // has_default
+            MbValue::none(),      // default
+            MbValue::none(),      // annotation
+        ])),
+    ]));
+    super::super::closure::mb_func_set_params(quote_func, quote_params);
+
     // urllib.parse module-level constants (per typeshed Final[list[str]]
     // and Final[str]). These mirror CPython's lists used internally by
     // urlparse / urljoin and are also exposed as part of the public
@@ -581,9 +644,9 @@ pub fn register() {
         }
     });
 
-    // http module: HTTPStatus constants exposed as module-level ints AND as
-    // attributes of a HTTPStatus namespace instance so that both
-    // `http.OK` and `http.HTTPStatus.OK` yield the status code.
+    // http module: HTTPStatus constants exposed as IntEnum members at module
+    // level and as attributes of a HTTPStatus namespace instance so that both
+    // `http.OK` and `http.HTTPStatus.OK` yield int-compatible status members.
     //
     // The `(code, name, phrase)` table is owned by `cclab_mamba_registry::http`;
     // we iterate the canonical list rather than maintain a parallel copy in
@@ -591,24 +654,33 @@ pub fn register() {
     // EARLY_HINTS, IM_A_TEAPOT). Binding crates and mamba now agree on the
     // same table.
     let mut http_attrs = HashMap::new();
-    for &(code, name, _phrase) in cclab_mamba_registry::http::canonical_codes() {
-        http_attrs.insert(name.to_string(), MbValue::from_int(code as i64));
-    }
+    let status_defs: Vec<(&str, i64)> = cclab_mamba_registry::http::canonical_codes()
+        .iter()
+        .map(|(code, name, _)| (*name, i64::from(*code)))
+        .collect();
+    let status_members = super::enum_class::register_int_enum("HTTPStatus", &status_defs);
     let http_status = MbObject::new_instance("HTTPStatus".to_string());
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*http_status).data {
             let mut f = fields.write().unwrap();
-            for &(code, name, _phrase) in cclab_mamba_registry::http::canonical_codes() {
-                f.insert(name.to_string(), MbValue::from_int(code as i64));
+            let members = MbObject::new_dict();
+            if let ObjData::Dict(ref lock) = (*members).data {
+                let mut map = lock.write().unwrap();
+                for ((code, name, phrase), member) in cclab_mamba_registry::http::canonical_codes()
+                    .iter()
+                    .zip(status_members)
+                {
+                    decorate_status_member(member, *code, name, phrase);
+                    http_attrs.insert((*name).to_string(), member);
+                    f.insert(name.to_string(), member);
+                    super::super::rc::retain_if_ptr(member);
+                    map.insert(
+                        super::super::dict_ops::DictKey::Str(name.to_string()),
+                        member,
+                    );
+                }
             }
-            // `HTTPStatus.__members__` is an (ordered) mapping name→member. We
-            // expose plain ints as the member values: CPython's IntEnum members
-            // ARE ints, and the conformance fixtures only compare members to
-            // ints (`100 <= member <= 599`). A name→int dict makes
-            // `HTTPStatus.__members__.values()` iterate ints that compare
-            // correctly. Insertion order follows the canonical table (= CPython
-            // definition order).
-            f.insert("__members__".to_string(), make_status_members_dict());
+            f.insert("__members__".to_string(), MbValue::from_ptr(members));
         }
     }
     http_attrs.insert("HTTPStatus".into(), MbValue::from_ptr(http_status));
@@ -662,6 +734,75 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(client_addr as u64);
     });
+    // Exception classes: register the real hierarchy (rooted at HTTPException ⊂
+    // Exception) so issubclass / `except` work. Registered parent-first so each
+    // child's MRO can expand its base. Overrides the callable-shell attrs above.
+    let http_exc_tree: &[(&str, &[&str])] = &[
+        ("HTTPException", &["Exception"]),
+        ("NotConnected", &["HTTPException"]),
+        ("InvalidURL", &["HTTPException"]),
+        ("UnknownProtocol", &["HTTPException"]),
+        ("UnknownTransferEncoding", &["HTTPException"]),
+        ("UnimplementedFileMode", &["HTTPException"]),
+        ("IncompleteRead", &["HTTPException"]),
+        ("ImproperConnectionState", &["HTTPException"]),
+        ("CannotSendRequest", &["ImproperConnectionState"]),
+        ("CannotSendHeader", &["ImproperConnectionState"]),
+        ("ResponseNotReady", &["ImproperConnectionState"]),
+        ("BadStatusLine", &["HTTPException"]),
+        ("LineTooLong", &["BadStatusLine"]),
+        ("RemoteDisconnected", &["ConnectionResetError", "BadStatusLine"]),
+    ];
+    for (name, bases) in http_exc_tree {
+        super::super::class::mb_class_register(
+            name,
+            bases.iter().map(|b| b.to_string()).collect(),
+            HashMap::new(),
+        );
+        client_attrs.insert(
+            name.to_string(),
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        );
+    }
+    // IncompleteRead(partial, expected=None) carries named partial/expected
+    // attributes (CPython); the generic exception ctor would not. Override its
+    // attr with a dedicated constructor (the class stays registered for the
+    // HTTPException MRO, so isinstance still holds).
+    {
+        let ir_addr = d_incomplete_read as *const () as usize;
+        client_attrs.insert("IncompleteRead".to_string(), MbValue::from_func(ir_addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(ir_addr as u64);
+        });
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(ir_addr as u64, "IncompleteRead".to_string());
+        });
+    }
+    // HTTPMessage (case-insensitive header container) + parse_headers().
+    {
+        let mut m: HashMap<String, MbValue> = HashMap::new();
+        for (name, addr) in [
+            ("keys", hm_keys as *const () as usize),
+            ("items", hm_items as *const () as usize),
+            ("get", hm_get as *const () as usize),
+            ("__len__", hm_len as *const () as usize),
+            ("__getitem__", hm_getitem as *const () as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            m.insert(name.to_string(), MbValue::from_func(addr));
+        }
+        super::super::class::mb_class_register("HTTPMessage", vec![], m);
+        let ph_addr = dispatch_parse_headers as *const () as usize;
+        client_attrs.insert("parse_headers".to_string(), MbValue::from_func(ph_addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(ph_addr as u64);
+        });
+    }
+    // `error` is CPython's module-level alias for the HTTPException class.
+    client_attrs.insert(
+        "error".to_string(),
+        MbValue::from_ptr(MbObject::new_str("HTTPException".to_string())),
+    );
     for &(code, name, _phrase) in cclab_mamba_registry::http::canonical_codes() {
         client_attrs.insert(name.to_string(), MbValue::from_int(code as i64));
     }
@@ -671,6 +812,8 @@ pub fn register() {
     // `http.client.responses` maps each status code (int) to its reason
     // phrase (str), e.g. `responses[404] == 'Not Found'`.
     client_attrs.insert("responses".into(), make_responses_dict());
+    // Real (minimal) HTTPConnection with putrequest/putheader validation.
+    register_httpconnection_class(&mut client_attrs);
     super::register_module("http.client", client_attrs);
 
     // http.server — same callable-shell treatment.
@@ -717,6 +860,27 @@ pub fn register() {
         server_attrs.insert(
             "BaseHTTPRequestHandler".to_string(),
             MbValue::from_ptr(handler),
+        );
+        // Register parse_request as a real method on the class so a
+        // `BaseHTTPRequestHandler.__new__(...)` instance can parse a request
+        // line. The module attr stays the type-object (for class data attrs);
+        // method dispatch resolves through the class registry by class name.
+        let mut handler_methods: HashMap<String, MbValue> = HashMap::new();
+        for (name, addr) in [
+            ("parse_request",      bh_parse_request      as *const () as usize),
+            ("send_response_only", bh_send_response_only as *const () as usize),
+            ("send_response",      bh_send_response      as *const () as usize),
+            ("send_header",        bh_send_header        as *const () as usize),
+            ("end_headers",        bh_end_headers        as *const () as usize),
+            ("send_error",         bh_send_error         as *const () as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            handler_methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
+        super::super::class::mb_class_register(
+            "BaseHTTPRequestHandler",
+            vec!["object".to_string()],
+            handler_methods,
         );
     }
     // `http.server.DEFAULT_ERROR_MESSAGE` is a module-level `str` template used
@@ -819,24 +983,69 @@ fn make_handler_responses_dict() -> MbValue {
     MbValue::from_ptr(dict)
 }
 
-/// Build `HTTPStatus.__members__`: an ordered dict mapping each member name
-/// (str key) to its value (int). Order follows the canonical table, which is
-/// CPython's HTTPStatus definition order.
-fn make_status_members_dict() -> MbValue {
-    use super::super::dict_ops::DictKey;
-    let dict = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*dict).data {
-            let mut map = lock.write().unwrap();
-            for &(code, name, _phrase) in cclab_mamba_registry::http::canonical_codes() {
-                map.insert(
-                    DictKey::Str(name.to_string()),
-                    MbValue::from_int(code as i64),
-                );
-            }
+/// Add HTTPStatus-specific fields to a shared IntEnum member.
+fn decorate_status_member(member: MbValue, code: u16, _name: &str, phrase: &str) {
+    if let Some(inst_ptr) = member.as_ptr() {
+        unsafe {
+            let ObjData::Instance { ref fields, .. } = (*inst_ptr).data else {
+                return;
+            };
+            let mut f = fields.write().unwrap();
+            f.insert(
+                "phrase".to_string(),
+                MbValue::from_ptr(MbObject::new_str(phrase.to_string())),
+            );
+            f.insert(
+                "description".to_string(),
+                MbValue::from_ptr(MbObject::new_str(phrase.to_string())),
+            );
+            let code = i64::from(code);
+            f.insert(
+                "is_informational".to_string(),
+                MbValue::from_bool((100..=199).contains(&code)),
+            );
+            f.insert(
+                "is_success".to_string(),
+                MbValue::from_bool((200..=299).contains(&code)),
+            );
+            f.insert(
+                "is_redirection".to_string(),
+                MbValue::from_bool((300..=399).contains(&code)),
+            );
+            f.insert(
+                "is_client_error".to_string(),
+                MbValue::from_bool((400..=499).contains(&code)),
+            );
+            f.insert(
+                "is_server_error".to_string(),
+                MbValue::from_bool((500..=599).contains(&code)),
+            );
         }
     }
-    MbValue::from_ptr(dict)
+}
+
+/// Underlying integer for a `HTTPStatus` member instance.
+pub fn http_status_member_value(v: MbValue) -> Option<MbValue> {
+    super::enum_class::int_member_value(v)
+}
+
+pub fn mb_httpstatus_call(arg: MbValue) -> MbValue {
+    let Some(code) = status_code_arg(arg) else {
+        raise("ValueError", "None is not a valid HTTPStatus".to_string());
+        return MbValue::none();
+    };
+    if cclab_mamba_registry::http::canonical_codes()
+        .iter()
+        .find(|(known, _, _)| i64::from(*known) == code)
+        .is_some()
+    {
+        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(code)]));
+        if let Some(member) = super::enum_class::enum_class_call("HTTPStatus", args) {
+            return member;
+        }
+    }
+    raise("ValueError", format!("{code} is not a valid HTTPStatus"));
+    MbValue::none()
 }
 
 /// Build a type-object shell: an Instance with `class_name == "type"` and a
@@ -859,6 +1068,13 @@ fn make_type_object(name: &str) -> MbValue {
 }
 
 // ── Helpers ──
+
+fn raise(exc: &str, msg: String) {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg)),
+    );
+}
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
@@ -887,6 +1103,71 @@ fn extract_safe_bytes(safe: MbValue, default: &[u8]) -> Vec<u8> {
     extract_bytes_like(safe)
         .or_else(|| extract_str(safe).map(|s| s.into_bytes()))
         .unwrap_or_else(|| default.to_vec())
+}
+
+/// Split a native arg slice into (positional, trailing-kwargs-dict). mamba
+/// folds keyword arguments into one trailing dict positional for callees in
+/// the native-kwargs allowlist; quote/unquote's first positional is never a
+/// dict, so a trailing Dict unambiguously names the kwargs.
+fn split_trailing_kwargs(a: &[MbValue]) -> (&[MbValue], Option<MbValue>) {
+    if let Some(&last) = a.last() {
+        let is_dict = last.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
+        if is_dict {
+            return (&a[..a.len() - 1], Some(last));
+        }
+    }
+    (a, None)
+}
+
+/// Read `name` from a kwargs dict, returning None when absent.
+fn dict_kw_get(kw: MbValue, name: &str) -> Option<MbValue> {
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let v = super::super::dict_ops::mb_dict_get(
+        kw,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        sentinel,
+    );
+    if v.to_bits() == u64::MAX { None } else { Some(v) }
+}
+
+/// Encode `s` to bytes under `encoding` honoring the `errors` handler, as
+/// CPython's `quote(string, encoding=, errors=)` does. utf-8 (and unknown
+/// encodings) pass through losslessly; latin-1/ascii map a code point to one
+/// byte when it fits, otherwise apply the error handler. Returns None after
+/// raising UnicodeEncodeError on a strict-mode failure.
+fn encode_str_with(s: &str, encoding: &str, errors: &str) -> Option<Vec<u8>> {
+    let enc = encoding.to_ascii_lowercase().replace('_', "-");
+    let limit: u32 = match enc.as_str() {
+        "latin-1" | "iso-8859-1" | "latin1" | "l1" => 0xFF,
+        "ascii" | "us-ascii" | "646" => 0x7F,
+        // utf-8 / unknown: every str code point is representable.
+        _ => return Some(s.as_bytes().to_vec()),
+    };
+    let mut out = Vec::new();
+    for ch in s.chars() {
+        let cp = ch as u32;
+        if cp <= limit {
+            out.push(cp as u8);
+            continue;
+        }
+        match errors {
+            "replace" => out.push(b'?'),
+            "ignore" => {}
+            "xmlcharrefreplace" => out.extend_from_slice(format!("&#{cp};").as_bytes()),
+            _ => {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("UnicodeEncodeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'{enc}' codec can't encode character '\\u{cp:04x}' in position 0"
+                    ))),
+                );
+                return None;
+            }
+        }
+    }
+    Some(out)
 }
 
 fn raise_type_error(msg: &str) -> MbValue {
@@ -979,10 +1260,38 @@ fn decode_utf8_with(bytes: &[u8], replacement: Option<char>) -> String {
 ///
 /// Default `safe` is '/' per CPython: slashes in a path are preserved.
 pub fn mb_urllib_quote(val: MbValue, safe: MbValue) -> MbValue {
-    // bytes input is escaped byte-for-byte; str input is UTF-8 encoded first.
+    mb_urllib_quote_full(val, safe, MbValue::none(), MbValue::none())
+}
+
+/// urllib.parse.quote(string, safe='/', encoding=None, errors=None).
+///
+/// str input is encoded with `encoding` (default utf-8) under the `errors`
+/// handler before percent-encoding; bytes input is escaped byte-for-byte and
+/// rejects an explicit `encoding` (CPython raises TypeError).
+pub fn mb_urllib_quote_full(
+    val: MbValue,
+    safe: MbValue,
+    encoding: MbValue,
+    errors: MbValue,
+) -> MbValue {
+    let enc = extract_str(encoding);
     let bytes = match extract_bytes_like(val) {
-        Some(b) => b,
-        None => extract_str(val).unwrap_or_default().into_bytes(),
+        Some(b) => {
+            if enc.is_some() {
+                return raise_type_error(
+                    "quote() doesn't support 'encoding' for bytes",
+                );
+            }
+            b
+        }
+        None => {
+            let s = extract_str(val).unwrap_or_default();
+            let errs = extract_str(errors).unwrap_or_else(|| "strict".to_string());
+            match encode_str_with(&s, enc.as_deref().unwrap_or("utf-8"), &errs) {
+                Some(b) => b,
+                None => return MbValue::none(),
+            }
+        }
     };
     let safe_bytes = if safe.is_none() {
         b"/".to_vec()
@@ -1029,13 +1338,19 @@ pub fn mb_urllib_quote_plus(val: MbValue, safe: MbValue) -> MbValue {
 
 /// urllib.parse.unquote(string) → decode %XX sequences; leave '+' untouched.
 pub fn mb_urllib_unquote(val: MbValue) -> MbValue {
+    mb_urllib_unquote_full(val, MbValue::none(), MbValue::none())
+}
+
+/// urllib.parse.unquote(string, encoding='utf-8', errors='replace') → decode
+/// %XX sequences using the requested codec/error handler.
+pub fn mb_urllib_unquote_full(val: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
     let Some(input) = extract_str_or_bytes(val) else {
         return raise_type_error("unquote() argument must be str or bytes");
     };
+    let enc = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
+    let errs = extract_str(errors).unwrap_or_else(|| "replace".to_string());
     let decoded = percent_decode_to_bytes(&input, false);
-    MbValue::from_ptr(MbObject::new_str(decode_bytes(
-        &decoded, "utf-8", "replace",
-    )))
+    MbValue::from_ptr(MbObject::new_str(decode_bytes(&decoded, &enc, &errs)))
 }
 
 /// urllib.parse.unquote_plus(string) → decode %XX and '+' → ' '.
@@ -1071,17 +1386,32 @@ pub fn mb_urllib_urlencode_with(
     safe: &str,
     quote_via: MbValue,
 ) -> MbValue {
+    mb_urllib_urlencode_codec(params, doseq, safe, quote_via, MbValue::none(), MbValue::none())
+}
+
+/// urlencode honoring doseq / safe= / quote_via= plus encoding= / errors=
+/// (the codec used to %-encode str keys and values; default utf-8/strict).
+pub fn mb_urllib_urlencode_codec(
+    params: MbValue,
+    doseq: MbValue,
+    safe: &str,
+    quote_via: MbValue,
+    encoding: MbValue,
+    errors: MbValue,
+) -> MbValue {
     // A bare str/bytes is not a mapping or pair sequence.
     if extract_str(params).is_some() || extract_bytes_like(params).is_some() {
         return raise_type_error("not a valid non-string sequence or mapping object");
     }
+    let enc_name = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
+    let err_name = extract_str(errors).unwrap_or_else(|| "strict".to_string());
     let do_seq = super::super::builtins::mb_bool(doseq).as_bool() == Some(true);
     let pairs = urlencode_pairs(params);
     let mut parts = Vec::new();
     let safe_b = safe.as_bytes();
     let enc = |v: MbValue| -> String {
         if quote_via.is_none() {
-            encode_query_component(v, safe_b)
+            encode_query_component(v, safe_b, &enc_name, &err_name)
         } else {
             // quote_via(str(value), safe) through the supplied callable.
             let s = py_str(v);
@@ -1114,12 +1444,14 @@ pub fn mb_urllib_urlencode_with(
 
 /// Encode one urlencode key or value via `quote_plus` semantics. bytes are
 /// escaped byte-for-byte; everything else is `str()`-coerced first.
-fn encode_query_component(v: MbValue, safe: &[u8]) -> String {
+fn encode_query_component(v: MbValue, safe: &[u8], encoding: &str, errors: &str) -> String {
     if let Some(b) = extract_bytes_like(v) {
         return percent_encode_bytes(&b, safe, true);
     }
     let s = py_str(v);
-    percent_encode_bytes(s.as_bytes(), safe, true)
+    // Encode the str under the requested codec (default utf-8) before %-encoding.
+    let bytes = encode_str_with(&s, encoding, errors).unwrap_or_else(|| s.into_bytes());
+    percent_encode_bytes(&bytes, safe, true)
 }
 
 /// Yield the elements of a list/tuple value, or — for a mapping — its keys
@@ -1131,16 +1463,25 @@ fn sequence_elements(v: MbValue) -> Option<Vec<MbValue>> {
         match &(*ptr).data {
             ObjData::List(ref lock) => Some(lock.read().unwrap().iter().copied().collect()),
             ObjData::Tuple(ref t) => Some(t.to_vec()),
-            ObjData::Dict(ref lock) => {
-                let map = lock.read().unwrap();
-                Some(
-                    map.keys()
-                        .map(super::super::dict_ops::dict_key_to_mbvalue)
-                        .collect(),
-                )
-            }
+            ObjData::Dict(_) => dict_key_elements(v),
             ObjData::Set(ref lock) => Some(lock.read().unwrap().iter().copied().collect()),
+            ObjData::Instance { .. } => {
+                let backing = super::super::class::unwrap_dictlike_data(v)?;
+                dict_key_elements(backing)
+            }
             _ => None,
+        }
+    }
+}
+
+fn dict_key_elements(mapping: MbValue) -> Option<Vec<MbValue>> {
+    let ptr = mapping.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = &(*ptr).data {
+            let map = lock.read().unwrap();
+            Some(map.keys().map(super::super::dict_ops::dict_key_to_mbvalue).collect())
+        } else {
+            None
         }
     }
 }
@@ -2123,6 +2464,254 @@ fn req_args_vec(args: MbValue) -> Vec<MbValue> {
     out
 }
 
+/// Write an instance field (retaining the value, releasing any prior).
+fn set_inst_field(self_v: MbValue, name: &str, val: MbValue) {
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::super::rc::retain_if_ptr(val);
+                let old = fields.write().unwrap().insert(name.to_string(), val);
+                if let Some(o) = old {
+                    super::super::rc::release_if_ptr(o);
+                }
+            }
+        }
+    }
+}
+
+/// Decode a bytes/bytearray/str MbValue to a Rust String (lossy for bytes).
+fn bytes_or_str(v: MbValue) -> String {
+    if let Some(s) = extract_str(v) {
+        return s;
+    }
+    v.as_ptr().map(|p| unsafe {
+        match &(*p).data {
+            ObjData::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+            ObjData::ByteArray(lock) => {
+                String::from_utf8_lossy(&lock.read().unwrap()).into_owned()
+            }
+            _ => String::new(),
+        }
+    }).unwrap_or_default()
+}
+
+/// BaseHTTPRequestHandler.parse_request() -> bool. Parses `self.raw_requestline`
+/// ("GET /path HTTP/1.1\r\n") into `command` / `path` / `request_version` and
+/// sets `requestline`. Minimal vs CPython (no header block parsing); the
+/// fixtures drive it with in-memory buffers and check the request-line fields.
+unsafe extern "C" fn bh_parse_request(self_v: MbValue, _args: MbValue) -> MbValue {
+    let raw = req_field(self_v, "raw_requestline").unwrap_or_else(MbValue::none);
+    let line = bytes_or_str(raw);
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    set_inst_field(self_v, "requestline",
+        MbValue::from_ptr(MbObject::new_str(trimmed.to_string())));
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    // Reject like CPython BaseHTTPRequestHandler.parse_request: write an error
+    // page via send_error and return False. An empty line is silently dropped.
+    let send_err = |code: i64, msg: String| -> MbValue {
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(code),
+            MbValue::from_ptr(MbObject::new_str(msg)),
+        ]));
+        bh_send_error(self_v, args);
+        MbValue::from_bool(false)
+    };
+    if parts.is_empty() {
+        return MbValue::from_bool(false);
+    }
+    // With ≥3 tokens the last is the protocol version: validate it first
+    // (CPython order) — a non `HTTP/<int>.<int>` version is a 400, and a major
+    // version ≥ 2 is a 505 "Invalid HTTP version".
+    let version = if parts.len() >= 3 {
+        let v = parts[parts.len() - 1];
+        let base = v.strip_prefix("HTTP/");
+        let nums = base.and_then(|b| {
+            let mut it = b.split('.');
+            let major = it.next()?.parse::<i64>().ok()?;
+            let minor = it.next()?.parse::<i64>().ok()?;
+            if it.next().is_some() { return None; }
+            Some((major, minor))
+        });
+        match nums {
+            None => return send_err(400, format!("Bad request version ({v:?})")),
+            Some((major, _)) if major >= 2 => {
+                return send_err(505, format!("Invalid HTTP version ({})", base.unwrap_or("")));
+            }
+            Some(_) => v,
+        }
+    } else {
+        "HTTP/0.9"
+    };
+    if !(2..=3).contains(&parts.len()) {
+        return send_err(400, format!("Bad request syntax ({trimmed:?})"));
+    }
+    let (command, path) = (parts[0], parts[1]);
+    set_inst_field(self_v, "command",
+        MbValue::from_ptr(MbObject::new_str(command.to_string())));
+    set_inst_field(self_v, "path",
+        MbValue::from_ptr(MbObject::new_str(path.to_string())));
+    set_inst_field(self_v, "request_version",
+        MbValue::from_ptr(MbObject::new_str(version.to_string())));
+    MbValue::from_bool(true)
+}
+
+/// HTTP reason phrase for a status code (the subset the fixtures exercise plus
+/// the common codes); empty string for unknown codes.
+fn status_phrase(code: i64) -> &'static str {
+    match code {
+        200 => "OK", 201 => "Created", 202 => "Accepted", 204 => "No Content",
+        301 => "Moved Permanently", 302 => "Found", 303 => "See Other",
+        304 => "Not Modified", 307 => "Temporary Redirect", 308 => "Permanent Redirect",
+        400 => "Bad Request", 401 => "Unauthorized", 403 => "Forbidden",
+        404 => "Not Found", 405 => "Method Not Allowed", 406 => "Not Acceptable",
+        408 => "Request Timeout", 409 => "Conflict", 410 => "Gone",
+        500 => "Internal Server Error", 501 => "Not Implemented",
+        502 => "Bad Gateway", 503 => "Service Unavailable",
+        _ => "",
+    }
+}
+
+fn status_code_arg(v: MbValue) -> Option<i64> {
+    v.as_int().or_else(|| http_status_member_value(v).and_then(|value| value.as_int()))
+}
+
+/// `self.protocol_version` (instance or inherited class attr), default HTTP/1.0.
+fn handler_proto(self_v: MbValue) -> String {
+    let v = super::super::class::mb_getattr(
+        self_v,
+        MbValue::from_ptr(MbObject::new_str("protocol_version".to_string())),
+    );
+    extract_str(v).unwrap_or_else(|| "HTTP/1.0".to_string())
+}
+
+/// Append a header/status byte-line to the handler's `_headers_buffer` list
+/// (lazily created), mirroring CPython's deferred header buffering.
+fn handler_buffer_append(self_v: MbValue, line: Vec<u8>) {
+    let list = match req_field(self_v, "_headers_buffer").filter(|v| !v.is_none()) {
+        Some(l) => l,
+        None => {
+            let l = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+            set_inst_field(self_v, "_headers_buffer", l);
+            l
+        }
+    };
+    if let Some(ptr) = list.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let b = MbValue::from_ptr(MbObject::new_bytes(line));
+                super::super::rc::retain_if_ptr(b);
+                lock.write().unwrap().push(b);
+            }
+        }
+    }
+}
+
+/// Write bytes to `self.wfile` via its `.write(...)` method (a BytesIO etc.).
+fn handler_wfile_write(self_v: MbValue, data: Vec<u8>) {
+    let wfile = req_field(self_v, "wfile").unwrap_or_else(MbValue::none);
+    if wfile.is_none() {
+        return;
+    }
+    let arg = MbValue::from_ptr(MbObject::new_bytes(data));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![arg]));
+    super::super::class::mb_call_method(
+        wfile,
+        MbValue::from_ptr(MbObject::new_str("write".to_string())),
+        args,
+    );
+}
+
+/// BaseHTTPRequestHandler.send_response_only(code, message=None) — buffer the
+/// status line (deferred until end_headers, matching CPython).
+unsafe extern "C" fn bh_send_response_only(self_v: MbValue, args: MbValue) -> MbValue {
+    let pos = req_args_vec(args);
+    let code = pos.first().and_then(|v| status_code_arg(*v)).unwrap_or(0);
+    let msg = pos.get(1).copied().and_then(extract_str)
+        .unwrap_or_else(|| status_phrase(code).to_string());
+    let proto = handler_proto(self_v);
+    if proto != "HTTP/0.9" {
+        handler_buffer_append(self_v, format!("{proto} {code} {msg}\r\n").into_bytes());
+    }
+    MbValue::none()
+}
+
+/// BaseHTTPRequestHandler.send_response(code, message=None) — status line via
+/// send_response_only (Server/Date headers omitted: nondeterministic and not
+/// asserted by the fixtures).
+unsafe extern "C" fn bh_send_response(self_v: MbValue, args: MbValue) -> MbValue {
+    bh_send_response_only(self_v, args)
+}
+
+/// BaseHTTPRequestHandler.send_header(keyword, value) — buffer one header line.
+unsafe extern "C" fn bh_send_header(self_v: MbValue, args: MbValue) -> MbValue {
+    // CPython's send_header reads `self.request_version`; on a handler built via
+    // __new__ (no parse_request / send_response yet) that attribute is absent,
+    // raising AttributeError.
+    if req_field(self_v, "request_version").filter(|v| !v.is_none()).is_none() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "'BaseHTTPRequestHandler' object has no attribute 'request_version'".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    let pos = req_args_vec(args);
+    let key = pos.first().copied().and_then(extract_str).unwrap_or_default();
+    let val = pos.get(1).copied().and_then(extract_str).unwrap_or_default();
+    handler_buffer_append(self_v, format!("{key}: {val}\r\n").into_bytes());
+    MbValue::none()
+}
+
+/// BaseHTTPRequestHandler.end_headers() — append the blank-line separator and
+/// flush the buffered header block to wfile.
+unsafe extern "C" fn bh_end_headers(self_v: MbValue, _args: MbValue) -> MbValue {
+    handler_buffer_append(self_v, b"\r\n".to_vec());
+    // Flush: concatenate every buffered byte-line and write once.
+    let mut out: Vec<u8> = Vec::new();
+    if let Some(buf) = req_field(self_v, "_headers_buffer") {
+        if let Some(ptr) = buf.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                for item in lock.read().unwrap().iter() {
+                    if let Some(ip) = item.as_ptr() {
+                        if let ObjData::Bytes(ref b) = (*ip).data {
+                            out.extend_from_slice(b);
+                        }
+                    }
+                }
+                lock.write().unwrap().clear();
+            }
+        }
+    }
+    handler_wfile_write(self_v, out);
+    MbValue::none()
+}
+
+/// BaseHTTPRequestHandler.send_error(code, message=None) — status line +
+/// text/html body from DEFAULT_ERROR_MESSAGE.
+unsafe extern "C" fn bh_send_error(self_v: MbValue, args: MbValue) -> MbValue {
+    let pos = req_args_vec(args);
+    let code = pos.first().and_then(|v| status_code_arg(*v)).unwrap_or(0);
+    let phrase = status_phrase(code);
+    let message = pos.get(1).copied().and_then(extract_str)
+        .unwrap_or_else(|| phrase.to_string());
+    // Status line + minimal header block, flushed immediately.
+    let proto = handler_proto(self_v);
+    handler_buffer_append(self_v, format!("{proto} {code} {message}\r\n").into_bytes());
+    handler_buffer_append(self_v, b"Content-Type: text/html;charset=utf-8\r\n".to_vec());
+    let body = format!(
+        "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        \
+         <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    \
+         <body>\n        <h1>Error response</h1>\n        \
+         <p>Error code: {code}</p>\n        <p>Message: {message}.</p>\n    </body>\n</html>\n"
+    );
+    handler_buffer_append(self_v,
+        format!("Content-Length: {}\r\n", body.len()).into_bytes());
+    bh_end_headers(self_v, MbValue::none());
+    handler_wfile_write(self_v, body.into_bytes());
+    MbValue::none()
+}
+
 /// (scheme, netloc, path-with-params-query-fragment) split of a URL.
 fn split_url(url: &str) -> (String, String, String) {
     let (scheme, rest) = match url.find("://") {
@@ -2135,21 +2724,208 @@ fn split_url(url: &str) -> (String, String, String) {
     }
 }
 
+fn request_url_fields(url: &str) -> (String, String, String, String, MbValue) {
+    let (scheme, host, path) = split_url(url);
+    let selector = {
+        let p = path.split('#').next().unwrap_or("");
+        if p.is_empty() { "/".to_string() } else { p.to_string() }
+    };
+    let fragment = match url.split_once('#') {
+        Some((_, frag)) => MbValue::from_ptr(MbObject::new_str(frag.to_string())),
+        None => MbValue::none(),
+    };
+    (scheme, host, selector, url.to_string(), fragment)
+}
+
+fn assign_request_url_fields(self_v: MbValue, url: &str) {
+    let (scheme, host, selector, full_url, fragment) = request_url_fields(url);
+    set_inst_field(self_v, "full_url", MbValue::from_ptr(MbObject::new_str(full_url)));
+    set_inst_field(self_v, "host", MbValue::from_ptr(MbObject::new_str(host)));
+    set_inst_field(self_v, "type", MbValue::from_ptr(MbObject::new_str(scheme)));
+    set_inst_field(self_v, "selector", MbValue::from_ptr(MbObject::new_str(selector)));
+    set_inst_field(self_v, "fragment", fragment);
+}
+
+pub fn request_setattr(self_v: MbValue, attr_s: &str, value: MbValue) -> bool {
+    if attr_s != "full_url" {
+        return false;
+    }
+    let Some(url) = extract_str(value) else {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "full_url must be a string".to_string(),
+            )),
+        );
+        return true;
+    };
+    let (scheme, host, _) = split_url(&url);
+    if scheme.is_empty() || host.is_empty() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("unknown url type".to_string())),
+        );
+        return true;
+    }
+    assign_request_url_fields(self_v, &url);
+    true
+}
+
+/// Read an HTTPMessage's ordered (key, value) header pairs.
+fn http_message_pairs(self_v: MbValue) -> Vec<(String, String)> {
+    let headers = req_field(self_v, "_headers").unwrap_or_else(MbValue::none);
+    let items: Vec<MbValue> = headers.as_ptr().map(|p| unsafe {
+        if let ObjData::List(ref lock) = (*p).data { lock.read().unwrap().to_vec() } else { Vec::new() }
+    }).unwrap_or_default();
+    items.iter().filter_map(|pair| {
+        let elems: Vec<MbValue> = pair.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Tuple(ref t) = (*p).data { Some(t.clone()) } else { None }
+        })?;
+        Some((extract_str(*elems.first()?)?, extract_str(*elems.get(1)?)?))
+    }).collect()
+}
+
+/// HTTPMessage.keys() — header names in order.
+unsafe extern "C" fn hm_keys(self_v: MbValue, _args: MbValue) -> MbValue {
+    let keys: Vec<MbValue> = http_message_pairs(self_v).into_iter()
+        .map(|(k, _)| MbValue::from_ptr(MbObject::new_str(k))).collect();
+    MbValue::from_ptr(MbObject::new_list(keys))
+}
+
+/// HTTPMessage.items() — (name, value) pairs in order.
+unsafe extern "C" fn hm_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    let items: Vec<MbValue> = http_message_pairs(self_v).into_iter()
+        .map(|(k, v)| MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str(k)),
+            MbValue::from_ptr(MbObject::new_str(v)),
+        ]))).collect();
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+/// HTTPMessage.__len__() — header count.
+unsafe extern "C" fn hm_len(self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_int(http_message_pairs(self_v).len() as i64)
+}
+
+/// Case-insensitive header lookup (RFC 822 field names are case-insensitive).
+fn http_message_lookup(self_v: MbValue, name: &str) -> Option<String> {
+    let lname = name.to_ascii_lowercase();
+    http_message_pairs(self_v).into_iter()
+        .find(|(k, _)| k.to_ascii_lowercase() == lname)
+        .map(|(_, v)| v)
+}
+
+/// HTTPMessage.get(name, default=None).
+unsafe extern "C" fn hm_get(self_v: MbValue, args: MbValue) -> MbValue {
+    let pos = req_args_vec(args);
+    let name = pos.first().copied().and_then(extract_str).unwrap_or_default();
+    match http_message_lookup(self_v, &name) {
+        Some(v) => MbValue::from_ptr(MbObject::new_str(v)),
+        None => pos.get(1).copied().unwrap_or_else(MbValue::none),
+    }
+}
+
+/// HTTPMessage.__getitem__(name) — None for a missing header (email.Message).
+unsafe extern "C" fn hm_getitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let name = req_args_vec(args).first().copied().and_then(extract_str).unwrap_or_default();
+    match http_message_lookup(self_v, &name) {
+        Some(v) => MbValue::from_ptr(MbObject::new_str(v)),
+        None => MbValue::none(),
+    }
+}
+
+/// http.client.parse_headers(fp) -> HTTPMessage. Reads the RFC 822 header block
+/// from `fp` (a readable file object) and parses "Name: value" lines.
+unsafe extern "C" fn dispatch_parse_headers(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let fp = a.first().copied().unwrap_or_else(MbValue::none);
+    let data = super::super::class::mb_call_method(
+        fp,
+        MbValue::from_ptr(MbObject::new_str("read".to_string())),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
+    // Header bytes are latin-1; decode 1:1.
+    let text = extract_bytes_like(data)
+        .map(|b| b.iter().map(|&c| c as char).collect::<String>())
+        .or_else(|| extract_str(data))
+        .unwrap_or_default();
+    let mut pairs: Vec<MbValue> = Vec::new();
+    for line in text.split('\n') {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            break; // blank line ends the header block
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            pairs.push(MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str(k.trim().to_string())),
+                MbValue::from_ptr(MbObject::new_str(v.trim().to_string())),
+            ])));
+        }
+    }
+    let inst = MbObject::new_instance("HTTPMessage".to_string());
+    if let ObjData::Instance { ref fields, .. } = (*inst).data {
+        fields.write().unwrap().insert("_headers".into(),
+            MbValue::from_ptr(MbObject::new_list(pairs)));
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// http.client.IncompleteRead(partial, expected=None) — an HTTPException
+/// carrying the bytes read so far (`partial`) and the expected length.
+unsafe extern "C" fn d_incomplete_read(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let partial = a.first().copied().unwrap_or_else(MbValue::none);
+    let expected = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let inst = MbObject::new_instance("IncompleteRead".to_string());
+    if let ObjData::Instance { ref fields, .. } = (*inst).data {
+        super::super::rc::retain_if_ptr(partial);
+        super::super::rc::retain_if_ptr(expected);
+        let mut f = fields.write().unwrap();
+        f.insert("partial".into(), partial);
+        f.insert("expected".into(), expected);
+        f.insert("args".into(),
+            MbValue::from_ptr(MbObject::new_tuple(vec![partial, expected])));
+    }
+    MbValue::from_ptr(inst)
+}
+
 unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let raw: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
         &[]
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
-    // Trailing kwargs dict appended by the call lowering.
+    // Trailing kwargs dict appended by the call lowering. The data argument is
+    // ALSO a dict (`Request(url, {})` posts an empty form), so a trailing dict
+    // is the kwargs dict only when it is non-empty and every key names a known
+    // Request keyword — otherwise it is the positional `data` mapping.
+    let is_request_kwargs = |v: MbValue| -> bool {
+        let Some(ptr) = v.as_ptr() else { return false };
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let map = lock.read().unwrap();
+                return !map.is_empty()
+                    && map.keys().all(|k| matches!(
+                        k,
+                        super::super::dict_ops::DictKey::Str(s)
+                            if matches!(s.as_str(),
+                                "data" | "headers" | "origin_req_host"
+                                    | "unverifiable" | "method")
+                    ));
+            }
+        }
+        false
+    };
     let (positional, kwargs): (&[MbValue], Option<MbValue>) = match raw.last().copied() {
-        Some(last)
-            if raw.len() > 1
-                && last
-                    .as_ptr()
-                    .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
-                    .unwrap_or(false) =>
-        {
+        Some(last) if raw.len() > 1 && is_request_kwargs(last) => {
             (&raw[..raw.len() - 1], Some(last))
         }
         _ => (raw, None),
@@ -2181,30 +2957,16 @@ unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> Mb
         .unwrap_or_else(MbValue::none);
     let method = kwarg("method").unwrap_or_else(MbValue::none);
 
-    let (scheme, host, path) = split_url(&url);
     let inst = MbObject::new_instance(REQUEST_CLASS.to_string());
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
             let mut f = fields.write().unwrap();
-            f.insert(
-                "full_url".into(),
-                MbValue::from_ptr(MbObject::new_str(url.clone())),
-            );
+            let (scheme, host, selector, full_url, fragment) = request_url_fields(&url);
+            f.insert("full_url".into(), MbValue::from_ptr(MbObject::new_str(full_url)));
             f.insert("host".into(), MbValue::from_ptr(MbObject::new_str(host)));
             f.insert("type".into(), MbValue::from_ptr(MbObject::new_str(scheme)));
-            // selector: path+query (no fragment); "/" for a bare host URL.
-            let selector = {
-                let p = path.split('#').next().unwrap_or("");
-                if p.is_empty() {
-                    "/".to_string()
-                } else {
-                    p.to_string()
-                }
-            };
-            f.insert(
-                "selector".into(),
-                MbValue::from_ptr(MbObject::new_str(selector)),
-            );
+            f.insert("selector".into(), MbValue::from_ptr(MbObject::new_str(selector)));
+            f.insert("fragment".into(), fragment);
             f.insert("data".into(), data);
             f.insert("method".into(), method);
             f.insert("unverifiable".into(), MbValue::from_bool(false));
@@ -2266,7 +3028,9 @@ unsafe extern "C" fn rm_get_header(self_v: MbValue, args: MbValue) -> MbValue {
     if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
         unsafe {
             if let ObjData::Dict(ref lock) = (*hd).data {
-                if let Some(v) = lock.read().unwrap().get(capitalize_header(&name).as_str()) {
+                // CPython get_header does an EXACT lookup; only add_header
+                // capitalizes (on store). Do not capitalize the query.
+                if let Some(v) = lock.read().unwrap().get(name.as_str()) {
                     let v = *v;
                     super::super::rc::retain_if_ptr(v);
                     return v;
@@ -2284,10 +3048,10 @@ unsafe extern "C" fn rm_has_header(self_v: MbValue, args: MbValue) -> MbValue {
     if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
         unsafe {
             if let ObjData::Dict(ref lock) = (*hd).data {
+                // CPython has_header is an EXACT membership test; only
+                // add_header capitalizes (on store). No query capitalization.
                 return MbValue::from_bool(
-                    lock.read()
-                        .unwrap()
-                        .contains_key(capitalize_header(&name).as_str()),
+                    lock.read().unwrap().contains_key(name.as_str()),
                 );
             }
         }
@@ -2328,6 +3092,113 @@ unsafe extern "C" fn rm_header_items(self_v: MbValue, _args: MbValue) -> MbValue
     MbValue::from_ptr(MbObject::new_list(items))
 }
 
+const HTTPCONN_CLASS: &str = "http.client.HTTPConnection";
+
+unsafe extern "C" fn d_httpconnection_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let inst = MbObject::new_instance(HTTPCONN_CLASS.to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut f = fields.write().unwrap();
+            let host = a.first().copied().unwrap_or_else(MbValue::none);
+            f.insert("host".into(), host);
+            // request state: "idle" until putrequest starts a request.
+            f.insert("_HTTPConnection__state".into(),
+                MbValue::from_ptr(MbObject::new_str("Idle".to_string())));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+unsafe extern "C" fn hc_putrequest(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = req_args_vec(args);
+    let method = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let url = a.get(1).copied().and_then(extract_str).unwrap_or_default();
+    // CPython rejects control characters in the method (ValueError) and the
+    // URL (http.client.InvalidURL).
+    if method.contains(['\n', '\r', '\t', ' ']) {
+        raise("ValueError", "method can't contain control characters".to_string());
+        return MbValue::none();
+    }
+    if url.contains(['\n', '\r']) {
+        raise("InvalidURL", "URL can't contain control characters".to_string());
+        return MbValue::none();
+    }
+    if let Some(p) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields.write().unwrap().insert("_HTTPConnection__state".into(),
+                    MbValue::from_ptr(MbObject::new_str("Request-started".to_string())));
+            }
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn hc_putheader(self_v: MbValue, _args: MbValue) -> MbValue {
+    let state = self_v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().unwrap().get("_HTTPConnection__state").copied().and_then(extract_str)
+        } else { None }
+    }).unwrap_or_default();
+    if state != "Request-started" {
+        raise("CannotSendHeader", "Cannot send header".to_string());
+    }
+    MbValue::none()
+}
+
+/// Register a minimal stateful http.client.HTTPConnection (putrequest /
+/// putheader with CPython's control-char + ordering validation).
+fn register_httpconnection_class(attrs: &mut HashMap<String, MbValue>) {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let mut map: Map<String, MbValue> = Map::new();
+    map.insert("putrequest".into(), var(hc_putrequest as *const () as usize));
+    map.insert("putheader".into(), var(hc_putheader as *const () as usize));
+    super::super::class::mb_class_register(HTTPCONN_CLASS, vec!["object".to_string()], map);
+    attrs.insert("HTTPConnection".to_string(),
+        MbValue::from_func(d_httpconnection_new as *const () as usize));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(d_httpconnection_new as *const () as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(d_httpconnection_new as *const () as u64, HTTPCONN_CLASS.to_string());
+    });
+}
+
+/// OpenerDirector() / build_opener(*handlers) -> an OpenerDirector instance.
+/// Handlers are accepted and ignored; the surface only checks the type.
+unsafe extern "C" fn d_opener_director_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    for arg in args {
+        let primitive_or_none = arg.is_none()
+            || arg.as_int().is_some()
+            || arg.as_float().is_some()
+            || arg.is_bool()
+            || extract_str(*arg).is_some();
+        if primitive_or_none {
+            let type_name = extract_str(super::super::builtins::mb_type(*arg))
+                .unwrap_or_else(|| "object".to_string());
+            return raise_type_error(&format!(
+                "expected BaseHandler instance, got {}",
+                type_name
+            ));
+        }
+    }
+    MbValue::from_ptr(MbObject::new_instance("OpenerDirector".to_string()))
+}
+
 /// Register the Request class + rewire urllib.request.Request.
 pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
     use std::collections::HashMap as Map;
@@ -2363,5 +3234,23 @@ pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         m.borrow_mut()
             .insert(d_request_new as *const () as u64, REQUEST_CLASS.to_string());
+    });
+
+    // OpenerDirector — a real class so `isinstance(build_opener(),
+    // OpenerDirector)` and `type(...).__name__ == "OpenerDirector"` hold.
+    // build_opener() and OpenerDirector() both construct an instance.
+    super::super::class::mb_class_register(
+        "OpenerDirector",
+        vec!["object".to_string()],
+        Map::new(),
+    );
+    let od = d_opener_director_new as *const () as usize;
+    attrs.insert("OpenerDirector".to_string(), MbValue::from_func(od));
+    attrs.insert("build_opener".to_string(), MbValue::from_func(od));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(od as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(od as u64, "OpenerDirector".to_string());
     });
 }

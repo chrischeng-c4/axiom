@@ -49,6 +49,8 @@ const TUPLE: u8 = b't';
 const EMPTY_SET: u8 = 0x8f;
 const ADDITEMS: u8 = 0x90;
 const FROZENSET: u8 = 0x91;
+const GLOBAL: u8 = b'c';
+const REDUCE: u8 = b'R';
 const BINPUT: u8 = b'q'; // 1-byte memo put
 const LONG_BINPUT: u8 = b'r'; // 4-byte memo put
 const BINGET: u8 = b'h'; // 1-byte memo get
@@ -184,7 +186,7 @@ extern "C" fn pickler_dump_method(this: MbValue, obj: MbValue) -> MbValue {
 extern "C" fn unpickler_load_method(this: MbValue) -> MbValue {
     let file = instance_field(this, "_file");
     let data = file_read_remaining(file);
-    decode_bytes(&data)
+    decode_bytes_with_unpickler(&data, Some(this))
 }
 
 extern "C" fn pickler_init(this: MbValue, file: MbValue) -> MbValue {
@@ -195,6 +197,12 @@ extern "C" fn pickler_init(this: MbValue, file: MbValue) -> MbValue {
 extern "C" fn unpickler_init(this: MbValue, file: MbValue) -> MbValue {
     set_instance_field(this, "_file", file);
     MbValue::none()
+}
+
+extern "C" fn unpickler_find_class(_this: MbValue, module: MbValue, name: MbValue) -> MbValue {
+    let module = extract_str(module).unwrap_or_default();
+    let name = extract_str(name).unwrap_or_default();
+    default_find_class(&module, &name)
 }
 
 /// Register the pickle module.
@@ -371,6 +379,10 @@ fn register_streaming_classes() {
         "load".to_string(),
         MbValue::from_func(unpickler_load_method as *const () as usize),
     );
+    unpickler_methods.insert(
+        "find_class".to_string(),
+        MbValue::from_func(unpickler_find_class as *const () as usize),
+    );
     super::super::class::mb_class_register(
         "Unpickler",
         vec!["object".to_string()],
@@ -426,6 +438,13 @@ fn set_instance_field(inst: MbValue, name: &str, val: MbValue) {
 fn raise_value_error(msg: &str) {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("ValueError".into())),
+        MbValue::from_ptr(MbObject::new_str(msg.into())),
+    );
+}
+
+fn raise_type_error(msg: &str) {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".into())),
         MbValue::from_ptr(MbObject::new_str(msg.into())),
     );
 }
@@ -578,6 +597,27 @@ impl Encoder {
         self.out.extend_from_slice(b);
     }
 
+    fn emit_global(&mut self, module: &str, name: &str) {
+        self.out.push(GLOBAL);
+        self.out.extend_from_slice(module.as_bytes());
+        self.out.push(b'\n');
+        self.out.extend_from_slice(name.as_bytes());
+        self.out.push(b'\n');
+    }
+
+    fn emit_args_tuple(&mut self, args: &[MbValue]) -> Result<(), ()> {
+        if args.is_empty() {
+            self.out.push(EMPTY_TUPLE);
+        } else {
+            self.out.push(MARK);
+            for arg in args {
+                self.encode(*arg)?;
+            }
+            self.out.push(TUPLE);
+        }
+        Ok(())
+    }
+
     fn emit_int(&mut self, n: i64) {
         if n >= i32::MIN as i64 && n <= i32::MAX as i64 {
             self.out.push(BININT);
@@ -615,6 +655,22 @@ impl Encoder {
         if let Some(b) = val.as_bool() {
             self.out.push(if b { NEWTRUE } else { NEWFALSE });
             return Ok(());
+        }
+        // Lambdas / local functions and generators cannot be pickled (their
+        // NaN-boxed handle is an int, which would otherwise serialize as a
+        // bogus integer). CPython raises PicklingError / AttributeError.
+        {
+            let is_lambda = extract_str(super::super::closure::mb_func_get_name(val)).as_deref()
+                == Some("<lambda>");
+            if is_lambda
+                || super::super::generator::is_known_generator(val)
+                || super::super::async_rt::is_known_coroutine(val)
+                || super::super::async_rt::is_coroutine_wrapper(val)
+            {
+                raise_pickling_error("Can't pickle local object, generator, or coroutine");
+                self.failed = true;
+                return Err(());
+            }
         }
         if let Some(i) = val.as_int() {
             // random.Random handles are NaN-boxed ints; pickling the raw id
@@ -802,6 +858,23 @@ impl Encoder {
         class_name: &str,
         fields: &crate::runtime::rc::MbRwLock<FxHashMap<String, MbValue>>,
     ) -> Result<(), ()> {
+        if class_name == "socket.socket" {
+            raise_type_error("cannot pickle 'socket.socket' object");
+            self.failed = true;
+            return Err(());
+        }
+
+        if super::enum_class::is_enum_member(val) {
+            if let Some(raw) = super::enum_class::int_member_value(val) {
+                self.out.push(OP_INST_REDUCE);
+                self.emit_unicode(class_name);
+                self.out.push(MARK);
+                self.encode(raw)?;
+                self.out.push(OP_BUILD);
+                return Ok(());
+            }
+        }
+
         // __reduce__ path.
         let has_reduce = !super::super::class::lookup_method(class_name, "__reduce__").is_none();
         if has_reduce {
@@ -811,7 +884,7 @@ impl Encoder {
                 MbValue::from_ptr(MbObject::new_list(vec![])),
             );
             if let Some(rptr) = reduced.as_ptr() {
-                let parts: Option<(String, Vec<MbValue>)> = unsafe {
+                let parts: Option<(MbValue, String, Vec<MbValue>)> = unsafe {
                     if let ObjData::Tuple(ref parts) = (*rptr).data {
                         if parts.len() >= 2 {
                             let target =
@@ -823,7 +896,7 @@ impl Encoder {
                                 }
                                 _ => vec![parts[1]],
                             };
-                            Some((target, args))
+                            Some((parts[0], target, args))
                         } else {
                             None
                         }
@@ -831,7 +904,13 @@ impl Encoder {
                         None
                     }
                 };
-                if let Some((target, args)) = parts {
+                if let Some((target_value, target, args)) = parts {
+                    if let Some((module, name)) = global_ref_for_callable(target_value) {
+                        self.emit_global(&module, &name);
+                        self.emit_args_tuple(&args)?;
+                        self.out.push(REDUCE);
+                        return Ok(());
+                    }
                     self.out.push(OP_INST_REDUCE);
                     self.emit_unicode(&target);
                     self.out.push(MARK);
@@ -894,6 +973,7 @@ fn encode_value(val: MbValue) -> Result<Vec<u8>, ()> {
 struct Decoder<'a> {
     data: &'a [u8],
     pos: usize,
+    unpickler: Option<MbValue>,
     /// Stack of values being assembled.
     stack: Vec<MbValue>,
     /// Mark stack — indices into `stack` where a MARK was placed.
@@ -907,10 +987,11 @@ struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
-    fn new(data: &'a [u8]) -> Self {
+    fn new(data: &'a [u8], unpickler: Option<MbValue>) -> Self {
         Decoder {
             data,
             pos: 0,
+            unpickler,
             stack: Vec::new(),
             marks: Vec::new(),
             pending_inst: Vec::new(),
@@ -1166,6 +1247,32 @@ impl<'a> Decoder<'a> {
                     self.stack
                         .push(MbValue::from_ptr(MbObject::new_frozenset(uniq)));
                 }
+                GLOBAL => {
+                    let Some(module) = self.read_line() else {
+                        self.fail();
+                        return MbValue::none();
+                    };
+                    let Some(name) = self.read_line() else {
+                        self.fail();
+                        return MbValue::none();
+                    };
+                    let value = self.find_class(&module, &name);
+                    if self.error {
+                        return MbValue::none();
+                    }
+                    self.stack.push(value);
+                }
+                REDUCE => {
+                    let args = self.pop();
+                    let func = self.pop();
+                    let arg_list = tuple_or_list_to_list(args);
+                    let value = super::super::builtins::mb_call_spread(func, arg_list);
+                    if super::super::exception::current_exception_type().is_some() {
+                        self.error = true;
+                        return MbValue::none();
+                    }
+                    self.stack.push(value);
+                }
                 BINPUT => {
                     let idx = match self.read_u8() {
                         Some(i) => i as u32,
@@ -1330,6 +1437,36 @@ impl<'a> Decoder<'a> {
         Some(String::from_utf8_lossy(s).into_owned())
     }
 
+    fn read_line(&mut self) -> Option<String> {
+        let start = self.pos;
+        while self.pos < self.data.len() && self.data[self.pos] != b'\n' {
+            self.pos += 1;
+        }
+        if self.pos >= self.data.len() {
+            return None;
+        }
+        let line = &self.data[start..self.pos];
+        self.pos += 1;
+        Some(String::from_utf8_lossy(line).into_owned())
+    }
+
+    fn find_class(&mut self, module: &str, name: &str) -> MbValue {
+        if let Some(unpickler) = self.unpickler {
+            let args = MbValue::from_ptr(MbObject::new_list(vec![new_str(module), new_str(name)]));
+            let value = super::super::class::mb_call_method(
+                unpickler,
+                new_str("find_class"),
+                args,
+            );
+            if super::super::exception::current_exception_type().is_some() {
+                self.error = true;
+                return MbValue::none();
+            }
+            return value;
+        }
+        default_find_class(module, name)
+    }
+
     /// OP_BUILD: pop the items pushed since the last MARK (which followed an
     /// OP_INST_* opcode) and assemble the pending instance. For the reduce
     /// form the items are constructor args; for the default form they are
@@ -1381,11 +1518,15 @@ impl<'a> Decoder<'a> {
 }
 
 fn decode_bytes(data: &[u8]) -> MbValue {
+    decode_bytes_with_unpickler(data, None)
+}
+
+fn decode_bytes_with_unpickler(data: &[u8], unpickler: Option<MbValue>) -> MbValue {
     if data.is_empty() {
         raise_unpickling_error("pickle data was truncated");
         return MbValue::none();
     }
-    let mut dec = Decoder::new(data);
+    let mut dec = Decoder::new(data, unpickler);
     dec.run()
 }
 
@@ -1397,6 +1538,61 @@ fn extract_str(val: MbValue) -> Option<String> {
             None
         }
     })
+}
+
+fn new_str(s: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.to_string()))
+}
+
+fn tuple_or_list_to_list(value: MbValue) -> MbValue {
+    let items = value
+        .as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(items) => items.clone(),
+                ObjData::List(lock) => lock.read().unwrap().iter().copied().collect(),
+                _ => vec![value],
+            }
+        })
+        .unwrap_or_else(|| vec![value]);
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+fn global_ref_for_callable(value: MbValue) -> Option<(String, String)> {
+    let name = extract_str(super::super::closure::mb_func_get_name(value))?;
+    let module = extract_str(super::super::closure::mb_func_get_module(value))
+        .unwrap_or_else(|| "builtins".to_string());
+    if module.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some((module, name))
+}
+
+fn default_find_class(module: &str, name: &str) -> MbValue {
+    let module_name = if module == "__builtin__" {
+        "builtins"
+    } else {
+        module
+    };
+    let module_value = super::super::module::mb_import(new_str(module_name));
+    if super::super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+    if let Some(ptr) = module_value.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                if let Some(value) = lock.read().unwrap().get(name).copied() {
+                    super::super::rc::retain_if_ptr(value);
+                    return value;
+                }
+            }
+        }
+    }
+    super::super::exception::mb_raise(
+        new_str("AttributeError"),
+        new_str(&format!("Can't get attribute '{name}' on {module_name}")),
+    );
+    MbValue::none()
 }
 
 // ── Public entry points (symbol-table bound: mb_pickle_dumps/loads) ──

@@ -29,19 +29,49 @@ impl<'a> Parser<'a> {
     /// Type annotations are optional — omitted params default to Any.
     pub(crate) fn parse_lambda(&mut self) -> crate::error::Result<Spanned<Expr>> {
         let (start, _) = self.advance(); // consume `lambda`
-        let mut params = Vec::new();
+        let mut params: Vec<Param> = Vec::new();
 
         // No-param lambda: `lambda: body`
+        // PEP 570/3102 markers are valid in lambda parameter lists too:
+        // a `/` retroactively marks prior params positional-only, and a bare
+        // `*` (or `*args`) makes the following params keyword-only.
+        let mut seen_star = false;
         if self.peek_kind() != Some(TokenKind::Colon) {
             loop {
                 let p_start = self.peek().map(|t| t.start).unwrap_or(0);
 
-                // Handle **kwargs
+                // `/` positional-only separator (`lambda a, /, b: ...`).
+                if self.peek_kind() == Some(TokenKind::Slash) {
+                    self.advance();
+                    for p in params.iter_mut() {
+                        if p.kind == ParamKind::Regular {
+                            p.pos_only = true;
+                        }
+                    }
+                    if self.peek_kind() == Some(TokenKind::Comma) {
+                        self.advance();
+                        continue;
+                    }
+                    break;
+                }
+
+                // Handle **kwargs / *args / bare `*`
                 let kind = if self.peek_kind() == Some(TokenKind::DoubleStar) {
                     self.advance();
                     ParamKind::DoubleStar
                 } else if self.peek_kind() == Some(TokenKind::Star) {
                     self.advance();
+                    // bare `*` (keyword-only separator, `lambda a, *, c: ...`)
+                    // vs `*args`: a name must follow for the latter.
+                    if !self.peek_kind().as_ref().map_or(false, Self::is_name_token) {
+                        seen_star = true;
+                        if self.peek_kind() == Some(TokenKind::Comma) {
+                            self.advance();
+                            continue;
+                        }
+                        break;
+                    }
+                    seen_star = true;
                     ParamKind::Star
                 } else {
                     ParamKind::Regular
@@ -95,7 +125,7 @@ impl<'a> Parser<'a> {
                     default,
                     kind,
                     pos_only: false,
-                    kw_only: false,
+                    kw_only: seen_star && kind == ParamKind::Regular,
                     span: self.span_from(p_start),
                 });
 
@@ -108,7 +138,24 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(TokenKind::Colon)?;
-        let body = self.parse_expr()?;
+        if self
+            .peek_kind()
+            .as_ref()
+            .map_or(false, Self::is_name_token)
+            && self.peek_at(1).is_some_and(|k| *k == TokenKind::ColonEq)
+        {
+            return Err(crate::error::MambaError::syntax(
+                self.peek()
+                    .map(|t| Span::new(self.file_id, t.start, t.end))
+                    .unwrap_or_else(|| self.span_from(start)),
+                "invalid syntax",
+            ));
+        }
+        let was_in_class_body = self.in_class_body;
+        self.in_class_body = false;
+        let body = self.parse_expr();
+        self.in_class_body = was_in_class_body;
+        let body = body?;
         let span = Span::new(self.file_id, start, body.span.end);
         Ok(Spanned::new(
             Expr::Lambda {
@@ -161,9 +208,10 @@ impl<'a> Parser<'a> {
         let first = self.parse_expr()?;
 
         // Generator expression: (expr for ...)
-        if self.peek_kind() == Some(TokenKind::For) {
+        if self.at_comprehension_clause_start() {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RParen)?;
+            self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
             return Ok(Spanned::new(
                 Expr::GeneratorExpr {
                     element: Box::new(first),
@@ -204,9 +252,10 @@ impl<'a> Parser<'a> {
         let first = self.parse_expr()?;
 
         // List comprehension: [expr for ...]
-        if self.peek_kind() == Some(TokenKind::For) {
+        if self.at_comprehension_clause_start() {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RBracket)?;
+            self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
             return Ok(Spanned::new(
                 Expr::ListComp {
                     element: Box::new(first),
@@ -273,9 +322,10 @@ impl<'a> Parser<'a> {
             let value = self.parse_expr()?;
 
             // Dict comprehension: {k: v for ...}
-            if self.peek_kind() == Some(TokenKind::For) {
+            if self.at_comprehension_clause_start() {
                 let generators = self.parse_comprehension_clauses()?;
                 self.expect(TokenKind::RBrace)?;
+                self.validate_comprehension_assignment_exprs(&[&first, &value], &generators, self.span_from(start))?;
                 return Ok(Spanned::new(
                     Expr::DictComp {
                         key: Box::new(first),
@@ -309,9 +359,10 @@ impl<'a> Parser<'a> {
         }
 
         // Set comprehension: {expr for ...}
-        if self.peek_kind() == Some(TokenKind::For) {
+        if self.at_comprehension_clause_start() {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RBrace)?;
+            self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
             return Ok(Spanned::new(
                 Expr::SetComp {
                     element: Box::new(first),
@@ -334,6 +385,12 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(Expr::SetLit(elems), self.span_from(start)))
     }
 
+    pub(crate) fn at_comprehension_clause_start(&self) -> bool {
+        self.peek_kind() == Some(TokenKind::For)
+            || (self.peek_kind() == Some(TokenKind::Async)
+                && self.peek_at(1).is_some_and(|kind| *kind == TokenKind::For))
+    }
+
     /// Parse comprehension clauses: `for x in iter if cond ...`
     ///
     /// Supports both single-variable (`for x in …`) and tuple-target
@@ -352,20 +409,8 @@ impl<'a> Parser<'a> {
             };
             self.expect(TokenKind::For)?;
 
-            // Parse one or more comma-separated target names (tuple target).
-            let mut targets = Vec::new();
-            let (ts, te) = self.expect_name()?;
-            targets.push(self.text_at(ts, te).to_string());
-            while self.peek_kind() == Some(TokenKind::Comma) {
-                self.advance(); // consume ','
-                                // Break if we've reached `in` (trailing comma not valid here,
-                                // but be lenient to avoid a confusing error).
-                if self.peek_kind() == Some(TokenKind::In) {
-                    break;
-                }
-                let (ts, te) = self.expect_name()?;
-                targets.push(self.text_at(ts, te).to_string());
-            }
+            let (targets, unpack_target, target_reads_before_bind) =
+                self.parse_comprehension_targets()?;
 
             self.expect(TokenKind::In)?;
             let iter = self.parse_expr_bp(0)?;
@@ -376,6 +421,8 @@ impl<'a> Parser<'a> {
             }
             generators.push(Comprehension {
                 targets,
+                unpack_target,
+                target_reads_before_bind,
                 iter,
                 conditions,
                 is_async,
@@ -383,6 +430,360 @@ impl<'a> Parser<'a> {
         }
         Ok(generators)
     }
+
+    fn parse_comprehension_targets(
+        &mut self,
+    ) -> crate::error::Result<(Vec<String>, bool, Vec<String>)> {
+        let mut targets = Vec::new();
+        let mut target_reads = Vec::new();
+        let unpack_target =
+            self.parse_comprehension_target_list_until(TokenKind::In, &mut targets, &mut target_reads)?;
+        if targets.is_empty() {
+            let span = self
+                .peek()
+                .map(|token| Span::new(self.file_id, token.start, token.end))
+                .unwrap_or_else(Span::dummy);
+            return Err(crate::error::MambaError::syntax(
+                span,
+                "expected comprehension target",
+            ));
+        }
+        let target_reads_before_bind = target_reads
+            .into_iter()
+            .filter(|name| targets.iter().any(|target| target == name))
+            .collect();
+        Ok((targets, unpack_target, target_reads_before_bind))
+    }
+
+    fn parse_comprehension_target_list_until(
+        &mut self,
+        stop: TokenKind,
+        targets: &mut Vec<String>,
+        target_reads: &mut Vec<String>,
+    ) -> crate::error::Result<bool> {
+        let mut had_comma = false;
+        while self.peek_kind() != Some(stop.clone()) {
+            had_comma |= self.parse_comprehension_target_atom(&stop, targets, target_reads)?;
+            if self.peek_kind() != Some(TokenKind::Comma) {
+                break;
+            }
+            had_comma = true;
+            self.advance();
+            if self.peek_kind() == Some(stop.clone()) {
+                break;
+            }
+        }
+        Ok(had_comma)
+    }
+
+    fn parse_comprehension_target_atom(
+        &mut self,
+        stop: &TokenKind,
+        targets: &mut Vec<String>,
+        target_reads: &mut Vec<String>,
+    ) -> crate::error::Result<bool> {
+        let Some(kind) = self.peek_kind() else {
+            return Err(crate::error::MambaError::syntax(
+                Span::dummy(),
+                "unexpected end of comprehension target",
+            ));
+        };
+
+        match kind {
+            TokenKind::Star => {
+                self.advance();
+                self.parse_comprehension_target_atom(stop, targets, target_reads)?;
+                Ok(true)
+            }
+            TokenKind::LParen => {
+                self.advance();
+                let had_comma =
+                    self.parse_comprehension_target_list_until(
+                        TokenKind::RParen,
+                        targets,
+                        target_reads,
+                    )?;
+                self.expect(TokenKind::RParen)?;
+                Ok(had_comma)
+            }
+            TokenKind::LBracket => {
+                self.advance();
+                self.parse_comprehension_target_list_until(
+                    TokenKind::RBracket,
+                    targets,
+                    target_reads,
+                )?;
+                self.expect(TokenKind::RBracket)?;
+                Ok(true)
+            }
+            ref name_kind if Self::is_name_token(name_kind) => {
+                let (ts, te) = self.expect_name()?;
+                let name = self.text_at(ts, te).to_string();
+                let mut binds_name = true;
+                loop {
+                    match self.peek_kind() {
+                        Some(TokenKind::Dot) => {
+                            binds_name = false;
+                            self.advance();
+                            self.expect_name()?;
+                        }
+                        Some(TokenKind::LBracket) => {
+                            binds_name = false;
+                            self.consume_balanced_target_trailer(
+                                TokenKind::LBracket,
+                                TokenKind::RBracket,
+                            )?;
+                        }
+                        Some(TokenKind::LParen) => {
+                            binds_name = false;
+                            self.consume_balanced_target_trailer(
+                                TokenKind::LParen,
+                                TokenKind::RParen,
+                            )?;
+                        }
+                        _ => break,
+                    }
+                }
+                if binds_name {
+                    targets.push(name);
+                } else {
+                    target_reads.push(name);
+                }
+                Ok(false)
+            }
+            _ if self.peek_kind() == Some(stop.clone()) => Ok(false),
+            _ => {
+                let span = self
+                    .peek()
+                    .map(|token| Span::new(self.file_id, token.start, token.end))
+                    .unwrap_or_else(Span::dummy);
+                Err(crate::error::MambaError::syntax(
+                    span,
+                    format!("expected identifier, got {kind}"),
+                ))
+            }
+        }
+    }
+
+    fn consume_balanced_target_trailer(
+        &mut self,
+        open: TokenKind,
+        close: TokenKind,
+    ) -> crate::error::Result<()> {
+        self.expect(open)?;
+        let mut depth = 1usize;
+        while depth > 0 {
+            let Some(kind) = self.peek_kind() else {
+                return Err(crate::error::MambaError::syntax(
+                    Span::dummy(),
+                    "unexpected end of comprehension target",
+                ));
+            };
+            match kind {
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    depth -= 1;
+                    self.advance();
+                }
+                TokenKind::Eof => {
+                    let span = self
+                        .peek()
+                        .map(|token| Span::new(self.file_id, token.start, token.end))
+                        .unwrap_or_else(Span::dummy);
+                    return Err(crate::error::MambaError::syntax(
+                        span,
+                        format!("expected {close}, got EOF"),
+                    ));
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_comprehension_assignment_exprs(
+        &self,
+        body_exprs: &[&Spanned<Expr>],
+        generators: &[Comprehension],
+        span: Span,
+    ) -> crate::error::Result<()> {
+        for generator in generators {
+            if Self::expr_contains_walrus(&generator.iter) {
+                return Err(crate::error::MambaError::syntax(
+                    generator.iter.span,
+                    "assignment expression cannot be used in a comprehension iterable expression",
+                ));
+            }
+        }
+
+        let mut walrus_targets = Vec::new();
+        for expr in body_exprs {
+            Self::collect_walrus_targets(expr, &mut walrus_targets);
+        }
+        for generator in generators {
+            for condition in &generator.conditions {
+                Self::collect_walrus_targets(condition, &mut walrus_targets);
+            }
+        }
+
+        let iteration_targets: Vec<&str> = generators
+            .iter()
+            .flat_map(|generator| generator.targets.iter().map(String::as_str))
+            .collect();
+        for target in &walrus_targets {
+            if iteration_targets.iter().any(|iteration| *iteration == target.as_str()) {
+                return Err(crate::error::MambaError::syntax(
+                    span,
+                    format!(
+                        "assignment expression cannot rebind comprehension iteration variable '{target}'",
+                    ),
+                ));
+            }
+        }
+
+        if self.in_class_body && !walrus_targets.is_empty() {
+            return Err(crate::error::MambaError::syntax(
+                span,
+                "assignment expression within a comprehension cannot be used in a class body",
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn expr_contains_walrus(expr: &Spanned<Expr>) -> bool {
+        let mut targets = Vec::new();
+        Self::collect_walrus_targets(expr, &mut targets);
+        !targets.is_empty()
+    }
+
+    fn collect_walrus_targets(expr: &Spanned<Expr>, out: &mut Vec<String>) {
+        match &expr.node {
+            Expr::Walrus { target, value } => {
+                out.push(target.clone());
+                Self::collect_walrus_targets(value, out);
+            }
+            Expr::BinOp { lhs, rhs, .. } => {
+                Self::collect_walrus_targets(lhs, out);
+                Self::collect_walrus_targets(rhs, out);
+            }
+            Expr::UnaryOp { operand, .. } | Expr::Attr { object: operand, .. } => {
+                Self::collect_walrus_targets(operand, out);
+            }
+            Expr::Call { func, args } => {
+                Self::collect_walrus_targets(func, out);
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value)
+                        | CallArg::Keyword { value, .. }
+                        | CallArg::StarArg(value)
+                        | CallArg::DoubleStarArg(value) => Self::collect_walrus_targets(value, out),
+                    }
+                }
+            }
+            Expr::Index { object, index } => {
+                Self::collect_walrus_targets(object, out);
+                Self::collect_walrus_targets(index, out);
+            }
+            Expr::Slice { start, stop, step } => {
+                if let Some(value) = start {
+                    Self::collect_walrus_targets(value, out);
+                }
+                if let Some(value) = stop {
+                    Self::collect_walrus_targets(value, out);
+                }
+                if let Some(value) = step {
+                    Self::collect_walrus_targets(value, out);
+                }
+            }
+            Expr::ListLit(values) | Expr::SetLit(values) | Expr::TupleLit(values) | Expr::UnpackTarget(values) => {
+                for value in values {
+                    Self::collect_walrus_targets(value, out);
+                }
+            }
+            Expr::DictLit(entries) => {
+                for (key, value) in entries {
+                    if let Some(key) = key {
+                        Self::collect_walrus_targets(key, out);
+                    }
+                    Self::collect_walrus_targets(value, out);
+                }
+            }
+            Expr::IfExpr { body, condition, else_body } => {
+                Self::collect_walrus_targets(body, out);
+                Self::collect_walrus_targets(condition, out);
+                Self::collect_walrus_targets(else_body, out);
+            }
+            Expr::Lambda { .. } => {}
+            Expr::ListComp { element, generators }
+            | Expr::SetComp { element, generators }
+            | Expr::GeneratorExpr { element, generators } => {
+                Self::collect_walrus_targets(element, out);
+                for generator in generators {
+                    for condition in &generator.conditions {
+                        Self::collect_walrus_targets(condition, out);
+                    }
+                }
+            }
+            Expr::DictComp { key, value, generators } => {
+                Self::collect_walrus_targets(key, out);
+                Self::collect_walrus_targets(value, out);
+                for generator in generators {
+                    for condition in &generator.conditions {
+                        Self::collect_walrus_targets(condition, out);
+                    }
+                }
+            }
+            Expr::FString(parts) => {
+                for part in parts {
+                    Self::collect_walrus_targets_in_fstring_part(part, out);
+                }
+            }
+            Expr::Yield(value) => {
+                if let Some(value) = value {
+                    Self::collect_walrus_targets(value, out);
+                }
+            }
+            Expr::YieldFrom(value) | Expr::Await(value) | Expr::Starred(value) => {
+                Self::collect_walrus_targets(value, out);
+            }
+            Expr::ChainedCompare { operands, .. } => {
+                for operand in operands {
+                    Self::collect_walrus_targets(operand, out);
+                }
+            }
+            Expr::IntLit(_)
+            | Expr::BigIntLit(_)
+            | Expr::FloatLit(_)
+            | Expr::ComplexLit(_)
+            | Expr::StrLit(_)
+            | Expr::BytesLit(_)
+            | Expr::BoolLit(_)
+            | Expr::NoneLit
+            | Expr::Ellipsis
+            | Expr::Ident(_) => {}
+        }
+    }
+
+    fn collect_walrus_targets_in_fstring_part(part: &FStringPart, out: &mut Vec<String>) {
+        match part {
+            FStringPart::Literal(_) => {}
+            FStringPart::Expr(expr, spec) => {
+                Self::collect_walrus_targets(expr, out);
+                if let Some(spec) = spec {
+                    for part in spec {
+                        Self::collect_walrus_targets_in_fstring_part(part, out);
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 #[cfg(test)]
@@ -612,26 +1013,79 @@ mod tests {
         match parse_expr("[k for k, v in items]") {
             Expr::ListComp { generators, .. } => {
                 assert_eq!(generators[0].targets, vec!["k", "v"]);
+                assert!(generators[0].unpack_target);
             }
             other => panic!("expected ListComp, got {other:?}"),
         }
     }
 
-    // REQ: tick-132 test-coverage — PEP 530 async-for list comprehension gating gap.
-    // parse_comprehension_clauses has is_async=true handling (this file, line ~328)
-    // but parse_list_or_comp's gating check (line ~190) only peeks TokenKind::For,
-    // not Async — so `[x async for ...]` never reaches the is_async branch and the
-    // parser errors with "expected ], got async". This test LOCKS that current
-    // (buggy) behavior so a future fix widening the gating check must also update
-    // this test. When fixed, replace with a positive assertion of is_async=true.
     #[test]
-    fn test_list_comp_async_for_currently_rejected_by_gating_gap() {
-        let src = "[x async for x in aiter]\n";
-        let r = crate::parser::parse(src, fid());
+    fn test_list_comp_singleton_tuple_target() {
+        match parse_expr("[v for v, in items]") {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators[0].targets, vec!["v"]);
+                assert!(generators[0].unpack_target);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_list_comp_parenthesized_singleton_tuple_target() {
+        match parse_expr("[v for (v,) in items]") {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators[0].targets, vec!["v"]);
+                assert!(generators[0].unpack_target);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_list_comp_complex_target_collects_binding_names() {
+        match parse_expr("[x for a, (*b, c[d+e::f(g)], h.i) in items]") {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators[0].targets, vec!["a", "b"]);
+                assert!(generators[0].unpack_target);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_list_comp_records_target_read_before_bind() {
+        match parse_expr("[1 for l[0], l in items]") {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators[0].targets, vec!["l"]);
+                assert_eq!(generators[0].target_reads_before_bind, vec!["l"]);
+                assert!(generators[0].unpack_target);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_list_comp_rejects_walrus_rebinding_complex_target_name() {
+        let src = "[(a := 1) for a, (*b, c[d+e::f(g)], h.i) in j]\n";
+        let err = crate::parser::parse(src, fid()).expect_err("expected syntax error");
         assert!(
-            r.is_err(),
-            "gating gap: async-for in list comp should currently error"
+            err.to_string().contains(
+                "assignment expression cannot rebind comprehension iteration variable 'a'"
+            ),
+            "{err}"
         );
+    }
+
+    #[test]
+    fn test_list_comp_accepts_async_for_clause() {
+        let src = "[x async for x in aiter]\n";
+        match parse_expr(src) {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators.len(), 1);
+                assert!(generators[0].is_async);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
     }
 
     // --- Dict ---
@@ -665,6 +1119,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_dict_comp_accepts_async_for_clause() {
+        match parse_expr("{k: v async for k, v in items}") {
+            Expr::DictComp { generators, .. } => {
+                assert_eq!(generators.len(), 1);
+                assert!(generators[0].is_async);
+            }
+            other => panic!("expected DictComp, got {other:?}"),
+        }
+    }
+
     // --- Set ---
 
     #[test]
@@ -685,6 +1150,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_set_comp_accepts_async_for_clause() {
+        match parse_expr("{x async for x in items}") {
+            Expr::SetComp { generators, .. } => {
+                assert_eq!(generators.len(), 1);
+                assert!(generators[0].is_async);
+            }
+            other => panic!("expected SetComp, got {other:?}"),
+        }
+    }
+
     // --- Generator expression ---
 
     #[test]
@@ -696,6 +1172,17 @@ mod tests {
             } => {
                 assert!(matches!(element.node, Expr::Ident(ref n) if n == "x"));
                 assert_eq!(generators.len(), 1);
+            }
+            other => panic!("expected GeneratorExpr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_generator_expr_accepts_async_for_clause() {
+        match parse_expr("(x async for x in items)") {
+            Expr::GeneratorExpr { generators, .. } => {
+                assert_eq!(generators.len(), 1);
+                assert!(generators[0].is_async);
             }
             other => panic!("expected GeneratorExpr, got {other:?}"),
         }

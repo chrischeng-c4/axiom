@@ -699,6 +699,12 @@ unsafe extern "C" fn d_zipfile_new(args_ptr: *const MbValue, nargs: usize) -> Mb
             },
         );
     });
+    unsafe {
+        // The target object is borrowed from the caller but stored twice on the
+        // ZipFile handle. Keep both fields alive until the handle is released.
+        super::super::rc::retain_if_ptr(target);
+        super::super::rc::retain_if_ptr(target);
+    }
     let zf = make_instance(
         ZIPFILE_CLASS,
         vec![
@@ -1041,6 +1047,34 @@ unsafe extern "C" fn extfile_read(self_v: MbValue, args: MbValue) -> MbValue {
     new_bytes(data[pos..end].to_vec())
 }
 
+/// ZipExtFile.tell() -> current position in the decompressed stream.
+unsafe extern "C" fn extfile_tell(self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_int(get_field(self_v, "_pos").and_then(|v| v.as_int()).unwrap_or(0))
+}
+
+/// ZipExtFile.seek(offset, whence=SEEK_SET) -> new position. Seekable since
+/// the whole member is decompressed in memory; whence 0/1/2 = SET/CUR/END.
+unsafe extern "C" fn extfile_seek(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = seq_items(args);
+    let offset = items.first().and_then(|v| v.as_int()).unwrap_or(0);
+    let whence = items.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+    let len = get_field(self_v, "_data").and_then(extract_bytes).map(|b| b.len() as i64).unwrap_or(0);
+    let cur = get_field(self_v, "_pos").and_then(|v| v.as_int()).unwrap_or(0);
+    let base = match whence {
+        1 => cur,
+        2 => len,
+        _ => 0,
+    };
+    let new_pos = (base + offset).clamp(0, len);
+    set_field(self_v, "_pos", MbValue::from_int(new_pos));
+    MbValue::from_int(new_pos)
+}
+
+/// ZipExtFile.seekable() -> True (in-memory member is always seekable).
+unsafe extern "C" fn extfile_seekable(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_bool(true)
+}
+
 unsafe extern "C" fn extfile_enter(self_v: MbValue, _args: MbValue) -> MbValue {
     self_v
 }
@@ -1300,7 +1334,15 @@ fn register_zip_classes() {
         s.borrow_mut()
             .insert(d_zipinfo_from_file as *const () as usize as u64);
     });
-    super::super::class::mb_class_register(ZIPINFO_CLASS, vec![], zi);
+    // ZipInfo instances historically use the short internal class name for
+    // stable reprs, while the exported constructor is typed as
+    // `zipfile.ZipInfo`. Link the two nominally so isinstance(getinfo(...),
+    // zipfile.ZipInfo) succeeds.
+    super::super::class::mb_class_register(
+        ZIPINFO_CLASS,
+        vec!["zipfile.ZipInfo".into()],
+        zi,
+    );
     // The qualified name is what NATIVE_TYPE_NAMES maps to for the gate.
     let mut zi2: Map<String, MbValue> = Map::new();
     zi2.insert(
@@ -1311,6 +1353,9 @@ fn register_zip_classes() {
 
     let mut ext: Map<String, MbValue> = Map::new();
     ext.insert("read".into(), var(extfile_read as *const () as usize));
+    ext.insert("tell".into(), var(extfile_tell as *const () as usize));
+    ext.insert("seek".into(), var(extfile_seek as *const () as usize));
+    ext.insert("seekable".into(), var(extfile_seekable as *const () as usize));
     ext.insert("__enter__".into(), var(extfile_enter as *const () as usize));
     ext.insert("__exit__".into(), var(extfile_exit as *const () as usize));
     super::super::class::mb_class_register("zipfile.ZipExtFile", vec![], ext);

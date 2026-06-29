@@ -123,6 +123,15 @@ unsafe extern "C" fn dispatch_copy(args_ptr: *const MbValue, nargs: usize) -> Mb
 
 /// copy.copy(obj) -> shallow copy.
 pub fn mb_copy_copy(obj: MbValue) -> MbValue {
+    if super::super::generator::is_known_generator(obj) {
+        return raise_exc("TypeError", "cannot copy 'generator' object");
+    }
+    if super::super::async_rt::is_known_coroutine(obj) {
+        return raise_exc("TypeError", "cannot copy 'coroutine' object");
+    }
+    if super::super::async_rt::is_coroutine_wrapper(obj) {
+        return raise_exc("TypeError", "cannot copy 'coroutine_wrapper' object");
+    }
     // Immutable atoms (and tuples — see below) return by identity.
     if is_atomic(obj) {
         return return_identity(obj);
@@ -179,7 +188,7 @@ unsafe fn copy_instance(obj: MbValue, class_name: &str) -> MbValue {
         let empty = MbValue::from_ptr(MbObject::new_list(vec![]));
         return call_method(obj, "__copy__", empty);
     }
-    // 2. __reduce_ex__ / __reduce__ reconstruction.
+    // 2. copyreg / __reduce_ex__ / __reduce__ reconstruction.
     match reduce(obj, class_name) {
         ReduceOutcome::Identity => return return_identity(obj),
         ReduceOutcome::Tuple(rv) => {
@@ -224,6 +233,12 @@ unsafe fn copy_instance(obj: MbValue, class_name: &str) -> MbValue {
         if exception_pending() {
             return return_identity(obj);
         }
+    }
+    if own_new_requires_constructor_args(class_name) {
+        return raise_exc(
+            "TypeError",
+            &format!("{class_name}.__new__() missing required arguments"),
+        );
     }
     let fields = read_fields(obj);
     let new_inst = MbObject::new_instance(class_name.to_string());
@@ -402,6 +417,61 @@ fn record_memoized(orig: MbValue, copy: MbValue) {
 /// Core deepcopy recursion. `memo` maps a source object's NaN-boxed bits to its
 /// freshly-built copy so repeated references and cycles collapse to one object.
 fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
+    if super::super::generator::is_known_generator(obj) {
+        return raise_exc("TypeError", "cannot pickle 'generator' object");
+    }
+    if super::super::async_rt::is_known_coroutine(obj) {
+        return raise_exc("TypeError", "cannot pickle 'coroutine' object");
+    }
+    if super::super::async_rt::is_coroutine_wrapper(obj) {
+        return raise_exc("TypeError", "cannot pickle 'coroutine_wrapper' object");
+    }
+    // A slice is atomic for shallow copy (copy.copy returns it unchanged) but
+    // deepcopy rebuilds it: CPython has no _deepcopy_atomic entry for slice, so
+    // it reconstructs via slice.__reduce__ with deep-copied start/stop/step.
+    // Intercept before is_atomic() (which deliberately keeps slice atomic for
+    // the shallow path).
+    if let Some(ptr) = obj.as_ptr() {
+        let is_slice = unsafe {
+            matches!(&(*ptr).data, ObjData::Instance { class_name, .. } if class_name == "slice")
+        };
+        if is_slice {
+            let key = obj.to_bits();
+            if let Some(existing) = memo.get(&key) {
+                let v = *existing;
+                unsafe {
+                    super::super::rc::retain_if_ptr(v);
+                }
+                return v;
+            }
+            let (start, stop, step) = unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    let g = fields.read().unwrap();
+                    (
+                        g.get("start").copied().unwrap_or_else(MbValue::none),
+                        g.get("stop").copied().unwrap_or_else(MbValue::none),
+                        g.get("step").copied().unwrap_or_else(MbValue::none),
+                    )
+                } else {
+                    (MbValue::none(), MbValue::none(), MbValue::none())
+                }
+            };
+            let ds = deepcopy_memo(start, memo);
+            let dt = deepcopy_memo(stop, memo);
+            let dp = deepcopy_memo(step, memo);
+            let result = super::super::builtins::mb_slice(ds, dt, dp);
+            // mb_slice retains each arg for its own storage; release our
+            // deepcopy-owned handles so each refcount lands at one.
+            unsafe {
+                super::super::rc::release_if_ptr(ds);
+                super::super::rc::release_if_ptr(dt);
+                super::super::rc::release_if_ptr(dp);
+            }
+            memo.insert(key, result);
+            record_memoized(obj, result);
+            return result;
+        }
+    }
     if is_atomic(obj) {
         return return_identity(obj);
     }
@@ -505,6 +575,16 @@ fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
             }
             ObjData::Instance { class_name, .. } => {
                 let cls = class_name.clone();
+                // A bound method (`__func__` + `__self__`) is rebound on
+                // deepcopy: CPython's _deepcopy_method builds
+                // `type(x)(x.__func__, deepcopy(x.__self__, memo))`, so the copy
+                // points at the deepcopied receiver (which resolves through the
+                // shared memo to the already-built copy when an instance stores
+                // one of its own bound methods). `__func__` is a function
+                // (atomic) and stays shared.
+                if cls == "method" {
+                    return deepcopy_bound_method(obj, key, memo);
+                }
                 deepcopy_instance(obj, &cls, key, memo)
             }
             _ => return_identity(obj),
@@ -532,7 +612,7 @@ unsafe fn deepcopy_instance(
         }
         return result;
     }
-    // 2. __reduce_ex__ / __reduce__ reconstruction.
+    // 2. copyreg / __reduce_ex__ / __reduce__ reconstruction.
     match reduce(obj, class_name) {
         ReduceOutcome::Identity => {
             let v = return_identity(obj);
@@ -580,6 +660,12 @@ unsafe fn deepcopy_instance(
             return v;
         }
     }
+    if own_new_requires_constructor_args(class_name) {
+        return raise_exc(
+            "TypeError",
+            &format!("{class_name}.__new__() missing required arguments"),
+        );
+    }
     let new_inst = MbObject::new_instance(class_name.to_string());
     let result = MbValue::from_ptr(new_inst);
     memo.insert(key, result); // seed for cycles (self-referential attribute)
@@ -591,6 +677,49 @@ unsafe fn deepcopy_instance(
             nl.write().unwrap().insert(k.clone(), dv);
         }
     }
+    result
+}
+
+/// Deep-copy a bound method: deepcopy its `__self__` (through the shared memo,
+/// so an instance that stores one of its own bound methods rebinds to the
+/// instance's copy rather than the original) and build a fresh `method` shell
+/// over the same `__func__`. Mirrors CPython's `_deepcopy_method`.
+unsafe fn deepcopy_bound_method(
+    obj: MbValue,
+    key: u64,
+    memo: &mut FxHashMap<u64, MbValue>,
+) -> MbValue {
+    let (func, recv, name) = {
+        let fields = read_fields(obj);
+        (
+            fields
+                .get("__func__")
+                .copied()
+                .unwrap_or_else(MbValue::none),
+            fields
+                .get("__self__")
+                .copied()
+                .unwrap_or_else(MbValue::none),
+            fields.get("__name__").copied(),
+        )
+    };
+    let new_recv = deepcopy_memo(recv, memo);
+    let new_inst = MbObject::new_instance("method".to_string());
+    if let ObjData::Instance { fields: ref nl, .. } = (*new_inst).data {
+        let mut g = nl.write().unwrap();
+        // `__func__` is a function (atomic): share it, retaining for storage.
+        super::super::rc::retain_if_ptr(func);
+        g.insert("__func__".to_string(), func);
+        // `new_recv` is already a deepcopy-owned handle: store it as-is.
+        g.insert("__self__".to_string(), new_recv);
+        if let Some(n) = name {
+            super::super::rc::retain_if_ptr(n);
+            g.insert("__name__".to_string(), n);
+        }
+    }
+    let result = MbValue::from_ptr(new_inst);
+    memo.insert(key, result);
+    record_memoized(obj, result);
     result
 }
 
@@ -619,12 +748,17 @@ enum ReduceOutcome {
     TypeError,
 }
 
-/// Invoke __reduce_ex__(4) or __reduce__() if the class defines one, returning
+/// Invoke copyreg, __reduce_ex__(4), or __reduce__() if the class defines one, returning
 /// the parsed (callable, args, state). Returns `None` when the instance has no
 /// custom reducer (so the caller falls back to a plain __dict__ copy). A string
 /// result from __reduce__ (the "return self by name" protocol) also yields
 /// `None` so the object is returned by identity.
 unsafe fn reduce(obj: MbValue, class_name: &str) -> ReduceOutcome {
+    if let Some(reducer) = super::copyreg_mod::reduce_func_for_class(class_name) {
+        let args = MbValue::from_ptr(MbObject::new_list(vec![obj]));
+        let rv = super::super::builtins::mb_call_spread(reducer, args);
+        return parse_reduce_result(rv);
+    }
     let rv = if has_method(class_name, "__reduce_ex__") {
         let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(4)]));
         call_method(obj, "__reduce_ex__", args)
@@ -634,6 +768,10 @@ unsafe fn reduce(obj: MbValue, class_name: &str) -> ReduceOutcome {
     } else {
         return ReduceOutcome::None;
     };
+    parse_reduce_result(rv)
+}
+
+unsafe fn parse_reduce_result(rv: MbValue) -> ReduceOutcome {
     // A bare string result means "return self by name" — return identity.
     if rv
         .as_ptr()
@@ -760,6 +898,37 @@ unsafe fn apply_state(inst: MbValue, state: MbValue) {
 /// True if `class_name` (via MRO) defines `method`.
 fn has_method(class_name: &str, method: &str) -> bool {
     !super::super::class::lookup_method(class_name, method).is_none()
+}
+
+/// CPython's inherited object reductor can only fall back to a no-argument
+/// `__new__` reconstruction path. If a class defines its own `__new__` with
+/// required constructor parameters beyond `cls`, copy/deepcopy must raise
+/// TypeError unless copyreg or an explicit reducer supplied constructor args
+/// first. Use function metadata instead of a runtime probe because direct JIT
+/// calls are padded on under-arity.
+fn own_new_requires_constructor_args(class_name: &str) -> bool {
+    if !super::super::class::class_defines_own_method(class_name, "__new__") {
+        return false;
+    }
+    if has_method(class_name, "__getnewargs__") || has_method(class_name, "__getnewargs_ex__") {
+        return false;
+    }
+    let new_func = super::super::class::lookup_method(class_name, "__new__");
+    if new_func.is_none() {
+        return false;
+    }
+    let Some(params) = super::super::closure::func_params(new_func) else {
+        return false;
+    };
+    let required_positional = params
+        .iter()
+        .filter(|p| p.kind <= 1 && !p.has_default)
+        .count();
+    let required_keyword_only = params
+        .iter()
+        .filter(|p| p.kind == 3 && !p.has_default)
+        .count();
+    required_positional.saturating_sub(1) > 0 || required_keyword_only > 0
 }
 
 /// Detect CPython's "uncopyable" condition: a class with a custom

@@ -553,6 +553,8 @@ fn normalize_encoding(name: &str) -> &str {
     match name.to_lowercase().replace(['-', '_', ' '], "").as_str() {
         s if s.starts_with("utf8") => "utf-8",
         s if s.starts_with("ascii") || s == "usascii" || s == "646" => "ascii",
+        s if s == "idna" => "idna",
+        s if s == "punycode" => "punycode",
         s if s.starts_with("latin1")
             || s == "iso88591"
             || s == "8859"
@@ -586,6 +588,8 @@ fn canonical_codec_name(name: &str) -> Option<&'static str> {
         "utf-32" => Some("utf-32"),
         "utf-32-le" => Some("utf-32-le"),
         "utf-32-be" => Some("utf-32-be"),
+        "idna" => Some("idna"),
+        "punycode" => Some("punycode"),
         _ => None,
     }
 }
@@ -608,14 +612,6 @@ fn make_codec_info(name: MbValue, encode: MbValue, decode: MbValue) -> MbValue {
     MbValue::from_ptr(inst)
 }
 
-/// True when `val` is the string "strict" or None/absent (the default handler).
-fn is_strict_errors(val: MbValue) -> bool {
-    match extract_str(val) {
-        Some(s) => s == "strict",
-        None => true, // absent / None → strict default
-    }
-}
-
 /// True for the well-known non-raising handlers we model exactly.
 fn known_error_handler(name: &str) -> bool {
     matches!(
@@ -631,30 +627,51 @@ fn known_error_handler(name: &str) -> bool {
     )
 }
 
-/// Replacement bytes for an unencodable char `c` under handler `name`, or
-/// None when the handler is 'strict' (the caller raises). Matches CPython:
-///   replace          → b'?'
-///   ignore           → b'' (drop)
-///   xmlcharrefreplace→ b'&#NNN;'
-///   backslashreplace → b'\\xHH'/b'\\uHHHH'/b'\\UHHHHHHHH'
-fn encode_error_repl(name: &str, c: char) -> Option<Vec<u8>> {
-    let cp = c as u32;
-    match name {
-        "replace" => Some(vec![b'?']),
-        "ignore" => Some(Vec::new()),
-        "xmlcharrefreplace" => Some(format!("&#{};", cp).into_bytes()),
-        "backslashreplace" => {
-            let s = if cp <= 0xFF {
-                format!("\\x{:02x}", cp)
-            } else if cp <= 0xFFFF {
-                format!("\\u{:04x}", cp)
-            } else {
-                format!("\\U{:08x}", cp)
-            };
-            Some(s.into_bytes())
+pub(crate) fn punycode_encode_bytes(s: &str) -> Option<Vec<u8>> {
+    idna::punycode::encode_str(s).map(String::into_bytes)
+}
+
+pub(crate) fn punycode_decode_string(bytes: &[u8]) -> Option<String> {
+    let input = std::str::from_utf8(bytes).ok()?;
+    idna::punycode::decode_to_string(input)
+}
+
+pub(crate) fn idna_encode_bytes(s: &str) -> Option<Vec<u8>> {
+    let (out, rest) = idna_encode_ready_labels(s, true)?;
+    if rest.is_empty() {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn idna_decode_string(bytes: &[u8]) -> Option<String> {
+    let input = std::str::from_utf8(bytes).ok()?;
+    Some(idna::domain_to_unicode(input).0)
+}
+
+fn idna_encode_ready_labels(input: &str, final_chunk: bool) -> Option<(Vec<u8>, String)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (idx, ch) in input.char_indices() {
+        if ch != '.' {
+            continue;
         }
-        "namereplace" => Some(format!("\\N{{U+{:04X}}}", cp).into_bytes()),
-        _ => None, // strict / surrogate* → caller raises
+        let label = &input[start..idx];
+        if !label.is_empty() {
+            out.extend_from_slice(idna::domain_to_ascii(label).ok()?.as_bytes());
+        }
+        out.push(b'.');
+        start = idx + ch.len_utf8();
+    }
+    let rest = &input[start..];
+    if final_chunk {
+        if !rest.is_empty() {
+            out.extend_from_slice(idna::domain_to_ascii(rest).ok()?.as_bytes());
+        }
+        Some((out, String::new()))
+    } else {
+        Some((out, rest.to_string()))
     }
 }
 
@@ -679,14 +696,10 @@ pub fn mb_codecs_encode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             return b;
         }
     }
-    // D2′: borrow the payload; only allocate the output Bytes.
-    let s: &str = match unsafe { extract_str_ref(&obj) } {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    if unsafe { extract_str_ref(&obj) }.is_none() {
+        return MbValue::none();
+    }
     let enc = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
-    let enc_norm = normalize_encoding(&enc);
-    let _strict = is_strict_errors(errors);
     // Validate the error handler name (CPython resolves it eagerly).
     let handler = extract_str(errors).unwrap_or_else(|| "strict".to_string());
     if !known_error_handler(&handler) {
@@ -699,60 +712,7 @@ pub fn mb_codecs_encode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             "'undefined' codec can't encode character in position 0",
         );
     }
-    let bytes: Vec<u8> = match enc_norm {
-        "utf-8" => {
-            // Reject lone surrogates under strict (Rust &str can't hold them,
-            // so any well-formed str round-trips; kept for completeness).
-            s.as_bytes().to_vec()
-        }
-        "ascii" => {
-            let mut out = Vec::with_capacity(s.len());
-            for (i, c) in s.char_indices() {
-                if c.is_ascii() {
-                    out.push(c as u8);
-                } else if let Some(repl) = encode_error_repl(&handler, c) {
-                    out.extend_from_slice(&repl);
-                } else {
-                    return raise_unicode_encode_error(&format!(
-                        "'ascii' codec can't encode character '\\u{:04x}' in position {}: ordinal not in range(128)",
-                        c as u32, i));
-                }
-            }
-            out
-        }
-        "latin-1" => {
-            let mut out = Vec::with_capacity(s.len());
-            for (i, c) in s.char_indices() {
-                let n = c as u32;
-                if n <= 255 {
-                    out.push(n as u8);
-                } else if let Some(repl) = encode_error_repl(&handler, c) {
-                    out.extend_from_slice(&repl);
-                } else {
-                    return raise_unicode_encode_error(&format!(
-                        "'latin-1' codec can't encode character '\\u{:04x}' in position {}: ordinal not in range(256)",
-                        n, i));
-                }
-            }
-            out
-        }
-        "utf-16" => {
-            let mut b = vec![0xFF, 0xFE];
-            b.extend(encode_u16_units(s, true));
-            b
-        }
-        "utf-16-le" => encode_u16_units(s, true),
-        "utf-16-be" => encode_u16_units(s, false),
-        "utf-32" => {
-            let mut b = vec![0xFF, 0xFE, 0x00, 0x00];
-            b.extend(encode_u32_units(s, true));
-            b
-        }
-        "utf-32-le" => encode_u32_units(s, true),
-        "utf-32-be" => encode_u32_units(s, false),
-        _ => return raise_lookup_error(&format!("unknown encoding: {}", enc)),
-    };
-    MbValue::from_ptr(MbObject::new_bytes(bytes))
+    super::super::string_ops::mb_str_encode_with(obj, encoding, errors)
 }
 
 /// codecs.decode(obj, encoding='utf-8') -> str  (strict errors)
@@ -773,20 +733,16 @@ pub fn mb_codecs_decode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             return b;
         }
     }
-    let bytes: &[u8] = match unsafe { extract_bytes_ref(&obj) } {
-        Some(b) => b,
-        None => {
-            // str passthrough (CPython coerces str→bytes via the default codec
-            // before decode; we model the identity case the fixtures use).
-            if let Some(s) = unsafe { extract_str_ref(&obj) } {
-                return MbValue::from_ptr(MbObject::new_str(s.to_owned()));
-            }
-            return MbValue::none();
+    if unsafe { extract_bytes_ref(&obj) }.is_none() {
+        // str passthrough (CPython coerces str→bytes via the default codec
+        // before decode; we model the identity case the fixtures use).
+        if let Some(s) = unsafe { extract_str_ref(&obj) } {
+            return MbValue::from_ptr(MbObject::new_str(s.to_owned()));
         }
-    };
+        return MbValue::none();
+    }
     let enc = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
     let enc_norm = normalize_encoding(&enc);
-    let strict = is_strict_errors(errors);
     if let Some(h) = extract_str(errors) {
         if !known_error_handler(&h) {
             return raise_lookup_error(&format!("unknown error handler name '{}'", h));
@@ -798,48 +754,7 @@ pub fn mb_codecs_decode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             "'undefined' codec can't decode byte 0x00 in position 0: undefined mapping",
         );
     }
-    let s = match enc_norm {
-        "utf-8" => {
-            if strict {
-                match std::str::from_utf8(bytes) {
-                    Ok(v) => v.to_owned(),
-                    Err(e) => {
-                        let pos = e.valid_up_to();
-                        let bad = bytes.get(pos).copied().unwrap_or(0);
-                        return raise_unicode_decode_error(&format!(
-                            "'utf-8' codec can't decode byte 0x{:02x} in position {}: invalid start byte",
-                            bad, pos));
-                    }
-                }
-            } else {
-                String::from_utf8_lossy(bytes).into_owned()
-            }
-        }
-        "ascii" => {
-            let mut out = String::with_capacity(bytes.len());
-            for (i, &b) in bytes.iter().enumerate() {
-                if b < 128 {
-                    out.push(b as char);
-                } else if strict {
-                    return raise_unicode_decode_error(&format!(
-                        "'ascii' codec can't decode byte 0x{:02x} in position {}: ordinal not in range(128)",
-                        b, i));
-                } else {
-                    out.push('\u{FFFD}');
-                }
-            }
-            out
-        }
-        "latin-1" => bytes.iter().map(|&b| b as char).collect(),
-        "utf-16" => return mb_codecs_utf_16_decode(obj),
-        "utf-16-le" => decode_u16_units(bytes, true),
-        "utf-16-be" => decode_u16_units(bytes, false),
-        "utf-32" => return mb_codecs_utf_32_decode(obj),
-        "utf-32-le" => decode_u32_units(bytes, true),
-        "utf-32-be" => decode_u32_units(bytes, false),
-        _ => return raise_lookup_error(&format!("unknown encoding: {}", enc)),
-    };
-    MbValue::from_ptr(MbObject::new_str(s))
+    super::super::bytes_ops::mb_bytes_decode_with(obj, encoding, errors)
 }
 
 /// codecs.lookup(encoding) -> CodecInfo
@@ -1781,6 +1696,8 @@ fn codec_encode_bytes(mode: &str, s: &str) -> Option<Vec<u8>> {
             b.extend(encode_u32_units(s, true));
             b
         }
+        "idna" => idna_encode_bytes(s)?,
+        "punycode" => punycode_encode_bytes(s)?,
         _ => return None,
     })
 }
@@ -1805,6 +1722,8 @@ fn codec_decode_str(mode: &str, bytes: &[u8]) -> Option<String> {
             let (slice, le) = utf32_bom(bytes);
             decode_u32_units(slice, le)
         }
+        "idna" => idna_decode_string(bytes)?,
+        "punycode" => punycode_decode_string(bytes)?,
         _ => return None,
     })
 }
@@ -1931,7 +1850,26 @@ fn incr_encode(self_v: MbValue, args_list: MbValue) -> MbValue {
     let sig = inst_field(self_v, "sig")
         .map(|v| v.as_bool() == Some(true))
         .unwrap_or(false);
+    let is_final = pos_arg(args_list, 1)
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
     let s = extract_str(input).unwrap_or_default();
+    // rot-13 is a str->str transform — it yields a str, not bytes.
+    if is_rot13_codec(&mode) {
+        return MbValue::from_ptr(MbObject::new_str(rot13_transform(&s)));
+    }
+    if mode == "idna" {
+        let mut buffered = inst_field(self_v, "buffer")
+            .and_then(extract_str)
+            .unwrap_or_default();
+        buffered.push_str(&s);
+        let (out, rest) = match idna_encode_ready_labels(&buffered, is_final) {
+            Some(v) => v,
+            None => return raise_unicode_encode_error("'idna' codec can't encode input"),
+        };
+        set_inst_field(self_v, "buffer", new_str(rest));
+        return new_bytes(out);
+    }
     let mut out = codec_encode_bytes(&mode, &s).unwrap_or_default();
     // utf-8-sig emits a BOM before the first chunk.
     if sig {
@@ -1950,6 +1888,7 @@ fn incr_encode(self_v: MbValue, args_list: MbValue) -> MbValue {
 
 fn incr_encode_reset(self_v: MbValue, _args: MbValue) -> MbValue {
     set_inst_field(self_v, "first", MbValue::from_bool(true));
+    set_inst_field(self_v, "buffer", new_str(String::new()));
     MbValue::none()
 }
 
@@ -2277,6 +2216,7 @@ extern "C" fn factory_incr_encoder_call(self_v: MbValue) -> MbValue {
         inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)),
     );
     set_inst_field(inst, "first", MbValue::from_bool(true));
+    set_inst_field(inst, "buffer", new_str(String::new()));
     inst
 }
 
@@ -2387,11 +2327,35 @@ pub fn mb_codecs_getincrementaldecoder_real(encoding: MbValue) -> MbValue {
     make_factory("codecs._IncrementalDecoderFactory", &enc)
 }
 
+/// True for the rot-13 text-transform codec (under its common spellings).
+fn is_rot13_codec(mode: &str) -> bool {
+    matches!(mode.to_ascii_lowercase().replace('_', "-").as_str(), "rot-13" | "rot13")
+}
+
+/// Apply the ROT-13 cipher to ASCII letters; other characters pass through.
+fn rot13_transform(s: &str) -> String {
+    s.chars().map(|c| match c {
+        'a'..='z' => (((c as u8 - b'a' + 13) % 26) + b'a') as char,
+        'A'..='Z' => (((c as u8 - b'A' + 13) % 26) + b'A') as char,
+        _ => c,
+    }).collect()
+}
+
 pub fn mb_codecs_getincrementalencoder_real(encoding: MbValue) -> MbValue {
     let enc = match extract_str(encoding) {
         Some(e) => e,
         None => return raise_type_error("getincrementalencoder() argument must be str"),
     };
+    // rot-13 is a str->str transform codec (its name does not normalize to a
+    // byte codec): store an explicit "rot-13" mode for the encoder to detect.
+    if is_rot13_codec(&enc) {
+        let inst = MbValue::from_ptr(MbObject::new_instance(
+            "codecs._IncrementalEncoderFactory".to_string(),
+        ));
+        set_inst_field(inst, "mode", new_str("rot-13".to_string()));
+        set_inst_field(inst, "sig", MbValue::from_bool(false));
+        return inst;
+    }
     let (mode, _) = split_sig(&enc);
     if !supported_byte_codec(&mode) {
         return raise_lookup_error(&format!("unknown encoding: {}", enc));
@@ -2435,6 +2399,8 @@ fn supported_byte_codec(mode: &str) -> bool {
             | "utf-32"
             | "utf-32-le"
             | "utf-32-be"
+            | "idna"
+            | "punycode"
     )
 }
 
@@ -2749,6 +2715,31 @@ pub fn mb_codecs_iterencode2(iterable: MbValue, encoding: MbValue) -> MbValue {
     }
     let items = super::super::builtins::extract_items(iterable);
     let mut out = Vec::with_capacity(items.len());
+    if mode == "idna" {
+        let mut buffered = String::new();
+        for it in items {
+            buffered.push_str(&extract_str(it).unwrap_or_default());
+            let (chunk, rest) = match idna_encode_ready_labels(&buffered, false) {
+                Some(v) => v,
+                None => return raise_unicode_encode_error("'idna' codec can't encode input"),
+            };
+            buffered = rest;
+            if !chunk.is_empty() {
+                out.push(new_bytes(chunk));
+            }
+        }
+        let (chunk, rest) = match idna_encode_ready_labels(&buffered, true) {
+            Some(v) => v,
+            None => return raise_unicode_encode_error("'idna' codec can't encode input"),
+        };
+        if !rest.is_empty() {
+            return raise_unicode_encode_error("'idna' codec can't encode input");
+        }
+        if !chunk.is_empty() {
+            out.push(new_bytes(chunk));
+        }
+        return MbValue::from_ptr(MbObject::new_list(out));
+    }
     let mut first = true;
     for it in items {
         let s = extract_str(it).unwrap_or_default();

@@ -33,6 +33,16 @@ fn build_set_like_left(left: MbValue, items: Vec<MbValue>) -> MbValue {
     }
 }
 
+fn is_frozenset_like(value: MbValue) -> bool {
+    if let Some(("frozenset", _)) = super::class::builtin_data_payload(value) {
+        return true;
+    }
+    value
+        .as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::FrozenSet(_)) })
+        .unwrap_or(false)
+}
+
 /// Create a new empty set.
 pub fn mb_set_new() -> MbValue {
     MbValue::from_ptr(MbObject::new_set(Vec::new()))
@@ -276,18 +286,11 @@ pub fn mb_set_pop(receiver: MbValue) -> MbValue {
 
 /// set.update(other) — in-place union; adds all elements from other (set, list, or tuple).
 pub fn mb_set_update(receiver: MbValue, other: MbValue) -> MbValue {
-    let new_items: Vec<MbValue> = if let Some(ptr) = other.as_ptr() {
-        unsafe {
-            match (*ptr).data {
-                ObjData::Set(ref lock) => lock.read().unwrap().to_vec(),
-                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-                ObjData::Tuple(ref items) => items.clone(),
-                _ => vec![],
-            }
-        }
-    } else {
-        vec![]
-    };
+    // CPython `set.update(*others)` accepts ANY iterable (range, dict→keys,
+    // str→chars, generators, …). Delegate to the shared iterable-collection
+    // path instead of an inline Set/List/Tuple-only match (which silently
+    // dropped every other iterable).
+    let new_items: Vec<MbValue> = extract_set_items(other);
 
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
@@ -509,6 +512,18 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         }
     }
     match name {
+        "__init__" => {
+            if is_frozenset_like(receiver) {
+                return MbValue::none();
+            }
+            if args_len() == 0 {
+                mb_set_clear(receiver);
+            } else {
+                mb_set_clear(receiver);
+                let _ = mb_set_update(receiver, arg(0));
+            }
+            MbValue::none()
+        }
         "add" => {
             mb_set_add(receiver, arg(0));
             MbValue::none()
@@ -594,6 +609,11 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
 
 // REQ: R6 — extract_set_items handles both Set and FrozenSet
 fn extract_set_items(val: MbValue) -> Vec<MbValue> {
+    if let Some((_base, payload)) =
+        super::class::builtin_data_payload_if_unoverridden(val, "__iter__")
+    {
+        return extract_set_items(payload);
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -1028,6 +1048,30 @@ mod tests {
 
     fn make_args(vals: Vec<MbValue>) -> MbValue {
         MbValue::from_ptr(MbObject::new_list(vals))
+    }
+
+    #[test]
+    fn test_set_init_kwargs_raise_type_error_through_method_kwargs_path() {
+        super::super::exception::mb_clear_exception();
+        let set = mb_set_new();
+        let kwargs = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("a".to_string())),
+            MbValue::from_int(1),
+        );
+        let result = super::super::class::mb_call_method_kwargs(
+            set,
+            MbValue::from_ptr(MbObject::new_str("__init__".to_string())),
+            make_args(vec![]),
+            kwargs,
+        );
+        assert!(result.is_none());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
     }
 
     #[test]

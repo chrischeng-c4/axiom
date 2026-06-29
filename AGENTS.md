@@ -31,7 +31,35 @@ Full details: `ECOSYSTEM.md`. Domain model schemas: `projects/agentic-workflow/s
 ## Codex Operational Rules
 
 Use `rg` for search, use `apply_patch` for manual edits, respect the workspace
-sandbox, and request escalation when GitHub/network-backed commands need it.
+sandbox. Run all `aw ...` and `gh ...` commands with escalated permissions,
+because they may touch GitHub/network-backed state, workflow metadata, or git
+index/refs.
+
+## Codex Subagent Profiles
+
+Codex may use subagents only when the current surface supports delegation and
+the user or project workflow explicitly permits it. Keep Agentic Workflow
+lifecycle authority on the main thread: `aw wi`, `aw td`, `aw cb`, `aw run`,
+`aw health`, GitHub issue/PR updates, commits, rebases, and pushes are
+main-thread responsibilities unless the user gives a narrower override.
+
+Every delegated prompt must tell the subagent it is not alone in the codebase:
+do not revert unrelated edits, do not overwrite work from other agents, and
+report any overlapping dirty files before editing. Split implementation
+subtasks by disjoint write scope.
+
+Project-local profiles:
+
+- `mamba-runtime-explorer`: read-only codebase investigator. Use for concrete
+  runtime questions under `projects/mamba/src/runtime/**`. It must return
+  root cause, relevant file/line references, and a minimal patch strategy.
+- `mamba-runtime-worker`: bounded runtime implementer. Write scope is
+  `projects/mamba/src/runtime/**` only. Do not edit CPython fixtures, harnesses,
+  manifests, cached failure lists, docs, issue state, or git metadata.
+- `mamba-validation-worker`: validation-only runner. It may run focused cargo,
+  mamba, and CPython-oracle commands and must return exact commands, exit
+  statuses, and important stdout/stderr. It must not edit files or update
+  GitHub/AW state.
 
 <!-- aw:start -->
 ## Agentic Workflow CLI Surface

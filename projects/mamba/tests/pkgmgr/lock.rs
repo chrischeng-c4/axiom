@@ -20,6 +20,8 @@ fn mamba_bin() -> PathBuf {
 fn run(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(mamba_bin())
         .args(args)
+        .env_remove("MAMBA_FROZEN_INDEX")
+        .env_remove("MAMBA_INDEX_URL")
         .current_dir(dir)
         .output()
         .expect("spawn mamba")
@@ -83,17 +85,19 @@ fn lock_records_direct_and_transitive_deps() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(run(
-        &proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.path().to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
 
     let out = run(&proj, &["lock", "--index", index.path().to_str().unwrap()]);
     assert!(
@@ -128,17 +132,19 @@ fn lock_does_not_create_venv_or_site_packages() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(run(
-        &proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.path().to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
     assert!(
         run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
             .status
@@ -186,23 +192,63 @@ fn lock_unresolvable_dep_fails_cleanly() {
 }
 
 #[test]
+fn lock_no_source_requires_explicit_registry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+
+    let manifest_path = proj.join("mamba.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let edited = manifest.replace(
+        "dependencies = []",
+        "dependencies = [\n    \"frozen_demo_pkg==0.1.0\",\n]",
+    );
+    std::fs::write(&manifest_path, &edited).unwrap();
+
+    let out = run(&proj, &["lock"]);
+    assert!(
+        !out.status.success(),
+        "no-source lock must fail; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no package source configured") && stderr.contains("--index-url"),
+        "stderr must name explicit source options: {stderr:?}"
+    );
+    assert_eq!(
+        edited,
+        std::fs::read_to_string(&manifest_path).unwrap(),
+        "failed no-source lock must not mutate mamba.toml"
+    );
+    assert!(
+        !proj.join("mamba.lock").exists(),
+        "failed no-source lock must not write a partial lockfile"
+    );
+}
+
+#[test]
 fn lock_is_byte_identical_on_replay() {
     let index = build_index();
     let tmp = tempfile::tempdir().unwrap();
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(run(
-        &proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.path().to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
     assert!(
         run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
             .status
@@ -216,6 +262,99 @@ fn lock_is_byte_identical_on_replay() {
     );
     let b = std::fs::read(proj.join("mamba.lock")).unwrap();
     assert_eq!(a, b, "lockfile must be byte-identical on replay");
+}
+
+#[test]
+fn lock_check_passes_when_lockfile_is_current() {
+    let index = build_index();
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
+            .status
+            .success()
+    );
+
+    let before = std::fs::read(proj.join("mamba.lock")).unwrap();
+    let out = run(
+        &proj,
+        &["lock", "--check", "--index", index.path().to_str().unwrap()],
+    );
+    assert!(
+        out.status.success(),
+        "lock --check must pass; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("up to date"),
+        "stdout names success: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let after = std::fs::read(proj.join("mamba.lock")).unwrap();
+    assert_eq!(before, after, "lock --check must not rewrite the lockfile");
+}
+
+#[test]
+fn lock_check_fails_without_mutating_stale_lockfile() {
+    let index = build_index();
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
+            .status
+            .success()
+    );
+
+    let lock_path = proj.join("mamba.lock");
+    let stale = std::fs::read_to_string(&lock_path)
+        .unwrap()
+        .replace("version = \"0.1.0\"", "version = \"9.9.9\"");
+    std::fs::write(&lock_path, &stale).unwrap();
+    let out = run(
+        &proj,
+        &["lock", "--check", "--index", index.path().to_str().unwrap()],
+    );
+    assert!(!out.status.success(), "stale lock --check must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("out of date"),
+        "stderr names stale lock: {stderr:?}"
+    );
+    assert_eq!(
+        stale,
+        std::fs::read_to_string(&lock_path).unwrap(),
+        "failed lock --check must not rewrite stale lockfile"
+    );
 }
 
 #[test]
@@ -418,5 +557,128 @@ fn lock_resolves_transitive_requires_dist_against_pypi_mock() {
     assert!(
         lock.contains("dependencies = [\"trans-leaf==2.0.0\"]"),
         "root's dependencies pin the leaf: {lock}"
+    );
+}
+
+#[test]
+fn lock_index_url_uses_stored_auth_credentials_for_resolver() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server_url = rt.block_on(async {
+        use mamba::pkgmanage::pkgmgr::auth_header::basic_auth;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let expected_auth = basic_auth("__token__", "secret-token").unwrap();
+        let root_meta = serde_json::json!({
+            "info": { "name": "auth_root", "version": "1.0.0" },
+            "releases": {
+                "1.0.0": [{
+                    "filename": "auth_root-1.0.0-py3-none-any.whl",
+                    "url": "https://example.invalid/auth_root-1.0.0-py3-none-any.whl",
+                    "digests": { "sha256": &"4".repeat(64) },
+                    "yanked": false
+                }]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/auth-root/json"))
+            .and(header("authorization", expected_auth.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(root_meta))
+            .mount(&server)
+            .await;
+        let root_version = serde_json::json!({
+            "info": {
+                "name": "auth_root",
+                "version": "1.0.0",
+                "requires_dist": ["auth_leaf==2.0.0"]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/auth-root/1.0.0/json"))
+            .and(header("authorization", expected_auth.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(root_version))
+            .mount(&server)
+            .await;
+        let leaf_meta = serde_json::json!({
+            "info": { "name": "auth_leaf", "version": "2.0.0" },
+            "releases": {
+                "2.0.0": [{
+                    "filename": "auth_leaf-2.0.0-py3-none-any.whl",
+                    "url": "https://example.invalid/auth_leaf-2.0.0-py3-none-any.whl",
+                    "digests": { "sha256": &"5".repeat(64) },
+                    "yanked": false
+                }]
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/auth-leaf/json"))
+            .and(header("authorization", expected_auth.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(leaf_meta))
+            .mount(&server)
+            .await;
+        let leaf_version = serde_json::json!({
+            "info": {
+                "name": "auth_leaf",
+                "version": "2.0.0",
+                "requires_dist": []
+            }
+        });
+        Mock::given(method("GET"))
+            .and(path("/pypi/auth-leaf/2.0.0/json"))
+            .and(header("authorization", expected_auth.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(leaf_version))
+            .mount(&server)
+            .await;
+
+        let url = server.uri();
+        std::mem::forget(server);
+        url
+    });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let creds = tmp.path().join("credentials");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+    let login = Command::new(mamba_bin())
+        .args(["auth", "login", &server_url, "--token", "secret-token"])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba auth login");
+    assert!(
+        login.status.success(),
+        "auth login must succeed: {}",
+        String::from_utf8_lossy(&login.stderr)
+    );
+    let manifest = std::fs::read_to_string(proj.join("mamba.toml")).unwrap();
+    let edited = manifest.replace(
+        "dependencies = []",
+        "dependencies = [\n    \"auth_root==1.0.0\",\n]",
+    );
+    std::fs::write(proj.join("mamba.toml"), edited).unwrap();
+
+    let out = Command::new(mamba_bin())
+        .args(["lock", "--index-url", &server_url])
+        .env("MAMBA_CREDENTIALS_DIR", &creds)
+        .env("MAMBA_CACHE_DIR", &cache)
+        .current_dir(&proj)
+        .output()
+        .expect("spawn mamba lock");
+    assert!(
+        out.status.success(),
+        "authenticated lock must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let lock = std::fs::read_to_string(proj.join("mamba.lock")).unwrap();
+    assert!(lock.contains("name = \"auth-root\""), "{lock}");
+    assert!(lock.contains("name = \"auth-leaf\""), "{lock}");
+    assert!(
+        lock.contains("dependencies = [\"auth-leaf==2.0.0\"]"),
+        "{lock}"
     );
 }

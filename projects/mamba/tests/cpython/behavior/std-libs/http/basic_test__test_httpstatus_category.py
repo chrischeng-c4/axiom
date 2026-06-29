@@ -9,12 +9,11 @@
 # case = "basic_test__test_httpstatus_category"
 # subject = "cpython.test_httplib.BasicTest.test_httpstatus_category"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_httplib.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_httplib.py::BasicTest::test_httpstatus_category
 """Auto-ported test: BasicTest::test_httpstatus_category (CPython 3.12 oracle)."""
 

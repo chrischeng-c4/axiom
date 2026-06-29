@@ -91,6 +91,37 @@ unsafe extern "C" fn dispatch_locale_stub(_args_ptr: *const MbValue, _nargs: usi
     MbValue::none()
 }
 
+/// locale.getencoding() / getpreferredencoding([do_setlocale]) -> str.
+/// CPython returns the current locale's codec name; mamba runs UTF-8, and
+/// "UTF-8" round-trips through codecs.lookup. The optional do_setlocale arg
+/// (getpreferredencoding) is accepted and ignored.
+unsafe extern "C" fn dispatch_locale_getencoding(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str("UTF-8".to_string()))
+}
+
+/// locale._parse_localename(localename) -> (language, encoding). Splits a
+/// `lang.ENCODING` name; bare "C" → (None, None), bare "UTF-8" → (None,
+/// "UTF-8"); an otherwise-unrecognized bare name is a ValueError.
+unsafe extern "C" fn dispatch_parse_localename(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = |t: &str| MbValue::from_ptr(MbObject::new_str(t.to_string()));
+    let tup = |lang: MbValue, enc: MbValue| {
+        MbValue::from_ptr(MbObject::new_tuple(vec![lang, enc]))
+    };
+    if let Some((lang, enc)) = name.split_once('.') {
+        let lang_v = if lang.is_empty() { MbValue::none() } else { s(lang) };
+        return tup(lang_v, s(enc));
+    }
+    if name == "C" {
+        return tup(MbValue::none(), MbValue::none());
+    }
+    if name == "UTF-8" {
+        return tup(MbValue::none(), s("UTF-8"));
+    }
+    raise_named("ValueError", &format!("unknown locale: {name}"))
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -101,6 +132,9 @@ pub fn register() {
         ("atoi", dispatch_atoi as usize),
         ("strcoll", dispatch_strcoll as usize),
         ("strxfrm", dispatch_strxfrm as usize),
+        ("getencoding", dispatch_locale_getencoding as usize),
+        ("getpreferredencoding", dispatch_locale_getencoding as usize),
+        ("_parse_localename", dispatch_parse_localename as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -122,8 +156,6 @@ pub fn register() {
         "delocalize",
         "dgettext",
         "getdefaultlocale",
-        "getencoding",
-        "getpreferredencoding",
         "gettext",
         "localeconv",
         "localize",
@@ -363,15 +395,12 @@ pub fn mb_locale_strcoll(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_locale_format_string(fmt: MbValue, val: MbValue) -> MbValue {
+    // locale.format_string(fmt, val) with the default grouping=False is the
+    // same printf-style substitution as `fmt % val` — delegate to the shared
+    // formatter so %%-escapes, tuple args, and %(name)s mappings all work
+    // (the previous stub only handled a single %d/%f).
     let f = extract_str(fmt).unwrap_or_default();
-    let result = if let Some(i) = val.as_int() {
-        f.replacen("%d", &i.to_string(), 1)
-    } else if let Some(fl) = val.as_float() {
-        f.replacen("%f", &format!("{:.6}", fl), 1)
-    } else {
-        f
-    };
-    MbValue::from_ptr(MbObject::new_str(result))
+    super::super::string_ops::mb_str_percent_format(f, val)
 }
 
 pub fn mb_locale_LC_ALL() -> MbValue {

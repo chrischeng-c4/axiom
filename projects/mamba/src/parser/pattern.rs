@@ -1,7 +1,7 @@
 use super::ast::*;
 use super::Parser;
 use crate::error::MambaError;
-use crate::lexer::token::TokenKind;
+use crate::lexer::token::{TokenKind, BIG_INT_LITERAL_SENTINEL};
 use crate::source::span::{Span, Spanned};
 
 impl<'a> Parser<'a> {
@@ -285,8 +285,7 @@ impl<'a> Parser<'a> {
                 }
                 break;
             }
-            // PEP 634: mapping keys must be literals, not arbitrary expressions (#827)
-            let key = self.parse_pattern_literal()?;
+            let key = self.parse_mapping_key()?;
             self.expect(TokenKind::Colon)?;
             let value = self.parse_pattern()?;
             pairs.push((key, value));
@@ -299,6 +298,53 @@ impl<'a> Parser<'a> {
             Pattern::Mapping { pairs, rest },
             self.span_from(start),
         ))
+    }
+
+    /// Parse a mapping-pattern key. PEP 634 permits literal keys and dotted
+    /// value-pattern keys (`case {Keys.KEY: value}:`), but not bare capture
+    /// names or arbitrary expressions.
+    fn parse_mapping_key(&mut self) -> crate::error::Result<Spanned<Expr>> {
+        let token = self.peek().ok_or_else(|| {
+            MambaError::syntax(Span::dummy(), "expected mapping pattern key")
+        })?;
+        match &token.kind {
+            TokenKind::Int(_) | TokenKind::Float(_) | TokenKind::Str(_)
+            | TokenKind::True | TokenKind::False | TokenKind::None_
+            | TokenKind::Minus => self.parse_pattern_literal(),
+            kind if Parser::is_name_token(kind) => self.parse_dotted_value_key(),
+            other => Err(MambaError::syntax(
+                Span::new(self.file_id, token.start, token.end),
+                format!("expected literal or dotted value key, got {other}"),
+            )),
+        }
+    }
+
+    fn parse_dotted_value_key(&mut self) -> crate::error::Result<Spanned<Expr>> {
+        let start = self.peek().map(|t| t.start).unwrap_or(0);
+        let (ns, ne) = self.expect_name()?;
+        let mut expr = Spanned::new(
+            Expr::Ident(self.text_at(ns, ne).to_string()),
+            Span::new(self.file_id, ns, ne),
+        );
+        let mut saw_dot = false;
+        while self.peek_kind() == Some(TokenKind::Dot) {
+            saw_dot = true;
+            self.advance();
+            let (as_, ae) = self.expect_name()?;
+            let attr = self.text_at(as_, ae).to_string();
+            let span = expr.span.merge(Span::new(self.file_id, as_, ae));
+            expr = Spanned::new(
+                Expr::Attr { object: Box::new(expr), attr },
+                span,
+            );
+        }
+        if !saw_dot {
+            return Err(MambaError::syntax(
+                self.span_from(start),
+                "mapping pattern key must be a literal or dotted value",
+            ));
+        }
+        Ok(expr)
     }
 
     /// Parse ident-starting patterns: bindings, constructors, or class patterns.
@@ -372,8 +418,16 @@ impl<'a> Parser<'a> {
         match &token.kind {
             TokenKind::Int(v) => {
                 let v = *v;
-                self.advance();
-                Ok(Spanned::new(Expr::IntLit(v), self.span_from(start)))
+                let (_tok_start, tok_end) = self.advance();
+                let span = self.span_from(start);
+                if v == BIG_INT_LITERAL_SENTINEL {
+                    Ok(Spanned::new(
+                        Expr::BigIntLit(self.text_at(start, tok_end).to_string()),
+                        span,
+                    ))
+                } else {
+                    Ok(Spanned::new(Expr::IntLit(v), span))
+                }
             }
             TokenKind::Float(v) => {
                 let v = *v;
@@ -706,6 +760,25 @@ mod tests {
                 match &pairs[0].0.node {
                     Expr::StrLit(s) => assert_eq!(s, "key"),
                     other => panic!("expected StrLit key, got {other:?}"),
+                }
+                assert!(matches!(&pairs[0].1.node, Pattern::Binding(n) if n == "value"));
+            }
+            other => panic!("expected Mapping, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_mapping_pattern_dotted_value_key() {
+        match parse_pattern("{Keys.KEY: value}") {
+            Pattern::Mapping { pairs, rest } => {
+                assert_eq!(pairs.len(), 1);
+                assert!(rest.is_none());
+                match &pairs[0].0.node {
+                    Expr::Attr { object, attr } => {
+                        assert_eq!(attr, "KEY");
+                        assert!(matches!(&object.node, Expr::Ident(n) if n == "Keys"));
+                    }
+                    other => panic!("expected dotted value key, got {other:?}"),
                 }
                 assert!(matches!(&pairs[0].1.node, Pattern::Binding(n) if n == "value"));
             }

@@ -292,6 +292,28 @@ fn inst_set(instance: MbValue, name: &str, value: MbValue) {
     }
 }
 
+/// Store a borrowed runtime value into an instance field.
+///
+/// `inst_set` transfers ownership of a new value into the instance field. Use
+/// this helper only when the source value is borrowed from a method argument.
+fn inst_set_borrowed(instance: MbValue, name: &str, value: MbValue) {
+    unsafe {
+        super::super::rc::retain_if_ptr(value);
+    }
+    inst_set(instance, name, value);
+}
+
+fn borrowed_list_value(items: Vec<MbValue>) -> MbValue {
+    MbValue::from_ptr(MbObject::new_list_borrowed(items))
+}
+
+fn borrowed_return(value: MbValue) -> MbValue {
+    unsafe {
+        super::super::rc::retain_if_ptr(value);
+    }
+    value
+}
+
 /// Read an instance's runtime class name (the *subclass* the user defined).
 fn inst_class_name(instance: MbValue) -> Option<String> {
     instance.as_ptr().and_then(|ptr| unsafe {
@@ -385,7 +407,7 @@ extern "C" fn tr_add_success(_self: MbValue, _test: MbValue) -> MbValue {
 /// by setting `shouldStop` so a running suite halts (CPython `_setupStdout`
 /// elision aside, this is the observable contract).
 extern "C" fn tr_add_failure(self_obj: MbValue, test: MbValue, err: MbValue) -> MbValue {
-    let pair = MbValue::from_ptr(MbObject::new_list(vec![test, err]));
+    let pair = borrowed_list_value(vec![test, err]);
     list_field_push(self_obj, "failures", pair);
     maybe_stop_on_failfast(self_obj);
     MbValue::none()
@@ -393,7 +415,7 @@ extern "C" fn tr_add_failure(self_obj: MbValue, test: MbValue, err: MbValue) -> 
 
 /// `result.addError(test, err)` — record `(test, err)` in `errors`.
 extern "C" fn tr_add_error(self_obj: MbValue, test: MbValue, err: MbValue) -> MbValue {
-    let pair = MbValue::from_ptr(MbObject::new_list(vec![test, err]));
+    let pair = borrowed_list_value(vec![test, err]);
     list_field_push(self_obj, "errors", pair);
     maybe_stop_on_failfast(self_obj);
     MbValue::none()
@@ -408,7 +430,7 @@ extern "C" fn tr_add_sub_test(
     err: MbValue,
 ) -> MbValue {
     if !err.is_none() {
-        let pair = MbValue::from_ptr(MbObject::new_list(vec![test, err]));
+        let pair = borrowed_list_value(vec![test, err]);
         list_field_push(self_obj, "failures", pair);
         maybe_stop_on_failfast(self_obj);
     }
@@ -425,7 +447,7 @@ fn maybe_stop_on_failfast(self_obj: MbValue) {
 }
 
 extern "C" fn tr_add_skip(self_obj: MbValue, test: MbValue, reason: MbValue) -> MbValue {
-    let pair = MbValue::from_ptr(MbObject::new_list(vec![test, reason]));
+    let pair = borrowed_list_value(vec![test, reason]);
     list_field_push(self_obj, "skipped", pair);
     MbValue::none()
 }
@@ -465,6 +487,24 @@ extern "C" fn tc_init(self_obj: MbValue, args: MbValue) -> MbValue {
         .copied()
         .and_then(extract_str)
         .unwrap_or_else(|| DEFAULT_TEST_METHOD.to_string());
+    // CPython TestCase.__init__: a methodName that names no attribute is a
+    // ValueError ("no test method named ..."), except the "runTest" default
+    // (which is allowed to be absent).
+    if method != DEFAULT_TEST_METHOD {
+        let class_name =
+            inst_class_name(self_obj).unwrap_or_else(|| "TestCase".to_string());
+        let missing = super::super::class::lookup_method(&class_name, &method).is_none()
+            && inst_get(self_obj, &method).is_none();
+        if missing {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "no test method named {method} on {class_name}"
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
     inst_set(self_obj, "_testMethodName", name_val(&method));
     MbValue::none()
 }
@@ -590,9 +630,30 @@ extern "C" fn tc_run(self_obj: MbValue, args: MbValue) -> MbValue {
         .and_then(extract_str)
         .unwrap_or_else(|| DEFAULT_TEST_METHOD.to_string());
 
+    // CPython's run() does `getattr(self, self._testMethodName)` — a bare
+    // TestCase() has no `runTest`, so that raises AttributeError (uncaught).
+    let class_name = self_obj.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*p).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    }).unwrap_or_default();
+    let method_missing = super::super::class::lookup_method(&class_name, &method).is_none()
+        && inst_get(self_obj, &method).is_none();
+    if method_missing {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "'{class_name}' object has no attribute '{method}'"
+            ))),
+        );
+        return MbValue::none();
+    }
+
     // Expose the active result so `subTest()` can record sub-test failures
     // and reset the per-run sub-test bookkeeping.
-    inst_set(self_obj, "_outcome_result", result);
+    inst_set_borrowed(self_obj, "_outcome_result", result);
     inst_set(self_obj, "_subtest_recorded", MbValue::from_bool(false));
 
     // setUp → body → tearDown. A failing assert / self.fail() now signals a
@@ -836,7 +897,7 @@ extern "C" fn tl_load_tests_from_names(self_obj: MbValue, args: MbValue) -> MbVa
 /// non-TestCase class) yields an empty list, so `loadTestsFromTestCase`
 /// produces an empty suite for it.
 extern "C" fn tl_get_test_case_names(_self: MbValue, cls: MbValue) -> MbValue {
-    let Some(cls_name) = extract_str(cls) else {
+    let Some(cls_name) = super::super::class::resolve_class_name(cls) else {
         return new_empty_list();
     };
     let mut names: Vec<String> = super::super::class::mb_dir_mro_keys(&cls_name)
@@ -855,7 +916,7 @@ extern "C" fn tl_get_test_case_names(_self: MbValue, cls: MbValue) -> MbValue {
 /// no `test*` methods yields an empty suite.
 extern "C" fn tl_load_tests_from_test_case(self_obj: MbValue, cls: MbValue) -> MbValue {
     let names = call_method_n(self_obj, "getTestCaseNames", &[cls]);
-    let cls_name = extract_str(cls);
+    let cls_name = super::super::class::resolve_class_name(cls);
     let tests: Vec<MbValue> = super::super::builtins::extract_items(names)
         .into_iter()
         .filter_map(|n| {
@@ -1458,7 +1519,7 @@ fn assert_raises_dispatch(args: &[MbValue]) -> MbValue {
 
 /// `_AssertRaisesCtx.__enter__(self)` — the cm is its own bound object.
 extern "C" fn arc_enter(self_obj: MbValue) -> MbValue {
-    self_obj
+    borrowed_return(self_obj)
 }
 
 /// `_AssertRaisesCtx.__exit__(self, exc_type, exc_val, exc_tb)` — see
@@ -1505,7 +1566,7 @@ extern "C" fn arc_exit(
 /// owning case so `__exit__` can route a sub-test failure to the active
 /// `TestResult` via `addSubTest`, mirroring CPython's `_SubTest`.
 extern "C" fn subtest_enter(self_obj: MbValue) -> MbValue {
-    self_obj
+    borrowed_return(self_obj)
 }
 
 /// `_SubTestCtx.__exit__(self, exc_type, exc_val, exc_tb)`.
@@ -1554,7 +1615,7 @@ extern "C" fn subtest_exit(
 /// affect failure-report formatting, which the fixtures do not assert on).
 extern "C" fn tc_sub_test(self_obj: MbValue, _args: MbValue) -> MbValue {
     let cm = MbValue::from_ptr(MbObject::new_instance("_SubTestCtx".to_string()));
-    inst_set(cm, "_case", self_obj);
+    inst_set_borrowed(cm, "_case", self_obj);
     cm
 }
 

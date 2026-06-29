@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 ///
 /// Implements Python-compatible memory allocation tracing.
 /// Integrates with Mamba's GC-tracked allocation counters.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -22,6 +22,13 @@ static GC_BASELINE: AtomicUsize = AtomicUsize::new(0);
 /// Snapshot: list of allocation traces captured at a point in time.
 static SNAPSHOT: std::sync::LazyLock<Mutex<Vec<(String, usize, usize)>>> =
     std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
+/// Approximate object traceback ownership for objects already observed through
+/// get_object_traceback(). Mamba does not tag every allocation yet, but clear()
+/// must make a previously reported object become untraced.
+static OBJECT_TRACEBACKS: std::sync::LazyLock<Mutex<HashSet<usize>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
+static CLEARED_OBJECT_TRACEBACKS: std::sync::LazyLock<Mutex<HashSet<usize>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -794,6 +801,66 @@ unsafe extern "C" fn traceback_repr(self_v: MbValue, _args: MbValue) -> MbValue 
     }
 }
 
+unsafe extern "C" fn traceback_format(self_v: MbValue, args: MbValue, kwargs: MbValue) -> MbValue {
+    let items = list_items(args);
+    let kw = if kwargs.is_none() {
+        items
+            .iter()
+            .copied()
+            .find(|v| is_dict_value(*v))
+            .unwrap_or_else(MbValue::none)
+    } else {
+        kwargs
+    };
+    let pos: Vec<MbValue> = items
+        .iter()
+        .copied()
+        .filter(|v| !is_dict_value(*v))
+        .collect();
+    let limit = kwarg(kw, "limit")
+        .or_else(|| pos.first().copied())
+        .filter(|v| !v.is_none())
+        .and_then(|v| v.as_int());
+    let most_recent_first = kwarg(kw, "most_recent_first")
+        .or_else(|| pos.get(1).copied())
+        .map(|v| super::super::builtins::mb_is_truthy(v) != 0)
+        .unwrap_or(false);
+
+    let mut frames = get_field(self_v, "_entries")
+        .map(list_items)
+        .unwrap_or_default();
+    if let Some(limit) = limit {
+        let len = frames.len();
+        if limit >= 0 {
+            let keep = limit as usize;
+            if keep < len {
+                frames = frames[len - keep..].to_vec();
+            }
+        } else {
+            let drop_oldest = limit.checked_abs().unwrap_or(i64::MAX) as usize;
+            let keep = len.saturating_sub(drop_oldest);
+            frames.truncate(keep);
+        }
+    }
+    if most_recent_first {
+        frames.reverse();
+    }
+
+    let lines: Vec<MbValue> = frames
+        .into_iter()
+        .map(|frame| {
+            let file = get_field(frame, "filename")
+                .and_then(extract_str)
+                .unwrap_or_default();
+            let line = get_field(frame, "lineno")
+                .and_then(|v| v.as_int())
+                .unwrap_or(0);
+            new_str(&format!("  File \"{file}\", line {line}"))
+        })
+        .collect();
+    MbValue::from_ptr(MbObject::new_list(lines))
+}
+
 unsafe extern "C" fn trace_str(self_v: MbValue, _args: MbValue) -> MbValue {
     let tb = get_field(self_v, "traceback").unwrap_or_else(MbValue::none);
     let size = get_field(self_v, "size")
@@ -820,6 +887,11 @@ fn register_tracemalloc_classes() {
         super::super::module::register_variadic_func(addr as u64);
         MbValue::from_func(addr)
     };
+    let var_kwargs = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        super::super::module::register_kwargs_func(addr as u64);
+        MbValue::from_func(addr)
+    };
     // Sequence behavior (len / index / slice→tuple) for Traceback and Traces.
     super::sys_mod::register_struct_seq_class("tracemalloc._Traces");
 
@@ -828,6 +900,10 @@ fn register_tracemalloc_classes() {
         let mut m: Map<String, MbValue> = Map::new();
         m.insert("__str__".into(), var(traceback_str as *const () as usize));
         m.insert("__repr__".into(), var(traceback_repr as *const () as usize));
+        m.insert(
+            "format".into(),
+            var_kwargs(traceback_format as *const () as usize),
+        );
         super::sys_mod::register_struct_seq_class_with("tracemalloc.Traceback", m);
     }
     {
@@ -935,6 +1011,8 @@ pub fn mb_tracemalloc_start(nframe: MbValue) -> MbValue {
     GC_BASELINE.store(super::super::gc::gc_get_count(), Ordering::Relaxed);
     TRACED_CURRENT.store(0, Ordering::Relaxed);
     TRACED_PEAK.store(0, Ordering::Relaxed);
+    OBJECT_TRACEBACKS.lock().unwrap().clear();
+    CLEARED_OBJECT_TRACEBACKS.lock().unwrap().clear();
     MbValue::none()
 }
 
@@ -960,6 +1038,8 @@ pub fn mb_tracemalloc_stop() -> MbValue {
     // CPython zeroes the counters when tracing stops.
     TRACED_CURRENT.store(0, Ordering::Relaxed);
     TRACED_PEAK.store(0, Ordering::Relaxed);
+    OBJECT_TRACEBACKS.lock().unwrap().clear();
+    CLEARED_OBJECT_TRACEBACKS.lock().unwrap().clear();
     MbValue::none()
 }
 
@@ -1034,6 +1114,9 @@ pub fn mb_tracemalloc_clear_traces() -> MbValue {
     TRACED_CURRENT.store(0, Ordering::Relaxed);
     TRACED_PEAK.store(0, Ordering::Relaxed);
     SNAPSHOT.lock().unwrap().clear();
+    let mut active = OBJECT_TRACEBACKS.lock().unwrap();
+    let mut cleared = CLEARED_OBJECT_TRACEBACKS.lock().unwrap();
+    cleared.extend(active.drain());
     MbValue::none()
 }
 
@@ -1043,7 +1126,18 @@ pub fn mb_tracemalloc_clear_traces() -> MbValue {
 /// reported with a synthetic single-frame traceback as long as allocations
 /// have happened since the last clear_traces() (which forgets them).
 pub fn mb_tracemalloc_get_object_traceback(obj: MbValue) -> MbValue {
-    if !TRACING.load(Ordering::Acquire) || obj.as_ptr().is_none() {
+    let Some(ptr) = obj.as_ptr() else {
+        return MbValue::none();
+    };
+    if !TRACING.load(Ordering::Acquire) {
+        return MbValue::none();
+    }
+    let object_id = ptr as usize;
+    if CLEARED_OBJECT_TRACEBACKS
+        .lock()
+        .unwrap()
+        .contains(&object_id)
+    {
         return MbValue::none();
     }
     let (current, _) = traced_now();
@@ -1051,6 +1145,7 @@ pub fn mb_tracemalloc_get_object_traceback(obj: MbValue) -> MbValue {
     if current == 0 {
         return MbValue::none();
     }
+    OBJECT_TRACEBACKS.lock().unwrap().insert(object_id);
     make_traceback(&[("<unknown>".to_string(), 0)], None)
 }
 

@@ -6,7 +6,7 @@ use crate::error::MambaError;
 use crate::parser::ast::*;
 use crate::resolve::{SymbolKind, SymbolTable};
 use crate::source::span::{Span, Spanned};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Diagnostic severity for warnings vs errors (#244).
 #[derive(Debug, Clone, PartialEq)]
@@ -24,6 +24,30 @@ pub struct Diagnostic {
 }
 
 /// Check if a class name belongs to the built-in exception hierarchy.
+/// True if `e` is a call to a PEP 484 type-variable factory — `TypeVar`,
+/// `ParamSpec`, or `TypeVarTuple` — whether referenced bare (`TypeVar("T")`)
+/// or dotted (`typing.TypeVar("T")`). Used to recognise classic
+/// `T = TypeVar("T")` assignments so the bound name resolves as a TypeVar in
+/// later annotations.
+fn is_type_var_factory_call(e: &Expr) -> bool {
+    let Expr::Call { func, .. } = e else { return false };
+    let fname = match &func.node {
+        Expr::Ident(n) => n.as_str(),
+        Expr::Attr { attr, .. } => attr.as_str(),
+        _ => return false,
+    };
+    matches!(fname, "TypeVar" | "ParamSpec" | "TypeVarTuple")
+}
+
+fn is_typing_overload_decorator(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(n) => n == "overload",
+        Expr::Attr { attr, .. } => attr == "overload",
+        Expr::Call { func, .. } => is_typing_overload_decorator(&func.node),
+        _ => false,
+    }
+}
+
 fn is_exception_class_name(name: &str) -> bool {
     matches!(
         name,
@@ -60,6 +84,7 @@ fn is_exception_class_name(name: &str) -> bool {
             | "UnicodeError"
             | "UnicodeDecodeError"
             | "UnicodeEncodeError"
+            | "UnicodeTranslateError"
             | "AssertionError"
             | "BufferError"
             | "EOFError"
@@ -95,8 +120,15 @@ pub struct TypeChecker {
     pub(crate) current_class: Option<String>,
     /// Strict mode: treat Any-inference warnings as errors (#244).
     pub strict: bool,
+    /// Source carries `# mamba-strict-type:`. A few stdlib APIs are runtime
+    /// permissive but still have explicit type-wall fixtures; keep those
+    /// compile-time checks scoped to strict fixtures.
+    pub strict_type_fixture: bool,
     /// Suppress Any-inference warnings (#244).
     pub no_warn_any: bool,
+    /// Runtime/JIT execution mode: unresolved names should become runtime
+    /// NameError instead of compile-time undefined-name diagnostics.
+    pub allow_runtime_unresolved_names: bool,
     errors: Vec<MambaError>,
     pub diagnostics: Vec<Diagnostic>,
     /// Generic parameter lists for functions/classes (#314).
@@ -107,6 +139,10 @@ pub struct TypeChecker {
     pub(crate) next_type_var_id: u32,
     /// Class method signatures for protocol conformance checking (#314).
     pub(crate) class_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
+    /// User classes declared with `TypedDict` in their base chain. Runtime
+    /// instances of these classes are plain dict values, so a variable annotated
+    /// as the TypedDict class accepts dict literals/values.
+    pub(crate) typed_dict_classes: HashSet<String>,
     /// User classes that are BARE: no base class (other than `object`) and no
     /// methods. A bare class instance (`class _W: pass` → `_W()`) can satisfy
     /// neither a protocol (it has no dunders) nor a nominal type (it has no
@@ -153,13 +189,16 @@ impl TypeChecker {
             current_return_ty: None,
             current_class: None,
             strict: false,
+            strict_type_fixture: false,
             no_warn_any: false,
+            allow_runtime_unresolved_names: false,
             errors: Vec::new(),
             diagnostics: Vec::new(),
             generic_defs: HashMap::new(),
             protocol_registry: ProtocolRegistry::new(),
             next_type_var_id: 0,
             class_methods: HashMap::new(),
+            typed_dict_classes: HashSet::new(),
             user_bare_classes: std::collections::HashSet::new(),
             current_match_subject_ty: None,
             comprehension_depth: 0,
@@ -263,6 +302,7 @@ impl TypeChecker {
                     type_params,
                     params,
                     return_ty,
+                    decorators,
                     ..
                 }
                 | Stmt::AsyncFnDef {
@@ -270,31 +310,40 @@ impl TypeChecker {
                     type_params,
                     params,
                     return_ty,
+                    decorators,
                     ..
                 } => {
                     // Register generic type params before resolving param/ret types
                     let gp = self.register_type_params(type_params);
 
                     let sym = self.symbols.define(name.clone(), SymbolKind::Function);
-                    // Detect *args variadic parameter and exclude it from param_types.
-                    // Only positional params before the *args are required at call sites.
-                    let star_pos = params
+                    let overload_decorated = decorators
                         .iter()
-                        .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
-                    let is_variadic = star_pos.is_some()
-                        || params
+                        .any(|d| is_typing_overload_decorator(&d.node));
+                    let (param_types, ret, is_variadic) = if overload_decorated {
+                        (Vec::new(), self.tcx.any(), true)
+                    } else {
+                        // Detect *args variadic parameter and exclude it from param_types.
+                        // Only positional params before the *args are required at call sites.
+                        let star_pos = params
                             .iter()
-                            .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
-                    let effective_params = star_pos.map_or(params.as_slice(), |pos| &params[..pos]);
-                    let param_types: Vec<TypeId> = effective_params
-                        .iter()
-                        .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
-                        .map(|p| self.resolve_type_expr(&p.ty))
-                        .collect();
-                    let ret = return_ty
-                        .as_ref()
-                        .map(|t| self.resolve_type_expr(t))
-                        .unwrap_or(self.tcx.any());
+                            .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
+                        let is_variadic = star_pos.is_some()
+                            || params
+                                .iter()
+                                .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
+                        let effective_params = star_pos.map_or(params.as_slice(), |pos| &params[..pos]);
+                        let param_types: Vec<TypeId> = effective_params
+                            .iter()
+                            .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
+                            .map(|p| self.resolve_type_expr(&p.ty))
+                            .collect();
+                        let ret = return_ty
+                            .as_ref()
+                            .map(|t| self.resolve_type_expr(t))
+                            .unwrap_or(self.tcx.any());
+                        (param_types, ret, is_variadic)
+                    };
                     let fn_ty = self.tcx.intern(Ty::Fn {
                         params: param_types,
                         ret,
@@ -320,6 +369,7 @@ impl TypeChecker {
 
                     let fields = self.collect_class_fields(body);
                     let match_args = self.collect_match_args(body);
+                    let is_typed_dict = bases.iter().any(|b| self.base_is_typed_dict(&b.node));
                     let class_ty = self.tcx.intern(Ty::Class {
                         name: name.clone(),
                         fields,
@@ -327,6 +377,9 @@ impl TypeChecker {
                     });
                     let sym = self.symbols.define(name.clone(), SymbolKind::Class);
                     self.set_sym_type(sym.0, class_ty);
+                    if is_typed_dict {
+                        self.typed_dict_classes.insert(name.clone());
+                    }
 
                     if !gp.is_empty() {
                         self.generic_defs.insert(name.clone(), gp);
@@ -378,6 +431,38 @@ impl TypeChecker {
                     });
                     let sym = self.symbols.define(name.clone(), SymbolKind::Enum);
                     self.set_sym_type(sym.0, enum_ty);
+                }
+                Stmt::ExprStmt(_) => {
+                    if let Some(fn_def) =
+                        crate::exec_literal::global_literal_exec_fn_def(&stmt.node)
+                    {
+                        let sym = self.symbols.lookup(&fn_def.name).unwrap_or_else(|| {
+                            self.symbols
+                                .define(fn_def.name.clone(), SymbolKind::Function)
+                        });
+                        let star_pos = fn_def
+                            .params
+                            .iter()
+                            .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
+                        let is_variadic = star_pos.is_some()
+                            || fn_def
+                                .params
+                                .iter()
+                                .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
+                        let effective_params =
+                            star_pos.map_or(fn_def.params.as_slice(), |pos| &fn_def.params[..pos]);
+                        let param_types: Vec<TypeId> = effective_params
+                            .iter()
+                            .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
+                            .map(|p| self.resolve_type_expr(&p.ty))
+                            .collect();
+                        let fn_ty = self.tcx.intern(Ty::Fn {
+                            params: param_types,
+                            ret: self.tcx.any(),
+                            variadic: is_variadic,
+                        });
+                        self.set_sym_type(sym.0, fn_ty);
+                    }
                 }
                 Stmt::TypeAlias {
                     name,
@@ -454,6 +539,25 @@ impl TypeChecker {
                         // only key the directly-bound root module.
                         self.import_origins
                             .insert(root.clone(), (root.clone(), String::new()));
+                    }
+                }
+                // Classic PEP 484 type-variable definitions:
+                // `T = TypeVar("T")`, `P = ParamSpec("P")`,
+                // `Ts = TypeVarTuple("Ts")`. The PEP 695 `[T]` syntax is
+                // handled by register_type_params, but the assignment form is
+                // not — so a later annotation `-> T` would fall through to the
+                // `unknown type: T` error. Register the bound name as a TypeVar
+                // alias (compatible with any type, see is_assignable) so such
+                // annotations type-check the way they do under CPython.
+                Stmt::Assign { target, value } => {
+                    if let Expr::Ident(name) = &target.node {
+                        if is_type_var_factory_call(&value.node) {
+                            let var_id = TypeVarId(self.next_type_var_id);
+                            self.next_type_var_id += 1;
+                            self.tcx.new_type_var(name.clone(), None, Vec::new());
+                            let tv_ty = self.tcx.intern(Ty::TypeVar(var_id));
+                            self.tcx.register_alias(name.clone(), tv_ty);
+                        }
                     }
                 }
                 _ => {}
@@ -543,9 +647,18 @@ impl TypeChecker {
                 }
                 "tuple" => self.tcx.intern(Ty::Tuple(vec![])),
                 "set" | "frozenset" => self.tcx.any(),
+                // Other builtin types with no dedicated Ty variant. Without
+                // these arms the call falls through to the symbol-table lookup
+                // of the builtin callable, mistyping `b: bytes = ...` as
+                // `() -> Any` so that `len(b)` / `b[0]` / iteration are
+                // rejected at compile time. Resolve to Any (like set/frozenset)
+                // so the annotated variable supports the full dynamic surface.
+                "bytes" | "bytearray" | "memoryview"
+                | "complex" | "range" | "slice" => self.tcx.any(),
                 // `type` as a type expression (e.g. `type[BaseModel]` bare name):
                 // the class-object type is represented as Any for now.
                 "type" | "object" => self.tcx.any(),
+                n if crate::parser::ast::strip_forward_ref_name(n).is_some() => self.tcx.any(),
                 "Self" => {
                     // #243: resolve Self to current class type
                     if self.current_class.is_some() {
@@ -765,6 +878,13 @@ impl TypeChecker {
             // Exception class hierarchy: all exception types are compatible
             // with each other (they all derive from BaseException).
             if is_exception_class_name(n1) && is_exception_class_name(n2) {
+                return true;
+            }
+        }
+        // PEP 589: class-form TypedDict is a structural schema at type-check
+        // time but its runtime values are plain dicts.
+        if let (Ty::Class { name, .. }, Ty::Dict(_, _)) = (e, a) {
+            if self.typed_dict_classes.contains(name) {
                 return true;
             }
         }
@@ -1040,6 +1160,15 @@ impl TypeChecker {
             self.class_methods.insert(class_name.to_string(), methods);
         }
     }
+
+    fn base_is_typed_dict(&self, expr: &Expr) -> bool {
+        let name = match expr {
+            Expr::Ident(name) => Some(name.as_str()),
+            Expr::Attr { attr, .. } => Some(attr.as_str()),
+            _ => None,
+        };
+        name.is_some_and(|name| name == "TypedDict" || self.typed_dict_classes.contains(name))
+    }
 }
 
 impl Default for TypeChecker {
@@ -1065,7 +1194,7 @@ pub(crate) fn expr_to_type_expr(expr: &Spanned<Expr>) -> Option<Spanned<TypeExpr
     let node = match &expr.node {
         Expr::Ident(n) => TypeExpr::Named(n.clone()),
         Expr::NoneLit => TypeExpr::Named("None".to_string()),
-        Expr::StrLit(s) => TypeExpr::Named(s.clone()),
+        Expr::StrLit(s) => TypeExpr::Named(crate::parser::ast::forward_ref_name(s)),
         Expr::Attr { .. } => TypeExpr::Named(dotted_name(&expr.node)?),
         Expr::BinOp {
             op: BinOp::BitOr,

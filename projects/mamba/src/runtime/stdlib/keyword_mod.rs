@@ -85,7 +85,10 @@ pub fn mb_keyword_kwlist() -> MbValue {
 /// keyword.iskeyword(s) -> bool
 /// Returns True if s is a Python 3.12 hard keyword, False otherwise.
 pub fn mb_keyword_iskeyword(s: MbValue) -> MbValue {
-    MbValue::from_bool(with_str(s, |w| KEYWORDS.contains(&w)))
+    let Some(s) = extract_str(s) else {
+        return MbValue::from_bool(false);
+    };
+    MbValue::from_bool(KEYWORDS.contains(&s.as_str()))
 }
 
 /// keyword.softkwlist — returns the list of Python 3.12 soft keywords.
@@ -100,22 +103,23 @@ pub fn mb_keyword_softkwlist() -> MbValue {
 /// keyword.issoftkeyword(s) -> bool
 /// Returns True if s is a Python 3.12 soft keyword, False otherwise.
 pub fn mb_keyword_issoftkeyword(s: MbValue) -> MbValue {
-    MbValue::from_bool(with_str(s, |w| SOFT_KEYWORDS.contains(&w)))
+    let Some(s) = extract_str(s) else {
+        return MbValue::from_bool(false);
+    };
+    MbValue::from_bool(SOFT_KEYWORDS.contains(&s.as_str()))
 }
 
-/// Borrow `&str` from an MbValue holding a heap string and apply `f`. Non-string
-/// values are mapped to the empty string. The slice does not outlive the call.
 #[inline]
-fn with_str<R>(val: MbValue, f: impl FnOnce(&str) -> R) -> R {
+fn extract_str(val: MbValue) -> Option<String> {
     if let Some(ptr) = val.as_ptr() {
         use super::super::rc::ObjData;
         unsafe {
             if let ObjData::Str(ref s) = (*ptr).data {
-                return f(s.as_str());
+                return Some(s.clone());
             }
         }
     }
-    f("")
+    None
 }
 
 // HANDWRITE-END

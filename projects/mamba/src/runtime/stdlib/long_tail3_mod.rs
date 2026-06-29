@@ -30,6 +30,13 @@ unsafe extern "C" fn dispatch_int_zero(_a: *const MbValue, _n: usize) -> MbValue
 unsafe extern "C" fn dispatch_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
 }
+// importlib.util.find_spec(name) -> spec | None. Routes to the real
+// module-registry lookup so a missing module yields None (not an empty
+// shell dict), matching CPython's "find_spec returns None when absent".
+unsafe extern "C" fn dispatch_importlib_find_spec(a: *const MbValue, n: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(a, n) };
+    super::importlib_mod::mb_importlib_find_spec(args.first().copied().unwrap_or_else(MbValue::none))
+}
 
 fn register_addrs(addrs: &[usize]) {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
@@ -745,6 +752,82 @@ fn register_xml_subs() {
     );
 }
 
+/// `zoneinfo.available_timezones()` → a set of IANA zone-name strings. mamba
+/// has no full tz database, but CPython guarantees a non-empty set containing
+/// "UTC"; expose the common-zone subset so consumers see a realistic set.
+/// The common IANA zone names mamba recognises (identity/key surface only; no
+/// tz-transition data without chrono-tz).
+pub const IANA_ZONES: &[&str] = &[
+    "UTC", "GMT", "America/New_York", "America/Chicago", "America/Denver",
+    "America/Los_Angeles", "America/Sao_Paulo", "America/Toronto",
+    "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Moscow",
+    "Asia/Tokyo", "Asia/Shanghai", "Asia/Kolkata", "Asia/Dubai",
+    "Asia/Singapore", "Australia/Sydney", "Pacific/Auckland",
+    "Africa/Cairo", "Africa/Johannesburg",
+];
+
+/// Is `key` a zone name mamba recognises as valid (so ZoneInfo accepts it)?
+pub fn is_known_zone(key: &str) -> bool {
+    IANA_ZONES.contains(&key)
+}
+
+unsafe extern "C" fn dispatch_available_timezones(_a: *const MbValue, _n: usize) -> MbValue {
+    let elems: Vec<MbValue> = IANA_ZONES
+        .iter()
+        .map(|z| MbValue::from_ptr(MbObject::new_str((*z).to_string())))
+        .collect();
+    MbValue::from_ptr(MbObject::new_set(elems))
+}
+
+thread_local! {
+    /// Strong cache of ZoneInfo instances keyed by zone name (CPython parity:
+    /// `ZoneInfo(k) is ZoneInfo(k)`).
+    static ZI_CACHE: std::cell::RefCell<HashMap<String, MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// A bare ZoneInfo instance carrying its `key` (no tz data — mamba models only
+/// the identity/key surface).
+fn zoneinfo_fresh(key: &str) -> MbValue {
+    let inst = MbObject::new_instance("ZoneInfo".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            fields.write().unwrap().insert(
+                "key".to_string(),
+                MbValue::from_ptr(MbObject::new_str(key.to_string())),
+            );
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// Cached ZoneInfo construction (used by the `ZoneInfo(key)` call path).
+pub fn zoneinfo_cached(key: &str) -> MbValue {
+    if let Some(c) = ZI_CACHE.with(|m| m.borrow().get(key).copied()) {
+        unsafe { super::super::rc::retain_if_ptr(c); }
+        return c;
+    }
+    let v = zoneinfo_fresh(key);
+    ZI_CACHE.with(|m| {
+        m.borrow_mut().insert(key.to_string(), v);
+    });
+    unsafe { super::super::rc::retain_if_ptr(v); }
+    v
+}
+
+/// `ZoneInfo.no_cache(key)` — a fresh, uncached instance (CPython).
+unsafe extern "C" fn dispatch_zoneinfo_no_cache(a: *const MbValue, n: usize) -> MbValue {
+    let args = if n == 0 || a.is_null() { &[][..] } else { unsafe { std::slice::from_raw_parts(a, n) } };
+    let key = args
+        .first()
+        .and_then(|v| v.as_ptr())
+        .and_then(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        })
+        .unwrap_or_else(|| "UTC".to_string());
+    zoneinfo_fresh(&key)
+}
+
 fn register_zoneinfo() {
     // Most of the surface is the standard class-shell / dispatcher set, but
     // `ZoneInfo` additionally exposes the classmethods `clear_cache`,
@@ -762,25 +845,35 @@ fn register_zoneinfo() {
                 let mut map = fields.write().unwrap();
                 map.insert("clear_cache".to_string(), MbValue::from_func(shell));
                 map.insert("from_file".to_string(), MbValue::from_func(shell));
-                map.insert("no_cache".to_string(), MbValue::from_func(shell));
+                let nc = dispatch_zoneinfo_no_cache as *const () as usize;
+                super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                    s.borrow_mut().insert(nc as u64);
+                });
+                map.insert("no_cache".to_string(), MbValue::from_func(nc));
             }
         }
     }
 
     let mut attrs = HashMap::new();
     attrs.insert("ZoneInfo".to_string(), zone_info);
+    // ZoneInfoNotFoundError is a real exception class (KeyError subclass,
+    // registered in exception.rs) so `except zoneinfo.ZoneInfoNotFoundError`
+    // and `except KeyError` both catch it -- a class object is its name-string.
     attrs.insert(
         "ZoneInfoNotFoundError".to_string(),
-        MbValue::from_func(shell),
+        MbValue::from_ptr(MbObject::new_str("ZoneInfoNotFoundError".to_string())),
     );
+    // A real RuntimeWarning subclass (registered in exception.rs) so
+    // issubclass(InvalidTZPathWarning, RuntimeWarning) and isinstance hold.
     attrs.insert(
         "InvalidTZPathWarning".to_string(),
-        MbValue::from_func(shell),
+        MbValue::from_ptr(MbObject::new_str("InvalidTZPathWarning".to_string())),
     );
-    attrs.insert(
-        "available_timezones".to_string(),
-        MbValue::from_func(dispatch_empty_list as *const () as usize),
-    );
+    let avail = dispatch_available_timezones as *const () as usize;
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(avail as u64);
+    });
+    attrs.insert("available_timezones".to_string(), MbValue::from_func(avail));
     attrs.insert(
         "reset_tzpath".to_string(),
         MbValue::from_func(dispatch_noop as *const () as usize),
@@ -1006,7 +1099,10 @@ fn register_importlib_subs() {
                 "spec_from_loader",
                 dispatch_class_shell as *const () as usize,
             ),
-            ("find_spec", dispatch_class_shell as *const () as usize),
+            (
+                "find_spec",
+                dispatch_importlib_find_spec as *const () as usize,
+            ),
             ("resolve_name", dispatch_empty_str as *const () as usize),
             (
                 "source_from_cache",
@@ -1014,7 +1110,7 @@ fn register_importlib_subs() {
             ),
             (
                 "cache_from_source",
-                dispatch_empty_str as *const () as usize,
+                super::compileall_mod::cache_from_source_addr(),
             ),
             ("source_hash", dispatch_empty_str as *const () as usize),
             ("decode_source", dispatch_empty_str as *const () as usize),
@@ -1066,17 +1162,6 @@ fn register_collections_abc() {
 
 fn register_email_subs() {
     register_with(
-        "email.charset",
-        &["Charset"],
-        &[
-            ("add_alias", dispatch_noop as *const () as usize),
-            ("add_charset", dispatch_noop as *const () as usize),
-            ("add_codec", dispatch_noop as *const () as usize),
-        ],
-        &[("QP", 1), ("BASE64", 2), ("SHORTEST", 3)],
-        &[],
-    );
-    register_with(
         "email.encoders",
         &[],
         &[
@@ -1108,7 +1193,6 @@ fn register_email_subs() {
             "InvalidMultipartContentTransferEncodingDefect",
             "UndecodableBytesDefect",
             "InvalidBase64PaddingDefect",
-            "InvalidBase64CharactersDefect",
             "InvalidBase64LengthDefect",
             "InvalidHeaderDefect",
             "HeaderDefect",
@@ -1117,7 +1201,13 @@ fn register_email_subs() {
         ],
         &[],
         &[],
-        &[],
+        // InvalidBase64CharactersDefect is a class-name string (not a shell
+        // func) so isinstance(msg.defects[0], errors.InvalidBase64CharactersDefect)
+        // matches the instance email_mod appends on a malformed base64 payload.
+        &[(
+            "InvalidBase64CharactersDefect",
+            "InvalidBase64CharactersDefect",
+        )],
     );
     register_with(
         "email.feedparser",

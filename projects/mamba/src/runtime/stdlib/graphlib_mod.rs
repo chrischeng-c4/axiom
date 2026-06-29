@@ -1021,6 +1021,28 @@ mod tests {
     }
 
     #[test]
+    fn test_bound_done_method_spread_marks_ready_nodes() {
+        setup();
+        register();
+        let h = mb_graphlib_new();
+        mb_graphlib_add(h, make_int(1), make_list_ints(&[]));
+        mb_graphlib_add(h, make_int(2), make_list_ints(&[1]));
+        mb_graphlib_prepare(h);
+
+        let ready = mb_graphlib_get_ready(h);
+        assert_eq!(get_seq_ints(ready), vec![1]);
+        let done_name = MbValue::from_ptr(MbObject::new_str("done".to_string()));
+        let done_method = super::super::super::class::mb_getattr(h, done_name);
+        super::super::super::builtins::mb_call_spread(done_method, ready);
+
+        let next_ready = mb_graphlib_get_ready(h);
+        assert_eq!(get_seq_ints(next_ready), vec![2]);
+        mb_graphlib_done(h, make_list_ints(&[2]));
+        assert_eq!(mb_graphlib_is_active(h).as_bool(), Some(false));
+        mb_graphlib_destroy(h);
+    }
+
+    #[test]
     fn test_get_ready_returns_tuple() {
         setup();
         let h = mb_graphlib_new();

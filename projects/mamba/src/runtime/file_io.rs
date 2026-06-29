@@ -1,4 +1,4 @@
-use super::rc::MbObject;
+use super::rc::{InstanceFields, MbObject, MbObjectHeader, MbRwLock, ObjData, ObjKind};
 use super::value::MbValue;
 /// File I/O runtime support (#379).
 ///
@@ -8,6 +8,7 @@ use super::value::MbValue;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::sync::atomic::AtomicU32;
 
 /// File handle state.
 #[allow(dead_code)]
@@ -25,6 +26,12 @@ struct MbFile {
     writable: bool,
     /// Append mode — handle is positioned at end of existing content.
     append: bool,
+    /// Text-mode codec name (`f.encoding`), None in binary mode.
+    encoding: Option<String>,
+    /// Text-mode error handler (`f.errors`), None in binary mode.
+    errors: Option<String>,
+    /// Whether closing this wrapper owns the underlying fd.
+    closefd: bool,
 }
 
 /// Parsed open() mode flags. Returns None on a structurally invalid mode.
@@ -142,23 +149,59 @@ pub fn mb_file_name(handle: MbValue) -> MbValue {
     }
 }
 
+fn file_path_from_handle(handle: MbValue) -> Option<String> {
+    let id = handle.as_int()? as u64;
+    FILES.with(|files| files.borrow().get(&id).map(|file| file.path.clone()))
+        .or_else(|| super::stdlib::os_mod::mb_os_fd_path(id as i64))
+}
+
 /// open(path, mode) → file handle (as MbValue int)
 pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
+    mb_open_with_closefd(path, mode, true)
+}
+
+fn patched_open_override(path: MbValue, mode: MbValue) -> Option<MbValue> {
+    let open = super::module::mb_builtin_get(MbValue::from_ptr(MbObject::new_str(
+        "open".to_string(),
+    )));
+    let is_native_open = open
+        .as_func()
+        .map(|addr| super::module::is_native_func(addr as u64))
+        .unwrap_or(false);
+    if open.is_none() || is_native_open {
+        return None;
+    }
+    let mut args = vec![path];
+    if !mode.is_none() {
+        args.push(mode);
+    }
+    Some(super::builtins::mb_call_spread(
+        open,
+        MbValue::from_ptr(MbObject::new_list(args)),
+    ))
+}
+
+fn mb_open_with_closefd(path: MbValue, mode: MbValue, closefd_flag: bool) -> MbValue {
+    if let Some(v) = patched_open_override(path, mode) {
+        return v;
+    }
     // str/bytes/bytearray directly; otherwise os.fspath coercion (pathlib
     // instances and any `__fspath__` provider) — CPython accepts str, bytes,
     // or os.PathLike here.
-    let file_path =
-        match extract_str(path).or_else(|| super::stdlib::pathlib_mod::coerce_fspath(path)) {
-            Some(p) => p,
-            None => {
-                // A failing user `__fspath__` already left its own exception
-                // pending — propagate that instead of masking it.
-                if super::exception::mb_has_exception().as_bool() != Some(true) {
-                    raise_type_error("open() argument must be a string");
-                }
-                return MbValue::none();
+    let file_path = match extract_str(path)
+        .or_else(|| super::stdlib::pathlib_mod::coerce_fspath(path))
+        .or_else(|| file_path_from_handle(path))
+    {
+        Some(p) => p,
+        None => {
+            // A failing user `__fspath__` already left its own exception
+            // pending — propagate that instead of masking it.
+            if super::exception::mb_has_exception().as_bool() != Some(true) {
+                raise_type_error("open() argument must be a string");
             }
-        };
+            return MbValue::none();
+        }
+    };
     // Embedded NUL byte in path is a ValueError (CPython).
     if file_path.contains('\0') {
         raise_value_error("embedded null byte");
@@ -244,6 +287,13 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
             } else {
                 (None, Some(f))
             };
+            // CPython text streams default to the locale codec ("UTF-8" here)
+            // with "strict" error handling; binary streams expose neither.
+            let (encoding, errors) = if binary {
+                (None, None)
+            } else {
+                (Some("UTF-8".to_string()), Some("strict".to_string()))
+            };
             let mf = MbFile {
                 reader,
                 writer,
@@ -254,6 +304,9 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
                 readable,
                 writable,
                 append,
+                encoding,
+                errors,
+                closefd: closefd_flag,
             };
             FILES.with(|files| files.borrow_mut().insert(id, mf));
             MbValue::from_int(id as i64)
@@ -268,6 +321,237 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
             MbValue::none()
         }
     }
+}
+
+/// open(path, mode, encoding, errors, closefd) — like `mb_open`, but records
+/// the text codec / error-handler the caller passed so `f.encoding` /
+/// `f.errors` reflect them. None args keep `mb_open`'s text defaults (UTF-8 /
+/// strict); binary streams ignore both (they expose neither attribute).
+/// `closefd=False` with a filename raises ValueError (CPython).
+pub fn mb_open_ex(
+    path: MbValue,
+    mode: MbValue,
+    encoding: MbValue,
+    errors: MbValue,
+    closefd: MbValue,
+) -> MbValue {
+    // closefd=False is only meaningful for an existing fd; with a filename
+    // (a str path) CPython raises ValueError.
+    if closefd.as_bool() == Some(false) && extract_str_opt(path).is_some() {
+        crate::runtime::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "Cannot use closefd=False with file name".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    let closefd_flag = closefd.as_bool().unwrap_or(true);
+    let handle = mb_open_with_closefd(path, mode, closefd_flag);
+    if let Some(id) = handle.as_int() {
+        let enc = extract_str_opt(encoding);
+        let err = extract_str_opt(errors);
+        FILES.with(|files| {
+            if let Some(mf) = files.borrow_mut().get_mut(&(id as u64)) {
+                if !mf.binary {
+                    if let Some(e) = enc {
+                        mf.encoding = Some(e);
+                    }
+                    if let Some(e) = err {
+                        mf.errors = Some(e);
+                    }
+                }
+            }
+        });
+    }
+    handle
+}
+
+fn dict_get_kw(dict: MbValue, key: &str) -> Option<MbValue> {
+    dict.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().iter().find_map(|(k, v)| {
+                if let super::dict_ops::DictKey::Str(ref s) = k {
+                    if s == key {
+                        return Some(*v);
+                    }
+                }
+                None
+            })
+        } else {
+            None
+        }
+    })
+}
+
+fn kw_or_default(kwargs: MbValue, key: &str, default: MbValue) -> MbValue {
+    dict_get_kw(kwargs, key)
+        .filter(|v| !v.is_none())
+        .unwrap_or(default)
+}
+
+fn open_flags_for_mode(mode: MbValue) -> MbValue {
+    let mode_s = extract_str_opt(mode).unwrap_or_else(|| "r".to_string());
+    let mut flags = if mode_s.contains('+') {
+        0x0002 // O_RDWR
+    } else if mode_s.contains('w') || mode_s.contains('a') || mode_s.contains('x') {
+        0x0001 // O_WRONLY
+    } else {
+        0x0000 // O_RDONLY
+    };
+    if mode_s.contains('a') {
+        flags |= 0x0008; // O_APPEND
+    }
+    if mode_s.contains('w') {
+        flags |= 0x0200 | 0x0400; // O_CREAT | O_TRUNC
+    }
+    if mode_s.contains('x') {
+        flags |= 0x0200 | 0x0800; // O_CREAT | O_EXCL
+    }
+    MbValue::from_int(flags)
+}
+
+/// open(path, *pos_defaults, **kwargs) lowered through a single runtime helper
+/// so the merged kwargs mapping is evaluated once before open_ex reads it.
+pub fn mb_open_kwargs(
+    path: MbValue,
+    mode_default: MbValue,
+    encoding_default: MbValue,
+    errors_default: MbValue,
+    closefd_default: MbValue,
+    kwargs: MbValue,
+) -> MbValue {
+    let mode = kw_or_default(kwargs, "mode", mode_default);
+    let encoding = kw_or_default(kwargs, "encoding", encoding_default);
+    let errors = kw_or_default(kwargs, "errors", errors_default);
+    let closefd = kw_or_default(kwargs, "closefd", closefd_default);
+    mb_open_ex(path, mode, encoding, errors, closefd)
+}
+
+pub fn mb_open_with_opener(
+    path: MbValue,
+    mode: MbValue,
+    encoding: MbValue,
+    errors: MbValue,
+    closefd: MbValue,
+    opener: MbValue,
+) -> MbValue {
+    let real_path = if opener.is_none() {
+        path
+    } else {
+        let opener_args = MbValue::from_ptr(MbObject::new_list(vec![path, open_flags_for_mode(mode)]));
+        super::builtins::mb_call_spread(opener, opener_args)
+    };
+    mb_open_ex(real_path, mode, encoding, errors, closefd)
+}
+
+/// Extract a String from an MbValue str, or None for non-str / None.
+fn extract_str_opt(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|p| unsafe {
+        if let crate::runtime::rc::ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// `f.mode` — the mode string the file was opened with.
+pub fn mb_file_mode(handle: MbValue) -> MbValue {
+    file_str_field(handle, |mf| Some(mf.mode.clone()))
+}
+
+/// `f.encoding` — text-mode codec name, or None in binary mode.
+pub fn mb_file_encoding(handle: MbValue) -> MbValue {
+    file_str_field(handle, |mf| mf.encoding.clone())
+}
+
+/// `f.errors` — text-mode error handler, or None in binary mode.
+pub fn mb_file_errors(handle: MbValue) -> MbValue {
+    file_str_field(handle, |mf| mf.errors.clone())
+}
+
+/// Read an optional string field off a file handle as an MbValue str (None when
+/// the handle is unknown or the field is None).
+fn file_str_field(handle: MbValue, f: impl Fn(&MbFile) -> Option<String>) -> MbValue {
+    let Some(id) = handle.as_int() else { return MbValue::none() };
+    FILES.with(|files| {
+        match files.borrow().get(&(id as u64)).and_then(|mf| f(mf)) {
+            Some(s) => MbValue::from_ptr(MbObject::new_str(s)),
+            None => MbValue::none(),
+        }
+    })
+}
+
+fn make_io_instance(class_name: &str, fields: InstanceFields) -> MbValue {
+    MbValue::from_ptr(Box::into_raw(Box::new(MbObject {
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: class_name.to_string(),
+            fields: MbRwLock::new(fields),
+        },
+    })))
+}
+
+fn binary_layer_mode(mode: &str) -> String {
+    let plus = mode.contains('+');
+    let primary = if plus && mode.contains('a') {
+        'a'
+    } else if plus && mode.contains('x') {
+        'x'
+    } else if plus {
+        'r'
+    } else if mode.contains('a') {
+        'a'
+    } else if mode.contains('x') {
+        'x'
+    } else if mode.contains('w') {
+        'w'
+    } else {
+        'r'
+    };
+    let mut out = String::with_capacity(3);
+    out.push(primary);
+    out.push('b');
+    if plus {
+        out.push('+');
+    }
+    out
+}
+
+/// `f.buffer` for text-mode builtin open() handles. The runtime represents
+/// files as table-backed integer handles, so synthesize the visible
+/// TextIOWrapper buffer/raw metadata stack for attribute probes.
+pub fn mb_file_buffer(handle: MbValue) -> MbValue {
+    let Some(id) = handle.as_int() else { return MbValue::none() };
+    FILES.with(|files| {
+        let files = files.borrow();
+        let Some(mf) = files.get(&(id as u64)) else {
+            return MbValue::none();
+        };
+        if mf.binary {
+            return MbValue::none();
+        }
+        let mode = binary_layer_mode(&mf.mode);
+        let mut raw_fields = InstanceFields::default();
+        raw_fields.insert(
+            "mode".to_string(),
+            MbValue::from_ptr(MbObject::new_str(mode.clone())),
+        );
+        raw_fields.insert("closefd".to_string(), MbValue::from_bool(mf.closefd));
+        let raw = make_io_instance("FileIO", raw_fields);
+
+        let mut buffer_fields = InstanceFields::default();
+        buffer_fields.insert(
+            "mode".to_string(),
+            MbValue::from_ptr(MbObject::new_str(mode)),
+        );
+        buffer_fields.insert("raw".to_string(), raw);
+        make_io_instance("BufferedRandom", buffer_fields)
+    })
 }
 
 /// file.read([size]) → str (text mode) or bytes (binary mode), entire contents
@@ -426,7 +710,6 @@ pub fn mb_file_readlines(handle: MbValue) -> MbValue {
 
 /// file.write(text) → number of characters written
 pub fn mb_file_write(handle: MbValue, text: MbValue) -> MbValue {
-    let content = extract_bytes(text).unwrap_or_default();
     if let Some(id) = handle.as_int() {
         FILES.with(|files| {
             let mut files = files.borrow_mut();
@@ -435,11 +718,23 @@ pub fn mb_file_write(handle: MbValue, text: MbValue) -> MbValue {
                     raise_value_error("I/O operation on closed file");
                     return MbValue::none();
                 }
+                let binary = mf.binary;
+                let encoding = mf.encoding.clone();
                 if let Some(ref mut writer) = mf.writer {
+                    use std::io::{Seek, SeekFrom};
+                    let include_bom =
+                        !binary && writer.seek(SeekFrom::Current(0)).unwrap_or(0) == 0;
+                    let (content, logical_len) = if binary {
+                        let bytes = extract_bytes(text).unwrap_or_default();
+                        let len = bytes.len() as i64;
+                        (bytes, len)
+                    } else {
+                        encode_text_payload(text, encoding.as_deref(), include_bom)
+                    };
                     match writer.write_all(&content) {
                         Ok(()) => {
                             let _ = writer.flush();
-                            return MbValue::from_int(content.len() as i64);
+                            return MbValue::from_int(logical_len);
                         }
                         Err(_) => return MbValue::none(),
                     }
@@ -455,17 +750,30 @@ pub fn mb_file_write(handle: MbValue, text: MbValue) -> MbValue {
 /// file.writelines(lines) → None
 /// Writes each element of the iterable to the file (no separator added).
 pub fn mb_file_writelines(handle: MbValue, lines: MbValue) -> MbValue {
-    if let Some(items_ptr) = lines.as_ptr() {
-        let items: Vec<MbValue> = unsafe {
-            if let super::rc::ObjData::List(ref lock) = (*items_ptr).data {
-                lock.read().unwrap().to_vec()
-            } else {
-                Vec::new()
-            }
-        };
+    if mb_file_raise_if_closed(handle) {
+        return MbValue::none();
+    }
+    let iter_handle = super::iter::mb_iter(lines);
+    if iter_handle.is_none() {
+        return MbValue::none();
+    }
+    // Fast path: drain the iterator batch (avoids per-element HashMap lookups).
+    if let Some(items) = super::iter::drain_iter_to_vec(iter_handle) {
         for item in items {
             mb_file_write(handle, item);
         }
+        return MbValue::none();
+    }
+    // Fallback: standard iterator protocol.
+    loop {
+        if super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
+            break;
+        }
+        let item = super::iter::mb_next(iter_handle);
+        if item.is_none() && super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
+            break;
+        }
+        mb_file_write(handle, item);
     }
     MbValue::none()
 }
@@ -499,12 +807,45 @@ fn raise_value_error(msg: &str) {
 }
 
 fn raise_file_not_found(path: &str) {
-    super::exception::mb_raise(
+    let strerror = "No such file or directory";
+    let message = format!("[Errno 2] {strerror}: '{path}'");
+    let mut fields = InstanceFields::default();
+    fields.insert("message".to_string(), MbValue::from_ptr(MbObject::new_str(message)));
+    fields.insert(
+        "__type__".to_string(),
         MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(format!(
-            "No such file or directory: '{path}'"
-        ))),
     );
+    fields.insert("__cause__".to_string(), MbValue::none());
+    fields.insert("__context__".to_string(), MbValue::none());
+    fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
+    fields.insert("errno".to_string(), MbValue::from_int(2));
+    fields.insert(
+        "strerror".to_string(),
+        MbValue::from_ptr(MbObject::new_str(strerror.to_string())),
+    );
+    fields.insert(
+        "filename".to_string(),
+        MbValue::from_ptr(MbObject::new_str(path.to_string())),
+    );
+    fields.insert(
+        "args".to_string(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_int(2),
+            MbValue::from_ptr(MbObject::new_str(strerror.to_string())),
+            MbValue::from_ptr(MbObject::new_str(path.to_string())),
+        ])),
+    );
+    let obj = Box::new(MbObject {
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "FileNotFoundError".to_string(),
+            fields: MbRwLock::new(fields),
+        },
+    });
+    super::class::mb_raise_instance(MbValue::from_ptr(Box::into_raw(obj)));
 }
 
 fn raise_os_error(msg: &str) {
@@ -532,6 +873,56 @@ fn new_bytes(b: Vec<u8>) -> MbValue {
     MbValue::from_ptr(MbObject::new_bytes(b))
 }
 
+fn encode_text_payload(text: MbValue, encoding: Option<&str>, include_bom: bool) -> (Vec<u8>, i64) {
+    let Some(s) = extract_str(text) else {
+        let bytes = extract_bytes(text).unwrap_or_default();
+        let len = bytes.len() as i64;
+        return (bytes, len);
+    };
+    let logical_len = s.chars().count() as i64;
+    let enc = encoding
+        .unwrap_or("UTF-8")
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    let mut out = Vec::new();
+    match enc.as_str() {
+        "utf-8-sig" => {
+            if include_bom {
+                out.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+            }
+            out.extend_from_slice(s.as_bytes());
+        }
+        "utf-16" | "utf-16-le" => {
+            if include_bom && enc == "utf-16" {
+                out.extend_from_slice(&[0xFF, 0xFE]);
+            }
+            for unit in s.encode_utf16() {
+                out.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+        "utf-16-be" => {
+            for unit in s.encode_utf16() {
+                out.extend_from_slice(&unit.to_be_bytes());
+            }
+        }
+        "utf-32" | "utf-32-le" => {
+            if include_bom && enc == "utf-32" {
+                out.extend_from_slice(&[0xFF, 0xFE, 0x00, 0x00]);
+            }
+            for ch in s.chars() {
+                out.extend_from_slice(&(ch as u32).to_le_bytes());
+            }
+        }
+        "utf-32-be" => {
+            for ch in s.chars() {
+                out.extend_from_slice(&(ch as u32).to_be_bytes());
+            }
+        }
+        _ => out.extend_from_slice(s.as_bytes()),
+    }
+    (out, logical_len)
+}
+
 /// True iff `id` is an open (not closed) file handle whose ops need a closed
 /// guard. Returns the handle's `closed` flag.
 pub fn is_file_closed(handle: MbValue) -> bool {
@@ -545,6 +936,37 @@ pub fn is_file_closed(handle: MbValue) -> bool {
         });
     }
     false
+}
+
+pub fn mb_file_raise_if_closed(handle: MbValue) -> bool {
+    if is_file_closed(handle) {
+        raise_value_error("I/O operation on closed file");
+        return true;
+    }
+    false
+}
+
+/// file.fileno() — expose the table-backed handle id as the fd surrogate.
+pub fn mb_file_fileno(handle: MbValue) -> MbValue {
+    if mb_file_raise_if_closed(handle) {
+        return MbValue::none();
+    }
+    handle
+}
+
+/// file.isatty() — regular file handles are never terminals in this runtime.
+pub fn mb_file_isatty(handle: MbValue) -> MbValue {
+    if mb_file_raise_if_closed(handle) {
+        return MbValue::none();
+    }
+    MbValue::from_bool(false)
+}
+
+pub fn mb_file_iter(handle: MbValue) -> MbValue {
+    if mb_file_raise_if_closed(handle) {
+        return MbValue::none();
+    }
+    super::iter::mb_iter(handle)
 }
 
 /// file.tell() — current byte offset.
@@ -605,6 +1027,22 @@ pub fn mb_file_seek(handle: MbValue, offset: MbValue, whence: MbValue) -> MbValu
                 if mf.closed {
                     raise_value_error("I/O operation on closed file");
                     return MbValue::none();
+                }
+                if mf.reader.is_some() && mf.writer.is_some() {
+                    let reader_pos = {
+                        let r = mf.reader.as_mut().unwrap();
+                        r.seek(match from {
+                            SeekFrom::Start(n) => SeekFrom::Start(n),
+                            SeekFrom::End(n) => SeekFrom::End(n),
+                            SeekFrom::Current(n) => SeekFrom::Current(n),
+                        })
+                        .unwrap_or(0)
+                    };
+                    let writer_pos = {
+                        let wr = mf.writer.as_mut().unwrap();
+                        wr.seek(from).unwrap_or(reader_pos)
+                    };
+                    return MbValue::from_int(writer_pos as i64);
                 }
                 if let Some(ref mut r) = mf.reader {
                     let pos = r.seek(from).unwrap_or(0);

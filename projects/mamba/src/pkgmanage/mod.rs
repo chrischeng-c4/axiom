@@ -11,17 +11,31 @@
 // (PyPI-equivalents). See projects/mamba/PLAN.md.
 
 pub mod add;
+pub mod audit;
+pub mod auth;
 pub mod builder;
 pub mod cache;
+pub mod export;
 pub mod hash;
+pub mod index;
 pub mod init;
 pub mod install;
 pub mod lock;
 pub mod lockfile;
 pub mod manifest;
+pub mod package;
+pub mod pip;
 pub mod pkgmgr;
+pub mod python;
+pub mod provider;
 pub mod remove;
 pub mod run;
+pub mod shell;
 pub mod source;
 pub mod sync;
+pub mod tool;
+pub mod tree;
 pub mod validate;
+pub mod venv;
+pub mod version;
+pub mod workspace;

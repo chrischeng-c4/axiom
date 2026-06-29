@@ -6,27 +6,35 @@
 //   - $MAMBA_CACHE_DIR overrides the platform default — the gate
 //     points this at a tempdir so user home is never read or written.
 //   - `cache dir` prints the resolved cache root (debug aid).
+//   - `cache size` / `cache info` report exact cache bytes and category
+//     counts.
 //   - `cache clean` removes every entry under the root but keeps the
 //     root itself; safe to call when the root does not yet exist.
-//   - `cache prune` is currently equivalent to `clean` (placeholder
-//     for age-based eviction; out of scope here per #2685).
+//   - `cache prune` supports dry-run, age, total-size, and package
+//     targeted policies.
 //   - Offline; no implicit network or user-home traversal.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
-use std::fs;
 use std::io::Write as _;
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
+
+use crate::pkgmanage::pkgmgr::cache_prune::{
+    CacheCategory, PrunePolicy, apply_prune_plan, collapse_empty_dirs, enumerate_cache, plan_prune,
+};
 
 const CACHE_DIR_ENV: &str = "MAMBA_CACHE_DIR";
 
 pub fn cmd_cache(sub: &ArgMatches) -> Result<()> {
     match sub.subcommand() {
         Some(("dir", _)) => action_dir(),
+        Some(("size", cmd)) => action_size(cmd),
+        Some(("info", cmd)) => action_info(cmd),
         Some(("clean", _)) => action_clean(),
-        Some(("prune", _)) => action_prune(),
+        Some(("prune", cmd)) => action_prune(cmd),
         Some((other, _)) => bail!("unknown cache subcommand `{other}`"),
-        None => bail!("`mamba cache` requires a subcommand: dir | clean | prune"),
+        None => bail!("`mamba cache` requires a subcommand: dir | size | info | clean | prune"),
     }
 }
 
@@ -45,34 +53,141 @@ fn action_clean() -> Result<()> {
         eprintln!("no_op: cache root {} did not exist", root.display());
         return Ok(());
     }
-    let mut removed = 0usize;
-    for entry in fs::read_dir(&root).with_context(|| format!("read {}", root.display()))? {
-        let entry = entry.with_context(|| format!("walk {}", root.display()))?;
-        let path = entry.path();
-        let kind = entry
-            .file_type()
-            .with_context(|| format!("stat {}", path.display()))?;
-        if kind.is_dir() {
-            fs::remove_dir_all(&path).with_context(|| format!("remove dir {}", path.display()))?;
-        } else {
-            fs::remove_file(&path).with_context(|| format!("remove file {}", path.display()))?;
-        }
-        removed += 1;
-    }
+    let inv = enumerate_cache(&root)?;
+    let mut policy = PrunePolicy::clean_all();
+    policy.all_unknown_too = true;
+    let plan = plan_prune(&inv, &policy, SystemTime::now());
+    let summary = apply_prune_plan(&plan, false);
+    let empty_dirs = collapse_empty_dirs(&root);
+    report_prune_failures(&summary.failures)?;
     eprintln!(
-        "cleaned: {removed} entr{plural} under {root}",
-        plural = if removed == 1 { "y" } else { "ies" },
+        "cleaned: {files} file{file_plural}, {bytes} bytes freed, {dirs} empty dir{dir_plural} removed under {root}",
+        files = summary.removed,
+        file_plural = if summary.removed == 1 { "" } else { "s" },
+        bytes = summary.bytes_freed,
+        dirs = empty_dirs,
+        dir_plural = if empty_dirs == 1 { "" } else { "s" },
         root = root.display()
     );
     Ok(())
 }
 
-fn action_prune() -> Result<()> {
-    // For now `prune` is identical to `clean` — age-based eviction
-    // arrives once there's real wheel cache content (Tick 8+ has
-    // hash-addressed entries; eviction policy is a follow-up).
-    eprintln!("prune: applying clean policy (age-based eviction not yet enabled)");
-    action_clean()
+fn action_size(sub: &ArgMatches) -> Result<()> {
+    let root = resolve_cache_root()?;
+    let inv = enumerate_cache(&root)?;
+    if sub.get_flag("json") {
+        println!(
+            "{}",
+            serde_json::json!({
+                "root": root,
+                "bytes": inv.total_bytes(),
+                "entries": inv.count(),
+            })
+        );
+    } else {
+        println!("{} bytes", inv.total_bytes());
+    }
+    Ok(())
+}
+
+fn action_info(sub: &ArgMatches) -> Result<()> {
+    let root = resolve_cache_root()?;
+    let inv = enumerate_cache(&root)?;
+    if sub.get_flag("json") {
+        println!(
+            "{}",
+            serde_json::json!({
+                "root": root,
+                "entries": inv.count(),
+                "bytes": inv.total_bytes(),
+                "metadata": category_json(&inv, CacheCategory::Metadata),
+                "artifacts": category_json(&inv, CacheCategory::Artifact),
+                "content": category_json(&inv, CacheCategory::ContentAddressed),
+                "other": category_json(&inv, CacheCategory::Other),
+            })
+        );
+        return Ok(());
+    }
+
+    println!("root: {}", root.display());
+    println!("entries: {}", inv.count());
+    println!("bytes: {}", inv.total_bytes());
+    println!(
+        "metadata: {} entries, {} bytes",
+        inv.count_in(CacheCategory::Metadata),
+        inv.bytes_in(CacheCategory::Metadata)
+    );
+    println!(
+        "artifacts: {} entries, {} bytes",
+        inv.count_in(CacheCategory::Artifact),
+        inv.bytes_in(CacheCategory::Artifact)
+    );
+    println!(
+        "content: {} entries, {} bytes",
+        inv.count_in(CacheCategory::ContentAddressed),
+        inv.bytes_in(CacheCategory::ContentAddressed)
+    );
+    println!(
+        "other: {} entries, {} bytes",
+        inv.count_in(CacheCategory::Other),
+        inv.bytes_in(CacheCategory::Other)
+    );
+    Ok(())
+}
+
+fn action_prune(sub: &ArgMatches) -> Result<()> {
+    let root = resolve_cache_root()?;
+    if !root.exists() {
+        eprintln!("no_op: cache root {} did not exist", root.display());
+        return Ok(());
+    }
+
+    let mut policy = PrunePolicy {
+        all_unknown_too: sub.get_flag("all-unknown"),
+        ..Default::default()
+    };
+    if let Some(seconds) = sub.get_one::<String>("older-than-seconds") {
+        policy.max_age = Some(Duration::from_secs(parse_u64(
+            seconds,
+            "older-than-seconds",
+        )?));
+    }
+    if let Some(bytes) = sub.get_one::<String>("max-size") {
+        policy.max_total_bytes = Some(parse_u64(bytes, "max-size")?);
+    }
+    if let Some(packages) = sub.get_many::<String>("package") {
+        policy.only_packages = packages.cloned().collect();
+    }
+    if policy.max_age.is_none()
+        && policy.max_total_bytes.is_none()
+        && policy.only_packages.is_empty()
+    {
+        policy.wipe = true;
+        policy.all_unknown_too = true;
+    }
+
+    let inv = enumerate_cache(&root)?;
+    let plan = plan_prune(&inv, &policy, SystemTime::now());
+    let dry_run = sub.get_flag("dry-run");
+    let summary = apply_prune_plan(&plan, dry_run);
+    let empty_dirs = if dry_run {
+        0
+    } else {
+        collapse_empty_dirs(&root)
+    };
+    report_prune_failures(&summary.failures)?;
+    eprintln!(
+        "{verb}: {files} file{file_plural}, {bytes} bytes {suffix}, {dirs} empty dir{dir_plural} removed under {root}",
+        verb = if dry_run { "would_prune" } else { "pruned" },
+        files = summary.removed,
+        file_plural = if summary.removed == 1 { "" } else { "s" },
+        bytes = summary.bytes_freed,
+        suffix = if dry_run { "selected" } else { "freed" },
+        dirs = empty_dirs,
+        dir_plural = if empty_dirs == 1 { "" } else { "s" },
+        root = root.display()
+    );
+    Ok(())
 }
 
 /// Resolve the package cache root, in order:
@@ -104,6 +219,35 @@ pub fn resolve_cache_root() -> Result<PathBuf> {
     {
         Ok(home.join(".cache").join("mamba"))
     }
+}
+
+fn parse_u64(raw: &str, name: &str) -> Result<u64> {
+    raw.parse::<u64>()
+        .with_context(|| format!("parse --{name} value `{raw}`"))
+}
+
+fn category_json(
+    inv: &crate::pkgmanage::pkgmgr::cache_prune::CacheInventory,
+    cat: CacheCategory,
+) -> serde_json::Value {
+    serde_json::json!({
+        "entries": inv.count_in(cat),
+        "bytes": inv.bytes_in(cat),
+    })
+}
+
+fn report_prune_failures(failures: &[(PathBuf, String)]) -> Result<()> {
+    if failures.is_empty() {
+        return Ok(());
+    }
+    let mut detail = String::new();
+    for (path, err) in failures {
+        detail.push_str(&format!("{}: {}; ", path.display(), err));
+    }
+    bail!(
+        "cache prune failed for {} path(s): {detail}",
+        failures.len()
+    )
 }
 
 #[cfg(test)]

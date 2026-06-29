@@ -49,7 +49,11 @@ impl<'a> Parser<'a> {
             None
         };
         self.expect(TokenKind::Colon)?;
-        let body = self.parse_block()?;
+        let was_in_class_body = self.in_class_body;
+        self.in_class_body = false;
+        let body = self.parse_block();
+        self.in_class_body = was_in_class_body;
+        let body = body?;
         Ok(Spanned::new(
             Stmt::FnDef {
                 decorators,
@@ -96,7 +100,11 @@ impl<'a> Parser<'a> {
             None
         };
         self.expect(TokenKind::Colon)?;
-        let body = self.parse_block()?;
+        let was_in_class_body = self.in_class_body;
+        self.in_class_body = false;
+        let body = self.parse_block();
+        self.in_class_body = was_in_class_body;
+        let body = body?;
         Ok(Spanned::new(
             Stmt::AsyncFnDef {
                 decorators,
@@ -168,7 +176,11 @@ impl<'a> Parser<'a> {
             (Vec::new(), Vec::new())
         };
         self.expect(TokenKind::Colon)?;
-        let body = self.parse_block()?;
+        let was_in_class_body = self.in_class_body;
+        self.in_class_body = true;
+        let body = self.parse_block();
+        self.in_class_body = was_in_class_body;
+        let body = body?;
         Ok(Spanned::new(
             Stmt::ClassDef {
                 decorators,
@@ -1567,6 +1579,7 @@ enum MatchKey {
 fn match_key_of(expr: &Expr) -> Option<MatchKey> {
     match expr {
         Expr::IntLit(i) => Some(MatchKey::Num(*i as f64)),
+        Expr::BigIntLit(_) => None,
         Expr::FloatLit(f) => Some(MatchKey::Num(*f)),
         Expr::BoolLit(b) => Some(MatchKey::Num(if *b { 1.0 } else { 0.0 })),
         Expr::StrLit(s) => Some(MatchKey::Str(s.clone())),
