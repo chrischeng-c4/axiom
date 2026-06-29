@@ -9,12 +9,11 @@
 # case = "open__filename_as_str_wrong"
 # subject = "_gdbm.open(filename: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_gdbm.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename
 # mamba-strict-type: TypeError
 """Type wall: _gdbm.open(filename: str); call it with the wrong type.
 
