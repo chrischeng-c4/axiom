@@ -9,12 +9,11 @@
 # case = "use_env__flag_as_bool_wrong"
 # subject = "_curses.use_env(flag: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed flag"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_curses.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed flag
 # mamba-strict-type: TypeError
 """Type wall: _curses.use_env(flag: bool); call it with the wrong type.
 
