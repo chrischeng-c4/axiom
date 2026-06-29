@@ -24,55 +24,61 @@ capability_refs:
 
 ```mermaid
 ---
-id: cap-workload-sensitive-native-gates-logic
+id: cap-workload-sensitive-native-gates-contract
 entry: start
 nodes:
-  start: { kind: start, label: "cap command request" }
-  normalize: { kind: process, label: "normalize cap <cmd>, cap run argv, or shell-free cap run string into argv" }
-  shell_check: { kind: decision, label: "requires shell semantics or unsupported flags?" }
-  shell_fallback: { kind: terminal, label: "run original command path" }
-  candidate: { kind: process, label: "match native candidate subset: ls, sort, grep, find, sed -n" }
-  candidate_found: { kind: decision, label: "candidate subset matched?" }
-  classify: { kind: process, label: "classify workload with cheap observable thresholds" }
-  tiny_or_unknown: { kind: decision, label: "tiny or unknown materiality?" }
-  original: { kind: terminal, label: "keep original command; fixed cap overhead would dominate" }
-  parity: { kind: process, label: "require stdout, stderr, and exit-status parity coverage" }
-  resource_gate: { kind: process, label: "require representative benchmark gate for large workload" }
-  gate_pass: { kind: decision, label: "dual-win or approved RSS-fallback?" }
-  native_fast: { kind: terminal, label: "run workload-sensitive native fast path" }
+  start: { kind: start, label: "plan argv or shell-free command string" }
+  shape: { kind: decision, label: "matches supported safe shape?" }
+  fallback_shape: { kind: terminal, label: "original path: unsupported shape" }
+  probe: { kind: process, label: "collect cheap workload facts without executing command output" }
+  classify: { kind: decision, label: "meets command-specific minimum?" }
+  fallback_small: { kind: terminal, label: "original path: tiny or unmeasured workload" }
+  parity: { kind: process, label: "require parity test coverage for this shape" }
+  bench: { kind: process, label: "require benchmark row for representative large workload" }
+  promote: { kind: decision, label: "resource gate passes?" }
+  native: { kind: terminal, label: "native/replacement path active" }
+  fallback_gate: { kind: terminal, label: "original path: benchmark gate not proven" }
 edges:
-  - { from: start, to: normalize }
-  - { from: normalize, to: shell_check }
-  - { from: shell_check, to: shell_fallback, label: "yes" }
-  - { from: shell_check, to: candidate, label: "no" }
-  - { from: candidate, to: candidate_found }
-  - { from: candidate_found, to: original, label: "no" }
-  - { from: candidate_found, to: classify, label: "yes" }
-  - { from: classify, to: tiny_or_unknown }
-  - { from: tiny_or_unknown, to: original, label: "yes" }
-  - { from: tiny_or_unknown, to: parity, label: "large enough" }
-  - { from: parity, to: resource_gate }
-  - { from: resource_gate, to: gate_pass }
-  - { from: gate_pass, to: native_fast, label: "yes" }
-  - { from: gate_pass, to: original, label: "no" }
+  - { from: start, to: shape }
+  - { from: shape, to: fallback_shape, label: "no" }
+  - { from: shape, to: probe, label: "yes" }
+  - { from: probe, to: classify }
+  - { from: classify, to: fallback_small, label: "no" }
+  - { from: classify, to: parity, label: "yes" }
+  - { from: parity, to: bench }
+  - { from: bench, to: promote }
+  - { from: promote, to: native, label: "dual-win or approved RSS-fallback" }
+  - { from: promote, to: fallback_gate, label: "not proven" }
+thresholds:
+  ls:
+    shape: "simple -1/-a/-A over one existing directory"
+    minimum: "directory entry count >= 1024"
+  sort:
+    shape: "one regular file"
+    minimum: "file size >= 1048576 bytes"
+  grep:
+    shape: "recursive literal grep -R pattern root"
+    minimum: "root contains >= 64 regular files or estimated text bytes >= 1048576"
+  find:
+    shape: "root -type f -name pattern"
+    minimum: "root contains >= 512 directory entries before full traversal finishes"
+  sed_print:
+    shape: "sed -n start,endp file"
+    minimum: "regular file size >= 1048576 bytes or requested span >= 1024 lines"
+fallback_rule: "Any probe error, symlink ambiguity, unsupported flag, shell control syntax, or below-threshold workload preserves the original command path."
 ---
 flowchart TD
-    start([cap command request]) --> normalize[normalize cap <cmd>, cap run argv, or shell-free cap run string into argv]
-    normalize --> shell_check{requires shell semantics or unsupported flags?}
-    shell_check -- yes --> shell_fallback([run original command path])
-    shell_check -- no --> candidate[match native candidate subset: ls, sort, grep, find, sed -n]
-    candidate --> candidate_found{candidate subset matched?}
-    candidate_found -- no --> original([keep original command])
-    candidate_found -- yes --> classify[classify workload with cheap observable thresholds]
-    classify --> tiny_or_unknown{tiny or unknown materiality?}
-    tiny_or_unknown -- yes --> original
-    tiny_or_unknown -- large enough --> parity[require stdout, stderr, and exit-status parity coverage]
-    parity --> resource_gate[require representative benchmark gate for large workload]
-    resource_gate --> gate_pass{dual-win or approved RSS-fallback?}
-    gate_pass -- yes --> native_fast([run workload-sensitive native fast path])
-    gate_pass -- no --> original
+    start([plan argv or shell-free command string]) --> shape{matches supported safe shape?}
+    shape -- no --> fallback_shape([original path: unsupported shape])
+    shape -- yes --> probe[collect cheap workload facts]
+    probe --> classify{meets command-specific minimum?}
+    classify -- no --> fallback_small([original path: tiny or unmeasured workload])
+    classify -- yes --> parity[require parity test coverage]
+    parity --> bench[require benchmark row]
+    bench --> promote{resource gate passes?}
+    promote -- yes --> native([native/replacement path active])
+    promote -- no --> fallback_gate([original path: benchmark gate not proven])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
