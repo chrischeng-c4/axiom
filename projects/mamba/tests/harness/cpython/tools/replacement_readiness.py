@@ -27,6 +27,7 @@ GATE_CHECK = TOOLS_DIR / "gate_check.py"
 PLATFORM_READINESS = TOOLS_DIR / "platform_readiness.py"
 IMPORT_READINESS = TOOLS_DIR / "import_readiness.py"
 THIRD_PARTY_READINESS = TOOLS_DIR / "third_party_readiness.py"
+MAMBALIBS_READINESS = TOOLS_DIR / "mambalibs_readiness.py"
 DEBUGGER_READINESS = TOOLS_DIR / "debugger_readiness.py"
 CONCURRENCY_READINESS = TOOLS_DIR / "concurrency_readiness.py"
 
@@ -554,6 +555,51 @@ def third_party_dimension(show: int) -> Dimension:
     )
 
 
+def mambalibs_dimension(show: int) -> Dimension:
+    code, payload = run_json(
+        [sys.executable, str(MAMBALIBS_READINESS), "--json", "--show", str(show)],
+        accepted={0, EXIT_NOT_READY},
+    )
+    counts = payload["counts"]
+    status = "green" if code == 0 and payload["ready"] else "red"
+    return Dimension(
+        id="mambalibs_native_kit",
+        title="Mambalibs native-kit completeness",
+        status=status,
+        owner_issue="#714",
+        summary=(
+            "mambalibs native-kit readiness is green"
+            if status == "green"
+            else (
+                "mambalibs/native-kit readiness is not replacement-ready: "
+                f"{counts['native_kits']} native kits, {counts['pass']} pass, "
+                f"{counts['fail']} fail, {counts['blocker']} blocked, "
+                f"{counts['import_gate_manifests']} import gates"
+            )
+        ),
+        counts={
+            "native_kits": counts["native_kits"],
+            "pass": counts["pass"],
+            "fail": counts["fail"],
+            "blocker": counts["blocker"],
+            "fixture_manifests": counts["fixture_manifests"],
+            "import_gate_manifests": counts["import_gate_manifests"],
+            "support_status_pass": counts["support_status_pass"],
+            "support_status_xfail": counts["support_status_xfail"],
+            "support_status_blocker": counts["support_status_blocker"],
+            "support_status_missing": counts["support_status_missing"],
+            "registered_runtime_kits": counts["registered_runtime_kits"],
+            "manifest_errors": counts["manifest_errors"],
+            "register_errors": counts["register_errors"],
+            "path_errors": counts["path_errors"],
+            "blockers": counts["blockers"],
+            "unowned_gap_count": counts["unowned_gap_count"],
+        },
+        evidence=payload["evidence_commands"],
+        blockers=payload["blockers"][:show],
+    )
+
+
 def debugger_dimension(show: int) -> Dimension:
     code, payload = run_json(
         [sys.executable, str(DEBUGGER_READINESS), "--json", "--show", str(show)],
@@ -691,6 +737,7 @@ def dimensions(show: int, type_limit: int) -> list[Dimension]:
         platform_dimension(show),
         import_dimension(show),
         third_party_dimension(show),
+        mambalibs_dimension(show),
         debugger_dimension(show),
         concurrency_dimension(show),
     ]

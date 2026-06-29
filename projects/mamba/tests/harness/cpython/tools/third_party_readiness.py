@@ -342,14 +342,21 @@ def mambalibs_native_evidence() -> dict[str, Any]:
         ]
     import_gates = [path for path in fixtures if path.name.endswith("_import_gate")]
     return {
+        "owner_issue": "#714",
         "fixture_count": len(fixtures),
         "import_gate_count": len(import_gates),
         "fixtures_dir": repo_rel(MAMBALIBS_FIXTURES_DIR),
         "sample_import_gates": [path.name for path in import_gates[:8]],
+        "native_kit_readiness_report": (
+            "python3.12 projects/mamba/tests/harness/cpython/tools/"
+            "mambalibs_readiness.py --json"
+        ),
+        "counts_as_pure_python_package": False,
         "counts_as_cpython_extension_abi": False,
         "reason": (
             "mambalibs native bindings are mamba-only replacement evidence; "
-            "they do not prove CPython C-extension ABI compatibility"
+            "full native-kit replacement readiness is tracked separately by #714, "
+            "and they do not prove CPython C-extension ABI compatibility"
         ),
     }
 
