@@ -18,14 +18,17 @@
 # input(42, 42): int passed to input(prompt: str). CPython raises a catchable
 # runtime TypeError (fixture's try/except passes, exit 0); mamba force-rejects the
 # wrong-typed arg at compile time — `argument type mismatch: expected str, got int`.
+# owner: #704
 projects/mamba/tests/cpython/behavior/builtin-libs/builtins/builtin_test__test_input.py
 
 # ord(42): int passed to ord(c: str). CPython raises a catchable runtime TypeError
 # (try/except passes, exit 0); mamba force-rejects at compile time —
 # `argument type mismatch: expected str, got int`.
+# owner: #704
 projects/mamba/tests/cpython/behavior/builtin-libs/builtins/builtin_test__test_ord.py
 
 # getattr(c, 9): int passed to getattr(o, name: str). CPython raises a catchable
 # runtime TypeError (try/except passes, exit 0); mamba force-rejects at compile
 # time — `argument type mismatch: expected str, got int`.
+# owner: #704
 projects/mamba/tests/cpython/behavior/std-libs/decimal/py_context_input_validation__test_invalid_context.py
