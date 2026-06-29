@@ -140,3 +140,56 @@ requirementDiagram
     verifymethod: test
   }
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/cap/src/session_queue.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add the first opt-in per-session queue. CAP_SESSION_ID enables local
+      session state, profiled no-observe commands enqueue background jobs, and
+      observe commands drain prior same-session jobs.
+
+  - path: projects/cap/src/session_queue.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Cover queued touch metadata, observe barrier draining, prior failure
+      reporting, and unknown-command synchronous behavior.
+
+  - path: projects/cap/src/cli.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Let command-string cap run consult the session queue before resident shell
+      execution. Queue handling is opt-in and argv mode remains unchanged.
+
+  - path: projects/cap/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Export the session queue module inside the cap crate.
+
+  - path: projects/cap/tech-design/semantic/cap-src.md
+    action: modify
+    section: exports
+    impl_mode: hand-written
+    description: >
+      Keep semantic export metadata aligned with the new session_queue module.
+
+  - path: projects/cap/README.md
+    action: modify
+    section: overview
+    impl_mode: hand-written
+    description: >
+      Document the opt-in per-session queue, observe barriers, conservative
+      default synchronous behavior, and prior-failure reporting.
+```
