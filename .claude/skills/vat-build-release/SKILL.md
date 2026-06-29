@@ -24,7 +24,7 @@ Cuts and monitors a vat release using the project-owned release path:
 Run the release-prep script:
 
 ```bash
-.agents/skills/vat-build-release/scripts/release.sh
+.claude/skills/vat-build-release/scripts/release.sh
 ```
 
 Capture `RELEASE_TAG=vat@<version>` from stdout.

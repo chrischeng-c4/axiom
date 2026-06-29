@@ -1,23 +1,25 @@
 ---
 name: jet:build:release
-description: Release jet end-to-end — prep (bump+build+install+commit), land to main via git:land, then tag jet@<version> and push to trigger the release CI
+description: Release jet end-to-end — prep, land to main via git:land, tag/push jet@<version>, then monitor GitHub Actions and the GitHub Release until published
 user-invocable: true
 ---
 
 # /jet:build:release
 
-Cuts **and lands** a jet release, in three phases. `git:land` is the middle
+Cuts **and lands** a jet release, in four phases. `git:land` is the middle
 sub-action — invoke it as-is; do **not** modify it.
 
-1. **release-prep** — `projects/jet/build.sh release`: bump the patch version in
-   `projects/jet/Cargo.toml`, `cargo build --release`, install `~/.cargo/bin/jet`,
-   and commit `release(jet): jet@X`. **No tag, no push.**
+1. **release-prep** — `projects/jet/build.sh release`: check tag collisions,
+   bump when needed, `cargo build --release`, install `~/.cargo/bin/jet`, and
+   commit `release(jet): jet@X`. **No tag, no push.**
 2. **land** — run the **/git:land** flow to land the release commit on `main`
    (rebase `origin/main` → push → PR → squash-merge → rebase back).
 3. **tag + push** — once the release commit is on `main`, tag the landed `HEAD`
    `jet@X` and push the tag. Pushing a `jet@*` tag triggers
    `.github/workflows/jet-release.yml`, which builds the cross-platform binaries
    (macOS arm64 + Linux x64/arm64) and publishes the GitHub release.
+4. **monitor release** — watch the GitHub Actions run and verify the GitHub
+   Release exists before reporting success.
 
 ## Why the tag is last
 
@@ -56,5 +58,11 @@ git tag -a jet@<version> -m "Release jet@<version>"
 git push origin jet@<version>
 ```
 
-Report the new version, the merged PR, and the pushed tag (CI then publishes the
-release).
+### Step 4 — monitor GitHub release
+
+```bash
+scripts/project-build-monitor-release.sh jet jet@<version>
+```
+
+Report the new version, merged PR, pushed tag, GitHub Actions run URL, and
+GitHub Release URL.

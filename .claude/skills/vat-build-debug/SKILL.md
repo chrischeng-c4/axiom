@@ -15,8 +15,8 @@ version, and restores manifest files after the debug build.
 Run the build script:
 
 ```bash
-.agents/skills/vat-build-debug/scripts/build.sh
+.claude/skills/vat-build-debug/scripts/build.sh
 ```
 
-Report the result to the user, including whether `~/.cargo/bin/vat --version`
-was printed successfully.
+Report the installed version and whether `~/.cargo/bin/vat --version` was
+printed successfully.

@@ -403,29 +403,71 @@ deprecated `report-issue` shim, migrating to `issue`).
   to that same label. The group is named `issue` (**not** `report`), leaving
   domain `report` verbs (`jet report` = HTML **test** reports) untouched.
 
-## Releasing: each project owns its version and `<project>@X.Y.Z` tag
+## Project build and release contract
 
-Projects release **independently**. Each project crate sets its **own**
-`version` in its `Cargo.toml` (not `version.workspace`), so bumping one project
-never version-bumps the others. A release ships via the project's
-`.github/workflows/<project>-release.yml`, triggered by pushing a matching tag:
+Every project build skill and project `build.sh` must use the same two-mode
+contract. The agent-facing entry points are `<project>:build:debug` and
+`<project>:build:release`; the generic dispatcher is `aw:build:{debug,release}`
+using the project entry in `.aw/config.toml`.
+
+### Debug builds
+
+Debug builds are local install checkpoints:
+
+1. If the tree is dirty, commit first with a debug checkpoint commit.
+2. Read the project's configured base version and check whether
+   `<project>@<version>` already exists locally or on `origin`.
+3. If the tag exists, advance to the next version using the repository base-64
+   carry rule: patch increments first; when patch would exceed 63, reset patch
+   to 0 and increment minor; when minor would exceed 63, reset minor to 0 and
+   increment major.
+4. Build with the Cargo debug profile and a SemVer build-metadata suffix:
+   `<base-version>+<git-sha>`.
+5. Install the debug binary locally, then restore manifest and lockfile edits so
+   the debug-only version suffix is not left in the worktree.
+
+### Release builds
+
+Release builds are not complete until the GitHub Release is visible. The
+required chain is:
+
+1. **release-prep**: run the project `build.sh release` through the relevant
+   skill wrapper. The script checks local and remote tag collisions for
+   `<project>@<version>`, advances the version with the same base-64 carry rule
+   when needed, runs the Cargo release build, installs the local release binary,
+   commits version files as `release(<project>): <project>@X.Y.Z`, and prints
+   `RELEASE_TAG=<project>@X.Y.Z`. It must not create or push the tag.
+2. **land**: run `git:land` as-is so the release commit lands on `main`. Do not
+   tag before this step; rebases and squash merges can orphan a pre-land tag.
+3. **tag + push**: tag the landed `HEAD` and push the tag:
+
+   ```bash
+   git tag -a <project>@X.Y.Z -m "Release <project>@X.Y.Z"
+   git push origin <project>@X.Y.Z
+   ```
+
+4. **monitor**: run the release monitor and do not report success until it
+   completes:
+
+   ```bash
+   scripts/project-build-monitor-release.sh <project> <project>@X.Y.Z
+   ```
+
+   The monitor watches `.github/workflows/<project>-release.yml` for that tag
+   when the workflow exists, fails if the Actions run fails, then verifies
+   `gh release view <project>@X.Y.Z` before printing the GitHub Release URL. If
+   a project has no release workflow yet, the monitor still polls the GitHub
+   Release directly and fails if it never appears.
+
+The release identity is always:
 
 ```
 <project>@X.Y.Z        # e.g. lumen@0.4.4, vat@0.3.62
 ```
 
-To cut a release:
-
-1. Bump the project crate's own `version` (e.g. `projects/lumen/Cargo.toml`
-   `version = "0.4.4"`), regenerate `Cargo.lock`, and commit
-   `release(<project>): <project>@X.Y.Z`.
-2. Merge to `main`.
-3. Tag that commit `<project>@X.Y.Z` and push the tag — the workflow builds the
-   per-target artifacts (`<project>-<target>.tar.gz` + `.sha256`) and publishes
-   the GitHub release that `<project> upgrade` consumes.
-
-Do **not** bump `[workspace.package].version` to release one project — that
-version is shared, so it would bump every crate still inheriting it. A few
-crates still inherit it (`version.workspace = true`); when a project starts
-releasing independently, give it its own `version` first (matching its last
-published release).
+Projects should release **independently**. A releasing project should prefer its
+own `version` in its project `Cargo.toml`, so bumping one project does not bump
+the others. A few crates still inherit `[workspace.package].version`; until they
+are migrated, their `build.sh` must explicitly name the version source and every
+manifest it edits. Do not silently bump the workspace version for an unrelated
+project release.

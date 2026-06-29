@@ -2,4 +2,4 @@
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
-exec projects/mamba/build.sh release
+exec projects/vat/build.sh debug

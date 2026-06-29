@@ -8,7 +8,7 @@ usage() {
 Usage: projects/guard/build.sh <debug|release>
 
 debug    Build guard-cli and install target/debug/guard to ~/.cargo/bin/guard.
-release  Bump patch version, build/install guard, commit version files, and tag guard@<version>.
+release  Build/install guard, create a release commit, and print the tag to push after git:land.
 EOF
 }
 
@@ -44,6 +44,7 @@ esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+. scripts/project-build-lib.sh
 
 trap 'fail_hint "$MODE"' ERR
 
@@ -56,41 +57,29 @@ install_guard() {
 }
 
 if [[ "$MODE" == "debug" ]]; then
+  VERSION_FILES=(projects/guard/Cargo.toml projects/guard/guard-cli/Cargo.toml)
+  CURRENT_VERSION="$(project_build_read_version projects/guard/guard-cli/Cargo.toml)"
+  project_build_prepare_debug_version guard "$CURRENT_VERSION" "${VERSION_FILES[@]}"
   cargo build -p guard-cli
   install_guard debug
+  project_build_restore_manifests
   echo ""
-  echo "Build complete."
+  echo "Build complete (debug ${PROJECT_BUILD_DEBUG_VERSION})."
   exit 0
 fi
 
-CURRENT_VERSION="$(grep -m1 '^version = "' projects/guard/guard-cli/Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
-IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-
-NEW_PATCH=$((PATCH + 1))
-NEW_MINOR=$MINOR
-NEW_MAJOR=$MAJOR
-if [[ "$NEW_PATCH" -gt 63 ]]; then
-  NEW_PATCH=0
-  NEW_MINOR=$((MINOR + 1))
-fi
-if [[ "$NEW_MINOR" -gt 63 ]]; then
-  NEW_MINOR=0
-  NEW_MAJOR=$((MAJOR + 1))
-fi
-NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
-
-echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
-sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" projects/guard/Cargo.toml projects/guard/guard-cli/Cargo.toml
+VERSION_FILES=(projects/guard/Cargo.toml projects/guard/guard-cli/Cargo.toml)
+CURRENT_VERSION="$(project_build_read_version projects/guard/guard-cli/Cargo.toml)"
+export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
+project_build_prepare_release_version guard "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
 cargo build --release -p guard-cli
 install_guard release
 
-TAG="guard@${NEW_VERSION}"
+TAG="${PROJECT_BUILD_RELEASE_TAG}"
 git add Cargo.lock projects/guard
-git commit -m "release(guard): ${TAG}"
-git tag -a "$TAG" -m "Release ${TAG}"
+git commit --allow-empty -m "release(guard): ${TAG}"
 
-echo ""
-echo "Build complete. guard ${TAG} installed and tagged."
+project_build_print_release_next_steps guard "$TAG"
 # CODEGEN-END

@@ -6,8 +6,8 @@ set -euo pipefail
 # builds --release, installs to ~/.cargo/bin/jet, and commits
 # `release(jet): jet@<version>`. It does NOT tag or push.
 #
-# The /jet:build:release skill then lands the commit to main via /git:land and
-# only afterward tags + pushes (see SKILL.md) — tagging before the land would
-# orphan the tag off main.
+# The /jet:build:release skill then lands the commit to main via /git:land,
+# tags + pushes after landing, and monitors GitHub release publication (see
+# SKILL.md) — tagging before the land would orphan the tag off main.
 cd "$(git rev-parse --show-toplevel)"
 exec projects/jet/build.sh release

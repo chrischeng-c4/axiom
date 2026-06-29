@@ -1,4 +1,4 @@
 interface:
   display_name: "VAT Build Release"
-  short_description: "Release, install, commit, and tag vat"
-  default_prompt: "Use $vat-build-release to cut a vat release build and install it."
+  short_description: "Release vat and monitor GitHub publication"
+  default_prompt: "Use $vat-build-release to cut, land, tag, push, and monitor a vat release."
