@@ -26,7 +26,7 @@ class _W:
 
 
 from builtins import str
-obj = object.__new__(str)
+obj = str.__new__(str)
 try:
     obj.rjust(_W())  # width: SupportsIndex <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
