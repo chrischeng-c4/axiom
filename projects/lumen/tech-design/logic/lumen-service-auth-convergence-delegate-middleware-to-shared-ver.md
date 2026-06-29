@@ -158,25 +158,24 @@ e2e_tests:
     path: projects/lumen/tests/auth_e2e.rs
     command: "cargo test -p lumen --test auth_e2e -- --nocapture"
     verifies:
-      - "LUMEN_AUTH=required rejects missing and invalid Bearer tokens with 401."
-      - "Valid tokens pass through as AuthContext and RBAC denial remains 403."
-      - "Probe and scrape routes remain unauthenticated."
+      - "Required mode rejects missing and invalid Bearer tokens with the shared 401 JSON body."
+      - "Valid tokens are injected as AuthContext and handlers keep existing RBAC outcomes."
+      - "Metrics, health, and readiness remain outside the data-plane auth layer."
   - id: lumen-authz-matrix-contract
     name: "lumen authz matrix contract"
     runner: cargo
     path: projects/lumen/tests/authz_matrix_e2e.rs
     command: "cargo test -p lumen --test authz_matrix_e2e -- --nocapture"
     verifies:
-      - "Every protected route still applies the expected read/write/admin RBAC minimum."
+      - "Every protected route still enforces its route-specific role minimum after middleware delegation."
   - id: lumen-package-regression
     name: "lumen package regression"
     runner: cargo
     path: projects/lumen
     command: "cargo test -p lumen"
     verifies:
-      - "The shared-auth adoption does not regress the package test suite."
+      - "The package compiles and the full Lumen regression suite remains green."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
