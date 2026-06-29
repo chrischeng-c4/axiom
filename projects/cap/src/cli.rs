@@ -26,6 +26,7 @@ use crate::config::Config;
 use crate::daemon;
 use crate::hook_install;
 use crate::protocol::{LeaseState, Request, Response};
+use crate::resident_shell::{ResidentLightShellRun, ResidentLightShellSession};
 use crate::supervisor::SpawnSpec;
 
 #[derive(Parser, Debug)]
@@ -425,11 +426,14 @@ async fn handle_run(args: RunArgs) -> Result<ExitCode> {
             "nothing to run; usage: cap run \"<command>\" or cap run -- <command> [args...]"
         );
     }
-    let plan = if args.command.len() == 1 {
-        command_planner::plan_shell(&args.command[0], args.label)
-    } else {
-        command_planner::plan(&args.command, args.label)
-    };
+    if args.command.len() == 1 {
+        let session = ResidentLightShellSession::capture();
+        return match session.run_command_string(&args.command[0], args.label)? {
+            ResidentLightShellRun::Native(code) => Ok(code),
+            ResidentLightShellRun::BashFallback(external) => handle_external_run(external).await,
+        };
+    }
+    let plan = command_planner::plan(&args.command, args.label);
     match plan {
         CommandPlan::Native(native) => command_planner::run_native(&native),
         CommandPlan::External(external) => handle_external_run(external).await,

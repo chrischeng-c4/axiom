@@ -45,6 +45,7 @@ pub mod managed_run;
 pub mod paths;
 pub mod protocol;
 pub mod reap;
+pub mod resident_shell;
 pub mod sampler;
 pub mod supervisor;
 pub mod throttle;

@@ -549,7 +549,11 @@ pub fn run_native(plan: &NativePlan) -> Result<ExitCode> {
     Ok(exit_code_from_i32(code))
 }
 
-fn run_native_to(plan: &NativePlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+pub(crate) fn run_native_to(
+    plan: &NativePlan,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
     match &plan.command {
         NativeCommand::Ls(ls) => run_ls(ls, stdout, stderr),
         NativeCommand::Sort(sort) => run_sort(sort, stdout),

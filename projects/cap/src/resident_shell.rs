@@ -8,9 +8,7 @@ use std::{
 
 use anyhow::Result;
 
-use crate::command_planner::{
-    self, CommandPlan, ExternalImplementation, ExternalPlan, NativePlan,
-};
+use crate::command_planner::{self, CommandPlan, ExternalImplementation, ExternalPlan, NativePlan};
 
 /// @spec projects/cap/tech-design/logic/design-resident-light-shell-with-dynamic-bash-fallback.md#logic
 #[derive(Debug, Clone)]
@@ -70,10 +68,12 @@ impl ResidentLightShellSession {
         label: Option<String>,
     ) -> Result<ResidentLightShellRun> {
         match self.plan_command_string(command, label) {
-            ResidentLightShellPlan::Native(native) => {
-                Ok(ResidentLightShellRun::Native(command_planner::run_native(&native)?))
+            ResidentLightShellPlan::Native(native) => Ok(ResidentLightShellRun::Native(
+                command_planner::run_native(&native)?,
+            )),
+            ResidentLightShellPlan::BashFallback(plan) => {
+                Ok(ResidentLightShellRun::BashFallback(plan))
             }
-            ResidentLightShellPlan::BashFallback(plan) => Ok(ResidentLightShellRun::BashFallback(plan)),
         }
     }
 
@@ -153,7 +153,9 @@ mod tests {
             }
         }
 
-        let original = Command::new("/bin/ls").args(["-1", &dir.display().to_string()]).output()?;
+        let original = Command::new("/bin/ls")
+            .args(["-1", &dir.display().to_string()])
+            .output()?;
         assert_eq!(Some(0), original.status.code());
         assert_eq!(stdout, original.stdout);
         assert_eq!(stderr, original.stderr);
@@ -184,5 +186,4 @@ mod tests {
     }
 }
 
-<!-- marker: missing-generator:logic:540e8cc0 path: projects/cap/src/resident_shell.rs reason: Add the first resident light-shell session boundary. The session captures cwd/env, plans a command string through the existing command planner, runs native command stages in process, and returns a Bash fallback plan for unsupported or unproven command strings. -->
 // HANDWRITE-END

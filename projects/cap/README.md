@@ -166,15 +166,17 @@ Hook boundary:
 | Layer | Responsibility |
 |---|---|
 | Agent Bash hook | Receives the Bash tool's command string and rewrites it to `cap run '<original>'`. It should stay thin: empty-command and recursion prevention only. |
-| `cap run "<command string>"` | Owns command-string wrapping. It parses shell-free simple commands into argv, sends them through the command planner, and falls back to `bash -c` for pipes, redirects, globs, shell variables, `cd && ...`, and shell builtins. |
+| `cap run "<command string>"` | Owns command-string wrapping. A resident light-shell session captures the current cwd/env, attempts a conservative in-process native stage for proven shell-free commands, and dynamically falls back to `bash -lc <original>` for pipes, redirects, globs, shell variables, `cd && ...`, shell builtins, and unproven command shapes. |
 | `cap run -- <argv...>` | Manual explicit argv mode. It skips shell-string parsing and plans the exact argv the user supplied. |
 | cap command planner | Owns same-name command replacement decisions and benchmark-gated fallback behavior. |
 
 For example, the hook emits `cap run 'find . -type f -name "*.txt"'`; cap
 parses that string internally and can run the same native `find` replacement as
 `cap find . -type f -name "*.txt"`. For `find . -type f | xargs wc -l`, cap
-detects shell syntax and wraps the original string as `bash -c` internally so
-the shell keeps pipe behavior.
+detects shell syntax and wraps the original string as `bash -lc` internally so
+the shell keeps pipe behavior. The resident layer is an optimizer boundary, not
+a sandbox or replacement shell: unsupported syntax must delegate to Bash rather
+than fail as command-not-found.
 
 Active same-name replacements are workload-sensitive fast paths:
 
@@ -480,7 +482,7 @@ cap daemon stop      # next `cap run` auto-spawns the new one
   requires a `cap daemon stop`.
 * Same-name command replacement is the early model; marginal single-command
   gates (e.g. `cat`) are being retired toward native passthrough, and the next
-  real win is pipeline fusion — see
+  real win is resident light-shell pipeline fusion with dynamic Bash fallback — see
   [Deferred and planned direction](#deferred-and-planned-direction).
 </content>
 </invoke>
