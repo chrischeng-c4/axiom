@@ -25,20 +25,20 @@ macro_rules! dispatch_unary {
     };
 }
 
-macro_rules! dispatch_variadic {
-    ($name:ident, $fn:expr) => {
-        unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-            let list = MbValue::from_ptr(MbObject::new_list(a.to_vec()));
-            $fn(list)
-        }
-    };
-}
-
 dispatch_unary!(dispatch_run, mb_asyncio_run);
 dispatch_unary!(dispatch_sleep, rt_sleep);
 dispatch_unary!(dispatch_shield, mb_asyncio_shield);
-dispatch_variadic!(dispatch_gather, rt_gather);
+
+unsafe extern "C" fn dispatch_gather(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let list = MbValue::from_ptr(MbObject::new_list(a.to_vec()));
+    let result = rt_gather(list);
+    completed_coroutine("asyncio.gather", result)
+}
 
 unsafe extern "C" fn dispatch_create_task(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
