@@ -9,12 +9,11 @@
 # case = "zip____new____iter1_as_Iterable_wrong"
 # subject = "builtins.zip.__new__(iter1: Iterable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed iter1"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed iter1
 # mamba-strict-type: TypeError
 """Type wall: builtins.zip.__new__(iter1: Iterable); call it with the wrong type.
 

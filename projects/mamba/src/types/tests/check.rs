@@ -906,6 +906,46 @@ fn test_stdlib_tuple_dunder_contracts_rejected() {
 }
 
 #[test]
+fn test_stdlib_type_and_zip_contracts_rejected() {
+    let errors = check(
+        "from builtins import type\nobj = object.__new__(type)\nobj.__new__(12345, None, None)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `str`, got `int`")),
+        "type.__new__ should reject a non-str name, got: {errors:?}"
+    );
+
+    let errors = check(
+        "class _W:\n    pass\nfrom builtins import type\nobj = object.__new__(type)\nobj.__subclasscheck__(_W())\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `subclass`")),
+        "type.__subclasscheck__ should reject a bare instance subclass, got: {errors:?}"
+    );
+
+    let errors =
+        check("class _W:\n    pass\nfrom builtins import zip\nobj = object.__new__(zip)\nobj.__new__(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `iter1`")),
+        "zip.__new__ should reject a bare non-iterable probe, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from builtins import type, zip\nobj = object.__new__(type)\nobj.__new__('X', (), {})\nobj.__subclasscheck__(type)\nz = object.__new__(zip)\nz.__new__([])\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid type/zip strict contract forms must stay accepted, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_list_generic_method_contracts_rejected() {
     let errors = check(
         "class _W:\n    def __eq__(self, other):\n        return True\nobj: list[int] = [1]\nobj.append(_W())\nobj.count(_W())\nobj.index(_W())\nobj.remove(_W())\n",

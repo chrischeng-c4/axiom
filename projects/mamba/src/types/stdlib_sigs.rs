@@ -940,6 +940,41 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: type object constructors/descriptors. The strict fixtures call
+    // `obj = object.__new__(type)` then bound methods on that object, so these
+    // rows start at the instance-bound argument rather than the classmethod
+    // `cls` slot.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "type",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[
+            p("name", CoreTy::Str),
+            p("bases", CoreTy::Unknown),
+            p("namespace", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "builtins",
+        qualifier: "type",
+        name: "__subclasscheck__",
+        kind: SigKind::Method,
+        params: &[p("subclass", CoreTy::Typed)],
+        enforceable: true,
+    },
+    // POSITIVE: zip.__new__(iter1, *iter2) requires iterable inputs. Model the
+    // first iterable as a Typed negative wall so a provably bare `_W()` is
+    // rejected while real/dynamic iterable values remain skip-safe.
+    StdlibSig {
+        module: "builtins",
+        qualifier: "zip",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[p("iter1", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: range index/new overloads use SupportsIndex/slice protocols.
     // Typed rejects only a provably bare `_W()` while accepting ints, slices,
     // classes with __index__, and dynamic values.
