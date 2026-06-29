@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use mamba::bench::{BenchRunner, BenchSuite, print_report, run_suite};
 use mamba::conformance::{ConformanceOptions, run_suite as run_conformance_suite};
-use mamba::driver::{Backend, CompilerConfig, CompilerSession, EmitMode, MambaConfig};
+use mamba::driver::{Backend, CompilerConfig, CompilerSession, MambaConfig};
 use mamba::pkgmanage::add as pkg_add;
 use mamba::pkgmanage::audit as pkg_audit;
 use mamba::pkgmanage::auth as pkg_auth;
@@ -63,9 +63,17 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("run")
-                .about("Compile and execute a Mamba source file or project")
+                .about("Run a Mamba source file/project, or run a command inside the project env after --")
                 .arg(Arg::new("file").help("Source file (.py/.tp); omit to use entry_point from mamba.toml"))
-                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to mamba.toml")),
+                .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to mamba.toml"))
+                .arg(
+                    Arg::new("command")
+                        .value_name("COMMAND")
+                        .help("Command and arguments to run inside the synced project environment; use after --")
+                        .num_args(1..)
+                        .last(true)
+                        .allow_hyphen_values(true),
+                ),
         )
         .subcommand(
             Command::new("bench")
@@ -1034,9 +1042,17 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
     // with a populated lockfile, require `.venv` to be in sync before
     // running anything. See projects/mamba/src/pkgmanage/run.rs.
     let cwd_for_preflight = std::env::current_dir().context("getcwd")?;
-    if let Err(e) = mamba::pkgmanage::run::preflight(&cwd_for_preflight) {
-        eprintln!("{e}");
-        std::process::exit(1);
+    let preflight_mode = match mamba::pkgmanage::run::preflight(&cwd_for_preflight) {
+        Ok(mode) => mode,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+
+    if let Some(command) = sub.get_many::<String>("command") {
+        let args: Vec<String> = command.cloned().collect();
+        return cmd_run_command_mode(args, &cwd_for_preflight, &preflight_mode);
     }
 
     let project_config: Option<MambaConfig> =
@@ -1100,6 +1116,28 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn cmd_run_command_mode(
+    args: Vec<String>,
+    project_dir: &std::path::Path,
+    preflight_mode: &mamba::pkgmanage::run::Mode,
+) -> Result<()> {
+    if args.is_empty() {
+        bail!("no command specified after --");
+    }
+
+    let mut command = std::process::Command::new(&args[0]);
+    command.args(&args[1..]).current_dir(project_dir);
+    mamba::pkgmanage::run::configure_command_environment(&mut command, project_dir, preflight_mode);
+
+    let status = command
+        .status()
+        .with_context(|| format!("run command `{}`", args[0]))?;
+    if let Some(code) = status.code() {
+        std::process::exit(code);
+    }
+    std::process::exit(1);
 }
 
 fn cmd_bench(sub: &ArgMatches) -> Result<()> {

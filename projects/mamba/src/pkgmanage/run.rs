@@ -14,8 +14,9 @@
 // the file off to the compiler. Legacy `mamba run <file>` outside a
 // mamba project is untouched (returns `Mode::Legacy`).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::pkgmanage::sync::parse_locked_packages;
 
@@ -72,29 +73,67 @@ pub fn preflight(project_dir: &Path) -> Result<Mode> {
     // Inject the project's site-packages at the front of PYTHONPATH
     // for the lifetime of the current process. No global PATH /
     // user shell env mutation.
-    set_pythonpath_front(&site);
-    Ok(Mode::Project {
-        site_packages: site,
-    })
-}
-
-fn set_pythonpath_front(site: &Path) {
-    let existing = std::env::var_os("PYTHONPATH");
-    let mut paths: Vec<PathBuf> = vec![site.to_path_buf()];
-    if let Some(v) = existing {
-        for p in std::env::split_paths(&v) {
-            if p != site {
-                paths.push(p);
-            }
-        }
-    }
-    if let Ok(joined) = std::env::join_paths(paths.iter()) {
+    if let Some(joined) = joined_path_front("PYTHONPATH", [site.clone()]) {
         // SAFETY: env mutation is process-local; documented and
         // observed by the compiler session that follows.
         unsafe {
             std::env::set_var("PYTHONPATH", joined);
         }
     }
+    Ok(Mode::Project {
+        site_packages: site,
+    })
+}
+
+/// Apply the project environment to a subprocess for `mamba run -- <cmd>`.
+/// This never mutates the user's shell. Executables from `.venv/bin` (or
+/// `.venv/Scripts`) win over host PATH when a synced venv exists, and
+/// site-packages remains importable for host Python fallbacks.
+pub fn configure_command_environment(command: &mut Command, project_dir: &Path, mode: &Mode) {
+    let venv = project_dir.join(VENV_DIR);
+    if venv.join("pyvenv.cfg").exists() {
+        command.env("VIRTUAL_ENV", &venv);
+        let bin_dirs = [venv.join("bin"), venv.join("Scripts")]
+            .into_iter()
+            .filter(|path| path.is_dir());
+        if let Some(joined) = joined_path_front("PATH", bin_dirs) {
+            command.env("PATH", joined);
+        }
+    }
+
+    let site = match mode {
+        Mode::Project { site_packages } => Some(site_packages.clone()),
+        Mode::Legacy | Mode::EmptyLock => {
+            let candidate = venv.join(SITE_PACKAGES);
+            candidate.exists().then_some(candidate)
+        }
+    };
+    if let Some(site) = site {
+        if let Some(joined) = joined_path_front("PYTHONPATH", [site]) {
+            command.env("PYTHONPATH", joined);
+        }
+    }
+}
+
+fn joined_path_front<I>(key: &str, front: I) -> Option<std::ffi::OsString>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let existing = std::env::var_os(key);
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for path in front {
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    if let Some(v) = existing {
+        for p in std::env::split_paths(&v) {
+            if !paths.contains(&p) {
+                paths.push(p);
+            }
+        }
+    }
+    std::env::join_paths(paths.iter()).ok()
 }
 
 #[cfg(test)]

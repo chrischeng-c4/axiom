@@ -27,6 +27,23 @@ fn run(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("spawn mamba")
 }
 
+fn run_with_path(dir: &Path, args: &[&str], path: &std::ffi::OsStr) -> std::process::Output {
+    Command::new(mamba_bin())
+        .args(args)
+        .current_dir(dir)
+        .env("PATH", path)
+        .output()
+        .expect("spawn mamba")
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = std::fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).unwrap();
+}
+
 fn normalize_pep503(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut prev_sep = false;
@@ -62,20 +79,24 @@ fn build_index() -> tempfile::TempDir {
 
 fn setup_locked_project(proj: &Path, index: &Path) {
     assert!(run(proj, &["init"]).status.success());
-    assert!(run(
-        proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
-    assert!(run(proj, &["lock", "--index", index.to_str().unwrap()])
+    assert!(
+        run(
+            proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.to_str().unwrap()
+            ]
+        )
         .status
-        .success());
+        .success()
+    );
+    assert!(
+        run(proj, &["lock", "--index", index.to_str().unwrap()])
+            .status
+            .success()
+    );
 }
 
 fn write_trivial_script(proj: &Path) -> PathBuf {
@@ -157,4 +178,98 @@ fn run_outside_mamba_project_is_legacy() {
         !stderr.contains("environment is not synced"),
         "legacy run must skip the preflight, got: {stderr:?}"
     );
+}
+
+#[test]
+fn run_command_mode_before_sync_fails_with_environment_is_not_synced() {
+    let index = build_index();
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    setup_locked_project(&proj, index.path());
+
+    let out = run(&proj, &["run", "--", "sh", "-c", "echo SHOULD_NOT_RUN"]);
+    assert!(
+        !out.status.success(),
+        "command mode before sync must fail; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("environment is not synced"),
+        "stderr must signal env-not-synced, got: {stderr:?}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("SHOULD_NOT_RUN"),
+        "command must not run before sync"
+    );
+}
+
+#[test]
+fn run_command_mode_runs_python_with_synced_site_packages() {
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    assert!(run(&proj, &["init"]).status.success());
+    assert!(
+        run(&proj, &["add", "mamba-httpx-compat", "--provider", "mamba"])
+            .status
+            .success()
+    );
+    assert!(run(&proj, &["sync"]).status.success());
+    std::fs::write(
+        proj.join("app.py"),
+        "import httpx\nprint(httpx.__mamba_provider_distribution__)\n",
+    )
+    .unwrap();
+
+    let out = run(&proj, &["run", "--", "python3", "app.py"]);
+    assert!(
+        out.status.success(),
+        "command mode python must succeed; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "mamba-httpx-compat"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_command_mode_prefers_venv_bin_before_host_path() {
+    let index = build_index();
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("demo");
+    std::fs::create_dir(&proj).unwrap();
+    setup_locked_project(&proj, index.path());
+    assert!(run(&proj, &["sync"]).status.success());
+
+    let venv_bin = proj.join(".venv/bin");
+    std::fs::create_dir_all(&venv_bin).unwrap();
+    let venv_cmd = venv_bin.join("mamba-run-probe");
+    std::fs::write(&venv_cmd, "#!/bin/sh\necho venv-bin\n").unwrap();
+    make_executable(&venv_cmd);
+
+    let host_bin = tmp.path().join("host-bin");
+    std::fs::create_dir(&host_bin).unwrap();
+    let host_cmd = host_bin.join("mamba-run-probe");
+    std::fs::write(&host_cmd, "#!/bin/sh\necho host-path\n").unwrap();
+    make_executable(&host_cmd);
+    let mut paths = vec![host_bin];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let path = std::env::join_paths(paths.iter()).unwrap();
+
+    let out = run_with_path(&proj, &["run", "--", "mamba-run-probe"], &path);
+    assert!(
+        out.status.success(),
+        "command mode PATH probe must succeed; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "venv-bin");
 }
