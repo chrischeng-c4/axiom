@@ -9,12 +9,11 @@
 # case = "SimpleQueue__get__block_as_bool_wrong"
 # subject = "_queue.SimpleQueue.get(block: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed block"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_queue.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed block
 # mamba-strict-type: TypeError
 """Type wall: _queue.SimpleQueue.get(block: bool); call it with the wrong type.
 
