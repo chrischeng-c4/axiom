@@ -135,7 +135,6 @@ requirementDiagram
     lumen_api_e2e - verifies -> R4
     lumen_auth_e2e - verifies -> R1
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
