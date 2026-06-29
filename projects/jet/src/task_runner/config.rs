@@ -297,6 +297,7 @@ pub enum OpenApiCodegenHttpClient {
 pub enum OpenApiCodegenHooks {
     Auto,
     ReactQuery,
+    Swr,
     None,
 }
 
