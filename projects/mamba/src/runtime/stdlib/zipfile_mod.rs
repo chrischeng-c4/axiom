@@ -699,6 +699,12 @@ unsafe extern "C" fn d_zipfile_new(args_ptr: *const MbValue, nargs: usize) -> Mb
             },
         );
     });
+    unsafe {
+        // The target object is borrowed from the caller but stored twice on the
+        // ZipFile handle. Keep both fields alive until the handle is released.
+        super::super::rc::retain_if_ptr(target);
+        super::super::rc::retain_if_ptr(target);
+    }
     let zf = make_instance(
         ZIPFILE_CLASS,
         vec![

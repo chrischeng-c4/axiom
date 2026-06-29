@@ -7589,6 +7589,55 @@ fn mb_getattr_impl(
                     {
                         return make_bound_native_method(obj, &attr_name);
                     }
+                    // io in-memory streams: expose native methods as bound
+                    // callables for `f = bio.getvalue; f()` and for call forms
+                    // that lower through attribute lookup before invocation.
+                    if matches!(class_name.as_str(), "StringIO" | "BytesIO")
+                        && matches!(
+                            attr_name.as_str(),
+                            "write"
+                                | "read"
+                                | "read1"
+                                | "readline"
+                                | "readlines"
+                                | "readinto"
+                                | "getvalue"
+                                | "seek"
+                                | "tell"
+                                | "truncate"
+                                | "readable"
+                                | "writable"
+                                | "seekable"
+                                | "close"
+                                | "flush"
+                                | "__enter__"
+                                | "__exit__"
+                                | "__iter__"
+                        )
+                    {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
+                    if matches!(
+                        class_name.as_str(),
+                        "BufferedReader" | "BufferedWriter" | "TextIOWrapper"
+                    ) && matches!(
+                        attr_name.as_str(),
+                        "write"
+                            | "read"
+                            | "read1"
+                            | "peek"
+                            | "readline"
+                            | "readlines"
+                            | "readable"
+                            | "writable"
+                            | "seekable"
+                            | "close"
+                            | "flush"
+                            | "__enter__"
+                            | "__exit__"
+                    ) {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
                     // io in-memory streams: `.closed` reflects the _closed flag.
                     if matches!(
                         class_name.as_str(),
