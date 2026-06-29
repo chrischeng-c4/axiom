@@ -452,7 +452,7 @@ pub async fn run_agent_mode(opts: E2eRunOptions) -> Result<E2eRunResult> {
                 },
             )
             .await
-            .context("starting `jet serve --prod` for e2e run")?,
+            .context("starting `jet serve` for e2e run")?,
         ),
     };
     let base_url = launched_serve
@@ -540,7 +540,7 @@ pub async fn run_manual_mode(opts: E2eManualOptions) -> Result<E2eRunResult> {
                 },
             )
             .await
-            .context("starting `jet serve --prod` for e2e manual")?,
+            .context("starting `jet serve` for e2e manual")?,
         ),
     };
     let base_url = launched_serve
@@ -681,7 +681,7 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
                 },
             )
             .await
-            .context("starting `jet serve --prod` for e2e open")?,
+            .context("starting `jet serve` for e2e open")?,
         ),
     };
     let base_url = launched_serve
