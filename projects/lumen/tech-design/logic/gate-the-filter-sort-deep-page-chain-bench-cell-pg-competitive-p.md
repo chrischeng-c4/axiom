@@ -116,7 +116,6 @@ requirementDiagram
     }
     test_lumen_bench_sorted_page_deep_smoke - verifies -> R1
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
