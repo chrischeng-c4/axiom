@@ -56,9 +56,9 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         ),
         Case::new(
             "sed",
-            vec!["sed", "-n", "2,4p", fixture.sed_file()],
+            vec!["sed", "-n", "1,1024p", fixture.sed_file()],
             "/usr/bin/sed",
-            vec!["-n", "2,4p", fixture.sed_file()],
+            vec!["-n", "1,1024p", fixture.sed_file()],
         ),
         Case::new(
             "grep",
@@ -111,9 +111,9 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         ),
         (
             "run sed",
-            format!("sed -n 2,4p {}", fixture.sed_file()),
+            format!("sed -n 1,1024p {}", fixture.sed_file()),
             "/usr/bin/sed",
-            vec!["-n", "2,4p", fixture.sed_file()],
+            vec!["-n", "1,1024p", fixture.sed_file()],
         ),
         (
             "run grep",
@@ -252,6 +252,83 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         vec!["-R", "ABSENT", fixture.grep_root()],
     );
     assert_quiet_nonzero_parity(&cap, &no_match)?;
+
+    Ok(())
+}
+
+#[test]
+fn installed_frontend_exposes_standard_agent_commands() -> Result<()> {
+    let temp = tempfile::tempdir().context("create frontend tempdir")?;
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir(&bin_dir)?;
+    let cap = build_cap_frontend(&bin_dir)?;
+
+    let help = run(&cap, &["--help"])?;
+    assert!(
+        help.status.success(),
+        "cap --help failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&help.stdout),
+        String::from_utf8_lossy(&help.stderr)
+    );
+    let help_stdout = String::from_utf8_lossy(&help.stdout);
+    assert!(help_stdout.contains("Usage: cap "), "{help_stdout}");
+    assert!(!help_stdout.contains("Usage: cap-full "), "{help_stdout}");
+    for verb in ["llm", "upgrade", "issue", "report-issue"] {
+        assert!(
+            help_stdout.contains(verb),
+            "installed cap help missing {verb}:\n{help_stdout}"
+        );
+    }
+
+    let llm = run(&cap, &["llm", "--topic", "outline", "--format", "json"])?;
+    assert!(
+        llm.status.success(),
+        "cap llm failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&llm.stdout),
+        String::from_utf8_lossy(&llm.stderr)
+    );
+    let llm_stdout = String::from_utf8_lossy(&llm.stdout);
+    assert!(llm_stdout.contains("\"project\": \"cap\""), "{llm_stdout}");
+    assert!(llm_stdout.contains("\"id\": \"workflow\""), "{llm_stdout}");
+
+    for args in [
+        vec![
+            "issue",
+            "create",
+            "--title",
+            "cap: smoke",
+            "--dry-run",
+            "smoke",
+        ],
+        vec![
+            "report-issue",
+            "--title",
+            "cap: smoke",
+            "--dry-run",
+            "smoke",
+        ],
+    ] {
+        let out = run(&cap, &args)?;
+        assert!(
+            out.status.success(),
+            "cap {} failed:\nstdout:\n{}\nstderr:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("labels: project:cap"), "{stdout}");
+        assert!(stdout.contains("## Diagnostics"), "{stdout}");
+    }
+
+    let passthrough = run(&cap, &["sh", "-c", "printf cap-path-ok"])?;
+    assert!(
+        passthrough.status.success(),
+        "cap passthrough failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&passthrough.stdout),
+        String::from_utf8_lossy(&passthrough.stderr)
+    );
+    assert_eq!(passthrough.stdout, b"cap-path-ok");
 
     Ok(())
 }
@@ -514,8 +591,9 @@ impl Fixture {
 
         let list_dir = data.join("list");
         fs::create_dir(&list_dir)?;
-        fs::write(list_dir.join("b.txt"), b"b\n")?;
-        fs::write(list_dir.join("a.txt"), b"a\n")?;
+        for idx in 0..1024 {
+            fs::write(list_dir.join(format!("item-{idx:04}.txt")), b"x\n")?;
+        }
 
         let cat_file = data.join("cat.txt");
         fs::write(&cat_file, b"alpha\nbeta\n")?;
@@ -525,7 +603,9 @@ impl Fixture {
 
         let find_root = data.join("find");
         fs::create_dir(&find_root)?;
-        fs::write(find_root.join("only.txt"), b"found\n")?;
+        for idx in 0..512 {
+            fs::write(find_root.join(format!("only-{idx:04}.txt")), b"found\n")?;
+        }
 
         let du_root = data.join("du");
         fs::create_dir(&du_root)?;
@@ -538,11 +618,19 @@ impl Fixture {
         }
 
         let sed_file = data.join("sed.txt");
-        fs::write(&sed_file, b"one\ntwo\nthree\nfour\nfive\n")?;
+        let mut sed = fs::File::create(&sed_file)?;
+        for idx in 0..1100 {
+            writeln!(sed, "line {idx:04}")?;
+        }
 
         let grep_root = data.join("grep");
         fs::create_dir(&grep_root)?;
-        fs::write(grep_root.join("match.txt"), b"plain\nNEEDLE here\n")?;
+        for idx in 0..64 {
+            fs::write(
+                grep_root.join(format!("match-{idx:04}.txt")),
+                b"plain\nNEEDLE here\n",
+            )?;
+        }
 
         Ok(Self {
             list_dir: path_string(&list_dir),
