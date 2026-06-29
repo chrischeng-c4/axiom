@@ -154,9 +154,11 @@ def _mk(mod, kind, cls, func, got):
                 param=got[0], label=got[1], args=got[2])
 
 
-def _walk_class(body, mod, cls, kinds):
+def _walk_class(body, mod, cls, kinds, v312=True):
     """Methods directly in a class body, recursing into If-version blocks. Dunder
     methods (except __init__) are emitted as instance-method calls obj.__x__(wrong)."""
+    if not v312:
+        return
     for m in body:
         if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
             decos = decorator_names(m)
@@ -178,14 +180,16 @@ def _walk_class(body, mod, cls, kinds):
                     yield _mk(mod, kind, cls, m.name, got)
         elif isinstance(m, ast.ClassDef):
             if not m.name.startswith("_"):
-                yield from _walk_class(m.body, mod, f"{cls}.{m.name}", kinds)
+                yield from _walk_class(m.body, mod, f"{cls}.{m.name}", kinds, v312)
         elif isinstance(m, ast.If):
-            yield from _walk_class(m.body, mod, cls, kinds)
-            yield from _walk_class(m.orelse, mod, cls, kinds)
+            for branch, bv in _branch_v312(m, v312):
+                yield from _walk_class(branch, mod, cls, kinds, bv)
 
 
-def _walk_module(body, mod, kinds):
+def _walk_module(body, mod, kinds, v312=True):
     """Module-level defs and classes, recursing into If-version blocks."""
+    if not v312:
+        return
     for node in body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if "module" in kinds and not node.name.startswith("_"):
@@ -194,10 +198,10 @@ def _walk_module(body, mod, kinds):
                     yield _mk(mod, "module", None, node.name, got)
         elif isinstance(node, ast.ClassDef):
             if not node.name.startswith("_"):
-                yield from _walk_class(node.body, mod, node.name, kinds)
+                yield from _walk_class(node.body, mod, node.name, kinds, v312)
         elif isinstance(node, ast.If):
-            yield from _walk_module(node.body, mod, kinds)
-            yield from _walk_module(node.orelse, mod, kinds)
+            for branch, bv in _branch_v312(node, v312):
+                yield from _walk_module(branch, mod, kinds, bv)
 
 
 def candidates(kinds: set[str]):
