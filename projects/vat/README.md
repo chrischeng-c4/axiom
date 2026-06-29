@@ -54,6 +54,7 @@ Gate Inventory:
 | Host-process execution and GPU visibility | epic | - | implemented | verified | smoke | `rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal projects/vat/README.md projects/vat/src/gpu.rs` |
 | Agent-legible state and diff surface | epic | - | implemented | verified | smoke | `rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured projects/vat/README.md` |
 | Local agent test runner protocol | epic | #4152 | implemented | verified | smoke | `cargo test -p vat vat_toml_runner -- --nocapture` |
+| Production-like integration scenarios | change | #701 | implemented | verified | smoke | `cargo test -p vat --test vat_toml_runner scenario_ -- --nocapture` |
 | Local Kubernetes cluster service and `vat cluster` | change | #141 | implemented | verified | smoke | `cargo test -p vat --test vat_cluster -- --nocapture` |
 | GCP / Firebase emulator service presets | change | #143 | implemented | verified | smoke | `cargo test -p vat --test vat_emulators -- --nocapture` |
 | Built-in Rust emulators (Pub/Sub gRPC + Firebase Auth REST) | change | #145 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_auth --test vat_emulator_pubsub -- --nocapture` |
@@ -189,6 +190,7 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 |------|---------|
 | `vat run` | Load `vat.toml`, select `default_runner` or the only runner, emit sparse JSONL checkpoints, run setup/services/readiness/runner, capture logs/artifacts/diff/state, and cleanup. |
 | `vat run <runner-id>` | Run a specific `vat.toml` runner. |
+| `vat run --scenario <id>` | Run a named app-under-test scenario: app service + scenario deps + runner deps, with topology evidence in `vat state`. |
 | `vat run -- <cmd>` | Clone a base, run one direct command, record the result. `--base DIR`, `--from VAT`, `--isolation none\|seatbelt`, `--gpu auto\|required\|none`, `--json`. |
 | `vat llm` | Print the compact LLM/agent usage guide: when to use `vat.toml`, direct runs, evidence commands, retention, and non-Docker boundaries. |
 | `vat upgrade` | Self-update to the latest `vat@*` GitHub release (`--check` to report only, `--version <tag>` to pin). One of the three mandatory CLI-convention verbs (`llm`/`upgrade`/`report-issue`), via the shared `cli-std` crate. |
@@ -247,13 +249,41 @@ cluster = "auto"           # auto (kind→k3d→minikube) | kind | k3d | minikub
 # nodes = 1
 export = { KUBECONFIG = "{kubeconfig}" }
 
+[[services]]
+id = "web"                 # app under test; {port} is auto-allocated
+cmd = ["pnpm", "run", "dev", "--", "--host", "127.0.0.1", "--port", "{port}"]
+ready_http = "http://127.0.0.1:{port}/"
+export = { APP_URL = "APP_URL" }
+timeout_s = 30
+
+[[services]]
+id = "http"
+preset = "http-mock"       # required for hermetic scenario routing/no-forward
+
 [[runners]]
 id = "e2e"
 requires = ["pg", "k8s"]
 cmd = ["pnpm", "run", "test:e2e"]
 timeout_s = 300
 artifacts = ["test-results/**", "playwright-report/**"]
+
+[[scenarios]]
+id = "prod-like"
+app = "web"
+requires = ["pg", "k8s", "http"]
+runner = "e2e"
+network = "hermetic"       # open | hermetic
 ```
+
+`[[scenarios]]` is the production-like path: the app-under-test service starts
+with its declared dependencies, runner dependencies are deduped into the same
+service set, and `vat state <id>` records `test_run.scenario` with app, runner,
+services, routes, and whether hermetic mode was active. `network = "hermetic"`
+requires a participating `preset = "http-mock"` service, sets localhost-only
+egress, defaults the run to seatbelt isolation, runs direct-start services under
+that sandbox, and starts the proxy in no-forward mode. Docker/image, cluster, and
+native preset service backends remain external local services; the app and runner
+are still host processes, not containers or VMs.
 
 A service is provided in one of four ways, and **native (Homebrew) is
 preferred**:
@@ -376,9 +406,12 @@ target = "http://127.0.0.1:8123"   # or a local emulator's host:port
   `localhost-only` denies outbound network except loopback (so the run reaches
   only vat's local emulators/proxy); `deny` blocks all outbound; `open` (default)
   is unrestricted. Reads stay open and the GPU is untouched. Applies to both
-  direct (`vat run -- cmd`) and runner (`vat run <runner>`) commands; vat-spawned
-  services keep their network. With `--isolation none` a non-`open` policy warns
-  that confinement needs seatbelt.
+  direct (`vat run -- cmd`) and runner (`vat run <runner>`) commands. Regular
+  runner-mode services keep their network; `vat run --scenario <id>` with
+  `network = "hermetic"` also wraps direct-start app/dependency services while
+  leaving Docker/image, cluster, and preset service backends on their native
+  local-service path. With `--isolation none` a non-`open` policy warns that
+  confinement needs seatbelt.
 - **Fully hermetic**: when `egress` is `localhost-only`/`deny`, vat also runs the
   `http-mock` proxy in **no-forward** mode — an unmatched request returns
   `502 hermetic: … forwarding disabled` instead of reaching the internet. Net:

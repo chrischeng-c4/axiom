@@ -17,6 +17,8 @@ evidence afterward.
 ## First Choice
 
 - If the project has `vat.toml`, prefer plain `vat run`.
+- If `vat.toml` declares `[[scenarios]]` for an app-under-test, use
+  `vat run --scenario <id>`.
 - Use `vat run <runner-id>` only when you need a non-default runner.
 - If you only need one ad-hoc command, use `vat run -- <command>`.
 - `vat run` prints sparse JSONL checkpoints; the final line has
@@ -61,11 +63,28 @@ export = { KUBECONFIG = "{kubeconfig}" }
 id = "fs"                  # GCP Firestore emulator (exports FIRESTORE_EMULATOR_HOST)
 preset = "firestore"       # firestore | pubsub | datastore | bigtable | spanner | firebase
 
+[[services]]
+id = "web"                 # app under test; {port} is auto-allocated
+cmd = ["pnpm", "run", "dev", "--", "--host", "127.0.0.1", "--port", "{port}"]
+ready_http = "http://127.0.0.1:{port}/"
+export = { APP_URL = "APP_URL" }
+
+[[services]]
+id = "http"
+preset = "http-mock"       # required by hermetic scenarios
+
 [[runners]]
 id = "e2e"
 requires = ["pg"]
 cmd = ["pnpm", "run", "test:e2e"]
 artifacts = ["test-results/**", "playwright-report/**"]
+
+[[scenarios]]
+id = "prod-like"
+app = "web"
+requires = ["pg", "http"]
+runner = "e2e"
+network = "hermetic"       # open | hermetic
 ```
 
 ## Services: native or Docker
@@ -136,6 +155,12 @@ artifacts = ["test-results/**", "playwright-report/**"]
   real local services), add `http-mock` for arbitrary third-party HTTP, and
   `openapi` to fake a documented API from its spec — tests then need no
   hand-rolled service or HTTP-client mocks.
+- Production-like scenarios: declare `[[scenarios]]` when you want vat to start
+  the app-under-test plus dependencies and then run a test runner against it.
+  `network = "hermetic"` requires a participating `preset = "http-mock"` service,
+  sets localhost-only egress, defaults the run to seatbelt isolation, wraps
+  direct-start app/dependency services, and records `test_run.scenario` topology
+  in `vat state`.
 - A `cluster` service spins up an ephemeral local Kubernetes cluster (kind, k3d,
   or minikube; `auto` picks the first installed). vat creates it before the
   runner, exports `KUBECONFIG` (the `{kubeconfig}` token) plus
@@ -152,6 +177,8 @@ artifacts = ["test-results/**", "playwright-report/**"]
 - `vat run`: select the default runner, prepare or clone service images, start
   required services, wait for readiness, run the runner, capture evidence, stop
   services, and return the runner exit code.
+- `vat run --scenario prod-like`: start the named scenario's app service,
+  scenario deps, and runner deps, then run its selected runner.
 - `vat run e2e`: explicitly run the `e2e` runner.
 - `vat run -- cargo test -p app`: run one direct command without requiring
   vat.toml; the child exit code is forwarded.
