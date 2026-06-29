@@ -132,3 +132,25 @@ e2e_tests:
     verifies:
       - "The runtime behavior documented here remains covered by existing storage tests."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/types.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Refresh `SearchRequest.sort` schema docs: four sort keys, missing=first/last placement and total inclusion, and has_child parent sort support."
+  - path: projects/lumen/src/spec.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Update offline query-shape and LLM workflow wording for has_child + parent-field sort."
+  - path: projects/lumen/tests/spec_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Assert the offline agent docs expose sort.missing and has_child + sort support."
+```
