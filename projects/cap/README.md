@@ -178,6 +178,15 @@ the shell keeps pipe behavior. The resident layer is an optimizer boundary, not
 a sandbox or replacement shell: unsupported syntax must delegate to Bash rather
 than fail as command-not-found.
 
+Session queueing is opt-in through `CAP_SESSION_ID`. When it is set, cap can
+queue profiled no-observe side effects and return job metadata immediately;
+the first slice only queues simple `touch <path...>` commands. Observe commands
+such as `ls`, `cat`, `grep`, and `find` act as same-session barriers: they wait
+for earlier queued jobs before returning their own result, and if a prior job
+failed they report that job id and stderr instead of hiding the cause behind
+the observe command. Without `CAP_SESSION_ID`, or for unknown/risky command
+strings, `cap run` keeps the existing synchronous behavior.
+
 Active same-name replacements are workload-sensitive fast paths:
 
 | Command | Replaced subset | Gate | Notes |

@@ -47,6 +47,7 @@ pub mod protocol;
 pub mod reap;
 pub mod resident_shell;
 pub mod sampler;
+pub mod session_queue;
 pub mod supervisor;
 pub mod throttle;
 // CODEGEN-END

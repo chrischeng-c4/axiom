@@ -82,10 +82,12 @@ fn session_id() -> Option<String> {
 }
 
 fn split_profiled_words(command: &str) -> Option<Vec<String>> {
-    if command
-        .chars()
-        .any(|ch| matches!(ch, '|' | '&' | ';' | '<' | '>' | '(' | ')' | '$' | '`' | '"' | '\'' | '\n'))
-    {
+    if command.chars().any(|ch| {
+        matches!(
+            ch,
+            '|' | '&' | ';' | '<' | '>' | '(' | ')' | '$' | '`' | '"' | '\'' | '\n'
+        )
+    }) {
         return None;
     }
     let words = command
@@ -96,11 +98,14 @@ fn split_profiled_words(command: &str) -> Option<Vec<String>> {
 }
 
 fn classify(words: &[String]) -> WaitPolicy {
-    match words.first().map(|word| basename(word).as_str()) {
-        Some("touch") if words.len() > 1 && words[1..].iter().all(|arg| !arg.starts_with('-')) => {
+    let Some(program) = words.first().map(|word| basename(word)) else {
+        return WaitPolicy::Synchronous;
+    };
+    match program.as_str() {
+        "touch" if words.len() > 1 && words[1..].iter().all(|arg| !arg.starts_with('-')) => {
             WaitPolicy::NoObserve
         }
-        Some("ls" | "cat" | "grep" | "find") => WaitPolicy::Observe,
+        "ls" | "cat" | "grep" | "find" => WaitPolicy::Observe,
         _ => WaitPolicy::Synchronous,
     }
 }
@@ -217,7 +222,10 @@ fn wait_for_status(status_path: &Path) -> Result<()> {
     let deadline = Instant::now() + Duration::from_millis(DEFAULT_WAIT_MS);
     while !status_path.exists() {
         if Instant::now() >= deadline {
-            bail!("timed out waiting for queued cap job {}", status_path.display());
+            bail!(
+                "timed out waiting for queued cap job {}",
+                status_path.display()
+            );
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -251,7 +259,13 @@ fn next_job_id() -> String {
 fn sanitize_session(value: &str) -> String {
     value
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -264,7 +278,11 @@ fn basename(program: &str) -> String {
 }
 
 fn shell_join(words: &[String]) -> String {
-    words.iter().map(|word| shell_quote(word)).collect::<Vec<_>>().join(" ")
+    words
+        .iter()
+        .map(|word| shell_quote(word))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn shell_quote_path(path: &Path) -> String {
@@ -404,5 +422,4 @@ mod tests {
     }
 }
 
-<!-- marker: missing-generator:logic:cf1699b3 path: projects/cap/src/session_queue.rs reason: Add the first opt-in per-session queue. CAP_SESSION_ID enables local session state, profiled no-observe commands enqueue background jobs, and observe commands drain prior same-session jobs. -->
 // HANDWRITE-END

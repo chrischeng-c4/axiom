@@ -27,6 +27,7 @@ use crate::daemon;
 use crate::hook_install;
 use crate::protocol::{LeaseState, Request, Response};
 use crate::resident_shell::{ResidentLightShellRun, ResidentLightShellSession};
+use crate::session_queue::{self, QueueDecision};
 use crate::supervisor::SpawnSpec;
 
 #[derive(Parser, Debug)]
@@ -427,6 +428,14 @@ async fn handle_run(args: RunArgs) -> Result<ExitCode> {
         );
     }
     if args.command.len() == 1 {
+        match session_queue::handle_command_string(&args.command[0])? {
+            QueueDecision::ContinueSynchronously => {}
+            decision => {
+                if let Some(code) = decision.exit_code() {
+                    return Ok(code);
+                }
+            }
+        }
         let session = ResidentLightShellSession::capture();
         return match session.run_command_string(&args.command[0], args.label)? {
             ResidentLightShellRun::Native(code) => Ok(code),
