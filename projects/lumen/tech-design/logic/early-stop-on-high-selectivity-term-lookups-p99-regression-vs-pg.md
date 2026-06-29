@@ -154,25 +154,25 @@ changes:
     action: claim
     section: logic
     impl_mode: hand-written
-    reason: "Existing `try_plan` standalone Term branch returns a posting-window page and exact bitmap-cardinality total without full-score materialization."
+    reason: "Standalone Term planner already early-stops the returned page by reading only the requested posting window."
   - path: projects/lumen/tests/perf_gate.rs
     action: verify
     section: unit-test
     impl_mode: hand-written
-    reason: "Existing term latency floor remains the local regression check for exact term lookup cost."
+    reason: "Term latency floor is the local regression guard."
   - path: projects/lumen/tests/perf_gate_vs_db.rs
     action: verify
     section: e2e-test
     impl_mode: hand-written
-    reason: "Existing competitive gate carries kw_term peer evidence through pg-native/OpenSearch comparison."
+    reason: "Release competitive gate covers keyword term performance claims."
   - path: projects/lumen/vat.toml
     action: verify
     section: e2e-test
     impl_mode: hand-written
-    reason: "Existing ec-efficiency-meter runner provisions pg/OpenSearch and runs the release competitive gate under meter."
+    reason: "ec-efficiency-meter is the real-service peer runner used as closing evidence."
   - path: projects/lumen/README.md
     action: claim
     section: changes
     impl_mode: hand-written
-    reason: "Existing performance contract documents kw_term pg-native and OpenSearch margins as green."
+    reason: "Performance contract already records kw_term green margins through pg-native/OpenSearch evidence."
 ```
