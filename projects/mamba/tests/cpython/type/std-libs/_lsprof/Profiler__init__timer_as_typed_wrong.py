@@ -9,12 +9,11 @@
 # case = "Profiler__init__timer_as_typed_wrong"
 # subject = "_lsprof.Profiler.__init__(timer: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed timer"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_lsprof.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed timer
 # mamba-strict-type: TypeError
 """Type wall: _lsprof.Profiler.__init__(timer: typed); call it with the wrong type.
 
