@@ -2168,6 +2168,42 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("src", CoreTy::Typed), p("dst", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: filelist pattern helpers are string-pattern boundaries in
+    // distutils. Generated rows collapse translate/include/exclude to Unknown;
+    // keep strict mode from leaking impossible scalar or bare-object patterns
+    // into runtime import/setup errors.
+    StdlibSig {
+        module: "distutils.filelist",
+        qualifier: "",
+        name: "translate_pattern",
+        kind: SigKind::ModuleFn,
+        params: &[p("pattern", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.filelist",
+        qualifier: "FileList",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("warn", CoreTy::Typed), p("debug_print", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.filelist",
+        qualifier: "FileList",
+        name: "exclude_pattern",
+        kind: SigKind::Method,
+        params: &[p("pattern", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.filelist",
+        qualifier: "FileList",
+        name: "include_pattern",
+        kind: SigKind::Method,
+        params: &[p("pattern", CoreTy::Str)],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -4527,6 +4563,32 @@ mod tests {
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
             assert_eq!(sig.params[1].name, "dst");
             assert_eq!(sig.params[1].ty, CoreTy::Typed);
+        }
+    }
+
+    #[test]
+    fn curated_distutils_filelist_walls_override_unknown_rows() {
+        let translate = get("distutils.filelist", "", "translate_pattern")
+            .expect("translate_pattern row present");
+        assert!(translate.enforceable);
+        assert_eq!(translate.kind, SigKind::ModuleFn);
+        assert_eq!(translate.params[0].name, "pattern");
+        assert_eq!(translate.params[0].ty, CoreTy::Str);
+
+        let init = get("distutils.filelist", "FileList", "__init__")
+            .expect("FileList.__init__ row present");
+        assert!(init.enforceable);
+        assert_eq!(init.kind, SigKind::Method);
+        assert_eq!(init.params[0].name, "warn");
+        assert_eq!(init.params[0].ty, CoreTy::Typed);
+
+        for name in ["exclude_pattern", "include_pattern"] {
+            let sig = get("distutils.filelist", "FileList", name)
+                .expect("FileList pattern row present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, "pattern");
+            assert_eq!(sig.params[0].ty, CoreTy::Str);
         }
     }
 
