@@ -9,12 +9,11 @@
 # case = "MatchOr__init__patterns_as_list_wrong"
 # subject = "ast.MatchOr.__init__(patterns: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed patterns"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed patterns
 # mamba-strict-type: TypeError
 """Type wall: ast.MatchOr.__init__(patterns: list); call it with the wrong type.
 

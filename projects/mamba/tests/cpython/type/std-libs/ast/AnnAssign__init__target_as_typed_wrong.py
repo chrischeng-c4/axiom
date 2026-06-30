@@ -9,12 +9,11 @@
 # case = "AnnAssign__init__target_as_typed_wrong"
 # subject = "ast.AnnAssign.__init__(target: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target
 # mamba-strict-type: TypeError
 """Type wall: ast.AnnAssign.__init__(target: typed); call it with the wrong type.
 

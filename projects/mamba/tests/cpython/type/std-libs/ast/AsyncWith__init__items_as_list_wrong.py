@@ -9,12 +9,11 @@
 # case = "AsyncWith__init__items_as_list_wrong"
 # subject = "ast.AsyncWith.__init__(items: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed items"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed items
 # mamba-strict-type: TypeError
 """Type wall: ast.AsyncWith.__init__(items: list); call it with the wrong type.
 

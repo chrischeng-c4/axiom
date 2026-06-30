@@ -281,6 +281,410 @@ fn extract_str(val: MbValue) -> Option<String> {
     })
 }
 
+#[derive(Clone, Copy)]
+enum AstFieldKind {
+    AstNode,
+    AstNodeOrNone,
+    List,
+    StrOrNone,
+    Int,
+    ConstantValue,
+}
+
+#[derive(Clone, Copy)]
+struct AstFieldSpec {
+    name: &'static str,
+    kind: AstFieldKind,
+}
+
+const ANN_ASSIGN_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "target",
+        kind: AstFieldKind::AstNode,
+    },
+    AstFieldSpec {
+        name: "annotation",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+    AstFieldSpec {
+        name: "value",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+    AstFieldSpec {
+        name: "simple",
+        kind: AstFieldKind::Int,
+    },
+];
+const ASSIGN_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "targets",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "value",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+    AstFieldSpec {
+        name: "type_comment",
+        kind: AstFieldKind::StrOrNone,
+    },
+];
+const ASYNC_WITH_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "items",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "body",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "type_comment",
+        kind: AstFieldKind::StrOrNone,
+    },
+];
+const CONSTANT_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "value",
+        kind: AstFieldKind::ConstantValue,
+    },
+    AstFieldSpec {
+        name: "kind",
+        kind: AstFieldKind::StrOrNone,
+    },
+];
+const DELETE_FIELDS: &[AstFieldSpec] = &[AstFieldSpec {
+    name: "targets",
+    kind: AstFieldKind::List,
+}];
+const DICT_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "keys",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "values",
+        kind: AstFieldKind::List,
+    },
+];
+const EXCEPT_HANDLER_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "type",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+    AstFieldSpec {
+        name: "name",
+        kind: AstFieldKind::StrOrNone,
+    },
+    AstFieldSpec {
+        name: "body",
+        kind: AstFieldKind::List,
+    },
+];
+const FUNCTION_TYPE_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "argtypes",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "returns",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+];
+const LIST_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "elts",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "ctx",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+];
+const NAMES_FIELDS: &[AstFieldSpec] = &[AstFieldSpec {
+    name: "names",
+    kind: AstFieldKind::List,
+}];
+const VALUES_FIELDS: &[AstFieldSpec] = &[AstFieldSpec {
+    name: "values",
+    kind: AstFieldKind::List,
+}];
+
+fn ast_constructor_fields(node_type: &str) -> &'static [AstFieldSpec] {
+    match node_type {
+        "AnnAssign" => ANN_ASSIGN_FIELDS,
+        "Assign" => ASSIGN_FIELDS,
+        "AsyncWith" => ASYNC_WITH_FIELDS,
+        "Constant" | "NameConstant" | "Num" | "Str" | "Bytes" => CONSTANT_FIELDS,
+        "Delete" => DELETE_FIELDS,
+        "Dict" => DICT_FIELDS,
+        "ExceptHandler" => EXCEPT_HANDLER_FIELDS,
+        "FunctionType" => FUNCTION_TYPE_FIELDS,
+        "Global" | "Import" | "Nonlocal" => NAMES_FIELDS,
+        "Interactive" | "Module" => &[
+            AstFieldSpec {
+                name: "body",
+                kind: AstFieldKind::List,
+            },
+            AstFieldSpec {
+                name: "type_ignores",
+                kind: AstFieldKind::List,
+            },
+        ],
+        "JoinedStr" | "TemplateStr" => VALUES_FIELDS,
+        "List" | "Set" | "Tuple" => LIST_FIELDS,
+        "MatchMapping" => &[
+            AstFieldSpec {
+                name: "keys",
+                kind: AstFieldKind::List,
+            },
+            AstFieldSpec {
+                name: "patterns",
+                kind: AstFieldKind::List,
+            },
+            AstFieldSpec {
+                name: "rest",
+                kind: AstFieldKind::StrOrNone,
+            },
+        ],
+        "MatchOr" | "MatchSequence" => &[AstFieldSpec {
+            name: "patterns",
+            kind: AstFieldKind::List,
+        }],
+        "Try" | "TryStar" => &[
+            AstFieldSpec {
+                name: "body",
+                kind: AstFieldKind::List,
+            },
+            AstFieldSpec {
+                name: "handlers",
+                kind: AstFieldKind::List,
+            },
+            AstFieldSpec {
+                name: "orelse",
+                kind: AstFieldKind::List,
+            },
+            AstFieldSpec {
+                name: "finalbody",
+                kind: AstFieldKind::List,
+            },
+        ],
+        "With" => ASYNC_WITH_FIELDS,
+        _ => &[],
+    }
+}
+
+fn is_ast_node_type(name: &str) -> bool {
+    matches!(
+        name,
+        "AST"
+            | "Module"
+            | "Interactive"
+            | "Expression"
+            | "FunctionDef"
+            | "AsyncFunctionDef"
+            | "ClassDef"
+            | "Return"
+            | "Delete"
+            | "Assign"
+            | "TypeAlias"
+            | "AugAssign"
+            | "AnnAssign"
+            | "For"
+            | "AsyncFor"
+            | "While"
+            | "If"
+            | "With"
+            | "AsyncWith"
+            | "Match"
+            | "Raise"
+            | "Try"
+            | "TryStar"
+            | "Assert"
+            | "Import"
+            | "ImportFrom"
+            | "Global"
+            | "Nonlocal"
+            | "Expr"
+            | "Pass"
+            | "Break"
+            | "Continue"
+            | "BoolOp"
+            | "NamedExpr"
+            | "BinOp"
+            | "UnaryOp"
+            | "Lambda"
+            | "IfExp"
+            | "Dict"
+            | "Set"
+            | "ListComp"
+            | "SetComp"
+            | "DictComp"
+            | "GeneratorExp"
+            | "Await"
+            | "Yield"
+            | "YieldFrom"
+            | "Compare"
+            | "Call"
+            | "FormattedValue"
+            | "JoinedStr"
+            | "Constant"
+            | "Attribute"
+            | "Subscript"
+            | "Starred"
+            | "Name"
+            | "List"
+            | "Tuple"
+            | "Slice"
+            | "Load"
+            | "Store"
+            | "Del"
+            | "And"
+            | "Or"
+            | "Add"
+            | "Sub"
+            | "Mult"
+            | "MatMult"
+            | "Div"
+            | "Mod"
+            | "Pow"
+            | "LShift"
+            | "RShift"
+            | "BitOr"
+            | "BitXor"
+            | "BitAnd"
+            | "FloorDiv"
+            | "Invert"
+            | "Not"
+            | "UAdd"
+            | "USub"
+            | "Eq"
+            | "NotEq"
+            | "Lt"
+            | "LtE"
+            | "Gt"
+            | "GtE"
+            | "Is"
+            | "IsNot"
+            | "In"
+            | "NotIn"
+            | "arg"
+            | "arguments"
+            | "keyword"
+            | "alias"
+            | "withitem"
+            | "match_case"
+            | "MatchValue"
+            | "MatchSingleton"
+            | "MatchSequence"
+            | "MatchMapping"
+            | "MatchClass"
+            | "MatchStar"
+            | "MatchAs"
+            | "MatchOr"
+            | "ExceptHandler"
+            | "TypeVar"
+            | "ParamSpec"
+            | "TypeVarTuple"
+            | "AugLoad"
+            | "AugStore"
+            | "ExtSlice"
+            | "Index"
+            | "NameConstant"
+            | "Num"
+            | "Param"
+            | "Str"
+            | "Bytes"
+            | "Suite"
+            | "FunctionType"
+            | "TypeIgnore"
+    )
+}
+
+fn ast_node_type_from_marker(marker: &str) -> Option<&str> {
+    let node_type = marker.strip_prefix("mb_ast_node_")?;
+    is_ast_node_type(node_type).then_some(node_type)
+}
+
+fn is_ast_node_value(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(&(*ptr).data, super::super::rc::ObjData::Instance { class_name, .. } if is_ast_node_type(class_name))
+    })
+}
+
+fn is_list_value(value: MbValue) -> bool {
+    value
+        .as_ptr()
+        .is_some_and(|ptr| unsafe { matches!(&(*ptr).data, super::super::rc::ObjData::List(_)) })
+}
+
+fn is_str_value(value: MbValue) -> bool {
+    value
+        .as_ptr()
+        .is_some_and(|ptr| unsafe { matches!(&(*ptr).data, super::super::rc::ObjData::Str(_)) })
+}
+
+fn is_constant_value(value: MbValue) -> bool {
+    if value.is_none()
+        || value.is_ellipsis()
+        || value.as_bool().is_some()
+        || value.as_int().is_some()
+    {
+        return true;
+    }
+    if value.as_float().is_some() {
+        return true;
+    }
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            super::super::rc::ObjData::Str(_) | super::super::rc::ObjData::Bytes(_)
+        )
+    })
+}
+
+fn ast_field_accepts(kind: AstFieldKind, value: MbValue) -> bool {
+    match kind {
+        AstFieldKind::AstNode => is_ast_node_value(value),
+        AstFieldKind::AstNodeOrNone => value.is_none() || is_ast_node_value(value),
+        AstFieldKind::List => is_list_value(value),
+        AstFieldKind::StrOrNone => value.is_none() || is_str_value(value),
+        AstFieldKind::Int => value.as_int().is_some(),
+        AstFieldKind::ConstantValue => is_constant_value(value),
+    }
+}
+
+fn ast_type_error(node_type: &str, field: &AstFieldSpec) -> MbValue {
+    super::super::builtins::raise_type_error(format!(
+        "ast.{node_type} field '{}' received wrong type",
+        field.name
+    ));
+    MbValue::none()
+}
+
+pub fn mb_ast_construct_marker(marker: &str, args: &[MbValue]) -> Option<MbValue> {
+    let node_type = ast_node_type_from_marker(marker)?;
+    let specs = ast_constructor_fields(node_type);
+    let mut fields = FxHashMap::default();
+    for (idx, arg) in args.iter().copied().enumerate() {
+        if let Some(spec) = specs.get(idx) {
+            if !ast_field_accepts(spec.kind, arg) {
+                return Some(ast_type_error(node_type, spec));
+            }
+            unsafe {
+                super::super::rc::retain_if_ptr(arg);
+            }
+            fields.insert(spec.name.to_string(), arg);
+        } else {
+            unsafe {
+                super::super::rc::retain_if_ptr(arg);
+            }
+            fields.insert(format!("_arg{idx}"), arg);
+        }
+    }
+    Some(make_ast_node(node_type, fields))
+}
+
 /// Build a minimal AST node dict representing an AST tree node.
 fn make_ast_node(node_type: &str, fields: FxHashMap<String, MbValue>) -> MbValue {
     use super::super::rc::{MbObject, MbObjectHeader, ObjData};
