@@ -50,6 +50,8 @@ pub struct Args {
     pub gpu: GpuRequest,
     /// Direct mode prints full VatState JSON instead of a human summary.
     pub json: bool,
+    /// Per-invocation retention override for configured vat.toml runs.
+    pub keep: Option<RetentionPolicy>,
 }
 
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#cli
@@ -78,6 +80,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
         isolation,
         gpu,
         json,
+        keep,
     } = args;
     match target {
         Target::Direct {
@@ -100,6 +103,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             runner_ids,
+            keep,
         }),
         Target::Scenario { scenario_id } => exec_scenario(ScenarioArgs {
             base,
@@ -108,6 +112,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             scenario_id,
+            keep,
         }),
     }
 }
@@ -119,6 +124,7 @@ struct RunnerArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     runner_ids: Vec<String>,
+    keep: Option<RetentionPolicy>,
 }
 
 struct DirectArgs {
@@ -139,6 +145,7 @@ struct ScenarioArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     scenario_id: String,
+    keep: Option<RetentionPolicy>,
 }
 
 fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
@@ -260,6 +267,7 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
 fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
     let cwd = std::env::current_dir().context("get current directory")?;
     let cfg = config::load_nearest(&cwd)?;
+    let retention = args.keep.unwrap_or(cfg.workspace.keep);
     if args.base.is_some() || args.from.is_some() {
         bail!(
             "vat run [runner-id] uses vat.toml workspace.base; --base/--from are direct mode only"
@@ -358,7 +366,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
             digest: cfg.digest.clone(),
         },
         runner_id: joined_ids.clone(),
-        retention: cfg.workspace.keep,
+        retention,
         services: Vec::new(),
         scenario: None,
         runner: None,
@@ -371,7 +379,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         format!("runner: {joined_ids}"),
     ))?;
 
-    let result = run_configured(&mut vat, &cfg, &runners, &logs_dir, &[], false);
+    let result = run_configured(&mut vat, &cfg, &runners, &logs_dir, &[], false, retention);
     let code = match result {
         Ok(code) => code,
         Err(err) => {
@@ -388,7 +396,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
     vat.meta.status = Status::Exited { code };
     vat.save()?;
     let state = vat.project()?;
-    let should_remove = match cfg.workspace.keep {
+    let should_remove = match retention {
         RetentionPolicy::Always => false,
         RetentionPolicy::Never => true,
         RetentionPolicy::Failed => code == 0,
@@ -441,6 +449,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
 fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
     let cwd = std::env::current_dir().context("get current directory")?;
     let cfg = config::load_nearest(&cwd)?;
+    let retention = args.keep.unwrap_or(cfg.workspace.keep);
     if args.base.is_some() || args.from.is_some() {
         bail!(
             "vat run --scenario uses vat.toml workspace.base; --base/--from are direct mode only"
@@ -543,7 +552,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
             digest: cfg.digest.clone(),
         },
         runner_id: runner.id.clone(),
-        retention: cfg.workspace.keep,
+        retention,
         services: Vec::new(),
         scenario: Some(ScenarioRunRecord {
             id: scenario.id.clone(),
@@ -572,6 +581,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         &logs_dir,
         &extra_service_ids,
         scenario.network == ScenarioNetworkMode::Hermetic,
+        retention,
     );
     let code = match result {
         Ok(code) => code,
@@ -589,7 +599,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
     vat.meta.status = Status::Exited { code };
     vat.save()?;
     let state = vat.project()?;
-    let should_remove = match cfg.workspace.keep {
+    let should_remove = match retention {
         RetentionPolicy::Always => false,
         RetentionPolicy::Never => true,
         RetentionPolicy::Failed => code == 0,
@@ -636,6 +646,7 @@ fn run_configured(
     logs_dir: &Path,
     extra_service_ids: &[String],
     force_hermetic_proxy: bool,
+    retention: RetentionPolicy,
 ) -> Result<i32> {
     let rootfs = vat.rootfs();
     let cwd = rootfs.join(&vat.meta.spec.workdir);
@@ -714,10 +725,7 @@ fn run_configured(
         ) {
             Ok(handle) => handle,
             Err(err) => {
-                stop_services(
-                    &mut services,
-                    should_delete_clusters(&cfg.workspace.keep, -1),
-                );
+                stop_services(&mut services, should_delete_clusters(&retention, -1));
                 persist_services(vat, &services)?;
                 return Err(err);
             }
@@ -725,10 +733,7 @@ fn run_configured(
         services.push(handle);
         let last = services.len() - 1;
         if let Err(err) = wait_for_services(vat, &mut services[last..]) {
-            stop_services(
-                &mut services,
-                should_delete_clusters(&cfg.workspace.keep, -1),
-            );
+            stop_services(&mut services, should_delete_clusters(&retention, -1));
             persist_services(vat, &services)?;
             return Err(err);
         }
@@ -758,10 +763,7 @@ fn run_configured(
             Ok(proc) => procs.push(proc),
             Err(err) => {
                 kill_runner_processes(&mut procs);
-                stop_services(
-                    &mut services,
-                    should_delete_clusters(&cfg.workspace.keep, -1),
-                );
+                stop_services(&mut services, should_delete_clusters(&retention, -1));
                 persist_services(vat, &services)?;
                 return Err(err);
             }
@@ -792,10 +794,7 @@ fn run_configured(
         test_run.artifacts = artifacts;
     }
     vat.save()?;
-    stop_services(
-        &mut services,
-        should_delete_clusters(&cfg.workspace.keep, code),
-    );
+    stop_services(&mut services, should_delete_clusters(&retention, code));
     persist_services(vat, &services)?;
     let summary = records
         .iter()
@@ -1728,6 +1727,7 @@ fn prepare_firebase_service(
         "FIREBASE_EMULATOR_HUB".to_string(),
         format!("127.0.0.1:{hub_port}"),
     );
+    add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", hub_port);
 
     let ready_port = first_port.unwrap_or(hub_port);
     Ok(ServicePlan {
@@ -1786,6 +1786,13 @@ fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) 
         ServicePreset::Openapi => ("openapi", "OPENAPI_MOCK_HOST"),
         // Non-built-in presets never reach this path.
         _ => ("", ""),
+    }
+}
+
+fn builtin_emulator_export_value(preset: ServicePreset, host_port: &str) -> String {
+    match preset {
+        ServicePreset::CloudStorage => format!("http://{host_port}"),
+        _ => host_port.to_string(),
     }
 }
 
@@ -1885,7 +1892,7 @@ fn prepare_builtin_service(
         host_port.clone(),
     ];
 
-    let env = if preset == ServicePreset::HttpMock {
+    let mut env = if preset == ServicePreset::HttpMock {
         // The HTTP mock proxy exports a SET of env: proxy + CA trust. Paths live
         // under the stable store root, keyed by port for this run.
         let base = crate::paths::root()?.join("http-mock");
@@ -1920,15 +1927,21 @@ fn prepare_builtin_service(
             command.push(spec_path.to_string_lossy().into_owned());
         }
         let mut env = BTreeMap::new();
+        let default_value = builtin_emulator_export_value(preset, &host_port);
         if service.export.is_empty() {
-            env.insert(default_var.to_string(), host_port.clone());
+            env.insert(default_var.to_string(), default_value);
         } else {
-            for target in service.export.values() {
-                env.insert(target.clone(), host_port.clone());
+            for (key, template) in &service.export {
+                if template.contains("{host}") || template.contains("{port}") {
+                    env.insert(key.clone(), substitute_port(template, Some(port)));
+                } else {
+                    env.insert(template.clone(), default_value.clone());
+                }
             }
         }
         env
     };
+    add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", port);
 
     Ok(ServicePlan {
         id: service.id.clone(),
@@ -2216,9 +2229,7 @@ fn image_exports(service: &ServiceConfig, host_port: u16) -> BTreeMap<String, St
             .replace("{port}", &host_port.to_string());
         env.insert(key.clone(), value);
     }
-    let upper = service.id.to_uppercase().replace(['-', '.'], "_");
-    env.insert(format!("VAT_SERVICE_{upper}_HOST"), "127.0.0.1".to_string());
-    env.insert(format!("VAT_SERVICE_{upper}_PORT"), host_port.to_string());
+    add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", host_port);
     env
 }
 
@@ -2904,6 +2915,7 @@ fn preset_exports(
             }
         }
     }
+    add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", port);
     env
 }
 
@@ -2963,10 +2975,19 @@ fn external_exports(service: &ServiceConfig, host: &str, port: u16) -> BTreeMap<
     for (key, template) in &service.export {
         env.insert(key.clone(), substitute_endpoint(template, host, port));
     }
-    let upper = service.id.to_uppercase().replace(['-', '.'], "_");
+    add_service_endpoint_env(&mut env, &service.id, host, port);
+    env
+}
+
+fn add_service_endpoint_env(
+    env: &mut BTreeMap<String, String>,
+    service_id: &str,
+    host: &str,
+    port: u16,
+) {
+    let upper = service_id.to_uppercase().replace(['-', '.'], "_");
     env.insert(format!("VAT_SERVICE_{upper}_HOST"), host.to_string());
     env.insert(format!("VAT_SERVICE_{upper}_PORT"), port.to_string());
-    env
 }
 
 fn export_command_service_env(
@@ -2989,9 +3010,7 @@ fn export_command_service_env(
         }
     }
     if let Some(port) = port {
-        let upper = service.id.to_uppercase().replace(['-', '.'], "_");
-        env.insert(format!("VAT_SERVICE_{upper}_HOST"), "127.0.0.1".to_string());
-        env.insert(format!("VAT_SERVICE_{upper}_PORT"), port.to_string());
+        add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", port);
     }
     env
 }
@@ -3156,8 +3175,33 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
             "service": service.record.id.as_str(),
             "ms": service.record.ready_duration_ms,
         }))?;
+        emit_service_runtime_hints(service)?;
     }
     Ok(())
+}
+
+fn emit_service_runtime_hints(service: &ServiceHandle) -> Result<()> {
+    let stdout = std::fs::read_to_string(&service.record.stdout_log).unwrap_or_default();
+    let stderr = std::fs::read_to_string(&service.record.stderr_log).unwrap_or_default();
+    let logs = format!("{stdout}\n{stderr}");
+    for hint in service_log_hints(&service.record.id, &logs) {
+        emit_jsonl(hint)?;
+    }
+    Ok(())
+}
+
+fn service_log_hints(service_id: &str, logs: &str) -> Vec<serde_json::Value> {
+    let mut hints = Vec::new();
+    if logs.contains("TCP backlog setting") && logs.contains("somaxconn") {
+        hints.push(serde_json::json!({
+            "type": "hint",
+            "code": "macos_tcp_backlog_limited",
+            "service": service_id,
+            "message": "native TCP service reports the macOS accept backlog is capped by kern.ipc.somaxconn; connection-heavy runners may see ECONNREFUSED even while the service is up",
+            "suggestion": "reuse client connection pools or raise the host limit, for example `sudo sysctl -w kern.ipc.somaxconn=1024`, then rerun vat",
+        }));
+    }
+    hints
 }
 
 fn record_runner_failure(
@@ -3879,6 +3923,35 @@ mod tests {
     }
 
     #[test]
+    fn cloud_storage_builtin_export_includes_http_scheme() {
+        let svc = test_service("gcs", &[]);
+        let plan = prepare_builtin_service(
+            &svc,
+            ServicePreset::CloudStorage,
+            Path::new("."),
+            &[],
+            false,
+        )
+        .unwrap();
+        let port = plan.port.unwrap();
+        let expected_host = format!("http://127.0.0.1:{port}");
+        let expected_port = port.to_string();
+
+        assert_eq!(
+            plan.env.get("STORAGE_EMULATOR_HOST").map(String::as_str),
+            Some(expected_host.as_str())
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_GCS_HOST").map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_GCS_PORT").map(String::as_str),
+            Some(expected_port.as_str())
+        );
+    }
+
+    #[test]
     fn preset_exports_substitute_template_with_declared_env_key() {
         let mut svc = test_service("mongo", &[]);
         svc.export.insert(
@@ -3889,6 +3962,14 @@ mod tests {
         assert_eq!(
             env.get("MONGODB_URL").map(String::as_str),
             Some("mongodb://127.0.0.1:60736/tech-platform-e2e")
+        );
+        assert_eq!(
+            env.get("VAT_SERVICE_MONGO_HOST").map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            env.get("VAT_SERVICE_MONGO_PORT").map(String::as_str),
+            Some("60736")
         );
         assert!(
             !env.contains_key("mongodb://{host}:{port}/tech-platform-e2e"),
@@ -3906,6 +3987,45 @@ mod tests {
             env.get("CACHE_URL").map(String::as_str),
             Some("redis://127.0.0.1:60738/")
         );
+    }
+
+    #[test]
+    fn builtin_exports_support_templates_and_raw_endpoint_vars() {
+        let mut svc = test_service("tasks", &[]);
+        svc.export.insert(
+            "TASKS_URL".to_string(),
+            "http://{host}:{port}/v2/projects/demo".to_string(),
+        );
+        let plan =
+            prepare_builtin_service(&svc, ServicePreset::CloudTasks, Path::new("."), &[], false)
+                .unwrap();
+
+        let port = plan.port.unwrap();
+        let expected_url = format!("http://127.0.0.1:{port}/v2/projects/demo");
+        let expected_port = port.to_string();
+        assert_eq!(
+            plan.env.get("TASKS_URL").map(String::as_str),
+            Some(expected_url.as_str())
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_TASKS_HOST").map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_TASKS_PORT").map(String::as_str),
+            Some(expected_port.as_str())
+        );
+    }
+
+    #[test]
+    fn service_stderr_hints_detect_macos_somaxconn_warning() {
+        let stderr = "WARNING: The TCP backlog setting of 511 cannot be enforced because kern.ipc.somaxconn is set to the lower value of 128.";
+        let hints = service_log_hints("redis", stderr);
+
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0]["type"], "hint");
+        assert_eq!(hints[0]["code"], "macos_tcp_backlog_limited");
+        assert_eq!(hints[0]["service"], "redis");
     }
 
     #[test]

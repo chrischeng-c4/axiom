@@ -99,7 +99,7 @@ fn default_dot() -> PathBuf {
 
 /// Evidence retention policy after runner completion.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionPolicy {
     #[default]

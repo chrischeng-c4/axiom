@@ -462,6 +462,53 @@ cmd = ["sh", "-c", "echo before-fail; exit 7"]
 }
 
 #[test]
+fn keep_override_retains_successful_run_logs() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+
+[workspace]
+keep = "failed"
+
+[[runners]]
+id = "pass"
+cmd = ["sh", "-c", "echo kept-success"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--keep", "always", "pass"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = jsonl(&output.stdout);
+    let result = result_event(&events);
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["state"], "kept");
+    let id = result["id"].as_str().unwrap();
+
+    let logs = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["logs", id, "runner"])
+        .output()
+        .unwrap();
+    assert!(logs.status.success());
+    assert!(String::from_utf8_lossy(&logs.stdout).contains("kept-success"));
+}
+
+#[test]
 fn ambiguous_vat_run_requires_default_runner() {
     let project = tempfile::tempdir().unwrap();
     let vat_home = tempfile::tempdir().unwrap();
@@ -617,6 +664,11 @@ fn llm_guide_mentions_core_agent_contract() {
         "runtime = \"docker\"",
         "external = { host",
         "owned_by_vat = false",
+        "Env export contract",
+        "VAT_WORKSPACE_BASE",
+        "STORAGE_EMULATOR_HOST` includes `http://",
+        "vat run --keep always",
+        "kern.ipc.somaxconn",
         // Cloud Tasks / Cloud Scheduler clients need an explicit REST/factory
         // override (the SDKs don't auto-read the host var and default to gRPC).
         "Pointing a client at",

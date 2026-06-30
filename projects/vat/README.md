@@ -191,6 +191,7 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 | `vat run` | Load `vat.toml`, select `default_runner` or the only runner, emit sparse JSONL checkpoints, run setup/services/readiness/runner, capture logs/artifacts/diff/state, and cleanup. |
 | `vat run <runner-id>` | Run a specific `vat.toml` runner. |
 | `vat run --scenario <id>` | Run a named app-under-test scenario: app service + scenario deps + runner deps, with topology evidence in `vat state`. |
+| `vat run --keep always\|failed\|never [runner-id]` | Override `[workspace].keep` for one configured run, e.g. retain logs for a passing probe without editing `vat.toml`. |
 | `vat run -- <cmd>` | Clone a base, run one direct command, record the result. `--base DIR`, `--from VAT`, `--isolation none\|seatbelt`, `--gpu auto\|required\|none`, `--json`. |
 | `vat llm [--topic <t>] [--format md\|json]` | Print offline agent-facing docs. Default `outline`; use `--topic guide` for the detailed vat.toml/service/evidence/boundary guide. |
 | `vat upgrade` | Self-update to the latest `vat@*` GitHub release (`--check` to report only, `--version <tag>` to pin). One of the three mandatory CLI-convention verbs (`llm`/`upgrade`/`issue`), via the shared `cli-std` crate. |
@@ -319,8 +320,9 @@ preferred**:
   Each exports its host var (`PUBSUB_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`,
   `CLOUD_TASKS_EMULATOR_HOST`, `CLOUD_SCHEDULER_EMULATOR_HOST`,
   `CLOUD_WORKFLOWS_EMULATOR_HOST`, `STORAGE_EMULATOR_HOST` — point your client's
-  base URL at `http://$HOST`; the GCS SDKs read `STORAGE_EMULATOR_HOST`
-  automatically). `http-mock` instead exports `HTTP(S)_PROXY` + a CA-trust bundle
+  base URL at `http://$HOST` for host:port vars; `STORAGE_EMULATOR_HOST` is
+  exported as `http://127.0.0.1:<port>` because the GCS REST SDK expects a
+  schemed endpoint). `http-mock` instead exports `HTTP(S)_PROXY` + a CA-trust bundle
   (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, …) so the runner's
   outbound HTTP/HTTPS — even hardcoded `https://api.example.com` — is intercepted
   with **no app code change**: register stubs at `$VAT_HTTP_MOCK_HOST/__admin/stubs`,
@@ -379,6 +381,21 @@ preferred**:
   (never a panic). `vat cluster` manages clusters standalone, outside a run.
 - `cmd` — an explicit native command.
 
+Env export contract:
+
+| Service backing | Default exports | `export` map semantics | Raw service vars |
+|---|---|---|---|
+| `preset` datastore/broker | postgres/mysql → `DATABASE_URL`; redis → `REDIS_URL`; nats → `NATS_URL`; rabbitmq → `AMQP_URL`; mongo → `MONGODB_URI`; opensearch → `OPENSEARCH_URL` | Value containing `{host}`/`{port}` uses the map key as the env var name; otherwise the value is a legacy alias name receiving the default URL. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
+| `preset` built-in emulator | `PUBSUB_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`, `CLOUD_TASKS_EMULATOR_HOST`, `CLOUD_SCHEDULER_EMULATOR_HOST`, `CLOUD_WORKFLOWS_EMULATOR_HOST`, `STORAGE_EMULATOR_HOST`, `VAT_HTTP_MOCK_HOST`, or `OPENAPI_MOCK_HOST` | Same template/alias rule as other presets. `STORAGE_EMULATOR_HOST` includes `http://`; the others are host:port unless documented by the service. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
+| `image` | none | Key is always the env var name; value may use `{host}`/`{port}`. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
+| `external` | none | Key is always the env var name; value may use `{host}`/`{port}` from the attached endpoint. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT`; state records `owned_by_vat = false` |
+| `cmd` | `VAT_SERVICE_<ID>_URL` when `ready_http` exists and no custom export is set | Value containing `{host}`/`{port}` uses the map key as the env var name; otherwise the value aliases `ready_http`. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` only when the command needs/allocates a port |
+| `cluster` | `KUBECONFIG` | `{kubeconfig}` expands to the isolated kubeconfig path. | `VAT_SERVICE_<ID>_KUBECONFIG` |
+
+Runner scripts can detect a configured vat run with `VAT_WORKSPACE_BASE`; it is
+set for `vat.toml` runner and scenario modes and points at the source workspace
+that vat cloned.
+
 For the native path vat checks for required binaries, cold-prepares cached
 service data when needed, and clones it on later runs. For the Docker path it
 runs an ephemeral `docker run --rm` container bound to loopback, removed at
@@ -389,6 +406,13 @@ ports, every path exports runner env vars, and vat reports only a few JSONL
 checkpoints unless the agent asks for logs/state/diff.
 A Docker-backed service with no reachable daemon fails with a structured
 `docker_unavailable` error rather than a panic.
+
+On macOS, connection-heavy runners against native TCP presets can hit the host
+accept-backlog ceiling (`kern.ipc.somaxconn`, often 128) and see intermittent
+`ECONNREFUSED` even while Redis/Postgres/etc. are still running. vat surfaces the
+Redis startup warning as a structured `hint` event. Prefer connection pooling in
+the app under test, or raise the host limit for the session, for example
+`sudo sysctl -w kern.ipc.somaxconn=1024`, then rerun vat.
 
 ## Network sandbox
 

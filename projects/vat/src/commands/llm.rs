@@ -128,8 +128,9 @@ network = "hermetic"       # open | hermetic
   `PUBSUB_EMULATOR_HOST` / `FIREBASE_AUTH_EMULATOR_HOST` /
   `CLOUD_TASKS_EMULATOR_HOST` / `CLOUD_SCHEDULER_EMULATOR_HOST` /
   `CLOUD_WORKFLOWS_EMULATOR_HOST` / `STORAGE_EMULATOR_HOST` — point your client's
-  base URL at `http://$HOST` (the GCS SDKs read `STORAGE_EMULATOR_HOST`
-  automatically). `cloud-tasks` (v2 REST) delivers each task's httpRequest to its
+  base URL at `http://$HOST` for host:port vars; `STORAGE_EMULATOR_HOST` already
+  includes `http://` because the GCS REST SDK expects a schemed endpoint.
+  `cloud-tasks` (v2 REST) delivers each task's httpRequest to its
   target at scheduleTime (or `tasks/{t}:run`); `cloud-scheduler` (v1 REST) fires
   a job's httpTarget on its cron schedule or `jobs/{j}:run`; `cloud-workflows`
   (v1 REST) runs a subset Workflows interpreter whose `call: http.*` steps can
@@ -182,6 +183,24 @@ network = "hermetic"       # open | hermetic
 - Docker-backed services need a reachable Docker daemon; vat emits a structured
   `docker_unavailable` error (no panic) when it is missing. The runner itself is
   never containerized.
+- Env export contract:
+
+  | Service backing | Default exports | `export` map semantics | Raw service vars |
+  |---|---|---|---|
+  | `preset` datastore/broker | postgres/mysql -> `DATABASE_URL`; redis -> `REDIS_URL`; nats -> `NATS_URL`; rabbitmq -> `AMQP_URL`; mongo -> `MONGODB_URI`; opensearch -> `OPENSEARCH_URL` | If the value contains `{host}`/`{port}`, the key is the env var name; otherwise the value is a legacy alias receiving the default URL. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
+  | `preset` built-in emulator | `PUBSUB_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`, `CLOUD_TASKS_EMULATOR_HOST`, `CLOUD_SCHEDULER_EMULATOR_HOST`, `CLOUD_WORKFLOWS_EMULATOR_HOST`, `STORAGE_EMULATOR_HOST`, `VAT_HTTP_MOCK_HOST`, or `OPENAPI_MOCK_HOST` | Same template/alias rule. `STORAGE_EMULATOR_HOST` includes `http://`; most other host vars are host:port. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
+  | `image` | none | Key is always the env var name; value may use `{host}`/`{port}`. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
+  | `external` | none | Key is always the env var name; value may use `{host}`/`{port}` from the attached endpoint. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT`; state records `owned_by_vat = false` |
+  | `cmd` | `VAT_SERVICE_<ID>_URL` when `ready_http` exists and no custom export is set | Template values use the key as env var name; otherwise the value aliases `ready_http`. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` only when a port is allocated |
+  | `cluster` | `KUBECONFIG` | `{kubeconfig}` expands to the isolated kubeconfig path. | `VAT_SERVICE_<ID>_KUBECONFIG` |
+
+- Runner scripts can detect configured vat runner/scenario mode with
+  `VAT_WORKSPACE_BASE`; it points at the source workspace that vat cloned.
+- macOS native TCP presets can hit `kern.ipc.somaxconn` under connection churn
+  and produce intermittent `ECONNREFUSED` even while the service is up. vat emits
+  a structured `hint` when a service log reports that backlog cap. Prefer app
+  connection pooling or raise the host limit, e.g.
+  `sudo sysctl -w kern.ipc.somaxconn=1024`.
 
 ## Command Patterns
 
@@ -191,6 +210,8 @@ network = "hermetic"       # open | hermetic
 - `vat run --scenario prod-like`: start the named scenario's app service,
   scenario deps, and runner deps, then run its selected runner.
 - `vat run e2e`: explicitly run the `e2e` runner.
+- `vat run --keep always e2e`: override `[workspace].keep` for one invocation so
+  a passing probe run remains inspectable via `vat logs` / `vat state`.
 - `vat run -- cargo test -p app`: run one direct command without requiring
   vat.toml; the child exit code is forwarded.
 - `vat logs <id> runner`: print retained runner stdout/stderr.
@@ -205,6 +226,8 @@ network = "hermetic"       # open | hermetic
 
 Default `keep = "failed"` means successful configured runs clean up after
 emitting JSON, while failed runs keep workspace state and logs for inspection.
+Use `vat run --keep always ...` to retain one passing configured run without
+editing `vat.toml`; use `--keep never` to force cleanup.
 
 ## Boundaries
 
