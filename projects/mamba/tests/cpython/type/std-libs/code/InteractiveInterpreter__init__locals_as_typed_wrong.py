@@ -9,12 +9,11 @@
 # case = "InteractiveInterpreter__init__locals_as_typed_wrong"
 # subject = "code.InteractiveInterpreter.__init__(locals: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed locals"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/code.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed locals
 # mamba-strict-type: TypeError
 """Type wall: code.InteractiveInterpreter.__init__(locals: typed); call it with the wrong type.
 

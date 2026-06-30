@@ -431,6 +431,57 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: cmd/code constructors and methods where generated signatures
+    // either collapse the first argument to Unknown or skip at a star-param
+    // boundary. These fixtures exercise the first positional wall only.
+    StdlibSig {
+        module: "cmd",
+        qualifier: "Cmd",
+        name: "cmdloop",
+        kind: SigKind::Method,
+        params: &[p("intro", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "cmd",
+        qualifier: "Cmd",
+        name: "columnize",
+        kind: SigKind::Method,
+        params: &[p("list", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "cmd",
+        qualifier: "Cmd",
+        name: "completenames",
+        kind: SigKind::Method,
+        params: &[p("text", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "cmd",
+        qualifier: "Cmd",
+        name: "postcmd",
+        kind: SigKind::Method,
+        params: &[p("stop", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "code",
+        qualifier: "InteractiveConsole",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("locals", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "code",
+        qualifier: "InteractiveInterpreter",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("locals", CoreTy::Typed)],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {
