@@ -2204,6 +2204,191 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("pattern", CoreTy::Str)],
         enforceable: true,
     },
+    // POSITIVE: distutils.log formatting helpers are variadic, which makes the
+    // generated rows skip wholesale. Enforce the required `msg`/`level` prefix
+    // parameters while preserving the `*args` boundary as Unknown.
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "",
+        name: "debug",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "",
+        name: "error",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "",
+        name: "fatal",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "",
+        name: "info",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "",
+        name: "log",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("level", CoreTy::Int),
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "",
+        name: "warn",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "Log",
+        name: "debug",
+        kind: SigKind::Method,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "Log",
+        name: "error",
+        kind: SigKind::Method,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "Log",
+        name: "fatal",
+        kind: SigKind::Method,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "Log",
+        name: "info",
+        kind: SigKind::Method,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "Log",
+        name: "log",
+        kind: SigKind::Method,
+        params: &[
+            p("level", CoreTy::Int),
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.log",
+        qualifier: "Log",
+        name: "warn",
+        kind: SigKind::Method,
+        params: &[
+            p("msg", CoreTy::Str),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -4589,6 +4774,39 @@ mod tests {
             assert_eq!(sig.kind, SigKind::Method);
             assert_eq!(sig.params[0].name, "pattern");
             assert_eq!(sig.params[0].ty, CoreTy::Str);
+        }
+    }
+
+    #[test]
+    fn curated_distutils_log_variadic_prefix_walls() {
+        for qualifier in ["", "Log"] {
+            let kind = if qualifier.is_empty() {
+                SigKind::ModuleFn
+            } else {
+                SigKind::Method
+            };
+
+            for name in ["debug", "error", "fatal", "info", "warn"] {
+                let sig = get("distutils.log", qualifier, name).expect("log row present");
+                assert!(sig.enforceable, "{qualifier}.{name}");
+                assert_eq!(sig.kind, kind);
+                assert_eq!(sig.params[0].name, "msg");
+                assert_eq!(sig.params[0].ty, CoreTy::Str);
+                assert_eq!(sig.params[1].name, "args");
+                assert_eq!(sig.params[1].ty, CoreTy::Unknown);
+                assert!(sig.params[1].star);
+            }
+
+            let log = get("distutils.log", qualifier, "log").expect("log(level, msg) present");
+            assert!(log.enforceable, "{qualifier}.log");
+            assert_eq!(log.kind, kind);
+            assert_eq!(log.params[0].name, "level");
+            assert_eq!(log.params[0].ty, CoreTy::Int);
+            assert_eq!(log.params[1].name, "msg");
+            assert_eq!(log.params[1].ty, CoreTy::Str);
+            assert_eq!(log.params[2].name, "args");
+            assert_eq!(log.params[2].ty, CoreTy::Unknown);
+            assert!(log.params[2].star);
         }
     }
 

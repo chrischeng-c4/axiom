@@ -9,12 +9,11 @@
 # case = "Log__log__level_as_int_wrong"
 # subject = "distutils.log.Log.log(level: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed level"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/log.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed level
 # mamba-strict-type: TypeError
 """Type wall: distutils.log.Log.log(level: int); call it with the wrong type.
 
