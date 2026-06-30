@@ -9,12 +9,11 @@
 # case = "Counter__subtract__mapping_as_Mapping_wrong"
 # subject = "collections.Counter.subtract(mapping: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mapping"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mapping
 # mamba-strict-type: TypeError
 """Type wall: collections.Counter.subtract(mapping: Mapping); call it with the wrong type.
 

@@ -9,12 +9,11 @@
 # case = "Counter__init__iterable_as_typed_wrong"
 # subject = "collections.Counter.__init__(iterable: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed iterable"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed iterable
 # mamba-strict-type: TypeError
 """Type wall: collections.Counter.__init__(iterable: typed); call it with the wrong type.
 
