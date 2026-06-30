@@ -9,12 +9,10 @@
 # case = "ProcessPoolExecutor__init__max_workers_as_typed_wrong"
 # subject = "concurrent.futures.process.ProcessPoolExecutor.__init__(max_workers: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed max_workers"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/concurrent/futures/process.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed max_workers
 # mamba-strict-type: TypeError
 """Type wall: concurrent.futures.process.ProcessPoolExecutor.__init__(max_workers: typed); call it with the wrong type.
 
