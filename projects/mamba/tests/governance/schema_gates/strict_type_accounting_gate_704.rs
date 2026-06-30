@@ -368,6 +368,41 @@ fn aifc_open_unknown_contract_is_not_a_strict_type_wall() {
 }
 
 #[test]
+fn argparse_unknown_contracts_are_not_strict_type_walls() {
+    let root = mamba_root();
+    for rel in [
+        "Action__init__option_strings_as_Sequence_wrong.py",
+        "ArgumentParser__format_help__formatter_as_typed_wrong.py",
+        "ArgumentParser__format_usage__formatter_as_typed_wrong.py",
+        "ArgumentParser__parse_args__args_as_typed_wrong.py",
+        "ArgumentParser__parse_intermixed_args__args_as_typed_wrong.py",
+        "ArgumentParser__parse_known_args__args_as_typed_wrong.py",
+        "ArgumentParser__parse_known_intermixed_args__args_as_typed_wrong.py",
+        "BooleanOptionalAction__init__option_strings_as_Sequence_wrong.py",
+    ] {
+        assert!(
+            !root
+                .join("tests/cpython/type/std-libs/argparse")
+                .join(rel)
+                .exists(),
+            "argparse Unknown/non-enforceable param must not be an executable strict wall: {rel}"
+        );
+    }
+    for rel in [
+        "ArgumentParser__error__message_as_str_wrong.py",
+        "ArgumentParser__exit__status_as_int_wrong.py",
+        "FileType__init__mode_as_str_wrong.py",
+    ] {
+        assert!(
+            root.join("tests/cpython/type/std-libs/argparse")
+                .join(rel)
+                .exists(),
+            "argparse scalar strict wall must remain enforced: {rel}"
+        );
+    }
+}
+
+#[test]
 fn type_wall_generator_skips_typevar_fixture_params() {
     let script = r#"
 import ast
@@ -388,7 +423,11 @@ assert gen_module.is_not_wrongable(ast.Name(id="type"))
 assert gen_module.is_not_wrongable(ast.Name(id="Callable"))
 assert not gen_module.is_not_wrongable(ast.Name(id="str"))
 assert gen_module.is_signature_param_not_wrongable("aifc", None, "open", "f")
+assert gen_module.is_signature_param_not_wrongable("argparse", "Action", "__init__", "option_strings")
+assert gen_module.is_signature_param_not_wrongable("argparse", "ArgumentParser", "parse_args", "args")
+assert gen_module.is_signature_param_not_wrongable("argparse", "BooleanOptionalAction", "__init__", "option_strings")
 assert not gen_module.is_signature_param_not_wrongable("aifc", "Aifc_read", "getmark", "id")
+assert not gen_module.is_signature_param_not_wrongable("argparse", "ArgumentParser", "error", "message")
 "#;
     let output = Command::new("python3.12")
         .arg("-c")
