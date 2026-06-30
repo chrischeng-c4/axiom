@@ -117,7 +117,7 @@ pub struct CreateArgs {
     pub phase: Option<String>,
     /// Per-section apply: merge ONLY the section of the given `type:`
     /// annotation from the payload file at
-    /// `.aw/payloads/<slug>/<section>.md` into the spec. Other
+    /// `.aw/payloads/<slug>/<phase>/<section>.md` into the spec. Other
     /// sections in the spec are untouched. Required for loop-fill flow
     /// where the subagent applies one section at a time.
     #[arg(long)]
@@ -1129,6 +1129,7 @@ fn validate_spec_for_section_apply(spec_content: &str, current_section: &str) ->
     )
 }
 
+#[cfg(test)]
 fn validate_td_content_file(
     spec_path: &std::path::Path,
     scope: TdContentValidationScope<'_>,
@@ -2495,7 +2496,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!("## Target");
     println!();
     println!("Write the TD skeleton to `{}`.", spec_path);
-    println!("Then write exactly one section payload at a time as directed below.");
+    println!("Then fill exactly one initialized section payload at a time as directed below.");
     println!();
     println!("## Spec format");
     println!();
@@ -2617,7 +2618,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
 /// Apply mode: validate spec in-place, emit dispatch envelope for validate.
 ///
 /// When `--section X` is supplied, reads
-/// `.aw/payloads/<slug>/<section>.md` and merges ONLY that section
+/// `.aw/payloads/<slug>/<phase>/<section>.md` and merges ONLY that section
 /// into the spec file before validating (loop-fill path). When omitted,
 /// the caller is expected to have written the full spec directly — we
 /// just validate in-place.
@@ -2645,17 +2646,21 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         let legacy_payload_rel = format!(".aw/payloads/{}/{}.md", slug, section);
         let payload_rel = if worktree_abs.join(&preferred_payload_rel).exists() {
             preferred_payload_rel
-        } else {
+        } else if worktree_abs.join(&legacy_payload_rel).exists() {
             legacy_payload_rel
-        };
-        let payload_abs = worktree_abs.join(&payload_rel);
-        if !payload_abs.exists() {
+        } else {
+            initialize_td_payload_file(
+                &worktree_abs,
+                &preferred_payload_rel,
+                &td_section_payload_template(section)?,
+            )?;
             let msg = format!(
-                "section payload not found: {} (write the per-section spec fragment there first)",
-                payload_abs.display()
+                "section payload was missing; initialized {}. Fill that file, then rerun this command.",
+                preferred_payload_rel
             );
             return td_error(slug, msg);
-        }
+        };
+        let payload_abs = worktree_abs.join(&payload_rel);
         let payload_body =
             std::fs::read_to_string(&payload_abs).context("failed to read section payload")?;
         let base_body = if spec_abs.exists() {
@@ -2791,6 +2796,11 @@ async fn complete_section_apply(
             )
             .await?;
         let expected_payload = section_payload_rel(slug, pass, next_section);
+        initialize_td_payload_file(
+            &worktree_abs,
+            &expected_payload,
+            &td_section_payload_template(next_section)?,
+        )?;
         let expected_command = format!(
             "aw td create {} --apply --phase {} --section {} --spec-path {}",
             slug, pass, next_section, spec_path
@@ -2798,7 +2808,7 @@ async fn complete_section_apply(
         super::workflow_guard::create_issue_lock(
             &worktree_abs,
             &super::workflow_guard::TransitionLock::new(slug, "td", expected_command)
-                .with_expected_payload(expected_payload)
+                .with_expected_payload(expected_payload.clone())
                 .with_active_phase(active_phase.clone())
                 .with_active_branch(active_branch)
                 .with_current_section(next_section.clone())
@@ -2816,6 +2826,7 @@ async fn complete_section_apply(
                 "phase": pass,
                 "section": next_section,
                 "spec_path": spec_path,
+                "payload_path": expected_payload,
             }),
         ))
     } else if pass == "applicability" {
@@ -2837,18 +2848,27 @@ async fn complete_section_apply(
             .into_iter()
             .next()
         {
-            Some(first) => Some((
-                "Td-Applicability-Complete",
-                active_phase,
-                "aw td create",
-                serde_json::json!({
-                    "slug": slug,
-                    "apply": true,
-                    "phase": "contract",
-                    "section": first,
-                    "spec_path": spec_path,
-                }),
-            )),
+            Some(first) => {
+                let expected_payload = section_payload_rel(slug, "contract", &first);
+                initialize_td_payload_file(
+                    &worktree_abs,
+                    &expected_payload,
+                    &td_section_payload_template(&first)?,
+                )?;
+                Some((
+                    "Td-Applicability-Complete",
+                    active_phase,
+                    "aw td create",
+                    serde_json::json!({
+                        "slug": slug,
+                        "apply": true,
+                        "phase": "contract",
+                        "section": first,
+                        "spec_path": spec_path,
+                        "payload_path": expected_payload,
+                    }),
+                ))
+            }
             None => Some((
                 "Td-Applicability-Complete",
                 active_phase,

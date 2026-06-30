@@ -2064,6 +2064,7 @@ auth_method = "cli"
             "aw-health",
             // REQ: R12 — active support skills
             "aw-build-debug",
+            "aw-build-release",
             "aw-release-patch",
             "aw-mamba-test-coverage",
         ];
@@ -2151,6 +2152,7 @@ auth_method = "cli"
         // REQ: R15, R17 — three skills have companion script files
         let expected_scripts: &[(&str, &str)] = &[
             ("aw-build-debug", "build.sh"),
+            ("aw-build-release", "release.sh"),
             ("aw-release-patch", "release.sh"),
             ("aw-mamba-test-coverage", "coverage.sh"),
         ];

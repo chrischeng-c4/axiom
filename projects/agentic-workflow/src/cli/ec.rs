@@ -111,8 +111,9 @@ pub struct EcFillArgs {
     #[arg(long)]
     pub section: String,
     /// Markdown fragment containing the complete replacement section.
+    /// Defaults to `.aw/payloads/ec/<draft-id>/<section>.md`.
     #[arg(long)]
-    pub body_file: PathBuf,
+    pub body_file: Option<PathBuf>,
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
@@ -712,10 +713,22 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
     }
     let title = args.title.clone().unwrap_or_else(|| title_case(&id));
     let content = render_ec_draft(&ctx, &id, &category, &title, &args);
+    let fill_sections = ec_draft_fill_sections(&args);
+    let payload_paths = fill_sections
+        .iter()
+        .map(|section| ec_payload_rel(&id, section))
+        .collect::<Vec<_>>();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     fs::write(&path, content).with_context(|| format!("write {}", path.display()))?;
+    for (section, rel_path) in fill_sections.iter().zip(payload_paths.iter()) {
+        initialize_ec_payload_file(
+            &ctx.project_root,
+            rel_path,
+            &ec_section_payload_template(&ctx, &id, &category, &title, &args, section)?,
+        )?;
+    }
     let rel = relative_to(&ctx.project_root, &path);
     if args.json {
         println!(
@@ -725,14 +738,35 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
                 "path": rel,
                 "id": id,
                 "category": category,
+                "payload_paths": payload_paths,
+                "next": payload_paths.first().map(|payload| serde_json::json!({
+                    "kind": "dispatch",
+                    "command": format!(
+                        "aw ec fill --project {} {} --section {}",
+                        ctx.project,
+                        rel,
+                        fill_sections.first().cloned().unwrap_or_default()
+                    ),
+                    "payload_path": payload,
+                    "reason": "fill the initialized EC section payload and apply it",
+                    "requires_hitl": false,
+                })),
             }))?
         );
     } else {
         println!("ec draft {}: wrote {}", ctx.project, rel);
-        println!(
-            "next: aw ec fill --project {} {} --section e2e-test --body-file <file>",
-            ctx.project, rel
-        );
+        for (section, payload) in fill_sections.iter().zip(payload_paths.iter()) {
+            println!("payload {section}: {payload}");
+        }
+        if let Some(section) = fill_sections.first() {
+            println!(
+                "next: fill {} then run `aw ec fill --project {} {} --section {}`",
+                payload_paths.first().cloned().unwrap_or_default(),
+                ctx.project,
+                rel,
+                section
+            );
+        }
         println!("then: aw ec gen --project {} --verify", ctx.project);
     }
     Ok(())
@@ -754,8 +788,64 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
         );
     }
     let existing = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let payload = fs::read_to_string(&args.body_file)
-        .with_context(|| format!("read {}", args.body_file.display()))?;
+    let body_file = match args.body_file.as_ref() {
+        Some(path) => path.clone(),
+        None => {
+            let id = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(slugify)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("cannot derive EC draft id from {}", path.display())
+                })?;
+            ctx.project_root.join(ec_payload_rel(&id, &args.section))
+        }
+    };
+    if !body_file.exists() && args.body_file.is_none() {
+        let id = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(slugify)
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| "draft".to_string());
+        let category = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("behavior");
+        let title = title_case(&id);
+        let default_args = EcDraftArgs {
+            id: id.clone(),
+            category: category.to_string(),
+            title: Some(title.clone()),
+            capability_id: None,
+            claim_id: None,
+            contract_id: None,
+            command: None,
+            tool: Vec::new(),
+            force: false,
+            json: false,
+        };
+        initialize_ec_payload_file(
+            &ctx.project_root,
+            &ec_payload_rel(&id, &args.section),
+            &ec_section_payload_template(
+                &ctx,
+                &id,
+                category,
+                &title,
+                &default_args,
+                &args.section,
+            )?,
+        )?;
+        bail!(
+            "EC payload was missing; initialized {}. Fill that file, then rerun this command.",
+            relative_to(&ctx.project_root, &body_file)
+        );
+    }
+    let payload =
+        fs::read_to_string(&body_file).with_context(|| format!("read {}", body_file.display()))?;
     let merged = merge_ec_section(&existing, &args.section, &payload)?;
     fs::write(&path, merged).with_context(|| format!("write {}", path.display()))?;
     let rel = relative_to(&ctx.project_root, &path);
@@ -766,6 +856,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
                 "project": ctx.project,
                 "path": rel,
                 "section": args.section,
+                "payload_path": relative_to(&ctx.project_root, &body_file),
                 "action": "filled",
             }))?
         );
@@ -779,6 +870,48 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
     Ok(())
 }
 
+fn ec_draft_fill_sections(args: &EcDraftArgs) -> Vec<String> {
+    let mut sections = vec!["e2e-test".to_string()];
+    if !args.tool.is_empty() {
+        sections.push("tool-contract".to_string());
+    }
+    sections
+}
+
+fn ec_payload_rel(id: &str, section: &str) -> String {
+    format!(".aw/payloads/ec/{id}/{section}.md")
+}
+
+fn initialize_ec_payload_file(project_root: &Path, rel_path: &str, content: &str) -> Result<bool> {
+    let abs = project_root.join(rel_path);
+    if abs.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = abs.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create EC payload directory {}", parent.display())
+        })?;
+    }
+    fs::write(&abs, content)
+        .with_context(|| format!("failed to write EC payload {}", abs.display()))?;
+    Ok(true)
+}
+
+fn ec_section_payload_template(
+    ctx: &EcProjectContext,
+    id: &str,
+    category: &str,
+    title: &str,
+    args: &EcDraftArgs,
+    section: &str,
+) -> Result<String> {
+    match section {
+        "e2e-test" => Ok(render_ec_e2e_section(id, category, title, args)),
+        "tool-contract" => Ok(render_ec_tool_contract_section(ctx, id, category, args)),
+        _ => bail!("EC section '{section}' is not supported for payload initialization"),
+    }
+}
+
 fn render_ec_draft(
     ctx: &EcProjectContext,
     id: &str,
@@ -786,14 +919,7 @@ fn render_ec_draft(
     title: &str,
     args: &EcDraftArgs,
 ) -> String {
-    let capability_id = args.capability_id.as_deref().unwrap_or("unmapped");
-    let claim_id = args.claim_id.as_deref().unwrap_or(id);
-    let contract_id = args.contract_id.as_deref().unwrap_or(id);
-    let command = args.command.as_deref().unwrap_or("");
-    let mut fill_sections = vec!["e2e-test"];
-    if !args.tool.is_empty() {
-        fill_sections.push("tool-contract");
-    }
+    let fill_sections = ec_draft_fill_sections(args);
     let mut out = String::new();
     out.push_str("---\n");
     out.push_str(&format!("id: {id}\n"));
@@ -801,6 +927,20 @@ fn render_ec_draft(
     out.push_str(&format!("fill_sections: [{}]\n", fill_sections.join(", ")));
     out.push_str("---\n\n");
     out.push_str(&format!("# EC: {title}\n\n"));
+    out.push_str(&render_ec_e2e_section(id, category, title, args));
+    if !args.tool.is_empty() {
+        out.push('\n');
+        out.push_str(&render_ec_tool_contract_section(ctx, id, category, args));
+    }
+    out
+}
+
+fn render_ec_e2e_section(id: &str, category: &str, title: &str, args: &EcDraftArgs) -> String {
+    let capability_id = args.capability_id.as_deref().unwrap_or("unmapped");
+    let claim_id = args.claim_id.as_deref().unwrap_or(id);
+    let contract_id = args.contract_id.as_deref().unwrap_or(id);
+    let command = args.command.as_deref().unwrap_or("");
+    let mut out = String::new();
     out.push_str("## External Contract\n");
     out.push_str("<!-- type: e2e-test lang: yaml -->\n\n");
     out.push_str("```yaml\n");
@@ -814,34 +954,49 @@ fn render_ec_draft(
         out.push_str(&format!("    command: {command:?}\n"));
     }
     out.push_str("    assertions:\n");
-    out.push_str("      - \"Describe the externally observable guarantee.\"\n");
+    out.push_str(&format!(
+        "      - \"Describe the externally observable guarantee for {title}.\"\n"
+    ));
     out.push_str("```\n");
-    if !args.tool.is_empty() {
-        out.push_str("\n## Tool Contracts\n");
-        out.push_str("<!-- type: tool-contract lang: yaml -->\n\n");
-        out.push_str("```yaml\n");
-        out.push_str("tool_contracts:\n");
-        for tool in &args.tool {
-            let tool = slugify(tool);
-            if tool.is_empty() {
-                continue;
-            }
-            let manifest = default_tool_contract_manifest_rel(&tool);
-            out.push_str(&format!("  - id: {id}-{tool}\n"));
-            out.push_str(&format!("    tool: {tool}\n"));
-            out.push_str(&format!("    manifest: {manifest}\n"));
-            out.push_str(&format!("    category: {category}\n"));
-            out.push_str(&format!(
-                "    command: {}\n",
-                default_tool_command(ctx, &tool, &ctx.project_root.join(&manifest), id)
-            ));
-            out.push_str("    native:\n");
-            out.push_str("      version: 1\n");
-            out.push_str(&format!("      id: {id:?}\n"));
-            out.push_str(&format!("      project: {:?}\n", ctx.project));
+    out
+}
+
+fn render_ec_tool_contract_section(
+    ctx: &EcProjectContext,
+    id: &str,
+    category: &str,
+    args: &EcDraftArgs,
+) -> String {
+    let tools = if args.tool.is_empty() {
+        vec!["tool".to_string()]
+    } else {
+        args.tool.clone()
+    };
+    let mut out = String::new();
+    out.push_str("## Tool Contracts\n");
+    out.push_str("<!-- type: tool-contract lang: yaml -->\n\n");
+    out.push_str("```yaml\n");
+    out.push_str("tool_contracts:\n");
+    for tool in tools {
+        let tool = slugify(&tool);
+        if tool.is_empty() {
+            continue;
         }
-        out.push_str("```\n");
+        let manifest = default_tool_contract_manifest_rel(&tool);
+        out.push_str(&format!("  - id: {id}-{tool}\n"));
+        out.push_str(&format!("    tool: {tool}\n"));
+        out.push_str(&format!("    manifest: {manifest}\n"));
+        out.push_str(&format!("    category: {category}\n"));
+        out.push_str(&format!(
+            "    command: {}\n",
+            default_tool_command(ctx, &tool, &ctx.project_root.join(&manifest), id)
+        ));
+        out.push_str("    native:\n");
+        out.push_str("      version: 1\n");
+        out.push_str(&format!("      id: {id:?}\n"));
+        out.push_str(&format!("      project: {:?}\n", ctx.project));
     }
+    out.push_str("```\n");
     out
 }
 
@@ -4915,6 +5070,87 @@ tool_contracts:
         assert_eq!(manifest.tool_manifests.len(), 1);
         assert_eq!(manifest.tool_manifests[0].tool, "meter");
         assert_eq!(manifest.tool_manifests[0].path, "projects/demo/meter.toml");
+    }
+
+    #[test]
+    fn ec_payload_helpers_scaffold_initialized_sections() {
+        let (_tmp, ctx) = write_demo_repo();
+        let args = EcDraftArgs {
+            id: "search-indexing".to_string(),
+            category: "efficiency".to_string(),
+            title: Some("Search Indexing".to_string()),
+            capability_id: Some("search-indexing".to_string()),
+            claim_id: Some("indexing-speed".to_string()),
+            contract_id: Some("indexing-contract".to_string()),
+            command: Some("cargo test -p demo-crate indexing_speed".to_string()),
+            tool: vec!["meter".to_string()],
+            force: false,
+            json: false,
+        };
+
+        assert_eq!(
+            ec_draft_fill_sections(&args),
+            vec!["e2e-test".to_string(), "tool-contract".to_string()]
+        );
+        assert_eq!(
+            ec_payload_rel("search-indexing", "e2e-test"),
+            ".aw/payloads/ec/search-indexing/e2e-test.md"
+        );
+
+        let e2e = ec_section_payload_template(
+            &ctx,
+            "search-indexing",
+            "efficiency",
+            "Search Indexing",
+            &args,
+            "e2e-test",
+        )
+        .unwrap();
+        assert!(e2e.contains("## External Contract"));
+        assert!(e2e.contains("<!-- type: e2e-test lang: yaml -->"));
+        assert!(e2e.contains("capability_id: search-indexing"));
+        assert!(e2e.contains("claim_id: indexing-speed"));
+        assert!(e2e.contains("contract_id: indexing-contract"));
+        assert!(e2e.contains("command: \"cargo test -p demo-crate indexing_speed\""));
+
+        let tool = ec_section_payload_template(
+            &ctx,
+            "search-indexing",
+            "efficiency",
+            "Search Indexing",
+            &args,
+            "tool-contract",
+        )
+        .unwrap();
+        assert!(tool.contains("## Tool Contracts"));
+        assert!(tool.contains("tool_contracts:"));
+        assert!(tool.contains("tool: meter"));
+        assert!(tool.contains("manifest: meter.toml"));
+
+        let err = ec_section_payload_template(
+            &ctx,
+            "search-indexing",
+            "efficiency",
+            "Search Indexing",
+            &args,
+            "changes",
+        )
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("EC section 'changes' is not supported"));
+    }
+
+    #[test]
+    fn initialize_ec_payload_file_preserves_existing_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rel = ".aw/payloads/ec/search-indexing/e2e-test.md";
+
+        assert!(initialize_ec_payload_file(tmp.path(), rel, "first\n").unwrap());
+        assert_eq!(fs::read_to_string(tmp.path().join(rel)).unwrap(), "first\n");
+
+        assert!(!initialize_ec_payload_file(tmp.path(), rel, "second\n").unwrap());
+        assert_eq!(fs::read_to_string(tmp.path().join(rel)).unwrap(), "first\n");
     }
 
     #[test]

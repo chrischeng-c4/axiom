@@ -1179,6 +1179,7 @@ pub(crate) fn read_known_project_name_label_pairs(project_root: &Path) -> Vec<(S
 // Same shape and contract as `read_known_project_name_label_pairs`.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
+#[cfg(test)]
 pub(crate) fn read_known_agent_name_label_pairs(project_root: &Path) -> Vec<(String, String)> {
     read_name_label_pairs(project_root, "agents")
 }
