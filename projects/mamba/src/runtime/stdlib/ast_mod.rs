@@ -1270,6 +1270,15 @@ pub fn mb_ast_fix_missing_locations(node: MbValue) -> MbValue {
     if !is_ast_node_value(node) {
         return ast_arg_type_error("fix_missing_locations", "node");
     }
+    fix_ast_missing_locations(
+        node,
+        AstLocation {
+            lineno: 1,
+            col_offset: 0,
+            end_lineno: 1,
+            end_col_offset: 0,
+        },
+    );
     node
 }
 
@@ -1342,6 +1351,44 @@ fn copy_non_none_ast_attr(old_node: MbValue, new_node: MbValue, attr: &str) {
     if let Some(value) = ast_attr_value(old_node, attr) {
         if !value.is_none() {
             set_ast_attr(new_node, attr, value);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AstLocation {
+    lineno: i64,
+    col_offset: i64,
+    end_lineno: i64,
+    end_col_offset: i64,
+}
+
+fn fix_ast_missing_locations(node: MbValue, inherited: AstLocation) -> AstLocation {
+    let mut current = inherited;
+    if ast_node_allows_location_attrs(node) {
+        current.lineno = fix_ast_location_attr(node, "lineno", inherited.lineno, 1);
+        current.col_offset = fix_ast_location_attr(node, "col_offset", inherited.col_offset, 0);
+        current.end_lineno = fix_ast_location_attr(node, "end_lineno", inherited.end_lineno, 1);
+        current.end_col_offset =
+            fix_ast_location_attr(node, "end_col_offset", inherited.end_col_offset, 0);
+    }
+    for child in ast_child_nodes(node) {
+        fix_ast_missing_locations(child, current);
+    }
+    current
+}
+
+fn fix_ast_location_attr(
+    node: MbValue,
+    attr: &str,
+    inherited: i64,
+    constructor_default: i64,
+) -> i64 {
+    match ast_attr_value(node, attr).and_then(MbValue::as_int) {
+        Some(value) if value != constructor_default || inherited == constructor_default => value,
+        _ => {
+            set_ast_attr(node, attr, MbValue::from_int(inherited));
+            inherited
         }
     }
 }
@@ -1817,6 +1864,48 @@ mod tests {
         let node = mb_ast_parse(MbValue::from_ptr(MbObject::new_str("".to_string())));
         let fixed = mb_ast_fix_missing_locations(node);
         assert!(fixed.as_ptr().is_some());
+
+        fn field(node: MbValue, name: &str) -> MbValue {
+            let ptr = node.as_ptr().expect("ast node");
+            unsafe {
+                if let super::super::super::rc::ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    *fields.read().unwrap().get(name).expect("location attr")
+                } else {
+                    panic!("expected AST instance")
+                }
+            }
+        }
+
+        let leaf = make_ast_node("Constant", FxHashMap::default());
+        let mut expr_fields = FxHashMap::default();
+        expr_fields.insert("value".to_string(), leaf);
+        let expr = make_ast_node("Expr", expr_fields);
+        set_ast_attr(expr, "lineno", MbValue::from_int(7));
+        set_ast_attr(expr, "col_offset", MbValue::from_int(2));
+        set_ast_attr(expr, "end_lineno", MbValue::from_int(9));
+        set_ast_attr(expr, "end_col_offset", MbValue::from_int(4));
+
+        let mut module_fields = FxHashMap::default();
+        module_fields.insert(
+            "body".to_string(),
+            MbValue::from_ptr(MbObject::new_list_borrowed(vec![expr])),
+        );
+        module_fields.insert(
+            "type_ignores".to_string(),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        let module = make_ast_node("Module", module_fields);
+        let fixed = mb_ast_fix_missing_locations(module);
+
+        assert_eq!(fixed.to_bits(), module.to_bits());
+        assert_eq!(field(expr, "lineno").as_int(), Some(7));
+        assert_eq!(field(expr, "col_offset").as_int(), Some(2));
+        assert_eq!(field(expr, "end_lineno").as_int(), Some(9));
+        assert_eq!(field(expr, "end_col_offset").as_int(), Some(4));
+        assert_eq!(field(leaf, "lineno").as_int(), Some(7));
+        assert_eq!(field(leaf, "col_offset").as_int(), Some(2));
+        assert_eq!(field(leaf, "end_lineno").as_int(), Some(9));
+        assert_eq!(field(leaf, "end_col_offset").as_int(), Some(4));
     }
 
     #[test]
