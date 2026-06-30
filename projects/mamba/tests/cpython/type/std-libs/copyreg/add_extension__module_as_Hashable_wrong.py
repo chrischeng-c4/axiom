@@ -9,12 +9,10 @@
 # case = "add_extension__module_as_Hashable_wrong"
 # subject = "copyreg.add_extension(module: Hashable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed module"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/copyreg.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed module
 # mamba-strict-type: TypeError
 """Type wall: copyreg.add_extension(module: Hashable); call it with the wrong type.
 
