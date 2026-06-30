@@ -43,7 +43,6 @@ disp_unary!(d_dump, mb_ast_dump);
 disp_unary!(d_literal_eval, mb_ast_literal_eval);
 disp_unary!(d_get_docstring, mb_ast_get_docstring);
 disp_unary!(d_fix_missing_locations, mb_ast_fix_missing_locations);
-disp_binary!(d_increment_lineno, mb_ast_increment_lineno);
 disp_binary!(d_copy_location, mb_ast_copy_location);
 disp_unary!(d_walk, mb_ast_walk);
 disp_unary!(d_unparse, mb_ast_unparse);
@@ -52,6 +51,18 @@ disp_nullary!(d_NodeTransformer, mb_ast_NodeTransformer);
 disp_unary!(d_iter_fields, mb_ast_iter_fields);
 disp_unary!(d_iter_child_nodes, mb_ast_iter_child_nodes);
 disp_binary!(d_get_source_segment, mb_ast_get_source_segment);
+
+unsafe extern "C" fn d_increment_lineno(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if nargs > 2 {
+        return ast_arg_type_error("increment_lineno", "n");
+    }
+    mb_ast_increment_lineno_checked(
+        a.get(0).copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+        nargs >= 2,
+    )
+}
 
 unsafe extern "C" fn d_main(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     if nargs == 0 {
@@ -1264,11 +1275,19 @@ pub fn mb_ast_fix_missing_locations(node: MbValue) -> MbValue {
 
 /// ast.increment_lineno(node, n=1) -> node
 pub fn mb_ast_increment_lineno(node: MbValue, n: MbValue) -> MbValue {
+    mb_ast_increment_lineno_checked(node, n, !n.is_none())
+}
+
+fn mb_ast_increment_lineno_checked(node: MbValue, n: MbValue, n_provided: bool) -> MbValue {
     if !is_ast_node_value(node) {
         return ast_arg_type_error("increment_lineno", "node");
     }
-    if !n.is_none() && n.as_int().is_none() {
-        return ast_arg_type_error("increment_lineno", "n");
+    if n_provided && n.as_int().is_none() {
+        super::super::builtins::raise_type_error(format!(
+            "unsupported operand type(s) for +: 'int' and '{}'",
+            super::super::builtins::value_type_name(n)
+        ));
+        return MbValue::none();
     }
     let delta = n.as_int().unwrap_or(1);
     increment_ast_node_locations(node, delta);
@@ -1895,6 +1914,19 @@ mod tests {
         mb_ast_increment_lineno(leaf, MbValue::none());
         assert_eq!(field(leaf, "lineno").as_int(), Some(11));
         assert!(field(leaf, "end_lineno").is_none());
+
+        let before_error = field(leaf, "lineno");
+        let args = [leaf, MbValue::none()];
+        super::super::super::exception::mb_clear_exception();
+        unsafe {
+            d_increment_lineno(args.as_ptr(), args.len());
+        }
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(field(leaf, "lineno").to_bits(), before_error.to_bits());
+        super::super::super::exception::mb_clear_exception();
 
         let op = make_ast_node("Add", FxHashMap::default());
         set_ast_attr(op, "lineno", MbValue::from_int(4));
