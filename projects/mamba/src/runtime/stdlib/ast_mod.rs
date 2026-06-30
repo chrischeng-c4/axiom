@@ -910,10 +910,48 @@ pub fn mb_ast_literal_eval(expr: MbValue) -> MbValue {
         Some(s) => s,
         None => return MbValue::none(),
     };
+    if literal_eval_has_unexpected_indent(&s) {
+        return ast_literal_eval_indentation_error();
+    }
     match LiteralEvalParser::new(&s).parse_complete() {
         Ok(value) => value,
         Err(_) => ast_literal_eval_value_error(),
     }
+}
+
+fn literal_eval_has_unexpected_indent(src: &str) -> bool {
+    let mut chars = src.chars().peekable();
+
+    while matches!(chars.peek(), Some(' ' | '\t')) {
+        chars.next();
+    }
+
+    while matches!(chars.peek(), Some('\n' | '\r')) {
+        let first = chars.next();
+        if first == Some('\r') && chars.peek() == Some(&'\n') {
+            chars.next();
+        }
+
+        let mut indented = false;
+        while matches!(chars.peek(), Some(' ' | '\t')) {
+            indented = true;
+            chars.next();
+        }
+
+        if indented && !matches!(chars.peek(), Some('\n' | '\r') | None) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn ast_literal_eval_indentation_error() -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("IndentationError".to_string())),
+        MbValue::from_ptr(MbObject::new_str("unexpected indent".to_string())),
+    );
+    MbValue::none()
 }
 
 fn ast_literal_eval_value_error() -> MbValue {
@@ -1847,6 +1885,16 @@ mod tests {
                 panic!("expected bytes");
             }
         }
+    }
+
+    #[test]
+    fn test_literal_eval_leading_indent_matches_cpython() {
+        assert!(!literal_eval_has_unexpected_indent(" \t -1"));
+        assert!(!literal_eval_has_unexpected_indent("\n-1"));
+        assert!(!literal_eval_has_unexpected_indent("\n   \n-1"));
+        assert!(literal_eval_has_unexpected_indent("\n -1"));
+        assert!(literal_eval_has_unexpected_indent("\n\t-1"));
+        assert!(literal_eval_has_unexpected_indent("   \n -1"));
     }
 
     #[test]
