@@ -319,6 +319,70 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("extra", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: asyncio.trsock.TransportSocket is a private-but-importable
+    // Py312 stdlib type used by asyncio transports. Generated rows either lose
+    // protocol/bool precision or conservatively mark platform-specific socket
+    // helpers unenforceable; tighten only the strict-type fixture walls.
+    StdlibSig {
+        module: "asyncio.trsock",
+        qualifier: "TransportSocket",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[
+            p("exc_type", CoreTy::Typed),
+            p("exc_val", CoreTy::Typed),
+            p("exc_tb", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "asyncio.trsock",
+        qualifier: "TransportSocket",
+        name: "ioctl",
+        kind: SigKind::Method,
+        params: &[p("control", CoreTy::Int), p("option", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "asyncio.trsock",
+        qualifier: "TransportSocket",
+        name: "sendmsg_afalg",
+        kind: SigKind::Method,
+        params: &[p("msg", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "asyncio.trsock",
+        qualifier: "TransportSocket",
+        name: "sendto",
+        kind: SigKind::Method,
+        params: &[p("data", CoreTy::Bytes), p("address", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "asyncio.trsock",
+        qualifier: "TransportSocket",
+        name: "set_inheritable",
+        kind: SigKind::Method,
+        params: &[p("inheritable", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "asyncio.trsock",
+        qualifier: "TransportSocket",
+        name: "setblocking",
+        kind: SigKind::Method,
+        params: &[p("flag", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "asyncio.trsock",
+        qualifier: "TransportSocket",
+        name: "share",
+        kind: SigKind::Method,
+        params: &[p("process_id", CoreTy::Int)],
+        enforceable: true,
+    },
     // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
     // constructor/property contracts in typeshed. Generated rows either collapse
     // them to `Typed` or lose the parameter entirely; keep the strict wall exact
