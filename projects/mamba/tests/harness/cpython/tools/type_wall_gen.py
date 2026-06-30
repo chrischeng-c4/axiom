@@ -87,6 +87,14 @@ NOT_WRONGABLE = {
 }
 NOT_WRONGABLE_SIGNATURE_PARAMS = {
     ("aifc", "", "open", "f"),
+    ("argparse", "Action", "__init__", "option_strings"),
+    ("argparse", "ArgumentParser", "format_help", "formatter"),
+    ("argparse", "ArgumentParser", "format_usage", "formatter"),
+    ("argparse", "ArgumentParser", "parse_args", "args"),
+    ("argparse", "ArgumentParser", "parse_intermixed_args", "args"),
+    ("argparse", "ArgumentParser", "parse_known_args", "args"),
+    ("argparse", "ArgumentParser", "parse_known_intermixed_args", "args"),
+    ("argparse", "BooleanOptionalAction", "__init__", "option_strings"),
 }
 BUILTINS = "builtins"
 NON_RUNTIME_STUB_MODULE_PREFIXES = ("_typeshed",)
