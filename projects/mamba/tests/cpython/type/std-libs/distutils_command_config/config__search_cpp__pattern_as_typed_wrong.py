@@ -9,12 +9,11 @@
 # case = "config__search_cpp__pattern_as_typed_wrong"
 # subject = "distutils.command.config.config.search_cpp(pattern: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pattern"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/command/config.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pattern
 # mamba-strict-type: TypeError
 """Type wall: distutils.command.config.config.search_cpp(pattern: typed); call it with the wrong type.
 
