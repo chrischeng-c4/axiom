@@ -9,12 +9,11 @@
 # case = "byte_compile__py_files_as_list_wrong"
 # subject = "distutils.util.byte_compile(py_files: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed py_files"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed py_files
 # mamba-strict-type: TypeError
 """Type wall: distutils.util.byte_compile(py_files: list); call it with the wrong type.
 
