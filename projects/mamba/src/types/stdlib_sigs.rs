@@ -2509,6 +2509,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("string", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "email.feedparser",
+        qualifier: "BytesFeedParser",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("_factory", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.feedparser",
+        qualifier: "FeedParser",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("_factory", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -5032,6 +5048,18 @@ mod tests {
         assert_eq!(sig.kind, SigKind::Method);
         assert_eq!(sig.params[0].name, "string");
         assert_eq!(sig.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_email_feedparser_factory_walls_override_unknown_rows() {
+        for qualifier in ["BytesFeedParser", "FeedParser"] {
+            let sig = get("email.feedparser", qualifier, "__init__")
+                .expect("feedparser constructor row present");
+            assert!(sig.enforceable, "{qualifier}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, "_factory");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
     }
 
     #[test]
