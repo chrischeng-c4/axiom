@@ -2651,6 +2651,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    StdlibSig {
+        module: "email.mime.message",
+        qualifier: "MIMEMessage",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("_msg", CoreTy::Typed),
+            p("_subtype", CoreTy::Str),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -5274,6 +5285,18 @@ mod tests {
             assert_eq!(sig.params[0].name, param_name, "Message.{name}");
             assert_eq!(sig.params[0].ty, CoreTy::Typed, "Message.{name}");
         }
+    }
+
+    #[test]
+    fn curated_email_mime_message_init_msg_wall_overrides_unknown_row() {
+        let sig = get("email.mime.message", "MIMEMessage", "__init__")
+            .expect("email.mime.message MIMEMessage.__init__ row present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "_msg");
+        assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        assert_eq!(sig.params[1].name, "_subtype");
+        assert_eq!(sig.params[1].ty, CoreTy::Str);
     }
 
     #[test]
