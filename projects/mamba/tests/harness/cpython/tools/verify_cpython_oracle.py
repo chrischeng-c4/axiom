@@ -36,6 +36,7 @@ NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
 PLATFORM_SPECIFIC_TYPE_LIBS = {"_winapi": "win32"}
 VERSION_SPECIFIC_TYPE_LIBS = {
     "_zstd": (3, 14),
+    "annotationlib": (3, 14),
     "compression_zstd": (3, 14),
     "compression_zstd__zstdfile": (3, 14),
 }
