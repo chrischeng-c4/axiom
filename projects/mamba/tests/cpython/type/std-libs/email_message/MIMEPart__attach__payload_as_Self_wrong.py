@@ -9,12 +9,11 @@
 # case = "MIMEPart__attach__payload_as_Self_wrong"
 # subject = "email.message.MIMEPart.attach(payload: Self)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed payload"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/message.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed payload
 # mamba-strict-type: TypeError
 """Type wall: email.message.MIMEPart.attach(payload: Self); call it with the wrong type.
 

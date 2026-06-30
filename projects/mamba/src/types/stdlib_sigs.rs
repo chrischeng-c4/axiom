@@ -2576,6 +2576,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
     StdlibSig {
         module: "email.message",
         qualifier: "MIMEPart",
+        name: "attach",
+        kind: SigKind::Method,
+        params: &[p("payload", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "MIMEPart",
+        name: "get_body",
+        kind: SigKind::Method,
+        params: &[p("preferencelist", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "MIMEPart",
         name: "as_string",
         kind: SigKind::Method,
         params: &[
@@ -5199,6 +5215,21 @@ mod tests {
             assert_eq!(sig.params.len(), expected_len, "{qualifier}.{name}");
             assert_eq!(sig.params[0].name, "unixfrom", "{qualifier}.{name}");
             assert_eq!(sig.params[0].ty, CoreTy::Bool, "{qualifier}.{name}");
+        }
+    }
+
+    #[test]
+    fn curated_email_message_mimepart_typed_walls_override_unknown_rows() {
+        for (name, param_name) in [
+            ("attach", "payload"),
+            ("get_body", "preferencelist"),
+        ] {
+            let sig = get("email.message", "MIMEPart", name)
+                .expect("email.message MIMEPart row present");
+            assert!(sig.enforceable, "MIMEPart.{name}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, param_name, "MIMEPart.{name}");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed, "MIMEPart.{name}");
         }
     }
 
