@@ -8113,6 +8113,7 @@ fn is_python_codegen_section(section: Option<&str>) -> bool {
 }
 
 /// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
+#[cfg(test)]
 pub(crate) fn supports_source_backed_replay(target_rel_path: &str, section: Option<&str>) -> bool {
     supports_source_backed_replay_path(Path::new(target_rel_path), section)
 }
