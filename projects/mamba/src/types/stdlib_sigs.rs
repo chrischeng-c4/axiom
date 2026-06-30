@@ -216,6 +216,33 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("tuple", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: generated cgi/cgitb rows lose these first-argument walls to
+    // Unknown/Callable collapse. Bare user objects and concrete scalars are
+    // safe strict-mode rejects for these contracts.
+    StdlibSig {
+        module: "cgi",
+        qualifier: "",
+        name: "print_exception",
+        kind: SigKind::ModuleFn,
+        params: &[p("type", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "cgi",
+        qualifier: "",
+        name: "print_form",
+        kind: SigKind::ModuleFn,
+        params: &[p("form", CoreTy::Dict)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "cgitb",
+        qualifier: "",
+        name: "scanvars",
+        kind: SigKind::ModuleFn,
+        params: &[p("reader", CoreTy::Typed)],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {

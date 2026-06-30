@@ -245,6 +245,7 @@ pub fn register() {
         "parse_multipart",
         "test",
         "print_environ",
+        "print_exception",
         "print_form",
         "print_directory",
         "print_arguments",
