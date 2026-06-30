@@ -698,6 +698,143 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("m", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: OrderedDict key/value operations are typevar/protocol-shaped
+    // in typeshed. Use `Typed` for key/iterable contracts, `Bool` for
+    // `popitem(last)`, and `Dict` for merge operands so both scalar non-dicts
+    // and bare user objects are rejected while real mapping-like values remain
+    // skip-safe.
+    StdlibSig {
+        module: "collections",
+        qualifier: "OrderedDict",
+        name: "__or__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Dict)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "OrderedDict",
+        name: "__ror__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Dict)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "OrderedDict",
+        name: "fromkeys",
+        kind: SigKind::Method,
+        params: &[p("iterable", CoreTy::Typed), p("value", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "OrderedDict",
+        name: "move_to_end",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("last", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "OrderedDict",
+        name: "pop",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "OrderedDict",
+        name: "popitem",
+        kind: SigKind::Method,
+        params: &[p("last", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "OrderedDict",
+        name: "setdefault",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    // POSITIVE: UserDict methods similarly collapse to Unknown in generated
+    // rows. Bare user objects satisfy neither mapping/iterable protocols nor
+    // typevar key contracts, so `Typed` gives fixture-backed strict walls
+    // without hard-coding full protocol semantics.
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserDict",
+        name: "__delitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserDict",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserDict",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("dict", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserDict",
+        name: "__ior__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserDict",
+        name: "__or__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserDict",
+        name: "__ror__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserDict",
+        name: "__setitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("item", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserDict",
+        name: "fromkeys",
+        kind: SigKind::Method,
+        params: &[p("iterable", CoreTy::Typed), p("value", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserDict",
+        name: "get",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {
@@ -3100,6 +3237,44 @@ mod tests {
         ] {
             let sig = get("collections", "Counter", name).expect("Counter row present");
             assert!(sig.enforceable, "Counter.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+    }
+
+    #[test]
+    fn curated_ordereddict_walls_override_unknown_generated_rows() {
+        for (name, first_param, first_ty) in [
+            ("__or__", "value", CoreTy::Dict),
+            ("__ror__", "value", CoreTy::Dict),
+            ("fromkeys", "iterable", CoreTy::Typed),
+            ("move_to_end", "key", CoreTy::Typed),
+            ("pop", "key", CoreTy::Typed),
+            ("popitem", "last", CoreTy::Bool),
+            ("setdefault", "key", CoreTy::Typed),
+        ] {
+            let sig = get("collections", "OrderedDict", name).expect("OrderedDict row present");
+            assert!(sig.enforceable, "OrderedDict.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, first_ty);
+        }
+    }
+
+    #[test]
+    fn curated_userdict_walls_override_unknown_generated_rows() {
+        for (name, first_param) in [
+            ("__delitem__", "key"),
+            ("__getitem__", "key"),
+            ("__init__", "dict"),
+            ("__ior__", "other"),
+            ("__or__", "other"),
+            ("__ror__", "other"),
+            ("__setitem__", "key"),
+            ("fromkeys", "iterable"),
+            ("get", "key"),
+        ] {
+            let sig = get("collections", "UserDict", name).expect("UserDict row present");
+            assert!(sig.enforceable, "UserDict.{name} must stay enforceable");
             assert_eq!(sig.params[0].name, first_param);
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }
