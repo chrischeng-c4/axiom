@@ -939,6 +939,81 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("item", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: UserString overloads collapse several first-argument walls to
+    // Unknown/Typed generated rows. Restore the fixture-backed strict walls
+    // without modeling the full string overload matrix.
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserString",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("index", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserString",
+        name: "center",
+        kind: SigKind::Method,
+        params: &[p("width", CoreTy::Int), p("fillchar", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserString",
+        name: "endswith",
+        kind: SigKind::Method,
+        params: &[
+            p("suffix", CoreTy::Typed),
+            p("start", CoreTy::Unknown),
+            p("end", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserString",
+        name: "format_map",
+        kind: SigKind::Method,
+        params: &[p("mapping", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserString",
+        name: "ljust",
+        kind: SigKind::Method,
+        params: &[p("width", CoreTy::Int), p("fillchar", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserString",
+        name: "rjust",
+        kind: SigKind::Method,
+        params: &[p("width", CoreTy::Int), p("fillchar", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserString",
+        name: "splitlines",
+        kind: SigKind::Method,
+        params: &[p("keepends", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserString",
+        name: "startswith",
+        kind: SigKind::Method,
+        params: &[
+            p("prefix", CoreTy::Typed),
+            p("start", CoreTy::Unknown),
+            p("end", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {
@@ -3404,6 +3479,25 @@ mod tests {
             assert!(sig.enforceable, "UserList.{name} must stay enforceable");
             assert_eq!(sig.params[0].name, first_param);
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+    }
+
+    #[test]
+    fn curated_userstring_walls_override_unknown_generated_rows() {
+        for (name, first_param, first_ty) in [
+            ("__getitem__", "index", CoreTy::Typed),
+            ("center", "width", CoreTy::Int),
+            ("endswith", "suffix", CoreTy::Typed),
+            ("format_map", "mapping", CoreTy::Typed),
+            ("ljust", "width", CoreTy::Int),
+            ("rjust", "width", CoreTy::Int),
+            ("splitlines", "keepends", CoreTy::Bool),
+            ("startswith", "prefix", CoreTy::Typed),
+        ] {
+            let sig = get("collections", "UserString", name).expect("UserString row present");
+            assert!(sig.enforceable, "UserString.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, first_ty);
         }
     }
 
