@@ -9,12 +9,11 @@
 # case = "match_case__init__pattern_as_pattern_wrong"
 # subject = "ast.match_case.__init__(pattern: pattern)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pattern"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pattern
 # mamba-strict-type: TypeError
 """Type wall: ast.match_case.__init__(pattern: pattern); call it with the wrong type.
 

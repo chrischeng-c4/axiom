@@ -9,12 +9,11 @@
 # case = "keyword__init__arg_as_typed_wrong"
 # subject = "ast.keyword.__init__(arg: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg
 # mamba-strict-type: TypeError
 """Type wall: ast.keyword.__init__(arg: typed); call it with the wrong type.
 
