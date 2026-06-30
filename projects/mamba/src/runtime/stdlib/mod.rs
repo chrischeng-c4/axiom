@@ -116,6 +116,7 @@ pub mod email_mod;
 pub mod encodings_mod;
 pub mod errno_mod;
 pub mod fastapi_mod;
+pub mod fcntl_mod;
 pub mod filecmp_mod;
 pub mod fileinput_mod;
 pub mod flask_mod;
@@ -406,6 +407,7 @@ pub fn register_stdlib() {
     getpass_mod::register();
     site_mod::register();
     fileinput_mod::register();
+    fcntl_mod::register();
     wsgiref_mod::register();
     xmlrpc_mod::register();
     dev_tools_mod::register();
