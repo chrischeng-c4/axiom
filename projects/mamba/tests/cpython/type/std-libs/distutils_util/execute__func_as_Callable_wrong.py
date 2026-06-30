@@ -9,12 +9,11 @@
 # case = "execute__func_as_Callable_wrong"
 # subject = "distutils.util.execute(func: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: distutils.util.execute(func: Callable); call it with the wrong type.
 

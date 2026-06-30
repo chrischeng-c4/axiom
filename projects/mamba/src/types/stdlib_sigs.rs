@@ -2428,6 +2428,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: distutils.util generated rows lose the concrete list/callable
+    // prefix walls. Use Typed for Callable until the PoC table has a dedicated
+    // callable core type; it rejects the bare user object used by the fixture.
+    StdlibSig {
+        module: "distutils.util",
+        qualifier: "",
+        name: "byte_compile",
+        kind: SigKind::ModuleFn,
+        params: &[p("py_files", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.util",
+        qualifier: "",
+        name: "execute",
+        kind: SigKind::ModuleFn,
+        params: &[p("func", CoreTy::Typed), p("args", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -4883,6 +4902,24 @@ mod tests {
         assert_eq!(python_lib.params[0].ty, CoreTy::Typed);
         assert_eq!(python_lib.params[1].name, "standard_lib");
         assert_eq!(python_lib.params[1].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_distutils_util_walls_override_unknown_rows() {
+        let byte_compile = get("distutils.util", "", "byte_compile")
+            .expect("byte_compile row present");
+        assert!(byte_compile.enforceable);
+        assert_eq!(byte_compile.kind, SigKind::ModuleFn);
+        assert_eq!(byte_compile.params[0].name, "py_files");
+        assert_eq!(byte_compile.params[0].ty, CoreTy::List);
+
+        let execute = get("distutils.util", "", "execute").expect("execute row present");
+        assert!(execute.enforceable);
+        assert_eq!(execute.kind, SigKind::ModuleFn);
+        assert_eq!(execute.params[0].name, "func");
+        assert_eq!(execute.params[0].ty, CoreTy::Typed);
+        assert_eq!(execute.params[1].name, "args");
+        assert_eq!(execute.params[1].ty, CoreTy::Unknown);
     }
 
     #[test]
