@@ -2447,6 +2447,33 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("func", CoreTy::Typed), p("args", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: doctest generated rows collapse list/dict/bool constructor and
+    // helper walls. Keep unknown leading values skip-safe while enforcing the
+    // concrete positional parameters that the CPython fixture corpus exercises.
+    StdlibSig {
+        module: "doctest",
+        qualifier: "",
+        name: "run_docstring_examples",
+        kind: SigKind::ModuleFn,
+        params: &[p("f", CoreTy::Unknown), p("globs", CoreTy::Dict)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "doctest",
+        qualifier: "DocTest",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("examples", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "doctest",
+        qualifier: "DocTestFinder",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("verbose", CoreTy::Bool)],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -4920,6 +4947,31 @@ mod tests {
         assert_eq!(execute.params[0].ty, CoreTy::Typed);
         assert_eq!(execute.params[1].name, "args");
         assert_eq!(execute.params[1].ty, CoreTy::Unknown);
+    }
+
+    #[test]
+    fn curated_doctest_walls_override_unknown_rows() {
+        let run_docstring_examples = get("doctest", "", "run_docstring_examples")
+            .expect("run_docstring_examples row present");
+        assert!(run_docstring_examples.enforceable);
+        assert_eq!(run_docstring_examples.kind, SigKind::ModuleFn);
+        assert_eq!(run_docstring_examples.params[0].name, "f");
+        assert_eq!(run_docstring_examples.params[0].ty, CoreTy::Unknown);
+        assert_eq!(run_docstring_examples.params[1].name, "globs");
+        assert_eq!(run_docstring_examples.params[1].ty, CoreTy::Dict);
+
+        let doc_test = get("doctest", "DocTest", "__init__").expect("DocTest.__init__ present");
+        assert!(doc_test.enforceable);
+        assert_eq!(doc_test.kind, SigKind::Method);
+        assert_eq!(doc_test.params[0].name, "examples");
+        assert_eq!(doc_test.params[0].ty, CoreTy::List);
+
+        let finder = get("doctest", "DocTestFinder", "__init__")
+            .expect("DocTestFinder.__init__ present");
+        assert!(finder.enforceable);
+        assert_eq!(finder.kind, SigKind::Method);
+        assert_eq!(finder.params[0].name, "verbose");
+        assert_eq!(finder.params[0].ty, CoreTy::Bool);
     }
 
     #[test]
