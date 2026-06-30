@@ -32,6 +32,17 @@ unsafe extern "C" fn dispatch_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
 }
 
+unsafe extern "C" fn dispatch_weakrefset_weak_set(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    if nargs == 0 {
+        return super::weakref_mod::mb_weakref_weak_set_from(MbValue::none());
+    }
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    super::weakref_mod::mb_weakref_weak_set_from(a.first().copied().unwrap_or_else(MbValue::none))
+}
+
 fn extract_args(args: MbValue) -> Vec<MbValue> {
     args.as_ptr()
         .and_then(|p| unsafe {
@@ -1907,8 +1918,11 @@ fn register_internals() {
     register_with("_threading_local", &["local"], &[], &[], &[]);
     register_with(
         "_weakrefset",
-        &["WeakSet", "_IterationGuard"],
-        &[],
+        &["_IterationGuard"],
+        &[(
+            "WeakSet",
+            dispatch_weakrefset_weak_set as *const () as usize,
+        )],
         &[],
         &[],
     );

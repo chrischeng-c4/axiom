@@ -715,6 +715,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: `_weakrefset.WeakSet.__init__(data: Iterable | None)` is richer
+    // than CoreTy can represent. A `Typed` wall rejects the generated bare
+    // user-instance probes while runtime validation handles scalar
+    // non-iterables for Py312 behavior.
+    StdlibSig {
+        module: "_weakrefset",
+        qualifier: "WeakSet",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("data", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
@@ -2278,6 +2290,14 @@ mod tests {
             assert_eq!(sig.params[0].name, "message");
             assert_eq!(sig.params[0].ty, CoreTy::Str);
         }
+    }
+
+    #[test]
+    fn curated_weakrefset_constructor_wall_overrides_unknown_generated_row() {
+        let sig = get("_weakrefset", "WeakSet", "__init__").expect("WeakSet.__init__ present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.params[0].name, "data");
+        assert_eq!(sig.params[0].ty, CoreTy::Typed);
     }
 
     /// Regenerable contract (fixture_lint-style): the checked-in

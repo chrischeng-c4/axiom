@@ -160,8 +160,10 @@ fn registry_find_plain_proxy(obj: MbValue) -> Option<MbValue> {
                 if let Some(ptr) = w.as_ptr() {
                     unsafe {
                         if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                            return matches!(class_name.as_str(), "ProxyType" | "CallableProxyType")
-                                && ref_callback(w).is_none();
+                            return matches!(
+                                class_name.as_str(),
+                                "ProxyType" | "CallableProxyType"
+                            ) && ref_callback(w).is_none();
                         }
                     }
                 }
@@ -172,7 +174,9 @@ fn registry_find_plain_proxy(obj: MbValue) -> Option<MbValue> {
 }
 
 fn referent_needs_proxy_hash_guard(obj: MbValue) -> bool {
-    let Some(ptr) = obj.as_ptr() else { return false; };
+    let Some(ptr) = obj.as_ptr() else {
+        return false;
+    };
     unsafe {
         if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
             return super::super::class::class_own_members(class_name)
@@ -187,7 +191,10 @@ fn referent_needs_proxy_wrapper(obj: MbValue) -> bool {
     if is_int_backed_function_handle(obj) {
         return true;
     }
-    if matches!(super::collections_mod::user_wrapper_data(obj), Some(("list", _))) {
+    if matches!(
+        super::collections_mod::user_wrapper_data(obj),
+        Some(("list", _))
+    ) {
         return true;
     }
     if referent_needs_proxy_hash_guard(obj) {
@@ -295,14 +302,12 @@ fn class_ref_target_name(wref: MbValue) -> Option<String> {
     let ptr = wref.as_ptr()?;
     unsafe {
         match &(*ptr).data {
-            ObjData::Instance { class_name, fields } if class_name == "ReferenceType" => {
-                fields
-                    .read()
-                    .unwrap()
-                    .get("_class_object_name")
-                    .copied()
-                    .and_then(extract_str)
-            }
+            ObjData::Instance { class_name, fields } if class_name == "ReferenceType" => fields
+                .read()
+                .unwrap()
+                .get("_class_object_name")
+                .copied()
+                .and_then(extract_str),
             _ => None,
         }
     }
@@ -746,8 +751,12 @@ unsafe extern "C" fn dispatch_getweakrefs(args_ptr: *const MbValue, nargs: usize
     mb_weakref_getweakrefs(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
-unsafe extern "C" fn dispatch_weak_set(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    mb_weakref_weak_set()
+unsafe extern "C" fn dispatch_weak_set(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs == 0 {
+        return mb_weakref_weak_set_from(MbValue::none());
+    }
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    mb_weakref_weak_set_from(a.first().copied().unwrap_or_else(MbValue::none))
 }
 
 unsafe extern "C" fn dispatch_weak_key_dict(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -983,6 +992,10 @@ unsafe extern "C" fn ws_contains(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn ws_len(self_v: MbValue, _args: MbValue) -> MbValue {
     super::super::set_ops::mb_set_len(ws_data_pruned(self_v))
+}
+
+unsafe extern "C" fn ws_iter(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::iter::mb_iter(ws_data_pruned(self_v))
 }
 
 fn ws_dispatch_set_method(name: &str, self_v: MbValue, args: MbValue) -> MbValue {
@@ -1259,16 +1272,13 @@ fn reject_non_weakreferenceable(obj: MbValue) -> bool {
         Some("NoneType")
     } else if obj.is_bool() {
         Some("bool")
-    } else if obj
-        .as_int()
-        .is_some_and(|id| {
-            id < 0
-                || !(super::uuid_mod::is_uuid_handle(id as u64)
-                    || super::super::generator::is_known_generator(obj)
-                    || super::super::iter::mb_is_iterator_handle(obj)
-                    || is_int_backed_function_handle(obj))
-        })
-    {
+    } else if obj.as_int().is_some_and(|id| {
+        id < 0
+            || !(super::uuid_mod::is_uuid_handle(id as u64)
+                || super::super::generator::is_known_generator(obj)
+                || super::super::iter::mb_is_iterator_handle(obj)
+                || is_int_backed_function_handle(obj))
+    }) {
         Some("int")
     } else if obj.is_float() {
         Some("float")
@@ -1386,7 +1396,9 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
     if referent_needs_proxy_wrapper(obj) {
         if callback.is_none() {
             if let Some(existing) = registry_find_plain_proxy(obj) {
-                unsafe { super::super::rc::retain_if_ptr(existing); }
+                unsafe {
+                    super::super::rc::retain_if_ptr(existing);
+                }
                 return existing;
             }
         }
@@ -1421,7 +1433,10 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
             MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
         );
         let proxy = Box::new(MbObject {
-            header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+            header: MbObjectHeader {
+                rc: AtomicU32::new(1),
+                kind: ObjKind::Instance,
+            },
             data: ObjData::Instance {
                 class_name: class_name.to_string(),
                 fields: RwLock::new(fields),
@@ -1433,8 +1448,12 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
     }
     // The proxy carve-out returns the referent itself. The argument cleanup and
     // returned alias each consume an owned slot, so keep both references alive.
-    unsafe { super::super::rc::retain_if_ptr(obj); }
-    unsafe { super::super::rc::retain_if_ptr(obj); }
+    unsafe {
+        super::super::rc::retain_if_ptr(obj);
+    }
+    unsafe {
+        super::super::rc::retain_if_ptr(obj);
+    }
     obj
 }
 
@@ -1580,6 +1599,11 @@ pub fn mb_weakref_getweakrefs(obj: MbValue) -> MbValue {
 
 /// weakref.WeakSet() -> Instance stub (behaves like a normal set).
 pub fn mb_weakref_weak_set() -> MbValue {
+    mb_weakref_weak_set_from(MbValue::none())
+}
+
+/// weakref.WeakSet([data]) -> Instance stub initialized from an iterable.
+pub fn mb_weakref_weak_set_from(data: MbValue) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert(
         "data".to_string(),
@@ -1599,7 +1623,42 @@ pub fn mb_weakref_weak_set() -> MbValue {
             fields: RwLock::new(fields),
         },
     });
-    MbValue::from_ptr(Box::into_raw(obj))
+    let set = MbValue::from_ptr(Box::into_raw(obj));
+    if data.is_none() {
+        return set;
+    }
+
+    let iter_handle = super::super::iter::mb_iter(data);
+    if iter_handle.is_none() {
+        return MbValue::none();
+    }
+    if let Some(items) = super::super::iter::drain_iter_to_vec(iter_handle) {
+        for item in items {
+            let args = MbValue::from_ptr(MbObject::new_list(vec![item]));
+            unsafe {
+                ws_add(set, args);
+            }
+            if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+                return MbValue::none();
+            }
+        }
+        return set;
+    }
+
+    loop {
+        if super::super::iter::mb_has_next(iter_handle).as_bool() != Some(true) {
+            break;
+        }
+        let item = super::super::iter::mb_next(iter_handle);
+        let args = MbValue::from_ptr(MbObject::new_list(vec![item]));
+        unsafe {
+            ws_add(set, args);
+        }
+        if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+            return MbValue::none();
+        }
+    }
+    set
 }
 
 /// weakref.WeakKeyDictionary() -> Instance stub backed by a plain dict.
@@ -1727,6 +1786,7 @@ fn register_weakref_classes() {
     let mut ws: Map<String, MbValue> = Map::new();
     let ws_methods: &[(&str, usize)] = &[
         ("__contains__", ws_contains as usize),
+        ("__iter__", ws_iter as usize),
         ("__len__", ws_len as usize),
         ("add", ws_add as usize),
         ("clear", ws_clear as usize),
@@ -2091,13 +2151,19 @@ mod tests {
     fn test_userlist_proxy_bool_forwards_to_backing_list() {
         let v = super::super::collections_mod::mb_userlist_new(MbValue::none());
         let proxy = mb_weakref_proxy(v, MbValue::none());
-        assert_eq!(crate::runtime::builtins::mb_bool(proxy).as_bool(), Some(false));
+        assert_eq!(
+            crate::runtime::builtins::mb_bool(proxy).as_bool(),
+            Some(false)
+        );
 
         let backing = super::super::collections_mod::user_wrapper_data(v)
             .expect("expected UserList backing")
             .1;
         crate::runtime::list_ops::mb_list_append(backing, MbValue::from_int(12));
-        assert_eq!(crate::runtime::builtins::mb_bool(proxy).as_bool(), Some(true));
+        assert_eq!(
+            crate::runtime::builtins::mb_bool(proxy).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
