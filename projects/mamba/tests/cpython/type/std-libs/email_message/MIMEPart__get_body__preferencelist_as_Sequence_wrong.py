@@ -9,12 +9,11 @@
 # case = "MIMEPart__get_body__preferencelist_as_Sequence_wrong"
 # subject = "email.message.MIMEPart.get_body(preferencelist: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed preferencelist"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/message.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed preferencelist
 # mamba-strict-type: TypeError
 """Type wall: email.message.MIMEPart.get_body(preferencelist: Sequence); call it with the wrong type.
 
