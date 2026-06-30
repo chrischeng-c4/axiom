@@ -532,6 +532,53 @@ fn array_unknown_contracts_are_not_strict_type_walls() {
 }
 
 #[test]
+fn configparser_parsingerror_filename_is_not_a_py312_strict_wall() {
+    let root = mamba_root();
+    assert!(
+        !root
+            .join(
+                "tests/cpython/type/std-libs/configparser/ParsingError__filename__value_as_str_wrong.py"
+            )
+            .exists(),
+        "CPython 3.12 has no callable ParsingError.filename(value) API; stale typeshed rows must not become executable strict walls"
+    );
+
+    let script = r#"
+import configparser
+import importlib.util
+import pathlib
+import sys
+
+assert not hasattr(configparser.ParsingError, "filename")
+err = configparser.ParsingError("source.ini")
+assert not hasattr(err, "filename")
+err.filename = 12345
+assert err.filename == 12345
+
+gen_tool = pathlib.Path("tests/harness/cpython/tools/type_wall_gen.py")
+sys.path.insert(0, str(gen_tool.parent))
+gen_spec = importlib.util.spec_from_file_location("type_wall_gen", gen_tool)
+gen_module = importlib.util.module_from_spec(gen_spec)
+assert gen_spec.loader is not None
+sys.modules[gen_spec.name] = gen_module
+gen_spec.loader.exec_module(gen_module)
+assert gen_module.is_signature_param_not_wrongable("configparser", "ParsingError", "filename", "value")
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run configparser ParsingError filename smoke");
+    assert!(
+        output.status.success(),
+        "configparser ParsingError filename smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn type_wall_generator_skips_typevar_fixture_params() {
     let script = r#"
 import ast
@@ -559,6 +606,7 @@ assert gen_module.is_signature_param_not_wrongable("array", "array", "__add__", 
 assert gen_module.is_signature_param_not_wrongable("array", "array", "__getitem__", "key")
 assert gen_module.is_signature_param_not_wrongable("array", "array", "__new__", "typecode")
 assert gen_module.is_signature_param_not_wrongable("array", "array", "append", "v")
+assert gen_module.is_signature_param_not_wrongable("configparser", "ParsingError", "filename", "value")
 assert not gen_module.is_signature_param_not_wrongable("aifc", "Aifc_read", "getmark", "id")
 assert not gen_module.is_signature_param_not_wrongable("argparse", "ArgumentParser", "error", "message")
 assert not gen_module.is_signature_param_not_wrongable("array", "array", "__mul__", "value")
