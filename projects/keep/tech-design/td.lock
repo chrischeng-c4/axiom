@@ -2,10 +2,16 @@ version = 2
 project = "keep"
 ir_kind = "td"
 td_path = "projects/keep/tech-design"
-generated_at = "2026-06-30T16:28:15.715126+00:00"
-digest = "sha256:0d11667c70ad0511dc4c470ed8f10e0a748df2df61508f8adfd039c78328df36"
-source_digest = "sha256:0d11667c70ad0511dc4c470ed8f10e0a748df2df61508f8adfd039c78328df36"
-ir_digest = "sha256:c43de2f1a729d5e4f6d21c2b29ec896a973abe08a5264079f17f60c92de88bd6"
+generated_at = "2026-06-30T16:41:19.379479+00:00"
+digest = "sha256:3e0a2c19995be0c9af8051d7404a695b3638912a98372fcabdcd991d8c2cc957"
+source_digest = "sha256:3e0a2c19995be0c9af8051d7404a695b3638912a98372fcabdcd991d8c2cc957"
+ir_digest = "sha256:b19195aac223ac017cd5275d935eb5d060a2fc7390a7cdc976010a022372a23b"
+
+[[files]]
+path = "interfaces/cli/migrate-keep-cli-from-report-issue-to-the-issue-group-cli-std-is.md"
+digest = "sha256:a36e9cbc3a2c500db4d02a408b395968a2d60d5018571062c8ca69c85cfe3776"
+ir_digest = "sha256:a66b22845f9153755420bf11970a2084c0e48ebad3a5fb7f2d78280224428ac6"
+section_count = 3
 
 [[files]]
 path = "logic/keep-service-http-adoption-compose-shared-probes-trace-and-drain.md"
