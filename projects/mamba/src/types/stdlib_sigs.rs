@@ -1927,6 +1927,65 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("ndigits", CoreTy::Int)],
         enforceable: true,
     },
+    // POSITIVE: difflib callbacks/sequences are protocol/callable-heavy in
+    // typeshed, so generated rows collapse them to Unknown or an empty
+    // unenforceable constructor row. The strict fixtures probe bare `_W()`
+    // values, which satisfy neither callable nor sequence contracts.
+    StdlibSig {
+        module: "difflib",
+        qualifier: "Differ",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("linejunk", CoreTy::Typed),
+            p("charjunk", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "difflib",
+        qualifier: "SequenceMatcher",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("isjunk", CoreTy::Typed),
+            p("a", CoreTy::Typed),
+            p("b", CoreTy::Typed),
+            p("autojunk", CoreTy::Bool),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "difflib",
+        qualifier: "",
+        name: "diff_bytes",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("dfunc", CoreTy::Typed),
+            p("a", CoreTy::Typed),
+            p("b", CoreTy::Typed),
+            p("fromfile", CoreTy::Typed),
+            p("tofile", CoreTy::Typed),
+            p("fromfiledate", CoreTy::Typed),
+            p("tofiledate", CoreTy::Typed),
+            p("n", CoreTy::Int),
+            p("lineterm", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "difflib",
+        qualifier: "",
+        name: "ndiff",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("a", CoreTy::Typed),
+            p("b", CoreTy::Typed),
+            p("linejunk", CoreTy::Typed),
+            p("charjunk", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4125,6 +4184,31 @@ mod tests {
         assert_eq!(sig.kind, SigKind::Method);
         assert_eq!(sig.params[0].name, "ndigits");
         assert_eq!(sig.params[0].ty, CoreTy::Int);
+    }
+
+    #[test]
+    fn curated_difflib_callback_walls_override_unknown_rows() {
+        let differ = get("difflib", "Differ", "__init__").expect("Differ.__init__ present");
+        assert!(differ.enforceable);
+        assert_eq!(differ.kind, SigKind::Method);
+        assert_eq!(differ.params[0].name, "linejunk");
+        assert_eq!(differ.params[0].ty, CoreTy::Typed);
+
+        let matcher =
+            get("difflib", "SequenceMatcher", "__init__").expect("SequenceMatcher.__init__");
+        assert!(matcher.enforceable);
+        assert_eq!(matcher.params[0].name, "isjunk");
+        assert_eq!(matcher.params[0].ty, CoreTy::Typed);
+
+        let diff_bytes = get("difflib", "", "diff_bytes").expect("diff_bytes present");
+        assert!(diff_bytes.enforceable);
+        assert_eq!(diff_bytes.params[0].name, "dfunc");
+        assert_eq!(diff_bytes.params[0].ty, CoreTy::Typed);
+
+        let ndiff = get("difflib", "", "ndiff").expect("ndiff present");
+        assert!(ndiff.enforceable);
+        assert_eq!(ndiff.params[0].name, "a");
+        assert_eq!(ndiff.params[0].ty, CoreTy::Typed);
     }
 
     #[test]
