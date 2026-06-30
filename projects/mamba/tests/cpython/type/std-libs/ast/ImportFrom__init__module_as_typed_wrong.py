@@ -9,12 +9,11 @@
 # case = "ImportFrom__init__module_as_typed_wrong"
 # subject = "ast.ImportFrom.__init__(module: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed module"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed module
 # mamba-strict-type: TypeError
 """Type wall: ast.ImportFrom.__init__(module: typed); call it with the wrong type.
 

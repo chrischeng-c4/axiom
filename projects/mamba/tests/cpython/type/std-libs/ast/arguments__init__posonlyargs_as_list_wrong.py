@@ -9,12 +9,11 @@
 # case = "arguments__init__posonlyargs_as_list_wrong"
 # subject = "ast.arguments.__init__(posonlyargs: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed posonlyargs"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed posonlyargs
 # mamba-strict-type: TypeError
 """Type wall: ast.arguments.__init__(posonlyargs: list); call it with the wrong type.
 

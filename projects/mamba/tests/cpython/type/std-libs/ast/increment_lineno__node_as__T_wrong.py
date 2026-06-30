@@ -9,12 +9,11 @@
 # case = "increment_lineno__node_as__T_wrong"
 # subject = "ast.increment_lineno(node: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed node"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed node
 # mamba-strict-type: TypeError
 """Type wall: ast.increment_lineno(node: _T); call it with the wrong type.
 

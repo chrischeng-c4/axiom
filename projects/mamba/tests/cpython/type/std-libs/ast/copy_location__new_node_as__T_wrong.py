@@ -9,12 +9,11 @@
 # case = "copy_location__new_node_as__T_wrong"
 # subject = "ast.copy_location(new_node: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed new_node"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed new_node
 # mamba-strict-type: TypeError
 """Type wall: ast.copy_location(new_node: _T); call it with the wrong type.
 
