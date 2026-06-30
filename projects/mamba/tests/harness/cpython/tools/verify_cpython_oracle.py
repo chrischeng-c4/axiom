@@ -33,7 +33,11 @@ CPYTHON_DIR = TOOLS_DIR.parents[2] / "cpython"  # tests/cpython (fixtures + .cac
 MAMBA_DIR = CPYTHON_DIR.parent.parent
 FIXTURES_ROOT = CPYTHON_DIR
 NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
-PLATFORM_SPECIFIC_TYPE_LIBS = {"_winapi": "win32"}
+PLATFORM_SPECIFIC_TYPE_LIBS = {
+    "_winapi": "win32",
+    "msilib": "win32",
+    "ossaudiodev": ("linux", "freebsd"),
+}
 VERSION_SPECIFIC_TYPE_LIBS = {
     "_zstd": (3, 14),
     "annotationlib": (3, 14),
@@ -106,7 +110,13 @@ def is_platform_specific_unavailable_type_fixture(path: Path) -> bool:
     if lib is None:
         return False
     required = PLATFORM_SPECIFIC_TYPE_LIBS.get(lib)
-    return required is not None and sys.platform != required
+    if required is None:
+        return False
+    if isinstance(required, str):
+        required = (required,)
+    return not any(
+        sys.platform == item or sys.platform.startswith(item) for item in required
+    )
 
 
 def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
