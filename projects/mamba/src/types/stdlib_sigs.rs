@@ -2525,6 +2525,30 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("_factory", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "email.generator",
+        qualifier: "BytesGenerator",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("outfp", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.generator",
+        qualifier: "DecodedGenerator",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("outfp", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.generator",
+        qualifier: "Generator",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("outfp", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -5058,6 +5082,18 @@ mod tests {
             assert!(sig.enforceable, "{qualifier}");
             assert_eq!(sig.kind, SigKind::Method);
             assert_eq!(sig.params[0].name, "_factory");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+    }
+
+    #[test]
+    fn curated_email_generator_outfp_walls_override_unknown_rows() {
+        for qualifier in ["BytesGenerator", "DecodedGenerator", "Generator"] {
+            let sig = get("email.generator", qualifier, "__init__")
+                .expect("email generator constructor row present");
+            assert!(sig.enforceable, "{qualifier}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, "outfp");
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }
     }
