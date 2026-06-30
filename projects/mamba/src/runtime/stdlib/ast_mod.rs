@@ -52,7 +52,15 @@ disp_nullary!(d_NodeTransformer, mb_ast_NodeTransformer);
 disp_unary!(d_iter_fields, mb_ast_iter_fields);
 disp_unary!(d_iter_child_nodes, mb_ast_iter_child_nodes);
 disp_binary!(d_get_source_segment, mb_ast_get_source_segment);
-disp_nullary!(d_main, mb_ast_main);
+
+unsafe extern "C" fn d_main(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs == 0 {
+        return mb_ast_main();
+    }
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let _ = a.get(0).copied().unwrap_or_else(MbValue::none);
+    ast_arg_type_error("main", "args")
+}
 
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -207,7 +215,11 @@ pub fn register() {
         "AugStore",
         "ExtSlice",
         "Index",
+        "NameConstant",
+        "Num",
         "Param",
+        "Str",
+        "Bytes",
         "Suite",
         // Additional concrete node classes
         "FunctionType",
@@ -277,6 +289,19 @@ fn extract_str(val: MbValue) -> Option<String> {
             Some(s.clone())
         } else {
             None
+        }
+    })
+}
+
+fn extract_source_text(val: MbValue) -> Option<String> {
+    if let Some(s) = extract_str(val) {
+        return Some(s);
+    }
+    val.as_ptr().and_then(|ptr| unsafe {
+        use super::super::rc::ObjData;
+        match &(*ptr).data {
+            ObjData::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+            _ => None,
         }
     })
 }
@@ -794,7 +819,12 @@ fn make_ast_node(node_type: &str, fields: FxHashMap<String, MbValue>) -> MbValue
 /// In the full implementation, this calls the Mamba parser and
 /// wraps the resulting AST in Python-compatible node objects.
 pub fn mb_ast_parse(source: MbValue) -> MbValue {
-    let src = extract_str(source).unwrap_or_default();
+    if is_ast_node_value(source) {
+        return source;
+    }
+    let Some(src) = extract_source_text(source) else {
+        return ast_arg_type_error("parse", "source");
+    };
     let mut fields = FxHashMap::default();
     // One stub statement node per top-level statement, typed by its leading
     // keyword, each carrying an empty body of its own. Not a real AST — just

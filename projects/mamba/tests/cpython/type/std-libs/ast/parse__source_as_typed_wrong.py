@@ -9,12 +9,11 @@
 # case = "parse__source_as_typed_wrong"
 # subject = "ast.parse(source: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed source"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed source
 # mamba-strict-type: TypeError
 """Type wall: ast.parse(source: typed); call it with the wrong type.
 
