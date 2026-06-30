@@ -9,12 +9,10 @@
 # case = "UserString____getitem____index_as_typed_wrong"
 # subject = "collections.UserString.__getitem__(index: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed index"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed index
 # mamba-strict-type: TypeError
 """Type wall: collections.UserString.__getitem__(index: typed); call it with the wrong type.
 

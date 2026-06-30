@@ -9,12 +9,10 @@
 # case = "UserString__endswith__suffix_as_typed_wrong"
 # subject = "collections.UserString.endswith(suffix: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed suffix"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed suffix
 # mamba-strict-type: TypeError
 """Type wall: collections.UserString.endswith(suffix: typed); call it with the wrong type.
 

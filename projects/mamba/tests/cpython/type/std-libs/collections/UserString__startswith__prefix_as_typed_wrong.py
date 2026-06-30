@@ -9,12 +9,10 @@
 # case = "UserString__startswith__prefix_as_typed_wrong"
 # subject = "collections.UserString.startswith(prefix: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed prefix"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed prefix
 # mamba-strict-type: TypeError
 """Type wall: collections.UserString.startswith(prefix: typed); call it with the wrong type.
 
