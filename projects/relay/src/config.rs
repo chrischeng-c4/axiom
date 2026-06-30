@@ -56,10 +56,20 @@ impl Default for DedupeConfig {
 pub struct WorkQueueConfig {
     /// Lease duration before an unacked entry is redelivery-eligible.
     pub lease_ttl_ms: u64,
-    /// Redelivery attempts before revocation / dead-letter.
+    /// Redelivery attempts before an entry is dead-lettered. `0` disables
+    /// dead-lettering (entries redeliver indefinitely).
     pub max_attempts: u32,
     /// Base backoff between delivery attempts.
     pub redeliver_backoff_ms: u64,
+    /// Suffix of the sibling subject an exhausted entry is routed to
+    /// (`{subject}{dlq_suffix}`). Subjects ending in this suffix are opened with
+    /// `max_attempts = 0` so dead-lettering never recurses.
+    #[serde(default = "default_dlq_suffix")]
+    pub dlq_suffix: String,
+}
+
+fn default_dlq_suffix() -> String {
+    ".dlq".to_string()
 }
 
 impl Default for WorkQueueConfig {
@@ -68,6 +78,7 @@ impl Default for WorkQueueConfig {
             lease_ttl_ms: 30_000,
             max_attempts: 5,
             redeliver_backoff_ms: 1_000,
+            dlq_suffix: default_dlq_suffix(),
         }
     }
 }

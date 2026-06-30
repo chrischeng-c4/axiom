@@ -38,6 +38,28 @@ pub struct WorkQueue {
     committed: Seq,
 }
 
+/// Classification of the next pickable seq (work-queue internal).
+enum Pick {
+    /// Ready to lease.
+    Ready(Seq),
+    /// Exhausted its `max_attempts` budget — must be dead-lettered, not leased.
+    Dead(Seq),
+    /// Nothing ready.
+    Empty,
+}
+
+/// Outcome of a dead-letter-aware lease attempt. `Dead` carries the seq and its
+/// delivered-attempt count so the engine can durably route it to the
+/// dead-letter subject (a cross-subject op the engine owns) and then `discard`
+/// it from this queue.
+///
+/// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+pub enum LeaseOrDead {
+    Leased(Lease),
+    Dead { seq: Seq, attempts: u32 },
+    Empty,
+}
+
 impl WorkQueue {
     pub fn new(subject: &str, shard: ShardId, lease_ttl_ms: u64, max_attempts: u32) -> Self {
         WorkQueue {
@@ -81,14 +103,26 @@ impl WorkQueue {
         None
     }
 
-    /// Lease the next entry to `consumer_id` (preferring redelivery). The grant
-    /// carries a monotonic `epoch` (the attempt number) used to fence stale
-    /// workers on ack / heartbeat. Returns `None` when nothing is ready.
-    ///
-    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
-    pub fn lease(&mut self, consumer_id: &str, log_len: Seq, now: DateTime<Utc>) -> Option<Lease> {
-        let seq = self.pick(log_len)?;
+    /// True when `seq` has exhausted its delivery budget and must be
+    /// dead-lettered instead of re-leased. `max_attempts == 0` disables this
+    /// (entries redeliver indefinitely). The check uses the *delivered* count, so
+    /// the `max_attempts`-th delivery is the last actual attempt and the next
+    /// pick is dead.
+    fn is_dead(&self, seq: Seq) -> bool {
+        self.max_attempts > 0 && self.attempts.get(&seq).copied().unwrap_or(0) >= self.max_attempts
+    }
 
+    /// Pick the next seq and classify it as ready-to-lease vs dead (exhausted).
+    fn pick_classified(&mut self, log_len: Seq) -> Pick {
+        match self.pick(log_len) {
+            Some(seq) if self.is_dead(seq) => Pick::Dead(seq),
+            Some(seq) => Pick::Ready(seq),
+            None => Pick::Empty,
+        }
+    }
+
+    /// Build and record a lease for `seq` (bumping its attempt/epoch).
+    fn grant(&mut self, seq: Seq, consumer_id: &str, now: DateTime<Utc>) -> Lease {
         let attempt = self.attempts.get(&seq).copied().unwrap_or(0) + 1;
         self.attempts.insert(seq, attempt);
         let epoch = attempt as u64;
@@ -107,7 +141,58 @@ impl WorkQueue {
         };
         self.leases.insert(seq, lease.clone());
         self.lease_index.insert(lease_id, seq);
-        Some(lease)
+        lease
+    }
+
+    /// Lease the next entry to `consumer_id` (preferring redelivery), ignoring
+    /// the dead-letter cap. The grant carries a monotonic `epoch` (the attempt
+    /// number) used to fence stale workers. Returns `None` when nothing is ready.
+    /// Prefer [`WorkQueue::lease_or_dead`] on the engine path so exhausted entries
+    /// are dead-lettered rather than re-offered forever.
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn lease(&mut self, consumer_id: &str, log_len: Seq, now: DateTime<Utc>) -> Option<Lease> {
+        let seq = self.pick(log_len)?;
+        Some(self.grant(seq, consumer_id, now))
+    }
+
+    /// Lease the next ready entry, or report the next entry that has exhausted
+    /// `max_attempts` so the engine can dead-letter it. A `Dead` seq is removed
+    /// from the pick rotation (popped) but NOT leased and NOT yet committed — the
+    /// engine durably routes it to the dead-letter subject and then calls
+    /// [`WorkQueue::discard`].
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn lease_or_dead(
+        &mut self,
+        consumer_id: &str,
+        log_len: Seq,
+        now: DateTime<Utc>,
+    ) -> LeaseOrDead {
+        match self.pick_classified(log_len) {
+            Pick::Ready(seq) => LeaseOrDead::Leased(self.grant(seq, consumer_id, now)),
+            Pick::Dead(seq) => LeaseOrDead::Dead {
+                seq,
+                attempts: self.attempts.get(&seq).copied().unwrap_or(0),
+            },
+            Pick::Empty => LeaseOrDead::Empty,
+        }
+    }
+
+    /// Drop a dead-lettered entry: remove its bookkeeping and advance the
+    /// committed watermark (mirrors `ack`) so the source backlog reclaims it.
+    /// Called by the engine AFTER the entry is durably on the dead-letter
+    /// subject (hazard H2: DLQ-before-discard).
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn discard(&mut self, seq: Seq) {
+        self.leases.remove(&seq);
+        self.lease_index.retain(|_, s| *s != seq);
+        self.attempts.remove(&seq);
+        self.acked.insert(seq);
+        while self.acked.contains(&self.committed) {
+            self.committed += 1;
+        }
     }
 
     /// Lease up to `max` entries in one call (amortizes a worker's round-trips).

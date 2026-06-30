@@ -27,7 +27,7 @@ use crate::shard::shard_for;
 use crate::types::{
     AppendOutcome, CommittedOffset, DeliveryModel, Lease, LogEntry, Payload, Seq, ShardId,
 };
-use crate::workqueue::WorkQueue;
+use crate::workqueue::{LeaseOrDead, WorkQueue};
 use tokio::sync::watch;
 
 struct SubjectState {
@@ -123,11 +123,19 @@ impl Relay {
         {
             log.set_retention_mode(mode);
         }
+        // Dead-letter subjects ({subject}{dlq_suffix}) open with max_attempts=0
+        // so a consumer draining the DLQ never re-dead-letters into {subject}.dlq.dlq.
+        let dlq_suffix = &self.config.work_queue.dlq_suffix;
+        let max_attempts = if !dlq_suffix.is_empty() && subject.ends_with(dlq_suffix.as_str()) {
+            0
+        } else {
+            self.config.work_queue.max_attempts
+        };
         let mut workqueue = WorkQueue::new(
             subject,
             shard,
             self.config.work_queue.lease_ttl_ms,
-            self.config.work_queue.max_attempts,
+            max_attempts,
         );
         if let Some(watermark) = log.load_commit() {
             workqueue.recover(watermark);
@@ -312,7 +320,9 @@ impl Relay {
     }
 
     /// Lease the next ready entry, scanning shards from a rotating start so the
-    /// whole subject drains across shards.
+    /// whole subject drains across shards. Entries that have exhausted
+    /// `max_attempts` are dead-lettered (durably routed to `{subject}{dlq_suffix}`)
+    /// and skipped, never re-offered.
     ///
     /// @spec projects/relay/tech-design/logic/multi-shard-per-subject-server-side-sharding-horizontal-scale.md#logic
     pub fn lease(
@@ -324,14 +334,64 @@ impl Relay {
         let start = (self.lease_cursor.fetch_add(1, Ordering::Relaxed) % self.shards as u64) as u32;
         for off in 0..self.shards {
             let shard = (start + off) % self.shards;
-            let ss = self.shard_state(subject, shard)?;
-            let mut g = ss.lock().expect("subject mutex");
-            let len = g.log.len();
-            if let Some(l) = g.workqueue.lease(consumer_id, len, now) {
+            if let Some(l) = self.lease_one(subject, shard, consumer_id, now)? {
                 return Ok(Some(l));
             }
         }
         Ok(None)
+    }
+
+    /// Lease one entry from a single shard, dead-lettering any exhausted entries
+    /// encountered first. Returns `Ok(None)` when the shard's queue is drained.
+    ///
+    /// Dead-lettering crosses subjects (publish to `{subject}{dlq_suffix}`), so it
+    /// runs WITHOUT holding the source shard lock — and the DLQ append is made
+    /// durable BEFORE the source entry is discarded (hazard H2), so a crash
+    /// mid-way at worst re-delivers (at-least-once), never loses, the task.
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    fn lease_one(
+        &self,
+        subject: &str,
+        shard: ShardId,
+        consumer_id: &str,
+        now: DateTime<Utc>,
+    ) -> io::Result<Option<Lease>> {
+        loop {
+            // Phase A: under the source lock, lease or detect a dead entry and
+            // read its body (the dead seq is popped out of the pick rotation).
+            let (dead_seq, dead_entry, attempts) = {
+                let ss = self.shard_state(subject, shard)?;
+                let mut g = ss.lock().expect("subject mutex");
+                let len = g.log.len();
+                match g.workqueue.lease_or_dead(consumer_id, len, now) {
+                    LeaseOrDead::Leased(l) => return Ok(Some(l)),
+                    LeaseOrDead::Empty => return Ok(None),
+                    LeaseOrDead::Dead { seq, attempts } => (seq, g.log.entry(seq)?, attempts),
+                }
+            };
+            // Phase B (no source lock held): durably route to the DLQ, then
+            // discard from the source so its watermark/storage advances.
+            if let Some(entry) = dead_entry {
+                let dlq = format!("{subject}{}", self.config.work_queue.dlq_suffix);
+                let mut headers = entry.headers.clone();
+                headers.insert("x-relay-dlq-reason".to_string(), "max-attempts".to_string());
+                headers.insert("x-relay-dlq-attempts".to_string(), attempts.to_string());
+                headers.insert("x-relay-origin-subject".to_string(), subject.to_string());
+                headers.insert("x-relay-origin-seq".to_string(), entry.seq.to_string());
+                let dlq_id = format!("{}:dlq", entry.message_id);
+                self.publish(&dlq, &dlq_id, entry.payload, headers, now)?;
+            }
+            let ss = self.shard_state(subject, shard)?;
+            let mut g = ss.lock().expect("subject mutex");
+            g.workqueue.discard(dead_seq);
+            let wm = g.workqueue.committed_watermark();
+            g.log.persist_commit(wm)?;
+            if g.log.retention_mode() == RetentionMode::Ack {
+                g.log.truncate_below_acked(wm)?;
+            }
+            // loop: re-pick from this shard (next entry may be ready or dead).
+        }
     }
 
     /// Read a leased entry's stored body (`message_id` + `payload` + `headers`)
@@ -362,13 +422,14 @@ impl Relay {
                 break;
             }
             let shard = (start + off) % self.shards;
-            let ss = self.shard_state(subject, shard)?;
-            let mut g = ss.lock().expect("subject mutex");
-            let len = g.log.len();
-            out.extend(
-                g.workqueue
-                    .lease_batch(consumer_id, len, max - out.len(), now),
-            );
+            // Dead-letter-aware: drain this shard one entry at a time so exhausted
+            // entries are routed to the DLQ rather than re-offered.
+            while out.len() < max {
+                match self.lease_one(subject, shard, consumer_id, now)? {
+                    Some(l) => out.push(l),
+                    None => break,
+                }
+            }
         }
         Ok(out)
     }

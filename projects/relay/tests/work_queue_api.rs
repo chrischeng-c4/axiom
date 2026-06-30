@@ -140,4 +140,65 @@ fn heartbeat_is_fenced() {
         .unwrap()
         .is_none());
 }
+
+// Phase 2: an entry that exhausts max_attempts is durably routed to {subject}.dlq
+// and removed from the source backlog, instead of redelivering forever.
+#[test]
+fn exhausted_entry_is_dead_lettered() {
+    let mut core = RelayCoreConfig::in_memory();
+    core.work_queue.max_attempts = 2; // 2 deliveries, then DLQ on the 3rd pick
+    let mut r = Relay::new(core);
+    let now = Utc::now();
+    publish(&mut r, "q", "m0");
+
+    // Two deliveries that both expire (attempts 1 and 2).
+    let mut t = now;
+    for attempt in 1..=2u32 {
+        let l = r.lease("q", "c", t).unwrap().unwrap();
+        assert_eq!((l.seq, l.attempt), (0, attempt));
+        t += Duration::seconds(31);
+        assert_eq!(r.reclaim_expired("q", t).unwrap(), vec![0]);
+    }
+
+    // The 3rd pick exhausts the budget: dead-lettered, not re-offered.
+    assert!(
+        r.lease("q", "c", t).unwrap().is_none(),
+        "exhausted entry is not re-offered"
+    );
+    assert_eq!(
+        r.committed_offset("q").unwrap().unwrap().committed_seq,
+        0,
+        "source backlog advanced past the dead-lettered entry"
+    );
+
+    // Durably on the dead-letter subject with diagnostic headers.
+    assert_eq!(r.log_len("q.dlq").unwrap(), 1);
+    let dl = r.lease("q.dlq", "dlc", t).unwrap().unwrap();
+    let body = r.entry("q.dlq", dl.shard, dl.seq).unwrap().unwrap();
+    let h = |k: &str| body.headers.get(k).map(String::as_str);
+    assert_eq!(h("x-relay-dlq-reason"), Some("max-attempts"));
+    assert_eq!(h("x-relay-dlq-attempts"), Some("2"));
+    assert_eq!(h("x-relay-origin-subject"), Some("q"));
+    assert_eq!(h("x-relay-origin-seq"), Some("0"));
+}
+
+// Phase 2: max_attempts = 0 disables dead-lettering — the entry redelivers
+// indefinitely and nothing is routed to the DLQ.
+#[test]
+fn max_attempts_zero_disables_dead_letter() {
+    let mut core = RelayCoreConfig::in_memory();
+    core.work_queue.max_attempts = 0;
+    let mut r = Relay::new(core);
+    let now = Utc::now();
+    publish(&mut r, "q", "m0");
+
+    let mut t = now;
+    for attempt in 1..=6u32 {
+        let l = r.lease("q", "c", t).unwrap().unwrap();
+        assert_eq!((l.seq, l.attempt), (0, attempt), "redelivers indefinitely");
+        t += Duration::seconds(31);
+        assert_eq!(r.reclaim_expired("q", t).unwrap(), vec![0]);
+    }
+    assert_eq!(r.log_len("q.dlq").unwrap(), 0, "nothing dead-lettered");
+}
 // HANDWRITE-END
