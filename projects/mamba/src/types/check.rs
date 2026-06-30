@@ -882,7 +882,7 @@ impl TypeChecker {
             // scalar. Buffer-ish values still reject impossible concrete scalar
             // actuals in the call hook.
             // `Typed` is handled by the bare-class branch in the hook, and
-            // `List` by a negative scalar wall, not here.
+            // `Type`/`List` by negative scalar walls, not here.
             CoreTy::Bytes
             | CoreTy::MemoryView
             | CoreTy::Complex
@@ -890,6 +890,7 @@ impl TypeChecker {
             | CoreTy::Tuple
             | CoreTy::Dict
             | CoreTy::Typed
+            | CoreTy::Type
             | CoreTy::Unknown => None,
         }
     }
