@@ -43,6 +43,11 @@ VERSION_SPECIFIC_TYPE_LIBS = {
     "compression_zstd": (3, 14),
     "compression_zstd__zstdfile": (3, 14),
 }
+VERSION_REMOVED_TYPE_LIBS = {
+    "asyncore": (3, 12),
+    "asynchat": (3, 12),
+    "smtpd": (3, 12),
+}
 VERSION_SPECIFIC_TYPE_FIXTURES = {
     "std-libs/ast/TemplateStr__init__values_as_list_wrong.py": (3, 14),
 }
@@ -146,7 +151,10 @@ def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
     if lib is None:
         return False
     required = VERSION_SPECIFIC_TYPE_LIBS.get(lib)
-    return required is not None and sys.version_info[:2] < required
+    if required is not None and sys.version_info[:2] < required:
+        return True
+    removed = VERSION_REMOVED_TYPE_LIBS.get(lib)
+    return removed is not None and sys.version_info[:2] >= removed
 
 
 def is_excluded_type_fixture(path: Path) -> bool:
@@ -411,6 +419,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "host_platform": sys.platform,
             "excluded_version_specific_type_fixtures": len(excluded_version_specific),
             "version_specific_type_libs": VERSION_SPECIFIC_TYPE_LIBS,
+            "version_removed_type_libs": VERSION_REMOVED_TYPE_LIBS,
             "version_specific_type_fixture_cases": VERSION_SPECIFIC_TYPE_FIXTURES,
             "host_python_version": list(sys.version_info[:2]),
         },
