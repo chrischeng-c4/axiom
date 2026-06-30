@@ -489,6 +489,10 @@ pub fn register() {
         &[
             ("ensure_future", dispatch_class_shell as *const () as usize),
             ("create_task", dispatch_class_shell as *const () as usize),
+            (
+                "create_eager_task_factory",
+                dispatch_class_shell as *const () as usize,
+            ),
             ("gather", dispatch_class_shell as *const () as usize),
             ("wait", dispatch_empty_list as *const () as usize),
             ("wait_for", dispatch_noop as *const () as usize),

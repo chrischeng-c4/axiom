@@ -9,12 +9,11 @@
 # case = "create_eager_task_factory__custom_task_constructor_as__CustomTaskConstructor_wrong"
 # subject = "asyncio.tasks.create_eager_task_factory(custom_task_constructor: _CustomTaskConstructor)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed custom_task_constructor"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/tasks.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed custom_task_constructor
 # mamba-strict-type: TypeError
 """Type wall: asyncio.tasks.create_eager_task_factory(custom_task_constructor: _CustomTaskConstructor); call it with the wrong type.
 
