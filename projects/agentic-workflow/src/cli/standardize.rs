@@ -6588,7 +6588,12 @@ fn language_for_path(path: &Path) -> Option<&'static str> {
 }
 
 fn is_dockerfile_path(path: &Path) -> bool {
-    path.file_name().and_then(|name| name.to_str()) == Some("Dockerfile")
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    file_name == "Dockerfile"
+        || file_name.starts_with("Dockerfile.")
+        || file_name.ends_with(".dockerfile")
 }
 
 fn is_dockerignore_path(path: &Path) -> bool {
@@ -9385,7 +9390,12 @@ fn codegen_replay_supported(file: &SourceFile) -> bool {
     ) || path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".dockerignore" | "Dockerfile" | "llms.txt"))
+        .is_some_and(|name| {
+            matches!(name, ".dockerignore" | "llms.txt")
+                || name == "Dockerfile"
+                || name.starts_with("Dockerfile.")
+                || name.ends_with(".dockerfile")
+        })
 }
 
 fn render_codegen_owned_source(path: &Path, content: &str, spec_ref: &str) -> String {
@@ -11165,6 +11175,31 @@ test_cmd = "cargo test -p tool"
             handwrite_gaps: vec![],
         };
         assert!(codegen_replay_supported(&llms_file));
+    }
+
+    #[test]
+    fn codegen_replay_supports_dockerfile_variants() {
+        for rel in [
+            "projects/lumen/Dockerfile",
+            "projects/lumen/Dockerfile.release",
+            "projects/lumen/Dockerfile.bench",
+            "projects/lumen/service.dockerfile",
+        ] {
+            let file = SourceFile {
+                rel: rel.into(),
+                abs: PathBuf::from(rel),
+                language: "dockerfile".into(),
+                markers: FileMarkers {
+                    codegen: true,
+                    handwrite: false,
+                },
+                handwrite_gaps: vec![],
+            };
+            assert!(
+                codegen_replay_supported(&file),
+                "codegen replay should accept {rel}"
+            );
+        }
     }
 
     #[test]

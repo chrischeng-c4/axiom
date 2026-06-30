@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lumen Build Debug"
+  short_description: "Build and install lumen debug binary"
+  default_prompt: "Use $lumen-build-debug to build and install the lumen debug binary."

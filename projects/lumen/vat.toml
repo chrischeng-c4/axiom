@@ -49,6 +49,10 @@ cmd = [
 id = "build-meter"
 cmd = ["cargo", "build", "-p", "meter-cli"]
 
+[[setup]]
+id = "build-lumen-bench"
+cmd = ["cargo", "build", "--release", "-p", "lumen", "--bin", "lumen-bench"]
+
 [[services]]
 id = "lumen"
 cmd = ["../../target/release/lumen", "serve"]
@@ -68,10 +72,10 @@ timeout_s = 30
 [[services]]
 id = "pg"
 preset = "postgres"
-port = 5432
+port = 55432
 seed = ["tests/ec/pg/schema.sql"]
 export = { DATABASE_URL = "LUMEN_BENCH_PG_DSN" }
-ready_cmd = ["sh", "-c", "psql -h 127.0.0.1 -p 5432 -U postgres -d lumenbench -tAc 'select 1' >/dev/null 2>&1"]
+ready_cmd = ["sh", "-c", "psql -h 127.0.0.1 -p 55432 -U postgres -d lumenbench -tAc 'select 1' >/dev/null 2>&1"]
 timeout_s = 120
 
 [[services]]
@@ -194,7 +198,7 @@ timeout_s = 900
 [[runners]]
 id = "meter-profile"
 requires = ["lumen"]
-cmd = ["../../target/debug/meter", "profile", "--exec", "../../target/release/lumen-bench", "--duration", "25", "--", "run", "--tiers", "s", "--types", "bool_filter", "--queries", "200000"]
+cmd = ["../../target/debug/meter", "profile", "--exec", "../../target/release/lumen-bench", "--duration", "25", "--", "run", "--tiers", "s", "--types", "sorted_page_deep", "--documents", "20000", "--page-size", "100", "--queries", "200"]
 timeout_s = 300
 
 # Self-provisioned efficiency helper. The production EC dispatch path is the

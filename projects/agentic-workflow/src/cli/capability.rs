@@ -5699,7 +5699,7 @@ fn capability_production_readiness(
             project,
             verify,
             verify,
-            false,
+            verify,
             test_gates.clone(),
             production_gates_evaluated,
             Some(verified_by_id),

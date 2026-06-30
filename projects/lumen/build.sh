@@ -78,7 +78,7 @@ export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
 project_build_prepare_release_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
-cargo build --release -p lumen --bin lumen --features "otel relay-wal"
+cargo build --release -p lumen --bin lumen --features "otel operator relay-wal self-update issue"
 install_lumen release
 
 TAG="${PROJECT_BUILD_RELEASE_TAG}"

@@ -63,7 +63,7 @@ Gate Inventory:
 | Built-in Rust emulator (Cloud Storage / GCS) | change | #148 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_storage -- --nocapture` |
 | Built-in HTTP mock + record/replay proxy (HTTPS MITM) | change | #149 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_httpmock -- --nocapture` |
 | OpenAPI-driven mock HTTP service (spec → responses) | change | #150 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_openapi -- --nocapture` |
-| `vat upgrade` / `vat report-issue` (mandatory CLI convention) | change | #491 | implemented | verified | smoke | `cargo test -p vat --test vat_cli_convention -- --nocapture` |
+| `vat llm` / `vat upgrade` / `vat issue` (mandatory CLI convention) | change | #491 | implemented | verified | smoke | `cargo test -p vat --test vat_cli_convention -- --nocapture` |
 | Dual-protocol emulators (Cloud Tasks + Scheduler gRPC alongside REST) | change | #499 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_tasks_grpc --test vat_emulator_scheduler_grpc -- --nocapture` |
 | Network sandbox v1 — transparent HTTP host-routing | change | #503 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_httpmock_routing -- --nocapture` |
 | Network sandbox v2 — transparent gRPC routing (h2 MITM) | change | #509 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_grpc_mitm_routing -- --nocapture` |
@@ -192,9 +192,9 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 | `vat run <runner-id>` | Run a specific `vat.toml` runner. |
 | `vat run --scenario <id>` | Run a named app-under-test scenario: app service + scenario deps + runner deps, with topology evidence in `vat state`. |
 | `vat run -- <cmd>` | Clone a base, run one direct command, record the result. `--base DIR`, `--from VAT`, `--isolation none\|seatbelt`, `--gpu auto\|required\|none`, `--json`. |
-| `vat llm` | Print the compact LLM/agent usage guide: when to use `vat.toml`, direct runs, evidence commands, retention, and non-Docker boundaries. |
-| `vat upgrade` | Self-update to the latest `vat@*` GitHub release (`--check` to report only, `--version <tag>` to pin). One of the three mandatory CLI-convention verbs (`llm`/`upgrade`/`report-issue`), via the shared `cli-std` crate. |
-| `vat report-issue` | File a diagnostics-rich GitHub issue (version + target + OS/arch auto-attached); `--dry-run` to preview, `--title`/`--message`/`--label`. |
+| `vat llm [--topic <t>] [--format md\|json]` | Print offline agent-facing docs. Default `outline`; use `--topic guide` for the detailed vat.toml/service/evidence/boundary guide. |
+| `vat upgrade` | Self-update to the latest `vat@*` GitHub release (`--check` to report only, `--version <tag>` to pin). One of the three mandatory CLI-convention verbs (`llm`/`upgrade`/`issue`), via the shared `cli-std` crate. |
+| `vat issue search\|view\|create` | Search, read, and file diagnostics-rich GitHub issues under `project:vat`; `issue create --dry-run --title <t>` previews version + target + OS/arch diagnostics without submitting. |
 | `vat ls` | List vats (one line each, or `--json` array of full states). |
 | `vat state <id>` | Full agent-legible state as JSON (`--compact` for one line). |
 | `vat diff <id>` | Every filesystem change vs. the vat's base (`--json`). |

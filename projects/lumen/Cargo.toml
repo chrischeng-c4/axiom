@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.4"
+version = "0.4.5"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -15,6 +15,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "lumen"
 path = "src/bin/lumen.rs"
+
+[[bin]]
+name = "lumen-bench"
+path = "src/bin/lumen-bench.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -44,11 +48,17 @@ reqwest = { workspace = true, optional = true }
 # client surface backs the relay-WAL client (#469). reqwest here is rustls (no
 # openssl), so the serving binary still cross-compiles cleanly.
 h2c = { path = "../../libs/h2c", features = ["server"] }
-# `lumen upgrade` / `lumen report-issue` — the standard agent-facing CLI ops,
+# `lumen upgrade` / `lumen issue` — the standard agent-facing CLI ops,
 # shared across the ecosystem (CONTRIBUTING.md "CLI convention"). Offline paths
 # always build; the HTTPS paths are pulled in by lumen's `self-update` /
-# `report-issue` features via `cli-std/online`.
+# `issue` features via `cli-std/online`.
 cli-std = { path = "../../libs/cli-std", default-features = false }
+# Shared request-auth plumbing: Lumen supplies only the static role-map verifier
+# and per-collection RBAC policy.
+service-auth = { path = "../../libs/service-auth" }
+# Shared k8s-native HTTP service shell: standard probe routes, request tracing,
+# h2c serve wrapper, and SIGTERM drain sequencing.
+service-http = { path = "../../libs/service-http" }
 # Lumen-owned HA: writes replicated through the shared raft-core engine (behind
 # the `raft-wal` feature). Peer RPCs ride the same h2c transport.
 raft-core = { path = "../../libs/raft-core", optional = true }
@@ -103,12 +113,16 @@ relay-wal = ["dep:relay", "dep:reqwest"]
 # raft-wal — lumen owns write ordering + replication via libs/raft-core (HA),
 # instead of an external broker. Peer RPCs use the h2c client. (#515)
 raft-wal = ["dep:raft-core", "dep:raft-host", "dep:reqwest"]
-# self-update / report-issue — enable the online (HTTPS) paths of the shared
+# self-update / issue — enable the online (HTTPS) paths of the shared
 # CLI-ops lib. Offline builds still ship both commands (upgrade --check / the
-# report-issue dry-run + pre-filled-URL fallback). The published binary enables
+# issue create dry-run + pre-filled-URL fallback). The published binary enables
 # them (lumen-release.yml); both map to the lib's single `online` capability.
 self-update = ["cli-std/online"]
-report-issue = ["cli-std/online"]
+issue = ["cli-std/online"]
+# Deprecated build-feature alias kept for release scripts or local invocations
+# that have not yet renamed their feature set. The CLI command itself is
+# `lumen issue`, not `lumen report-issue`.
+report-issue = ["issue"]
 operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:operator"]
 # OTLP trace export. Compiled into the release binary (lumen-release.yml / build.sh
 # pass --features otel); off in plain dev builds so they don't pay the OTLP build

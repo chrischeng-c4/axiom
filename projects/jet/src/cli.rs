@@ -3784,6 +3784,9 @@ fn run_library_build(
         lib_config.and_then(|c| c.dts).unwrap_or(true)
     };
 
+    let sourcemap =
+        coerce_sourcemap_mode_or_warn(m.get_one::<String>("sourcemap").map(String::as_str));
+
     let options = crate::bundler::LibBuildOptions {
         project_root: root_dir.to_path_buf(),
         out_dir,
@@ -3810,6 +3813,7 @@ fn run_library_build(
                     .collect()
             })
             .unwrap_or_default(),
+        sourcemap,
     };
 
     let start = std::time::Instant::now();

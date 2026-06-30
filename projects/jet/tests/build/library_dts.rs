@@ -11,8 +11,10 @@
 //!   (e) an untyped export fails the build (isolatedDeclarations).
 //!
 //! @issue #171
+//! @issue #722
 
 use jet::bundler::types::OutputFormat;
+use jet::bundler::types::SourceMapOption;
 use jet::bundler::{build_library, LibBuildOptions};
 use std::collections::HashSet;
 use tempfile::tempdir;
@@ -40,6 +42,7 @@ fn lib_options(root: &std::path::Path) -> LibBuildOptions {
         entry: Vec::new(),
         css_merge: Vec::new(),
         raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
     }
 }
 
@@ -234,6 +237,84 @@ fn multi_entry_emits_one_dts_per_entry() {
     );
 }
 
+#[test]
+fn barrel_reexports_emit_sibling_declaration_files() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "barrel-lib",
+            "version": "1.0.0",
+            "module": "./src/index.ts"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export * from "./math";
+export * from "./greeter";
+"#,
+    );
+    write_file(
+        root,
+        "src/math.ts",
+        "export function add(a: number, b: number) { return a + b; }\n",
+    );
+    write_file(
+        root,
+        "src/greeter.ts",
+        r#"export class Greeter {
+    greet(name: string) { return `hi ${name}`; }
+}
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+
+    let index_dts = root.join("dist/index.d.ts");
+    let math_dts = root.join("dist/math.d.ts");
+    let greeter_dts = root.join("dist/greeter.d.ts");
+
+    assert_eq!(
+        result.types.len(),
+        1,
+        "public type outputs still track entry declarations"
+    );
+    assert_eq!(result.types[0].path, index_dts);
+    assert!(index_dts.is_file(), "entry declaration must exist");
+    assert!(
+        math_dts.is_file(),
+        "barrel re-export target declaration must exist"
+    );
+    assert!(
+        greeter_dts.is_file(),
+        "barrel re-export target declaration must exist"
+    );
+
+    let index_text = std::fs::read_to_string(index_dts).unwrap();
+    assert!(
+        index_text.contains("export * from \"./math\"")
+            && index_text.contains("export * from \"./greeter\""),
+        "entry declaration must preserve barrel re-exports, got:\n{index_text}"
+    );
+
+    let math_text = std::fs::read_to_string(math_dts).unwrap();
+    assert!(
+        math_text.contains("export declare function add(a: number, b: number): number;"),
+        "sibling declaration must preserve typed function signature, got:\n{math_text}"
+    );
+
+    let greeter_text = std::fs::read_to_string(greeter_dts).unwrap();
+    assert!(
+        greeter_text.contains("export declare class Greeter")
+            && greeter_text.contains("greet(name: string): string;"),
+        "sibling declaration must preserve typed class member, got:\n{greeter_text}"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // (d) declaration = false → no .d.ts emitted.
 // ──────────────────────────────────────────────────────────────────────────
@@ -271,7 +352,8 @@ fn declaration_off_emits_no_dts() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// (e) Untyped exported value fails the build (isolatedDeclarations).
+// (e) Untyped exported values still fail, but locally inferable exported
+//     function/member returns emit tsc-like declarations.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -292,6 +374,58 @@ fn untyped_export_fails_build() {
     assert!(
         msg.contains("isolatedDeclarations"),
         "error must explain the isolatedDeclarations requirement, got: {msg}"
+    );
+}
+
+#[test]
+fn exported_function_infers_number_return_type() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "bad-function-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        "export function add(a: number, b: number) { return a + b; }\n",
+    );
+
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("export declare function add(a: number, b: number): number;"),
+        "inferred numeric return type must be emitted, got:\n{dts}"
+    );
+}
+
+#[test]
+fn exported_class_member_infers_string_return_type() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "bad-class-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export class Greeter {
+    greet(name: string) { return `hi ${name}`; }
+}
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("export declare class Greeter")
+            && dts.contains("greet(name: string): string;"),
+        "inferred string member return type must be emitted, got:\n{dts}"
     );
 }
 

@@ -63,6 +63,26 @@ fn json_schema_emits_component_schemas() {
 }
 
 #[test]
+// @spec projects/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md
+fn search_request_sort_schema_documents_current_sort_behavior() {
+    let v: Value = serde_json::from_str(&json_schema_json()).expect("json-schema is valid JSON");
+    let desc = v["components"]["schemas"]["SearchRequest"]["properties"]["sort"]["description"]
+        .as_str()
+        .expect("SearchRequest.sort has a schema description");
+    for needle in [
+        "up to 4 keys",
+        "`first`/`last` keep",
+        "`has_child`",
+        "exact `total`",
+    ] {
+        assert!(
+            desc.contains(needle),
+            "sort description missing `{needle}`: {desc}"
+        );
+    }
+}
+
+#[test]
 fn query_shapes_cover_core_node_types_and_carry_requests() {
     let v = query_shapes();
     let shapes = v["shapes"].as_array().expect("shapes array");
@@ -98,6 +118,19 @@ fn query_shapes_cover_core_node_types_and_carry_requests() {
             s["name"]
         );
     }
+    let has_child = shapes
+        .iter()
+        .find(|s| s["name"] == "has_child_nested_group")
+        .expect("has_child query shape exists");
+    let desc = has_child["description"].as_str().unwrap();
+    assert!(
+        desc.contains("parent-field sort"),
+        "has_child shape description should mention parent-field sort: {desc}"
+    );
+    assert!(
+        has_child["request"]["sort"].is_array(),
+        "has_child shape should show sort composition: {has_child}"
+    );
 }
 
 #[test]
@@ -175,15 +208,16 @@ fn llm_workflow_covers_the_integration_model() {
     // Mental model + the 4-step workflow + flavor guide + non-goals must be
     // present so an agent can wire lumen in without a docs site.
     for needle in [
-        "search index",   // mental model: not a database
-        "external_id",    // returns ids, not documents
-        "Declare",        // step 1
-        "Ingest",         // step 2 (caller pub/sub)
-        "Search",         // step 3
-        "Hydrate",        // step 4
-        "Which \"find\"", // flavor decision guide
-        ":7373",          // connection
-        "Do NOT",         // non-goals
+        "search index",        // mental model: not a database
+        "external_id",         // returns ids, not documents
+        "Declare",             // step 1
+        "Ingest",              // step 2 (caller pub/sub)
+        "Search",              // step 3
+        "Hydrate",             // step 4
+        "Which \"find\"",      // flavor decision guide
+        "parent-field `sort`", // has_child + parent-field sort support
+        ":7373",               // connection
+        "Do NOT",              // non-goals
     ] {
         assert!(g.contains(needle), "workflow missing `{needle}`");
     }

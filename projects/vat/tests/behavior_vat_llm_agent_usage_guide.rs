@@ -10,7 +10,7 @@
 // @command cargo test -p vat --test vat_toml_runner -- --nocapture
 // AW-EC-END
 
-// Contract: `vat llm` exits successfully.
+// Contract: `vat llm --topic guide` exits successfully.
 // Contract: The guide mentions vat.toml runner mode and direct command mode.
 // Contract: The guide mentions state, diff, and logs evidence commands.
 // Contract: The guide preserves non-Docker and non-daemon boundaries.

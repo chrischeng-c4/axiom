@@ -10,9 +10,9 @@
 // @command cargo test -p vat --test vat_cli_convention -- --nocapture
 // AW-EC-END
 
-// Contract: `vat --help` output contains `llm`, `upgrade`, and `report-issue`.
+// Contract: `vat --help` output contains `llm`, `upgrade`, and `issue`.
 // Contract: `vat upgrade --check` exits 0 and reports current vs latest without writing the binary (network-permitting; offline it errors cleanly, never panics).
-// Contract: `vat report-issue --title X --dry-run` prints a body containing the vat version and OS/arch and submits nothing.
+// Contract: `vat issue create --title X --dry-run` prints a body containing the vat version and OS/arch and submits nothing.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_cli_convention_help_lists_all_three() {

@@ -46,7 +46,12 @@ impl ManagedService for Lumen {
         let name = self.name_any();
         let serving_ready = ready.ready.get(&name).copied().unwrap_or(0) as i32;
         let broker_ready = if self.spec.broker.is_managed() {
-            ready.ready.get(&format!("{name}-relay")).copied().unwrap_or(0) >= 1
+            ready
+                .ready
+                .get(&format!("{name}-relay"))
+                .copied()
+                .unwrap_or(0)
+                >= 1
         } else {
             true // external broker: assumed up.
         };
@@ -70,7 +75,7 @@ impl ManagedService for Lumen {
     }
 }
 
-/// `lumen k8s operator` — run the reconcile controller on the shared
+/// `lumen k8s operator run` — run the reconcile controller on the shared
 /// `libs/operator` host (leader-gated; safe at `replicas > 1`).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
